@@ -67,9 +67,8 @@ func (v *partitionInPlaceVisitor) Leave(n Node) bool {
 	return n != v.stop
 }
 
-// partitionReturningExpr exposes whether a helper assigns the Node returned by
-// Accept. Its return value deliberately differs from the node seen by the
-// visitor, as an unsupported external node is allowed to own its fallback.
+// partitionReturningExpr exposes whether a legacy helper assigns the Node
+// returned by Accept while the in-place helper leaves the child slot unchanged.
 type partitionReturningExpr struct {
 	exprNode
 	returned ExprNode
@@ -85,6 +84,11 @@ func (n *partitionReturningExpr) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	return n.returned, true
+}
+
+func (n *partitionReturningExpr) AcceptInPlace(v InPlaceVisitor) bool {
+	v.Enter(n)
+	return v.Leave(n)
 }
 
 func TestPartitionVisitorHelpersPreserveChildOrder(t *testing.T) {

@@ -16,449 +16,449 @@
 
 package ast
 
-func (n *CreateDatabaseStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CreateDatabaseStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *AlterDatabaseStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *AlterDatabaseStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *DropDatabaseStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DropDatabaseStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *FlashBackDatabaseStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *FlashBackDatabaseStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *IndexPartSpecification) acceptInPlace(v InPlaceVisitor) bool {
+func (n *IndexPartSpecification) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Expr != nil {
-		if !acceptInPlaceExprNode(n.Expr, v) {
+		if !n.Expr.AcceptInPlace(v) {
 			return false
 		}
 		return v.Leave(n)
 	}
-	if !n.Column.acceptInPlace(v) {
+	if !n.Column.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *ReferenceDef) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ReferenceDef) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Table != nil {
-		if !n.Table.acceptInPlace(v) {
+		if !n.Table.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, val := range n.IndexPartSpecifications {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
-	if !n.OnDelete.acceptInPlace(v) {
+	if !n.OnDelete.AcceptInPlace(v) {
 		return false
 	}
-	if !n.OnUpdate.acceptInPlace(v) {
+	if !n.OnUpdate.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *OnDeleteOpt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *OnDeleteOpt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *OnUpdateOpt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *OnUpdateOpt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ColumnOption) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ColumnOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Expr != nil {
-		if !acceptInPlaceExprNode(n.Expr, v) {
+		if !n.Expr.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *IndexOption) acceptInPlace(v InPlaceVisitor) bool {
+func (n *IndexOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.SplitOpt != nil {
-		if !n.SplitOpt.acceptInPlace(v) {
+		if !n.SplitOpt.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *Constraint) acceptInPlace(v InPlaceVisitor) bool {
+func (n *Constraint) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Keys {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Refer != nil {
-		if !n.Refer.acceptInPlace(v) {
+		if !n.Refer.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Option != nil {
-		if !n.Option.acceptInPlace(v) {
+		if !n.Option.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Expr != nil {
-		if !acceptInPlaceExprNode(n.Expr, v) {
+		if !n.Expr.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *ColumnDef) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ColumnDef) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Name.acceptInPlace(v) {
+	if !n.Name.AcceptInPlace(v) {
 		return false
 	}
 	for _, val := range n.Options {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *CreateTableStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CreateTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Table.acceptInPlace(v) {
+	if !n.Table.AcceptInPlace(v) {
 		return false
 	}
 	if n.ReferTable != nil {
-		if !n.ReferTable.acceptInPlace(v) {
+		if !n.ReferTable.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, val := range n.Cols {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, val := range n.Constraints {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, val := range n.SplitIndex {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Select != nil {
-		if !acceptInPlaceNode(n.Select, v) {
+		if !n.Select.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Partition != nil {
-		if !n.Partition.acceptInPlace(v) {
+		if !n.Partition.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, option := range n.Options {
-		if !option.acceptInPlace(v) {
+		if !option.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *DropTableStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DropTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Tables {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *DropPlacementPolicyStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DropPlacementPolicyStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *DropResourceGroupStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DropResourceGroupStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *OptimizeTableStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *OptimizeTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *DropSequenceStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DropSequenceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Sequences {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *RenameTableStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *RenameTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, t := range n.TableToTables {
-		if !t.acceptInPlace(v) {
+		if !t.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *TableToTable) acceptInPlace(v InPlaceVisitor) bool {
+func (n *TableToTable) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.OldTable.acceptInPlace(v) {
+	if !n.OldTable.AcceptInPlace(v) {
 		return false
 	}
-	if !n.NewTable.acceptInPlace(v) {
+	if !n.NewTable.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *CreateViewStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CreateViewStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.ViewName.acceptInPlace(v) {
+	if !n.ViewName.AcceptInPlace(v) {
 		return false
 	}
-	if !acceptInPlaceNode(n.Select, v) {
+	if !n.Select.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *CreatePlacementPolicyStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CreatePlacementPolicyStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *CreateMaskingPolicyStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CreateMaskingPolicyStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Table != nil {
-		if !n.Table.acceptInPlace(v) {
+		if !n.Table.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Column != nil {
-		if !n.Column.acceptInPlace(v) {
+		if !n.Column.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Expr != nil {
-		if !acceptInPlaceExprNode(n.Expr, v) {
+		if !n.Expr.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *CreateResourceGroupStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CreateResourceGroupStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *CreateSequenceStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CreateSequenceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Name.acceptInPlace(v) {
+	if !n.Name.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *IndexLockAndAlgorithm) acceptInPlace(v InPlaceVisitor) bool {
+func (n *IndexLockAndAlgorithm) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *CreateIndexStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CreateIndexStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Table.acceptInPlace(v) {
+	if !n.Table.AcceptInPlace(v) {
 		return false
 	}
 	for _, val := range n.IndexPartSpecifications {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.IndexOption != nil {
-		if !n.IndexOption.acceptInPlace(v) {
+		if !n.IndexOption.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.LockAlg != nil {
-		if !n.LockAlg.acceptInPlace(v) {
+		if !n.LockAlg.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *DropIndexStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DropIndexStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Table.acceptInPlace(v) {
+	if !n.Table.AcceptInPlace(v) {
 		return false
 	}
 	if n.LockAlg != nil {
-		if !n.LockAlg.acceptInPlace(v) {
+		if !n.LockAlg.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *LockTablesStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *LockTablesStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for i := range n.TableLocks {
-		if !n.TableLocks[i].Table.acceptInPlace(v) {
+		if !n.TableLocks[i].Table.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *UnlockTablesStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *UnlockTablesStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *CleanupTableLockStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CleanupTableLockStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for i := range n.Tables {
-		if !n.Tables[i].acceptInPlace(v) {
+		if !n.Tables[i].AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *RepairTableStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *RepairTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Table.acceptInPlace(v) {
+	if !n.Table.AcceptInPlace(v) {
 		return false
 	}
-	if !n.CreateStmt.acceptInPlace(v) {
+	if !n.CreateStmt.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *ResourceGroupRunawayActionOption) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ResourceGroupRunawayActionOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	return v.Leave(n)
 }
-func (n *TableOption) acceptInPlace(v InPlaceVisitor) bool {
+func (n *TableOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Value != nil {
-		if !acceptInPlaceNode(n.Value, v) {
+		if !n.Value.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.TimeUnitValue != nil {
-		if !n.TimeUnitValue.acceptInPlace(v) {
+		if !n.TimeUnitValue.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *ColumnPosition) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ColumnPosition) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.RelativeColumn != nil {
-		if !n.RelativeColumn.acceptInPlace(v) {
+		if !n.RelativeColumn.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *AlterTableSpec) acceptInPlace(v InPlaceVisitor) bool {
+func (n *AlterTableSpec) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Constraint != nil {
-		if !n.Constraint.acceptInPlace(v) {
+		if !n.Constraint.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.NewTable != nil {
-		if !n.NewTable.acceptInPlace(v) {
+		if !n.NewTable.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.SplitIndex != nil {
-		if !n.SplitIndex.acceptInPlace(v) {
+		if !n.SplitIndex.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, col := range n.NewColumns {
-		if !col.acceptInPlace(v) {
+		if !col.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, constraint := range n.NewConstraints {
-		if !constraint.acceptInPlace(v) {
+		if !constraint.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.OldColumnName != nil {
-		if !n.OldColumnName.acceptInPlace(v) {
+		if !n.OldColumnName.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Position != nil {
-		if !n.Position.acceptInPlace(v) {
+		if !n.Position.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.MaskingPolicyColumn != nil {
-		if !n.MaskingPolicyColumn.acceptInPlace(v) {
+		if !n.MaskingPolicyColumn.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.MaskingPolicyExpr != nil {
-		if !acceptInPlaceExprNode(n.MaskingPolicyExpr, v) {
+		if !n.MaskingPolicyExpr.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Partition != nil {
-		if !n.Partition.acceptInPlace(v) {
+		if !n.Partition.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, option := range n.Options {
-		if !option.acceptInPlace(v) {
+		if !option.AcceptInPlace(v) {
 			return false
 		}
 	}
@@ -469,30 +469,30 @@ func (n *AlterTableSpec) acceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
-func (n *AlterTableStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *AlterTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Table.acceptInPlace(v) {
+	if !n.Table.AcceptInPlace(v) {
 		return false
 	}
 	for _, val := range n.Specs {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *TruncateTableStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *TruncateTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Table.acceptInPlace(v) {
+	if !n.Table.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *PartitionOptions) acceptInPlace(v InPlaceVisitor) bool {
+func (n *PartitionOptions) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
@@ -509,1143 +509,1143 @@ func (n *PartitionOptions) acceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
-func (n *RecoverTableStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *RecoverTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Table != nil {
-		if !n.Table.acceptInPlace(v) {
+		if !n.Table.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *FlashBackToTimestampStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *FlashBackToTimestampStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if len(n.Tables) != 0 {
 		for _, val := range n.Tables {
-			if !val.acceptInPlace(v) {
+			if !val.AcceptInPlace(v) {
 				return false
 			}
 		}
 	}
 	if n.FlashbackTSO == 0 {
-		if !acceptInPlaceExprNode(n.FlashbackTS, v) {
+		if !n.FlashbackTS.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *FlashBackTableStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *FlashBackTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Table != nil {
-		if !n.Table.acceptInPlace(v) {
+		if !n.Table.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *AttributesSpec) acceptInPlace(v InPlaceVisitor) bool {
+func (n *AttributesSpec) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *StatsOptionsSpec) acceptInPlace(v InPlaceVisitor) bool {
+func (n *StatsOptionsSpec) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *AlterPlacementPolicyStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *AlterPlacementPolicyStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *AlterResourceGroupStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *AlterResourceGroupStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *AlterSequenceStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *AlterSequenceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Name.acceptInPlace(v) {
+	if !n.Name.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *Join) acceptInPlace(v InPlaceVisitor) bool {
+func (n *Join) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceNode(n.Left, v) {
+	if !n.Left.AcceptInPlace(v) {
 		return false
 	}
 	if n.Right != nil {
-		if !acceptInPlaceNode(n.Right, v) {
+		if !n.Right.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.On != nil {
-		if !n.On.acceptInPlace(v) {
+		if !n.On.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, col := range n.Using {
-		if !col.acceptInPlace(v) {
+		if !col.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *TableName) acceptInPlace(v InPlaceVisitor) bool {
+func (n *TableName) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.TableSample != nil {
-		if !n.TableSample.acceptInPlace(v) {
+		if !n.TableSample.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.AsOf != nil {
-		if n.AsOf.acceptInPlace(v) {
+		if n.AsOf.AcceptInPlace(v) {
 			return v.Leave(n)
 		}
 	}
 	return v.Leave(n)
 }
-func (n *DeleteTableList) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DeleteTableList) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n != nil {
 		for _, t := range n.Tables {
-			if !t.acceptInPlace(v) {
+			if !t.AcceptInPlace(v) {
 				return false
 			}
 		}
 	}
 	return v.Leave(n)
 }
-func (n *OnCondition) acceptInPlace(v InPlaceVisitor) bool {
+func (n *OnCondition) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Expr, v) {
+	if !n.Expr.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *TableSource) acceptInPlace(v InPlaceVisitor) bool {
+func (n *TableSource) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceNode(n.Source, v) {
+	if !n.Source.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *WildCardField) acceptInPlace(v InPlaceVisitor) bool {
+func (n *WildCardField) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *SelectField) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SelectField) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Expr != nil {
-		if !acceptInPlaceExprNode(n.Expr, v) {
+		if !n.Expr.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *FieldList) acceptInPlace(v InPlaceVisitor) bool {
+func (n *FieldList) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Fields {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *TableRefsClause) acceptInPlace(v InPlaceVisitor) bool {
+func (n *TableRefsClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.TableRefs.acceptInPlace(v) {
+	if !n.TableRefs.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *ByItem) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ByItem) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Expr, v) {
+	if !n.Expr.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *GroupByClause) acceptInPlace(v InPlaceVisitor) bool {
+func (n *GroupByClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Items {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *HavingClause) acceptInPlace(v InPlaceVisitor) bool {
+func (n *HavingClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Expr, v) {
+	if !n.Expr.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *OrderByClause) acceptInPlace(v InPlaceVisitor) bool {
+func (n *OrderByClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Items {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (s *TableSample) acceptInPlace(v InPlaceVisitor) bool {
+func (s *TableSample) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(s); skipChildren {
 		return v.Leave(s)
 	}
 	if s.Expr != nil {
-		if !acceptInPlaceExprNode(s.Expr, v) {
+		if !s.Expr.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if s.RepeatableSeed != nil {
-		if !acceptInPlaceExprNode(s.RepeatableSeed, v) {
+		if !s.RepeatableSeed.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(s)
 }
-func (c *CommonTableExpression) acceptInPlace(v InPlaceVisitor) bool {
+func (c *CommonTableExpression) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(c); skipChildren {
 		return v.Leave(c)
 	}
-	if !c.Query.acceptInPlace(v) {
+	if !c.Query.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(c)
 }
-func (n *WithClause) acceptInPlace(v InPlaceVisitor) bool {
+func (n *WithClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, cte := range n.CTEs {
-		if !cte.acceptInPlace(v) {
+		if !cte.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *SelectStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SelectStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.With != nil {
-		if !n.With.acceptInPlace(v) {
+		if !n.With.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if len(n.TableHints) != 0 {
 		for _, hint := range n.TableHints {
-			if !hint.acceptInPlace(v) {
+			if !hint.AcceptInPlace(v) {
 				return false
 			}
 		}
 	}
 	if n.Fields != nil {
-		if !n.Fields.acceptInPlace(v) {
+		if !n.Fields.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.From != nil {
-		if !n.From.acceptInPlace(v) {
+		if !n.From.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Where != nil {
-		if !acceptInPlaceExprNode(n.Where, v) {
+		if !n.Where.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.GroupBy != nil {
-		if !n.GroupBy.acceptInPlace(v) {
+		if !n.GroupBy.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Having != nil {
-		if !n.Having.acceptInPlace(v) {
+		if !n.Having.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, list := range n.Lists {
-		if !list.acceptInPlace(v) {
+		if !list.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for i := range n.WindowSpecs {
-		if !(&n.WindowSpecs[i]).acceptInPlace(v) {
+		if !(&n.WindowSpecs[i]).AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.OrderBy != nil {
-		if !n.OrderBy.acceptInPlace(v) {
+		if !n.OrderBy.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Limit != nil {
-		if !n.Limit.acceptInPlace(v) {
+		if !n.Limit.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.LockInfo != nil {
 		for _, t := range n.LockInfo.Tables {
-			if !t.acceptInPlace(v) {
+			if !t.AcceptInPlace(v) {
 				return false
 			}
 		}
 	}
 	return v.Leave(n)
 }
-func (n *SetOprSelectList) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SetOprSelectList) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.With != nil {
-		if !n.With.acceptInPlace(v) {
+		if !n.With.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, sel := range n.Selects {
-		if !acceptInPlaceNode(sel, v) {
+		if !sel.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.OrderBy != nil {
-		if !n.OrderBy.acceptInPlace(v) {
+		if !n.OrderBy.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Limit != nil {
-		if !n.Limit.acceptInPlace(v) {
+		if !n.Limit.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *SetOprStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SetOprStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.With != nil {
-		if !n.With.acceptInPlace(v) {
+		if !n.With.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.SelectList != nil {
-		if !n.SelectList.acceptInPlace(v) {
+		if !n.SelectList.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.OrderBy != nil {
-		if !n.OrderBy.acceptInPlace(v) {
+		if !n.OrderBy.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Limit != nil {
-		if !n.Limit.acceptInPlace(v) {
+		if !n.Limit.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *Assignment) acceptInPlace(v InPlaceVisitor) bool {
+func (n *Assignment) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Column.acceptInPlace(v) {
+	if !n.Column.AcceptInPlace(v) {
 		return false
 	}
-	if !acceptInPlaceExprNode(n.Expr, v) {
+	if !n.Expr.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *ColumnNameOrUserVar) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ColumnNameOrUserVar) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChild := v.Enter(n); skipChild {
 		return v.Leave(n)
 	}
 	if n.ColumnName != nil {
-		if !n.ColumnName.acceptInPlace(v) {
+		if !n.ColumnName.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.UserVar != nil {
-		if !n.UserVar.acceptInPlace(v) {
+		if !n.UserVar.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *LoadDataStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *LoadDataStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Table != nil {
-		if !n.Table.acceptInPlace(v) {
+		if !n.Table.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, val := range n.Columns {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, assignment := range n.ColumnAssignments {
-		if !assignment.acceptInPlace(v) {
+		if !assignment.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, cuVars := range n.ColumnsAndUserVars {
-		if !cuVars.acceptInPlace(v) {
+		if !cuVars.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *ImportIntoStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ImportIntoStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Table != nil {
-		if !n.Table.acceptInPlace(v) {
+		if !n.Table.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, cuVars := range n.ColumnsAndUserVars {
-		if !cuVars.acceptInPlace(v) {
+		if !cuVars.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, assignment := range n.ColumnAssignments {
-		if !assignment.acceptInPlace(v) {
+		if !assignment.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Select != nil {
-		if !acceptInPlaceNode(n.Select, v) {
+		if !n.Select.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *CallStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CallStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Procedure != nil {
-		if !n.Procedure.acceptInPlace(v) {
+		if !n.Procedure.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *InsertStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *InsertStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Select != nil {
-		if !acceptInPlaceNode(n.Select, v) {
+		if !n.Select.AcceptInPlace(v) {
 			return false
 		}
 	}
-	if !n.Table.acceptInPlace(v) {
+	if !n.Table.AcceptInPlace(v) {
 		return false
 	}
 	for _, val := range n.Columns {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, list := range n.Lists {
 		for _, val := range list {
-			if !acceptInPlaceExprNode(val, v) {
+			if !val.AcceptInPlace(v) {
 				return false
 			}
 		}
 	}
 	for _, val := range n.OnDuplicate {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, field := range n.Returning {
-		if !field.acceptInPlace(v) {
+		if !field.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *DeleteStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DeleteStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.With != nil {
-		if !n.With.acceptInPlace(v) {
+		if !n.With.AcceptInPlace(v) {
 			return false
 		}
 	}
-	if !n.TableRefs.acceptInPlace(v) {
+	if !n.TableRefs.AcceptInPlace(v) {
 		return false
 	}
 	if n.Tables != nil {
-		if !n.Tables.acceptInPlace(v) {
+		if !n.Tables.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Where != nil {
-		if !acceptInPlaceExprNode(n.Where, v) {
+		if !n.Where.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Order != nil {
-		if !n.Order.acceptInPlace(v) {
+		if !n.Order.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Limit != nil {
-		if !n.Limit.acceptInPlace(v) {
+		if !n.Limit.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, field := range n.Returning {
-		if !field.acceptInPlace(v) {
+		if !field.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *NonTransactionalDMLStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *NonTransactionalDMLStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.ShardColumn != nil {
-		if !n.ShardColumn.acceptInPlace(v) {
+		if !n.ShardColumn.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.DMLStmt != nil {
-		if !acceptInPlaceNode(n.DMLStmt, v) {
+		if !n.DMLStmt.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *UpdateStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *UpdateStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.With != nil {
-		if !n.With.acceptInPlace(v) {
+		if !n.With.AcceptInPlace(v) {
 			return false
 		}
 	}
-	if !n.TableRefs.acceptInPlace(v) {
+	if !n.TableRefs.AcceptInPlace(v) {
 		return false
 	}
 	for _, val := range n.List {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Where != nil {
-		if !acceptInPlaceExprNode(n.Where, v) {
+		if !n.Where.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Order != nil {
-		if !n.Order.acceptInPlace(v) {
+		if !n.Order.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Limit != nil {
-		if !n.Limit.acceptInPlace(v) {
+		if !n.Limit.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, field := range n.Returning {
-		if !field.acceptInPlace(v) {
+		if !field.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *Limit) acceptInPlace(v InPlaceVisitor) bool {
+func (n *Limit) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Count != nil {
-		if !acceptInPlaceExprNode(n.Count, v) {
+		if !n.Count.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Offset != nil {
-		if !acceptInPlaceExprNode(n.Offset, v) {
+		if !n.Offset.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *ShowStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ShowStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Table != nil {
-		if !n.Table.acceptInPlace(v) {
+		if !n.Table.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Column != nil {
-		if !n.Column.acceptInPlace(v) {
+		if !n.Column.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Pattern != nil {
-		if !n.Pattern.acceptInPlace(v) {
+		if !n.Pattern.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Where != nil {
-		if !acceptInPlaceExprNode(n.Where, v) {
+		if !n.Where.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Limit != nil {
-		if !n.Limit.acceptInPlace(v) {
+		if !n.Limit.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *WindowSpec) acceptInPlace(v InPlaceVisitor) bool {
+func (n *WindowSpec) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.PartitionBy != nil {
-		if !n.PartitionBy.acceptInPlace(v) {
+		if !n.PartitionBy.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.OrderBy != nil {
-		if !n.OrderBy.acceptInPlace(v) {
+		if !n.OrderBy.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Frame != nil {
-		if !n.Frame.acceptInPlace(v) {
+		if !n.Frame.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *SelectIntoOption) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SelectIntoOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	return v.Leave(n)
 }
-func (n *PartitionByClause) acceptInPlace(v InPlaceVisitor) bool {
+func (n *PartitionByClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Items {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *FrameClause) acceptInPlace(v InPlaceVisitor) bool {
+func (n *FrameClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !(&n.Extent.Start).acceptInPlace(v) {
+	if !(&n.Extent.Start).AcceptInPlace(v) {
 		return false
 	}
-	if !(&n.Extent.End).acceptInPlace(v) {
+	if !(&n.Extent.End).AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *FrameBound) acceptInPlace(v InPlaceVisitor) bool {
+func (n *FrameBound) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Expr != nil {
-		if !acceptInPlaceExprNode(n.Expr, v) {
+		if !n.Expr.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *DistributeTableStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DistributeTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Table.acceptInPlace(v) {
+	if !n.Table.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *SplitRegionStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SplitRegionStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Table.acceptInPlace(v) {
+	if !n.Table.AcceptInPlace(v) {
 		return false
 	}
 	if n.SplitOpt != nil {
-		if !n.SplitOpt.acceptInPlace(v) {
+		if !n.SplitOpt.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *SplitOption) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SplitOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Lower {
-		if !acceptInPlaceExprNode(val, v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, val := range n.Upper {
-		if !acceptInPlaceExprNode(val, v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, list := range n.ValueLists {
 		for _, val := range list {
-			if !acceptInPlaceExprNode(val, v) {
+			if !val.AcceptInPlace(v) {
 				return false
 			}
 		}
 	}
 	return v.Leave(n)
 }
-func (n *SplitIndexOption) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SplitIndexOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.SplitOpt.acceptInPlace(v) {
+	if !n.SplitOpt.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *AsOfClause) acceptInPlace(v InPlaceVisitor) bool {
+func (n *AsOfClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.TsExpr, v) {
+	if !n.TsExpr.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *BetweenExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *BetweenExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Expr, v) {
+	if !n.Expr.AcceptInPlace(v) {
 		return false
 	}
-	if !acceptInPlaceExprNode(n.Left, v) {
+	if !n.Left.AcceptInPlace(v) {
 		return false
 	}
-	if !acceptInPlaceExprNode(n.Right, v) {
+	if !n.Right.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *BinaryOperationExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *BinaryOperationExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.L, v) {
+	if !n.L.AcceptInPlace(v) {
 		return false
 	}
-	if !acceptInPlaceExprNode(n.R, v) {
+	if !n.R.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *WhenClause) acceptInPlace(v InPlaceVisitor) bool {
+func (n *WhenClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Expr, v) {
+	if !n.Expr.AcceptInPlace(v) {
 		return false
 	}
-	if !acceptInPlaceExprNode(n.Result, v) {
+	if !n.Result.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *CaseExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CaseExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Value != nil {
-		if !acceptInPlaceExprNode(n.Value, v) {
+		if !n.Value.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, val := range n.WhenClauses {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.ElseClause != nil {
-		if !acceptInPlaceExprNode(n.ElseClause, v) {
+		if !n.ElseClause.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *SubqueryExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SubqueryExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceNode(n.Query, v) {
+	if !n.Query.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *CompareSubqueryExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CompareSubqueryExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.L, v) {
+	if !n.L.AcceptInPlace(v) {
 		return false
 	}
-	if !acceptInPlaceExprNode(n.R, v) {
+	if !n.R.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *TableNameExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *TableNameExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Name.acceptInPlace(v) {
+	if !n.Name.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *ColumnName) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ColumnName) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ColumnNameExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ColumnNameExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Name.acceptInPlace(v) {
+	if !n.Name.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *DefaultExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DefaultExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ExistsSubqueryExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ExistsSubqueryExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Sel, v) {
+	if !n.Sel.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *PatternInExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *PatternInExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Expr, v) {
+	if !n.Expr.AcceptInPlace(v) {
 		return false
 	}
 	for _, val := range n.List {
-		if !acceptInPlaceExprNode(val, v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Sel != nil {
-		if !acceptInPlaceExprNode(n.Sel, v) {
+		if !n.Sel.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *IsNullExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *IsNullExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Expr, v) {
+	if !n.Expr.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *IsTruthExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *IsTruthExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Expr, v) {
+	if !n.Expr.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *PatternLikeOrIlikeExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *PatternLikeOrIlikeExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Expr != nil {
-		if !acceptInPlaceExprNode(n.Expr, v) {
+		if !n.Expr.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Pattern != nil {
-		if !acceptInPlaceExprNode(n.Pattern, v) {
+		if !n.Pattern.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *ParenthesesExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ParenthesesExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Expr != nil {
-		if !acceptInPlaceExprNode(n.Expr, v) {
+		if !n.Expr.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *PositionExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *PositionExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.P != nil {
-		if !acceptInPlaceExprNode(n.P, v) {
+		if !n.P.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *PatternRegexpExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *PatternRegexpExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Expr, v) {
+	if !n.Expr.AcceptInPlace(v) {
 		return false
 	}
-	if !acceptInPlaceExprNode(n.Pattern, v) {
+	if !n.Pattern.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *RowExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *RowExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Values {
-		if !acceptInPlaceExprNode(val, v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *UnaryOperationExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *UnaryOperationExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.V, v) {
+	if !n.V.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *ValuesExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ValuesExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Column.acceptInPlace(v) {
+	if !n.Column.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *VariableExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *VariableExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Value == nil {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Value, v) {
+	if !n.Value.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *MaxValueExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *MaxValueExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	return v.Leave(n)
 }
-func (n *MatchAgainst) acceptInPlace(v InPlaceVisitor) bool {
+func (n *MatchAgainst) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, colName := range n.ColumnNames {
-		if !colName.acceptInPlace(v) {
+		if !colName.AcceptInPlace(v) {
 			return false
 		}
 	}
-	if !acceptInPlaceExprNode(n.Against, v) {
+	if !n.Against.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *SetCollationExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SetCollationExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Expr, v) {
+	if !n.Expr.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *FuncCallExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *FuncCallExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Args {
-		if !acceptInPlaceExprNode(val, v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *JSONSumCrc32Expr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *JSONSumCrc32Expr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Expr, v) {
+	if !n.Expr.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *FuncCastExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *FuncCastExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Expr, v) {
+	if !n.Expr.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *TrimDirectionExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *TrimDirectionExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	return v.Leave(n)
 }
-func (n *AggregateFuncExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *AggregateFuncExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Args {
-		if !acceptInPlaceExprNode(val, v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Order != nil {
-		if !n.Order.acceptInPlace(v) {
+		if !n.Order.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *WindowFuncExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *WindowFuncExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Args {
-		if !acceptInPlaceExprNode(val, v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
-	if !(&n.Spec).acceptInPlace(v) {
+	if !(&n.Spec).AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *TimeUnitExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *TimeUnitExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	return v.Leave(n)
 }
-func (n *GetFormatSelectorExpr) acceptInPlace(v InPlaceVisitor) bool {
+func (n *GetFormatSelectorExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	return v.Leave(n)
 }
-func (n *TraceStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *TraceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceNode(n.Stmt, v) {
+	if !n.Stmt.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *ExplainForStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ExplainForStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ExplainStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ExplainStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Stmt != nil {
-		if !acceptInPlaceNode(n.Stmt, v) {
+		if !n.Stmt.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *PlanReplayerStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *PlanReplayerStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
@@ -1653,745 +1653,745 @@ func (n *PlanReplayerStmt) acceptInPlace(v InPlaceVisitor) bool {
 		return v.Leave(n)
 	}
 	if n.HistoricalStatsInfo != nil {
-		if !n.HistoricalStatsInfo.acceptInPlace(v) {
+		if !n.HistoricalStatsInfo.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Stmt == nil {
 		if n.Where != nil {
-			if !acceptInPlaceExprNode(n.Where, v) {
+			if !n.Where.AcceptInPlace(v) {
 				return false
 			}
 		}
 		if n.OrderBy != nil {
-			if !n.OrderBy.acceptInPlace(v) {
+			if !n.OrderBy.AcceptInPlace(v) {
 				return false
 			}
 		}
 		if n.Limit != nil {
-			if !n.Limit.acceptInPlace(v) {
+			if !n.Limit.AcceptInPlace(v) {
 				return false
 			}
 		}
 		return v.Leave(n)
 	}
-	if !acceptInPlaceNode(n.Stmt, v) {
+	if !n.Stmt.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *TrafficStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *TrafficStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *CompactTableStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CompactTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Table.acceptInPlace(v) {
+	if !n.Table.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *PrepareStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *PrepareStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.SQLVar != nil {
-		if !n.SQLVar.acceptInPlace(v) {
+		if !n.SQLVar.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *DeallocateStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DeallocateStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ExecuteStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ExecuteStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.UsingVars {
-		if !acceptInPlaceExprNode(val, v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *BeginStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *BeginStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.AsOf != nil {
-		if !n.AsOf.acceptInPlace(v) {
+		if !n.AsOf.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *BinlogStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *BinlogStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *CommitStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CommitStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *RollbackStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *RollbackStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *UseStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *UseStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *VariableAssignment) acceptInPlace(v InPlaceVisitor) bool {
+func (n *VariableAssignment) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Value, v) {
+	if !n.Value.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *FlushStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *FlushStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, t := range n.Tables {
-		if !t.acceptInPlace(v) {
+		if !t.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *KillStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *KillStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *SavepointStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SavepointStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ReleaseSavepointStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ReleaseSavepointStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *SetStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SetStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Variables {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *SetConfigStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SetConfigStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Value, v) {
+	if !n.Value.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *SetSessionStatesStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SetSessionStatesStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *SetPwdStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SetPwdStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *SetRoleStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SetRoleStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *SetDefaultRoleStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SetDefaultRoleStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *CreateUserStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CreateUserStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *AlterUserStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *AlterUserStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *AlterInstanceStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *AlterInstanceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *AlterRangeStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *AlterRangeStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *DropUserStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DropUserStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *StringOrUserVar) acceptInPlace(v InPlaceVisitor) bool {
+func (n *StringOrUserVar) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChild := v.Enter(n); skipChild {
 		return v.Leave(n)
 	}
 	if n.UserVar != nil {
-		if !n.UserVar.acceptInPlace(v) {
+		if !n.UserVar.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *RecommendIndexStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *RecommendIndexStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *CreateBindingStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CreateBindingStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.OriginNode != nil {
-		if !acceptInPlaceNode(n.OriginNode, v) {
+		if !n.OriginNode.AcceptInPlace(v) {
 			return false
 		}
-		if !acceptInPlaceNode(n.HintedNode, v) {
+		if !n.HintedNode.AcceptInPlace(v) {
 			return false
 		}
 	} else {
 		for _, digest := range n.PlanDigests {
-			if !digest.acceptInPlace(v) {
+			if !digest.AcceptInPlace(v) {
 				return false
 			}
 		}
 	}
 	return v.Leave(n)
 }
-func (n *DropBindingStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DropBindingStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.OriginNode != nil {
-		if !acceptInPlaceNode(n.OriginNode, v) {
+		if !n.OriginNode.AcceptInPlace(v) {
 			return false
 		}
 		if n.HintedNode != nil {
-			if !acceptInPlaceNode(n.HintedNode, v) {
+			if !n.HintedNode.AcceptInPlace(v) {
 				return false
 			}
 		}
 	} else {
 		for _, digest := range n.SQLDigests {
-			if !digest.acceptInPlace(v) {
+			if !digest.AcceptInPlace(v) {
 				return false
 			}
 		}
 	}
 	return v.Leave(n)
 }
-func (n *SetBindingStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SetBindingStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.OriginNode != nil {
-		if !acceptInPlaceNode(n.OriginNode, v) {
+		if !n.OriginNode.AcceptInPlace(v) {
 			return false
 		}
 		if n.HintedNode != nil {
-			if !acceptInPlaceNode(n.HintedNode, v) {
+			if !n.HintedNode.AcceptInPlace(v) {
 				return false
 			}
 		}
 	}
 	return v.Leave(n)
 }
-func (n *CreateStatisticsStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CreateStatisticsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Table.acceptInPlace(v) {
+	if !n.Table.AcceptInPlace(v) {
 		return false
 	}
 	for _, col := range n.Columns {
-		if !col.acceptInPlace(v) {
+		if !col.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *DropStatisticsStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DropStatisticsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *DoStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DoStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Exprs {
-		if !acceptInPlaceExprNode(val, v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *AdminStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *AdminStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Tables {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.Where != nil {
-		if !acceptInPlaceExprNode(n.Where, v) {
+		if !n.Where.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *PrivElem) acceptInPlace(v InPlaceVisitor) bool {
+func (n *PrivElem) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Cols {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *RevokeStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *RevokeStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Privs {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *RevokeRoleStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *RevokeRoleStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *GrantStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *GrantStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Privs {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *GrantProxyStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *GrantProxyStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *GrantRoleStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *GrantRoleStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ShutdownStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ShutdownStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *RestartStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *RestartStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *HelpStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *HelpStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *RenameUserStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *RenameUserStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, t := range n.UserToUsers {
-		if !t.acceptInPlace(v) {
+		if !t.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *UserToUser) acceptInPlace(v InPlaceVisitor) bool {
+func (n *UserToUser) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *BRIEStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *BRIEStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Tables {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *ImportIntoActionStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ImportIntoActionStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *CancelDistributionJobStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CancelDistributionJobStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *TableOptimizerHint) acceptInPlace(v InPlaceVisitor) bool {
+func (n *TableOptimizerHint) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *SetResourceGroupStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SetResourceGroupStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *CalibrateResourceStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *CalibrateResourceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.DynamicCalibrateResourceOptionList {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *DynamicCalibrateResourceOption) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DynamicCalibrateResourceOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Ts != nil {
-		if !acceptInPlaceExprNode(n.Ts, v) {
+		if !n.Ts.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *DropQueryWatchStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DropQueryWatchStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *AddQueryWatchStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *AddQueryWatchStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	for _, val := range n.QueryWatchOptionList {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *QueryWatchOption) acceptInPlace(v InPlaceVisitor) bool {
+func (n *QueryWatchOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.ResourceGroupOption != nil && n.ResourceGroupOption.GroupNameExpr != nil {
-		if !acceptInPlaceExprNode(n.ResourceGroupOption.GroupNameExpr, v) {
+		if !n.ResourceGroupOption.GroupNameExpr.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.ActionOption != nil {
-		if !n.ActionOption.acceptInPlace(v) {
+		if !n.ActionOption.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.TextOption != nil {
-		if !n.TextOption.acceptInPlace(v) {
+		if !n.TextOption.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *QueryWatchTextOption) acceptInPlace(v InPlaceVisitor) bool {
+func (n *QueryWatchTextOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.PatternExpr != nil {
-		if !acceptInPlaceExprNode(n.PatternExpr, v) {
+		if !n.PatternExpr.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *StoreParameter) acceptInPlace(v InPlaceVisitor) bool {
+func (n *StoreParameter) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ProcedureDecl) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureDecl) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.DeclDefault != nil {
-		if !acceptInPlaceExprNode(n.DeclDefault, v) {
+		if !n.DeclDefault.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *ProcedureBlock) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureBlock) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, ProcedureVar := range n.ProcedureVars {
-		if !acceptInPlaceNode(ProcedureVar, v) {
+		if !ProcedureVar.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *ProcedureInfo) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureInfo) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, ProcedureParam := range n.ProcedureParam {
-		if !ProcedureParam.acceptInPlace(v) {
+		if !ProcedureParam.AcceptInPlace(v) {
 			return false
 		}
 	}
-	if !acceptInPlaceNode(n.ProcedureBody, v) {
+	if !n.ProcedureBody.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *DropProcedureStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DropProcedureStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ProcedureIfInfo) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureIfInfo) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.IfBody.acceptInPlace(v) {
+	if !n.IfBody.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *ProcedureElseIfBlock) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureElseIfBlock) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.ProcedureIfStmt.acceptInPlace(v) {
+	if !n.ProcedureIfStmt.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *ProcedureElseBlock) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureElseBlock) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ProcedureIfBlock) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureIfBlock) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.IfExpr != nil {
-		if !acceptInPlaceExprNode(n.IfExpr, v) {
+		if !n.IfExpr.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.ProcedureElseStmt != nil {
-		if !acceptInPlaceNode(n.ProcedureElseStmt, v) {
+		if !n.ProcedureElseStmt.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *SimpleWhenThenStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SimpleWhenThenStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Expr != nil {
-		if !acceptInPlaceExprNode(n.Expr, v) {
+		if !n.Expr.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *SimpleCaseStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SimpleCaseStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Condition, v) {
+	if !n.Condition.AcceptInPlace(v) {
 		return false
 	}
 	for _, stmt := range n.WhenCases {
-		if !stmt.acceptInPlace(v) {
+		if !stmt.AcceptInPlace(v) {
 			return false
 		}
 	}
 	if n.ElseCases != nil {
 		for _, stmt := range n.ElseCases {
-			if !acceptInPlaceNode(stmt, v) {
+			if !stmt.AcceptInPlace(v) {
 				return false
 			}
 		}
 	}
 	return v.Leave(n)
 }
-func (n *SearchWhenThenStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SearchWhenThenStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	if n.Expr != nil {
-		if !acceptInPlaceExprNode(n.Expr, v) {
+		if !n.Expr.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *SearchCaseStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *SearchCaseStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, stmt := range n.WhenCases {
-		if !stmt.acceptInPlace(v) {
+		if !stmt.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *ProcedureRepeatStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureRepeatStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, stmt := range n.Body {
-		if !acceptInPlaceNode(stmt, v) {
+		if !stmt.AcceptInPlace(v) {
 			return false
 		}
 	}
-	if !acceptInPlaceExprNode(n.Condition, v) {
+	if !n.Condition.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *ProcedureWhileStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureWhileStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceExprNode(n.Condition, v) {
+	if !n.Condition.AcceptInPlace(v) {
 		return false
 	}
 	for _, stmt := range n.Body {
-		if !acceptInPlaceNode(stmt, v) {
+		if !stmt.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *ProcedureCursor) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureCursor) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ProcedureErrorControl) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureErrorControl) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, errorInfo := range n.ErrorCon {
-		if !acceptInPlaceNode(errorInfo, v) {
+		if !errorInfo.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *ProcedureOpenCur) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureOpenCur) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ProcedureCloseCur) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureCloseCur) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ProcedureFetchInto) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureFetchInto) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ProcedureErrorVal) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureErrorVal) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ProcedureErrorState) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureErrorState) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ProcedureErrorCon) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureErrorCon) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *ProcedureLabelBlock) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureLabelBlock) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.Block.acceptInPlace(v) {
+	if !n.Block.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *ProcedureLabelLoop) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureLabelLoop) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !acceptInPlaceNode(n.Block, v) {
+	if !n.Block.AcceptInPlace(v) {
 		return false
 	}
 	return v.Leave(n)
 }
-func (n *ProcedureJump) acceptInPlace(v InPlaceVisitor) bool {
+func (n *ProcedureJump) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *AnalyzeTableStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *AnalyzeTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.TableNames {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *DropStatsStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *DropStatsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Tables {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *LoadStatsStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *LoadStatsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
-func (n *LockStatsStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *LockStatsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Tables {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *UnlockStatsStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *UnlockStatsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, val := range n.Tables {
-		if !val.acceptInPlace(v) {
+		if !val.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }
-func (n *RefreshStatsStmt) acceptInPlace(v InPlaceVisitor) bool {
+func (n *RefreshStatsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }

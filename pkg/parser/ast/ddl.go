@@ -4522,7 +4522,7 @@ func (n *PartitionDefinitionClauseLessThan) acceptInPlace(v Visitor) bool {
 
 func (n *PartitionDefinitionClauseLessThan) walkInPlace(v InPlaceVisitor) bool {
 	for _, expr := range n.Exprs {
-		if !acceptInPlaceNode(expr, v) {
+		if !expr.AcceptInPlace(v) {
 			return false
 		}
 	}
@@ -4605,7 +4605,7 @@ func (n *PartitionDefinitionClauseIn) acceptInPlace(v Visitor) bool {
 func (n *PartitionDefinitionClauseIn) walkInPlace(v InPlaceVisitor) bool {
 	for _, valList := range n.Values {
 		for _, val := range valList {
-			if !acceptInPlaceNode(val, v) {
+			if !val.AcceptInPlace(v) {
 				return false
 			}
 		}
@@ -4899,11 +4899,11 @@ func (n *PartitionMethod) acceptInPlace(v Visitor) bool {
 }
 
 func (n *PartitionMethod) walkInPlace(v InPlaceVisitor) bool {
-	if n.Expr != nil && !acceptInPlaceNode(n.Expr, v) {
+	if n.Expr != nil && !n.Expr.AcceptInPlace(v) {
 		return false
 	}
 	for _, colName := range n.ColumnNames {
-		if !acceptInPlaceNode(colName, v) {
+		if !colName.AcceptInPlace(v) {
 			return false
 		}
 	}

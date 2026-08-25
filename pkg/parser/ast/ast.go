@@ -37,6 +37,10 @@ type Node interface {
 	// children should be skipped. Otherwise, call its children in particular order that
 	// later elements depends on former elements. Finally, return visitor.Leave.
 	Accept(v Visitor) (node Node, ok bool)
+	// AcceptInPlace accepts InPlaceVisitor to visit itself without replacing nodes.
+	// Implementations must use the same traversal order and control flow as Accept,
+	// but must not assign visitor callback results back to the AST.
+	AcceptInPlace(v InPlaceVisitor) bool
 	// Text returns the utf8 encoding text of the element.
 	Text() string
 	// OriginalText returns the original text of the element.
@@ -168,66 +172,11 @@ type InPlaceVisitor interface {
 	Leave(n Node) (ok bool)
 }
 
-type inPlaceAccepting interface {
-	acceptInPlace(InPlaceVisitor) bool
-}
-
-type externalInPlaceAccepting interface {
-	AcceptInPlace(InPlaceVisitor) bool
-}
-
-type inPlaceVisitorAdapter struct {
-	visitor InPlaceVisitor
-}
-
-var _ Visitor = (*inPlaceVisitorAdapter)(nil)
-
-func (v *inPlaceVisitorAdapter) Enter(n Node) (Node, bool) {
-	return n, v.visitor.Enter(n)
-}
-
-func (v *inPlaceVisitorAdapter) Leave(n Node) (Node, bool) {
-	return n, v.visitor.Leave(n)
-}
-
-// Walk visits node using Node.Accept's traversal order and control flow.
-// External nodes can opt into direct, write-free traversal by implementing
-// AcceptInPlace(InPlaceVisitor) bool with equivalent traversal behavior.
-// Unsupported nodes fall back to their legacy Accept implementation for the
-// entire subtree they own. Callback mutations and synchronization with
-// concurrent access are the caller's responsibility.
+// Walk visits node using Node.AcceptInPlace's traversal order and control flow.
+// Callback mutations and synchronization with concurrent access are the
+// caller's responsibility.
 func Walk(node Node, visitor InPlaceVisitor) bool {
-	return acceptInPlaceNode(node, visitor)
-}
-
-func acceptInPlaceNode(node Node, visitor InPlaceVisitor) bool {
-	switch node := node.(type) {
-	case *ColumnNameExpr:
-		return node.acceptInPlace(visitor)
-	case *DefaultExpr:
-		return node.acceptInPlace(visitor)
-	case *SelectStmt:
-		return node.acceptInPlace(visitor)
-	}
-	if accepting, ok := node.(inPlaceAccepting); ok {
-		return accepting.acceptInPlace(visitor)
-	}
-	if accepting, ok := node.(externalInPlaceAccepting); ok {
-		return accepting.AcceptInPlace(visitor)
-	}
-	_, ok := node.Accept(&inPlaceVisitorAdapter{visitor: visitor})
-	return ok
-}
-
-func acceptInPlaceExprNode(node ExprNode, visitor InPlaceVisitor) bool {
-	switch node := node.(type) {
-	case *ColumnNameExpr:
-		return node.acceptInPlace(visitor)
-	case *DefaultExpr:
-		return node.acceptInPlace(visitor)
-	default:
-		return acceptInPlaceNode(node, visitor)
-	}
+	return node.AcceptInPlace(visitor)
 }
 
 // GetStmtLabel generates a label for a statement.

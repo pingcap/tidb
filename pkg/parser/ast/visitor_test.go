@@ -62,27 +62,6 @@ func (v *testVisitor) Leave(n parserast.Node) (parserast.Node, bool) {
 	return v.leave(n)
 }
 
-type unsupportedExternalNode struct {
-	parserast.Node
-	child       parserast.Node
-	acceptCalls int
-}
-
-func (n *unsupportedExternalNode) Accept(v parserast.Visitor) (parserast.Node, bool) {
-	n.acceptCalls++
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*unsupportedExternalNode)
-	child, ok := n.child.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.child = child
-	return v.Leave(n)
-}
-
 type benchmarkVisitor struct{}
 
 func (*benchmarkVisitor) Enter(n parserast.Node) (parserast.Node, bool) {
@@ -340,35 +319,6 @@ func TestWalk(t *testing.T) {
 		require.Zero(t, allocations)
 	})
 
-	t.Run("unsupported_external_node_owns_adapter_fallback_subtree", func(t *testing.T) {
-		leaf := &parserast.DefaultExpr{}
-		child := &parserast.ParenthesesExpr{Expr: leaf}
-		root := &unsupportedExternalNode{Node: &parserast.DefaultExpr{}, child: child}
-
-		var events []string
-		visitor := &testInPlaceVisitor{
-			enter: func(n parserast.Node) bool {
-				events = append(events, "enter "+walkFallbackNodeName(n, root, child, leaf))
-				return false
-			},
-			leave: func(n parserast.Node) bool {
-				events = append(events, "leave "+walkFallbackNodeName(n, root, child, leaf))
-				return true
-			},
-		}
-
-		require.True(t, parserast.Walk(root, visitor))
-		require.Equal(t, 1, root.acceptCalls)
-		require.Equal(t, []string{
-			"enter external",
-			"enter child",
-			"enter leaf",
-			"leave leaf",
-			"leave child",
-			"leave external",
-		}, events)
-	})
-
 	t.Run("parser_driver_nodes", func(t *testing.T) {
 		testCases := []struct {
 			name string
@@ -526,19 +476,6 @@ func walkNodeName(n parserast.Node, root, unary, leafA, leafB, leafC parserast.N
 	}
 }
 
-func walkFallbackNodeName(n parserast.Node, root, child, leaf parserast.Node) string {
-	switch n {
-	case root:
-		return "external"
-	case child:
-		return "child"
-	case leaf:
-		return "leaf"
-	default:
-		return fmt.Sprintf("unexpected %T", n)
-	}
-}
-
 type writebackCandidate struct {
 	file     string
 	line     int
@@ -559,7 +496,7 @@ func TestWalkWritebackInventory(t *testing.T) {
 	entries, err := traversalSources.ReadDir(".")
 	require.NoError(t, err)
 
-	var acceptCount, legacyInPlaceHelperCount int
+	var acceptCount, acceptInPlaceCount, legacyInPlaceHelperCount int
 	var functionsWithWritebacks int
 	var candidates []writebackCandidate
 	var cacheIssues []string
@@ -611,6 +548,13 @@ func TestWalkWritebackInventory(t *testing.T) {
 					continue
 				}
 				legacyInPlaceHelperCount++
+			case "AcceptInPlace":
+				if function.Type.Params == nil || len(function.Type.Params.List) != 1 ||
+					renderExpr(t, fset, function.Type.Params.List[0].Type) != "InPlaceVisitor" {
+					continue
+				}
+				acceptInPlaceCount++
+				continue
 			default:
 				continue
 			}
@@ -663,16 +607,8 @@ func TestWalkWritebackInventory(t *testing.T) {
 		}, fastPaths)
 	})
 
-	t.Run("hot_in_place_dispatch_fast_path", func(t *testing.T) {
-		source, err := traversalSources.ReadFile("ast.go")
-		require.NoError(t, err)
-		require.ElementsMatch(t,
-			[]string{"ColumnNameExpr", "DefaultExpr", "SelectStmt"},
-			inPlaceDispatchFastPaths(t, source),
-		)
-	})
-
 	require.Equal(t, 213, acceptCount)
+	require.Equal(t, 213, acceptInPlaceCount)
 	require.Equal(t, 6, legacyInPlaceHelperCount)
 	require.Equal(t, 219, acceptCount+legacyInPlaceHelperCount)
 	require.Equal(t, 140, functionsWithWritebacks)
@@ -688,40 +624,6 @@ func TestWalkWritebackInventory(t *testing.T) {
 	}
 	require.Empty(t, guarded, "guarded writebacks: %s", formatWritebackCandidates(guarded))
 	require.Equal(t, 271, len(candidates)-len(guarded), "unguarded writebacks: %s", formatWritebackCandidates(candidates))
-}
-
-func inPlaceDispatchFastPaths(t *testing.T, source []byte) []string {
-	t.Helper()
-	fset := token.NewFileSet()
-	file, err := goparser.ParseFile(fset, "ast.go", source, 0)
-	require.NoError(t, err)
-	for _, decl := range file.Decls {
-		function, ok := decl.(*goast.FuncDecl)
-		if !ok || function.Name.Name != "acceptInPlaceNode" {
-			continue
-		}
-		var fastPaths []string
-		goast.Inspect(function.Body, func(node goast.Node) bool {
-			clause, ok := node.(*goast.CaseClause)
-			if !ok {
-				return true
-			}
-			for _, expr := range clause.List {
-				pointer, ok := expr.(*goast.StarExpr)
-				if !ok {
-					continue
-				}
-				name, ok := pointer.X.(*goast.Ident)
-				if ok {
-					fastPaths = append(fastPaths, name.Name)
-				}
-			}
-			return true
-		})
-		return fastPaths
-	}
-	require.FailNow(t, "acceptInPlaceNode not found")
-	return nil
 }
 
 func hasChildTraversalCall(body *goast.BlockStmt) bool {

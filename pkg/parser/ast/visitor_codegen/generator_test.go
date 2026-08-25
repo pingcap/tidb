@@ -43,48 +43,48 @@ func TestGenerateTraversalGrammar(t *testing.T) {
 
 	source := string(result.Source)
 	for _, exact := range []string{
-		`func (n *LeafNode) acceptInPlace(v InPlaceVisitor) bool {
+		`func (n *LeafNode) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }`,
-		`func (n *InlineNode) acceptInPlace(v InPlaceVisitor) bool {
+		`func (n *InlineNode) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	for _, child := range n.Pointers {
-		if !child.acceptInPlace(v) {
+		if !child.AcceptInPlace(v) {
 			return false
 		}
 	}
 	for _, child := range n.Interfaces {
-		if !acceptInPlaceExprNode(child, v) {
+		if !child.AcceptInPlace(v) {
 			return false
 		}
 	}
 	return v.Leave(n)
 }`,
-		`if !(&n.Extent.Start).acceptInPlace(v) {
+		`if !(&n.Extent.Start).AcceptInPlace(v) {
 		return false
 	}
-	if !(&n.Extent.End).acceptInPlace(v) {
+	if !(&n.Extent.End).AcceptInPlace(v) {
 		return false
 	}`,
 		`for _, table := range n.LockInfo.Tables {
-			if !table.acceptInPlace(v) {
+			if !table.AcceptInPlace(v) {
 				return false
 			}
 		}`,
-		`if !(&n.Spec).acceptInPlace(v) {
+		`if !(&n.Spec).AcceptInPlace(v) {
 		return false
 	}`,
 		`for i := range n.Specs {
-		if !(&n.Specs[i]).acceptInPlace(v) {
+		if !(&n.Specs[i]).AcceptInPlace(v) {
 			return false
 		}
 	}`,
 		`for _, children := range n.NestedNodes {
 		for _, child := range children {
-			if !acceptInPlaceNode(child, v) {
+			if !child.AcceptInPlace(v) {
 				return false
 			}
 		}
@@ -93,7 +93,7 @@ func TestGenerateTraversalGrammar(t *testing.T) {
 		return false
 	}`,
 		`if n.Optional != nil {
-		if !n.Optional.acceptInPlace(v) {
+		if !n.Optional.AcceptInPlace(v) {
 			return false
 		}
 	}`,
@@ -101,7 +101,7 @@ func TestGenerateTraversalGrammar(t *testing.T) {
 		return v.Leave(n)
 	}`,
 		`if n.EarlyChild != nil {
-		if n.EarlyChild.acceptInPlace(v) {
+		if n.EarlyChild.AcceptInPlace(v) {
 			return v.Leave(n)
 		}
 	}`,
@@ -117,7 +117,7 @@ func TestGenerateTraversalGrammar(t *testing.T) {
 		"newChildren",
 		"legacyChildren",
 		"newNode",
-		"spec.acceptInPlace",
+		"spec.AcceptInPlace",
 		".Accept(v)",
 		"return n, false",
 	} {
@@ -433,7 +433,7 @@ func TestGenerateCurrentASTReceiverInventory(t *testing.T) {
 	var generatedWritebacks []string
 	for _, decl := range generatedFile.Decls {
 		method, ok := decl.(*ast.FuncDecl)
-		if !ok || method.Recv == nil || method.Name.Name != "acceptInPlace" {
+		if !ok || method.Recv == nil || method.Name.Name != "AcceptInPlace" {
 			continue
 		}
 		receiver, ok := receiverTypeName(method)
@@ -455,11 +455,11 @@ func TestGenerateCurrentASTReceiverInventory(t *testing.T) {
 		})
 	}
 	if len(generatedReceivers) != expectedReceiverCount {
-		t.Fatalf("got %d generated acceptInPlace receivers, want %d", len(generatedReceivers), expectedReceiverCount)
+		t.Fatalf("got %d generated AcceptInPlace receivers, want %d", len(generatedReceivers), expectedReceiverCount)
 	}
 	for _, receiver := range result.Receivers {
 		if generatedReceivers[receiver] != 1 {
-			t.Errorf("generated %d acceptInPlace methods for %s, want exactly one", generatedReceivers[receiver], receiver)
+			t.Errorf("generated %d AcceptInPlace methods for %s, want exactly one", generatedReceivers[receiver], receiver)
 		}
 	}
 	if len(generatedWritebacks) != 0 {
@@ -522,6 +522,7 @@ const traversalFixture = `package fixture
 
 type Node interface {
 	Accept(Visitor) (Node, bool)
+	AcceptInPlace(InPlaceVisitor) bool
 }
 
 type ExprNode interface {
@@ -538,9 +539,6 @@ type InPlaceVisitor interface {
 	Enter(Node) bool
 	Leave(Node) bool
 }
-
-func acceptInPlaceNode(Node, InPlaceVisitor) bool { return true }
-func acceptInPlaceExprNode(ExprNode, InPlaceVisitor) bool { return true }
 
 func shouldReplaceNode(Visitor) bool { return true }
 

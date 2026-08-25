@@ -602,7 +602,7 @@ func transformAccept(pkg *parsedPackage, filename string, fn *ast.FuncDecl) (*as
 	}
 	return &ast.FuncDecl{
 		Recv: fn.Recv,
-		Name: ast.NewIdent("acceptInPlace"),
+		Name: ast.NewIdent("AcceptInPlace"),
 		Type: &ast.FuncType{
 			Params:  &ast.FieldList{List: []*ast.Field{{Names: []*ast.Ident{ast.NewIdent(visitorVar)}, Type: ast.NewIdent("InPlaceVisitor")}}},
 			Results: &ast.FieldList{List: []*ast.Field{{Type: ast.NewIdent("bool")}}},
@@ -919,16 +919,12 @@ func (t *methodTransformer) inPlaceCall(receiver ast.Expr) (*ast.CallExpr, error
 		if _, ok := t.pkg.receivers[name]; !ok {
 			return nil, t.errorAt(receiver.Pos(), "unknown concrete Accept receiver %s for %s.Accept", name, expressionString(receiver))
 		}
-		return &ast.CallExpr{Fun: &ast.SelectorExpr{X: receiver, Sel: ast.NewIdent("acceptInPlace")}, Args: []ast.Expr{ast.NewIdent(t.visitorVar)}}, nil
+		return &ast.CallExpr{Fun: &ast.SelectorExpr{X: receiver, Sel: ast.NewIdent("AcceptInPlace")}, Args: []ast.Expr{ast.NewIdent(t.visitorVar)}}, nil
 	case *ast.InterfaceType:
 		if !t.isNodeInterface(typeExpr, make(map[string]bool)) {
 			return nil, t.errorAt(receiver.Pos(), "cannot classify non-Node interface %s.Accept", expressionString(receiver))
 		}
-		dispatcher := "acceptInPlaceNode"
-		if isIdent(typeExpr, "ExprNode") {
-			dispatcher = "acceptInPlaceExprNode"
-		}
-		return &ast.CallExpr{Fun: ast.NewIdent(dispatcher), Args: []ast.Expr{receiver, ast.NewIdent(t.visitorVar)}}, nil
+		return &ast.CallExpr{Fun: &ast.SelectorExpr{X: receiver, Sel: ast.NewIdent("AcceptInPlace")}, Args: []ast.Expr{ast.NewIdent(t.visitorVar)}}, nil
 	case *ast.Ident:
 		if _, ok := t.pkg.receivers[typ.Name]; !ok {
 			return nil, t.errorAt(receiver.Pos(), "unknown concrete Accept receiver %s for %s.Accept", typ.Name, expressionString(receiver))
@@ -948,7 +944,7 @@ func (t *methodTransformer) inPlaceCall(receiver ast.Expr) (*ast.CallExpr, error
 			return nil, t.errorAt(receiver.Pos(), "concrete value %s.Accept is not addressable", expressionString(receiver))
 		}
 		address := &ast.UnaryExpr{Op: token.AND, X: binding}
-		return &ast.CallExpr{Fun: &ast.SelectorExpr{X: &ast.ParenExpr{X: address}, Sel: ast.NewIdent("acceptInPlace")}, Args: []ast.Expr{ast.NewIdent(t.visitorVar)}}, nil
+		return &ast.CallExpr{Fun: &ast.SelectorExpr{X: &ast.ParenExpr{X: address}, Sel: ast.NewIdent("AcceptInPlace")}, Args: []ast.Expr{ast.NewIdent(t.visitorVar)}}, nil
 	default:
 		return nil, t.errorAt(receiver.Pos(), "unknown type %s for %s.Accept", expressionString(typeExpr), expressionString(receiver))
 	}
