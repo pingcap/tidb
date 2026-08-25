@@ -19,6 +19,7 @@ import (
 	"context"
 	goerrors "errors"
 	"io"
+	"time"
 
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
 	"github.com/pingcap/errors"
@@ -33,7 +34,8 @@ import (
 const noSuchKey = "NoSuchKey"
 
 type client struct {
-	svc API
+	svc        API
+	presignSvc API
 	storeapi.BucketPrefix
 	options *backuppb.S3
 }
@@ -151,6 +153,21 @@ func (c *client) DeleteObject(ctx context.Context, name string) error {
 		Key:    oss.Ptr(key),
 	})
 	return errors.Trace(err)
+}
+
+func (c *client) PresignObject(ctx context.Context, name string, expire time.Duration) (string, error) {
+	if expire < 0 {
+		return "", errors.New("presign expiration must not be negative")
+	}
+	key := c.ObjectKey(name)
+	result, err := c.presignSvc.Presign(ctx, &oss.GetObjectRequest{
+		Bucket: oss.Ptr(c.Bucket),
+		Key:    oss.Ptr(key),
+	}, oss.PresignExpires(expire))
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return result.URL, nil
 }
 
 func (c *client) DeleteObjects(ctx context.Context, names []string) error {
