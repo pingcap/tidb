@@ -1214,9 +1214,3 @@ func (*SchemaTracker) CreatePlacementPolicyWithInfo(_ sessionctx.Context, _ *mod
 func (*SchemaTracker) RefreshMeta(_ sessionctx.Context, _ *model.RefreshMetaArgs) error {
 	return nil
 }
-
-// UpdateStorageClassTransition implements the DDL interface, and is a no-op in
-// DM's in-memory schema tracker.
-func (*SchemaTracker) UpdateStorageClassTransition(_ sessionctx.Context, _, _ int64, _, _ string, _ *model.FinishStorageClassTransitionArgs) error {
-	return nil
-}

@@ -411,11 +411,6 @@ func (d *Checker) RefreshMeta(ctx sessionctx.Context, args *model.RefreshMetaArg
 	return d.realExecutor.RefreshMeta(ctx, args)
 }
 
-// UpdateStorageClassTransition implements the DDL interface.
-func (d *Checker) UpdateStorageClassTransition(ctx sessionctx.Context, schemaID, tableID int64, schemaName, tableName string, args *model.FinishStorageClassTransitionArgs) error {
-	return d.realExecutor.UpdateStorageClassTransition(ctx, schemaID, tableID, schemaName, tableName, args)
-}
-
 // CleanupTableLock implements the DDL interface.
 func (d *Checker) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
 	return d.realExecutor.CleanupTableLock(ctx, tables)

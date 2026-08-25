@@ -496,7 +496,7 @@ func (m *storageClassTransitionManager) pruneHistory(ctx context.Context, sctx s
 func (m *storageClassTransitionManager) finalize(sctx sessionctx.Context, operation *storageClassTransitionOperation) error {
 	schemaName := firstNonEmpty(operation.currentSchemaName, operation.TableSchema)
 	tableName := firstNonEmpty(operation.currentTableName, operation.TableName)
-	return m.ddl.executor.UpdateStorageClassTransition(
+	return m.ddl.executor.submitStorageClassTransitionJob(
 		sctx,
 		operation.schemaID,
 		operation.TableID,
@@ -516,7 +516,7 @@ func (m *storageClassTransitionManager) finalize(sctx sessionctx.Context, operat
 func (m *storageClassTransitionManager) cleanupHistory(sctx sessionctx.Context, operation *storageClassTransitionOperation) error {
 	schemaName := firstNonEmpty(operation.currentSchemaName, operation.TableSchema)
 	tableName := firstNonEmpty(operation.currentTableName, operation.TableName)
-	return m.ddl.executor.UpdateStorageClassTransition(
+	return m.ddl.executor.submitStorageClassTransitionJob(
 		sctx,
 		operation.schemaID,
 		operation.TableID,
@@ -747,9 +747,9 @@ func clearStorageClassTransitionMarker(tblInfo *model.TableInfo, physicalID int6
 	}
 }
 
-// UpdateStorageClassTransition submits an internal DDL to finalize an active
-// operation or remove a history record after it is durably copied.
-func (e *executor) UpdateStorageClassTransition(
+// submitStorageClassTransitionJob submits an internal DDL to finalize an
+// active operation or remove a history record after it is durably copied.
+func (e *executor) submitStorageClassTransitionJob(
 	ctx sessionctx.Context,
 	schemaID, tableID int64,
 	schemaName, tableName string,
