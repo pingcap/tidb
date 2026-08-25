@@ -212,6 +212,13 @@ three additional source-derived request tests protect common multi-region
 terminal resharding, nested cleanup-error propagation, and immediate
 NotLeader-hint adoption.
 
+Hosted run 32867435825 passes clean generation/check/docs, unit tests, raw
+integration, and all 78 transaction integration tests with that repair. A
+subsequent mocktikv runtime remediation sets transactional
+`GetResponse.not_found`; the adapter matrix verifies its wire fields and an
+external `Transaction<MockPdClient>` regression verifies the public client
+decodes an absent key as `None`.
+
 ## Direct client-go/client-rust differential
 
 `tests/client_go_differential` is an isolated Go module pinned to the exact

@@ -49,6 +49,15 @@ pub struct MockPdClient {
 }
 
 impl MockPdClient {
+    /// Replaces the PD-owned KV client, so requests routed through
+    /// `map_region_to_store` reach the same handler-wired client the mock
+    /// store returned to the caller — client-go's mockstore uses one shared
+    /// RPC client for both.
+    pub fn with_rpc_client(mut self, client: RpcClient) -> Self {
+        self.rpc = client;
+        self
+    }
+
     pub fn new(cluster: Cluster) -> Self {
         Self {
             rpc: RpcClient::new(cluster.clone(), cluster.engine()),

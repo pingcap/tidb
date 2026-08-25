@@ -252,16 +252,12 @@ impl RpcClient {
                 session.resolved_locks(),
             ) {
                 Ok(value) => kvrpcpb::GetResponse {
-                    // Real TiKV reports missing keys through `not_found`, and
-                    // the transaction client's response processor relies on it
-                    // to distinguish an absent key from an empty value; the
-                    // raw-path handler below already sets it.
                     not_found: value.is_none(),
                     value: value
                         .as_ref()
                         .map_or_else(Vec::new, |value| value.0.clone()),
                     commit_ts: if request.need_commit_ts {
-                        value.map_or(0, |value| value.1)
+                        value.as_ref().map_or(0, |value| value.1)
                     } else {
                         0
                     },
@@ -1877,19 +1873,29 @@ mod tests {
             .unwrap()
             .error
             .is_none());
-        assert_eq!(
-            client
-                .handle_get(&kvrpcpb::GetRequest {
-                    context: Some(context.clone()),
-                    key: b"k".to_vec(),
-                    version: 2,
-                    ..Default::default()
-                })
-                .await
-                .unwrap()
-                .value,
-            b"v"
-        );
+        let present = client
+            .handle_get(&kvrpcpb::GetRequest {
+                context: Some(context.clone()),
+                key: b"k".to_vec(),
+                version: 2,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(present.value, b"v");
+        assert!(!present.not_found);
+
+        let missing = client
+            .handle_get(&kvrpcpb::GetRequest {
+                context: Some(context.clone()),
+                key: b"missing".to_vec(),
+                version: 2,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(missing.not_found);
+        assert!(missing.value.is_empty());
 
         client
             .handle_raw_put(&kvrpcpb::RawPutRequest {

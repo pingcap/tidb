@@ -56,9 +56,9 @@ pub struct PlanBuilder<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> {
 /// Used to ensure that a plan has a designated target or targets, a target is
 /// a particular TiKV server.
 pub trait PlanBuilderPhase {}
-pub(crate) struct NoTarget;
+pub struct NoTarget;
 impl PlanBuilderPhase for NoTarget {}
-pub(crate) struct Targetted;
+pub struct Targetted;
 impl PlanBuilderPhase for Targetted {}
 
 impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {

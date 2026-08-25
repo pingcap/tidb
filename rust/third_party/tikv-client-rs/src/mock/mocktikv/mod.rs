@@ -78,7 +78,9 @@ pub fn new_tikv_and_pd_client(
     if let Some(handler) = coprocessor {
         client = client.with_coprocessor_handler(handler);
     }
-    let pd = MockPdClient::new(cluster.clone());
+    // Route PD-resolved region stores through the same handler-wired client
+    // returned to the caller, exactly like client-go's mockstore.
+    let pd = MockPdClient::new(cluster.clone()).with_rpc_client(client.clone());
     Ok((client, cluster, pd))
 }
 

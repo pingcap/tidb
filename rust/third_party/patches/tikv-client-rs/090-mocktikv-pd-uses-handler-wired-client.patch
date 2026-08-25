@@ -1,0 +1,35 @@
+diff --git a/src/mock/mocktikv/mod.rs b/src/mock/mocktikv/mod.rs
+index 0ec17d0..2997404 100644
+--- a/src/mock/mocktikv/mod.rs
++++ b/src/mock/mocktikv/mod.rs
+@@ -78,7 +78,9 @@ pub fn new_tikv_and_pd_client(
+     if let Some(handler) = coprocessor {
+         client = client.with_coprocessor_handler(handler);
+     }
+-    let pd = MockPdClient::new(cluster.clone());
++    // Route PD-resolved region stores through the same handler-wired client
++    // returned to the caller, exactly like client-go's mockstore.
++    let pd = MockPdClient::new(cluster.clone()).with_rpc_client(client.clone());
+     Ok((client, cluster, pd))
+ }
+ 
+diff --git a/src/mock/mocktikv/pd.rs b/src/mock/mocktikv/pd.rs
+index e38ee47..66dd7fe 100644
+--- a/src/mock/mocktikv/pd.rs
++++ b/src/mock/mocktikv/pd.rs
+@@ -49,6 +49,15 @@ pub struct MockPdClient {
+ }
+ 
+ impl MockPdClient {
++    /// Replaces the PD-owned KV client, so requests routed through
++    /// `map_region_to_store` reach the same handler-wired client the mock
++    /// store returned to the caller — client-go's mockstore uses one shared
++    /// RPC client for both.
++    pub fn with_rpc_client(mut self, client: RpcClient) -> Self {
++        self.rpc = client;
++        self
++    }
++
+     pub fn new(cluster: Cluster) -> Self {
+         Self {
+             rpc: RpcClient::new(cluster.clone(), cluster.engine()),

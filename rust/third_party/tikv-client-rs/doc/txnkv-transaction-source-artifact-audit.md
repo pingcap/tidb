@@ -1,6 +1,6 @@
 # `txnkv/transaction` source-artifact audit
 
-This was the atomic completion receipt for client-go package `txnkv/transaction`, pinned at commit `52c1e76cec993571493c81de442bcbef90cdc106`. Runtime downstream testing reopened the claim because Rust's transaction does not yet use or expose the completed staged `MemDb` as its committing buffer. The Rust implementation remains in the `tikv-client` crate and is validated with `nightly-2026-08-22`; the row is `in-progress` until that architectural gap and its injected-client test surface close.
+This was the atomic completion receipt for client-go package `txnkv/transaction`, pinned at commit `52c1e76cec993571493c81de442bcbef90cdc106`. Runtime downstream testing reopened the claim because Rust's transaction does not yet use or expose the completed staged `MemDb` as its committing buffer. The Rust implementation remains in the `tikv-client` crate and is validated with `nightly-2026-08-22`; the injected-client test surface is now externally usable under `internal-tests`, but the row remains `in-progress` until the authoritative-buffer architectural gap closes.
 
 ## Complete source inventory
 
@@ -119,3 +119,5 @@ Final validation on `nightly-2026-08-22` used the exact batch code:
 Package-owned behavior is covered through deterministic request-level mocks and source-derived state-machine tests. The configured Go 1.25.12 toolchain subsequently passed the complete pinned local and race suites, and the repository integration workflow passed the transactional package against matching API-v1 PD/TiKV.
 
 A live TiKV/PD cluster is not required by any of the four package-local source test files. End-to-end cross-client differential runs for transaction, snapshot, lock resolver, safe point, and root-store orchestration remain a repository completion gate owned by their high-level packages; they are not an omitted artifact of this atomic package receipt.
+
+Post-reopening remediation exposes `Transaction::new` only for crate tests or the explicit `internal-tests` feature and re-exports its `Keyspace` selector through `testutils`. This supplies client-go's public injected-client test capability without widening the production constructor surface. The external `mocktikv_transaction_tests` target constructs `Transaction<MockPdClient>` and exercises a real transaction read through the mock transport. This closes the injected-client API gap; it does not close or obscure the remaining disconnected-`MemDb` gap.

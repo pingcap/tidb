@@ -14,6 +14,7 @@ pub use crate::mock::mocktikv::{
     Cluster as MockCluster, CoprocessorHandler as CoprRpcHandler, Pair as MvccPair,
     RpcClient as MockClient, Session as RpcSession,
 };
+pub use crate::request::Keyspace;
 pub use unistore::MockEngine as MvccStore;
 
 use crate::mock::mocktikv::{MockError, MockPdClient};
