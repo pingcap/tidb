@@ -63,10 +63,11 @@ const (
 	// one reference (baseCores-core) node's Dump and Schema phases together
 	// clear within exportTargetSeconds, run sequentially at full concurrency
 	// (ExportDumpConcurrencyMultiplier*baseCores for Dump,
-	// ExportSchemaConcurrencyMultiplier*baseCores for Schema) and a ~28ms
-	// median same-region S3 PUT latency per small chunk. The exact derivation
-	// gives ~1.37M; rounded down to 1.2M for headroom.
-	baseTableCountForExport = 1_200_000
+	// ExportSchemaConcurrencyMultiplier*baseCores for Schema). Calibrated from
+	// measured per-chunk latency in real cluster testing, then rounded down
+	// so this constant only ever under-promises node/slot count, never
+	// over-promises finishing within exportTargetSeconds.
+	baseTableCountForExport = 1_000_000
 	// To improve performance for small tasks, we assume that on a 8c machine,
 	// importing 200 GiB of data requires full utilization of a single node’s resources.
 	// Therefore, for every additional 25 GiB, add 1 slot as an estimate for task's
