@@ -39,6 +39,7 @@ const (
 	storageClassDirectionToIA            = "TO_IA"
 	storageClassDirectionToStandard      = "TO_STANDARD"
 	storageClassTransitionPollInterval   = 2 * time.Second
+	storageClassTransitionPruneInterval  = time.Minute
 	storageClassTransitionRequestTimeout = 30 * time.Second
 )
 
@@ -530,12 +531,23 @@ func (m *storageClassTransitionManager) cleanupHistory(sctx sessionctx.Context, 
 	)
 }
 
-func (m *storageClassTransitionManager) poll(ctx context.Context, sctx sessionctx.Context) error {
-	active, pending, err := m.discover()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cleanupFailed := false
+func storageClassTransitionNeedsSession(activeCount, pendingCount int, pruneHistory bool) bool {
+	return activeCount > 0 || pendingCount > 0 || pruneHistory
+}
+
+func storageClassTransitionNeedsHistoryPrune(pendingCount int, historyChanged, pruneHistory bool) bool {
+	return pendingCount == 0 && (historyChanged || pruneHistory)
+}
+
+func (m *storageClassTransitionManager) poll(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	active map[storageClassTransitionKey]*storageClassTransitionOperation,
+	pending map[storageClassTransitionKey]*storageClassTransitionOperation,
+	pruneHistory bool,
+) (bool, error) {
+	historyPruneAttempted := false
+	historyChanged := false
 	for key, operation := range pending {
 		m.mergeObserved(operation)
 		if err := m.recordHistory(ctx, sctx, operation); err != nil {
@@ -543,13 +555,23 @@ func (m *storageClassTransitionManager) poll(ctx context.Context, sctx sessionct
 				zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("target", key.target), zap.Error(err))
 			continue
 		}
+		historyChanged = true
 		if err := m.cleanupHistory(sctx, operation); err != nil {
-			cleanupFailed = true
 			logutil.DDLLogger().Warn("clean storage class transition pending history failed",
 				zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("target", key.target), zap.Error(err))
 			continue
 		}
 		delete(pending, key)
+	}
+
+	// Never prune a history row while its durable table marker may still exist.
+	// Otherwise a failed cleanup followed by pruning can make the same operation
+	// appear active and complete a second time.
+	if storageClassTransitionNeedsHistoryPrune(len(pending), historyChanged, pruneHistory) && m.ddl.ownerManager.IsOwner() {
+		historyPruneAttempted = true
+		if err := m.pruneHistory(ctx, sctx); err != nil {
+			logutil.DDLLogger().Warn("prune storage class transition history failed", zap.Error(err))
+		}
 	}
 
 	if len(active) > 0 {
@@ -558,7 +580,7 @@ func (m *storageClassTransitionManager) poll(ctx context.Context, sctx sessionct
 		cancel()
 		if err != nil {
 			m.setActive(active, pending)
-			return errors.Trace(err)
+			return historyPruneAttempted, errors.Trace(err)
 		}
 		for key, operation := range active {
 			if !m.ddl.ownerManager.IsOwner() {
@@ -584,18 +606,13 @@ func (m *storageClassTransitionManager) poll(ctx context.Context, sctx sessionct
 		}
 	}
 	m.setActive(active, pending)
-	// Never prune a history row while its durable table marker may still exist.
-	// Otherwise a failed cleanup followed by pruning can make the same operation
-	// appear active and complete a second time.
-	if cleanupFailed {
-		return nil
-	}
-	return m.pruneHistory(ctx, sctx)
+	return historyPruneAttempted, nil
 }
 
 func (d *ddl) PollStorageClassTransitionRoutine() {
 	ticker := time.NewTicker(storageClassTransitionPollInterval)
 	defer ticker.Stop()
+	nextHistoryPrune := time.Now().Add(storageClassTransitionPruneInterval)
 	for {
 		select {
 		case <-d.ctx.Done():
@@ -604,6 +621,18 @@ func (d *ddl) PollStorageClassTransitionRoutine() {
 		}
 		if !d.ownerManager.IsOwner() {
 			d.storageClassTransitionManager.clear()
+			continue
+		}
+		active, pending, err := d.storageClassTransitionManager.discover()
+		if err != nil {
+			logutil.DDLLogger().Warn("discover storage class transitions failed", zap.Error(err))
+			continue
+		}
+		pruneHistory := !time.Now().Before(nextHistoryPrune)
+		if len(active) == 0 && len(pending) == 0 {
+			d.storageClassTransitionManager.setActive(active, pending)
+		}
+		if !storageClassTransitionNeedsSession(len(active), len(pending), pruneHistory) {
 			continue
 		}
 		if d.sessPool == nil {
@@ -616,8 +645,11 @@ func (d *ddl) PollStorageClassTransitionRoutine() {
 			continue
 		}
 		ctx := kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL)
-		err = d.storageClassTransitionManager.poll(ctx, sctx)
+		historyPruneAttempted, err := d.storageClassTransitionManager.poll(ctx, sctx, active, pending, pruneHistory)
 		d.sessPool.Put(sctx)
+		if historyPruneAttempted {
+			nextHistoryPrune = time.Now().Add(storageClassTransitionPruneInterval)
+		}
 		if err != nil {
 			logutil.DDLLogger().Warn("storage class transition poll failed", zap.Error(err))
 		}

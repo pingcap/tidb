@@ -61,6 +61,18 @@ func TestStorageClassTransitionCompletesOnOneFullObservation(t *testing.T) {
 	require.Equal(t, 1.0, operation.Progress)
 }
 
+func TestStorageClassTransitionPollDecisions(t *testing.T) {
+	require.False(t, storageClassTransitionNeedsSession(0, 0, false))
+	require.True(t, storageClassTransitionNeedsSession(1, 0, false))
+	require.True(t, storageClassTransitionNeedsSession(0, 1, false))
+	require.True(t, storageClassTransitionNeedsSession(0, 0, true))
+
+	require.False(t, storageClassTransitionNeedsHistoryPrune(0, false, false))
+	require.True(t, storageClassTransitionNeedsHistoryPrune(0, true, false))
+	require.True(t, storageClassTransitionNeedsHistoryPrune(0, false, true))
+	require.False(t, storageClassTransitionNeedsHistoryPrune(1, true, true))
+}
+
 func TestSupersededStorageClassTransitionKeepsLastObservation(t *testing.T) {
 	start := model.TSConvert2Time(1234)
 	key := storageClassTransitionKey{tableID: 10, target: model.StorageClassTierIA, startTS: 1234}
