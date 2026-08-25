@@ -130,8 +130,12 @@ func (n *StoreParameter) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *StoreParameter) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*StoreParameter)
+	return v.Leave(n)
 }
 
 // ProcedureDecl represents the internal variables of stored procedure .
@@ -312,8 +316,12 @@ func (n *DropProcedureStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node interface.
 func (n *DropProcedureStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropProcedureStmt)
+	return v.Leave(n)
 }
 
 // ProcedureIfInfo stores the `if statement` of procedure.
@@ -402,8 +410,12 @@ func (n *ProcedureElseBlock) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureElseBlock Accept interface.
 func (n *ProcedureElseBlock) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ProcedureElseBlock)
+	return v.Leave(n)
 }
 
 // ProcedureIfBlock stores `expr ... else if ... else ...` statement in procedure.
@@ -803,8 +815,12 @@ func (n *ProcedureCursor) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureCursor Accept interface.
 func (n *ProcedureCursor) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ProcedureCursor)
+	return v.Leave(n)
 }
 
 // ProcedureErrorControl stored procedure handler statement.
@@ -877,8 +893,12 @@ func (n *ProcedureOpenCur) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureOpenCur Accept interface.
 func (n *ProcedureOpenCur) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ProcedureOpenCur)
+	return v.Leave(n)
 }
 
 // ProcedureCloseCur store close cursor statement.
@@ -897,8 +917,12 @@ func (n *ProcedureCloseCur) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureCloseCur Accept interface.
 func (n *ProcedureCloseCur) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ProcedureCloseCur)
+	return v.Leave(n)
 }
 
 // ProcedureFetchInto store cursor read data command.
@@ -925,8 +949,12 @@ func (n *ProcedureFetchInto) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureFetchInto Accept interface.
 func (n *ProcedureFetchInto) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ProcedureFetchInto)
+	return v.Leave(n)
 }
 
 // ProcedureErrorVal store procedure handler error code.
@@ -944,8 +972,12 @@ func (n *ProcedureErrorVal) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureErrorVal Accept interface.
 func (n *ProcedureErrorVal) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ProcedureErrorVal)
+	return v.Leave(n)
 }
 
 // ProcedureErrorState store procedure handler SQLSTATE string.
@@ -964,8 +996,12 @@ func (n *ProcedureErrorState) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureErrorState Accept interface.
 func (n *ProcedureErrorState) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ProcedureErrorState)
+	return v.Leave(n)
 }
 
 // ProcedureErrorCon stores procedure handler status info.
@@ -990,8 +1026,12 @@ func (n *ProcedureErrorCon) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureErrorCon Accept interface.
 func (n *ProcedureErrorCon) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ProcedureErrorCon)
+	return v.Leave(n)
 }
 
 // ProcedureLabelBlock stored procedure block label statement.
@@ -1141,6 +1181,10 @@ func (n *ProcedureJump) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureJump Accept interface.
 func (n *ProcedureJump) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ProcedureJump)
+	return v.Leave(n)
 }

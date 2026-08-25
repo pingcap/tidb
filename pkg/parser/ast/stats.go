@@ -272,8 +272,12 @@ func (n *LoadStatsStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *LoadStatsStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*LoadStatsStmt)
+	return v.Leave(n)
 }
 
 // LockStatsStmt is the statement node for lock table statistic
@@ -412,8 +416,12 @@ func (n *RefreshStatsStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *RefreshStatsStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RefreshStatsStmt)
+	return v.Leave(n)
 }
 
 func (n *RefreshStatsStmt) Dedup() {

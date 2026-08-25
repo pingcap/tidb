@@ -162,8 +162,12 @@ func (n *CreateDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *CreateDatabaseStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateDatabaseStmt)
+	return v.Leave(n)
 }
 
 // AlterDatabaseStmt is a statement to change the structure of a database.
@@ -208,8 +212,12 @@ func (n *AlterDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *AlterDatabaseStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterDatabaseStmt)
+	return v.Leave(n)
 }
 
 func (n *AlterDatabaseStmt) isAllPlacementOptions() bool {
@@ -244,8 +252,12 @@ func (n *DropDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *DropDatabaseStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropDatabaseStmt)
+	return v.Leave(n)
 }
 
 // FlashBackDatabaseStmt is a statement to restore a database and all tables in the database.
@@ -269,8 +281,12 @@ func (n *FlashBackDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *FlashBackDatabaseStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*FlashBackDatabaseStmt)
+	return v.Leave(n)
 }
 
 // IndexPartSpecifications is used for parsing index column name or index expression from SQL.
@@ -456,8 +472,12 @@ func (n *OnDeleteOpt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *OnDeleteOpt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*OnDeleteOpt)
+	return v.Leave(n)
 }
 
 // OnUpdateOpt is used for optional on update clause.
@@ -477,8 +497,12 @@ func (n *OnUpdateOpt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *OnUpdateOpt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*OnUpdateOpt)
+	return v.Leave(n)
 }
 
 // ColumnOptionType is the type for ColumnOption.
@@ -1432,8 +1456,12 @@ func (n *DropPlacementPolicyStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *DropPlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropPlacementPolicyStmt)
+	return v.Leave(n)
 }
 
 type DropResourceGroupStmt struct {
@@ -1458,8 +1486,12 @@ func (n *DropResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *DropResourceGroupStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropResourceGroupStmt)
+	return v.Leave(n)
 }
 
 type OptimizeTableStmt struct {
@@ -1488,8 +1520,12 @@ func (n *OptimizeTableStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *OptimizeTableStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*OptimizeTableStmt)
+	return v.Leave(n)
 }
 
 // DropSequenceStmt is a statement to drop a Sequence.
@@ -1747,8 +1783,12 @@ func (n *CreatePlacementPolicyStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *CreatePlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreatePlacementPolicyStmt)
+	return v.Leave(n)
 }
 
 // MaskingPolicyState represents the optional ENABLE/DISABLE state of a masking policy.
@@ -1939,8 +1979,12 @@ func (n *CreateResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *CreateResourceGroupStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateResourceGroupStmt)
+	return v.Leave(n)
 }
 
 // CreateSequenceStmt is a statement to create a Sequence.
@@ -2026,8 +2070,12 @@ func (n *IndexLockAndAlgorithm) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *IndexLockAndAlgorithm) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*IndexLockAndAlgorithm)
+	return v.Leave(n)
 }
 
 // IndexKeyType is the type for index key.
@@ -2265,8 +2313,8 @@ type UnlockTablesStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *UnlockTablesStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	_, _ = v.Enter(n)
+	return v.Leave(n)
 }
 
 // Restore implements Node interface.
@@ -2648,8 +2696,11 @@ func (n *ResourceGroupRunawayActionOption) Restore(ctx *format.RestoreCtx) error
 
 // Accept implements Node Accept interface.
 func (n *ResourceGroupRunawayActionOption) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	return v.Leave(n)
 }
 
 // ResourceGroupRunawayWatchOption is used for parsing the resource group runaway watch.
@@ -5197,8 +5248,12 @@ func (n *AttributesSpec) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *AttributesSpec) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AttributesSpec)
+	return v.Leave(n)
 }
 
 type StatsOptionsSpec struct {
@@ -5220,8 +5275,12 @@ func (n *StatsOptionsSpec) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *StatsOptionsSpec) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*StatsOptionsSpec)
+	return v.Leave(n)
 }
 
 // AlterPlacementPolicyStmt is a statement to alter placement policy option.
@@ -5256,8 +5315,12 @@ func (n *AlterPlacementPolicyStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *AlterPlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterPlacementPolicyStmt)
+	return v.Leave(n)
 }
 
 func CheckAppend(ops []*ResourceGroupOption, newOp *ResourceGroupOption) bool {
@@ -5323,8 +5386,12 @@ func (n *AlterResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *AlterResourceGroupStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterResourceGroupStmt)
+	return v.Leave(n)
 }
 
 // AlterSequenceStmt is a statement to alter sequence option.

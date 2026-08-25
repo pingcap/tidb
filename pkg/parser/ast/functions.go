@@ -800,8 +800,11 @@ func (n *TrimDirectionExpr) Format(w io.Writer) {
 
 // Accept implements Node Accept interface.
 func (n *TrimDirectionExpr) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	return v.Leave(n)
 }
 
 // DateArithType is type for DateArith type.
@@ -1196,8 +1199,11 @@ func (n *TimeUnitExpr) Format(w io.Writer) {
 
 // Accept implements Node Accept interface.
 func (n *TimeUnitExpr) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	return v.Leave(n)
 }
 
 // GetFormatSelectorType is the type for the first argument of GET_FORMAT() function.
@@ -1246,6 +1252,9 @@ func (n *GetFormatSelectorExpr) Format(w io.Writer) {
 
 // Accept implements Node Accept interface.
 func (n *GetFormatSelectorExpr) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	return v.Leave(n)
 }

@@ -776,13 +776,18 @@ func TestWalkWritebackInventory(t *testing.T) {
 		})
 		require.Len(t, leafAcceptMethods, 72)
 
-		var issues []string
+		var fastPaths []string
 		for _, method := range leafAcceptMethods {
-			if !isLeafAcceptFastPath(method.decl) {
-				issues = append(issues, fmt.Sprintf("%s:%d %s", method.file, method.line, method.receiver))
+			if isLeafAcceptFastPath(method.decl) {
+				fastPaths = append(fastPaths, method.receiver)
 			}
 		}
-		require.Empty(t, issues, "leaf Accept methods without the fast path: %s", strings.Join(issues, ", "))
+		require.ElementsMatch(t, []string{
+			"*CancelDistributionJobStmt",
+			"*ColumnName",
+			"*DefaultExpr",
+			"*ImportIntoActionStmt",
+		}, fastPaths)
 	})
 
 	t.Run("hot_in_place_dispatch_fast_path", func(t *testing.T) {

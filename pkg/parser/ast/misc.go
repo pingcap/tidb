@@ -196,8 +196,12 @@ func (n *ExplainForStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *ExplainForStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ExplainForStmt)
+	return v.Leave(n)
 }
 
 // ExplainStmt is a statement to provide information about how is SQL statement executed
@@ -581,8 +585,12 @@ func (n *TrafficStmt) SecureText() string {
 
 // Accept implements Node Accept interface.
 func (n *TrafficStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*TrafficStmt)
+	return v.Leave(n)
 }
 
 type CompactReplicaKind string
@@ -711,8 +719,12 @@ func (n *DeallocateStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *DeallocateStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DeallocateStmt)
+	return v.Leave(n)
 }
 
 // Prepared represents a prepared statement.
@@ -843,8 +855,12 @@ func (n *BinlogStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *BinlogStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*BinlogStmt)
+	return v.Leave(n)
 }
 
 // CompletionType defines completion_type used in COMMIT and ROLLBACK statements
@@ -887,8 +903,12 @@ func (n *CommitStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *CommitStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CommitStmt)
+	return v.Leave(n)
 }
 
 // RollbackStmt is a statement to roll back the current transaction.
@@ -916,8 +936,12 @@ func (n *RollbackStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *RollbackStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RollbackStmt)
+	return v.Leave(n)
 }
 
 // UseStmt is a statement to use the DBName database as the current database.
@@ -937,8 +961,12 @@ func (n *UseStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *UseStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*UseStmt)
+	return v.Leave(n)
 }
 
 const (
@@ -1225,8 +1253,12 @@ func (n *KillStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *KillStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*KillStmt)
+	return v.Leave(n)
 }
 
 // SavepointStmt is the statement of SAVEPOINT.
@@ -1246,7 +1278,8 @@ func (n *SavepointStmt) Restore(ctx *format.RestoreCtx) error {
 // Accept implements Node Accept interface.
 func (n *SavepointStmt) Accept(v Visitor) (Node, bool) {
 	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	n = newNode.(*SavepointStmt)
+	return v.Leave(n)
 }
 
 // ReleaseSavepointStmt is the statement of RELEASE SAVEPOINT.
@@ -1266,7 +1299,8 @@ func (n *ReleaseSavepointStmt) Restore(ctx *format.RestoreCtx) error {
 // Accept implements Node Accept interface.
 func (n *ReleaseSavepointStmt) Accept(v Visitor) (Node, bool) {
 	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	n = newNode.(*ReleaseSavepointStmt)
+	return v.Leave(n)
 }
 
 // SetStmt is the statement to set variables.
@@ -1369,8 +1403,12 @@ func (n *SetSessionStatesStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *SetSessionStatesStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SetSessionStatesStmt)
+	return v.Leave(n)
 }
 
 /*
@@ -1437,8 +1475,12 @@ func (n *SetPwdStmt) SecureText() string {
 
 // Accept implements Node Accept interface.
 func (n *SetPwdStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SetPwdStmt)
+	return v.Leave(n)
 }
 
 // SetRoleStmtType is the type for FLUSH statement.
@@ -1487,8 +1529,12 @@ func (n *SetRoleStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *SetRoleStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SetRoleStmt)
+	return v.Leave(n)
 }
 
 type SetDefaultRoleStmt struct {
@@ -1534,8 +1580,12 @@ func (n *SetDefaultRoleStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *SetDefaultRoleStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SetDefaultRoleStmt)
+	return v.Leave(n)
 }
 
 // UserSpec is used for parsing create user statement.
@@ -1897,8 +1947,12 @@ func (n *CreateUserStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *CreateUserStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateUserStmt)
+	return v.Leave(n)
 }
 
 // SecureText implements SensitiveStatement interface.
@@ -2027,8 +2081,12 @@ func (n *AlterUserStmt) SecureText() string {
 
 // Accept implements Node Accept interface.
 func (n *AlterUserStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterUserStmt)
+	return v.Leave(n)
 }
 
 // AlterInstanceStmt modifies instance.
@@ -2054,8 +2112,12 @@ func (n *AlterInstanceStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *AlterInstanceStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterInstanceStmt)
+	return v.Leave(n)
 }
 
 // AlterRangeStmt modifies range configuration.
@@ -2078,8 +2140,12 @@ func (n *AlterRangeStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *AlterRangeStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterRangeStmt)
+	return v.Leave(n)
 }
 
 // DropUserStmt creates user account.
@@ -2115,8 +2181,12 @@ func (n *DropUserStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *DropUserStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropUserStmt)
+	return v.Leave(n)
 }
 
 type StringOrUserVar struct {
@@ -2217,8 +2287,12 @@ func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *RecommendIndexStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RecommendIndexStmt)
+	return v.Leave(n)
 }
 
 // CreateBindingStmt creates sql binding hint.
@@ -2542,8 +2616,12 @@ func (n *DropStatisticsStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *DropStatisticsStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropStatisticsStmt)
+	return v.Leave(n)
 }
 
 // DoStmt is the struct for DO statement.
@@ -3213,8 +3291,12 @@ func (n *RevokeRoleStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *RevokeRoleStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RevokeRoleStmt)
+	return v.Leave(n)
 }
 
 // GrantStmt is the struct for GRANT statement.
@@ -3320,8 +3402,12 @@ type GrantProxyStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *GrantProxyStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*GrantProxyStmt)
+	return v.Leave(n)
 }
 
 // Restore implements Node interface.
@@ -3355,8 +3441,12 @@ type GrantRoleStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *GrantRoleStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*GrantRoleStmt)
+	return v.Leave(n)
 }
 
 // Restore implements Node interface.
@@ -3409,8 +3499,12 @@ func (n *ShutdownStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *ShutdownStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ShutdownStmt)
+	return v.Leave(n)
 }
 
 // RestartStmt is a statement to restart the TiDB server.
@@ -3427,8 +3521,12 @@ func (n *RestartStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *RestartStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RestartStmt)
+	return v.Leave(n)
 }
 
 // HelpStmt is a statement for server side help
@@ -3448,8 +3546,12 @@ func (n *HelpStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *HelpStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*HelpStmt)
+	return v.Leave(n)
 }
 
 // RenameUserStmt is a statement to rename a user.
@@ -3513,8 +3615,12 @@ func (n *UserToUser) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *UserToUser) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*UserToUser)
+	return v.Leave(n)
 }
 
 type BRIEKind uint8
@@ -4235,8 +4341,12 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *TableOptimizerHint) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*TableOptimizerHint)
+	return v.Leave(n)
 }
 
 // TextString represent a string, it can be a binary literal.
@@ -4272,8 +4382,12 @@ func (n *SetResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *SetResourceGroupStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SetResourceGroupStmt)
+	return v.Leave(n)
 }
 
 // CalibrateResourceType is the type for CalibrateResource statement.
@@ -4436,7 +4550,8 @@ func (n *DropQueryWatchStmt) Restore(ctx *format.RestoreCtx) error {
 // Accept implements Node Accept interface.
 func (n *DropQueryWatchStmt) Accept(v Visitor) (Node, bool) {
 	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	n = newNode.(*DropQueryWatchStmt)
+	return v.Leave(n)
 }
 
 // AddQueryWatchStmt is a statement to add a runaway watch item.

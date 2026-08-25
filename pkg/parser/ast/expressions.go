@@ -1570,8 +1570,11 @@ func (n *MaxValueExpr) Format(w io.Writer) {
 
 // Accept implements Node Accept interface.
 func (n *MaxValueExpr) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	return v.Leave(n)
 }
 
 // MatchAgainst is the expression for matching against fulltext index.
