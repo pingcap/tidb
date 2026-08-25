@@ -125,6 +125,11 @@ pub use driver::mem_buffer::{
 pub use driver::tikv_mem_buffer::{
     TikvMemBufferBackend, TikvMemBufferError, TikvMemBufferIterator, TikvMemBufferSnapshotGetter,
 };
+#[cfg(feature = "tikv-inprocess")]
+pub use driver::tikv_opener::TikvInProcessSource;
+pub use driver::tikv_opener::{
+    TikvClusterSource, TikvCommitProtocol, TikvTransactionOpener, TikvTransactionSource,
+};
 pub use driver::tikv_transaction::{TikvTransactionDriver, TikvTransactionError};
 pub use driver_error::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
 pub use error::{

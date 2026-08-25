@@ -105,12 +105,35 @@ pub struct TikvTransactionDriver<PdC: PdClient> {
     transaction: SyncTransaction<PdC>,
     start_ts: u64,
     pipelined_dml: bool,
+    read_only: bool,
 }
 
 impl<PdC: PdClient> TikvTransactionDriver<PdC> {
-    /// Wraps one begun client transaction.
+    /// Wraps one begun writable client transaction.
     #[must_use]
     pub fn new(transaction: Transaction<PdC>, runtime: Arc<tokio::runtime::Runtime>) -> Self {
+        Self::with_mode(transaction, runtime, false)
+    }
+
+    /// Wraps one begun read-only client transaction.
+    ///
+    /// The mode has to be supplied by whoever built the transaction options:
+    /// the engine's own `is_read_only` answers the *dynamic* question client-go
+    /// `KVTxn.IsReadOnly` answers — "has this written anything yet" — which is
+    /// true of every freshly opened writable transaction too.
+    #[must_use]
+    pub fn new_read_only(
+        transaction: Transaction<PdC>,
+        runtime: Arc<tokio::runtime::Runtime>,
+    ) -> Self {
+        Self::with_mode(transaction, runtime, true)
+    }
+
+    fn with_mode(
+        transaction: Transaction<PdC>,
+        runtime: Arc<tokio::runtime::Runtime>,
+        read_only: bool,
+    ) -> Self {
         // The start timestamp is captured here because the source exposes it
         // on the async transaction, while every later call goes through the
         // blocking wrapper.
@@ -120,6 +143,7 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
             transaction: SyncTransaction::new(transaction, runtime),
             start_ts,
             pipelined_dml,
+            read_only,
         }
     }
 
@@ -274,8 +298,43 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     }
 
     /// Rolls the transaction back; staged entries never reach the store.
+    ///
+    /// Only a writable transaction can be rolled back: a read-only one never
+    /// took a lock or prewrote anything, so the engine rejects the call the
+    /// way client-go does. Callers that do not know which they hold should use
+    /// [`Self::finish_without_writes`].
     pub fn rollback(&mut self) -> Result<(), TikvTransactionError> {
         self.transaction.rollback()?;
         Ok(())
+    }
+
+    /// Whether this transaction was opened read-only and so can never write.
+    ///
+    /// Distinct from the engine's `is_read_only`, which answers client-go
+    /// `KVTxn.IsReadOnly`'s dynamic question ("nothing staged yet") and is
+    /// therefore true of a fresh writable transaction as well.
+    #[must_use]
+    pub const fn is_read_only_mode(&self) -> bool {
+        self.read_only
+    }
+
+    /// Whether nothing has been staged yet, as Go `KVTxn.IsReadOnly`.
+    pub fn has_no_writes(&mut self) -> bool {
+        self.is_empty()
+    }
+
+    /// Ends a transaction that wrote nothing.
+    ///
+    /// A writable transaction still has to be rolled back so its locks and
+    /// staged state are released; a read-only one has neither, and the engine
+    /// treats rolling it back as an invalid transition. This is the one call a
+    /// statement path can make without tracking which kind it opened — and the
+    /// engine's drop check requires making it, since dropping a still-active
+    /// transaction is a bug it refuses to ignore.
+    pub fn finish_without_writes(&mut self) -> Result<(), TikvTransactionError> {
+        if self.read_only {
+            return Ok(());
+        }
+        self.rollback()
     }
 }
