@@ -244,6 +244,31 @@ shapes remain on the existing general executor.
   `1.650/1.478` (`1.12x`), R32 `4.925/3.344` (`1.47x`), R33
   `115.250/163.391` (`0.71x`), R34 `252.278/190.456` (`1.32x`), R35
   `152.788/100.398` (`1.52x`), and R32det `5.375/3.521` (`1.53x`).
+- [x] (2026-08-25) Installed the repository-required Go 1.25.10 toolchain in
+  `/tmp`, ran the Go source tests `TestIndexAdvisorWeb3Bench`,
+  `TestTopNPushDown`, `TestGetPushedDownTopNHeavyFunctionNotFirstByItem`,
+  `TestAggPushDownEngine`, and `TestBuildFinalModeAggregation` (all pass with
+  `-tags=intest`), and completed `make lint` successfully. Rebuilt the release
+  Rust server from the pushed source and loaded the official Web3Bench
+  scale-factor-10 fixture into `web3bench_rerun_20260825` (10,000 blocks,
+  7,000 contracts, 800,000 transactions, 180,000 token transfers, and 2,000
+  temp-table rows). The fresh receipts are
+  `/tmp/web3_10x_results_original_go_after_go.json`,
+  `/tmp/web3_10x_results_original_rust_after_go.json`,
+  `/tmp/web3_10x_plan_original_go_after_go.json`,
+  `/tmp/web3_10x_plan_original_rust_after_go.json`,
+  `/tmp/web3_10x_perf_original_finalplanfix_repeat_after_go.json`, and
+  `/tmp/web3_10x_perf_original_finalplanfix_repeat_after_go2.json`.
+  All 11 result queries match except R32's 16 rows selected from the same
+  timestamp-tie boundary; R32det is byte-exact. All 11 normalized operator,
+  task, and access-shape plans match (optimizer estimates and generated
+  `Column#N` labels remain implementation-specific). Across the two fresh
+  rounds R34 Rust/Go medians were `154.476/174.864 ms` and
+  `102.006/141.365 ms`; R35 was `146.711/106.445 ms` and
+  `149.132/102.973 ms`. Against the clean Rust receipts before the R34/R35
+  changes (about 315 ms and 163 ms), neither changed query regressed; local
+  Go/Rust latency varies with TiKV and process scheduling, so this is not a
+  claim of identical latency for every query.
 
 ## Validation commands
 
