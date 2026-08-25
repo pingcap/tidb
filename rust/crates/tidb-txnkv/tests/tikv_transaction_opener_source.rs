@@ -172,3 +172,39 @@ fn timestamps_advance_across_transactions() {
     );
     assert!(Timestamp::from_version(second).version() == second);
 }
+
+#[test]
+fn the_pessimistic_surface_locks_reads_and_reports_locked_keys() {
+    let opener = opener();
+
+    let mut seed = opener.begin().unwrap();
+    seed.set(k("row-a"), b"1".to_vec()).unwrap();
+    seed.set(k("row-b"), b"2".to_vec()).unwrap();
+    seed.commit().unwrap();
+
+    let mut txn = opener.begin_pessimistic().unwrap();
+
+    // A locking read returns the committed value and records the lock.
+    assert_eq!(txn.get_for_update(&k("row-a")).unwrap(), Some(b"1".to_vec()));
+    let locked = txn.locked_keys();
+    assert!(
+        locked.contains(&k("row-a")),
+        "the locking read records its key: {locked:?}"
+    );
+
+    // A batch locking read returns the committed values for its keys.
+    let pairs = txn.batch_get_for_update(&[k("row-a"), k("row-b")]).unwrap();
+    assert_eq!(pairs.len(), 2);
+    assert!(pairs.contains(&(k("row-b"), b"2".to_vec())));
+
+    // The transaction then finishes through the same two-phase commit.
+    txn.set(k("row-a"), b"locked-write".to_vec()).unwrap();
+    txn.commit().expect("the pessimistic transaction commits");
+
+    let mut reader = opener.begin_read_only().unwrap();
+    assert_eq!(
+        reader.get(&k("row-a")).unwrap(),
+        Some(b"locked-write".to_vec())
+    );
+    reader.finish_without_writes().unwrap();
+}

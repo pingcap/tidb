@@ -491,3 +491,58 @@ fn classify_cause(error: &TikvTransactionError) -> crate::transaction::Transacti
         },
     }
 }
+
+/// Pessimistic-path surface, as Go `KVTxn`'s statement-time locking.
+///
+/// A pessimistic transaction takes its locks while statements run and then
+/// finishes through the same two-phase commit; these are the calls the
+/// statement layer makes between those two points.
+impl<PdC: PdClient> TikvTransactionDriver<PdC> {
+    /// Reads one key under a statement-time pessimistic lock, as Go
+    /// `KVTxn.LockKeys` followed by the read for `SELECT ... FOR UPDATE`.
+    pub fn get_for_update(&mut self, key: &Key) -> Result<Option<Vec<u8>>, TikvTransactionError> {
+        Ok(self.transaction.get_for_update(key.as_bytes().to_vec())?)
+    }
+
+    /// Reads several keys under statement-time pessimistic locks.
+    pub fn batch_get_for_update(
+        &mut self,
+        keys: &[Key],
+    ) -> Result<Vec<(Key, Vec<u8>)>, TikvTransactionError> {
+        Ok(self
+            .transaction
+            .batch_get_for_update(keys.iter().map(|key| key.as_bytes().to_vec()))?
+            .into_iter()
+            .map(|pair| (Key::from(Vec::<u8>::from(pair.0)), pair.1))
+            .collect())
+    }
+
+    /// The keys this transaction currently holds pessimistic locks on.
+    ///
+    /// Lock state is the *engine's* own: client-go records it as the
+    /// `HasLocked` bit on its buffer entry, and TiDB's typed `KeyFlags`
+    /// deliberately does not model that bit — `pkg/kv/keyflags.go` exposes
+    /// `HasNeedLocked` ("this key must be locked"), which is a different fact.
+    /// So this reads the engine's flags directly rather than TiDB's typed
+    /// projection of them.
+    pub fn locked_keys(&mut self) -> Vec<Key> {
+        let memdb = self.transaction.get_mem_buffer();
+        let mut keys = Vec::new();
+        let mut iterator = memdb.iter_with_flags(None, None);
+        while iterator.valid() {
+            keys.push(iterator.key().to_vec());
+            if iterator.next().is_err() {
+                break;
+            }
+        }
+        drop(iterator);
+        keys.into_iter()
+            .filter(|key| {
+                memdb
+                    .get_flags_readonly(key)
+                    .is_ok_and(|flags| flags.has_locked() || flags.has_locked_in_share_mode())
+            })
+            .map(Key::from)
+            .collect()
+    }
+}
