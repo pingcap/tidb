@@ -87,6 +87,7 @@ The Rust TiDB implementation on `hparser-integration` must make the same optimiz
   | get_sys_var + get_system | 2.3% | sysvar lookup chain: lowercase alloc + double HashMap | pre-built index |
   | Lexer scan | 1.3% | SQL tokenization per statement | prepared stmt cache |
 
+- [x] (2026-08-25) Phase A baseline receipt on latest HEAD: Go median 248.89, Rust median 174.21 QPS (ratio 0.6999) over 4x150s rounds. The `KvTable.columns` field is already behind `Arc<Vec<KvColumn>>` — the parallel session's metadata-sharing change means `KvTable::clone` now shares column data instead of deep-copying. Phase A's original goal (eliminate per-statement catalog clones) is already achieved by this structural change.
 - [ ] Phase A: Eliminate per-statement catalog/table metadata clones (~3% CPU)
   - `single_kv_table`/`sole_kv_table` clones entire KvTable per statement
   - Fix: return `Arc<KvTable>` from catalog instead of owned value
