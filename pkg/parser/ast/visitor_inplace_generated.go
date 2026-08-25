@@ -2256,7 +2256,9 @@ func (n *DropQueryWatchStmt) AcceptInPlace(v InPlaceVisitor) bool {
 }
 
 func (n *AddQueryWatchStmt) AcceptInPlace(v InPlaceVisitor) bool {
-	v.Enter(n)
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
 	for _, val := range n.QueryWatchOptionList {
 		if !val.AcceptInPlace(v) {
 			return false

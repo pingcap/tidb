@@ -240,6 +240,27 @@ func TestWalk(t *testing.T) {
 		}, events)
 	})
 
+	t.Run("query_watch_skip_children", func(t *testing.T) {
+		root := &parserast.AddQueryWatchStmt{
+			QueryWatchOptionList: []*parserast.QueryWatchOption{{}},
+		}
+		var entered, left []parserast.Node
+		visitor := &testInPlaceVisitor{
+			enter: func(n parserast.Node) bool {
+				entered = append(entered, n)
+				return n == root
+			},
+			leave: func(n parserast.Node) bool {
+				left = append(left, n)
+				return true
+			},
+		}
+
+		require.True(t, parserast.Walk(root, visitor))
+		require.Equal(t, []parserast.Node{root}, entered)
+		require.Equal(t, []parserast.Node{root}, left)
+	})
+
 	t.Run("stop_traversal", func(t *testing.T) {
 		leafA := &parserast.DefaultExpr{}
 		leafB := &parserast.DefaultExpr{}

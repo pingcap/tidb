@@ -292,13 +292,14 @@ type localBinding struct {
 }
 
 type methodTransformer struct {
-	pkg          *parsedPackage
-	filename     string
-	receiverName string
-	receiverVar  string
-	visitorVar   string
-	locals       map[string]localBinding
-	enterResult  string
+	pkg              *parsedPackage
+	filename         string
+	receiverName     string
+	receiverVar      string
+	visitorVar       string
+	locals           map[string]localBinding
+	enterResult      string
+	ignoredEnterCall *ast.CallExpr
 }
 
 // Generate parses legacy Accept methods and emits their write-free in-place
@@ -590,6 +591,13 @@ func transformAccept(pkg *parsedPackage, filename string, fn *ast.FuncDecl) (*as
 	if err != nil {
 		return nil, err
 	}
+	// Legacy Accept methods may ignore Enter's skip result for compatibility. AcceptInPlace
+	// is a traversal framework API, so synthesize the missing skip branch for composites.
+	if transformer.ignoredEnterCall != nil && hasInPlaceChildTraversal(body) {
+		if !addSkipChildrenBranch(body, transformer.ignoredEnterCall, visitorVar, receiverVar) {
+			return nil, transformer.errorAt(transformer.ignoredEnterCall.Pos(), "failed to add the missing Visitor.Enter skip check")
+		}
+	}
 	if err := transformer.validateTransformedBody(body); err != nil {
 		return nil, err
 	}
@@ -652,6 +660,7 @@ func (t *methodTransformer) transformBlock(block *ast.BlockStmt) (*ast.BlockStmt
 					continue
 				}
 			}
+			t.ignoredEnterCall = enter.call
 			result = append(result, &ast.ExprStmt{X: enter.call})
 			continue
 		}
@@ -726,6 +735,48 @@ func (t *methodTransformer) transformBlock(block *ast.BlockStmt) (*ast.BlockStmt
 	}
 	result = removeUnusedMakeAssignments(result)
 	return &ast.BlockStmt{List: result}, nil
+}
+
+func hasInPlaceChildTraversal(body *ast.BlockStmt) bool {
+	found := false
+	ast.Inspect(body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if ok && (selector.Sel.Name == "AcceptInPlace" || selector.Sel.Name == "acceptInPlace") {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func addSkipChildrenBranch(body *ast.BlockStmt, enterCall *ast.CallExpr, visitorVar, receiverVar string) bool {
+	for i, statement := range body.List {
+		expression, ok := statement.(*ast.ExprStmt)
+		if !ok || expression.X != enterCall {
+			continue
+		}
+		body.List[i] = &ast.IfStmt{
+			Init: &ast.AssignStmt{
+				Lhs: []ast.Expr{ast.NewIdent("skipChildren")},
+				Tok: token.DEFINE,
+				Rhs: []ast.Expr{enterCall},
+			},
+			Cond: ast.NewIdent("skipChildren"),
+			Body: &ast.BlockStmt{List: []ast.Stmt{
+				&ast.ReturnStmt{Results: []ast.Expr{&ast.CallExpr{
+					Fun:  &ast.SelectorExpr{X: ast.NewIdent(visitorVar), Sel: ast.NewIdent("Leave")},
+					Args: []ast.Expr{ast.NewIdent(receiverVar)},
+				}}},
+			}},
+		}
+		return true
+	}
+	return false
 }
 
 type enterInfo struct {

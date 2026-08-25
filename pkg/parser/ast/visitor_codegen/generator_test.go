@@ -134,6 +134,36 @@ func TestGenerateTraversalGrammar(t *testing.T) {
 		t.Fatal("generation is not deterministic")
 	}
 	typeCheckFixture(t, traversalFixture, result.Source)
+
+	t.Run("ignored_composite_skip", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFixture(t, dir, "ignored_skip.go", ignoredCompositeSkipFixture)
+
+		result := generateFixture(t, GenerateRequest{
+			SourceDir:         dir,
+			TraversalFiles:    []string{"ignored_skip.go"},
+			ExpectedReceivers: []string{"CompositeNode", "ConcreteChild"},
+		})
+		for _, exact := range []string{
+			`func (n *ConcreteChild) AcceptInPlace(v InPlaceVisitor) bool {
+	v.Enter(n)
+	return v.Leave(n)
+}`,
+			`func (n *CompositeNode) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if !n.Child.AcceptInPlace(v) {
+		return false
+	}
+	return v.Leave(n)
+}`,
+		} {
+			if !strings.Contains(string(result.Source), exact) {
+				t.Errorf("generated source does not contain exact traversal:\n%s\n\nsource:\n%s", exact, result.Source)
+			}
+		}
+	})
 }
 
 func TestGenerateChecksExpectedReceiverSetBeforeReturningSource(t *testing.T) {
@@ -880,6 +910,29 @@ func (n *UnsupportedNode) Accept(v Visitor) (Node, bool) {
 		if !ok { return n, false }
 		n.Child = child.(*ConcreteChild)
 	}
+	return v.Leave(n)
+}
+`
+
+const ignoredCompositeSkipFixture = `package fixture
+
+type Node interface { Accept(Visitor) (Node, bool) }
+type Visitor interface {
+	Enter(Node) (Node, bool)
+	Leave(Node) (Node, bool)
+}
+type ConcreteChild struct{}
+func (n *ConcreteChild) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+type CompositeNode struct { Child *ConcreteChild }
+func (n *CompositeNode) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*CompositeNode)
+	child, ok := n.Child.Accept(v)
+	if !ok { return n, false }
+	n.Child = child.(*ConcreteChild)
 	return v.Leave(n)
 }
 `
