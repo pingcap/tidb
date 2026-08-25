@@ -3746,6 +3746,7 @@ dependencies = [
  "tidb-error",
  "tidb-pd-client",
  "tidb-proto",
+ "tikv-client",
  "tokio",
  "tokio-stream",
  "tonic",

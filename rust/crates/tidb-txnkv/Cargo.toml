@@ -21,6 +21,7 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-pd-client = { path = "../tidb-pd-client" }
+tikv-client.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true

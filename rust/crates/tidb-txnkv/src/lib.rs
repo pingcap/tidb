@@ -122,6 +122,9 @@ pub use driver::mem_buffer::{
     EmptyIterator as DriverEmptyIterator, MemBufferBackend, MemBufferDriver,
     MemBufferSnapshotGetter, MemBufferSnapshotIterator, StagingHandle,
 };
+pub use driver::tikv_mem_buffer::{
+    TikvMemBufferBackend, TikvMemBufferError, TikvMemBufferIterator, TikvMemBufferSnapshotGetter,
+};
 pub use driver_error::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
 pub use error::{
     gen_entry_too_large_err, gen_key_exists_err, gen_key_too_large_err, gen_txn_too_large_err,
