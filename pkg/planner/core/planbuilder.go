@@ -3026,7 +3026,7 @@ func (b *PlanBuilder) appendAnalyzeVersionOverwriteWarning() {
 
 // buildAnalyzeTable constructs analyze tasks for each table.
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (base.Plan, error) {
-	p := &Analyze{Opts: opts}
+	p := Analyze{Opts: opts}.Init(b.ctx, b.getSelectOffset())
 	p.OptionsMap = make(map[int64]V2AnalyzeOptions)
 	usePersistedOptions := vardef.PersistAnalyzeOptions.Load()
 

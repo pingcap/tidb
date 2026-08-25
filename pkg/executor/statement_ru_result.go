@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 )
 
 // These deliberately uncalibrated weights keep the first ResultOnly path
@@ -117,7 +118,8 @@ func newStatementRUCalculationSetup(stmt *ExecStmt) (statementRUCalculationSetup
 		return statementRUCalculationSetup{}, false
 	}
 	sessVars := stmt.Ctx.GetSessionVars()
-	if sessVars == nil || sessVars.StmtCtx == nil || !sessVars.StmtCtx.IsReadOnly ||
+	_, isAnalyze := stmt.Plan.(*plannercore.Analyze)
+	if sessVars == nil || sessVars.StmtCtx == nil || (!sessVars.StmtCtx.IsReadOnly && !isAnalyze) ||
 		sessVars.InRestrictedSQL || sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) ||
 		sessVars.StmtCtx.GetFlatPlan() != nil {
 		return statementRUCalculationSetup{}, false

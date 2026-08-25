@@ -299,6 +299,19 @@ func calculateStatementRUPlanChildFirst(
 	}
 
 	switch origin := operator.Origin.(type) {
+	case *plannercore.Analyze:
+		// ANALYZE can issue independent requests for indexes, partitions, and
+		// split ranges. Its scan-byte estimate is accumulated once per logical
+		// request before their nonlinear scan-detail fields are flattened.
+		if !operator.IsRoot || len(operator.ChildrenIdx) != 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if runtimeStatsColl != nil {
+			scanBytes, found := runtimeStatsColl.GetAnalyzeScanBytes(origin.ID())
+			if found && !addStatementRUScanBytes(calculator, scanBytes) {
+				return statementRUOperatorResult{state: statementRUOperatorInvalid}
+			}
+		}
 	case *physicalop.PhysicalTableReader:
 		// Scan-byte accounting is performed at Reader boundaries. A TableReader
 		// contributes scan evidence from its single TiKV table request exactly once.

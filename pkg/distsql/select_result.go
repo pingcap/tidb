@@ -330,10 +330,12 @@ type selectResult struct {
 	label string
 	resp  kv.Response
 
-	rowLen                  int
-	fieldTypes              []*types.FieldType
-	intermediateOutputTypes [][]*types.FieldType
-	ctx                     *dcontext.DistSQLContext
+	rowLen                   int
+	fieldTypes               []*types.FieldType
+	intermediateOutputTypes  [][]*types.FieldType
+	ctx                      *dcontext.DistSQLContext
+	isAnalyze                bool
+	collectExecDetailsForRaw bool
 
 	selectResp       *tipb.SelectResponse
 	selectRespSize   int64 // record the selectResp.Size() when it is initialized.
@@ -355,6 +357,8 @@ type selectResult struct {
 	memTracker       *memory.Tracker
 
 	stats *selectResultRuntimeStats
+
+	analyzeScanDetail clientutil.ScanDetail
 	// distSQLConcurrency and paging are only for collecting information, and they don't affect the process of execution.
 	distSQLConcurrency int
 	paging             bool
@@ -544,8 +548,17 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 		return nil, errors.New("selectResult is invalid after IntoIter()")
 	}
 
+	var start time.Time
+	if r.collectExecDetailsForRaw {
+		start = time.Now()
+	}
 	resultSubset, err := r.resp.Next(ctx)
 	r.partialCount++
+	if r.collectExecDetailsForRaw && resultSubset != nil {
+		if withStats, ok := resultSubset.(CopRuntimeStats); ok {
+			r.recordAnalyzeCopRuntimeStats(withStats.GetCopRuntimeStats(), time.Since(start))
+		}
+	}
 	if resultSubset != nil && err == nil {
 		data = resultSubset.GetData()
 	}
@@ -770,7 +783,71 @@ func (r *selectResult) Close() error {
 	if r.iter != nil {
 		return errors.New("selectResult is invalid after IntoIter()")
 	}
+	if r.isAnalyze {
+		return r.closeAnalyze()
+	}
 	return r.close()
+}
+
+func (r *selectResult) recordAnalyzeCopRuntimeStats(copStats *copr.CopRuntimeStats, copTime time.Duration) {
+	if copStats == nil || r.ctx == nil {
+		return
+	}
+	if r.ctx.ExecDetails != nil {
+		r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, copTime)
+		r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
+	}
+	if r.ctx.RuntimeStatsColl != nil && r.rootPlanID > 0 {
+		if r.stats == nil {
+			r.stats = &selectResultRuntimeStats{distSQLConcurrency: r.distSQLConcurrency}
+			if ci, ok := r.resp.(copr.CopInfo); ok {
+				r.stats.distSQLConcurrency, r.stats.extraConcurrency = ci.GetConcurrency()
+			}
+		}
+		r.stats.mergeCopRuntimeStats(copStats, copTime)
+		r.ctx.RuntimeStatsColl.RecordCopStats(
+			r.rootPlanID,
+			r.storeType,
+			copStats.ScanDetail,
+			copStats.TimeDetail,
+			copStats.ReadPoolTaskDetails,
+			nil,
+		)
+	}
+	if copStats.ScanDetail != nil {
+		r.analyzeScanDetail.Merge(copStats.ScanDetail)
+	}
+}
+
+func (r *selectResult) closeAnalyze() error {
+	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
+	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
+	if respSize > 0 {
+		r.memConsume(-respSize)
+	}
+
+	closeErr := r.resp.Close()
+	if !r.collectExecDetailsForRaw || r.ctx == nil {
+		return closeErr
+	}
+	if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
+		for _, copStats := range unconsumed.CollectUnconsumedCopRuntimeStats() {
+			r.recordAnalyzeCopRuntimeStats(copStats, 0)
+		}
+	}
+	if r.ctx.RuntimeStatsColl != nil && r.rootPlanID > 0 {
+		if r.stats != nil {
+			r.ctx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
+		}
+		if scanBytes, ok := execdetails.EstimateScanBytes(
+			r.analyzeScanDetail.TotalKeys,
+			r.analyzeScanDetail.ProcessedKeys,
+			r.analyzeScanDetail.ProcessedKeysSize,
+		); ok {
+			r.ctx.RuntimeStatsColl.RecordAnalyzeScanBytes(r.rootPlanID, scanBytes)
+		}
+	}
+	return closeErr
 }
 
 func (r *selectResult) close() error {

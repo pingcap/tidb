@@ -1170,6 +1170,11 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 	if err != nil {
 		return nil, err
 	}
+	if _, ok := a.Plan.(*plannercore.Analyze); ok {
+		// ANALYZE is a no-delay statement: its only Next call completes the
+		// root executor, so there is no RecordSet EOF callback to record later.
+		a.recordStatementRURootEOF()
+	}
 	err = a.handleStmtForeignKeyTrigger(ctx, e)
 	return nil, err
 }

@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
@@ -109,6 +111,89 @@ func drainStatementRURecordSet(t *testing.T, rs sqlexec.RecordSet) error {
 			return nil
 		}
 	}
+}
+
+func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
+	originalCollectExecutionInfo := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
+	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(true)
+	t.Cleanup(func() {
+		config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(originalCollectExecutionInfo)
+	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, index idx_b(b))")
+	tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30)")
+
+	var observation *statementRUObservation
+	testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+		if stmt.Ctx == tk.Session() {
+			observation = observeInstalledStatementRUOwner(stmt)
+		}
+	})
+	type calibrationObservation struct {
+		count     int
+		state     string
+		scanBytes float64
+	}
+	connectionID := tk.Session().GetSessionVars().ConnectionID
+	var calibration calibrationObservation
+	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+		observedConnectionID uint64,
+		state string,
+		_, scanBytes, _, _ float64,
+	) {
+		if observedConnectionID != connectionID {
+			return
+		}
+		calibration.count++
+		calibration.state = state
+		calibration.scanBytes = scanBytes
+	})
+
+	tk.MustExec("analyze table t")
+	require.NotNil(t, observation)
+	require.NotNil(t, observation.owner)
+	require.True(t, observation.owner.ConsumedForTest())
+	require.True(t, observation.owner.RecordedSuccessForTest())
+	analyzePlan, ok := observation.stmt.Plan.(*plannercore.Analyze)
+	require.True(t, ok)
+	require.Positive(t, analyzePlan.ID())
+	flat := requireStatementRUTerminalFlatPlan(t, observation.stmt)
+	require.Len(t, flat.Main, 1)
+	require.Same(t, analyzePlan, flat.Main[0].Origin)
+
+	runtimeStats := observation.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+	detail, found := runtimeStats.GetCopScanDetail(analyzePlan.ID())
+	require.True(t, found)
+	require.NotNil(t, detail)
+	scanBytes, found := runtimeStats.GetAnalyzeScanBytes(analyzePlan.ID())
+	require.True(t, found)
+	require.GreaterOrEqual(t, scanBytes, float64(0))
+	execDetail := observation.stmt.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
+	require.NotNil(t, execDetail.ScanDetail)
+	require.Equal(t, detail.ProcessedKeys, execDetail.ScanDetail.ProcessedKeys)
+	require.Equal(t, detail.ProcessedKeysSize, execDetail.ScanDetail.ProcessedKeysSize)
+
+	binaryPlan := observation.stmt.GetBinaryPlan()
+	require.NotEmpty(t, binaryPlan)
+	decoded, err := plancodec.DecodeBinaryPlan(binaryPlan)
+	require.NoError(t, err)
+	require.Contains(t, decoded, "Analyze")
+	require.Contains(t, decoded, "cop_task:")
+
+	require.Equal(t, 1, calibration.count)
+	require.Equal(t, "incomplete", calibration.state)
+	require.InDelta(t, scanBytes, calibration.scanBytes, 1e-9)
+
+	rows := tk.MustQuery("select tidb_decode_binary_plan(?)", binaryPlan).Rows()
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0], 1)
+	decodedBySQL, ok := rows[0][0].(string)
+	require.True(t, ok)
+	require.Contains(t, decodedBySQL, "Analyze")
+	require.Contains(t, decodedBySQL, "cop_task:")
 }
 
 func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {

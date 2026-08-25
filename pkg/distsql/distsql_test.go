@@ -16,15 +16,19 @@ package distsql
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -37,6 +41,7 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 func TestSelectNormal(t *testing.T) {
@@ -152,29 +157,212 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 }
 
 func TestAnalyze(t *testing.T) {
-	sctx := newMockSessionContext()
-	sctx.GetSessionVars().EnableChunkRPC = false
+	const planID = 42
+	original := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
+	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(true)
+	t.Cleanup(func() {
+		config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(original)
+	})
+
+	dctx := newAnalyzeTestDistSQLContext()
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetAnalyzeRequest(&tipb.AnalyzeReq{}, kv.RC).
 		SetKeepOrder(true).
 		Build()
 	require.NoError(t, err)
+	newResult := func(t *testing.T, dctx *distsqlctx.DistSQLContext, response *analyzeTestResponse) (SelectResult, *analyzeTestClient) {
+		t.Helper()
+		client := &analyzeTestClient{response: response}
+		result, err := Analyze(context.TODO(), client, request, tikvstore.DefaultVars, true, dctx, planID)
+		require.NoError(t, err)
+		require.NotNil(t, client.option)
+		return result, client
+	}
 
-	response, err := Analyze(context.TODO(), sctx.GetClient(), request, tikvstore.DefaultVars, true, sctx.GetDistSQLCtx())
-	require.NoError(t, err)
+	response := &analyzeTestResponse{result: &analyzeTestResultSubset{
+		data: []byte("analyze payload!"),
+		stats: &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{
+			ScanDetail: &tikvutil.ScanDetail{
+				ProcessedKeys:     13,
+				TotalKeys:         17,
+				ProcessedKeysSize: 19,
+			},
+			TimeDetail: tikvutil.TimeDetail{
+				ProcessTime: 3 * time.Millisecond,
+				WaitTime:    5 * time.Millisecond,
+			},
+		}},
+	}}
+	selectResponse, client := newResult(t, dctx, response)
+	require.True(t, client.option.EnableCollectExecutionInfo)
 
-	result, ok := response.(*selectResult)
+	result, ok := selectResponse.(*selectResult)
 	require.True(t, ok)
 
 	require.Equal(t, "analyze", result.label)
 	require.Equal(t, "internal", result.sqlType)
 
-	bytes, err := response.NextRaw(context.TODO())
+	bytes, err := selectResponse.NextRaw(context.TODO())
 	require.NoError(t, err)
-	require.Len(t, bytes, 16)
+	require.Equal(t, []byte("analyze payload!"), bytes)
+	details := dctx.ExecDetails.GetExecDetails()
+	require.Equal(t, 1, details.RequestCount)
+	require.NotNil(t, details.ScanDetail)
+	require.Equal(t, int64(13), details.ScanDetail.ProcessedKeys)
+	require.Equal(t, int64(17), details.ScanDetail.TotalKeys)
+	require.Equal(t, int64(19), details.ScanDetail.ProcessedKeysSize)
+	copStats := dctx.RuntimeStatsColl.GetCopStats(planID)
+	require.NotNil(t, copStats)
+	require.Contains(t, copStats.String(), "total_process_keys: 13")
+	require.Contains(t, copStats.String(), "total_process_keys_size: 19")
+	require.Contains(t, copStats.String(), "total_keys: 17")
 
-	require.NoError(t, response.Close())
+	require.NoError(t, selectResponse.Close())
+	require.Contains(t, dctx.RuntimeStatsColl.GetRootStats(planID).String(), "cop_task: {num: 1")
+	scanBytes, ok := dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
+	require.True(t, ok)
+	require.InDelta(t, float64(19)/13*17, scanBytes, 1e-9)
+
+	t.Run("sums estimates before independent requests are flattened", func(t *testing.T) {
+		dctx := newAnalyzeTestDistSQLContext()
+		for _, detail := range []*tikvutil.ScanDetail{
+			{ProcessedKeys: 1, ProcessedKeysSize: 100, TotalKeys: 10},
+			{ProcessedKeys: 9, ProcessedKeysSize: 9, TotalKeys: 9},
+		} {
+			response := &analyzeTestResponse{result: &analyzeTestResultSubset{
+				data:  []byte("analyze payload!"),
+				stats: &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{ScanDetail: detail}},
+			}}
+			result, _ := newResult(t, dctx, response)
+			_, err = result.NextRaw(context.TODO())
+			require.NoError(t, err)
+			require.NoError(t, result.Close())
+		}
+
+		scanBytes, found := dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
+		require.True(t, found)
+		require.InDelta(t, 1009, scanBytes, 1e-9)
+	})
+
+	t.Run("collection disabled does not record details", func(t *testing.T) {
+		config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(false)
+		t.Cleanup(func() {
+			config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(true)
+		})
+		dctx := newAnalyzeTestDistSQLContext()
+		response := &analyzeTestResponse{result: &analyzeTestResultSubset{
+			data: []byte("analyze payload!"),
+			stats: &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{
+				ScanDetail: &tikvutil.ScanDetail{ProcessedKeys: 1, ProcessedKeysSize: 2, TotalKeys: 3},
+			}},
+		}}
+		result, client := newResult(t, dctx, response)
+		require.False(t, client.option.EnableCollectExecutionInfo)
+		_, err = result.NextRaw(context.TODO())
+		require.NoError(t, err)
+		require.NoError(t, result.Close())
+		require.Zero(t, dctx.ExecDetails.GetExecDetails().RequestCount)
+		require.False(t, dctx.RuntimeStatsColl.ExistsCopStats(planID))
+		_, found := dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
+		require.False(t, found)
+	})
+
+	t.Run("subset details survive a response error", func(t *testing.T) {
+		dctx := newAnalyzeTestDistSQLContext()
+		responseErr := errors.New("response error")
+		response := &analyzeTestResponse{
+			result: &analyzeTestResultSubset{
+				stats: &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{
+					ScanDetail: &tikvutil.ScanDetail{ProcessedKeys: 2, ProcessedKeysSize: 6, TotalKeys: 4},
+				}},
+			},
+			err: responseErr,
+		}
+		result, _ := newResult(t, dctx, response)
+		data, err := result.NextRaw(context.TODO())
+		require.ErrorIs(t, err, responseErr)
+		require.Nil(t, data)
+		details := dctx.ExecDetails.GetExecDetails()
+		require.Equal(t, 1, details.RequestCount)
+		require.Equal(t, int64(2), details.ScanDetail.ProcessedKeys)
+		require.NoError(t, result.Close())
+		scanBytes, found := dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
+		require.True(t, found)
+		require.InDelta(t, 12, scanBytes, 1e-9)
+	})
+
+	t.Run("close collects unconsumed details", func(t *testing.T) {
+		dctx := newAnalyzeTestDistSQLContext()
+		response := &analyzeTestResponse{unconsumed: []*copr.CopRuntimeStats{{
+			CopExecDetails: execdetails.CopExecDetails{
+				ScanDetail: &tikvutil.ScanDetail{ProcessedKeys: 3, ProcessedKeysSize: 12, TotalKeys: 5},
+			},
+		}}}
+		result, _ := newResult(t, dctx, response)
+		require.NoError(t, result.Close())
+		details := dctx.ExecDetails.GetExecDetails()
+		require.Equal(t, 1, details.RequestCount)
+		require.Equal(t, int64(3), details.ScanDetail.ProcessedKeys)
+		scanBytes, found := dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
+		require.True(t, found)
+		require.InDelta(t, 20, scanBytes, 1e-9)
+	})
 }
+
+func newAnalyzeTestDistSQLContext() *distsqlctx.DistSQLContext {
+	sctx := newMockSessionContext()
+	sctx.GetSessionVars().EnableChunkRPC = false
+	dctx := sctx.GetDistSQLCtx()
+	dctx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+	return dctx
+}
+
+type analyzeTestClient struct {
+	kv.RequestTypeSupportedChecker
+	response kv.Response
+	option   *kv.ClientSendOption
+}
+
+func (c *analyzeTestClient) Send(_ context.Context, _ *kv.Request, _ any, option *kv.ClientSendOption) kv.Response {
+	c.option = option
+	return c.response
+}
+
+type analyzeTestResponse struct {
+	result     kv.ResultSubset
+	err        error
+	unconsumed []*copr.CopRuntimeStats
+	done       bool
+}
+
+func (r *analyzeTestResponse) Next(context.Context) (kv.ResultSubset, error) {
+	if r.done {
+		return nil, nil
+	}
+	r.done = true
+	return r.result, r.err
+}
+
+func (*analyzeTestResponse) Close() error { return nil }
+
+func (r *analyzeTestResponse) CollectUnconsumedCopRuntimeStats() []*copr.CopRuntimeStats {
+	return r.unconsumed
+}
+
+type analyzeTestResultSubset struct {
+	data  []byte
+	stats *copr.CopRuntimeStats
+}
+
+func (r *analyzeTestResultSubset) GetData() []byte { return r.data }
+
+func (*analyzeTestResultSubset) GetStartKey() kv.Key { return nil }
+
+func (r *analyzeTestResultSubset) MemSize() int64 { return int64(cap(r.data)) }
+
+func (*analyzeTestResultSubset) RespTime() time.Duration { return 0 }
+
+func (r *analyzeTestResultSubset) GetCopRuntimeStats() *copr.CopRuntimeStats { return r.stats }
 
 func TestChecksum(t *testing.T) {
 	sctx := newMockSessionContext()

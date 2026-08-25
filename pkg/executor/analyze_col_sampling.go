@@ -537,6 +537,7 @@ func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(ctx context.Context
 	for _, indexInfo := range indexInfos {
 		base := baseAnalyzeExec{
 			ctx:         e.ctx,
+			planID:      e.planID,
 			tableID:     e.TableID,
 			concurrency: concurrency,
 			analyzePB: &tipb.AnalyzeReq{

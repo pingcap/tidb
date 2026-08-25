@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -100,7 +101,7 @@ func (e *AnalyzeColumnsExec) open(ctx context.Context, ranges []*ranger.Range) e
 	var secondResult distsql.SelectResult
 	secondResult, err = e.buildResp(ctx, secondPartRanges)
 	if err != nil {
-		return err
+		return errors.Join(err, firstResult.Close())
 	}
 	e.resultHandler.open(firstResult, secondResult)
 
@@ -131,7 +132,7 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 		return nil, err
 	}
 	failpoint.InjectCall("analyzeColumnsRequestBuilt", kvReq)
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx(), e.planID)
 	if err != nil {
 		return nil, err
 	}

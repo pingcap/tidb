@@ -70,6 +70,7 @@ go_test(
     race = "on",
     shard_count = 34,
     deps = [
+        "//pkg/config",
         "//pkg/distsql/context",
         "//pkg/errctx",
         "//pkg/kv",
@@ -101,6 +102,7 @@ go_test(
         "@com_github_tikv_client_go_v2//kv",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
+        "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_goleak//:goleak",
     ],
 )
