@@ -322,6 +322,7 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	if addTo.maxRocksdbBlockReadByte < addWith.maxRocksdbBlockReadByte {
 		addTo.maxRocksdbBlockReadByte = addWith.maxRocksdbBlockReadByte
 	}
+	addTo.iaExecCount += addWith.iaExecCount
 	addTo.sumIARemoteReadSegmentCount += addWith.sumIARemoteReadSegmentCount
 	if addTo.maxIARemoteReadSegmentCount < addWith.maxIARemoteReadSegmentCount {
 		addTo.maxIARemoteReadSegmentCount = addWith.maxIARemoteReadSegmentCount
