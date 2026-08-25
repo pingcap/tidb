@@ -140,6 +140,8 @@ type spillStats struct {
 }
 
 type hashJoinRuntimeStatsV2 struct {
+	// concurrent is the probe-side worker count, which an order-preserving join drops to
+	// 1; buildConcurrent is the build-side one, which is always the full concurrency.
 	concurrent      int
 	buildConcurrent int
 	probeCollision  int64

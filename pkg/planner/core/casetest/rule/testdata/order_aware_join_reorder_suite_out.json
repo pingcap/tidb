@@ -99,9 +99,9 @@
         "SQL": "explain format = 'plan_tree' select t6.id, t7.payload, t8.payload, t9.payload from t7 join t8 on t7.id = t8.id join t9 on t8.id = t9.id join t6 on t6.id = t7.id where t6.category = 'hot' and t9.payload = 1 order by t6.id limit 2",
         "Plan": [
           "Projection root  test.t6.id, test.t7.payload, test.t8.payload, test.t9.payload",
-          "└─TopN root  test.t6.id, offset:0, count:2",
+          "└─Limit root  offset:0, count:2",
           "  └─Projection root  test.t7.payload, test.t8.payload, test.t9.payload, test.t6.id",
-          "    └─IndexJoin root  inner join, inner:IndexReader, outer key:test.t7.id, inner key:test.t6.id, equal cond:eq(test.t7.id, test.t6.id)",
+          "    └─HashJoin root  inner join, equal:[eq(test.t7.id, test.t6.id)], keep probe order:true",
           "      ├─IndexHashJoin(Build) root  inner join, inner:IndexLookUp, outer key:test.t8.id, inner key:test.t7.id, equal cond:eq(test.t8.id, test.t7.id)",
           "      │ ├─IndexJoin(Build) root  inner join, inner:IndexLookUp, outer key:test.t9.id, inner key:test.t8.id, equal cond:eq(test.t9.id, test.t8.id)",
           "      │ │ ├─IndexReader(Build) root  index:IndexRangeScan",
@@ -113,7 +113,7 @@
           "      │   ├─IndexRangeScan(Build) cop[tikv] table:t7, index:idx_id(id) range: decided by [eq(test.t7.id, test.t8.id)], keep order:false",
           "      │   └─TableRowIDScan(Probe) cop[tikv] table:t7 keep order:false",
           "      └─IndexReader(Probe) root  index:IndexRangeScan",
-          "        └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range: decided by [eq(test.t6.id, test.t7.id) eq(test.t6.category, hot)], keep order:false"
+          "        └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range:[\"hot\",\"hot\"], keep order:true"
         ]
       },
       {
@@ -126,19 +126,19 @@
           "Projection root  test.t6.id, test.t7.payload, test.t8.payload, test.t9.payload",
           "└─Limit root  offset:0, count:2",
           "  └─Projection root  test.t7.payload, test.t8.payload, test.t9.payload, test.t6.id",
-          "    └─IndexJoin root  inner join, inner:IndexReader, outer key:test.t8.id, inner key:test.t9.id, equal cond:eq(test.t8.id, test.t9.id)",
-          "      ├─IndexHashJoin(Build) root  inner join, inner:IndexLookUp, outer key:test.t7.id, inner key:test.t8.id, equal cond:eq(test.t7.id, test.t8.id)",
-          "      │ ├─IndexHashJoin(Build) root  inner join, inner:IndexLookUp, outer key:test.t6.id, inner key:test.t7.id, equal cond:eq(test.t6.id, test.t7.id)",
-          "      │ │ ├─IndexReader(Build) root  index:IndexRangeScan",
-          "      │ │ │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range:[\"hot\",\"hot\"], keep order:true",
-          "      │ │ └─IndexLookUp(Probe) root  ",
-          "      │ │   ├─IndexRangeScan(Build) cop[tikv] table:t7, index:idx_id(id) range: decided by [eq(test.t7.id, test.t6.id)], keep order:false",
-          "      │ │   └─TableRowIDScan(Probe) cop[tikv] table:t7 keep order:false",
-          "      │ └─IndexLookUp(Probe) root  ",
-          "      │   ├─IndexRangeScan(Build) cop[tikv] table:t8, index:idx_id(id) range: decided by [eq(test.t8.id, test.t7.id)], keep order:false",
-          "      │   └─TableRowIDScan(Probe) cop[tikv] table:t8 keep order:false",
-          "      └─IndexReader(Probe) root  index:IndexRangeScan",
-          "        └─IndexRangeScan cop[tikv] table:t9, index:idx_payload_id(payload, id) range: decided by [eq(test.t9.id, test.t8.id) eq(test.t9.payload, 1)], keep order:false"
+          "    └─HashJoin root  inner join, equal:[eq(test.t8.id, test.t9.id)], keep probe order:true",
+          "      ├─IndexReader(Build) root  index:IndexRangeScan",
+          "      │ └─IndexRangeScan cop[tikv] table:t9, index:idx_payload_id(payload, id) range:[1,1], keep order:false",
+          "      └─IndexHashJoin(Probe) root  inner join, inner:IndexLookUp, outer key:test.t7.id, inner key:test.t8.id, equal cond:eq(test.t7.id, test.t8.id)",
+          "        ├─IndexHashJoin(Build) root  inner join, inner:IndexLookUp, outer key:test.t6.id, inner key:test.t7.id, equal cond:eq(test.t6.id, test.t7.id)",
+          "        │ ├─IndexReader(Build) root  index:IndexRangeScan",
+          "        │ │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range:[\"hot\",\"hot\"], keep order:true",
+          "        │ └─IndexLookUp(Probe) root  ",
+          "        │   ├─IndexRangeScan(Build) cop[tikv] table:t7, index:idx_id(id) range: decided by [eq(test.t7.id, test.t6.id)], keep order:false",
+          "        │   └─TableRowIDScan(Probe) cop[tikv] table:t7 keep order:false",
+          "        └─IndexLookUp(Probe) root  ",
+          "          ├─IndexRangeScan(Build) cop[tikv] table:t8, index:idx_id(id) range: decided by [eq(test.t8.id, test.t7.id)], keep order:false",
+          "          └─TableRowIDScan(Probe) cop[tikv] table:t8 keep order:false"
         ]
       }
     ]

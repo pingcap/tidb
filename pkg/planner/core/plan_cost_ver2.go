@@ -789,8 +789,9 @@ func getPlanCostVer24PhysicalHashJoin(pp base.PhysicalPlan, taskType property.Ta
 	buildRows := max(MinNumRows, getCardinality(build, option.CostFlag))
 	probeRows := getCardinality(probe, option.CostFlag)
 	buildRowSize := max(MinRowSize, getAvgRowSize(build.StatsInfo(), build.Schema().Columns))
-	// For order-preserving hash join, probe uses single-threaded execution (concurrency=1)
-	// to maintain order from the probe side, so don't divide probe cost by full concurrency.
+	// An order-preserving join probes on one worker to keep the probe-row order, so the
+	// probe half of the cost is not divided down by the join's concurrency. Build is
+	// unaffected and is not divided by concurrency here either way.
 	tidbProbeConcurrency := float64(p.Concurrency)
 	if p.KeepProbeOrder {
 		tidbProbeConcurrency = 1

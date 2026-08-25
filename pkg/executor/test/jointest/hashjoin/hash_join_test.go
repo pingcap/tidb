@@ -1035,3 +1035,153 @@ func TestIssue56825(t *testing.T) {
 		tk.MustQuery("select * from t1 right join t2 on t1.id = t2.id and t1.col1 <= t2.col1 order by t2.id").Check(testkit.Rows("1 2 1 2 3 4 5 6", "<nil> <nil> 3 4 5 6 7 8", "<nil> <nil> 4 5 6 7 8 9"))
 	}
 }
+
+// orderPreservingHashJoinData builds a probe table with an index on the ordering column
+// and a small build table that only covers part of the probe side's join keys.
+func orderPreservingHashJoinData(t *testing.T, tk *testkit.TestKit) {
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists probe, build")
+	tk.MustExec("create table probe(a int, b int, key(b))")
+	tk.MustExec("create table build(a int, c int)")
+	probeRows := make([]string, 0, 20000)
+	for i := range 20000 {
+		probeRows = append(probeRows, fmt.Sprintf("(%d,%d)", i%50, i))
+	}
+	tk.MustExec("insert into probe values " + strings.Join(probeRows, ","))
+	buildRows := make([]string, 0, 40)
+	for i := range 40 {
+		buildRows = append(buildRows, fmt.Sprintf("(%d,%d)", i, i*10))
+	}
+	tk.MustExec("insert into build values " + strings.Join(buildRows, ","))
+	tk.MustExec("analyze table probe, build")
+}
+
+// requireOrderedBy checks that col of every returned row is non-decreasing, which is what
+// an order-preserving hash join promises the Limit above it.
+func requireOrderedBy(t *testing.T, rows [][]any, col int) {
+	prev := -1
+	for i, row := range rows {
+		s := fmt.Sprintf("%v", row[col])
+		if s == "<nil>" {
+			continue
+		}
+		var v int
+		_, err := fmt.Sscanf(s, "%d", &v)
+		require.NoError(t, err)
+		require.LessOrEqualf(t, prev, v, "row %d breaks the ordering: %d after %d", i, v, prev)
+		prev = v
+	}
+}
+
+// TestOrderPreservingHashJoin covers the hash join that serves ORDER BY from its probe
+// side instead of leaving a Sort above the join.
+func TestOrderPreservingHashJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	orderPreservingHashJoinData(t, tk)
+
+	// The shapes the optimization is meant for: the ordering comes from the probe side and
+	// the parent only wants a few rows, so the Sort/TopN disappears.
+	for _, q := range []string{
+		"select /*+ hash_join(probe, build) */ probe.b from probe join build on probe.a = build.a order by probe.b limit 10",
+		"select /*+ hash_join(probe, build) */ probe.b from probe where probe.a in (select a from build) order by probe.b limit 10",
+		"select /*+ hash_join(probe, build) */ probe.b from probe where not exists (select 1 from build where build.a = probe.a) order by probe.b limit 10",
+	} {
+		plan := tk.MustQuery("explain " + q).String()
+		require.Containsf(t, plan, "keep probe order:true", "expected an order-preserving hash join for %s, got:\n%s", q, plan)
+		require.NotContainsf(t, plan, "TopN", "the TopN should be gone for %s, got:\n%s", q, plan)
+		requireOrderedBy(t, tk.MustQuery(q).Rows(), 0)
+	}
+
+	// A filter between the Limit and the join makes the join produce more rows than the
+	// Limit asks for; every one of them still has to come out.
+	q := "select /*+ hash_join(probe, build) */ probe.b from probe join build on probe.a = build.a where build.c > 100 order by probe.b limit 2000"
+	require.Contains(t, tk.MustQuery("explain "+q).String(), "keep probe order:true")
+	rows := tk.MustQuery(q).Rows()
+	require.Len(t, rows, 2000)
+	requireOrderedBy(t, rows, 0)
+}
+
+// TestOrderPreservingHashJoinRejected pins the cases the planner must not claim it can
+// order, because the executor that would run them does not preserve the probe order.
+func TestOrderPreservingHashJoinRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	orderPreservingHashJoinData(t, tk)
+
+	for _, tc := range []struct {
+		name string
+		prep string
+		sql  string
+	}{
+		{
+			// Hash join v1 has no order-preserving probe at all.
+			name: "hash join v1",
+			prep: "set @@tidb_hash_join_version = 'legacy'",
+			sql:  "select /*+ hash_join(probe, build) */ probe.b from probe join build on probe.a = build.a order by probe.b limit 3000",
+		},
+		{
+			// NullEQ keys are not supported by v2, so this falls back to v1.
+			name: "null-safe equal",
+			sql:  "select /*+ hash_join(probe, build) */ probe.b from probe join build on probe.a <=> build.a order by probe.b limit 3000",
+		},
+		{
+			// A cartesian join has no equal conditions, which v2 does not support either.
+			name: "cartesian join",
+			sql:  "select /*+ hash_join(probe, build) */ probe.b from probe join build on probe.a > build.a order by probe.b limit 3000",
+		},
+		{
+			// outerJoinProbe appends a batch's null-extended rows after that batch's
+			// matched rows, so probe order does not survive an outer join.
+			name: "left outer join",
+			sql:  "select /*+ hash_join(probe, build) */ probe.b from probe left join build on probe.a = build.a order by probe.b limit 3000",
+		},
+		{
+			// Without a limit the probe side is read to the end anyway, so there is
+			// nothing to gain from giving up probe parallelism.
+			name: "no limit",
+			sql:  "select /*+ hash_join(probe, build) */ probe.b from probe join build on probe.a = build.a order by probe.b",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			if tc.prep != "" {
+				tk.MustExec(tc.prep)
+			}
+			plan := tk.MustQuery("explain " + tc.sql).String()
+			require.NotContainsf(t, plan, "keep probe order:true",
+				"%s must not be planned as an order-preserving hash join, got:\n%s", tc.name, plan)
+			requireOrderedBy(t, tk.MustQuery(tc.sql).Rows(), 0)
+		})
+	}
+}
+
+// TestOrderPreservingHashJoinOuterBuild makes sure a build side that is also the outer
+// side keeps emitting all of its unmatched rows: that scan is split across Concurrency
+// workers, while an order-preserving join only runs one of them.
+func TestOrderPreservingHashJoinOuterBuild(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists big, small")
+	tk.MustExec("create table big(a int, b int)")
+	tk.MustExec("create table small(a int, c int, key(c))")
+	bigRows := make([]string, 0, 20000)
+	for i := range 20000 {
+		bigRows = append(bigRows, fmt.Sprintf("(%d,%d)", i, i))
+	}
+	tk.MustExec("insert into big values " + strings.Join(bigRows, ","))
+	smallRows := make([]string, 0, 3000)
+	for i := range 3000 {
+		smallRows = append(smallRows, fmt.Sprintf("(%d,%d)", i, i))
+	}
+	tk.MustExec("insert into small values " + strings.Join(smallRows, ","))
+	tk.MustExec("analyze table big, small")
+
+	q := "select /*+ hash_join(big, small), hash_join_build(big) */ small.c, big.b from big left join small on big.a = small.a order by small.c limit 20000"
+	require.NotContains(t, tk.MustQuery("explain "+q).String(), "keep probe order:true")
+	rows := tk.MustQuery(q).Rows()
+	require.Len(t, rows, 20000)
+	requireOrderedBy(t, rows, 0)
+}

@@ -166,6 +166,12 @@ func (h *hashJoinSpillHelper) areAllPartitionsSpilled() bool {
 // Set flag so that we can trigger other executor's spill when
 // hash join can not spill.
 func (h *hashJoinSpillHelper) setCanSpillFlag(canSpill bool) {
+	// Spilling re-partitions the probe side and replays it in restore rounds, which
+	// destroys the probe-row order an order-preserving join promised its parent. Such a
+	// join never spills; it falls back to the ordinary memory-quota action instead.
+	if canSpill && h.hashJoinExec != nil && h.hashJoinExec.KeepProbeOrder {
+		canSpill = false
+	}
 	h.canSpillFlag.Store(canSpill)
 }
 
