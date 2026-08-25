@@ -435,6 +435,36 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       outright, so it goes with the chain rather than being replaced.
       Every one of these is reached through `MultiStatementTransaction`, so
       none can be removed ahead of that migration.
+- [ ] **`MultiStatementTransaction` migration: mapped in full, blocked on one
+      upstream signal (2026-08-25).** Went at the type everything is gated
+      behind. It is far less coupled than the line count suggests -- 6 buffer
+      call sites, and the engine surface it uses is just `start_ts`,
+      `locked_keys`, `snapshot_get`, `for_update_get`, `commit`,
+      `finish_without_writes`, `pessimistic_rollback`, `into_two_pc`.
+      The migration *simplifies* it, which is the sign it is the right
+      direction. Three things dissolve into the engine rather than being
+      ported: the `OpenTransaction` optimistic/pessimistic enum (client-go
+      has one `KVTxn` with a flag, not two types), `finish()`'s
+      pessimistic branch with its explicit `pessimistic_rollback(held)` +
+      `into_two_pc()` dance (client-go's `Rollback` releases pessimistic
+      locks itself), and `LockKeepAlive` (client-go runs the TTL heartbeat
+      internally). `TransactionMutationBuffer` goes with them.
+      **The blocker: `check_lock_expired` has no engine equivalent to call.**
+      It is Go `session.checkTxnAborted` -- past client-go's `MaxTxnTTL` the
+      TTL manager gives up, TiKV may let another transaction resolve the
+      locks this one believes it holds, and a statement reading through them
+      is the lost-update shape, so TiDB admits only COMMIT/ROLLBACK from
+      that point. The engine tracks exactly this state internally
+      (`pipelined_heartbeat_failed`, the `ttl_manager_closed` check in
+      `transaction.rs`) but exposes no accessor: its public TTL surface is
+      `send_heart_beat`, `heartbeat_option`, `is_auto_heartbeat`.
+      Dropping the check would silently lose a real safety property;
+      reimplementing the TTL manager TiDB-side is precisely the client-go
+      duplication this migration removes. So this needs a small upstream
+      addition -- an `is_lock_expired()`-style accessor -- and is the fourth
+      gap to raise, after the public `proto` module, the injected-PD
+      constructor, and the ungated in-process store (all three since
+      absorbed).
 - [ ] Phase 4: full-workspace build, targeted + aggregate test pass, `make
       bazel_prepare` (Go-file-count is unaffected, but Bazel metadata for the
       Rust crates does not apply — confirm scope; see `Concrete Steps`),
