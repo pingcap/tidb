@@ -292,6 +292,37 @@ func TestWalk(t *testing.T) {
 		}, events)
 	})
 
+	t.Run("as_of_child_stop_propagation", func(t *testing.T) {
+		t.Run("visitor", func(t *testing.T) {
+			asOf := &parserast.AsOfClause{TsExpr: &test_driver.ValueExpr{}}
+			root := &parserast.TableName{AsOf: asOf}
+			visitor := &testVisitor{
+				enter: func(n parserast.Node) (parserast.Node, bool) {
+					return n, false
+				},
+				leave: func(n parserast.Node) (parserast.Node, bool) {
+					return n, n != asOf
+				},
+			}
+
+			_, ok := root.Accept(visitor)
+			require.False(t, ok)
+		})
+
+		t.Run("in_place_visitor", func(t *testing.T) {
+			asOf := &parserast.AsOfClause{TsExpr: &test_driver.ValueExpr{}}
+			root := &parserast.TableName{AsOf: asOf}
+			visitor := &testInPlaceVisitor{
+				enter: func(parserast.Node) bool { return false },
+				leave: func(n parserast.Node) bool {
+					return n != asOf
+				},
+			}
+
+			require.False(t, parserast.Walk(root, visitor))
+		})
+	})
+
 	t.Run("in_place_mutation", func(t *testing.T) {
 		column := &parserast.ColumnName{Name: parserast.NewCIStr("original")}
 		root := &parserast.ColumnNameExpr{Name: column}

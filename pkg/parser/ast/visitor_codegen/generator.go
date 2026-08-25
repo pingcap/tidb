@@ -11,8 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package visitor_codegen generates AST traversal methods for InPlaceVisitor.
-package visitor_codegen
+// Package codegen generates AST traversal methods for InPlaceVisitor.
+package codegen
 
 import (
 	"bytes"

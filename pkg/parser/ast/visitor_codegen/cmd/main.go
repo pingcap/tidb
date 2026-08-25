@@ -26,9 +26,9 @@ func main() {
 	output := flag.String("output", "pkg/parser/ast/visitor_inplace_generated.go", "generated output path")
 	flag.Parse()
 
-	result, err := visitor_codegen.Generate(visitor_codegen.GenerateRequest{SourceDir: *sourceDir})
+	result, err := codegen.Generate(codegen.GenerateRequest{SourceDir: *sourceDir})
 	if err == nil {
-		err = visitor_codegen.WriteFileAtomically(*output, result.Source)
+		err = codegen.WriteFileAtomically(*output, result.Source)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

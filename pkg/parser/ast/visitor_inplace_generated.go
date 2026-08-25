@@ -690,8 +690,8 @@ func (n *TableName) AcceptInPlace(v InPlaceVisitor) bool {
 		}
 	}
 	if n.AsOf != nil {
-		if n.AsOf.AcceptInPlace(v) {
-			return v.Leave(n)
+		if !n.AsOf.AcceptInPlace(v) {
+			return false
 		}
 	}
 	return v.Leave(n)
