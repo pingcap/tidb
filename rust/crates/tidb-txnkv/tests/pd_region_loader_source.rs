@@ -33,7 +33,9 @@ use tidb_txnkv::region::{
 use tidb_txnkv::region::{
     PeerRole, RegionMetadata, RegionMetadataPeer, RegionRecoveryLoader, RegionVerId,
 };
+use tidb_txnkv::driver::tikv_pd_bridge::TidbPdBridge;
 use tidb_txnkv::PdRegionLoader;
+use tikv_client::region_cache::RegionCache as EngineRegionCache;
 use tokio_stream::wrappers::ReceiverStream;
 
 const CLUSTER_ID: u64 = 84;
@@ -993,4 +995,31 @@ fn store_response(
             node_state: node_state as i32,
         }),
     }
+}
+
+#[test]
+fn engine_region_cache_routes_through_the_injected_tidb_pd_client() {
+    // Go boundary: `pkg/store/driver/tikv_driver.go`. TiDB builds the PD
+    // client and hands it to `tikv.NewKVStore`; the engine's region cache
+    // then routes on top of it. This drives that exact composition: TiDB's
+    // own PD client, injected, answering the engine's region lookups.
+    let server = Server::start(valid_state());
+    let pd = tidb_pd_client::PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let cache = EngineRegionCache::new(Arc::new(TidbPdBridge::new(Arc::new(pd))));
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let region = runtime
+        .block_on(cache.get_region_by_key(&encoded(b"logical-start").into()))
+        .unwrap();
+
+    assert_eq!(region.region.id, 7);
+    assert_eq!(region.region.start_key, encoded(b"logical-start"));
+    assert_eq!(region.region.end_key, encoded(b"logical-end"));
+    let epoch = region.region.region_epoch.expect("epoch survives the bridge");
+    assert_eq!((epoch.conf_ver, epoch.version), (3, 4));
+    assert_eq!(region.leader.expect("leader survives the bridge").id, 11);
 }

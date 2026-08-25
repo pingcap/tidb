@@ -618,6 +618,31 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
     phase markers were `pub(crate)`, making
     `single_region_with_store(...).plan()` — the client-go `SendReq`
     equivalent — unusable downstream (patch 080).
+  - *API gap raised upstream, deliberately NOT patch-carried (2026-08-25):*
+    **`PdRpcClient` cannot take an injected PD client.** Go's
+    `tikv.NewKVStore(uuid, pdClient, spkv, rpcClient, ...)` accepts a
+    caller-built `pd.Client`; TiDB uses that to inject its own
+    (`tikv_driver.go`). `RetryClientTrait` is the matching seam and
+    `RegionCache<C>`/`CodecPdClient<C>` are already generic over it, but
+    `PdRpcClient` pins its two fields to `RetryClient<Cl>`
+    (`pd: Arc<RetryClient<Cl>>`, `region_cache:
+    Arc<RegionCache<CodecPdClient<RetryClient<Cl>>>>`), and
+    `RetryClientTrait` is implemented only for `RetryClient<Cluster>`. So an
+    external PD client reaches a `RegionCache` but not the engine stack.
+    The fix is to make the second type parameter the PD client itself:
+    `PdRpcClient<KvC = TikvConnect, Pd = RetryClient<Cluster>>` with
+    `Pd: RetryClientTrait + Send + Sync + 'static`, which is a mechanical
+    rename of ~8 sites in `pd/client.rs`. Tried locally and reverted: it
+    also needs `cluster_id` lifted onto `RetryClientTrait` (a default of `0`
+    mirrors `PdClient::cluster_id` exactly), forwarding in
+    `CodecPdClient`, and `mock.rs`'s `pd_rpc_client()` — typed
+    `PdRpcClient<MockKvConnect, MockCluster>` — reworked, since
+    `RetryClient<MockCluster>` has no `RetryClientTrait` impl. Touching
+    `client.rs` + `retry.rs` + `codec.rs` + `mock.rs` in a carried patch
+    would conflict on nearly every resync, so this is raised for upstream
+    rather than patched here. Until it lands, `tikv_pd_bridge.rs` is
+    complete and usable against `RegionCache` directly; only the full-stack
+    injection waits.
   - *The one remaining architectural divergence that matters:*
     **`Transaction`'s internal buffer is not the memdb.** Client-go's
     `KVTxn` commits directly out of the `unionstore.MemDB` TiDB stages
