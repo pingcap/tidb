@@ -1897,7 +1897,9 @@ impl IndexRangeSourceExec {
             if let Some(cursor) = self.cursor.as_mut() {
                 let entry = cursor
                     .next_handle_in_partition()
-                    .map_err(|_| ExecError::unsupported("index bytes failed to decode"))?;
+                    .map_err(|error| {
+                        ExecError::unsupported(format!("index bytes failed to decode: {error:?}"))
+                    })?;
                 if let Some(entry) = entry {
                     return Ok(Some(entry));
                 }
@@ -3017,7 +3019,9 @@ impl IndexMergeSourceExec {
             if let Some(cursor) = self.cursor.as_mut() {
                 let handle = cursor
                     .next_handle()
-                    .map_err(|_| ExecError::unsupported("index bytes failed to decode"))?;
+                    .map_err(|error| {
+                        ExecError::unsupported(format!("index bytes failed to decode: {error:?}"))
+                    })?;
                 if let Some(handle) = handle {
                     if self.seen.insert(handle.clone()) {
                         return Ok(Some(handle));
@@ -3710,7 +3714,9 @@ impl IndexJoinLookupExec {
             if let Some(cursor) = self.cursor.as_mut() {
                 let handle = cursor
                     .next_handle()
-                    .map_err(|_| ExecError::unsupported("index bytes failed to decode"))?;
+                    .map_err(|error| {
+                        ExecError::unsupported(format!("index bytes failed to decode: {error:?}"))
+                    })?;
                 if let Some(handle) = handle {
                     return Ok(Some(handle));
                 }
