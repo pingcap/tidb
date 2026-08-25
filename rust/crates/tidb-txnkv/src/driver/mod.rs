@@ -18,4 +18,5 @@
 pub mod mem_buffer;
 pub mod read;
 pub mod tikv_mem_buffer;
+pub mod tikv_transaction;
 pub mod transaction_error;
