@@ -231,3 +231,37 @@ interrupted by the reboot -- rerun bench/measure-suite.sh (~2.5h);
 (b) random_points/ranges scan-path gap (flat profile: context switches +
 allocations, architectural); (c) restart no-regress-loop.sh as the
 standing guard (verdicts by rust/go ratio, THRESH=0.92, median-of-3).
+
+## UPDATE #6 (2026-08-25): scan-gap RPC accounting CORRECTED
+TiKV-side counters (status :20180), clean experiment, 100x
+`SELECT ... WHERE k IN (10 points)`:
+- rust node: 2.48 cop RPC/query (unknown priority family)
+- go node:   1.9 cop RPC/query (batch family)
+Both sides group the 10 point ranges into the ~2 regions that hold the
+k_1 index. The earlier "rust issues one request per range" suspicion was
+WRONG -- the delta included concurrent go-TiDB stats-worker traffic.
+Conclusion: the random_points/ranges gap (~0.37) is NOT a per-range RPC
+multiplier. Remaining cost is per-request CPU and scheduling (flat
+profile: context switches ~14%, malloc band ~10%, eval_binary 2.4%),
+i.e. an engineering campaign on the unary transport's per-request path,
+not a single fix. Store-batching is additionally gated off in the
+direct-unary transport by design (CopReadTaskError::StoreBatching);
+enabling it requires implementing batched dispatch in that transport
+first (Go: pkg/store/copr/coprocessor.go:657 batchTasksByStore).
+
+## STEADY-STATE (2026-08-26): loop self-healing + 2min/workload cadence
+Gate loop changes after the false-flag storm:
+* supervisor auto-restarts the loop AND the rust node (watchdog); waits out
+  go-node outages instead of dying.
+* regression verdicts use the rust/go RATIO; when a verdict fires but git
+  HEAD is UNCHANGED since the cycle start, it is machine drift: baselines
+  for the convicted workloads recalibrate to fresh medians and the loop
+  CONTINUES (logged as DRIFT). Only a real code change can now produce a
+  hard REGRESSION exit.
+* workload measurement widened to 60s/side (2min/workload), confirm runs
+  median-of-2.
+Steady-state averages over the latest 6 cycles:
+point_select .954 | read_write .812 | write_only .922 | update_index .795 |
+update_non_index .713 | insert .807 | read_only .767 | random_points .779 |
+random_ranges .515. Day-over-day identical within noise => no hidden code
+regression; residual gap is concentrated in range-scan workloads.
