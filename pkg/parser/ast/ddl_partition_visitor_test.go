@@ -111,7 +111,7 @@ func TestPartitionVisitorHelpersPreserveChildOrder(t *testing.T) {
 	}
 
 	legacy := &partitionLegacyVisitor{names: names}
-	require.True(t, method.acceptWithVisitor(legacy))
+	require.True(t, method.acceptInPlace(legacy))
 	require.Equal(t, expected, legacy.events)
 
 	inPlace := &partitionInPlaceVisitor{names: names}
@@ -168,7 +168,7 @@ func TestPartitionDefinitionVisitorHelpersPreserveClauseOrder(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			legacy := &partitionLegacyVisitor{names: testCase.names}
-			require.True(t, testCase.definition.acceptWithVisitor(legacy))
+			require.True(t, testCase.definition.acceptInPlace(legacy))
 			require.Equal(t, testCase.expected, legacy.events)
 
 			inPlace := &partitionInPlaceVisitor{names: testCase.names}
@@ -188,7 +188,7 @@ func TestPartitionVisitorHelpersPreserveSkipAndStop(t *testing.T) {
 		expected := []string{"enter expr", "leave expr", "enter column", "leave column"}
 
 		legacy := &partitionLegacyVisitor{names: names, skip: expr}
-		require.True(t, method.acceptWithVisitor(legacy))
+		require.True(t, method.acceptInPlace(legacy))
 		require.Equal(t, expected, legacy.events)
 
 		inPlace := &partitionInPlaceVisitor{names: names, skip: expr}
@@ -204,7 +204,7 @@ func TestPartitionVisitorHelpersPreserveSkipAndStop(t *testing.T) {
 		expected := []string{"enter expr", "leave expr"}
 
 		legacy := &partitionLegacyVisitor{names: names, stop: expr}
-		require.False(t, method.acceptWithVisitor(legacy))
+		require.False(t, method.acceptInPlace(legacy))
 		require.Equal(t, expected, legacy.events)
 
 		inPlace := &partitionInPlaceVisitor{names: names, stop: expr}
@@ -226,7 +226,7 @@ func TestPartitionVisitorHelpersPreserveSkipAndStop(t *testing.T) {
 		}
 
 		legacy := &partitionLegacyVisitor{names: names, stop: second}
-		require.False(t, definition.acceptWithVisitor(legacy))
+		require.False(t, definition.acceptInPlace(legacy))
 		require.Equal(t, expected, legacy.events)
 
 		inPlace := &partitionInPlaceVisitor{names: names, stop: second}
@@ -294,8 +294,8 @@ func TestPartitionWalkInPlaceMutatesWithoutFrameworkWriteback(t *testing.T) {
 			},
 		}
 
-		require.True(t, method.acceptWithVisitor(visitor))
-		require.True(t, clause.acceptWithVisitor(visitor))
+		require.True(t, method.acceptInPlace(visitor))
+		require.True(t, clause.acceptInPlace(visitor))
 		require.Same(t, methodReplacement, method.Expr)
 		require.Same(t, clauseReplacement, clause.Exprs[0])
 	})

@@ -44,9 +44,7 @@ func TestGenerateTraversalGrammar(t *testing.T) {
 	source := string(result.Source)
 	for _, exact := range []string{
 		`func (n *LeafNode) acceptInPlace(v InPlaceVisitor) bool {
-	if skipChildren := v.Enter(n); skipChildren {
-		return v.Leave(n)
-	}
+	v.Enter(n)
 	return v.Leave(n)
 }`,
 		`func (n *InlineNode) acceptInPlace(v InPlaceVisitor) bool {
@@ -96,11 +94,6 @@ func TestGenerateTraversalGrammar(t *testing.T) {
 	}`,
 		`if n.Optional != nil {
 		if !n.Optional.acceptInPlace(v) {
-			return false
-		}
-	}`,
-		`if n.InlineLeaf != nil {
-		if !n.InlineLeaf.acceptInPlace(v) {
 			return false
 		}
 	}`,
@@ -201,27 +194,6 @@ func TestGenerateRejectsUnsupportedTraversalGrammar(t *testing.T) {
 			t.Errorf("error %q does not contain %q", err, want)
 		}
 	}
-
-	t.Run("inexact_inlined_leaf_sequence", func(t *testing.T) {
-		dir := t.TempDir()
-		writeFixture(t, dir, "inexact_inline.go", inexactInlinedLeafFixture)
-		result, err := Generate(GenerateRequest{
-			SourceDir:         dir,
-			TraversalFiles:    []string{"inexact_inline.go"},
-			ExpectedReceivers: []string{"ConcreteChild", "InexactInlineNode"},
-		})
-		if err == nil {
-			t.Fatal("expected inexact inlined leaf grammar error")
-		}
-		if len(result.Source) != 0 {
-			t.Fatalf("returned partial source after transform failure:\n%s", result.Source)
-		}
-		for _, want := range []string{"inexact_inline.go", "InexactInlineNode", "leaf Accept fast path"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("error %q does not contain %q", err, want)
-			}
-		}
-	})
 }
 
 func TestGenerateRejectsMismatchedDirectWriteback(t *testing.T) {
@@ -612,13 +584,12 @@ type LockInfo struct {
 
 type replacementHelper struct{}
 
-func (replacementHelper) acceptWithVisitor(Visitor) bool { return true }
+func (replacementHelper) acceptInPlace(Visitor) bool { return true }
 func (replacementHelper) walkInPlace(InPlaceVisitor) bool { return true }
 
 type FixtureNode struct {
 	Concrete *ConcreteChild
 	Optional *ConcreteChild
-	InlineLeaf *ConcreteChild
 	Dynamic  ExprNode
 	Children []*ConcreteChild
 	LegacyChildren []*ConcreteChild
@@ -665,15 +636,6 @@ func (n *FixtureNode) Accept(v Visitor) (Node, bool) {
 		}
 		n.Optional, _ = node.(*ConcreteChild)
 	}
-	if n.InlineLeaf != nil {
-		newLeaf, _ := v.Enter(n.InlineLeaf)
-		node, ok := v.Leave(newLeaf)
-		if !ok {
-			return n, false
-		}
-		n.InlineLeaf = node.(*ConcreteChild)
-	}
-
 	newChildren := make([]*ConcreteChild, len(n.Children))
 	for i, child := range n.Children {
 		node, ok := child.Accept(v)
@@ -723,7 +685,7 @@ func (n *FixtureNode) Accept(v Visitor) (Node, bool) {
 		}
 	}
 
-	if !n.Helper.acceptWithVisitor(v) {
+	if !n.Helper.acceptInPlace(v) {
 		return n, false
 	}
 
@@ -917,53 +879,6 @@ func (n *UnsupportedNode) Accept(v Visitor) (Node, bool) {
 		if !ok { return n, false }
 		n.Child = child.(*ConcreteChild)
 	}
-	return v.Leave(n)
-}
-`
-
-const inexactInlinedLeafFixture = `package fixture
-
-type Node interface {
-	Accept(Visitor) (Node, bool)
-}
-
-type Visitor interface {
-	Enter(Node) (Node, bool)
-	Leave(Node) (Node, bool)
-}
-
-type InPlaceVisitor interface {
-	Enter(Node) bool
-	Leave(Node) bool
-}
-
-type ConcreteChild struct{}
-
-func (n *ConcreteChild) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ConcreteChild)
-	return v.Leave(n)
-}
-
-type InexactInlineNode struct {
-	Child *ConcreteChild
-}
-
-func (n *InexactInlineNode) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*InexactInlineNode)
-	newChild, _ := v.Enter(n.Child)
-	node, ok := v.Leave(newChild)
-	if !ok {
-		return n, false
-	}
-	n.Child = node.(*ConcreteChild)
 	return v.Leave(n)
 }
 `

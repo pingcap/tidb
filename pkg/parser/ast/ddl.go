@@ -4298,7 +4298,7 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 		n.Options[i] = node.(*TableOption)
 	}
 	for _, def := range n.PartDefinitions {
-		if !def.acceptWithVisitor(v) {
+		if !def.acceptInPlace(v) {
 			return n, false
 		}
 	}
@@ -4455,7 +4455,7 @@ func (spd *SubPartitionDefinition) Restore(ctx *format.RestoreCtx) error {
 
 type PartitionDefinitionClause interface {
 	restore(ctx *format.RestoreCtx) error
-	acceptWithVisitor(v Visitor) bool
+	acceptInPlace(v Visitor) bool
 	walkInPlace(v InPlaceVisitor) bool
 	// Validate checks if the clause is consistent with the given options.
 	// `pt` can be 0 and `columns` can be -1 to skip checking the clause against
@@ -4469,7 +4469,7 @@ func (*PartitionDefinitionClauseNone) restore(_ *format.RestoreCtx) error {
 	return nil
 }
 
-func (*PartitionDefinitionClauseNone) acceptWithVisitor(_ Visitor) bool {
+func (*PartitionDefinitionClauseNone) acceptInPlace(_ Visitor) bool {
 	return true
 }
 
@@ -4509,7 +4509,7 @@ func (n *PartitionDefinitionClauseLessThan) restore(ctx *format.RestoreCtx) erro
 	return nil
 }
 
-func (n *PartitionDefinitionClauseLessThan) acceptWithVisitor(v Visitor) bool {
+func (n *PartitionDefinitionClauseLessThan) acceptInPlace(v Visitor) bool {
 	for i, expr := range n.Exprs {
 		newExpr, ok := expr.Accept(v)
 		if !ok {
@@ -4589,7 +4589,7 @@ func (n *PartitionDefinitionClauseIn) restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-func (n *PartitionDefinitionClauseIn) acceptWithVisitor(v Visitor) bool {
+func (n *PartitionDefinitionClauseIn) acceptInPlace(v Visitor) bool {
 	for _, valList := range n.Values {
 		for j, val := range valList {
 			newVal, ok := val.Accept(v)
@@ -4673,7 +4673,7 @@ func (n *PartitionDefinitionClauseHistory) restore(ctx *format.RestoreCtx) error
 	return nil
 }
 
-func (*PartitionDefinitionClauseHistory) acceptWithVisitor(_ Visitor) bool {
+func (*PartitionDefinitionClauseHistory) acceptInPlace(_ Visitor) bool {
 	return true
 }
 
@@ -4710,8 +4710,8 @@ func (n *PartitionDefinition) Comment() (string, bool) {
 	return "", false
 }
 
-func (n *PartitionDefinition) acceptWithVisitor(v Visitor) bool {
-	return n.Clause.acceptWithVisitor(v)
+func (n *PartitionDefinition) acceptInPlace(v Visitor) bool {
+	return n.Clause.acceptInPlace(v)
 }
 
 func (n *PartitionDefinition) walkInPlace(v InPlaceVisitor) bool {
@@ -4879,8 +4879,8 @@ func (n *PartitionMethod) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// acceptWithVisitor is like Node.Accept but does not allow replacing the node itself.
-func (n *PartitionMethod) acceptWithVisitor(v Visitor) bool {
+// acceptInPlace is like Node.Accept but does not allow replacing the node itself.
+func (n *PartitionMethod) acceptInPlace(v Visitor) bool {
 	if n.Expr != nil {
 		expr, ok := n.Expr.Accept(v)
 		if !ok {
@@ -5035,14 +5035,14 @@ func (n *PartitionOptions) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*PartitionOptions)
-	if !n.PartitionMethod.acceptWithVisitor(v) {
+	if !n.PartitionMethod.acceptInPlace(v) {
 		return n, false
 	}
-	if n.Sub != nil && !n.Sub.acceptWithVisitor(v) {
+	if n.Sub != nil && !n.Sub.acceptInPlace(v) {
 		return n, false
 	}
 	for _, def := range n.Definitions {
-		if !def.acceptWithVisitor(v) {
+		if !def.acceptInPlace(v) {
 			return n, false
 		}
 	}

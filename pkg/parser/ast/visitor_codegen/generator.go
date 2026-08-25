@@ -281,7 +281,6 @@ type parsedPackage struct {
 	files     map[string]*ast.File
 	types     map[string]*ast.TypeSpec
 	methods   map[string]map[string]string
-	leaves    map[string]bool
 	receivers map[string]struct{}
 }
 
@@ -449,7 +448,6 @@ func parsePackage(request GenerateRequest) (*parsedPackage, []string, error) {
 		files:     make(map[string]*ast.File, len(allFiles)),
 		types:     make(map[string]*ast.TypeSpec),
 		methods:   make(map[string]map[string]string),
-		leaves:    make(map[string]bool),
 		receivers: make(map[string]struct{}),
 	}
 	for _, filename := range allFiles {
@@ -470,9 +468,6 @@ func parsePackage(request GenerateRequest) (*parsedPackage, []string, error) {
 		for _, decl := range file.Decls {
 			if method, ok := decl.(*ast.FuncDecl); ok && method.Recv != nil {
 				receiver, receiverOK := anyReceiverTypeName(method)
-				if receiverOK && isAcceptMethod(method) {
-					pkg.leaves[receiver] = isInlineableLeafAccept(method)
-				}
 				if receiverOK && method.Type.Params != nil && len(method.Type.Params.List) == 1 {
 					parameter, parameterOK := method.Type.Params.List[0].Type.(*ast.Ident)
 					if parameterOK {
@@ -584,12 +579,26 @@ func transformAccept(pkg *parsedPackage, filename string, fn *ast.FuncDecl) (*as
 			receiverVar: {typ: &ast.StarExpr{X: ast.NewIdent(receiverName)}},
 		},
 	}
+	standardLeaf := isStandardLeafAccept(fn)
 	body, err := transformer.transformBlock(fn.Body)
 	if err != nil {
 		return nil, err
 	}
 	if err := transformer.validateTransformedBody(body); err != nil {
 		return nil, err
+	}
+	// A leaf calls Leave for either Enter result, so direct traversal does not need the skip branch.
+	if standardLeaf {
+		body = &ast.BlockStmt{List: []ast.Stmt{
+			&ast.ExprStmt{X: &ast.CallExpr{
+				Fun:  &ast.SelectorExpr{X: ast.NewIdent(visitorVar), Sel: ast.NewIdent("Enter")},
+				Args: []ast.Expr{ast.NewIdent(receiverVar)},
+			}},
+			&ast.ReturnStmt{Results: []ast.Expr{&ast.CallExpr{
+				Fun:  &ast.SelectorExpr{X: ast.NewIdent(visitorVar), Sel: ast.NewIdent("Leave")},
+				Args: []ast.Expr{ast.NewIdent(receiverVar)},
+			}}},
+		}}
 	}
 	return &ast.FuncDecl{
 		Recv: fn.Recv,
@@ -610,32 +619,6 @@ func (t *methodTransformer) transformBlock(block *ast.BlockStmt) (*ast.BlockStmt
 	result := make([]ast.Stmt, 0, len(statements))
 	for i := 0; i < len(statements); i++ {
 		statement := statements[i]
-		inlinedLeaf, ok, err := t.inlinedLeafChild(statements[i:])
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			call, err := t.inPlaceCall(inlinedLeaf.child.receiver)
-			if err != nil {
-				return nil, err
-			}
-			checkBody, err := t.transformBlock(inlinedLeaf.check.Body)
-			if err != nil {
-				return nil, err
-			}
-			result = append(result, &ast.IfStmt{
-				Cond: &ast.UnaryExpr{Op: token.NOT, X: call},
-				Body: checkBody,
-			})
-			if identifierUsedInStatements(statements[i+4:], inlinedLeaf.enteredName) {
-				return nil, t.errorAt(statement.Pos(), "inlined leaf Enter result %s is used after traversal", inlinedLeaf.enteredName)
-			}
-			if err := t.ensureNoDelayedChildResultUse(statements[i+4:], inlinedLeaf.child); err != nil {
-				return nil, err
-			}
-			i += 3
-			continue
-		}
 		enter, isEnter, err := t.enterAssignment(statement)
 		if err != nil {
 			return nil, err
@@ -1247,10 +1230,6 @@ func (t *methodTransformer) validateTransformedBody(body *ast.BlockStmt) error {
 				validationErr = t.errorAt(current.Pos(), "unsupported traversal grammar retains shouldReplaceNode")
 				return false
 			}
-			if selector, ok := current.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "acceptWithVisitor" {
-				validationErr = t.errorAt(current.Pos(), "unsupported traversal grammar retains %s", expressionString(current.Fun))
-				return false
-			}
 		case *ast.ReturnStmt:
 			if len(current.Results) != 1 {
 				validationErr = t.errorAt(current.Pos(), "unsupported traversal return has %d results", len(current.Results))
@@ -1280,101 +1259,63 @@ type childCall struct {
 	okName   string
 }
 
-type inlinedLeafChild struct {
-	child       childCall
-	check       *ast.IfStmt
-	enteredName string
-}
-
-func (t *methodTransformer) inlinedLeafChild(statements []ast.Stmt) (inlinedLeafChild, bool, error) {
-	if len(statements) < 4 {
-		return inlinedLeafChild{}, false, nil
-	}
-	enter, ok := statements[0].(*ast.AssignStmt)
-	if !ok || enter.Tok != token.DEFINE || len(enter.Lhs) != 2 || len(enter.Rhs) != 1 || !isIdent(enter.Lhs[1], "_") {
-		return inlinedLeafChild{}, false, nil
-	}
-	enteredName := identName(enter.Lhs[0])
-	enterCall, ok := enter.Rhs[0].(*ast.CallExpr)
-	if !ok || enteredName == "" || !isMethodCall(enterCall, t.visitorVar, "Enter") || len(enterCall.Args) != 1 {
-		return inlinedLeafChild{}, false, nil
-	}
-	receiver := enterCall.Args[0]
-	if isIdent(receiver, t.receiverVar) {
-		return inlinedLeafChild{}, false, nil
-	}
-	receiverType, _, err := t.resolveExprType(receiver)
-	if err != nil {
-		return inlinedLeafChild{}, false, t.errorAt(receiver.Pos(), "cannot resolve inlined leaf receiver %s: %v", expressionString(receiver), err)
-	}
-	pointer, ok := receiverType.(*ast.StarExpr)
-	if !ok {
-		return inlinedLeafChild{}, false, t.errorAt(receiver.Pos(), "inlined leaf receiver %s must be a pointer, got %s", expressionString(receiver), expressionString(receiverType))
-	}
-	receiverName := identName(pointer.X)
-	if receiverName == "" || !t.pkg.leaves[receiverName] {
-		return inlinedLeafChild{}, false, t.errorAt(receiver.Pos(), "inlined leaf receiver %s must use the leaf Accept fast path", expressionString(receiver))
-	}
-
-	leave, ok := statements[1].(*ast.AssignStmt)
-	if !ok || leave.Tok != token.DEFINE || len(leave.Lhs) != 2 || len(leave.Rhs) != 1 {
-		return inlinedLeafChild{}, false, nil
-	}
-	leaveCall, ok := leave.Rhs[0].(*ast.CallExpr)
-	if !ok || !isMethodCall(leaveCall, t.visitorVar, "Leave") || len(leaveCall.Args) != 1 || !isIdent(leaveCall.Args[0], enteredName) {
-		return inlinedLeafChild{}, false, nil
-	}
-	child := childCall{
-		call:     leaveCall,
-		receiver: receiver,
-		nodeName: identName(leave.Lhs[0]),
-		okName:   identName(leave.Lhs[1]),
-	}
-	if child.nodeName == "" || child.okName == "" || child.okName == "_" {
-		return inlinedLeafChild{}, false, nil
-	}
-
-	check, ok := statements[2].(*ast.IfStmt)
-	if !ok || check.Init != nil || check.Else != nil {
-		return inlinedLeafChild{}, false, nil
-	}
-	positive, ok := boolCondition(check.Cond, child.okName)
-	if !ok || positive {
-		return inlinedLeafChild{}, false, nil
-	}
-	writeback, err := t.validateDirectChildWriteback(statements[3], child)
-	if err != nil {
-		return inlinedLeafChild{}, false, err
-	}
-	if !writeback {
-		return inlinedLeafChild{}, false, nil
-	}
-	return inlinedLeafChild{child: child, check: check, enteredName: enteredName}, true, nil
-}
-
-func isInlineableLeafAccept(method *ast.FuncDecl) bool {
+func isStandardLeafAccept(method *ast.FuncDecl) bool {
 	if method == nil || method.Recv == nil || len(method.Recv.List) != 1 || len(method.Recv.List[0].Names) != 1 ||
 		method.Type.Params == nil || len(method.Type.Params.List) != 1 || len(method.Type.Params.List[0].Names) != 1 ||
-		method.Body == nil || len(method.Body.List) != 2 {
+		method.Body == nil || len(method.Body.List) != 4 {
 		return false
 	}
 	receiverName := method.Recv.List[0].Names[0].Name
 	visitorName := method.Type.Params.List[0].Names[0].Name
+
 	enter, ok := method.Body.List[0].(*ast.AssignStmt)
-	if !ok || enter.Tok != token.DEFINE || len(enter.Lhs) != 2 || len(enter.Rhs) != 1 || !isIdent(enter.Lhs[1], "_") {
+	if !ok || enter.Tok != token.DEFINE || len(enter.Lhs) != 2 || len(enter.Rhs) != 1 {
 		return false
 	}
 	enteredName := identName(enter.Lhs[0])
+	skipName := identName(enter.Lhs[1])
 	enterCall, ok := enter.Rhs[0].(*ast.CallExpr)
-	if !ok || enteredName == "" || !isMethodCall(enterCall, visitorName, "Enter") || len(enterCall.Args) != 1 || !isIdent(enterCall.Args[0], receiverName) {
+	if !ok || enteredName == "" || skipName == "" || !isMethodCall(enterCall, visitorName, "Enter") ||
+		len(enterCall.Args) != 1 || !isIdent(enterCall.Args[0], receiverName) {
 		return false
 	}
-	leave, ok := method.Body.List[1].(*ast.ReturnStmt)
+
+	skip, ok := method.Body.List[1].(*ast.IfStmt)
+	if !ok || skip.Init != nil || skip.Else != nil || !isIdent(skip.Cond, skipName) || len(skip.Body.List) != 1 {
+		return false
+	}
+	skipReturn, ok := skip.Body.List[0].(*ast.ReturnStmt)
+	if !ok || len(skipReturn.Results) != 1 {
+		return false
+	}
+	skipLeave, ok := skipReturn.Results[0].(*ast.CallExpr)
+	if !ok || !isMethodCall(skipLeave, visitorName, "Leave") || len(skipLeave.Args) != 1 || !isIdent(skipLeave.Args[0], enteredName) {
+		return false
+	}
+
+	rebind, ok := method.Body.List[2].(*ast.AssignStmt)
+	if !ok || rebind.Tok != token.ASSIGN || len(rebind.Lhs) != 1 || len(rebind.Rhs) != 1 || !isIdent(rebind.Lhs[0], receiverName) {
+		return false
+	}
+	assertion, ok := rebind.Rhs[0].(*ast.TypeAssertExpr)
+	if !ok || !isIdent(assertion.X, enteredName) {
+		return false
+	}
+	pointer, ok := assertion.Type.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	receiverType, ok := anyReceiverTypeName(method)
+	if !ok || !isIdent(pointer.X, receiverType) {
+		return false
+	}
+
+	leave, ok := method.Body.List[3].(*ast.ReturnStmt)
 	if !ok || len(leave.Results) != 1 {
 		return false
 	}
 	leaveCall, ok := leave.Results[0].(*ast.CallExpr)
-	return ok && isMethodCall(leaveCall, visitorName, "Leave") && len(leaveCall.Args) == 1 && isIdent(leaveCall.Args[0], enteredName)
+	return ok && isMethodCall(leaveCall, visitorName, "Leave") && len(leaveCall.Args) == 1 && isIdent(leaveCall.Args[0], receiverName)
 }
 
 func childAssignment(statement ast.Stmt, visitor string) (childCall, bool) {
@@ -1678,7 +1619,7 @@ func (t *methodTransformer) rewriteHelperCalls(node ast.Node) error {
 			return true
 		}
 		selector, ok := call.Fun.(*ast.SelectorExpr)
-		if ok && selector.Sel.Name == "acceptWithVisitor" {
+		if ok && selector.Sel.Name == "acceptInPlace" {
 			typeExpr, _, err := t.resolveExprType(selector.X)
 			if err != nil {
 				rewriteErr = t.errorAt(call.Pos(), "cannot classify helper call %s: %v", expressionString(call), err)
@@ -1688,8 +1629,15 @@ func (t *methodTransformer) rewriteHelperCalls(node ast.Node) error {
 				typeExpr = pointer.X
 			}
 			receiver, ok := namedType(typeExpr)
-			if !ok || t.pkg.methods[receiver]["acceptWithVisitor"] != "Visitor" || t.pkg.methods[receiver]["walkInPlace"] != "InPlaceVisitor" {
-				rewriteErr = t.errorAt(call.Pos(), "helper %s must pair acceptWithVisitor(Visitor) with walkInPlace(InPlaceVisitor)", expressionString(selector.X))
+			if !ok {
+				rewriteErr = t.errorAt(call.Pos(), "cannot classify helper receiver %s", expressionString(selector.X))
+				return false
+			}
+			if t.pkg.methods[receiver]["acceptInPlace"] == "" {
+				return true
+			}
+			if t.pkg.methods[receiver]["acceptInPlace"] != "Visitor" || t.pkg.methods[receiver]["walkInPlace"] != "InPlaceVisitor" {
+				rewriteErr = t.errorAt(call.Pos(), "helper %s must pair acceptInPlace(Visitor) with walkInPlace(InPlaceVisitor)", expressionString(selector.X))
 				return false
 			}
 			selector.Sel = ast.NewIdent("walkInPlace")

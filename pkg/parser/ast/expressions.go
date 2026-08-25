@@ -572,8 +572,12 @@ func (n *ColumnName) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *ColumnName) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ColumnName)
+	return v.Leave(n)
 }
 
 // String implements Stringer interface.
@@ -642,8 +646,7 @@ func (n *ColumnNameExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ColumnNameExpr)
-	newName, _ := v.Enter(n.Name)
-	node, ok := v.Leave(newName)
+	node, ok := n.Name.Accept(v)
 	if !ok {
 		return n, false
 	}
@@ -681,8 +684,12 @@ func (n *DefaultExpr) Format(w io.Writer) {
 
 // Accept implements Node Accept interface.
 func (n *DefaultExpr) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DefaultExpr)
+	return v.Leave(n)
 }
 
 // ExistsSubqueryExpr is the expression for "exists (select ...)".
