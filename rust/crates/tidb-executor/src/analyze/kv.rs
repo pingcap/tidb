@@ -110,7 +110,24 @@ pub fn analyze_kv_table(
         0,
         columns,
         indexes,
-    ))
+    )
+    // Go stamps the writing transaction's start TS into both
+    // `mysql.stats_meta` columns (`save.go:200`). This tier has no cluster
+    // TSO, so the stamp is this process's clock in Go's TSO shape -- the
+    // physical half in the high bits, exactly what
+    // `show_stats::version_to_time` decodes back for `SHOW STATS_META`.
+    .with_stat_versions(now_tso_shaped(), now_tso_shaped()))
+}
+
+/// The current wall clock as a Go TSO: milliseconds since the epoch shifted
+/// into the physical half (Go `oracle.GetTimeFromTS` reads those same bits
+/// back), with the 18-bit logical counter left zero.
+fn now_tso_shaped() -> u64 {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis() as u64)
+        .unwrap_or_default();
+    millis << crate::show_stats::PHYSICAL_SHIFT_BITS
 }
 
 /// Go's `DecodeTopN`, which is the step this tier would otherwise skip.

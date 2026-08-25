@@ -1223,6 +1223,125 @@ fn filter_show_output(
 }
 
 impl Session {
+    /// Go `ShowExec.fetchShowStatsMeta` (`pkg/executor/show_stats.go:36`):
+    /// one row per table or partition whose statistics this session has
+    /// loaded, with the two TSOs of the stored `mysql.stats_meta` row
+    /// rendered as DATETIMEs.
+    ///
+    /// Go walks the infoschema and asks the stats handle for each physical ID;
+    /// the walk here is the catalog and the handle is
+    /// [`Catalog::table_statistics`], where `None` is exactly Go's
+    /// `GetNonPseudoPhysicalTableStats` miss: no `mysql.stats_meta` row was
+    /// ever loaded for that physical table. A LOADED row is shown even when
+    /// it carries no histograms -- Go shows an un-analyzed table too, with a
+    /// NULL `Last_analyze_time`, which is the branch
+    /// `appendTableForStatsMeta` makes on `IsAnalyzed()`.
+    fn stats_meta_stmt(
+        &mut self,
+        filter: Option<&tidb_ast::ShowInspectionFilter>,
+    ) -> Result<StmtOutput, DriverError> {
+        let (like_pattern, where_clause) = match filter {
+            None => (None, None),
+            Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
+                let value = datum_text(&self.eval_value(expr)?);
+                (
+                    Some(ShowLikePattern::from_expr(expr, value, true)),
+                    None,
+                )
+            }
+            Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
+        };
+        // Go renders through `oracle.GetTimeFromTS`, which builds the
+        // `time.Time` in the process's LOCAL zone -- not the session zone --
+        // so both servers on one host render identical strings.
+        let rows = self.with_catalog_mut(|catalog| {
+            let mut rows = Vec::new();
+            for database in catalog.database_names() {
+                let Some(names) = catalog.table_names(&database) else {
+                    continue;
+                };
+                for name in names {
+                    let Some(tidb_executor::TableEntry::Kv(table)) =
+                        catalog.table_in(&database, &name)
+                    else {
+                        continue;
+                    };
+                    let partitions: Vec<(i64, String)> = table
+                        .partition()
+                        .map(|partition| {
+                            partition
+                                .definitions
+                                .iter()
+                                .map(|definition| {
+                                    (definition.id, definition.name.clone())
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    // Go branches on `IsDynamicPartitionPruneEnabled()` here;
+                    // `tidb_partition_prune_mode` defaults to `dynamic`, and
+                    // every session of this node runs under that default.
+                    for target in tidb_executor::show_stats::PartitionTargets::for_table(
+                        table.table_id,
+                        &partitions,
+                        true,
+                    ) {
+                        let Some(statistics) = catalog.table_statistics(target.physical_id)
+                        else {
+                            continue;
+                        };
+                        let update_time =
+                            tidb_executor::show_stats::version_to_time(
+                                statistics.version,
+                                &chrono::Local,
+                            )
+                            .map_or(Datum::Null, Datum::Time);
+                        // Go's `IsAnalyzed()`: `LastAnalyzeVersion > 0`. A
+                        // table with a stats row but no analysis keeps the
+                        // last column NULL rather than inventing a time.
+                        let last_analyze_time =
+                            if statistics.last_analyze_version > 0 {
+                                tidb_executor::show_stats::version_to_time(
+                                    statistics.last_analyze_version,
+                                    &chrono::Local,
+                                )
+                                .map_or(Datum::Null, Datum::Time)
+                            } else {
+                                Datum::Null
+                            };
+                        rows.push(vec![
+                            Datum::new_string(database.as_bytes().to_vec()),
+                            Datum::new_string(name.as_bytes().to_vec()),
+                            Datum::new_string(target.label.as_str().as_bytes().to_vec()),
+                            update_time,
+                            Datum::Int(statistics.modify_count),
+                            Datum::Int(statistics.row_count),
+                            last_analyze_time,
+                        ]);
+                    }
+                }
+            }
+            Ok(rows)
+        })?;
+        // Go `buildShowSchema`, planbuilder.go:6031.
+        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let datetime = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime);
+        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let output = StmtOutput::Rows {
+            columns: vec![
+                ("Db_name".to_owned(), varchar()),
+                ("Table_name".to_owned(), varchar()),
+                ("Partition_name".to_owned(), varchar()),
+                ("Update_time".to_owned(), datetime()),
+                ("Modify_count".to_owned(), longlong()),
+                ("Row_count".to_owned(), longlong()),
+                ("Last_analyze_time".to_owned(), datetime()),
+            ],
+            rows,
+        };
+        filter_show_output(output, like_pattern, where_clause)
+    }
+
     /// The `SHOW COLUMNS` / `DESCRIBE` result for one table, optionally
     /// narrowed to a single column as Go's `DESCRIBE tbl col` narrows it.
     fn show_columns(
@@ -1935,6 +2054,10 @@ impl Session {
                 // `crate::show_admin`.
                 if let Some(output) = crate::show_admin::inspection_output(show.kind) {
                     return Ok(Some(output));
+                }
+                // Go `ShowExec.fetchShowStatsMeta` (`executor/show_stats.go:36`).
+                if show.kind == tidb_ast::ShowInspectionKind::StatsMeta {
+                    return self.stats_meta_stmt(show.filter.as_ref()).map(Some);
                 }
                 if show.kind != tidb_ast::ShowInspectionKind::ProcessList {
                     return Ok(None);

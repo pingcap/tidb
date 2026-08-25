@@ -992,13 +992,17 @@ fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStat
     }
     // `TableStatistics::new` decides `pseudo` -- Go's `GetStatsTable` reaches
     // it both from an uninitialized histogram set and from a zero row count,
-    // and that rule lives in one place for both tiers.
+    // and that rule lives in one place for both tiers. The two TSOs ride
+    // along unchanged: `SHOW STATS_META` renders them verbatim as
+    // `Update_time` and `Last_analyze_time`, so no field of the stored row is
+    // lost in this translation.
     TableStatistics::new(
         i64::try_from(stats.row_count).unwrap_or(i64::MAX),
         stats.modify_count,
         columns,
         indexes,
     )
+    .with_stat_versions(stats.version, stats.last_analyze_version)
     .with_shared_load_state(Arc::clone(&stats.load_state))
 }
 
@@ -1261,6 +1265,7 @@ mod tests {
         let loaded_stats = ClusterTableStats {
             table_id: table.id,
             version,
+            last_analyze_version: version,
             modify_count: 0,
             row_count: 3_000_065,
             columns: vec![item(1, 3_000_065), item(2, 10), item(3, 3_000_065)],

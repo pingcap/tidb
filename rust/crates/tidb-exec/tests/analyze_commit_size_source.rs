@@ -30,7 +30,7 @@ use tidb_datatype::{Datum, Time, TimeType};
 use tidb_exec::cluster_catalog::{
     load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
-use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
+use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
 use tidb_exec::cluster_stats_write::plan_stats_write;
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::real_tikv_analyze::ANALYZE_MAX_MUTATIONS;
@@ -57,6 +57,26 @@ impl MetaSnapshot for MetaStore {
             .filter(|(key, _)| key.starts_with(prefix))
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect())
+    }
+}
+
+fn apply_mutations(
+    store: &mut MetaStore,
+    mutations: &[tidb_txnkv::transaction::OptimisticMutation],
+) {
+    for mutation in mutations {
+        match mutation.kind() {
+            OptimisticMutationKind::MetaDelete
+            | OptimisticMutationKind::Delete
+            | OptimisticMutationKind::IndexDelete => {
+                store.pairs.remove(mutation.key());
+            }
+            _ => {
+                store
+                    .pairs
+                    .insert(mutation.key().to_vec(), mutation.value().to_vec());
+            }
+        }
     }
 }
 
@@ -142,6 +162,7 @@ fn a_real_table_s_six_histograms_fit_one_analyze_transaction() {
     let stats = ClusterTableStats {
         table_id: 4242,
         version: 440_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
         modify_count: 0,
         row_count: 10_240,
         columns: (1..=4).map(|id| full_histogram(id, false)).collect(),
@@ -150,6 +171,7 @@ fn a_real_table_s_six_histograms_fit_one_analyze_transaction() {
     };
     let plan = plan_stats_write(&mut store, &catalog, &stats, now())
         .expect("a full-sized analyze result plans");
+    let planned = plan.mutations.len();
     let planned = plan.mutations.len();
     // The shape that made this a defect rather than a hypothetical: six
     // histograms of the default size are already past the bounded path's
@@ -178,5 +200,37 @@ fn a_real_table_s_six_histograms_fit_one_analyze_transaction() {
         bytes <= MAX_OPTIMISTIC_TRANSACTION_BYTES,
         "an ANALYZE of a real table plans {bytes} bytes, over the transaction \
          byte budget {MAX_OPTIMISTIC_TRANSACTION_BYTES}"
+    );
+}
+
+/// The `last_stats_histograms_version` column round-trips: the writer stamps
+/// it with the analyze start TS (`save.go:200` writes it next to `version`),
+/// and the loader reads it back as Go's `LastAnalyzeVersion` -- which is what
+/// makes `SHOW STATS_META`'s `Last_analyze_time` a time instead of NULL.
+#[test]
+fn the_analyze_version_round_trips_through_the_stored_row() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let stats = ClusterTableStats {
+        table_id: 4242,
+        version: 440_000_000_000_000_000,
+        last_analyze_version: 440_000_000_000_000_000,
+        modify_count: 0,
+        row_count: 10,
+        columns: vec![],
+        indexes: vec![],
+        load_state: Default::default(),
+    };
+    let plan = plan_stats_write(&mut store, &catalog, &stats, now())
+        .expect("a small analyze plans");
+    apply_mutations(&mut store, &plan.mutations);
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    assert_eq!(
+        loader
+            .load_meta(&mut store, 4242)
+            .expect("the row reads back"),
+        Some((440_000_000_000_000_000, 0, 10, 440_000_000_000_000_000)),
+        "version, modify_count, count, last_analyze_version"
     );
 }

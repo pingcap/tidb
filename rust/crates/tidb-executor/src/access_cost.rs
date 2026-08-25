@@ -463,6 +463,15 @@ pub struct TableStatistics {
     pub row_count: i64,
     /// Go `HistColl.ModifyCount`, from `mysql.stats_meta.modify_count`.
     pub modify_count: i64,
+    /// Go `statistics.Table.Version`: the TSO of the `mysql.stats_meta` row
+    /// these statistics were loaded from. Zero only for statistics that never
+    /// touched storage (tests, in-process construction).
+    pub version: u64,
+    /// Go `statistics.Table.LastAnalyzeVersion`, from
+    /// `mysql.stats_meta.last_stats_histograms_version`. Zero means the table
+    /// has a stats row but was never ANALYZEd, which is what makes
+    /// `SHOW STATS_META` report a NULL `Last_analyze_time`.
+    pub last_analyze_version: u64,
     /// Column statistics by column ID.
     pub columns: BTreeMap<i64, ColumnStats>,
     /// Index statistics by index ID.
@@ -503,10 +512,23 @@ impl TableStatistics {
             pseudo: row_count == 0 || (columns.is_empty() && indexes.is_empty()),
             row_count,
             modify_count,
+            version: 0,
+            last_analyze_version: 0,
             columns,
             indexes,
             load_state: Arc::default(),
         }
+    }
+
+    /// Stamps the two TSOs the loaded `mysql.stats_meta` row carries, which
+    /// are exactly the two clocks `SHOW STATS_META` renders as `Update_time`
+    /// and `Last_analyze_time`. The cluster bridge is the one caller that has
+    /// them, because it is the one place statistics meet their stored row.
+    #[must_use]
+    pub fn with_stat_versions(mut self, version: u64, last_analyze_version: u64) -> Self {
+        self.version = version;
+        self.last_analyze_version = last_analyze_version;
+        self
     }
 
     /// Installs the state owned by the shared cluster statistics snapshot.
@@ -4637,6 +4659,8 @@ mod tests {
             pseudo: false,
             row_count: 10000,
             modify_count,
+            version: 0,
+            last_analyze_version: 0,
             columns: BTreeMap::new(),
             indexes: BTreeMap::new(),
             load_state: Arc::default(),

@@ -113,6 +113,13 @@ pub struct ClusterTableStats {
     pub modify_count: i64,
     /// `mysql.stats_meta.count`: the table's estimated row count.
     pub row_count: u64,
+    /// `mysql.stats_meta.last_stats_histograms_version`: the TSO of the last
+    /// write that filled this table's histograms, which is Go's
+    /// `statistics.Table.LastAnalyzeVersion`. Zero means never analyzed; the
+    /// writer (`pkg/statistics/handle/storage/save.go:200`) stamps it with the
+    /// same start TS as `version`, and a GC pass re-stamps both when it drops
+    /// dead histogram rows (`gc.go:144`).
+    pub last_analyze_version: u64,
     /// Column histograms, in `hist_id` order.
     pub columns: Vec<ClusterStatsItem>,
     /// Index histograms, in `hist_id` order.
@@ -174,7 +181,19 @@ impl ClusterStatsLoader {
             meta: SystemTableView::locate(
                 catalog,
                 "stats_meta",
-                &["table_id", "version", "modify_count", "count"],
+                &[
+                    "table_id",
+                    "version",
+                    "modify_count",
+                    "count",
+                    // Go stamps this with the same start TS as `version` on
+                    // every stats write (`save.go:200`) and a GC pass
+                    // re-stamps it (`gc.go:144`); SHOW STATS_META renders it
+                    // as `Last_analyze_time`. Nullable: rows written by
+                    // pre-8.x TiDBs have no value, which reads as zero --
+                    // never analyzed.
+                    "last_stats_histograms_version",
+                ],
             )?,
             histograms: SystemTableView::locate(
                 catalog,
@@ -258,7 +277,9 @@ impl ClusterStatsLoader {
         table_id: i64,
         column_types: &BTreeMap<i64, FieldType>,
     ) -> Result<Option<ClusterTableStats>, SystemTableError> {
-        let Some((version, modify_count, row_count)) = self.load_meta(snapshot, table_id)? else {
+        let Some((version, modify_count, row_count, last_analyze_version)) =
+            self.load_meta(snapshot, table_id)?
+        else {
             return Ok(None);
         };
         let buckets = self.load_buckets(snapshot, table_id, column_types)?;
@@ -269,6 +290,7 @@ impl ClusterStatsLoader {
             version,
             modify_count,
             row_count,
+            last_analyze_version,
             columns: Vec::new(),
             indexes: Vec::new(),
             load_state: Arc::default(),
@@ -325,11 +347,15 @@ impl ClusterStatsLoader {
     }
 
     /// Go `StatsMetaCountAndModifyCount`.
-    fn load_meta<S: MetaSnapshot>(
+    /// One table's `(version, modify_count, count, last_analyze_version)`,
+    /// or `None` for a table with no row -- the public single-table form of
+    /// [`Self::load_all_meta`], and the read behind
+    /// [`Self::load_table`]'s presence check.
+    pub fn load_meta<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
         table_id: i64,
-    ) -> Result<Option<(u64, i64, u64)>, SystemTableError> {
+    ) -> Result<Option<(u64, i64, u64, u64)>, SystemTableError> {
         // `mysql.stats_meta` declares `PRIMARY KEY (table_id) CLUSTERED`, so
         // this prefix is the row's exact key: one point read, not a scan.
         let rows = scan_system_table_prefixed(snapshot, &self.meta, &[Datum::Int(table_id)])?;
@@ -342,6 +368,7 @@ impl ClusterStatsLoader {
                 row.u64("version")?.unwrap_or_default(),
                 row.i64("modify_count")?.unwrap_or_default(),
                 row.u64("count")?.unwrap_or_default(),
+                row.u64("last_stats_histograms_version")?.unwrap_or_default(),
             )));
         }
         Ok(None)

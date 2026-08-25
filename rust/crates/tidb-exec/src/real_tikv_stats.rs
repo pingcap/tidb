@@ -208,6 +208,7 @@ mod unchanged_tests {
         TableStatsState::Loaded(std::sync::Arc::new(ClusterTableStats {
             table_id,
             version,
+            last_analyze_version: 0,
             modify_count: 0,
             row_count: 0,
             columns: Vec::new(),

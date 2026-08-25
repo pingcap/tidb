@@ -92,7 +92,7 @@ use tidb_stats::{Histogram, Table, TopN};
 
 /// Go `oracle.physicalShiftBits`: a TSO's low 18 bits are its logical
 /// counter, so the physical half is milliseconds since the Unix epoch.
-const PHYSICAL_SHIFT_BITS: u64 = 18;
+pub const PHYSICAL_SHIFT_BITS: u64 = 18;
 
 /// Go `(*ShowExec).versionToTime` (:280): `oracle.GetTimeFromTS` then
 /// `types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, 0)`.
