@@ -9,7 +9,7 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
-    mpsc, Arc,
+    mpsc, Arc, Mutex,
 };
 use std::time::{Duration, Instant};
 
@@ -152,9 +152,109 @@ impl KvIterator for ErrorIterator {
     }
 }
 
+type ManagedFlushFunction =
+    Arc<dyn Fn(u64, Arc<MemDb>, Option<Vec<u8>>) -> ManagedPipelinedFlushOutcome + Send + Sync>;
+type ManagedRemoteBatchGetFunction =
+    Arc<dyn Fn(&[Vec<u8>]) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, StaticError> + Send + Sync>;
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ManagedPipelinedFlushMetadata {
+    pub generation: u64,
+    pub primary_key: Option<Vec<u8>>,
+    pub range_start: Option<Vec<u8>>,
+    pub range_end: Option<Vec<u8>>,
+}
+
+pub(crate) struct ManagedPipelinedFlushOutcome {
+    pub metadata: ManagedPipelinedFlushMetadata,
+    pub result: Result<(), PipelinedError>,
+    pub flush_duration: Duration,
+}
+
+struct ManagedPipelinedState {
+    flush: Option<ManagedFlushFunction>,
+    remote_batch_get: Option<ManagedRemoteBatchGetFunction>,
+    flushing: Option<Arc<MemDb>>,
+    completion: Option<Mutex<mpsc::Receiver<ManagedPipelinedFlushOutcome>>>,
+    is_flushing: Arc<AtomicBool>,
+    generation: u64,
+    accumulated_len: usize,
+    accumulated_size: usize,
+    accumulated_cache_hits: u64,
+    accumulated_cache_misses: u64,
+    batch_get_cache: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+    min_flush_keys: usize,
+    min_flush_memory: u64,
+    force_flush_memory: u64,
+    write_throttle_ratio: f64,
+    flush_duration_ewma_ms: f64,
+    mem_change_hook: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+    flush_wait_duration: Duration,
+    started_at: Instant,
+    metadata: ManagedPipelinedFlushMetadata,
+}
+
+impl ManagedPipelinedState {
+    fn new(flush: ManagedFlushFunction) -> Self {
+        Self {
+            flush: Some(flush),
+            remote_batch_get: None,
+            flushing: None,
+            completion: None,
+            is_flushing: Arc::new(AtomicBool::new(false)),
+            generation: 0,
+            accumulated_len: 0,
+            accumulated_size: 0,
+            accumulated_cache_hits: 0,
+            accumulated_cache_misses: 0,
+            batch_get_cache: BTreeMap::new(),
+            min_flush_keys: MIN_FLUSH_KEYS,
+            min_flush_memory: MIN_FLUSH_MEMORY,
+            force_flush_memory: FORCE_FLUSH_MEMORY,
+            write_throttle_ratio: 0.0,
+            flush_duration_ewma_ms: 0.0,
+            mem_change_hook: None,
+            flush_wait_duration: Duration::ZERO,
+            started_at: Instant::now(),
+            metadata: ManagedPipelinedFlushMetadata::default(),
+        }
+    }
+
+    fn apply_metadata(&mut self, metadata: ManagedPipelinedFlushMetadata) {
+        self.metadata.generation = self.metadata.generation.max(metadata.generation);
+        if self.metadata.primary_key.is_none() {
+            self.metadata.primary_key = metadata.primary_key;
+        }
+        if let Some(start) = metadata.range_start {
+            if self
+                .metadata
+                .range_start
+                .as_ref()
+                .is_none_or(|current| start < *current)
+            {
+                self.metadata.range_start = Some(start);
+            }
+        }
+        if let Some(end) = metadata.range_end {
+            if self
+                .metadata
+                .range_end
+                .as_ref()
+                .is_none_or(|current| end > *current)
+            {
+                self.metadata.range_end = Some(end);
+            }
+        }
+    }
+}
+
 /// MemDB-facing adapter for the source-default ART index.
 pub struct MemDb {
     art: Art,
+    /// Present only when this exact MemDB is the authoritative buffer of a
+    /// pipelined transaction. Immutable generations are retained here until
+    /// their background flush result is observed.
+    managed_pipelined: Option<ManagedPipelinedState>,
 }
 
 impl Default for MemDb {
@@ -165,11 +265,150 @@ impl Default for MemDb {
 
 impl MemDb {
     pub fn new() -> Self {
-        Self { art: Art::new() }
+        Self {
+            art: Art::new(),
+            managed_pipelined: None,
+        }
     }
 
+    pub(crate) fn configure_managed_pipelined_flush<F>(&mut self, flush: F)
+    where
+        F: Fn(u64, Arc<MemDb>, Option<Vec<u8>>) -> ManagedPipelinedFlushOutcome
+            + Send
+            + Sync
+            + 'static,
+    {
+        let flush: ManagedFlushFunction = Arc::new(flush);
+        match &mut self.managed_pipelined {
+            Some(state) => state.flush = Some(flush),
+            None => {
+                let mut state = ManagedPipelinedState::new(flush);
+                state.mem_change_hook = self.art.take_memory_hook();
+                let (entry_limit, _) = self.art.entry_size_limit();
+                self.art.set_entry_size_limit(entry_limit, u64::MAX);
+                self.managed_pipelined = Some(state);
+            }
+        }
+    }
+
+    fn notify_managed_memory_change(&self) {
+        if let Some(hook) = self
+            .managed_pipelined
+            .as_ref()
+            .and_then(|state| state.mem_change_hook.as_ref())
+        {
+            hook(self.memory_footprint());
+        }
+    }
+
+    pub(crate) fn managed_pipelined_metadata(&self) -> ManagedPipelinedFlushMetadata {
+        self.managed_pipelined
+            .as_ref()
+            .map(|state| state.metadata.clone())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn is_managed_pipelined(&self) -> bool {
+        self.managed_pipelined.is_some()
+    }
+
+    pub(crate) fn configure_managed_remote_batch_get<F>(&mut self, remote_batch_get: F)
+    where
+        F: Fn(&[Vec<u8>]) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, StaticError>
+            + Send
+            + Sync
+            + 'static,
+    {
+        if let Some(state) = self.managed_pipelined.as_mut() {
+            state.remote_batch_get = Some(Arc::new(remote_batch_get));
+        }
+    }
+
+    pub(crate) fn managed_batch_get_cached_value(&self, key: &[u8]) -> Option<Option<Vec<u8>>> {
+        self.managed_pipelined
+            .as_ref()
+            .and_then(|state| state.batch_get_cache.get(key).cloned())
+    }
+
+    pub(crate) fn cache_managed_batch_get(
+        &mut self,
+        keys: impl IntoIterator<Item = Vec<u8>>,
+        values: &BTreeMap<Vec<u8>, Vec<u8>>,
+    ) {
+        let Some(state) = self.managed_pipelined.as_mut() else {
+            return;
+        };
+        for key in keys {
+            state
+                .batch_get_cache
+                .insert(key.clone(), values.get(&key).cloned());
+        }
+    }
+
+    pub(crate) fn set_managed_write_throttle_ratio(&mut self, ratio: f64) {
+        if let Some(state) = self.managed_pipelined.as_mut() {
+            state.write_throttle_ratio = ratio;
+        }
+    }
+
+    pub(crate) fn managed_flush_duration_ewma_ms(&self) -> f64 {
+        self.managed_pipelined
+            .as_ref()
+            .map_or(0.0, |state| state.flush_duration_ewma_ms)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_managed_flush_thresholds(
+        &mut self,
+        min_keys: usize,
+        min_memory: u64,
+        force_memory: u64,
+    ) {
+        let state = self
+            .managed_pipelined
+            .as_mut()
+            .expect("managed pipelined MemDB is configured");
+        state.min_flush_keys = min_keys;
+        state.min_flush_memory = min_memory;
+        state.force_flush_memory = force_memory;
+    }
+
+    /// Read only the mutable and in-flight generations.
+    pub fn get_local(&mut self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
+        match self.art.get(key) {
+            Ok(value) => Ok(value),
+            Err(StaticError::NotExist) => self
+                .managed_pipelined
+                .as_ref()
+                .and_then(|state| state.flushing.as_ref())
+                .ok_or(StaticError::NotExist)?
+                .get_readonly(key),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Source `MemBuffer.Get`: managed pipelined buffers fall through to the
+    /// flushed BufferBatchGet tier after mutable, in-flight, and batch-cache
+    /// lookup. Ordinary MemDBs retain local-only behavior.
     pub fn get(&mut self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
-        self.art.get(key)
+        match self.get_local(key) {
+            Ok(value) => Ok(value),
+            Err(StaticError::NotExist) => {
+                let Some(state) = self.managed_pipelined.as_ref() else {
+                    return Err(StaticError::NotExist);
+                };
+                if let Some(value) = state.batch_get_cache.get(key) {
+                    return value.clone().ok_or(StaticError::NotExist);
+                }
+                state
+                    .remote_batch_get
+                    .as_ref()
+                    .ok_or(StaticError::Unknown)?(&[key.to_vec()])?
+                .remove(key)
+                .ok_or(StaticError::NotExist)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// MemBuffer implements `Getter`, but client-go guarantees the local
@@ -179,37 +418,117 @@ impl MemDb {
     }
 
     pub fn get_readonly(&self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
-        self.art.get_readonly(key)
+        match self.art.get_readonly(key) {
+            Ok(value) => Ok(value),
+            Err(StaticError::NotExist) => self
+                .managed_pipelined
+                .as_ref()
+                .and_then(|state| state.flushing.as_ref())
+                .ok_or(StaticError::NotExist)?
+                .get_readonly(key),
+            Err(error) => Err(error),
+        }
     }
 
     /// Source `BatchGet`: absent keys are omitted, and an empty buffer avoids
     /// per-key lookups entirely.
-    pub fn batch_get(&mut self, keys: &[Vec<u8>]) -> BTreeMap<Vec<u8>, Vec<u8>> {
-        if self.len() == 0 {
-            return BTreeMap::new();
+    pub fn batch_get(
+        &mut self,
+        keys: &[Vec<u8>],
+    ) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, StaticError> {
+        if self.len() == 0 && self.managed_pipelined.is_none() {
+            return Ok(BTreeMap::new());
         }
-        keys.iter()
-            .filter_map(|key| self.get(key).ok().map(|value| (key.clone(), value)))
-            .collect()
+        let mut result = BTreeMap::new();
+        let mut remote_keys = Vec::new();
+        let mut cache_updates = BTreeMap::new();
+        for key in keys {
+            match self.get_local(key) {
+                Ok(value) => {
+                    cache_updates.insert(key.clone(), Some(value.clone()));
+                    result.insert(key.clone(), value);
+                }
+                Err(StaticError::NotExist) => {
+                    if self.managed_pipelined.is_none() {
+                        continue;
+                    }
+                    match self
+                        .managed_pipelined
+                        .as_ref()
+                        .and_then(|state| state.batch_get_cache.get(key))
+                    {
+                        Some(Some(value)) => {
+                            result.insert(key.clone(), value.clone());
+                        }
+                        Some(None) => {}
+                        None => remote_keys.push(key.clone()),
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        if !remote_keys.is_empty() {
+            let remote_batch_get = self
+                .managed_pipelined
+                .as_ref()
+                .and_then(|state| state.remote_batch_get.clone())
+                .ok_or(StaticError::Unknown)?;
+            let remote = remote_batch_get(&remote_keys)?;
+            for key in remote_keys {
+                match remote.get(&key) {
+                    Some(value) => {
+                        cache_updates.insert(key.clone(), Some(value.clone()));
+                        result.insert(key, value.clone());
+                    }
+                    None => {
+                        cache_updates.insert(key, None);
+                    }
+                }
+            }
+        }
+        if let Some(state) = self.managed_pipelined.as_mut() {
+            state.batch_get_cache.extend(cache_updates);
+        }
+        Ok(result)
     }
 
     pub fn batch_get_entries(
         &mut self,
         keys: &[Vec<u8>],
         _: &[GetOption],
-    ) -> BTreeMap<Vec<u8>, ValueEntry> {
-        self.batch_get(keys)
-            .into_iter()
-            .map(|(key, value)| (key, ValueEntry::new(value, 0)))
-            .collect()
+    ) -> Result<BTreeMap<Vec<u8>, ValueEntry>, StaticError> {
+        self.batch_get(keys).map(|entries| {
+            entries
+                .into_iter()
+                .map(|(key, value)| (key, ValueEntry::new(value, 0)))
+                .collect()
+        })
     }
 
     pub fn get_flags(&mut self, key: &[u8]) -> Result<KeyFlags, StaticError> {
-        self.art.flags(key)
+        match self.art.flags(key) {
+            Ok(flags) => Ok(flags),
+            Err(StaticError::NotExist) => self
+                .managed_pipelined
+                .as_ref()
+                .and_then(|state| state.flushing.as_ref())
+                .ok_or(StaticError::NotExist)?
+                .get_flags_readonly(key),
+            Err(error) => Err(error),
+        }
     }
 
     pub fn get_flags_readonly(&self, key: &[u8]) -> Result<KeyFlags, StaticError> {
-        self.art.flags_readonly(key)
+        match self.art.flags_readonly(key) {
+            Ok(flags) => Ok(flags),
+            Err(StaticError::NotExist) => self
+                .managed_pipelined
+                .as_ref()
+                .and_then(|state| state.flushing.as_ref())
+                .ok_or(StaticError::NotExist)?
+                .get_flags_readonly(key),
+            Err(error) => Err(error),
+        }
     }
 
     pub fn set(
@@ -220,7 +539,9 @@ impl MemDb {
         if value.is_empty() {
             return Err(Box::new(StaticError::CannotSetNilValue));
         }
-        self.art.set(key, Some(value), &[])
+        let result = self.art.set(key, Some(value), &[]);
+        self.notify_managed_memory_change();
+        result
     }
 
     pub fn set_with_flags(
@@ -232,11 +553,15 @@ impl MemDb {
         if value.is_empty() {
             return Err(Box::new(StaticError::CannotSetNilValue));
         }
-        self.art.set(key, Some(value), operations)
+        let result = self.art.set(key, Some(value), operations);
+        self.notify_managed_memory_change();
+        result
     }
 
     pub fn delete(&mut self, key: &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.art.set(key, Some(&[]), &[])
+        let result = self.art.set(key, Some(&[]), &[]);
+        self.notify_managed_memory_change();
+        result
     }
 
     pub fn delete_with_flags(
@@ -244,14 +569,22 @@ impl MemDb {
         key: &[u8],
         operations: &[FlagsOp],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.art.set(key, Some(&[]), operations)
+        let result = self.art.set(key, Some(&[]), operations);
+        self.notify_managed_memory_change();
+        result
     }
 
     pub fn update_flags(&mut self, key: &[u8], operations: &[FlagsOp]) {
         self.art.set(key, None, operations).unwrap();
+        self.notify_managed_memory_change();
     }
 
     pub fn iter(&self, lower: Option<&[u8]>, upper: Option<&[u8]>) -> Box<dyn KvIterator> {
+        if self.managed_pipelined.is_some() {
+            return Box::new(ErrorIterator {
+                error: "pipelined memdb does not support Iter",
+            });
+        }
         Box::new(ArtBufferIterator(self.art.iter(lower, upper)))
     }
 
@@ -266,6 +599,11 @@ impl MemDb {
     }
 
     pub fn iter_reverse(&self, upper: Option<&[u8]>, lower: Option<&[u8]>) -> Box<dyn KvIterator> {
+        if self.managed_pipelined.is_some() {
+            return Box::new(ErrorIterator {
+                error: "pipelined memdb does not support IterReverse",
+            });
+        }
         Box::new(ArtBufferIterator(self.art.iter_reverse(upper, lower)))
     }
 
@@ -275,13 +613,19 @@ impl MemDb {
 
     pub fn cleanup(&mut self, handle: usize) {
         self.art.cleanup(handle);
+        self.notify_managed_memory_change();
     }
 
     pub fn release(&mut self, handle: usize) {
         self.art.release(handle);
+        self.notify_managed_memory_change();
     }
 
     pub fn snapshot(&self) -> MemDbSnapshot {
+        assert!(
+            self.managed_pipelined.is_none(),
+            "GetSnapshot is not supported for PipelinedMemDB"
+        );
         MemDbSnapshot {
             snapshot: self.art.snapshot(),
             expected_sequence: self.art.snapshot_sequence(),
@@ -296,6 +640,10 @@ impl MemDb {
     }
 
     pub fn get_memdb(&mut self) -> &mut Self {
+        assert!(
+            self.managed_pipelined.is_none(),
+            "GetMemDB should not be invoked for PipelinedMemDB"
+        );
         self
     }
 
@@ -304,6 +652,11 @@ impl MemDb {
         lower: Option<&[u8]>,
         upper: Option<&[u8]>,
     ) -> Box<dyn KvIterator> {
+        if self.managed_pipelined.is_some() {
+            return Box::new(ErrorIterator {
+                error: "SnapshotIter is not supported for PipelinedMemDB",
+            });
+        }
         self.snapshot().iter(lower, upper, false)
     }
 
@@ -312,6 +665,11 @@ impl MemDb {
         upper: Option<&[u8]>,
         lower: Option<&[u8]>,
     ) -> Box<dyn KvIterator> {
+        if self.managed_pipelined.is_some() {
+            return Box::new(ErrorIterator {
+                error: "SnapshotIter is not supported for PipelinedMemDB",
+            });
+        }
         self.snapshot().iter(lower, upper, true)
     }
 
@@ -321,6 +679,10 @@ impl MemDb {
         upper: Option<&[u8]>,
         reverse: bool,
     ) -> BatchedSnapshotIterator {
+        assert!(
+            self.managed_pipelined.is_none(),
+            "BatchedSnapshotIter is not supported for PipelinedMemDB"
+        );
         self.snapshot().batched_iter(lower, upper, reverse)
     }
 
@@ -331,11 +693,17 @@ impl MemDb {
         reverse: bool,
         function: impl FnMut(&[u8], &[u8]) -> Result<bool, &'static str>,
     ) -> Result<(), &'static str> {
+        if self.managed_pipelined.is_some() {
+            return Err("pipelined memdb does not support ForEachInSnapshotRange");
+        }
         self.snapshot().for_each(lower, upper, reverse, function)
     }
 
     pub fn len(&self) -> usize {
-        self.art.len()
+        self.managed_pipelined
+            .as_ref()
+            .map_or(0, |state| state.accumulated_len)
+            + self.art.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -343,19 +711,32 @@ impl MemDb {
     }
 
     pub fn size(&self) -> usize {
-        self.art.size()
+        self.managed_pipelined
+            .as_ref()
+            .map_or(0, |state| state.accumulated_size)
+            + self.art.size()
     }
 
     pub fn dirty(&self) -> bool {
         self.art.dirty()
+            || self
+                .managed_pipelined
+                .as_ref()
+                .is_some_and(|state| state.accumulated_len > 0)
     }
 
     pub fn cache_hit_count(&self) -> u64 {
-        self.art.cache_hit_count()
+        self.managed_pipelined
+            .as_ref()
+            .map_or(0, |state| state.accumulated_cache_hits)
+            + self.art.cache_hit_count()
     }
 
     pub fn cache_miss_count(&self) -> u64 {
-        self.art.cache_miss_count()
+        self.managed_pipelined
+            .as_ref()
+            .map_or(0, |state| state.accumulated_cache_misses)
+            + self.art.cache_miss_count()
     }
 
     pub fn is_staging(&self) -> bool {
@@ -363,40 +744,78 @@ impl MemDb {
     }
 
     pub fn set_entry_size_limit(&mut self, entry_limit: u64, buffer_limit: u64) {
-        self.art.set_entry_size_limit(entry_limit, buffer_limit);
+        self.art.set_entry_size_limit(
+            entry_limit,
+            if self.managed_pipelined.is_some() {
+                u64::MAX
+            } else {
+                buffer_limit
+            },
+        );
     }
 
     pub fn checkpoint(&self) -> usize {
+        assert!(
+            self.managed_pipelined.is_none(),
+            "Checkpoint is not supported for PipelinedMemDB"
+        );
         self.art.checkpoint()
     }
 
     pub fn revert_to_checkpoint(&mut self, checkpoint: usize) {
+        assert!(
+            self.managed_pipelined.is_none(),
+            "RevertToCheckpoint is not supported for PipelinedMemDB"
+        );
         self.art.revert_to_checkpoint(checkpoint);
+        self.notify_managed_memory_change();
     }
 
     pub fn inspect_stage(&self, handle: usize, function: impl FnMut(&[u8], KeyFlags, &[u8])) {
+        assert!(
+            self.managed_pipelined.is_none(),
+            "InspectStage is not supported for PipelinedMemDB"
+        );
         self.art.inspect_stage(handle, function);
     }
 
     /// Removes a record completely from the test buffer.
     pub fn remove_from_buffer(&mut self, key: &[u8]) {
-        self.art.remove_from_buffer(key)
+        assert!(
+            self.managed_pipelined.is_none(),
+            "RemoveFromBuffer is not supported for PipelinedMemDB"
+        );
+        self.art.remove_from_buffer(key);
+        self.notify_managed_memory_change();
     }
 
     pub fn set_memory_footprint_change_hook(&mut self, hook: Arc<dyn Fn(u64) + Send + Sync>) {
-        self.art.set_memory_footprint_change_hook(hook);
+        if let Some(state) = self.managed_pipelined.as_mut() {
+            state.mem_change_hook = Some(hook);
+        } else {
+            self.art.set_memory_footprint_change_hook(hook);
+        }
     }
 
     pub fn memory_hook_is_set(&self) -> bool {
-        self.art.memory_hook_is_set()
+        self.managed_pipelined
+            .as_ref()
+            .is_some_and(|state| state.mem_change_hook.is_some())
+            || self.art.memory_hook_is_set()
     }
 
     pub fn memory_footprint(&self) -> u64 {
         self.art.memory_footprint()
+            + self
+                .managed_pipelined
+                .as_ref()
+                .and_then(|state| state.flushing.as_ref())
+                .map_or(0, |buffer| buffer.memory_footprint())
     }
 
     pub fn reset(&mut self) {
         self.art.reset();
+        self.notify_managed_memory_change();
     }
 
     pub fn select_value_history(
@@ -407,21 +826,148 @@ impl MemDb {
         self.art.select_value_history(key, predicate)
     }
 
-    pub fn flush(&self, _: bool) -> Result<bool, String> {
-        Ok(false)
+    fn wait_for_managed_flush(&mut self) -> Result<(), PipelinedError> {
+        let Some(state) = self.managed_pipelined.as_mut() else {
+            return Ok(());
+        };
+        let Some(completion) = state.completion.take() else {
+            return Ok(());
+        };
+        let started = Instant::now();
+        let outcome = completion
+            .into_inner()
+            .map_err(|_| PipelinedError::message("pipelined flush completion lock poisoned"))?
+            .recv()
+            .map_err(|_| PipelinedError::message("pipelined flush worker disconnected"))?;
+        state.flush_wait_duration += started.elapsed();
+        state.apply_metadata(outcome.metadata);
+        let elapsed_ms = outcome.flush_duration.as_secs_f64() * 1_000.0;
+        if elapsed_ms > 0.0 {
+            state.flush_duration_ewma_ms = if state.flush_duration_ewma_ms == 0.0 {
+                elapsed_ms
+            } else {
+                state.flush_duration_ewma_ms * 0.8 + elapsed_ms * 0.2
+            };
+        }
+        let result = match outcome.result {
+            Err(PipelinedError::KeyExists(mut error)) => {
+                if let Some(flushing) = &state.flushing {
+                    if let Ok(value) = flushing.get_readonly(&error.already_exist.key) {
+                        error.value = value;
+                    }
+                }
+                Err(PipelinedError::KeyExists(error))
+            }
+            result => result,
+        };
+        state.flushing = None;
+        self.notify_managed_memory_change();
+        result
     }
 
-    pub fn flush_wait(&self) -> Result<(), String> {
-        Ok(())
+    /// Starts a source-shaped background flush for this authoritative MemDB.
+    /// Normal MemDBs retain the source no-op behavior.
+    pub fn flush(&mut self, force: bool) -> Result<bool, PipelinedError> {
+        let Some(state) = self.managed_pipelined.as_mut() else {
+            return Ok(false);
+        };
+        // Source invalidates prefetched remote values on every Flush call,
+        // including threshold-skipped and staging-error paths.
+        state.batch_get_cache.clear();
+        if self.art.is_staging() {
+            return Err(PipelinedError::message(
+                "there are stages unreleased when Flush is called",
+            ));
+        }
+        let memory = self.art.memory_footprint();
+        let needs_flush = memory >= state.min_flush_memory
+            && (self.art.len() >= state.min_flush_keys || memory >= state.force_flush_memory);
+        if !force && !needs_flush {
+            return Ok(false);
+        }
+        if state.flushing.is_some() {
+            if !force
+                && state.is_flushing.load(Ordering::Acquire)
+                && memory < state.force_flush_memory
+            {
+                return Ok(false);
+            }
+            self.wait_for_managed_flush()?;
+        }
+
+        let state = self
+            .managed_pipelined
+            .as_ref()
+            .expect("managed pipelined state remains installed");
+        let ratio = state.write_throttle_ratio;
+        let throttle_sleep = if (0.0..1.0).contains(&ratio) && ratio > 0.0 {
+            let sleep_ms = ratio / (1.0 - ratio) * state.flush_duration_ewma_ms;
+            if sleep_ms >= 1.0 {
+                Some(Duration::from_millis(sleep_ms as u64))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let next_art = self.art.empty_generation();
+        let old_art = std::mem::replace(&mut self.art, next_art);
+        let old = Arc::new(MemDb {
+            art: old_art,
+            managed_pipelined: None,
+        });
+        let state = self
+            .managed_pipelined
+            .as_mut()
+            .expect("managed pipelined state remains installed");
+        state.accumulated_len += old.len();
+        state.accumulated_size += old.size();
+        state.accumulated_cache_hits += old.cache_hit_count();
+        state.accumulated_cache_misses += old.cache_miss_count();
+        state.generation = state.generation.saturating_add(1);
+        let generation = state.generation;
+        let primary_key = state.metadata.primary_key.clone();
+        let flush = state
+            .flush
+            .clone()
+            .ok_or_else(|| PipelinedError::message("pipelined flush function is not configured"))?;
+        let is_flushing = state.is_flushing.clone();
+        state.flushing = Some(old.clone());
+        is_flushing.store(true, Ordering::Release);
+        let (sender, receiver) = mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            if let Some(duration) = throttle_sleep {
+                std::thread::sleep(duration);
+            }
+            let outcome = flush(generation, old, primary_key);
+            is_flushing.store(false, Ordering::Release);
+            let _ = sender.send(outcome);
+        });
+        state.completion = Some(Mutex::new(receiver));
+        self.notify_managed_memory_change();
+        Ok(true)
+    }
+
+    pub fn flush_wait(&mut self) -> Result<(), PipelinedError> {
+        self.wait_for_managed_flush()
     }
 
     pub fn metrics(&self) -> PipelinedMetrics {
-        PipelinedMetrics {
-            flush_wait_duration: Duration::ZERO,
-            total_duration: Duration::ZERO,
-            memdb_hit_count: 0,
-            memdb_miss_count: 0,
-        }
+        self.managed_pipelined.as_ref().map_or(
+            PipelinedMetrics {
+                flush_wait_duration: Duration::ZERO,
+                total_duration: Duration::ZERO,
+                memdb_hit_count: 0,
+                memdb_miss_count: 0,
+            },
+            |state| PipelinedMetrics {
+                flush_wait_duration: state.flush_wait_duration,
+                total_duration: state.started_at.elapsed(),
+                memdb_hit_count: state.accumulated_cache_hits + self.art.cache_hit_count(),
+                memdb_miss_count: state.accumulated_cache_misses + self.art.cache_miss_count(),
+            },
+        )
     }
 }
 
@@ -1094,6 +1640,36 @@ impl StdError for PipelinedError {
         match self {
             Self::Message(_) => None,
             Self::KeyExists(error) => Some(error),
+        }
+    }
+}
+
+impl From<crate::Error> for PipelinedError {
+    fn from(error: crate::Error) -> Self {
+        fn take_key_exists(error: crate::Error) -> Option<KeyExistsError> {
+            match error {
+                crate::Error::KeyExists(error) => Some(error),
+                crate::Error::ExtractedErrors(errors) | crate::Error::MultipleKeyErrors(errors) => {
+                    errors.into_iter().find_map(take_key_exists)
+                }
+                crate::Error::PessimisticLockError { inner, .. } => take_key_exists(*inner),
+                _ => None,
+            }
+        }
+
+        let message = error.to_string();
+        match take_key_exists(error) {
+            Some(error) => Self::KeyExists(error),
+            None => Self::Message(message),
+        }
+    }
+}
+
+impl From<PipelinedError> for crate::Error {
+    fn from(error: PipelinedError) -> Self {
+        match error {
+            PipelinedError::KeyExists(error) => Self::KeyExists(error),
+            PipelinedError::Message(message) => Self::StringError(message),
         }
     }
 }
@@ -2002,7 +2578,7 @@ mod tests {
     fn memdb_facade_forwards_batch_snapshot_checkpoint_stage_and_metrics_contracts() {
         let mut db = MemDb::new();
         assert!(!db.flush(false).unwrap());
-        assert_eq!(db.flush_wait(), Ok(()));
+        assert!(db.flush_wait().is_ok());
         assert_eq!(db.metrics().memdb_hit_count, 0);
         let memory_events = Arc::new(AtomicU64::new(0));
         db.set_memory_footprint_change_hook({
@@ -2021,10 +2597,10 @@ mod tests {
                 b"tombstone".to_vec(),
                 b"missing".to_vec()
             ]),
-            BTreeMap::from([
+            Ok(BTreeMap::from([
                 (b"present".to_vec(), b"value".to_vec()),
                 (b"tombstone".to_vec(), Vec::new()),
-            ])
+            ]))
         );
         assert_eq!(
             db.get_entry(b"present", &[GetOption::ReturnCommitTs])
@@ -2033,7 +2609,10 @@ mod tests {
         );
         assert_eq!(
             db.batch_get_entries(&[b"present".to_vec()], &[GetOption::ReturnCommitTs]),
-            BTreeMap::from([(b"present".to_vec(), ValueEntry::new(b"value".to_vec(), 0))])
+            Ok(BTreeMap::from([(
+                b"present".to_vec(),
+                ValueEntry::new(b"value".to_vec(), 0)
+            )]))
         );
         let mut snapshot = db.snapshot_iter(None, None);
         assert_eq!(snapshot.key(), b"present");
@@ -2088,7 +2667,7 @@ mod tests {
     fn rbt_memdb_facade_forwards_batch_snapshot_checkpoint_stage_and_metrics_contracts() {
         let mut db = RbtMemDb::new();
         assert!(!db.flush(false).unwrap());
-        assert_eq!(db.flush_wait(), Ok(()));
+        assert!(db.flush_wait().is_ok());
         assert_eq!(db.metrics().memdb_miss_count, 0);
         let memory_events = Arc::new(AtomicU64::new(0));
         db.set_memory_footprint_change_hook({

@@ -35,9 +35,9 @@ use crate::driver::tikv_transaction::{TikvTransactionDriver, TikvTransactionErro
 /// The store an opener hands transactions out of.
 ///
 /// The vendored engine constructs production transactions through its
-/// `TransactionClient` and injected-client transactions through a test-gated
-/// constructor — the same split Go draws between `tikv.NewKVStore` and
-/// `tikv.NewTestTiKVStore`. This trait is the seam over both, so the opener,
+/// `TransactionClient` and in-process transactions through an injected PD
+/// client — the same split Go draws between `tikv.NewKVStore` and a store
+/// built over `mockstore`. This trait is the seam over both, so the opener,
 /// the driver, and everything above them are written once.
 pub trait TikvTransactionSource {
     /// The PD client the produced transactions route through.
@@ -273,18 +273,14 @@ impl TikvTransactionSource for TikvClusterSource {
 /// In-process store: transactions over an injected PD client, the counterpart
 /// of Go `tikv.NewTestTiKVStore` over `mockstore`.
 ///
-/// The vendored engine gates injected-client construction behind its
-/// `internal-tests` feature, so this source is gated the same way. An embedded
-/// TiDB node needs this path in an ordinary build, which is why the feature is
-/// re-exported here rather than being test-only: an ungated in-process store
-/// constructor upstream would let this gate go away.
-#[cfg(feature = "tikv-inprocess")]
+/// Upstream ungated injected-client construction, so this needs no feature of
+/// its own: an embedded TiDB node builds it in an ordinary build, exactly as
+/// Go compiles `mockstore` into `tidb-server`.
 pub struct TikvInProcessSource<PdC: PdClient> {
     pd: Arc<PdC>,
     runtime: Arc<tokio::runtime::Runtime>,
 }
 
-#[cfg(feature = "tikv-inprocess")]
 impl<PdC: PdClient> TikvInProcessSource<PdC> {
     /// Wraps one in-process PD client.
     #[must_use]
@@ -299,7 +295,6 @@ impl<PdC: PdClient> TikvInProcessSource<PdC> {
     }
 }
 
-#[cfg(feature = "tikv-inprocess")]
 impl<PdC: PdClient> TikvTransactionSource for TikvInProcessSource<PdC> {
     type PdC = PdC;
 

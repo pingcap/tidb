@@ -1,8 +1,9 @@
 # Repository source-artifact and live-validation audit
 
 This receipt closes the non-package repository gate for the client-go parity
-work. Package behavior remains owned by the 42 atomic package rows in
-[`client-go-parity-ledger.md`](client-go-parity-ledger.md); this document
+work. Package behavior remains owned by the 41 client-go package rows in
+[`client-go-parity-ledger.md`](client-go-parity-ledger.md); its additional TiDB
+UniStore row is explicitly not applicable. This document
 accounts for everything in the pinned source tree that is not already owned by
 one of those Go packages and records the final cross-client/live validation.
 
@@ -26,6 +27,17 @@ lines; there are no unclassified tracked artifacts.
 | `examples` | 19 | 1,319 | tree `47ae42586d3420bf7b1cd21e32bc83ca322c8687`; SHA-256 manifest `e311b96ff2c4af773bd11680208f5086254e2f09fc625fcc9d51d0ee05a6115a` |
 | `integration_tests` | 41 | 16,888 | tree `33bbed2a6133b8e5ae555d7359e3d7810b204324`; SHA-256 manifest `d4a7503f483fe03a24bffa092d2860d138de54444d9655616b4bd62915dd0341` |
 | **total** | **74** | **19,306** | complete |
+
+The completion re-audit independently reran Go 1.25.12 `go list ./...` and
+matched all 41 import paths exactly against the 41 client-go ledger rows. The
+309-file Git inventory partitions without overlap or omission into 235
+package-owned files/88,540 lines and the 74 files/19,306 lines above. A sorted
+SHA-256 manifest over the package-owned files is
+`447bda6232bbfd948f65974cab28b3fc3298b306a8c5f6d6b17963959bbcb700`;
+the corresponding whole-tree manifest is
+`dc2a6654936b739d1dbfa2cf7a24b9037ef3180cb89d591f5e789d8d12bcb51b`.
+Both use the same `<blob SHA-256><two spaces><path>` format as the group
+manifests below.
 
 The group manifests are SHA-256 over sorted lines of the form
 `<blob SHA-256><two spaces><path>`, with blob bytes read directly from the
@@ -317,9 +329,12 @@ All commands use `nightly-2026-08-22` unless they invoke the pinned Go 1.25.12
 toolchain:
 
 ```text
-cargo test --workspace --lib
-cargo test --workspace --lib --all-features
-# each: tikv-client 710 passed/1 ignored; unistore 22 passed
+make unit-test
+# no-default workspace: 757 passed/1 configured skip
+# all-feature library: 750 passed/1 configured skip
+
+cargo test --no-default-features --test public_injected_client_tests
+# 1 external ordinary-build injected-client test passed
 
 cargo test -p unistore
 # 22 unit + 2 external-consumer tests passed
@@ -337,7 +352,9 @@ git diff --check
 ```
 
 The generator was run immediately before these gates; its output manifest and
-the 38/38 kvproto byte comparison remained unchanged.
+the 38/38 kvproto byte comparison remained unchanged. Independently, the exact
+pinned client-go checkout passes `go test --tags=intest ./...` and
+`go test -race --tags=intest ./...` on Go 1.25.12.
 
 ## Final repository decision
 

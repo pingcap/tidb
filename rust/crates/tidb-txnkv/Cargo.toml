@@ -26,13 +26,6 @@ tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true
 
-[features]
-# The vendored engine gates injected-PD transaction construction behind its
-# `internal-tests` feature; an embedded (unistore) TiDB node needs that path in
-# an ordinary build, so it is surfaced as a feature here rather than as a
-# test-only dependency.
-tikv-inprocess = ["tikv-client/internal-tests"]
-
 [dev-dependencies]
 # `internal-tests` exposes the vendored client-go mocktikv/unistore in-process
 # store and the injected-PD `Transaction` constructor, matching how client-go

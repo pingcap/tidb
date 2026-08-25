@@ -243,6 +243,18 @@ impl Art {
         (self.entry_size_limit, self.buffer_size_limit)
     }
 
+    /// Builds an empty generation with the same limits and memory hook.
+    ///
+    /// Pipelined transactions rotate the active ART before dispatching a
+    /// flush. The new generation must retain caller-installed limits and
+    /// accounting hooks without cloning any buffered entries or stage state.
+    pub(crate) fn empty_generation(&self) -> Self {
+        let mut next = Self::new();
+        next.set_entry_size_limit(self.entry_size_limit, self.buffer_size_limit);
+        next.memory_hook.clone_from(&self.memory_hook);
+        next
+    }
+
     pub(crate) fn set_memory_footprint_change_hook(
         &mut self,
         hook: Arc<dyn Fn(u64) + Send + Sync>,
@@ -252,6 +264,10 @@ impl Art {
 
     pub(crate) fn memory_hook_is_set(&self) -> bool {
         self.memory_hook.is_some()
+    }
+
+    pub(crate) fn take_memory_hook(&mut self) -> Option<Arc<dyn Fn(u64) + Send + Sync>> {
+        self.memory_hook.take()
     }
 
     /// Native payload accounting; client-go reports arena capacities.

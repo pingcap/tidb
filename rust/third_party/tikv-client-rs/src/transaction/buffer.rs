@@ -76,6 +76,73 @@ fn mutation_flags_from_key_flags(flags: KeyFlags) -> MutationFlags {
     }
 }
 
+pub(crate) fn proto_mutations_from_memdb(
+    memdb: &MemDb,
+    keyspace: Keyspace,
+    is_pessimistic: bool,
+) -> Vec<kvrpcpb::Mutation> {
+    let physical_key = |key: &[u8]| {
+        Key::from(key.to_vec())
+            .encode_keyspace(keyspace, KeyMode::Txn)
+            .into()
+    };
+    let mut mutations = Vec::with_capacity(memdb.len());
+    let mut iterator = memdb.iter_with_flags(None, None);
+    while iterator.valid() {
+        let flags = iterator.flags();
+        let mut mutation = kvrpcpb::Mutation {
+            key: physical_key(iterator.key()),
+            assertion: assertion_from_flags(flags).to_proto() as i32,
+            ..Default::default()
+        };
+        let operation = if !iterator.has_value() {
+            flags.has_locked().then(|| lock_operation(flags))
+        } else if !iterator.value().is_empty() {
+            mutation.value = iterator.value().to_vec();
+            Some(if flags.has_presume_key_not_exists() {
+                kvrpcpb::Op::Insert
+            } else {
+                kvrpcpb::Op::Put
+            })
+        } else if !is_pessimistic && flags.has_presume_key_not_exists() {
+            Some(kvrpcpb::Op::CheckNotExists)
+        } else if flags.has_newly_inserted() {
+            flags.has_locked().then(|| lock_operation(flags))
+        } else {
+            Some(kvrpcpb::Op::Del)
+        };
+        if let Some(operation) = operation {
+            mutation.op = operation as i32;
+            mutations.push(mutation);
+        }
+        iterator
+            .next()
+            .expect("owned MemDB iterator advances deterministically");
+    }
+    mutations
+}
+
+/// Returns the first and last logical keys in a flushed MemDB generation.
+///
+/// Client-go derives the range from its immutable MemDB generation before it
+/// builds the flush mutations. Rust's MemDB key domain is logical, so retaining
+/// those logical bounds lets the later region lookup encode them exactly once.
+pub(crate) fn memdb_key_bounds(memdb: &MemDb) -> Option<(Vec<u8>, Vec<u8>)> {
+    let mut iterator = memdb.iter_with_flags(None, None);
+    if !iterator.valid() {
+        return None;
+    }
+    let first = iterator.key().to_vec();
+    let mut last = first.clone();
+    while iterator.valid() {
+        last = iterator.key().to_vec();
+        iterator
+            .next()
+            .expect("a stable flushed MemDB iterator remains valid");
+    }
+    Some((first, last))
+}
+
 /// A caching layer which buffers reads and writes in a transaction.
 pub struct Buffer {
     /// The transaction's single authoritative mutation store. Keys are kept
@@ -115,7 +182,12 @@ impl Buffer {
 
     /// Get the primary key of the buffer.
     pub fn get_primary_key(&self) -> Option<Key> {
-        self.primary_key.clone()
+        self.primary_key.clone().or_else(|| {
+            self.memdb
+                .managed_pipelined_metadata()
+                .primary_key
+                .map(Key::from)
+        })
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -239,6 +311,34 @@ impl Buffer {
             Ok(value) => MutationValue::Determined(Some(value)),
             Err(_) => MutationValue::Undetermined,
         }
+    }
+
+    /// Return the source PipelinedMemDB read precedence as a tri-state:
+    /// `None` means the remote buffer tier is still required, while
+    /// `Some(None)` is a buffered delete or cached remote miss.
+    pub(crate) fn pipelined_value(&self, key: &Key) -> Option<Option<Value>> {
+        match self.memdb_value(key) {
+            MutationValue::Determined(value) => Some(value),
+            MutationValue::Undetermined => self
+                .memdb
+                .managed_batch_get_cached_value(&self.logical_key(key)),
+        }
+    }
+
+    pub(crate) fn cache_pipelined_batch_get(
+        &mut self,
+        keys: impl IntoIterator<Item = Key>,
+        values: &BTreeMap<Key, Value>,
+    ) {
+        let keys = keys
+            .into_iter()
+            .map(|key| self.logical_key(&key))
+            .collect::<Vec<_>>();
+        let values = values
+            .iter()
+            .map(|(key, value)| (self.logical_key(key), value.clone()))
+            .collect::<BTreeMap<_, _>>();
+        self.memdb.cache_managed_batch_get(keys, &values);
     }
 
     fn memdb_flags(&self, key: &Key) -> KeyFlags {
@@ -532,6 +632,11 @@ impl Buffer {
         F: FnOnce(BoundRange, u32) -> Fut,
         Fut: Future<Output = Result<Vec<KvPair>>>,
     {
+        if self.memdb.is_managed_pipelined() {
+            return Err(crate::Error::StringError(
+                "pipelined memdb does not support Iter".to_owned(),
+            ));
+        }
         // Collect the authoritative MemDB view before awaiting the remote
         // fetch. The owned ART iterator includes tombstones and direct writes
         // made through Transaction::get_mem_buffer().
@@ -808,40 +913,7 @@ impl Buffer {
 
     /// Converts the buffered mutations to the proto buffer version
     pub fn to_proto_mutations(&self) -> Vec<kvrpcpb::Mutation> {
-        let mut mutations = Vec::with_capacity(self.memdb.len());
-        let mut iterator = self.memdb.iter_with_flags(None, None);
-        while iterator.valid() {
-            let flags = iterator.flags();
-            let mut mutation = kvrpcpb::Mutation {
-                key: self.physical_key(iterator.key()).into(),
-                assertion: assertion_from_flags(flags).to_proto() as i32,
-                ..Default::default()
-            };
-            let operation = if !iterator.has_value() {
-                flags.has_locked().then(|| lock_operation(flags))
-            } else if !iterator.value().is_empty() {
-                mutation.value = iterator.value().to_vec();
-                Some(if flags.has_presume_key_not_exists() {
-                    kvrpcpb::Op::Insert
-                } else {
-                    kvrpcpb::Op::Put
-                })
-            } else if !self.is_pessimistic && flags.has_presume_key_not_exists() {
-                Some(kvrpcpb::Op::CheckNotExists)
-            } else if flags.has_newly_inserted() {
-                flags.has_locked().then(|| lock_operation(flags))
-            } else {
-                Some(kvrpcpb::Op::Del)
-            };
-            if let Some(operation) = operation {
-                mutation.op = operation as i32;
-                mutations.push(mutation);
-            }
-            iterator
-                .next()
-                .expect("owned MemDB iterator advances deterministically");
-        }
-        mutations
+        proto_mutations_from_memdb(&self.memdb, self.keyspace, self.is_pessimistic)
     }
 
     /// Returns every value-bearing MemDB entry in source iteration order for

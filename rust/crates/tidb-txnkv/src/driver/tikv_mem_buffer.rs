@@ -316,6 +316,7 @@ impl MemBufferBackend for TikvMemBufferBackend<'_> {
         Ok(self
             .memdb
             .batch_get_entries(&raw_keys, &[])
+            .map_err(map_read_error)?
             .into_iter()
             .map(|(key, entry)| (Key::from(key), ValueEntry::new(entry.value, 0)))
             .collect())

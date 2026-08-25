@@ -46,7 +46,7 @@ use crate::resource_control::ResourceGroupControllerHandle;
 use crate::retry::{RetryBackoffer, BO_COMMIT_TS_LAG};
 use crate::store::Request as StoreRequest;
 use crate::timestamp::TimestampExt;
-use crate::transaction::buffer::Buffer;
+use crate::transaction::buffer::{memdb_key_bounds, proto_mutations_from_memdb, Buffer};
 use crate::transaction::extract_lock_from_key_error;
 use crate::transaction::latch::LatchesScheduler;
 use crate::transaction::lock::format_key_for_log;
@@ -60,7 +60,9 @@ use crate::transaction::txn_file::{
     build_txn_chunks, request_source_allows_txn_file, txn_file_max_chunks_in_parallel,
     txn_file_pre_split_keys, ChunkBatch, TxnChunkSlice,
 };
-use crate::transaction::unionstore::{MemDb, FORCE_FLUSH_MEMORY, MIN_FLUSH_KEYS, MIN_FLUSH_MEMORY};
+use crate::transaction::unionstore::{
+    ManagedPipelinedFlushMetadata, ManagedPipelinedFlushOutcome, MemDb, PipelinedError,
+};
 use crate::transaction::ReadLockContext;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::SnapshotRuntimeStats;
@@ -70,6 +72,16 @@ use crate::BoundRange;
 
 /// Maximum transaction lifetime before commit is refused, in milliseconds.
 pub const MAX_TXN_TIME_USE: u64 = 24 * 60 * 60 * 1_000;
+
+fn pipelined_broadcast_grace_period() -> Duration {
+    if cfg!(test) {
+        Duration::from_millis(1)
+    } else {
+        // Give slow followers time to apply resolved locks before evicting
+        // the transaction-status cache entry, matching client-go.
+        Duration::from_secs(5)
+    }
+}
 
 /// Result returned by a transaction binlog prewrite.
 pub trait BinlogWriteResult: Send + Sync {
@@ -384,8 +396,7 @@ impl Default for CommitSettings {
 }
 
 impl CommitSettings {
-    fn apply_request_context<R: StoreRequest>(&self, request: &mut R, timeout: Duration) {
-        let mut context = request.tikv_context().cloned().unwrap_or_default();
+    fn decorate_request_context(&self, context: &mut kvrpcpb::Context, timeout: Duration) {
         context.sync_log = self.force_sync_log;
         context.disk_full_opt = self.disk_full_option as i32;
         context.txn_source = self.transaction_source;
@@ -394,6 +405,11 @@ impl CommitSettings {
         if let Some(tag) = &self.resource_group_tag {
             context.resource_group_tag.clone_from(tag);
         }
+    }
+
+    fn apply_request_context<R: StoreRequest>(&self, request: &mut R, timeout: Duration) {
+        let mut context = request.tikv_context().cloned().unwrap_or_default();
+        self.decorate_request_context(&mut context, timeout);
         assert!(request.attach_context(context));
     }
 
@@ -559,11 +575,11 @@ struct AggressiveLockingContext {
 #[derive(Clone, Default)]
 struct PipelinedTransactionState {
     generation: u64,
-    flushed_mutations: BTreeMap<Vec<u8>, kvrpcpb::Mutation>,
     range_start: Option<Vec<u8>>,
     range_end: Option<Vec<u8>>,
     flush_wait_duration: Duration,
     flush_duration_ewma_ms: f64,
+    min_commit_ts: MinCommitTsManager,
 }
 
 /// An undo-able set of actions on the dataset.
@@ -674,18 +690,22 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     prewritten: bool,
     aggressive_locking: Option<AggressiveLockingContext>,
     aggressive_locking_dirty: bool,
+    /// Cancels background pipelined flush retries when the transaction is
+    /// committed, rolled back, or dropped.
+    pipelined_cancellation: crate::async_util::Cancellation,
+    pipelined_heartbeat_started: Arc<atomic::AtomicBool>,
+    pipelined_heartbeat_failed: Arc<atomic::AtomicBool>,
     pipelined_state: PipelinedTransactionState,
     start_instant: Instant,
     latches: Option<Arc<LatchesScheduler>>,
 }
 
 impl<PdC: PdClient> Transaction<PdC> {
-    /// Constructs a transaction over an injected PD/KV client for downstream tests.
+    /// Constructs a transaction over an injected PD/KV client.
     ///
-    /// This is the Rust counterpart of client-go's `NewTestTiKVStore` injection
-    /// path and is intentionally available only with the `internal-tests`
-    /// feature outside this crate.
-    #[cfg(any(test, feature = "internal-tests"))]
+    /// This is the Rust counterpart of client-go's ordinary-build injected
+    /// client path. Embedded and in-process stores do not need to enable
+    /// crate-internal test behavior to construct a transaction.
     #[doc(hidden)]
     pub fn new(
         timestamp: Timestamp,
@@ -723,7 +743,9 @@ impl<PdC: PdClient> Transaction<PdC> {
         let mut commit_settings = CommitSettings::default();
         commit_settings.scope = options.scope.clone();
         commit_settings.pipelined = options.pipelined;
-        Transaction {
+        let pipelined = options.pipelined.enable;
+        let start_version = timestamp.version();
+        let mut transaction = Transaction {
             status: Arc::new(AtomicU8::new(status as u8)),
             timestamp,
             buffer: Buffer::new_with_keyspace(options.is_pessimistic(), keyspace),
@@ -761,10 +783,18 @@ impl<PdC: PdClient> Transaction<PdC> {
             prewritten: false,
             aggressive_locking: None,
             aggressive_locking_dirty: false,
+            pipelined_cancellation: crate::async_util::Cancellation::default(),
+            pipelined_heartbeat_started: Arc::new(atomic::AtomicBool::new(false)),
+            pipelined_heartbeat_failed: Arc::new(atomic::AtomicBool::new(false)),
             pipelined_state: PipelinedTransactionState::default(),
             start_instant: std::time::Instant::now(),
             latches,
+        };
+        if pipelined {
+            transaction.set_snapshot_pipelined(start_version);
+            transaction.configure_pipelined_memdb();
         }
+        transaction
     }
 
     fn plan<Req: KvRequest>(&self, request: Req) -> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
@@ -952,153 +982,314 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.snapshot_read_timeout
     }
 
-    fn pipelined_pending_mutations(&self) -> Vec<kvrpcpb::Mutation> {
-        self.buffer
-            .to_proto_mutations()
-            .into_iter()
-            .map(|mut mutation| {
-                if self.commit_settings.assertion_level == kvrpcpb::AssertionLevel::Off {
-                    mutation.assertion = kvrpcpb::Assertion::None as i32;
+    fn configure_pipelined_memdb(&mut self) {
+        if !self.is_pipelined() {
+            return;
+        }
+        let primary_hint = self.buffer.get_primary_key();
+        let start_version = self.timestamp.clone();
+        let rpc = self.rpc.clone();
+        let options = self.options.clone();
+        let settings = self.commit_settings.clone();
+        let write_throttle_ratio = self.commit_settings.pipelined.write_throttle_ratio;
+        let keyspace = self.keyspace;
+        let keyspace_name = self.keyspace_name.clone();
+        let rpc_interceptor = self.rpc_interceptor.clone();
+        let resource_group_name = self.resource_group_name.clone();
+        let resource_control = self.resource_control.clone();
+        let ru_details = self.ru_details.clone();
+        let lock_resolver_context = self.lock_resolver_context.clone();
+        let pipelined_state = self.pipelined_state.clone();
+        let pipelined_cancellation = self.pipelined_cancellation.clone();
+        let pipelined_heartbeat_started = self.pipelined_heartbeat_started.clone();
+        let pipelined_heartbeat_failed = self.pipelined_heartbeat_failed.clone();
+        let start_instant = self.start_instant;
+        let is_pessimistic = self.is_pessimistic();
+        self.buffer.mem_buffer().configure_managed_pipelined_flush(
+            move |generation, memdb, managed_primary| {
+                let logical_bounds = memdb_key_bounds(&memdb);
+                let mut mutations = proto_mutations_from_memdb(&memdb, keyspace, is_pessimistic);
+                if settings.assertion_level == kvrpcpb::AssertionLevel::Off {
+                    for mutation in &mut mutations {
+                        mutation.assertion = kvrpcpb::Assertion::None as i32;
+                    }
                 }
-                mutation
-            })
-            .filter(|mutation| {
-                self.pipelined_state.flushed_mutations.get(&mutation.key) != Some(mutation)
-            })
-            .collect()
+                let eligible_primary = |mutation: &&kvrpcpb::Mutation| {
+                    !matches!(
+                        kvrpcpb::Op::try_from(mutation.op),
+                        Ok(kvrpcpb::Op::CheckNotExists
+                            | kvrpcpb::Op::SharedLock
+                            | kvrpcpb::Op::SharedPessimisticLock)
+                    )
+                };
+                let primary = managed_primary
+                    .map(Key::from)
+                    .or_else(|| primary_hint.clone())
+                    .or_else(|| {
+                        mutations
+                            .iter()
+                            .find(eligible_primary)
+                            .map(|mutation| Key::from(mutation.key.clone()))
+                    });
+                let ttl_manager_closed = pipelined_heartbeat_failed.load(atomic::Ordering::Acquire);
+                let metadata = ManagedPipelinedFlushMetadata {
+                    generation,
+                    primary_key: primary.as_ref().map(|key| <&[u8]>::from(key).to_vec()),
+                    range_start: (!ttl_manager_closed)
+                        .then(|| logical_bounds.as_ref().map(|bounds| bounds.0.clone()))
+                        .flatten(),
+                    range_end: (!ttl_manager_closed)
+                        .then(|| logical_bounds.as_ref().map(|bounds| bounds.1.clone()))
+                        .flatten(),
+                };
+                let flush_started = Instant::now();
+                let result = if ttl_manager_closed {
+                    Err(PipelinedError::message("ttl manager is closed"))
+                } else if mutations.iter().any(|mutation| {
+                    matches!(
+                        kvrpcpb::Op::try_from(mutation.op),
+                        Ok(kvrpcpb::Op::SharedLock | kvrpcpb::Op::SharedPessimisticLock)
+                    )
+                }) {
+                    Err(PipelinedError::message(
+                        "shared lock is not supported in pipelined transaction",
+                    ))
+                } else if mutations.is_empty() {
+                    Ok(())
+                } else if primary.is_none() {
+                    Err(PipelinedError::message(
+                        "[pipelined dml] primary key should be set before pipelined flush",
+                    ))
+                } else {
+                    let primary_in_generation = primary.as_ref().is_some_and(|primary| {
+                        mutations
+                            .iter()
+                            .any(|mutation| mutation.key.as_slice() == <&[u8]>::from(primary))
+                    });
+                    let mut committer = Committer::new(
+                        primary,
+                        mutations.clone(),
+                        start_version.clone(),
+                        rpc.clone(),
+                        options.clone(),
+                        settings.clone(),
+                        keyspace,
+                        keyspace_name.clone(),
+                        rpc_interceptor.clone(),
+                        resource_group_name.clone(),
+                        resource_control.clone(),
+                        ru_details.clone(),
+                        lock_resolver_context.clone(),
+                        pipelined_state.clone(),
+                        memdb.size() as u64,
+                        start_instant,
+                    );
+                    let heartbeat_committer = committer.clone();
+                    let result = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|error| PipelinedError::message(error.to_string()))
+                        .and_then(|runtime| {
+                            runtime.block_on(async {
+                                tokio::select! {
+                                    _ = pipelined_cancellation.cancelled() => {
+                                        Err(PipelinedError::message("pipelined flush cancelled"))
+                                    }
+                                    result = committer.flush_pipelined_generation(
+                                        mutations,
+                                        generation,
+                                    ) => result.map_err(PipelinedError::from),
+                                }
+                            })
+                        });
+                    if result.is_ok() && primary_in_generation {
+                        heartbeat_committer.start_pipelined_heartbeat(
+                            pipelined_cancellation.clone(),
+                            pipelined_heartbeat_started.clone(),
+                            pipelined_heartbeat_failed.clone(),
+                        );
+                    }
+                    result
+                };
+                ManagedPipelinedFlushOutcome {
+                    metadata,
+                    result,
+                    flush_duration: flush_started.elapsed(),
+                }
+            },
+        );
+        let remote_rpc = self.rpc.clone();
+        let remote_timestamp = self.timestamp.clone();
+        let remote_keyspace = self.keyspace;
+        let remote_keyspace_name = self.keyspace_name.clone();
+        let remote_rpc_interceptor = snapshot_runtime_interceptor(
+            self.rpc_interceptor.clone(),
+            self.snapshot_runtime_stats.clone(),
+        );
+        let remote_snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
+        let remote_snapshot_variables = self.snapshot_variables.clone();
+        let remote_resource_group_name = self.resource_group_name.clone();
+        let remote_resource_control = self.resource_control.clone();
+        let remote_ru_details = self.ru_details.clone();
+        let remote_retry_options = self.options.retry_options.clone();
+        let remote_priority = self.options.priority;
+        let remote_not_fill_cache = self.not_fill_cache;
+        let remote_isolation_level = self.isolation_level;
+        let remote_task_id = self.task_id;
+        let remote_resource_group_tag = self.resource_group_tag.clone();
+        let remote_resource_group_tagger = self.resource_group_tagger.clone();
+        let remote_snapshot_read_timeout = self.snapshot_read_timeout;
+        let remote_read_timestamp_validator = self.read_timestamp_validator.clone();
+        let remote_snapshot_visibility_validator = self.snapshot_visibility_validator.clone();
+        let remote_read_replica_scope = self.read_replica_scope.clone();
+        let remote_replica_read_config = self.replica_read_config.clone();
+        let remote_replica_read_adjuster = self.replica_read_adjuster.clone();
+        let remote_read_lock_context = self.read_lock_context.clone();
+        let remote_lock_resolver_context = self.lock_resolver_context.clone();
+        let remote_request_source = self.commit_settings.request_source.context_value();
+        let remote_internal = self.commit_settings.request_source.is_internal();
+        self.buffer
+            .mem_buffer()
+            .configure_managed_remote_batch_get(move |logical_keys| {
+                let logical_keys = logical_keys.to_vec();
+                let rpc = remote_rpc.clone();
+                let timestamp = remote_timestamp.clone();
+                let keyspace_name = remote_keyspace_name.clone();
+                let rpc_interceptor = remote_rpc_interceptor.clone();
+                let snapshot_runtime_stats = remote_snapshot_runtime_stats.clone();
+                let snapshot_variables = remote_snapshot_variables.clone();
+                let resource_group_name = remote_resource_group_name.clone();
+                let resource_control = remote_resource_control.clone();
+                let ru_details = remote_ru_details.clone();
+                let retry_options = remote_retry_options.clone();
+                let resource_group_tag = remote_resource_group_tag.clone();
+                let resource_group_tagger = remote_resource_group_tagger.clone();
+                let read_timestamp_validator = remote_read_timestamp_validator.clone();
+                let snapshot_visibility_validator = remote_snapshot_visibility_validator.clone();
+                let read_replica_scope = remote_read_replica_scope.clone();
+                let replica_read_config = remote_replica_read_config.clone();
+                let replica_read_adjuster = remote_replica_read_adjuster.clone();
+                let read_lock_context = remote_read_lock_context.clone();
+                let lock_resolver_context = remote_lock_resolver_context.clone();
+                let request_source = remote_request_source.clone();
+                std::thread::spawn(move || {
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|_| crate::error::StaticError::Unknown)?;
+                    runtime.block_on(async move {
+                        let snapshot_version = timestamp.version();
+                        let physical_keys = logical_keys
+                            .iter()
+                            .cloned()
+                            .map(|key| {
+                                Key::from(key).encode_keyspace(remote_keyspace, KeyMode::Txn)
+                            })
+                            .collect::<Vec<_>>();
+                        let replica_read_config = adjusted_replica_read_config(
+                            &replica_read_config,
+                            replica_read_adjuster.as_ref(),
+                            physical_keys.len(),
+                        );
+                        let stale_read = replica_read_config.stale_read;
+                        let request = new_buffer_batch_get_request(
+                            physical_keys.into_iter(),
+                            timestamp.clone(),
+                        );
+                        let resource_group_tag = resource_group_tag.or_else(|| {
+                            resource_group_tagger
+                                .as_ref()
+                                .map(|tagger| tagger(SnapshotRequestType::BufferBatchGet))
+                        });
+                        let plan = plan_with_keyspace_name(
+                            rpc,
+                            remote_keyspace,
+                            keyspace_name.as_deref(),
+                            rpc_interceptor,
+                            resource_group_name.as_deref(),
+                            resource_control,
+                            ru_details,
+                            replica_read_config,
+                            request,
+                        )
+                        .request_source(request_source)
+                        .priority(remote_priority)
+                        .not_fill_cache(remote_not_fill_cache)
+                        .isolation_level(remote_isolation_level)
+                        .task_id(remote_task_id)
+                        .resource_group_tag(resource_group_tag)
+                        .snapshot_read_timeout(
+                            remote_snapshot_read_timeout,
+                            SNAPSHOT_READ_TIMEOUT_MEDIUM,
+                        )
+                        .validate_read_timestamp(
+                            read_timestamp_validator,
+                            timestamp.version(),
+                            stale_read,
+                            read_replica_scope,
+                        )
+                        .resolve_lock_for_read(
+                            timestamp,
+                            retry_options.lock_backoff,
+                            remote_keyspace,
+                            read_lock_context,
+                            lock_resolver_context,
+                            snapshot_runtime_stats.clone(),
+                            snapshot_variables.clone(),
+                        )
+                        .retry_multi_region_with_snapshot_stats(
+                            retry_options.region_backoff,
+                            snapshot_runtime_stats,
+                            snapshot_variables,
+                        )
+                        .observe_snapshot_regions(remote_internal)
+                        .merge(Collect)
+                        .plan();
+                        let pairs = plan
+                            .execute()
+                            .await
+                            .map_err(|_| crate::error::StaticError::Unknown)?;
+                        if let Some(validator) = snapshot_visibility_validator {
+                            validator
+                                .check_visibility(snapshot_version)
+                                .await
+                                .map_err(|_| crate::error::StaticError::Unknown)?;
+                        }
+                        Ok(pairs
+                            .into_iter()
+                            .map(|pair| pair.encode_keyspace(remote_keyspace, KeyMode::Txn))
+                            .map(|pair| pair.truncate_keyspace(remote_keyspace))
+                            .map(|pair| (<&[u8]>::from(&pair.0).to_vec(), pair.1))
+                            .collect())
+                    })
+                })
+                .join()
+                .map_err(|_| crate::error::StaticError::Unknown)?
+            });
+        self.buffer
+            .mem_buffer()
+            .set_managed_write_throttle_ratio(write_throttle_ratio);
+    }
+
+    fn sync_pipelined_state_from_memdb(&mut self) {
+        let metadata = self.buffer.mem_buffer().managed_pipelined_metadata();
+        self.pipelined_state.generation = metadata.generation;
+        self.pipelined_state.range_start = metadata.range_start;
+        self.pipelined_state.range_end = metadata.range_end;
+        self.pipelined_state.flush_wait_duration =
+            self.buffer.mem_buffer().metrics().flush_wait_duration;
+        self.pipelined_state.flush_duration_ewma_ms =
+            self.buffer.mem_buffer().managed_flush_duration_ewma_ms();
     }
 
     async fn maybe_flush_pipelined(&mut self, force: bool) -> Result<bool> {
         if !self.is_pipelined() {
             return Ok(false);
         }
-        if self.buffer.has_shared_locks() {
-            return Err(Error::StringError(
-                "shared lock is not supported in pipelined transaction".to_owned(),
-            ));
-        }
-        let pending = self.pipelined_pending_mutations();
-        if pending.is_empty() {
-            return Ok(false);
-        }
-        let pending_size = pending.iter().fold(0_u64, |total, mutation| {
-            total.saturating_add((mutation.key.len() + mutation.value.len()) as u64)
-        });
-        if !force
-            && (pending_size < MIN_FLUSH_MEMORY
-                || (pending.len() < MIN_FLUSH_KEYS && pending_size < FORCE_FLUSH_MEMORY))
-        {
-            return Ok(false);
-        }
-
-        let primary = self
-            .buffer
-            .get_primary_key()
-            .or_else(|| {
-                pending
-                    .iter()
-                    .find(|mutation| {
-                        kvrpcpb::Op::try_from(mutation.op) != Ok(kvrpcpb::Op::CheckNotExists)
-                    })
-                    .map(|mutation| Key::from(mutation.key.clone()))
-            })
-            .ok_or_else(|| {
-                Error::StringError(
-                    "[pipelined dml] primary key should be set before pipelined flush".to_owned(),
-                )
-            })?;
-        let generation = self.pipelined_state.generation.saturating_add(1);
-        let mut request = new_flush_request(
-            pending.clone(),
-            primary,
-            self.timestamp.clone(),
-            Timestamp::from_version(self.timestamp.version().saturating_add(1)),
-            generation,
-            MAX_TTL.max(DEFAULT_LOCK_TTL),
-        );
-        request.assertion_level = self.commit_settings.assertion_level as i32;
-        self.commit_settings
-            .apply_request(&mut request, SNAPSHOT_READ_TIMEOUT_MEDIUM);
-        request
-            .context
-            .get_or_insert_with(kvrpcpb::Context::default)
-            .request_source = "external_pdml".to_owned();
-
-        let ratio = self.commit_settings.pipelined.write_throttle_ratio;
-        if (0.0..1.0).contains(&ratio) && ratio > 0.0 {
-            let sleep_ms = ratio / (1.0 - ratio) * self.pipelined_state.flush_duration_ewma_ms;
-            if sleep_ms >= 1.0 {
-                tokio::time::sleep(Duration::from_millis(sleep_ms as u64)).await;
-            }
-        }
-        let started = Instant::now();
-        let flushed_len = pending.len();
-        plan_with_keyspace_name(
-            self.rpc.clone(),
-            self.keyspace,
-            self.keyspace_name.as_deref(),
-            self.rpc_interceptor.clone(),
-            self.resource_group_name.as_deref(),
-            self.resource_control.clone(),
-            self.ru_details.clone(),
-            ReplicaReadConfig::default(),
-            request,
-        )
-        .priority(self.options.priority)
-        .resolve_lock_with_context(
-            self.timestamp.clone(),
-            self.options.retry_options.lock_backoff.clone(),
-            self.keyspace,
-            self.lock_resolver_context.clone(),
-        )
-        .retry_multi_region_with_concurrency(
-            self.options.retry_options.region_backoff.clone(),
-            self.commit_settings.pipelined.flush_concurrency.max(1),
-        )
-        .merge(CollectError)
-        .extract_error()
-        .plan()
-        .execute()
-        .await?;
-        let elapsed = started.elapsed();
-        crate::stats::observe_pipelined_flush(flushed_len, pending_size as usize, elapsed);
-
-        let first_key = pending.first().map(|mutation| mutation.key.clone());
-        let last_key = pending.last().map(|mutation| mutation.key.clone());
-        for mutation in pending {
-            self.pipelined_state
-                .flushed_mutations
-                .insert(mutation.key.clone(), mutation);
-        }
-        self.pipelined_state.generation = generation;
-        if let Some(first_key) = first_key {
-            if self
-                .pipelined_state
-                .range_start
-                .as_ref()
-                .is_none_or(|current| first_key < *current)
-            {
-                self.pipelined_state.range_start = Some(first_key);
-            }
-        }
-        if let Some(last_key) = last_key {
-            if self
-                .pipelined_state
-                .range_end
-                .as_ref()
-                .is_none_or(|current| last_key > *current)
-            {
-                self.pipelined_state.range_end = Some(last_key);
-            }
-        }
-        let elapsed_ms = elapsed.as_secs_f64() * 1_000.0;
-        self.pipelined_state.flush_duration_ewma_ms =
-            if self.pipelined_state.flush_duration_ewma_ms == 0.0 {
-                elapsed_ms
-            } else {
-                self.pipelined_state.flush_duration_ewma_ms * 0.8 + elapsed_ms * 0.2
-            };
-        Ok(true)
+        self.configure_pipelined_memdb();
+        let flushed = self.buffer.mem_buffer().flush(force).map_err(Error::from)?;
+        self.sync_pipelined_state_from_memdb();
+        Ok(flushed)
     }
 
     fn replica_read_config_for_items(&self, item_count: usize) -> ReplicaReadConfig {
@@ -1176,11 +1367,23 @@ impl<PdC: PdClient> Transaction<PdC> {
         );
         trace!("invoking transactional get request");
         self.check_allow_operation().await?;
+        let key = key.into();
+        if self.is_pipelined() {
+            let physical_key = key.clone().encode_keyspace(self.keyspace, KeyMode::Txn);
+            if let Some(value) = self.buffer.pipelined_value(&physical_key) {
+                return Ok(value);
+            }
+            return Ok(self
+                .batch_get_from_buffer(std::iter::once(key))
+                .await?
+                .next()
+                .map(|pair| pair.1));
+        }
         let timestamp = self.timestamp.clone();
         let snapshot_version = timestamp.version();
         let cache_snapshot_read = !self.options.read_only || timestamp.version() != u64::MAX;
         let rpc = self.rpc.clone();
-        let key = key.into().encode_keyspace(self.keyspace, KeyMode::Txn);
+        let key = key.encode_keyspace(self.keyspace, KeyMode::Txn);
         let retry_options = self.options.retry_options.clone();
         let keyspace = self.keyspace;
         let keyspace_name = self.keyspace_name.clone();
@@ -1276,6 +1479,15 @@ impl<PdC: PdClient> Transaction<PdC> {
         key: impl Into<Key>,
         options: &[GetOption],
     ) -> Result<Option<ValueEntry>> {
+        let key = key.into();
+        if self.is_pipelined() {
+            // PipelinedMemDB intentionally ignores Get options: its remote
+            // buffer tier exposes values with commit timestamp zero.
+            return self
+                .get(key)
+                .await
+                .map(|value| value.map(|value| ValueEntry::new(value, 0)));
+        }
         let _timer = crate::stats::snapshot_command_timer(
             "get",
             self.commit_settings.request_source.is_internal(),
@@ -1289,7 +1501,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let snapshot_version = timestamp.version();
         let cache_snapshot_read = !self.options.read_only || timestamp.version() != u64::MAX;
         let rpc = self.rpc.clone();
-        let key = key.into().encode_keyspace(self.keyspace, KeyMode::Txn);
+        let key = key.encode_keyspace(self.keyspace, KeyMode::Txn);
         let retry_options = self.options.retry_options.clone();
         let keyspace = self.keyspace;
         let keyspace_name = self.keyspace_name.clone();
@@ -1498,6 +1710,42 @@ impl<PdC: PdClient> Transaction<PdC> {
     ) -> Result<impl Iterator<Item = KvPair>> {
         debug!("invoking transactional batch_get request");
         self.check_allow_operation().await?;
+        let keys = keys.into_iter().map(Into::into).collect::<Vec<Key>>();
+        if self.is_pipelined() {
+            let mut buffered = Vec::new();
+            let mut remote_keys = Vec::new();
+            let mut remote_physical_keys = Vec::new();
+            for key in keys {
+                let physical_key = key.clone().encode_keyspace(self.keyspace, KeyMode::Txn);
+                match self.buffer.pipelined_value(&physical_key) {
+                    Some(Some(value)) => buffered.push(KvPair(key, value)),
+                    Some(None) => {}
+                    None => {
+                        remote_keys.push(key);
+                        remote_physical_keys.push(physical_key);
+                    }
+                }
+            }
+            if !remote_keys.is_empty() {
+                let fetched = self
+                    .batch_get_from_buffer(remote_keys)
+                    .await?
+                    .collect::<Vec<_>>();
+                let fetched_by_physical = fetched
+                    .iter()
+                    .map(|pair| {
+                        (
+                            pair.0.clone().encode_keyspace(self.keyspace, KeyMode::Txn),
+                            pair.1.clone(),
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>();
+                self.buffer
+                    .cache_pipelined_batch_get(remote_physical_keys, &fetched_by_physical);
+                buffered.extend(fetched);
+            }
+            return Ok(buffered.into_iter());
+        }
         let timestamp = self.timestamp.clone();
         let snapshot_version = timestamp.version();
         let cache_snapshot_read = !self.options.read_only || timestamp.version() != u64::MAX;
@@ -1515,7 +1763,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let ru_details = self.ru_details.clone();
         let keys = keys
             .into_iter()
-            .map(move |k| k.into().encode_keyspace(keyspace, KeyMode::Txn));
+            .map(move |key| key.encode_keyspace(keyspace, KeyMode::Txn));
         let retry_options = self.options.retry_options.clone();
         let priority = self.options.priority;
         let not_fill_cache = self.not_fill_cache;
@@ -1601,7 +1849,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                     .collect())
             })
             .await
-            .map(move |pairs| pairs.map(move |pair| pair.truncate_keyspace(keyspace)))
+            .map(move |pairs| {
+                pairs
+                    .map(move |pair| pair.truncate_keyspace(keyspace))
+                    .collect::<Vec<_>>()
+                    .into_iter()
+            })
     }
 
     /// Batch-read snapshot entries with source `GetOption` behavior. Missing
@@ -1612,6 +1865,16 @@ impl<PdC: PdClient> Transaction<PdC> {
         keys: impl IntoIterator<Item = impl Into<Key>>,
         options: &[GetOption],
     ) -> Result<BTreeMap<Key, ValueEntry>> {
+        let keys = keys.into_iter().map(Into::into).collect::<Vec<Key>>();
+        if self.is_pipelined() {
+            // PipelinedMemDB ignores BatchGet options and reports remote
+            // buffer values without snapshot commit timestamps.
+            return Ok(self
+                .batch_get(keys)
+                .await?
+                .map(|pair| (pair.0, ValueEntry::new(pair.1, 0)))
+                .collect());
+        }
         debug!("invoking transactional batch_get request with options");
         self.check_allow_operation().await?;
         let mut get_options = GetOptions::default();
@@ -1634,7 +1897,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let ru_details = self.ru_details.clone();
         let keys = keys
             .into_iter()
-            .map(move |key| key.into().encode_keyspace(keyspace, KeyMode::Txn));
+            .map(move |key| key.encode_keyspace(keyspace, KeyMode::Txn));
         let retry_options = self.options.retry_options.clone();
         let priority = self.options.priority;
         let not_fill_cache = self.not_fill_cache;
@@ -2616,6 +2879,30 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.cancel_aggressive_locking().await?;
         }
 
+        // Pipelined transactions commit only after the authoritative MemDB's
+        // final mutable generation has been handed to the background flush
+        // worker and every flush result has been observed.
+        if self.is_pipelined() {
+            self.configure_pipelined_memdb();
+            if let Err(error) = self.buffer.mem_buffer().flush(true).map_err(Error::from) {
+                self.pipelined_cancellation.cancel();
+                return Err(error);
+            }
+            if let Err(error) = self.buffer.mem_buffer().flush_wait().map_err(Error::from) {
+                self.pipelined_cancellation.cancel();
+                return Err(error);
+            }
+            self.pipelined_cancellation.cancel();
+            self.sync_pipelined_state_from_memdb();
+            if self.pipelined_state.range_start.is_none()
+                || self.pipelined_state.range_end.is_none()
+            {
+                return Err(Error::StringError(
+                    "unexpected empty pipelinedStart or pipelinedEnd".to_owned(),
+                ));
+            }
+        }
+
         let mut mutations = Vec::new();
         let mut stashed_assertion = None;
         // client-go invokes KvFilter while walking every value-bearing MemDB
@@ -2666,17 +2953,20 @@ impl<PdC: PdClient> Transaction<PdC> {
                 Ok(kvrpcpb::Op::SharedLock | kvrpcpb::Op::SharedPessimisticLock)
             )
         });
+        let has_flushed_pipelined_mutations =
+            self.is_pipelined() && self.pipelined_state.generation > 0;
         let primary_key = self
             .buffer
             .get_primary_key()
             .filter(|primary| {
-                mutations.iter().any(|mutation| {
-                    mutation.key.as_slice() == <&[u8]>::from(primary)
-                        && !matches!(
-                            kvrpcpb::Op::try_from(mutation.op),
-                            Ok(kvrpcpb::Op::SharedLock | kvrpcpb::Op::SharedPessimisticLock)
-                        )
-                })
+                has_flushed_pipelined_mutations
+                    || mutations.iter().any(|mutation| {
+                        mutation.key.as_slice() == <&[u8]>::from(primary)
+                            && !matches!(
+                                kvrpcpb::Op::try_from(mutation.op),
+                                Ok(kvrpcpb::Op::SharedLock | kvrpcpb::Op::SharedPessimisticLock)
+                            )
+                    })
             })
             .or_else(|| {
                 mutations
@@ -2684,7 +2974,9 @@ impl<PdC: PdClient> Transaction<PdC> {
                     .find(|mutation| {
                         !matches!(
                             kvrpcpb::Op::try_from(mutation.op),
-                            Ok(kvrpcpb::Op::CheckNotExists | kvrpcpb::Op::SharedLock)
+                            Ok(kvrpcpb::Op::CheckNotExists
+                                | kvrpcpb::Op::SharedLock
+                                | kvrpcpb::Op::SharedPessimisticLock)
                         )
                     })
                     .map(|mutation| Key::from(mutation.key.clone()))
@@ -2698,7 +2990,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     })
                     .flatten()
             });
-        if mutations.is_empty() {
+        if mutations.is_empty() && !has_flushed_pipelined_mutations {
             assert!(primary_key.is_none());
             self.prewritten = false;
             self.commit_timestamp = None;
@@ -2728,7 +3020,7 @@ impl<PdC: PdClient> Transaction<PdC> {
 
         self.start_auto_heartbeat().await;
 
-        let latch = if self.is_pessimistic() {
+        let latch = if self.is_pipelined() || self.is_pessimistic() {
             None
         } else if let Some(scheduler) = &self.latches {
             let keys = mutations
@@ -2841,6 +3133,19 @@ impl<PdC: PdClient> Transaction<PdC> {
                     error
                 );
             }
+        }
+
+        if self.is_pipelined() {
+            self.configure_pipelined_memdb();
+            self.pipelined_cancellation.cancel();
+            if let Err(error) = self.buffer.mem_buffer().flush_wait() {
+                warn!(
+                    "pipelined flush failed before rollback, start_ts: {}, error: {}",
+                    self.timestamp.version(),
+                    error
+                );
+            }
+            self.sync_pipelined_state_from_memdb();
         }
 
         let primary_key = self.buffer.get_primary_key();
@@ -3038,6 +3343,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Keys on this surface are logical in both API V1 and API V2, matching
     /// client-go's `KVTxn.GetMemBuffer` contract.
     pub fn get_mem_buffer(&mut self) -> &mut MemDb {
+        self.configure_pipelined_memdb();
         self.buffer.mem_buffer()
     }
 
@@ -4028,7 +4334,10 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     async fn start_auto_heartbeat(&mut self) {
-        if !self.options.heartbeat_option.is_auto_heartbeat() || self.is_heartbeat_started {
+        if self.is_pipelined()
+            || !self.options.heartbeat_option.is_auto_heartbeat()
+            || self.is_heartbeat_started
+        {
             return;
         }
         self.is_heartbeat_started = true;
@@ -4204,6 +4513,7 @@ impl<PdC: PdClient> Drop for Transaction<PdC> {
             self.timestamp.version(),
             self.get_status()
         );
+        self.pipelined_cancellation.cancel();
         if std::thread::panicking() {
             return;
         }
@@ -4824,14 +5134,7 @@ impl<PdC: PdClient> Committer<PdC> {
                 "shared lock is not supported in pipelined transaction".to_owned(),
             ));
         }
-        let pending = self
-            .mutations
-            .iter()
-            .filter(|mutation| {
-                self.pipelined_state.flushed_mutations.get(&mutation.key) != Some(*mutation)
-            })
-            .cloned()
-            .collect::<Vec<_>>();
+        let pending = self.mutations.to_vec();
         if !pending.is_empty() {
             let generation = self.pipelined_state.generation.saturating_add(1);
             self.flush_pipelined_generation(pending, generation).await?;
@@ -4895,6 +5198,127 @@ impl<PdC: PdClient> Committer<PdC> {
         Ok(Some(commit_timestamp))
     }
 
+    fn start_pipelined_heartbeat(
+        &self,
+        cancellation: crate::async_util::Cancellation,
+        started: Arc<atomic::AtomicBool>,
+        failed: Arc<atomic::AtomicBool>,
+    ) {
+        if started
+            .compare_exchange(
+                false,
+                true,
+                atomic::Ordering::AcqRel,
+                atomic::Ordering::Acquire,
+            )
+            .is_err()
+        {
+            return;
+        }
+        let committer = self.clone();
+        let interval = match self.options.heartbeat_option {
+            HeartbeatOption::NoHeartbeat => DEFAULT_HEARTBEAT_INTERVAL,
+            HeartbeatOption::FixedTime(interval) => interval,
+        };
+        let start_ts = self.start_version.version();
+        std::thread::spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    failed.store(true, atomic::Ordering::Release);
+                    warn!(
+                        "failed to start pipelined heartbeat runtime, start_ts: {start_ts}: {error}"
+                    );
+                    return;
+                }
+            };
+            runtime.block_on(async move {
+                let mut consecutive_failures = 0_u8;
+                loop {
+                    tokio::select! {
+                        _ = cancellation.cancelled() => break,
+                        _ = tokio::time::sleep(interval) => {}
+                    }
+                    match committer.send_pipelined_heartbeat().await {
+                        Ok(false) => consecutive_failures = 0,
+                        Ok(true) => {
+                            failed.store(true, atomic::Ordering::Release);
+                            break;
+                        }
+                        Err(error) => {
+                            consecutive_failures = consecutive_failures.saturating_add(1);
+                            let terminal = matches!(error, Error::TxnNotFound(_));
+                            warn!(
+                                "pipelined heartbeat failed, start_ts: {start_ts}, consecutive failures: {consecutive_failures}: {error}"
+                            );
+                            if terminal || consecutive_failures > 10 {
+                                failed.store(true, atomic::Ordering::Release);
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    /// Returns `true` when the source maximum pipelined lifetime has elapsed
+    /// and the TTL manager must be closed without sending another heartbeat.
+    async fn send_pipelined_heartbeat(&self) -> Result<bool> {
+        let primary = self.primary_key.clone().ok_or(Error::NoPrimaryKey)?;
+        let now = self.rpc.clone().get_timestamp().await?;
+        let uptime = crate::oracle::extract_physical(now.version()).saturating_sub(
+            crate::oracle::extract_physical(self.start_version.version()),
+        );
+        if uptime > MAX_TXN_TIME_USE as i64 {
+            info!(
+                "pipelined TTL manager reached its maximum lifetime, start_ts: {}, uptime_ms: {}",
+                self.start_version.version(),
+                uptime
+            );
+            return Ok(true);
+        }
+        self.pipelined_state
+            .min_commit_ts
+            .try_update(now.version(), WriteAccessLevel::Ttl);
+        let mut request = new_heart_beat_request(
+            self.start_version.clone(),
+            primary,
+            self.start_instant.elapsed().as_millis() as u64 + MAX_TTL,
+        );
+        request.min_commit_ts = self.pipelined_state.min_commit_ts.get();
+        self.settings
+            .apply_request(&mut request, SNAPSHOT_READ_TIMEOUT_MEDIUM);
+        plan_with_keyspace_name(
+            self.rpc.clone(),
+            self.keyspace,
+            self.keyspace_name.as_deref(),
+            self.rpc_interceptor.clone(),
+            self.resource_group_name.as_deref(),
+            self.resource_control.clone(),
+            self.ru_details.clone(),
+            ReplicaReadConfig::default(),
+            request,
+        )
+        .priority(self.options.priority)
+        .retry_multi_region(self.options.retry_options.region_backoff.clone())
+        .extract_error()
+        .merge(CollectSingle)
+        .plan()
+        .execute()
+        .await?;
+        if let Err(error) = self.broadcast_pipelined_status(0, false, false, true).await {
+            warn!(
+                "broadcast pipelined heartbeat status failed, start_ts: {}: {error}",
+                self.start_version.version()
+            );
+        }
+        Ok(false)
+    }
+
     async fn flush_pipelined_generation(
         &mut self,
         mutations: Vec<kvrpcpb::Mutation>,
@@ -4905,11 +5329,12 @@ impl<PdC: PdClient> Committer<PdC> {
                 "[pipelined dml] primary key should be set before pipelined flush".to_owned(),
             )
         })?;
+        let minimum = self.start_version.version().saturating_add(1);
         let mut request = new_flush_request(
             mutations.clone(),
             primary,
             self.start_version.clone(),
-            Timestamp::from_version(self.start_version.version().saturating_add(1)),
+            Timestamp::from_version(minimum),
             generation,
             MAX_TTL.max(DEFAULT_LOCK_TTL),
         );
@@ -4952,13 +5377,16 @@ impl<PdC: PdClient> Committer<PdC> {
         .execute()
         .await?;
         crate::stats::observe_pipelined_flush(mutations.len(), size, started.elapsed());
-        let first_key = mutations.first().map(|mutation| mutation.key.clone());
-        let last_key = mutations.last().map(|mutation| mutation.key.clone());
-        for mutation in mutations {
-            self.pipelined_state
-                .flushed_mutations
-                .insert(mutation.key.clone(), mutation);
-        }
+        let logical_key = |key: Vec<u8>| {
+            let key = Key::from(key).truncate_keyspace(self.keyspace);
+            <&[u8]>::from(&key).to_vec()
+        };
+        let first_key = mutations
+            .first()
+            .map(|mutation| logical_key(mutation.key.clone()));
+        let last_key = mutations
+            .last()
+            .map(|mutation| logical_key(mutation.key.clone()));
         self.pipelined_state.generation = generation;
         if let Some(first_key) = first_key {
             if self
@@ -5096,22 +5524,33 @@ impl<PdC: PdClient> Committer<PdC> {
         &self,
         commit_version: u64,
         is_completed: bool,
+        rolled_back: bool,
+        include_min_commit_ts: bool,
     ) -> Result<()> {
         let status = kvrpcpb::TxnStatus {
             start_ts: self.start_version.version(),
-            min_commit_ts: (!is_completed && commit_version == 0)
-                .then(|| self.min_commit_ts.get())
+            min_commit_ts: include_min_commit_ts
+                .then(|| self.pipelined_state.min_commit_ts.get())
                 .unwrap_or_default(),
             commit_ts: commit_version,
-            rolled_back: commit_version == 0,
+            rolled_back,
             is_completed,
         };
         let mut request = kvrpcpb::BroadcastTxnStatusRequest {
             txn_status: vec![status],
             ..Default::default()
         };
-        self.settings
-            .apply_request(&mut request, Duration::from_secs(5));
+        self.settings.decorate_request_context(
+            request
+                .context
+                .get_or_insert_with(kvrpcpb::Context::default),
+            Duration::from_secs(5),
+        );
+        if self.settings.resource_group_tag.is_none() {
+            if let Some(tagger) = &self.settings.resource_group_tagger {
+                tagger(&mut request);
+            }
+        }
         plan_with_keyspace_name(
             self.rpc.clone(),
             self.keyspace,
@@ -5131,11 +5570,19 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     async fn finish_pipelined_locks(&self, commit_version: u64) -> Result<()> {
-        if let Err(error) = self.broadcast_pipelined_status(commit_version, false).await {
+        let rolled_back = commit_version == 0;
+        if let Err(error) = self
+            .broadcast_pipelined_status(commit_version, false, rolled_back, true)
+            .await
+        {
             warn!("broadcast pipelined transaction status failed: {error}");
         }
         self.resolve_pipelined_locks(commit_version).await?;
-        if let Err(error) = self.broadcast_pipelined_status(commit_version, true).await {
+        tokio::time::sleep(pipelined_broadcast_grace_period()).await;
+        if let Err(error) = self
+            .broadcast_pipelined_status(commit_version, true, rolled_back, false)
+            .await
+        {
             warn!("broadcast completed pipelined transaction status failed: {error}");
         }
         Ok(())
@@ -6228,7 +6675,7 @@ impl<PdC: PdClient> Committer<PdC> {
         });
         if self.settings.pipelined.enable {
             if self.pipelined_state.generation == 0 {
-                if let Err(error) = self.broadcast_pipelined_status(0, true).await {
+                if let Err(error) = self.broadcast_pipelined_status(0, true, true, true).await {
                     warn!("broadcast completed pipelined rollback status failed: {error}");
                 }
                 return Ok(());
@@ -6401,6 +6848,7 @@ mod tests {
     use super::TransactionStatus;
     use super::WriteAccessLevel;
     use crate::transaction::txn_file::{ChunkBatch, TxnChunkRange, TxnChunkSlice};
+    use crate::transaction::unionstore::PipelinedError;
     use crate::transaction::ResolveLocksContext;
     use std::any::Any;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -10305,7 +10753,8 @@ mod tests {
         let shared_key = Key::from(b"shared".to_vec());
         pipelined.buffer.primary_key_or(&shared_key);
         pipelined.buffer.lock_shared(shared_key).unwrap();
-        let error = pipelined.maybe_flush_pipelined(true).await.unwrap_err();
+        assert!(pipelined.maybe_flush_pipelined(true).await.unwrap());
+        let error = pipelined.buffer.mem_buffer().flush_wait().unwrap_err();
         assert!(error
             .to_string()
             .contains("shared lock is not supported in pipelined transaction"));
@@ -10360,7 +10809,11 @@ mod tests {
             .await
             .unwrap();
         assert!(transaction.maybe_flush_pipelined(true).await.unwrap());
-        assert!(!transaction.maybe_flush_pipelined(true).await.unwrap());
+        // Source `Flush(true)` rotates an empty final generation; the flush
+        // callback observes it but deliberately sends no TiKV RPC.
+        assert!(transaction.maybe_flush_pipelined(true).await.unwrap());
+        transaction.buffer.mem_buffer().flush_wait().unwrap();
+        transaction.sync_pipelined_state_from_memdb();
 
         assert_eq!(
             *flushed.lock().unwrap(),
@@ -10370,7 +10823,7 @@ mod tests {
                 (3, vec![b"a".to_vec()], "external_pdml".to_owned()),
             ]
         );
-        assert_eq!(transaction.pipelined_state.generation, 3);
+        assert_eq!(transaction.pipelined_state.generation, 4);
         assert_eq!(
             transaction.pipelined_state.range_start.as_deref(),
             Some(b"a".as_slice())
@@ -10381,8 +10834,454 @@ mod tests {
         );
     }
 
+    #[rstest::rstest]
+    #[case(Keyspace::Disable, b"a".to_vec(), b"b".to_vec())]
+    #[case(
+        Keyspace::try_enable(7).unwrap(),
+        b"x\0\0\x07a".to_vec(),
+        b"x\0\0\x07b".to_vec()
+    )]
+    #[tokio::test]
+    async fn source_direct_mem_buffer_flush_rotates_the_authoritative_generation(
+        #[case] keyspace: Keyspace,
+        #[case] physical_a: Vec<u8>,
+        #[case] physical_b: Vec<u8>,
+    ) {
+        let flushed = Arc::new(Mutex::new(Vec::new()));
+        let flushed_by_hook = flushed.clone();
+        let committed = Arc::new(Mutex::new(Vec::new()));
+        let committed_by_hook = committed.clone();
+        let buffer_reads = Arc::new(AtomicUsize::new(0));
+        let buffer_reads_by_hook = buffer_reads.clone();
+        let statuses = Arc::new(Mutex::new(Vec::new()));
+        let statuses_by_hook = statuses.clone();
+        let physical_a_by_hook = physical_a.clone();
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if let Some(request) = request.downcast_ref::<kvrpcpb::FlushRequest>() {
+                    flushed_by_hook.lock().unwrap().push((
+                        request.generation,
+                        request.primary_key.clone(),
+                        request
+                            .mutations
+                            .iter()
+                            .map(|mutation| mutation.key.clone())
+                            .collect::<Vec<_>>(),
+                    ));
+                    std::thread::sleep(Duration::from_millis(5));
+                    return Ok(Box::<kvrpcpb::FlushResponse>::default() as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::BufferBatchGetRequest>() {
+                    assert_eq!(request.context.as_ref().unwrap().resolved_locks, vec![1]);
+                    buffer_reads_by_hook.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::new(kvrpcpb::BufferBatchGetResponse {
+                        pairs: request
+                            .keys
+                            .iter()
+                            .filter(|key| key.as_slice() == physical_a_by_hook.as_slice())
+                            .map(|key| kvrpcpb::KvPair {
+                                key: key.clone(),
+                                value: b"one".to_vec(),
+                                ..Default::default()
+                            })
+                            .collect(),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::CommitRequest>() {
+                    committed_by_hook
+                        .lock()
+                        .unwrap()
+                        .extend(request.keys.clone());
+                    return Ok(Box::<kvrpcpb::CommitResponse>::default() as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::ResolveLockRequest>() {
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::BroadcastTxnStatusRequest>()
+                {
+                    statuses_by_hook
+                        .lock()
+                        .unwrap()
+                        .extend(request.txn_status.clone());
+                    return Ok(
+                        Box::<kvrpcpb::BroadcastTxnStatusResponse>::default() as Box<dyn Any>
+                    );
+                }
+                panic!("unexpected direct-MemBuffer request");
+            },
+        )));
+        rpc.set_timestamp(Timestamp::from_version(2));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            rpc,
+            TransactionOptions::new_optimistic()
+                .pipelined(super::PipelinedTxnOptions {
+                    enable: true,
+                    flush_concurrency: 1,
+                    resolve_lock_concurrency: 1,
+                    write_throttle_ratio: 0.0,
+                })
+                .drop_check(CheckLevel::None),
+            keyspace,
+        );
+        let footprints = Arc::new(Mutex::new(Vec::new()));
+        let footprints_by_hook = footprints.clone();
+        transaction.set_memory_footprint_change_hook(move |bytes| {
+            footprints_by_hook.lock().unwrap().push(bytes);
+        });
+        let scan_error = match transaction.scan(b"a".to_vec()..b"z".to_vec(), 1).await {
+            Ok(_) => panic!("pipelined transaction scans must reject MemDB iteration"),
+            Err(error) => error,
+        };
+        assert!(scan_error
+            .to_string()
+            .contains("pipelined memdb does not support Iter"));
+
+        {
+            let memdb = transaction.get_mem_buffer();
+            let mut iterator = memdb.iter(None, None);
+            assert_eq!(
+                iterator.next(),
+                Err("pipelined memdb does not support Iter")
+            );
+            let mut snapshot_iterator = memdb.snapshot_iter(None, None);
+            assert_eq!(
+                snapshot_iterator.next(),
+                Err("SnapshotIter is not supported for PipelinedMemDB")
+            );
+            assert_eq!(
+                memdb.for_each_in_snapshot_range(None, None, false, |_, _| Ok(false)),
+                Err("pipelined memdb does not support ForEachInSnapshotRange")
+            );
+            assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                memdb.checkpoint();
+            }))
+            .is_err());
+
+            memdb.set(b"a", b"one").unwrap();
+            assert!(memdb.flush(true).unwrap());
+            assert_eq!(memdb.get_readonly(b"a").unwrap(), b"one");
+            memdb.flush_wait().unwrap();
+
+            memdb.set_managed_flush_thresholds(1, 0, u64::MAX);
+            memdb.set(b"b", b"two").unwrap();
+            assert!(memdb.flush(false).unwrap());
+            assert_eq!(memdb.get_readonly(b"b").unwrap(), b"two");
+            memdb.flush_wait().unwrap();
+        }
+        transaction.sync_pipelined_state_from_memdb();
+
+        assert_eq!(
+            *flushed.lock().unwrap(),
+            vec![
+                (1, physical_a.clone(), vec![physical_a.clone()]),
+                (2, physical_a.clone(), vec![physical_b]),
+            ]
+        );
+        assert_eq!(transaction.pipelined_state.generation, 2);
+        assert_eq!(
+            transaction.pipelined_state.range_start.as_deref(),
+            Some(b"a".as_slice())
+        );
+        assert_eq!(
+            transaction.pipelined_state.range_end.as_deref(),
+            Some(b"b".as_slice())
+        );
+        assert_eq!(transaction.memory_footprint(), 0);
+        assert_eq!(footprints.lock().unwrap().last().copied(), Some(0));
+        assert!(transaction.get_mem_buffer().metrics().flush_wait_duration > Duration::ZERO);
+        assert_eq!(transaction.get_mem_buffer().get(b"a").unwrap(), b"one");
+        assert_eq!(buffer_reads.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            transaction
+                .get_mem_buffer()
+                .batch_get(&[b"a".to_vec(), b"missing".to_vec()])
+                .unwrap(),
+            BTreeMap::from([(b"a".to_vec(), b"one".to_vec())])
+        );
+        assert_eq!(buffer_reads.load(Ordering::SeqCst), 2);
+        assert_eq!(transaction.get_mem_buffer().get(b"a").unwrap(), b"one");
+        assert_eq!(buffer_reads.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            transaction.get("a".to_owned()).await.unwrap(),
+            Some(b"one".to_vec())
+        );
+        assert_eq!(buffer_reads.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            transaction
+                .batch_get(["a".to_owned(), "missing".to_owned()])
+                .await
+                .unwrap()
+                .collect::<Vec<_>>(),
+            vec![KvPair(Key::from("a".to_owned()), b"one".to_vec())]
+        );
+        assert_eq!(buffer_reads.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            transaction
+                .get_with_options("a".to_owned(), &[GetOption::ReturnCommitTs])
+                .await
+                .unwrap()
+                .unwrap()
+                .commit_ts,
+            0
+        );
+        assert_eq!(
+            transaction
+                .batch_get_with_options(
+                    ["a".to_owned(), "missing".to_owned()],
+                    &[GetOption::ReturnCommitTs],
+                )
+                .await
+                .unwrap()
+                .get(&Key::from("a".to_owned()))
+                .unwrap()
+                .commit_ts,
+            0
+        );
+        assert_eq!(buffer_reads.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            transaction.get("a".to_owned()).await.unwrap(),
+            Some(b"one".to_vec())
+        );
+        assert_eq!(buffer_reads.load(Ordering::SeqCst), 2);
+        assert!(!transaction.get_mem_buffer().flush(false).unwrap());
+        assert_eq!(
+            transaction.get("a".to_owned()).await.unwrap(),
+            Some(b"one".to_vec())
+        );
+        assert_eq!(buffer_reads.load(Ordering::SeqCst), 3);
+        assert_eq!(transaction.commit().await.unwrap().unwrap().version(), 2);
+        assert_eq!(*committed.lock().unwrap(), vec![physical_a]);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while statuses.lock().unwrap().len() < 2 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("pipelined secondary resolution broadcasts both statuses");
+        let statuses = statuses.lock().unwrap();
+        let committing = statuses
+            .iter()
+            .find(|status| status.commit_ts == 2 && !status.is_completed)
+            .expect("commit broadcasts the non-completed transaction status");
+        assert_eq!(committing.min_commit_ts, 0);
+        let completed = statuses
+            .iter()
+            .find(|status| status.commit_ts == 2 && status.is_completed)
+            .expect("resolved locks broadcast the completed transaction status");
+        assert_eq!(completed.min_commit_ts, 0);
+    }
+
+    #[tokio::test]
+    async fn source_managed_pipelined_flush_enriches_key_exists_value() {
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                assert!(request.is::<kvrpcpb::FlushRequest>());
+                Ok(Box::new(kvrpcpb::FlushResponse {
+                    errors: vec![kvrpcpb::KeyError {
+                        already_exist: Some(kvrpcpb::AlreadyExist {
+                            key: b"key".to_vec(),
+                        }),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            rpc,
+            TransactionOptions::new_optimistic()
+                .pipelined(super::PipelinedTxnOptions {
+                    enable: true,
+                    flush_concurrency: 1,
+                    resolve_lock_concurrency: 1,
+                    write_throttle_ratio: 0.0,
+                })
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        let memdb = transaction.get_mem_buffer();
+        memdb.set(b"key", b"buffered-value").unwrap();
+        assert!(memdb.flush(true).unwrap());
+        match memdb.flush_wait().unwrap_err() {
+            PipelinedError::KeyExists(error) => {
+                assert_eq!(error.already_exist.key, b"key");
+                assert_eq!(error.value, b"buffered-value");
+            }
+            error => panic!("expected typed key-exists error, got {error}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn source_empty_pipelined_commit_flushes_and_rejects_empty_range() {
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let observed_by_hook = observed.clone();
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                let request = request
+                    .downcast_ref::<kvrpcpb::FlushRequest>()
+                    .expect("empty pipelined commit only flushes its final generation");
+                observed_by_hook
+                    .lock()
+                    .unwrap()
+                    .push((request.generation, request.mutations.len()));
+                Ok(Box::<kvrpcpb::FlushResponse>::default() as Box<dyn Any>)
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            rpc,
+            TransactionOptions::new_optimistic()
+                .pipelined(super::PipelinedTxnOptions {
+                    enable: true,
+                    flush_concurrency: 1,
+                    resolve_lock_concurrency: 1,
+                    write_throttle_ratio: 0.0,
+                })
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+
+        let error = transaction.commit().await.unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("unexpected empty pipelinedStart or pipelinedEnd"));
+        assert!(observed.lock().unwrap().is_empty());
+        assert_eq!(transaction.pipelined_state.generation, 1);
+        assert_eq!(transaction.get_status(), TransactionStatus::Dropped);
+    }
+
+    #[tokio::test]
+    async fn source_empty_pipelined_rollback_broadcasts_completed_status_without_flushing() {
+        let statuses = Arc::new(Mutex::new(Vec::new()));
+        let statuses_by_hook = statuses.clone();
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                let request = request
+                    .downcast_ref::<kvrpcpb::BroadcastTxnStatusRequest>()
+                    .expect("empty pipelined rollback only broadcasts transaction status");
+                statuses_by_hook
+                    .lock()
+                    .unwrap()
+                    .extend(request.txn_status.clone());
+                Ok(Box::<kvrpcpb::BroadcastTxnStatusResponse>::default() as Box<dyn Any>)
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            rpc,
+            TransactionOptions::new_optimistic()
+                .pipelined(super::PipelinedTxnOptions {
+                    enable: true,
+                    flush_concurrency: 1,
+                    resolve_lock_concurrency: 1,
+                    write_throttle_ratio: 0.0,
+                })
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+
+        transaction.rollback().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while statuses.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("empty pipelined rollback broadcasts its status asynchronously");
+        let statuses = statuses.lock().unwrap();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].start_ts, 1);
+        assert_eq!(statuses[0].min_commit_ts, 0);
+        assert_eq!(statuses[0].commit_ts, 0);
+        assert!(statuses[0].rolled_back);
+        assert!(statuses[0].is_completed);
+    }
+
     #[tokio::test]
     async fn source_pipelined_flush_owns_resolving_lock_observer_until_retry_finishes() {
+        let status_sent = Arc::new(tokio::sync::Notify::new());
+        let status_sent_by_hook = status_sent.clone();
+        let allow_status_finish = Arc::new(std::sync::Barrier::new(2));
+        let allow_status_finish_by_hook = allow_status_finish.clone();
+        let first_flush = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let first_flush_by_hook = first_flush.clone();
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if request.is::<kvrpcpb::FlushRequest>() {
+                    if !first_flush_by_hook.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                        return Ok(Box::<kvrpcpb::FlushResponse>::default() as Box<dyn Any>);
+                    }
+                    return Ok(Box::new(kvrpcpb::FlushResponse {
+                        errors: vec![kvrpcpb::KeyError {
+                            locked: Some(kvrpcpb::LockInfo {
+                                key: b"a".to_vec(),
+                                primary_lock: b"primary".to_vec(),
+                                lock_version: 1,
+                                lock_ttl: 60_000,
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    status_sent_by_hook.notify_one();
+                    allow_status_finish_by_hook.wait();
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::ResolveLockRequest>() {
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected pipelined-flush resolver request");
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            rpc,
+            TransactionOptions::new_optimistic()
+                .pipelined(super::PipelinedTxnOptions {
+                    enable: true,
+                    flush_concurrency: 1,
+                    resolve_lock_concurrency: 1,
+                    write_throttle_ratio: 0.0,
+                })
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        transaction
+            .put("a".to_owned(), b"value".to_vec())
+            .await
+            .unwrap();
+        let context = transaction.lock_resolver_context.clone();
+        assert!(transaction.maybe_flush_pipelined(true).await.unwrap());
+
+        tokio::time::timeout(Duration::from_secs(1), status_sent.notified())
+            .await
+            .expect("pipelined flush should enter lock resolution");
+        assert_eq!(
+            context.resolving_locks().await,
+            vec![crate::transaction::ResolvingLock {
+                txn_id: 1,
+                lock_txn_id: 1,
+                key: b"a".to_vec(),
+                primary: b"primary".to_vec(),
+            }]
+        );
+
+        allow_status_finish.wait();
+        transaction.buffer.mem_buffer().flush_wait().unwrap();
+        assert!(context.resolving_locks().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn source_pipelined_rollback_cancels_a_live_flush_retry() {
         let status_sent = Arc::new(tokio::sync::Notify::new());
         let status_sent_by_hook = status_sent.clone();
         let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -10391,7 +11290,7 @@ mod tests {
                     return Ok(Box::new(kvrpcpb::FlushResponse {
                         errors: vec![kvrpcpb::KeyError {
                             locked: Some(kvrpcpb::LockInfo {
-                                key: b"a".to_vec(),
+                                key: b"locked".to_vec(),
                                 primary_lock: b"primary".to_vec(),
                                 lock_version: 1,
                                 lock_ttl: 60_000,
@@ -10416,7 +11315,15 @@ mod tests {
                         ..Default::default()
                     }) as Box<dyn Any>);
                 }
-                panic!("unexpected pipelined-flush resolver request");
+                if request.is::<kvrpcpb::ResolveLockRequest>() {
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::BroadcastTxnStatusRequest>() {
+                    return Ok(
+                        Box::<kvrpcpb::BroadcastTxnStatusResponse>::default() as Box<dyn Any>
+                    );
+                }
+                panic!("unexpected pipelined-cancellation request");
             },
         )));
         let mut transaction = Transaction::new(
@@ -10433,28 +11340,243 @@ mod tests {
             Keyspace::Disable,
         );
         transaction
-            .put("a".to_owned(), b"value".to_vec())
+            .put("key".to_owned(), "value".to_owned())
             .await
             .unwrap();
         let context = transaction.lock_resolver_context.clone();
-        let task = tokio::spawn(async move { transaction.maybe_flush_pipelined(true).await });
-
+        assert!(transaction.maybe_flush_pipelined(true).await.unwrap());
         tokio::time::timeout(Duration::from_secs(1), status_sent.notified())
             .await
-            .expect("pipelined flush should enter lock resolution");
-        assert_eq!(
-            context.resolving_locks().await,
-            vec![crate::transaction::ResolvingLock {
-                txn_id: 1,
-                lock_txn_id: 1,
-                key: b"a".to_vec(),
-                primary: b"primary".to_vec(),
-            }]
-        );
+            .expect("flush reaches live-lock backoff");
 
-        task.abort();
-        let _ = task.await;
+        tokio::time::timeout(Duration::from_secs(1), transaction.rollback())
+            .await
+            .expect("rollback cancellation interrupts the flush retry")
+            .unwrap();
         assert!(context.resolving_locks().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn source_primary_flush_starts_pipelined_heartbeat_and_status_broadcast() {
+        let heartbeats = Arc::new(Mutex::new(Vec::new()));
+        let heartbeats_by_hook = heartbeats.clone();
+        let statuses = Arc::new(Mutex::new(Vec::new()));
+        let statuses_by_hook = statuses.clone();
+        let flush_min_commit_ts = Arc::new(Mutex::new(Vec::new()));
+        let flush_min_commit_ts_by_hook = flush_min_commit_ts.clone();
+        let status_sent = Arc::new(tokio::sync::Notify::new());
+        let status_sent_by_hook = status_sent.clone();
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if let Some(request) = request.downcast_ref::<kvrpcpb::FlushRequest>() {
+                    flush_min_commit_ts_by_hook
+                        .lock()
+                        .unwrap()
+                        .push((request.generation, request.min_commit_ts));
+                    return Ok(Box::<kvrpcpb::FlushResponse>::default() as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
+                    heartbeats_by_hook.lock().unwrap().push((
+                        request.primary_lock.clone(),
+                        request.start_version,
+                        request.advise_lock_ttl,
+                        request.min_commit_ts,
+                    ));
+                    return Ok(Box::<kvrpcpb::TxnHeartBeatResponse>::default() as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::BroadcastTxnStatusRequest>()
+                {
+                    statuses_by_hook
+                        .lock()
+                        .unwrap()
+                        .extend(request.txn_status.clone());
+                    status_sent_by_hook.notify_one();
+                    return Ok(
+                        Box::<kvrpcpb::BroadcastTxnStatusResponse>::default() as Box<dyn Any>
+                    );
+                }
+                panic!("unexpected pipelined-heartbeat request");
+            },
+        )));
+        rpc.set_timestamp(Timestamp::from_version(10));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            rpc,
+            TransactionOptions::new_optimistic()
+                .pipelined(super::PipelinedTxnOptions {
+                    enable: true,
+                    flush_concurrency: 1,
+                    resolve_lock_concurrency: 1,
+                    write_throttle_ratio: 0.0,
+                })
+                .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_millis(1)))
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        transaction
+            .put("primary".to_owned(), "value".to_owned())
+            .await
+            .unwrap();
+        assert!(transaction.maybe_flush_pipelined(true).await.unwrap());
+        transaction.buffer.mem_buffer().flush_wait().unwrap();
+        tokio::time::timeout(Duration::from_secs(1), status_sent.notified())
+            .await
+            .expect("successful primary flush starts heartbeat and broadcast");
+
+        let heartbeat = heartbeats.lock().unwrap()[0].clone();
+        assert_eq!(heartbeat.0, b"primary");
+        assert_eq!(heartbeat.1, 1);
+        assert!(heartbeat.2 >= super::MAX_TTL);
+        assert!(heartbeat.3 >= 10);
+        let status = statuses.lock().unwrap()[0].clone();
+        assert_eq!(status.start_ts, 1);
+        assert_eq!(status.min_commit_ts, heartbeat.3);
+        assert_eq!(status.commit_ts, 0);
+        assert!(!status.rolled_back);
+        assert!(!status.is_completed);
+        {
+            let memdb = transaction.get_mem_buffer();
+            memdb.set(b"secondary", b"value").unwrap();
+            assert!(memdb.flush(true).unwrap());
+            memdb.flush_wait().unwrap();
+        }
+        let flush_min_commit_ts = flush_min_commit_ts.lock().unwrap().clone();
+        assert_eq!(flush_min_commit_ts[0], (1, 2));
+        assert_eq!(flush_min_commit_ts[1], (2, 2));
+        transaction.pipelined_cancellation.cancel();
+        assert!(transaction
+            .pipelined_heartbeat_started
+            .load(Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn source_terminal_pipelined_heartbeat_failure_stops_later_flushes() {
+        let flushes = Arc::new(AtomicUsize::new(0));
+        let flushes_by_hook = flushes.clone();
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if request.is::<kvrpcpb::FlushRequest>() {
+                    flushes_by_hook.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::<kvrpcpb::FlushResponse>::default() as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::TxnHeartBeatRequest>() {
+                    return Ok(Box::new(kvrpcpb::TxnHeartBeatResponse {
+                        error: Some(kvrpcpb::KeyError {
+                            txn_not_found: Some(kvrpcpb::TxnNotFound {
+                                start_ts: 1,
+                                primary_key: b"primary".to_vec(),
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected terminal-heartbeat request");
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            rpc,
+            TransactionOptions::new_optimistic()
+                .pipelined(super::PipelinedTxnOptions {
+                    enable: true,
+                    flush_concurrency: 1,
+                    resolve_lock_concurrency: 1,
+                    write_throttle_ratio: 0.0,
+                })
+                .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_millis(1)))
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        transaction
+            .put("primary".to_owned(), "value".to_owned())
+            .await
+            .unwrap();
+        assert!(transaction.maybe_flush_pipelined(true).await.unwrap());
+        transaction.buffer.mem_buffer().flush_wait().unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !transaction
+                .pipelined_heartbeat_failed
+                .load(Ordering::Acquire)
+            {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("terminal heartbeat error closes the TTL manager");
+
+        let memdb = transaction.get_mem_buffer();
+        memdb.set(b"secondary", b"value").unwrap();
+        assert!(memdb.flush(true).unwrap());
+        assert_eq!(
+            memdb.flush_wait().unwrap_err().to_string(),
+            "ttl manager is closed"
+        );
+        assert_eq!(flushes.load(Ordering::SeqCst), 1);
+        transaction.pipelined_cancellation.cancel();
+    }
+
+    #[tokio::test]
+    async fn source_pipelined_heartbeat_closes_after_maximum_lifetime() {
+        let flushes = Arc::new(AtomicUsize::new(0));
+        let flushes_by_hook = flushes.clone();
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                assert!(request.is::<kvrpcpb::FlushRequest>());
+                flushes_by_hook.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::<kvrpcpb::FlushResponse>::default() as Box<dyn Any>)
+            },
+        )));
+        let start_physical = 1_000_i64;
+        rpc.set_timestamp(Timestamp {
+            physical: start_physical + super::MAX_TXN_TIME_USE as i64 + 1,
+            logical: 0,
+            ..Default::default()
+        });
+        let mut transaction = Transaction::new(
+            Timestamp {
+                physical: start_physical,
+                logical: 0,
+                ..Default::default()
+            },
+            rpc,
+            TransactionOptions::new_optimistic()
+                .pipelined(super::PipelinedTxnOptions {
+                    enable: true,
+                    flush_concurrency: 1,
+                    resolve_lock_concurrency: 1,
+                    write_throttle_ratio: 0.0,
+                })
+                .heartbeat_option(HeartbeatOption::FixedTime(Duration::from_millis(1)))
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        transaction
+            .put("primary".to_owned(), "value".to_owned())
+            .await
+            .unwrap();
+        assert!(transaction.maybe_flush_pipelined(true).await.unwrap());
+        transaction.buffer.mem_buffer().flush_wait().unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !transaction
+                .pipelined_heartbeat_failed
+                .load(Ordering::Acquire)
+            {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("maximum pipelined lifetime closes the TTL manager");
+
+        let memdb = transaction.get_mem_buffer();
+        memdb.set(b"secondary", b"value").unwrap();
+        assert!(memdb.flush(true).unwrap());
+        assert_eq!(
+            memdb.flush_wait().unwrap_err().to_string(),
+            "ttl manager is closed"
+        );
+        assert_eq!(flushes.load(Ordering::SeqCst), 1);
+        transaction.pipelined_cancellation.cancel();
     }
 
     #[test]

@@ -30,7 +30,6 @@ use crate::pd::{PdClient, PdRpcClient};
 use crate::proto::{keyspacepb, kvrpcpb};
 use crate::request::Plan;
 use crate::request::NULL_KEYSPACE_ID;
-use crate::store::Store;
 use crate::{Error, Result, SecurityManager};
 use crate::{Key, Timestamp, TimestampExt};
 
@@ -60,7 +59,7 @@ pub use crate::retry::{
     BO_TIFLASH_RPC, BO_TIKV_RPC, BO_TXN_LOCK,
 };
 pub use crate::store::{
-    ClientEventListener, EndpointType, KvClient as Client, RegionStore, Request, TikvConnect,
+    ClientEventListener, EndpointType, KvClient as Client, RegionStore, Request, Store, TikvConnect,
 };
 pub use crate::transaction::unionstore::{
     KvIterator as Iterator, MemDb as MemDB, MemDbSnapshot as MemBufferSnapshot,
