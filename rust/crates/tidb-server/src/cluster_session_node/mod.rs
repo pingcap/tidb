@@ -2217,9 +2217,19 @@ impl QuerySession for ClusterServerSession {
                     .as_ref()
                     .and_then(|plan| session.bind_cached_prepared_point_get(plan, &params))
                 {
-                    return session
-                        .execute_cached_prepared_point_get(cached)
-                        .map_err(map_error);
+                    match session.execute_cached_prepared_point_get(cached) {
+                        Ok(output) => return Ok(output),
+                        // The cached plan's identity moved under it (a DDL
+                        // between PREPARE and this EXECUTE). That is a cache
+                        // MISS, not a statement failure: fall through and
+                        // re-plan, exactly as Go's `GetPlanFromPlanCache`
+                        // does.
+                        Err(error)
+                            if error.to_string().contains(
+                                "prepared point-get cache was invalidated",
+                            ) => {}
+                        Err(error) => return Err(map_error(error)),
+                    }
                 }
                 if let Some(output) = session
                     .execute_fast_prepared_point_get(

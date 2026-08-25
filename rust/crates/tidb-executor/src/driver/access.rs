@@ -116,6 +116,12 @@ pub(crate) enum PointResidualBound {
 /// absent: both are rebuilt for every cache hit.
 #[derive(Clone, Debug)]
 pub struct PreparedPointGetPlan {
+    /// The catalog's KEY-DECODE METADATA version at resolve time — the
+    /// counter DDL moves and DML never touches (`Catalog::metadata_version`).
+    /// A transaction's own writes bump the mutation counter every statement,
+    /// so keying a cache hit on it would invalidate every read after the
+    /// transaction's first write; Go's plan cache invalidates on SCHEMA
+    /// changes, and this counter is that boundary.
     schema_version: u64,
     current_database: String,
     database: String,
@@ -236,7 +242,7 @@ impl PreparedPointGetPlan {
     /// Whether the catalog still names the same unpartitioned physical table.
     #[must_use]
     pub fn matches_catalog(&self, catalog: &Catalog, current_database: &str) -> bool {
-        if self.schema_version != catalog.version()
+        if self.schema_version != catalog.metadata_version()
             || !self.current_database.eq_ignore_ascii_case(current_database)
         {
             return false;
@@ -425,7 +431,7 @@ pub fn build_prepared_point_get_plan(
     }
 
     Some(PreparedPointGetPlan {
-        schema_version: catalog.version(),
+        schema_version: catalog.metadata_version(),
         current_database: current_database.to_owned(),
         database: database.to_owned(),
         table: table_name.to_owned(),
