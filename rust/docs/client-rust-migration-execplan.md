@@ -460,11 +460,26 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       `send_heart_beat`, `heartbeat_option`, `is_auto_heartbeat`.
       Dropping the check would silently lose a real safety property;
       reimplementing the TTL manager TiDB-side is precisely the client-go
-      duplication this migration removes. So this needs a small upstream
-      addition -- an `is_lock_expired()`-style accessor -- and is the fourth
-      gap to raise, after the public `proto` module, the injected-PD
-      constructor, and the ungated in-process store (all three since
-      absorbed).
+      duplication this migration removes.
+      **Correction, from reading the Go source rather than reasoning from
+      the Rust side:** the fix is NOT an `is_lock_expired()` accessor, which
+      is what this entry first claimed. Go does not ask client-go anything.
+      `session.checkTxnAborted` reads `sessionVars.TxnCtx.LockExpire`, a
+      TiDB-owned field, and `pkg/executor/select.go:346` hands client-go a
+      pointer to it -- `lockCtx.LockExpired = &seVars.TxnCtx.LockExpire` --
+      on a `kv.LockCtx`, which is an alias for client-go's own
+      `tikvstore.LockCtx`. The TTL manager writes through that pointer. So
+      the Go-faithful shape is a caller-supplied shared flag passed into the
+      lock context, and client-rust **already has it**:
+      `LockContext::lock_expired: Option<Arc<AtomicU32>>`
+      (`src/kv/types.rs:60`), the exact transcreation of the Go field.
+      The real gap is narrower and behavioral: that field is declared and
+      defaulted, and nothing in the crate ever writes it -- two occurrences
+      in the whole source tree, both in `kv/types.rs`. So the API surface
+      needed here is already correct and needs no addition; what is missing
+      is the TTL manager setting the flag on timeout. TiDB-Rust can be
+      written in the final Go-faithful shape today, passing its own flag
+      in, and it starts working the moment upstream wires it.
 - [ ] Phase 4: full-workspace build, targeted + aggregate test pass, `make
       bazel_prepare` (Go-file-count is unaffected, but Bazel metadata for the
       Rust crates does not apply — confirm scope; see `Concrete Steps`),
