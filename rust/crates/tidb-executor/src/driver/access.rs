@@ -101,6 +101,16 @@ struct FastPointOutput {
     columns: Vec<(String, FieldType)>,
 }
 
+/// One residual `column = ?`/`column = const` conjunct of a cached point
+/// read: the equality the key lookup cannot answer, so the decoded row must.
+#[derive(Clone, Debug)]
+pub(crate) enum PointResidualBound {
+    /// A constant whose datum is already in the column's domain.
+    Literal(Datum),
+    /// A `?` marker resolved against each EXECUTE's parameters.
+    Param(usize),
+}
+
 /// The immutable part of Go's cached `PointGetPlan` for one prepared handle
 /// lookup. Runtime cursor state and the execute-time handle are deliberately
 /// absent: both are rebuilt for every cache hit.
@@ -111,12 +121,27 @@ pub struct PreparedPointGetPlan {
     database: String,
     table: String,
     table_id: i64,
-    parameter_order: usize,
-    handle_type: FieldType,
+    /// One marker order per handle column, aligned with [`Self::handle_types`]
+    /// — an integer PK carries one entry, a composite common handle one per
+    /// prefix column. `None` pins that column to the matching
+    /// [`Self::handle_literals`] constant instead of an EXECUTE parameter.
+    parameter_orders: Vec<Option<usize>>,
+    /// The handle columns' field types, in handle order; `bind` moves each
+    /// execute's value into this domain before encoding the key.
+    handle_types: Vec<FieldType>,
+    /// The literal constants pinning handle columns, aligned with
+    /// [`Self::parameter_orders`]; `None` where a marker pins instead. A NULL
+    /// literal never matches, so it binds to an empty execution.
+    handle_literals: Vec<Option<Datum>>,
     /// Empty for an integer PK handle; one offset for the supported prepared
     /// common-handle shape. Keeping this explicit lets `bind` rebuild the
     /// encoded handle without re-running the AST path matcher.
     common_handle_offsets: Vec<usize>,
+    /// Equalities the key lookup leaves open (`stsrcd = ?` next to the full
+    /// handle pin). Each entry positions INTO THE OUTPUT ROW (the index inside
+    /// [`FastPointOutput::offsets`] the residual column decodes to), paired
+    /// with the bound to compare against.
+    residuals: Vec<(usize, PointResidualBound)>,
     output: FastPointOutput,
     row_decoder: crate::kv_table::PreparedPointGetRowDecoder,
 }
@@ -134,36 +159,77 @@ impl PreparedPointGetPlan {
         &self.current_database
     }
 
-    /// Rebuilds the parameter-dependent handle. A value that cannot be moved
-    /// exactly into the PK domain declines the cache and must be replanned.
+    /// The qualified table name the plan reads, `(database, table)`.
+    #[must_use]
+    pub fn names(&self) -> (&str, &str) {
+        (&self.database, &self.table)
+    }
+
+    /// Rebuilds the parameter-dependent handle and resolves every residual
+    /// bound against this EXECUTE's parameters. A value that cannot be moved
+    /// exactly into its column's domain declines the cache and must be
+    /// replanned; any NULL comparison makes the statement match no rows, so it
+    /// binds to an execution whose handle is `None` (or whose residuals can
+    /// never pass).
     #[must_use]
     pub fn bind(
         self: &Arc<Self>,
         values: &[Datum],
         zone: &tidb_datatype::SessionTimeZone,
     ) -> Option<PreparedPointGetExecution> {
-        let value = values.get(self.parameter_order)?;
-        let handle = if value.is_null() {
-            None
-        } else {
-            match point_get_value(&self.handle_type, value)? {
-                Datum::Int(value) if self.common_handle_offsets.is_empty() => {
-                    Some(TableHandle::Int(value))
-                }
-                Datum::UInt(value) if self.common_handle_offsets.is_empty() => {
-                    Some(TableHandle::Int(value as i64))
-                }
-                value if !self.common_handle_offsets.is_empty() => {
-                    let encoded = tidb_codec::encode_key_in_timezone(zone, &[value]).ok()?;
-                    let handle = tidb_txnkv::CommonHandle::new(encoded).ok()?;
-                    Some(TableHandle::Common(handle.encoded().to_vec()))
-                }
-                _ => return None,
+        let mut key_values = Vec::with_capacity(self.parameter_orders.len());
+        for (index, handle_type) in self.handle_types.iter().enumerate() {
+            let value = match (&self.parameter_orders[index], &self.handle_literals[index]) {
+                (Some(order), _) => values.get(*order)?,
+                (None, Some(literal)) => literal,
+                (None, None) => return None,
+            };
+            if value.is_null() {
+                // `handle = NULL` matches nothing; an empty result IS the
+                // answer, and no storage read may run for it.
+                return Some(PreparedPointGetExecution {
+                    plan: Arc::clone(self),
+                    handle: None,
+                    residuals: Vec::new(),
+                });
             }
+            key_values.push(point_get_value(handle_type, value)?);
+        }
+        let mut residuals = Vec::with_capacity(self.residuals.len());
+        for (position, bound) in &self.residuals {
+            let value = match bound {
+                PointResidualBound::Literal(value) => value.clone(),
+                PointResidualBound::Param(order) => {
+                    let value = values.get(*order)?;
+                    if value.is_null() {
+                        // `residual = NULL` never passes either.
+                        return Some(PreparedPointGetExecution {
+                            plan: Arc::clone(self),
+                            handle: None,
+                            residuals: Vec::new(),
+                        });
+                    }
+                    point_get_value(&self.output.columns[*position].1, value)?
+                }
+            };
+            residuals.push((*position, value));
+        }
+        let first = key_values.first()?;
+        let handle = if self.common_handle_offsets.is_empty() {
+            match first {
+                Datum::Int(value) => Some(TableHandle::Int(*value)),
+                Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
+                _ => None,
+            }
+        } else {
+            let encoded = tidb_codec::encode_key_in_timezone(zone, &key_values).ok()?;
+            let handle = tidb_txnkv::CommonHandle::new(encoded).ok()?;
+            Some(TableHandle::Common(handle.encoded().to_vec()))
         };
         Some(PreparedPointGetExecution {
             plan: Arc::clone(self),
             handle,
+            residuals,
         })
     }
 
@@ -190,6 +256,9 @@ impl PreparedPointGetPlan {
 pub struct PreparedPointGetExecution {
     plan: Arc<PreparedPointGetPlan>,
     handle: Option<TableHandle>,
+    /// This execute's residual equalities, parameters already resolved into
+    /// row domains: `(offset into the output row, expected value)`.
+    residuals: Vec<(usize, Datum)>,
 }
 
 impl PreparedPointGetExecution {
@@ -209,6 +278,7 @@ pub fn build_prepared_point_get_plan(
     parameter_count: usize,
     catalog: &Catalog,
     current_database: &str,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<PreparedPointGetPlan> {
     let tidb_ast::Stmt::Query(query) = stmt else {
         return None;
@@ -216,8 +286,7 @@ pub fn build_prepared_point_get_plan(
     let tidb_ast::QueryStmt::Select(select) = &**query else {
         return None;
     };
-    if parameter_count != 1
-        || !crate::access_path::select_is_bare_point_read(select)
+    if !crate::access_path::select_is_bare_point_read(select)
         || !select.hints.is_empty()
         || select.priority != tidb_ast::StatementPriority::None
         || select.sql_small_result
@@ -247,10 +316,9 @@ pub fn build_prepared_point_get_plan(
         (Some(offset), Vec::new())
     } else {
         let offsets = table.common_handle_offsets();
-        // The cache currently handles one marker and therefore one-column
-        // common handles. Composite handles continue through the general
-        // prepared path, which preserves their parameter-order semantics.
-        if offsets.len() != 1 {
+        // A composite common handle encodes its prefix columns in order; the
+        // walker below pins each of them exactly once, so any width works.
+        if offsets.is_empty() {
             return None;
         }
         (None, offsets.to_vec())
@@ -274,11 +342,85 @@ pub fn build_prepared_point_get_plan(
     }) {
         return None;
     }
-    let (column, parameter_order) = prepared_handle_marker(select.where_clause.as_ref()?)?;
-    let (offset, _, _) = ScopeResolver { scope: &scope }.resolve(column)?;
-    let matches_handle = handle_offset == Some(offset)
-        || common_handle_offsets.len() == 1 && common_handle_offsets[0] == offset;
-    if !matches_handle || parameter_order != 0 {
+    // One walk flattens the WHERE conjunction into resolved equalities; the
+    // handle pins exactly one per handle column and everything else filters
+    // the decoded row.
+    let conjuncts = prepared_point_eq_conjuncts(select.where_clause.as_ref()?, &scope, zone)?;
+    let mut resolver = ScopeResolver { scope: &scope };
+    let mut resolved = Vec::with_capacity(conjuncts.len());
+    for (path, marker_order, literal) in conjuncts {
+        let (offset, _, _) = resolver.resolve(&path)?;
+        resolved.push((offset, marker_order, literal));
+    }
+    drop(resolver);
+    let handle_offsets: Vec<usize> = match handle_offset {
+        Some(offset) => vec![offset],
+        None => common_handle_offsets.to_vec(),
+    };
+    if handle_offsets.is_empty() {
+        return None;
+    }
+    let mut parameter_orders = Vec::with_capacity(handle_offsets.len());
+    let mut handle_literals = Vec::with_capacity(handle_offsets.len());
+    for offset in &handle_offsets {
+        let mut hits = resolved.iter().filter(|(pinned, ..)| pinned == offset);
+        let (_, marker_order, literal) = hits.next()?;
+        if hits.next().is_some() {
+            return None;
+        }
+        parameter_orders.push(*marker_order);
+        handle_literals.push(literal.clone());
+    }
+    // Whatever equality the key lookup does not answer filters the decoded
+    // row. Each residual column must survive into the output row and compare
+    // byte-wise (or natively for non-strings), so the cached check is exactly
+    // the scan's own `=`; anything else declines to the ordinary planner.
+    let mut residuals = Vec::new();
+    for (offset, marker_order, literal) in &resolved {
+        if handle_offsets.contains(offset) {
+            continue;
+        }
+        let position = output.offsets.iter().position(|o| o == offset)?;
+        let column_type = &output.columns[position].1;
+        let string_safe = column_type.eval_type() != tidb_datatype::EvalType::String
+            || matches!(
+                column_type.collation(),
+                tidb_datatype::Collation::Binary
+                    | tidb_datatype::Collation::AsciiBin
+                    | tidb_datatype::Collation::Latin1Bin
+                    | tidb_datatype::Collation::Utf8Bin
+                    | tidb_datatype::Collation::Utf8Mb4Bin
+                    | tidb_datatype::Collation::Utf8Mb40900Bin
+            );
+        if !string_safe {
+            return None;
+        }
+        let bound = match marker_order {
+            Some(order) => PointResidualBound::Param(*order),
+            None => {
+                let value = literal.as_ref()?;
+                if value.is_null() {
+                    // `residual = NULL` matches no row under SQL semantics;
+                    // leave such statements to the ordinary planner rather
+                    // than caching an always-empty answer.
+                    return None;
+                }
+                PointResidualBound::Literal(value.clone())
+            }
+        };
+        residuals.push((position, bound));
+    }
+    // Every referenced marker must exist when the parameters arrive.
+    let max_order = parameter_orders
+        .iter()
+        .flatten()
+        .copied()
+        .chain(residuals.iter().filter_map(|(_, bound)| match bound {
+            PointResidualBound::Param(order) => Some(*order),
+            PointResidualBound::Literal(_) => None,
+        }))
+        .max();
+    if max_order.is_some_and(|order| order >= parameter_count) {
         return None;
     }
 
@@ -288,8 +430,12 @@ pub fn build_prepared_point_get_plan(
         database: database.to_owned(),
         table: table_name.to_owned(),
         table_id: table.table_id,
-        parameter_order,
-        handle_type: columns.get(offset)?.1.clone(),
+        parameter_orders,
+        handle_types: handle_offsets
+            .iter()
+            .map(|offset| columns.get(*offset).map(|column| column.1.clone()))
+            .collect::<Option<Vec<_>>>()?,
+        handle_literals,
         row_decoder: crate::kv_table::PreparedPointGetRowDecoder::new_with_handles(
             table.visible_columns(),
             handle_offset,
@@ -298,8 +444,90 @@ pub fn build_prepared_point_get_plan(
         )
         .ok()?,
         common_handle_offsets,
+        residuals,
         output,
     })
+}
+
+/// One `column = ?`/`column = const` conjunct of a prepared point read's
+/// WHERE, its column path kept UNRESOLVED until the builder maps it through
+/// the statement's scope.
+type PreparedPointConjunct = (
+    Vec<String>,
+    Option<usize>,
+    Option<Datum>,
+);
+
+/// Flattens a WHERE conjunction into `(column path, ? order, literal datum)`
+/// triples — exactly [`point_equal_pairs`]' shape rule with markers kept
+/// SYMBOLIC so a PREPARE-time plan can bind them per EXECUTE. Constants
+/// evaluate once here (a NULL literal survives as `Some(Datum::Null)`);
+/// anything outside `col = constant|?`, including ORs, comparisons of two
+/// columns, or functions of row columns, refuses the whole conjunction.
+fn prepared_point_eq_conjuncts(
+    where_clause: &tidb_ast::Expr,
+    scope: &FromScope,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<Vec<PreparedPointConjunct>> {
+    use tidb_ast::{BinaryOp, Expr};
+    fn unparenthesized(expr: &Expr) -> &Expr {
+        match expr {
+            Expr::Paren(inner) => unparenthesized(inner),
+            other => other,
+        }
+    }
+    fn walk(
+        expr: &Expr,
+        zone: &tidb_datatype::SessionTimeZone,
+        out: &mut Vec<PreparedPointConjunct>,
+    ) -> bool {
+        match expr {
+            Expr::Paren(inner) => walk(inner, zone, out),
+            Expr::Binary(BinaryOp::LogicAnd, lhs, rhs) => {
+                walk(lhs, zone, out) && walk(rhs, zone, out)
+            }
+            Expr::Binary(BinaryOp::Eq, lhs, rhs) => {
+                let (column, value_expr) = match (unparenthesized(lhs), unparenthesized(rhs)) {
+                    (Expr::Column(path), other) => (path, other),
+                    (other, Expr::Column(path)) => (path, other),
+                    _ => return false,
+                };
+                if column.is_empty() {
+                    return false;
+                }
+                match unparenthesized(value_expr) {
+                    Expr::ParamMarker { order, .. } => {
+                        out.push((column.clone(), Some(*order), None));
+                        true
+                    }
+                    _ => {
+                        let Ok(rewritten) = rewrite_expr_resolved(
+                            value_expr,
+                            &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
+                        ) else {
+                            return false;
+                        };
+                        let Expression::Constant(constant) = rewritten else {
+                            return false;
+                        };
+                        let Ok(value) = constant.eval() else {
+                            return false;
+                        };
+                        out.push((column.clone(), None, Some(value)));
+                        true
+                    }
+                }
+            }
+            _ => false,
+        }
+    }
+    let _ = scope;
+    let mut out = Vec::new();
+    if walk(where_clause, zone, &mut out) && !out.is_empty() {
+        Some(out)
+    } else {
+        None
+    }
 }
 
 /// YCSB's MySQL adapter pins every single-row lookup with
@@ -319,20 +547,6 @@ fn prepared_primary_index_hint(table_ref: &tidb_ast::TableRef) -> bool {
     })
 }
 
-fn prepared_handle_marker(expr: &tidb_ast::Expr) -> Option<(&[String], usize)> {
-    match expr {
-        tidb_ast::Expr::Paren(inner) => prepared_handle_marker(inner),
-        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, left, right) => match (&**left, &**right) {
-            (tidb_ast::Expr::Column(column), tidb_ast::Expr::ParamMarker { order, .. })
-            | (tidb_ast::Expr::ParamMarker { order, .. }, tidb_ast::Expr::Column(column)) => {
-                Some((column, *order))
-            }
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 /// Executes one rebound prepared point plan with fresh mutable runtime state.
 /// `None` means the schema identity moved after the cache decision.
 pub fn run_prepared_point_get(
@@ -349,16 +563,33 @@ pub fn run_prepared_point_get(
     else {
         return Ok(None);
     };
-    let rows = match execution.handle.as_ref() {
+    // A NULL key bound to an always-empty execution; no read may run.
+    let Some(handle) = execution.handle.as_ref() else {
+        return Ok(Some((plan.output.columns.clone(), Vec::new())));
+    };
+    let residuals = &execution.residuals;
+    let rows = match table
+        .get_prepared_point_row(handle, &plan.row_decoder, ctx)
+        .map_err(|error| {
+            ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+        })? {
         None => Vec::new(),
-        Some(handle) => match table
-            .get_prepared_point_row(handle, &plan.row_decoder, ctx)
-            .map_err(|error| {
-                ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-            })? {
-            None => Vec::new(),
-            Some(row) => vec![row],
-        },
+        Some(row) => {
+            // The residual equalities the key lookup could not answer decide
+            // here, comparing in each column's own domain — the same `=` the
+            // ordinary scan would have evaluated.
+            if !residuals.iter().all(|(position, expected)| {
+                row.get(*position).is_some_and(|actual| {
+                    actual
+                        .compare(expected, (&plan.output.columns[*position].1).collation())
+                        .is_ok_and(|ordering| ordering == std::cmp::Ordering::Equal)
+                })
+            }) {
+                Vec::new()
+            } else {
+                vec![row]
+            }
+        }
     };
     Ok(Some((plan.output.columns.clone(), rows)))
 }

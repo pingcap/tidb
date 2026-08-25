@@ -295,12 +295,12 @@ fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
     let stored_projection =
         tidb_parser::parse("SELECT base FROM generated_point WHERE id = ?").unwrap();
     assert!(
-        build_prepared_point_get_plan(&stored_projection, 1, &catalog, DEFAULT_DATABASE,).is_some()
+        build_prepared_point_get_plan(&stored_projection, 1, &catalog, DEFAULT_DATABASE, &Default::default()).is_some()
     );
     let generated_projection =
         tidb_parser::parse("SELECT projected FROM generated_point WHERE id = ?").unwrap();
     assert!(
-        build_prepared_point_get_plan(&generated_projection, 1, &catalog, DEFAULT_DATABASE,)
+        build_prepared_point_get_plan(&generated_projection, 1, &catalog, DEFAULT_DATABASE, &Default::default())
             .is_none(),
         "a generated-column projection needs the full statement context"
     );

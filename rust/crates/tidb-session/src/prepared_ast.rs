@@ -219,6 +219,7 @@ impl Session {
                 parameter_count,
                 &catalog,
                 self.current_database(),
+                &self.session_time_zone(),
             )
         };
         Ok(PreparedAst::from_parsed(
@@ -229,13 +230,17 @@ impl Session {
         ))
     }
 
-    /// Go `IsSafeToReusePointGetExecutor` plus the MaxTS-only reuse gate in
-    /// `ExecStmt.PointGet`. Every uncertain state declines to ordinary
+    /// Go `IsSafeToReusePointGetExecutor` plus the plan-cache reuse gates of
+    /// `GetPlanFromPlanCache`. Every uncertain state declines to ordinary
     /// planning; no cached lookup is allowed to widen into a multi-read plan.
+    ///
+    /// An EXPLICIT transaction may reuse the cached read too: its statement
+    /// snapshot is already bound before execution, so the lookup reads at the
+    /// transaction's timestamp through the session's own storage — the same
+    /// visibility the ordinary planner would build for it (Go serves these
+    /// from its prepared plan cache inside transactions as well).
     pub(crate) fn can_reuse_prepared_point_get(&self, plan: &PreparedPointGetPlan) -> bool {
-        if !self.is_autocommit()
-            || self.in_transaction()
-            || !self.session_bindings.is_empty()
+        if !self.session_bindings.is_empty()
             || self
                 .vars
                 .optimizer_fix_control()

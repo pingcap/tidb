@@ -581,6 +581,11 @@ impl Session {
         self.statement_insert_id = 0;
         self.statement_kind = StatementKind::Select;
 
+        if self.in_transaction() {
+            let plan = cached.plan();
+            let names = [(plan.names().0.to_owned(), plan.names().1.to_owned())];
+            self.record_mdl_related_table_names(&names);
+        }
         let current_db = self.current_db.clone();
         let ctx = self.prepared_point_get_context();
         let result = self.with_catalog_mut(|catalog| {
@@ -594,6 +599,13 @@ impl Session {
         self.found_in_plan_cache = true;
         Ok(StmtOutput::Rows { columns, rows })
     }
+
+    /// Records one cached point read's table on the transaction's metadata-
+    /// lock map when it runs INSIDE an explicit transaction. The ordinary
+    /// funnel does this from its single preprocess walk; the cached arm skips
+    /// that walk (which is its whole point), and a read under autocommit
+    /// records nothing anyway (`IsAutoCommitTxn && IsReadOnly`). Skipping the
+    /// RECORD here would let a DDL slip past a live transaction's reader.
 
     /// Go `preprocess.go:2243-2270`: as a statement's tables are bound, each
     /// is recorded on the transaction as `table id -> the LATEST domain
@@ -621,6 +633,36 @@ impl Session {
         if read_only && !self.in_transaction() && self.is_autocommit() {
             return;
         }
+        let version = self.cluster_schema_version_now();
+        let current_db = self.current_database().to_owned();
+        let catalog = match self.lock_catalog() {
+            Ok(catalog) => catalog,
+            Err(_) => {
+                sink.record_unresolved();
+                return;
+            }
+        };
+        for (db, table) in names {
+            let db = if db.is_empty() { &current_db } else { db };
+            match catalog.stored_table_id(db, table) {
+                Some(table_id) => sink.record_table(table_id, version),
+                None => sink.record_unresolved(),
+            }
+        }
+    }
+
+    /// [`Self::record_mdl_related_tables`] for a statement whose single table
+    /// name the cached plan already carries. A cached point read is a
+    /// SELECT: under autocommit it records nothing (the read-only rule
+    /// above), and inside an explicit transaction it records exactly that
+    /// one table.
+    fn record_mdl_related_table_names(&mut self, names: &[(String, String)]) {
+        if !self.in_transaction() {
+            return;
+        }
+        let Some(sink) = self.mdl_related_tables.clone() else {
+            return;
+        };
         let version = self.cluster_schema_version_now();
         let current_db = self.current_database().to_owned();
         let catalog = match self.lock_catalog() {

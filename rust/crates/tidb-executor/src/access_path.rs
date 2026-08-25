@@ -455,46 +455,32 @@ pub fn statement_read_shape(
 }
 
 /// Classifies a retained binary-protocol template without cloning it merely
-/// to replace parameter markers.  Only the conservative clustered-handle
-/// shape admitted by the prepared point-get executor is recognized here;
-/// every other prepared statement keeps the ordinary bound-tree classifier.
+/// to replace parameter markers. The cached point-read shape is recognized
+/// here by the SAME analyzer that builds its plan (`usize::MAX` leaves every
+/// marker order admissible; each execute's own parameters are validated when
+/// the plan binds); every other prepared statement keeps the ordinary
+/// bound-tree classifier.
 #[must_use]
 pub fn prepared_statement_read_shape(
     stmt: &tidb_ast::Stmt,
-    params: &[Datum],
+    _params: &[Datum],
     catalog: &crate::driver::Catalog,
     current_db: &str,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> StatementReadShape {
-    let tidb_ast::Stmt::Query(query) = stmt else {
-        return StatementReadShape::Unknown;
-    };
-    let tidb_ast::QueryStmt::Select(select) = &**query else {
-        return StatementReadShape::Unknown;
-    };
-    if !select_is_bare_point_read(select) {
-        return StatementReadShape::Unknown;
+    if crate::driver::access::build_prepared_point_get_plan(
+        stmt,
+        usize::MAX,
+        catalog,
+        current_db,
+        zone,
+    )
+    .is_some()
+    {
+        return StatementReadShape::AutocommitPointGet;
     }
-    let Some(table_ref) = crate::driver::access::single_table_ref(&select.from) else {
-        return StatementReadShape::Unknown;
-    };
-    let (database, table_name) = match table_ref.name.as_slice() {
-        [name] if !current_db.is_empty() => (current_db, name.as_str()),
-        [database, name] => (database.as_str(), name.as_str()),
-        _ => return StatementReadShape::Unknown,
-    };
-    let Some(crate::driver::TableEntry::Kv(table)) = catalog.get_in(database, table_name) else {
-        return StatementReadShape::Unknown;
-    };
-    if table.partition().is_some() {
-        return StatementReadShape::Unknown;
-    }
-    match crate::driver::access::try_prepared_common_handle_point_get_path(
-        select, table, params, zone,
-    ) {
-        Ok(Some(_)) => StatementReadShape::AutocommitPointGet,
-        _ => StatementReadShape::Unknown,
-    }
+    let _ = _params;
+    StatementReadShape::Unknown
 }
 
 #[cfg(test)]
