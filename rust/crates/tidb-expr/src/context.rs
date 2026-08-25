@@ -851,6 +851,7 @@ pub trait Columns {
 ///
 /// Its warning sink discards, which is what an evaluation outside a statement
 /// -- a test, a DEFAULT expression folded at DDL time -- wants.
+#[derive(Clone, Copy)]
 pub struct NoColumns;
 
 impl Columns for NoColumns {

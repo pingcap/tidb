@@ -33,10 +33,13 @@ fn shared() -> &'static Arc<Shared> {
     static POOL: OnceLock<Arc<Shared>> = OnceLock::new();
     POOL.get_or_init(|| {
         let shared = Arc::new(Shared::default());
+        // The hash-agg pipeline submits partial+final worker sets as tasks;
+        // sizing below a typical set starves the tail of the queue behind
+        // blocked lanes. Never fewer than 16.
         let workers = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4)
-            .min(16);
+            .max(16);
         for _ in 0..workers {
             let worker_shared = Arc::clone(&shared);
             std::thread::Builder::new()
@@ -97,6 +100,22 @@ where
     result_rx
         .recv()
         .unwrap_or_else(|_| panic!("exec pool worker dropped the task result"))
+}
+
+/// Submits `task` without blocking and returns a receiver for its result.
+/// Unlike [`submit`], the caller may keep working while the task runs.
+pub fn spawn<F, R>(task: F) -> std::sync::mpsc::Receiver<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    let (result_tx, result_rx) = std::sync::mpsc::sync_channel::<R>(1);
+    enqueue(Box::new(move || {
+        // A disconnected receiver means the caller dropped it before joining;
+        // the value has nowhere to go either way.
+        let _ = result_tx.send(task());
+    }));
+    result_rx
 }
 
 /// Runs one task per item across at most `concurrency` workers and returns

@@ -208,6 +208,17 @@ impl PipelineAbort {
     }
 }
 
+/// The `'static` snapshot the persistent pool's workers read: everything
+/// `fold_chunk` needs, cloned once per aggregation instead of borrowed from
+/// the executor (the pool cannot hold borrows; see `worker_pool`).
+struct PipelinePlan<C: Columns + Send + Sync + Clone + 'static> {
+    ctx: C,
+    group_by: Vec<Expression>,
+    group_collations: Vec<tidb_datatype::Collation>,
+    integer_columns: Option<Vec<(usize, bool)>>,
+    agg_funcs: Vec<AggFunc>,
+}
+
 /// One group inside a worker's map: the global row sequence of the first
 /// contributing row plus the group's aggregate states.
 struct PipelineGroup {
@@ -390,7 +401,7 @@ impl<C: HashAggContext> HashAggExec<C> {
     }
 }
 
-impl<C: Columns + Sync + HashAggContext> HashAggExec<C> {
+impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C> {
     /// Go `prepare4ParallelExec` fused with `parallelExec`'s consumption:
     /// the main thread fetches child chunks and round-robin-dispatches them
     /// to the partial-worker lanes; partial workers fold rows into their own
@@ -427,57 +438,40 @@ impl<C: Columns + Sync + HashAggContext> HashAggExec<C> {
             shuffle_rxs.push(rx);
         }
 
-        // Split the borrows: workers hold shared views of the plan and
-        // evaluation context, while the fetcher keeps the mutable executor
-        // state (Go hands each goroutine precisely the pieces it needs too).
+        // The persistent pool's tasks are `'static`: clone the shared plan
+        // pieces once into an Arc instead of borrowing them from the
+        // executor. The clone cost is one pass over the small plan vectors
+        // per aggregation; the saved thread spawns were a top profiling
+        // cost on every grouped query.
+        let plan = Arc::new(PipelinePlan {
+            ctx: self.ctx.clone(),
+            group_by: self.group_by.clone(),
+            group_collations: self.group_collations.clone(),
+            integer_columns: self.integer_group_columns.clone(),
+            agg_funcs: self.agg_funcs.clone(),
+        });
+
+        // Split the borrows: the fetcher keeps the mutable executor state.
         let HashAggExec {
             child,
             child_chunk,
             child_returned_empty,
-            ctx,
-            group_by,
-            group_collations,
-            integer_group_columns,
-            agg_funcs,
             truncated,
             memory,
-            tracker,
             parallel_output,
             ..
         } = self;
-        let tracker: &Arc<Tracker> = tracker;
         let memory: &StatementMemory = memory;
-        let ctx = &*ctx;
-        let group_by = &*group_by;
-        let group_collations = &*group_collations;
-        let agg_funcs = &*agg_funcs;
-        let integer_columns: Option<&[(usize, bool)]> = integer_group_columns.as_deref();
+        let tracker: &Arc<Tracker> = &self.tracker;
 
         let mut base_seq = 0u64;
         let mut next_lane = 0usize;
         let mut fetch_error: Option<ExecError> = None;
         let mut child_drained = false;
 
-        std::thread::scope(|scope| {
-            // ---- Final workers (Go `HashAggFinalWorker.run`). ----
-            for _ in 0..final_concurrency {
-                let shuffle_rx = shuffle_rxs.pop().expect("one receiver per final worker");
-                let final_tx = final_tx.clone();
-                scope.spawn(move || {
-                    let mut acc: Option<HashMap<Vec<u8>, PipelineGroup>> = None;
-                    while let Ok(map) = shuffle_rx.recv() {
-                        // Go `mergeInputIntoResultMap`: the FIRST map becomes
-                        // the accumulator directly; later maps merge in.
-                        let merged = acc.get_or_insert_with(HashMap::new);
-                        if let Err(error) = merge_map(merged, map) {
-                            let _ = final_tx.send(FinalMsg::Err(error));
-                        }
-                    }
-                    let _ = final_tx.send(FinalMsg::Maps(acc.unwrap_or_default()));
-                });
-            }
-
+        {
             // ---- Partial workers (Go `HashAggPartialWorker.run`). ----
+            let mut partial_handles = Vec::with_capacity(partial_concurrency);
             for _ in 0..partial_concurrency {
                 let lane_rx = lane_rxs.pop().expect("one receiver per partial worker");
                 let shuffle_txs = shuffle_txs.clone();
@@ -485,7 +479,8 @@ impl<C: Columns + Sync + HashAggContext> HashAggExec<C> {
                 let abort = abort.clone();
                 let stats_ref = Arc::clone(&stats);
                 let tracker = Arc::clone(tracker);
-                scope.spawn(move || {
+                let plan = Arc::clone(&plan);
+                partial_handles.push(crate::worker_pool::spawn(move || {
                     stats_ref.record_partial_worker();
                     let mut maps: Vec<HashMap<Vec<u8>, PipelineGroup>> =
                         (0..shuffle_txs.len()).map(|_| HashMap::new()).collect();
@@ -494,11 +489,11 @@ impl<C: Columns + Sync + HashAggContext> HashAggExec<C> {
                         if error.is_none() {
                             let fold = fold_chunk(
                                 FoldInputs {
-                                    ctx,
-                                    group_by,
-                                    group_collations,
-                                    integer_columns,
-                                    agg_funcs,
+                                    ctx: &plan.ctx,
+                                    group_by: &plan.group_by,
+                                    group_collations: &plan.group_collations,
+                                    integer_columns: plan.integer_columns.as_deref(),
+                                    agg_funcs: &plan.agg_funcs,
                                 },
                                 &mut maps,
                                 shuffle_txs.len(),
@@ -528,7 +523,26 @@ impl<C: Columns + Sync + HashAggContext> HashAggExec<C> {
                             let _ = final_tx.send(FinalMsg::Err(error));
                         }
                     }
-                });
+                }));
+            }
+
+            // ---- Final workers (Go `HashAggFinalWorker.run`). ----
+            let mut final_handles = Vec::with_capacity(final_concurrency);
+            for _ in 0..final_concurrency {
+                let shuffle_rx = shuffle_rxs.pop().expect("one receiver per final worker");
+                let final_tx = final_tx.clone();
+                final_handles.push(crate::worker_pool::spawn(move || {
+                    let mut acc: Option<HashMap<Vec<u8>, PipelineGroup>> = None;
+                    while let Ok(map) = shuffle_rx.recv() {
+                        // Go `mergeInputIntoResultMap`: the FIRST map becomes
+                        // the accumulator directly; later maps merge in.
+                        let merged = acc.get_or_insert_with(HashMap::new);
+                        if let Err(error) = merge_map(merged, map) {
+                            let _ = final_tx.send(FinalMsg::Err(error));
+                        }
+                    }
+                    let _ = final_tx.send(FinalMsg::Maps(acc.unwrap_or_default()));
+                }));
             }
 
             // ---- Fetcher: the MAIN thread (Go `fetchChildData`). ----
@@ -570,10 +584,19 @@ impl<C: Columns + Sync + HashAggContext> HashAggExec<C> {
                 next_lane = (next_lane + 1) % partial_concurrency;
             }
             // Close the lanes so every partial worker sees EOF and exits
-            // (Go closes `partialInputChs` once its fetcher returns).
+            // (Go closes `partialInputChs` once its fetcher returns), then
+            // wait for the partial workers so every shuffled map is sent
+            // before the shuffle senders disappear, and for the final
+            // workers to hand their merged maps back.
             drop(lane_txs);
+            for handle in partial_handles {
+                let _ = handle.recv();
+            }
             drop(shuffle_txs);
-        });
+            for handle in final_handles {
+                let _ = handle.recv();
+            }
+        }
 
         // Release the final-channel sender held by THIS frame, then drain
         // until the workers' senders are gone (they have joined above).
@@ -603,15 +626,20 @@ impl<C: Columns + Sync + HashAggContext> HashAggExec<C> {
 
         // Finish values in first-seen order (the serial path's contract).
         let ret_types = self.meta.ret_field_types().to_vec();
-        let width = agg_funcs.len();
+        let width = plan.agg_funcs.len();
         parallel_output.clear();
-        if groups.is_empty() && group_by.is_empty() {
+        if groups.is_empty() && plan.group_by.is_empty() {
             // Go: no group-by and no data yields ONE empty group, so a
             // global COUNT is 0 rather than an empty result set.
-            let mut states: Vec<AggState> = agg_funcs.iter().map(AggState::new).collect();
+            let mut states: Vec<AggState> = plan.agg_funcs.iter().map(AggState::new).collect();
             for (c, state) in states.iter_mut().enumerate() {
-                let value =
-                    finish_agg_value(state, &agg_funcs[c], &ret_types[c], ctx, &mut truncated[c])?;
+                let value = finish_agg_value(
+                    state,
+                    &plan.agg_funcs[c],
+                    &ret_types[c],
+                    &plan.ctx,
+                    &mut truncated[c],
+                )?;
                 parallel_output.push(value);
             }
         } else {
@@ -619,9 +647,9 @@ impl<C: Columns + Sync + HashAggContext> HashAggExec<C> {
                 for (c, state) in group.states.iter_mut().enumerate() {
                     let value = finish_agg_value(
                         state,
-                        &agg_funcs[c],
+                        &plan.agg_funcs[c],
                         &ret_types[c],
-                        ctx,
+                        &plan.ctx,
                         &mut truncated[c],
                     )?;
                     parallel_output.push(value);
@@ -1257,6 +1285,7 @@ mod tests {
 
     /// A test context answering session-variable reads from a map, to prove
     /// the concurrency settings actually steer worker counts.
+    #[derive(Clone)]
     struct VarCtx(HashMap<String, String>);
     impl Columns for VarCtx {
         fn get(&self, _: &[String]) -> Option<Datum> {
