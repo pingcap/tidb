@@ -1009,8 +1009,17 @@ pub(crate) fn plan_fast_single_row_scan(
     {
         return Ok(None);
     }
-    let built = crate::handle_range::build_handle_ranges(&table, where_clause, &ctx.session_zone())
-        .ok_or_else(|| DriverError::unsupported("the WHERE is not a clustered-handle range"))?;
+    // A WHERE that never detaches into clustered-handle ranges here (an
+    // `is not null`, a predicate naming no primary column, ...) is Go's
+    // ordinary table-reader statement, not a refusal: the general planner
+    // below plans it and answers it. This fast path only ever claims the
+    // shapes it can prove, so `None` from the range builder is a FALLBACK
+    // signal -- turning it into an error would reject statements Go answers.
+    let Some(built) =
+        crate::handle_range::build_handle_ranges(&table, where_clause, &ctx.session_zone())
+    else {
+        return Ok(None);
+    };
     if !built.residual.is_empty() || built.ranges.is_empty() {
         return Ok(None);
     }

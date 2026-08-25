@@ -1292,3 +1292,50 @@ fn a_single_point_handle_range_with_a_filter_is_a_point_get() {
         vec![vec![Datum::Int(1)]]
     );
 }
+
+/// A `LIMIT 1` whose WHERE never detaches into clustered-handle ranges (an
+/// `IS NOT NULL`, or a predicate naming no primary column) is the general
+/// planner's statement: Go plans a table reader over it and answers. The fast
+/// path must FALL BACK (`None`), never refuse the statement -- captured
+/// against TiDB, where `select prdaccno from dpm_prd_acc where prdaccno is
+/// not null limit 1` returns a row while an erroring fast path rejected it.
+#[test]
+fn fast_single_row_scan_falls_back_when_the_where_detaches_nothing() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE ycsb_fb (id VARCHAR(32) PRIMARY KEY CLUSTERED, v VARCHAR(32))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_insert_on(
+        "INSERT INTO ycsb_fb VALUES ('user-0001','value-1'),('user-0002','value-2')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    catalog.clear_dirty_content();
+    for sql in [
+        "SELECT id FROM ycsb_fb WHERE v IS NOT NULL LIMIT 1",
+        "SELECT id FROM ycsb_fb WHERE v = 'value-2' LIMIT 1",
+    ] {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &stmt else {
+            panic!("expected a query");
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("expected a select");
+        };
+        let ctx = crate::StmtContext::for_query();
+        assert!(
+            crate::driver::plan_fast_single_row_scan(select, &catalog, "test", &ctx)
+                .unwrap()
+                .is_none(),
+            "{sql} should fall back to the general planner"
+        );
+        // The general planner answers it, as Go's does.
+        let rows =
+            crate::run_select_meta_stmt(select, &catalog, "test", &ctx).expect("{sql} should run");
+        let (_, values) = rows;
+        assert_eq!(values.len(), 1, "{sql} should return one row");
+    }
+}
