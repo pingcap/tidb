@@ -684,6 +684,28 @@ fn a_string_comparison_lowers_to_the_string_signature_go_resolves() {
     assert_eq!(sent.children[1].val.as_deref(), Some(literal));
 }
 
+/// Go's collation inference admits an ASCII column against an ASCII literal:
+/// the column's `ascii_bin` collation wins over the literal's coercible
+/// connection collation. A non-ASCII literal must remain local because Go
+/// cannot convert it to the ASCII repertoire without changing the predicate.
+#[test]
+fn an_ascii_column_comparison_pushes_only_ascii_literals() {
+    let text = vec![string_column("ascii_bin")];
+    let ascii = string_compare_in(ScanComparisonOp::Eq, b"0xabc", true, "ascii_bin");
+    assert!(accepts(&ascii, &text));
+    let condition = wide_scan_selection_conditions(&[ascii], &text)
+        .unwrap()
+        .remove(0);
+    assert_eq!(condition.sig, Some(ScalarFuncSig::EqString as i32));
+    assert_eq!(
+        condition.field_type.as_ref().unwrap().collate,
+        Some(tidb_datatype::collation_to_proto("ascii_bin"))
+    );
+
+    let non_ascii = string_compare_in(ScanComparisonOp::Eq, "é".as_bytes(), true, "ascii_bin");
+    assert!(!accepts(&non_ascii, &text));
+}
+
 #[test]
 fn not_like_lowers_to_unary_not_over_gos_like_signature() {
     let text = vec![string_column("utf8mb4_bin")];

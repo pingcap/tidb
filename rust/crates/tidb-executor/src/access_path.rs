@@ -1052,9 +1052,10 @@ struct LookupPipeline {
     unemitted_handles: u64,
 }
 
-/// go `DefTiDBIndexLookupConcurrency`: the table-worker pool size behind an
-/// IndexLookUpExecutor.
-const DEFAULT_LOOKUP_FETCH_CONCURRENCY: usize = 4;
+/// Go `SessionVars.IndexLookupConcurrency()`: the table-worker pool size
+/// behind an IndexLookUpExecutor. The deprecated per-executor setting is
+/// unset by default, so Go falls back to `DefExecutorConcurrency` (5).
+const DEFAULT_LOOKUP_FETCH_CONCURRENCY: usize = 5;
 const MAX_LOOKUP_FETCH_CONCURRENCY: usize = 8;
 
 /// The pipeline width, from `TIKV_INDEX_LOOKUP_CONCURRENCY`. Unset means go's

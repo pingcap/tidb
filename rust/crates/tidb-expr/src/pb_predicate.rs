@@ -40,7 +40,7 @@
 //! `col IS NOT NULL` is `UnaryNotInt(IntIsNull(col))`. There is no
 //! `IsNotNull` signature to reach for.
 
-use std::{error::Error, fmt};
+use std::{collections::HashSet, error::Error, fmt};
 
 use tidb_ast::BinaryOp;
 use tidb_codec::{encode_decimal_fixed, encode_int, encode_uint};
@@ -54,6 +54,8 @@ const BINARY_FLAG: u32 = 1 << 7;
 const IS_BOOLEAN_FLAG: u32 = 1 << 19;
 const BINARY_COLLATION_PROTO_ID: i32 = -63;
 const BINARY_CHARSET: &str = "binary";
+const ASCII_CHARSET: &str = "ascii";
+const ASCII_BIN_COLLATION: &str = "ascii_bin";
 const UTF8MB4_CHARSET: &str = "utf8mb4";
 const BIGINT_COLUMN_LENGTH: i32 = 20;
 const MYSQL_TYPE_VAR_STRING: i32 = 253;
@@ -293,7 +295,8 @@ pub fn time_comparison_to_pb(
 /// literal (Go folds it at plan time and sends no comparison), and any column
 /// charset other than `utf8mb4` or `binary` (`latin1`, `ascii`, `gbk` reach
 /// `inferCollation`'s repertoire branches, and a literal that does not fit
-/// the column's repertoire changes the derived answer).
+/// the column's repertoire changes the derived answer). The ASCII column plus
+/// ASCII literal exception is handled by the pairwise comparison gate below.
 pub fn string_comparison_to_pb(
     operator: BinaryOp,
     left: StringPbOperand,
@@ -301,8 +304,7 @@ pub fn string_comparison_to_pb(
     collation: &str,
 ) -> Result<Expr, PbPredicateError> {
     let signature = string_comparison_signature(operator)?;
-    check_string_collation_is_sendable(&left, collation)?;
-    check_string_collation_is_sendable(&right, collation)?;
+    check_string_comparison_collation_is_sendable(&left, &right, collation)?;
     let collation = collation.to_owned();
     let children = vec![string_operand_to_pb(left)?, string_operand_to_pb(right)?];
     Ok(Expr {
@@ -324,6 +326,30 @@ pub fn string_comparison_to_pb(
         }),
         has_distinct: Some(false),
     })
+}
+
+/// Checks the one extra repertoire case `inferCollation` admits for a
+/// column-vs-literal comparison: an ASCII column and an ASCII literal keep the
+/// column's `ascii_bin` collation. The generic operand check intentionally
+/// rejects ASCII because it cannot see the literal's repertoire; this pairwise
+/// gate carries that missing fact and keeps non-ASCII literals fail-closed.
+fn check_string_comparison_collation_is_sendable(
+    left: &StringPbOperand,
+    right: &StringPbOperand,
+    collation: &str,
+) -> Result<(), PbPredicateError> {
+    let ascii_column_and_literal = match (left, right) {
+        (StringPbOperand::Column { charset, .. }, StringPbOperand::Literal(literal))
+        | (StringPbOperand::Literal(literal), StringPbOperand::Column { charset, .. }) => {
+            charset == ASCII_CHARSET && collation == ASCII_BIN_COLLATION && literal.is_ascii()
+        }
+        _ => false,
+    };
+    if !ascii_column_and_literal {
+        check_string_collation_is_sendable(left, collation)?;
+        check_string_collation_is_sendable(right, collation)?;
+    }
+    Ok(())
 }
 
 /// Refuses an operand whose CHARSET this lowering cannot faithfully describe.
@@ -527,13 +553,12 @@ pub fn string_in_to_pb(
         .ok_or(PbPredicateError::UnderivableStringCollation)?;
 
     let mut children = vec![tested];
-    let mut seen = Vec::<Vec<u8>>::new();
+    let mut seen = HashSet::<Vec<u8>>::new();
     for literal in list {
         let key = collation.key(&literal);
-        if seen.contains(&key) {
+        if !seen.insert(key) {
             continue;
         }
-        seen.push(key);
         children.push(string_operand_to_pb(StringPbOperand::Literal(literal))?);
     }
     if children.len() < 2 {
