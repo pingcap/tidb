@@ -338,3 +338,156 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
         self.rollback()
     }
 }
+
+/// Commit-outcome parity with the coordinator facade.
+///
+/// This is the seam consumers branch on: every caller of the previous
+/// coordinator matched on [`OptimisticCommitOutcome`], so the engine's simpler
+/// result is mapped back onto exactly those four terminal states.
+impl<PdC: PdClient> TikvTransactionDriver<PdC> {
+    /// Stages one source mutation set and runs two-phase commit, reporting the
+    /// terminal outcome in the coordinator facade's vocabulary.
+    ///
+    /// The kind-to-op/assertion mapping is the source's own
+    /// (`OptimisticMutation::to_proto`), expressed here as buffer state because
+    /// the engine reads its mutations off the staged buffer the way client-go's
+    /// `initKeysAndMutations` does: a presume-key-not-exists flag makes the
+    /// mutation an `Op_Insert`, and the assertion rides along per key.
+    pub fn commit_mutations(
+        &mut self,
+        mutations: Vec<crate::transaction::OptimisticMutation>,
+    ) -> Result<crate::transaction::OptimisticCommitOutcome, TikvTransactionError> {
+        use crate::transaction::OptimisticMutationKind as Kind;
+
+        let mutation_count = mutations.len();
+        let primary_key = mutations
+            .iter()
+            .map(|mutation| mutation.key().to_vec())
+            .min()
+            .unwrap_or_default();
+
+        for mutation in mutations {
+            let key = Key::from(mutation.key().to_vec());
+            let value = mutation.value().to_vec();
+            match mutation.kind() {
+                Kind::Insert | Kind::UniqueIndexInsert => {
+                    self.set_with_flags(key.clone(), value, &[FlagsOp::SetPresumeKeyNotExists])?;
+                    self.update_assertion_flags(&key, AssertionOp::AssertNotExist);
+                }
+                Kind::PutExisting => {
+                    self.set(key.clone(), value)?;
+                    self.update_assertion_flags(&key, AssertionOp::AssertExist);
+                }
+                Kind::Delete => {
+                    self.delete(key.clone())?;
+                    self.update_assertion_flags(&key, AssertionOp::AssertExist);
+                }
+                Kind::IndexPut | Kind::MetaPut => self.set(key, value)?,
+                Kind::IndexDelete | Kind::MetaDelete => self.delete(key)?,
+                Kind::LockOnly => {
+                    // A key this transaction locked but never wrote still has
+                    // to be prewritten, so the primary lock exists after
+                    // prewrite. The engine emits `Op_Lock` for a staged key
+                    // carrying the locked flag and no value change.
+                    self.mem_buffer()
+                        .backend_mut()
+                        .update_flags(&key, &[FlagsOp::SetNeedLocked]);
+                }
+            }
+        }
+
+        Ok(self.finish_commit(primary_key, mutation_count))
+    }
+
+    fn finish_commit(
+        &mut self,
+        primary_key: Vec<u8>,
+        mutation_count: usize,
+    ) -> crate::transaction::OptimisticCommitOutcome {
+        use crate::transaction::{
+            CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt,
+            RolledBackTransaction, TransactionCause, UndeterminedTransaction,
+        };
+
+        // The physical publication telemetry the previous receipt carried
+        // (per-batch publications, observed region epochs) is now the engine's
+        // own internal accounting and is not exposed; consumers read the
+        // commit timestamp and the terminal state, which are.
+        let mut receipt =
+            OptimisticTransactionReceipt::new(0, self.start_ts, primary_key, mutation_count);
+
+        match self.commit() {
+            Ok(commit_ts) => {
+                receipt.commit_ts = commit_ts.unwrap_or_default();
+                OptimisticCommitOutcome::Committed(CommittedTransaction {
+                    receipt,
+                    secondary_failures: Vec::new(),
+                })
+            }
+            Err(error) => {
+                if is_undetermined(&error) {
+                    // The primary was published and its result is unknown:
+                    // retrying an ambiguously committed write is a correctness
+                    // bug, so this stays its own terminal state.
+                    return OptimisticCommitOutcome::Undetermined(UndeterminedTransaction {
+                        receipt,
+                        cause: TransactionCause::Transport {
+                            detail: error.to_string(),
+                        },
+                    });
+                }
+                // Every other failure is definitive: the engine rolled its own
+                // prewrites back before returning.
+                OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+                    receipt,
+                    cause: classify_cause(&error),
+                })
+            }
+        }
+    }
+}
+
+/// Whether the engine reported an ambiguous commit result.
+fn is_undetermined(error: &TikvTransactionError) -> bool {
+    matches!(
+        error,
+        TikvTransactionError::Client(tikv_client::Error::UndeterminedError(_))
+    )
+}
+
+/// Maps one engine failure onto the facade's cause vocabulary.
+fn classify_cause(error: &TikvTransactionError) -> crate::transaction::TransactionCause {
+    use crate::transaction::TransactionCause;
+    use tikv_client::Error as ClientError;
+
+    let TikvTransactionError::Client(client_error) = error else {
+        return TransactionCause::Transport {
+            detail: error.to_string(),
+        };
+    };
+    match client_error {
+        ClientError::KeyExists(exists) => TransactionCause::AlreadyExists {
+            key: exists.already_exist.key.clone(),
+            detail: client_error.to_string(),
+        },
+        ClientError::AssertionFailed(failed) => TransactionCause::AssertionFailed {
+            key: failed.assertion_failed.key.clone(),
+            detail: client_error.to_string(),
+        },
+        ClientError::WriteConflict(_) | ClientError::WriteConflictInLatch(_) => {
+            TransactionCause::WriteConflict {
+                detail: client_error.to_string(),
+            }
+        }
+        ClientError::ResolveLockError(locks) => TransactionCause::Lock {
+            key: locks
+                .first()
+                .map(|lock| lock.key.clone())
+                .unwrap_or_default(),
+            detail: client_error.to_string(),
+        },
+        _ => TransactionCause::Transport {
+            detail: client_error.to_string(),
+        },
+    }
+}
