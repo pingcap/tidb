@@ -3660,8 +3660,16 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
         if let Some((partial_concurrency, final_concurrency)) = pipeline_counts {
             // The bounded integer fast path keeps its historical priority
             // (and its Open-time spill registration) over the pipeline.
+            // The historical note gave a bounded-integer fast path priority
+            // over the pipeline. That priority is what Go's own plan shows
+            // for GLOBAL count/sum (StreamAgg over index ranges), so keep it
+            // there — but a GROUPED count/sum-decimal shape (TPC-H q17's
+            // 200K-group avg merge) has no such Go stream-agg preference, and
+            // its bounded folder has no production caller: send it through
+            // the parallel pipeline rather than the serial fold.
+            let grouped = !self.group_by.is_empty();
             if <C as HashAggContext>::PARALLEL_WORKERS_MAY_EVAL
-                && self.parallel_int_agg_specs().is_none()
+                && (grouped || self.parallel_int_agg_specs().is_none())
             {
                 // Go `initForParallelExec`: worker counts resolved from the
                 // session variables; the pipeline takes this aggregation over.
