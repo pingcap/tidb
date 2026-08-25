@@ -404,6 +404,37 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       stays compiling and sites move one at a time. The old implementations
       become unreferenced as the chain completes, and the deletion is then
       mechanical.
+- [ ] **Go-fidelity classification of `tidb-txnkv` (2026-08-25), which decides
+      what the deletion may and may not touch.** Checked every module against
+      the Go source it cites, because "unreferenced" is NOT the deletion
+      criterion here: this repo transcreates whole Go packages, so a finished
+      port can legitimately sit unwired. Removing one would destroy completed
+      work. A first pass by reference-count alone would have deleted
+      ~1,800 lines of exactly that.
+      **Mirrors TiDB Go -- keep, wired or not:** `kv_api` (`pkg/kv/kv.go`),
+      `kv_contract`, `mpp` (`pkg/kv/mpp.go`), `fault_injection`
+      (`pkg/kv/fault_injection.go`), `retry` and `new_txn` (`pkg/kv/txn.go`),
+      `resource_group` (`pkg/kv/kv.go`), `key`/`key_flags`/`assertion`/
+      `error`/`handle`/`iteration`/`option`/`version`/`txn_scope`/
+      `txn_source`/`checker`/`batch_getter`/`key_ranges`/`keyspace`/
+      `prefix_ops`/`trxevents`/`union_iter`/`tiflash`/`counter`/`cache_db`/
+      `inner_txn`, `mvcc_metadata` and `unistore`
+      (`pkg/store/mockstore/unistore`), `client` (the driver boundary), and
+      `driver/` (`pkg/store/driver`, including the new engine-backed seams).
+      **Is client-go's job in Go -- delete once the consumer chain moves:**
+      `transaction/coordinator/` (client-go `twoPhaseCommitter`), `rpc/`
+      (`internal/client`), `region/` (`internal/locate`), `lock/`
+      (`txnkv/txnlock`), `pd_loader` (PD region loading), and `gc_state`,
+      whose own header says it is "transcreated from client-go's
+      `tikv/kv.go` ... `tikv/safepoint.go`".
+      **Has no Go counterpart at all:**
+      `transaction/mutation_buffer` (440 lines). Its own doc concedes the
+      point -- "TiDB does this in its `MemBuffer`". Go stages straight into
+      the memdb; there is no second coalescing buffer. Upstream's
+      now-authoritative `Transaction::get_mem_buffer()` supersedes it
+      outright, so it goes with the chain rather than being replaced.
+      Every one of these is reached through `MultiStatementTransaction`, so
+      none can be removed ahead of that migration.
 - [ ] Phase 4: full-workspace build, targeted + aggregate test pass, `make
       bazel_prepare` (Go-file-count is unaffected, but Bazel metadata for the
       Rust crates does not apply — confirm scope; see `Concrete Steps`),
