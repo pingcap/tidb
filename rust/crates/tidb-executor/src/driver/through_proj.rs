@@ -597,6 +597,18 @@ fn inject_expressions(
     catalog: &Catalog,
     current_db: &str,
 ) -> Option<SelectStmt> {
+    // An injection materializes an expression onto ONE BRANCH of a join.
+    // With no join there is no branch to publish on AND no edge to key:
+    // every equality would read one relation and hit `declined` below, so
+    // the answer is already `None`. Saying so up front keeps single-table
+    // statements -- most OLTP traffic -- out of the catalog walk entirely
+    // (Go's `injectExpr` runs on a JOIN REORDER of an actual join too).
+    {
+        let join = rewritten.from.as_ref()?;
+        if join.right.is_none() && !matches!(join.left, JoinNode::Join(_)) {
+            return None;
+        }
+    }
     let relations = base_relations(rewritten.from.as_ref()?, catalog, current_db)?;
     let mut injections: Vec<Injection> = Vec::new();
     // `AppendExpr`'s reuse test: the SAME expression on the SAME relation is

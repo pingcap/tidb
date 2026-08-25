@@ -153,6 +153,18 @@ pub struct Catalog {
     /// serves Go's stale reads on a tier whose store otherwise keeps no
     /// versions. See [`CommitHistory`].
     commit_history: Arc<std::sync::Mutex<CommitHistory>>,
+    /// Memoized answer of walking EVERY database's table map for LOCAL and
+    /// GLOBAL temporary tables, valid as of one `metadata_version`. Go asks
+    /// this from `temptable`'s own session map in O(1); this tier's maps are
+    /// the catalog itself, so without the memo the walk runs twice per
+    /// statement (`txn`'s overlay guard swaps global row storage in and out,
+    /// and detaches locals), which is pure overhead for the sessions that
+    /// hold no temporary tables -- every OLTP workload. Keyed on
+    /// `metadata_version` because exactly its mutators move the table set;
+    /// [`Self::take_local_temporary_tables`] also drops it explicitly after
+    /// removing entries.
+    temporary_sweep:
+        Option<(u64, Vec<(String, String)>, Vec<(String, String)>)>,
 }
 
 /// The narrow store's commit history.
@@ -261,6 +273,7 @@ impl Default for Catalog {
             shadowed_by_local_temporary: Vec::new(),
             statistics: HashMap::new(),
             commit_history: Arc::new(std::sync::Mutex::new(CommitHistory::default())),
+            temporary_sweep: None,
         };
         // Go's bootstrap builds the `information_schema` tables into the
         // infoschema itself, so they are ordinary objects to every name
@@ -1174,18 +1187,11 @@ impl Catalog {
     pub fn take_local_temporary_tables(&mut self) -> Vec<(String, String, KvTable)> {
         // Same gate as [`Self::attach_local_temporary_tables`]: a session
         // with no local temporary tables detaches nothing, so the key-decode
-        // metadata epoch must not move either.
-        let mut slots = Vec::new();
-        for (folded_database, schema) in &self.databases {
-            for (folded_name, entry) in &schema.tables {
-                if matches!(entry, TableEntry::Kv(table)
-                    if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
-                {
-                    slots.push((folded_database.clone(), folded_name.clone()));
-                }
-            }
-        }
-        if !slots.is_empty() {
+        // metadata epoch must not move either. The list itself comes from the
+        // memoized sweep rather than a fresh walk.
+        let slots = self.ensure_temporary_sweep().0.to_vec();
+        let moved_entries = !slots.is_empty();
+        if moved_entries {
             self.bump_metadata_version();
         }
         let mut taken = Vec::with_capacity(slots.len());
@@ -1205,6 +1211,9 @@ impl Catalog {
                 continue;
             };
             schema.tables.entry(folded_name).or_insert(entry);
+        }
+        if moved_entries {
+            self.temporary_sweep = None;
         }
         taken
     }
@@ -1231,6 +1240,57 @@ impl Catalog {
         }
         ids.sort();
         ids
+    }
+
+    /// The GLOBAL half of [`Self::global_temporary_table_ids`], served from
+    /// the memoized sweep below: `txn`'s overlay guard asks this twice per
+    /// statement, and the answer only moves when the table set does -- Go
+    /// asks the same question of `temptable`'s own session map in O(1).
+    pub fn global_temporary_table_ids_memo(&mut self) -> &[(String, String)] {
+        self.ensure_temporary_sweep().1
+    }
+
+    /// The LOCAL and GLOBAL temporary-table id lists as of the CURRENT
+    /// metadata epoch, rebuilt from ONE catalog walk when the memo is stale.
+    ///
+    /// Keyed on `metadata_version`, because exactly its mutators move the
+    /// table set; [`Self::take_local_temporary_tables`] also drops the memo
+    /// explicitly once it has removed entries under it.
+    fn ensure_temporary_sweep(&mut self) -> (&[(String, String)], &[(String, String)]) {
+        let epoch = self.metadata_version;
+        if self
+            .temporary_sweep
+            .as_ref()
+            .is_none_or(|(at, _, _)| *at != epoch)
+        {
+            let mut local: Vec<(String, String)> = Vec::new();
+            let mut global: Vec<(String, String)> = Vec::new();
+            for (folded_database, schema) in &self.databases {
+                for (folded_name, entry) in &schema.tables {
+                    let TableEntry::Kv(table) = entry else {
+                        continue;
+                    };
+                    match table.temp_table_type() {
+                        tidb_model::TempTableType::LOCAL => {
+                            local.push((folded_database.clone(), folded_name.clone()))
+                        }
+                        tidb_model::TempTableType::GLOBAL => {
+                            global.push((folded_database.clone(), folded_name.clone()))
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            global.sort();
+            self.temporary_sweep = Some((epoch, local, global));
+        }
+        match self.temporary_sweep.as_mut() {
+            Some((at, locals, globals)) => {
+                debug_assert_eq!(*at, epoch);
+                (locals.as_slice(), globals.as_slice())
+            }
+            None => unreachable!("just stored"),
+        }
     }
 
     /// A mutable handle on a table for the temporary-table overlay, which
