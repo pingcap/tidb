@@ -193,16 +193,30 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         .map_err(|error| tracked_after_pull(error.to_string(), sink, false))?;
     if !metadata.is_empty() {
         let refs: Vec<&[u8]> = metadata.iter().map(|payload| payload.as_slice()).collect();
-        sink.write_payloads(&refs).map_err(|error| {
-            tracked(
-                ResultSetWriteError {
-                    message: error.message,
-                    retryable: true,
-                    bytes_escaped: false,
-                },
-                false,
-            )
-        })?;
+        // A failed metadata write already put packets on the wire: the sink
+        // knows whether bytes escaped, and the answer can no longer be
+        // retried on this connection.
+        sink.write_payloads(&refs)
+            .map_err(|error| payloads_failed(error, sink))?;
+    }
+
+    // A zero-row answer never enters the row loop below. Its terminal EOF is
+    // still owed to the client: skipping the loop left the buffered metadata
+    // unflushed forever and the client waiting on bytes that never come
+    // (the regression `88ff511` shipped).
+    if batch.is_empty() {
+        source
+            .finish()
+            .map_err(|message| tracked_after_pull(message, sink, true))?;
+        let terminal = stream
+            .finish_packet()
+            .map_err(|error| tracked_after_pull(error.to_string(), sink, true))?;
+        write_payload(sink, &terminal).map_err(|error| tracked(error, true))?;
+        flush_sink(sink).map_err(|error| tracked(error, true))?;
+        return Ok(ResultSetWriteOutcome {
+            rows_written: stream.row_count(),
+            packets_written: sink.packets_written(),
+        });
     }
 
     // An empty first pull still has a complete result-set lifecycle. The
@@ -235,9 +249,6 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
     }
 
     loop {
-        if batch.is_empty() {
-            break;
-        }
         // Go streams a result set through a bufio.Writer that flushes only
         // when it fills, so 90k rows leave the server as a few megabyte-scale
         // transport writes. Flushing PER PACKET here turned every row into
@@ -260,30 +271,45 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         // its coalesced write instead of forcing a second segment. A small
         // result set therefore leaves as ONE transport write, which is what
         // Go's buffered connection gives a small SELECT.
-        batch = source
-            .next_batch(batch_size)
-            .map_err(|message| tracked_after_pull(message, sink, false))?;
+        batch = match source.next_batch(batch_size) {
+            Ok(batch) => batch,
+            Err(message) => {
+                // Rows this batch already formatted still belong to the wire:
+                // go streams them ahead of the later pull's error, and the
+                // retry classifier reads them back as escaped bytes.
+                let refs: Vec<&[u8]> =
+                    payloads.iter().map(|payload| payload.as_slice()).collect();
+                sink.write_payloads(&refs)
+                    .map_err(|error| payloads_failed(error, sink))?;
+                flush_sink(sink).map_err(|error| tracked(error, false))?;
+                return Err(tracked_after_pull(message, sink, false));
+            }
+        };
         if batch.is_empty() {
-            source
-                .finish()
-                .map_err(|message| tracked_after_pull(message, sink, true))?;
+            if let Err(message) = source.finish() {
+                // The same duty to the wire when finishing fails mid-stream.
+                let refs: Vec<&[u8]> =
+                    payloads.iter().map(|payload| payload.as_slice()).collect();
+                sink.write_payloads(&refs)
+                    .map_err(|error| payloads_failed(error, sink))?;
+                flush_sink(sink).map_err(|error| tracked(error, false))?;
+                return Err(tracked_after_pull(message, sink, true));
+            }
             let terminal = stream
                 .finish_packet()
                 .map_err(|error| tracked_after_pull(error.to_string(), sink, true))?;
             payloads.push(terminal);
         }
         let refs: Vec<&[u8]> = payloads.iter().map(|payload| payload.as_slice()).collect();
-        sink.write_payloads(&refs).map_err(|error| {
-            tracked(
-                ResultSetWriteError {
-                    message: error.message,
-                    retryable: true,
-                    bytes_escaped: error.bytes_escaped,
-                },
-                false,
-            )
-        })?;
+        sink.write_payloads(&refs)
+            .map_err(|error| payloads_failed(error, sink))?;
         flush_sink(sink).map_err(|error| tracked(error, false))?;
+        if batch.is_empty() {
+            return Ok(ResultSetWriteOutcome {
+                rows_written: stream.row_count(),
+                packets_written: sink.packets_written(),
+            });
+        }
     }
 
     Ok(ResultSetWriteOutcome {
@@ -348,6 +374,23 @@ fn write_payload<W: ResultSetSink>(
             bytes_escaped,
         }
     })
+}
+
+/// A failed coalesced `write_payloads` classifies exactly like a failed
+/// single-packet write: never retryable, and escaped only when the sink says
+/// so or any packet already left.
+fn payloads_failed<W: ResultSetSink>(
+    error: SinkWriteError,
+    sink: &W,
+) -> TrackedResultSetWriteError {
+    tracked(
+        ResultSetWriteError {
+            message: error.message,
+            retryable: false,
+            bytes_escaped: error.bytes_escaped || sink.packets_written() > 0,
+        },
+        false,
+    )
 }
 
 fn flush_sink<W: ResultSetSink>(sink: &mut W) -> Result<(), ResultSetWriteError> {
