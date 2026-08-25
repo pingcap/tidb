@@ -63,6 +63,12 @@ use tidb_expr::schema::Schema;
 use tidb_expr::truthy_of;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
+
+/// Lookups over at most this many handles are fetched inline by the calling
+/// worker instead of a dedicated `idx-lookup` thread: a point select's one
+/// handle costs less to fetch than the thread spawn did (jemalloc tcache init
+/// plus first stack touch), and the answer is byte-identical.
+const INDEX_LOOKUP_INLINE_HANDLES: usize = 4;
 use crate::kv_table::{
     IndexRange, IndexRangeCursor, KvTable, RemoteRowCursor, RowCursor, TableHandle,
 };
@@ -1818,6 +1824,27 @@ impl IndexRangeSourceExec {
                 ready: Some(Ok(LookupFetch::LocalFallback)),
             });
         };
+        // A tiny handle list (a point select lands one or two) is fetched
+        // right here on the calling worker: spawning a native thread for it
+        // costs more -- jemalloc tcache init plus first stack touch -- than
+        // the fetch itself, and the answer is byte-identical. Larger batches
+        // keep the dedicated thread so lookups still overlap planning.
+        if handles.len() <= INDEX_LOOKUP_INLINE_HANDLES {
+            let outcome = crate::kv_table::KvTable::finish_rows_by_handles(
+                &handles,
+                staged,
+            )
+            .map_err(|error| format!("{error:?}"))
+            .map(|answer| match answer {
+                Some((rows, applied, wire_rows)) => LookupFetch::Remote(rows, applied, wire_rows),
+                None => LookupFetch::LocalFallback,
+            });
+            return Ok(LookupBatchJob {
+                handles,
+                receiver: None,
+                ready: Some(outcome),
+            });
+        }
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let worker_handles = handles.clone();
         let worker = move || {
