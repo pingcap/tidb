@@ -55,7 +55,9 @@ use crate::lock::{
 use crate::region::{RegionLoader, RegionRecoveryLoader};
 use crate::rpc::UnaryCallContext;
 
-use super::command_client::{PublishedCommand, TransactionCommandClient};
+use super::command_client::{
+    PublishedCommand, TransactionCommandClient, TransactionPessimisticLockRequest,
+};
 use super::coordinator::{
     classify_key_error, PessimisticPrewritePlan, RealOptimisticTransaction, RecoveryPhase,
 };
@@ -515,11 +517,87 @@ where
             KvrpcPessimisticLockWakeUpMode::WakeUpModeNormal
         };
         let wait_started_at = Instant::now();
-        let mut queue = VecDeque::from(self.group(&sorted)?);
+        let mut queue: VecDeque<(
+            RegionKeyBatch,
+            Option<KvrpcPessimisticLockResponse>,
+        )> = VecDeque::from(self.group(&sorted)?.into_iter().map(|batch| (batch, None)).collect::<Vec<_>>());
+        // Go `KVTxn.LockKeys` dispatches every region batch's lock request
+        // before waiting on any of them (`lockKeys` via `doBatches`), so a
+        // statement spanning several regions costs one round trip instead of
+        // one per region. When more than one region batch is pending and no
+        // single-key ForceLock path applies, this first round is admitted the
+        // same way; each answer then runs through the unchanged `lock_batch`
+        // handling below, which owns blocker waits, retries, and regroups. A
+        // batch whose admission was lost rejoins the queue without one, which
+        // republishes it — a PessimisticLock that may or may not exist can be
+        // re-requested at the same timestamps.
+        if queue.len() > 1 && wake_up_mode == KvrpcPessimisticLockWakeUpMode::WakeUpModeNormal {
+            let batches: Vec<RegionKeyBatch> = queue.drain(..).map(|(batch, _)| batch).collect();
+            let requests: Vec<TransactionPessimisticLockRequest> = batches
+                .iter()
+                .map(|batch| {
+                    let waited = wait_started_at.elapsed();
+                    let mutations = batch
+                        .keys()
+                        .iter()
+                        .map(|key| KvrpcMutation {
+                            op: KvrpcOp::PessimisticLock as i32,
+                            key: key.clone(),
+                            value: Vec::new(),
+                            assertion: if presume_not_exists.contains(key) {
+                                KvrpcAssertion::NotExist as i32
+                            } else {
+                                KvrpcAssertion::None as i32
+                            },
+                        })
+                        .collect();
+                    let request = KvrpcPessimisticLockRequest {
+                        mutations,
+                        primary_lock: primary_key.to_vec(),
+                        start_version: self.start_ts(),
+                        lock_ttl: elapsed_ms(self.opened_at)
+                            .saturating_add(MANAGED_LOCK_TTL_MS),
+                        for_update_ts: self.for_update_ts,
+                        is_first_lock,
+                        wait_timeout: wait.wait_timeout_ms(waited),
+                        min_commit_ts: self.for_update_ts.saturating_add(1),
+                        wake_up_mode: wake_up_mode as i32,
+                        return_values,
+                        ..KvrpcPessimisticLockRequest::default()
+                    };
+                    TransactionPessimisticLockRequest {
+                        address: batch.address(),
+                        request,
+                        context: self.two_pc.write_context(batch.context()),
+                    }
+                })
+                .collect();
+            let results = match self.two_pc.runtime().client().try_lock() {
+                Ok(mut client) => client.publish_pessimistic_locks(&requests, call),
+                Err(_) => requests
+                    .iter()
+                    .map(|_| {
+                        PublishedCommand::<KvrpcPessimisticLockResponse>::BeforePublication(
+                            "TiKV client is already borrowed while publishing PessimisticLock"
+                                .to_owned(),
+                        )
+                    })
+                    .collect(),
+            };
+            for (batch, result) in batches.into_iter().zip(results) {
+                queue.push_back((
+                    batch,
+                    match result {
+                        PublishedCommand::Response(response) => Some(response.response),
+                        _ => None,
+                    },
+                ));
+            }
+        }
         let mut newly_locked = Vec::new();
         let mut locked_with_conflict: Vec<(Vec<u8>, u64)> = Vec::new();
         let mut values: BTreeMap<Vec<u8>, Option<Vec<u8>>> = BTreeMap::new();
-        while let Some(batch) = queue.pop_front() {
+        while let Some((batch, pre_response)) = queue.pop_front() {
             match self.lock_batch(
                 &batch,
                 &sorted,
@@ -532,6 +610,7 @@ where
                 return_values,
                 &mut values,
                 call,
+                pre_response,
             )? {
                 BatchOutcome::Locked { conflicts } => {
                     // Merged into the transaction *now*, not after the loop.
@@ -549,7 +628,7 @@ where
                 }
                 BatchOutcome::Regroup => {
                     for regrouped in self.group(batch.keys())?.into_iter().rev() {
-                        queue.push_front(regrouped);
+                        queue.push_front((regrouped, None));
                     }
                 }
             }
@@ -727,7 +806,12 @@ where
         return_values: bool,
         values: &mut BTreeMap<Vec<u8>, Option<Vec<u8>>>,
         call: &UnaryCallContext,
+        pre_response: Option<KvrpcPessimisticLockResponse>,
     ) -> Result<BatchOutcome, PessimisticLockFailure> {
+        // A response already admitted on the transport by this statement's
+        // concurrent first round stands in for this batch's first publish;
+        // every later round publishes fresh.
+        let mut pre_response = pre_response;
         let mutations = batch
             .keys()
             .iter()
@@ -762,7 +846,10 @@ where
                 return_values,
                 ..KvrpcPessimisticLockRequest::default()
             };
-            let response = self.publish_lock(batch, &request, call)?;
+            let response = match pre_response.take() {
+                Some(response) => response,
+                None => self.publish_lock(batch, &request, call)?,
+            };
             if let Some(region_error) = response.region_error.as_ref() {
                 self.two_pc
                     .recover_region_error(

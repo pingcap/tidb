@@ -109,6 +109,23 @@ pub struct TransactionCommitRequest<'a> {
     pub context: KvrpcContext,
 }
 
+/// One region-routed PessimisticLock submitted as part of a concurrent
+/// locking round.
+///
+/// Go `KVTxn.LockKeys` (`client-go/txnkv/txn.lockKeys`) admits every region
+/// batch's lock request before waiting on any of them, so a statement that
+/// touches several regions costs one round trip instead of one per region.
+/// The address is borrowed from the caller's region batch; the request and
+/// context are owned for the same reason as [`TransactionPrewriteRequest`].
+pub struct TransactionPessimisticLockRequest<'a> {
+    /// Physical TiKV leader address selected by the region cache.
+    pub address: &'a str,
+    /// Region-scoped PessimisticLock request.
+    pub request: KvrpcPessimisticLockRequest,
+    /// Region context stamped with the transaction's resolved locks.
+    pub context: KvrpcContext,
+}
+
 /// Typed transaction commands required from the sole shared TiKV client.
 ///
 /// Every method publishes one command on an already-selected route and
@@ -242,6 +259,29 @@ pub trait TransactionCommandClient {
         context: &KvrpcContext,
         call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcPessimisticLockResponse>;
+
+    /// Publishes a round of region-routed PessimisticLocks before waiting for
+    /// any response, mirroring Go `KVTxn.LockKeys` admitting every region's
+    /// lock request concurrently. Implementations may override this to retain
+    /// all in-flight requests on the shared transport; the default preserves
+    /// sequential publication for alternate clients.
+    fn publish_pessimistic_locks(
+        &mut self,
+        requests: &[TransactionPessimisticLockRequest<'_>],
+        call: &UnaryCallContext,
+    ) -> Vec<PublishedCommand<KvrpcPessimisticLockResponse>> {
+        requests
+            .iter()
+            .map(|request| {
+                self.publish_pessimistic_lock(
+                    request.address,
+                    &request.request,
+                    &request.context,
+                    call,
+                )
+            })
+            .collect()
+    }
 
     /// Publishes one PessimisticRollback releasing acquired pessimistic locks.
     fn publish_pessimistic_rollback(
@@ -489,6 +529,59 @@ impl TransactionCommandClient for TonicCoprocessorClient {
         results
             .into_iter()
             .map(|result| result.expect("every admitted Commit has a completion result"))
+            .collect()
+    }
+
+    fn publish_pessimistic_locks(
+        &mut self,
+        requests: &[TransactionPessimisticLockRequest<'_>],
+        call: &UnaryCallContext,
+    ) -> Vec<PublishedCommand<KvrpcPessimisticLockResponse>> {
+        let mut results = std::iter::repeat_with(|| None)
+            .take(requests.len())
+            .collect::<Vec<Option<PublishedCommand<KvrpcPessimisticLockResponse>>>>();
+        let mut pending = Vec::with_capacity(requests.len());
+
+        // Admission is synchronous only up to the transport publication
+        // receipt. Keeping each pending completion alive lets the worker
+        // overlap the region batches, so a multi-region locking statement
+        // costs one round trip instead of one per region — Go `lockKeys`.
+        for (index, request) in requests.iter().enumerate() {
+            match self.begin_transaction_pessimistic_lock(
+                request.address,
+                None,
+                &request.request,
+                &request.context,
+                call,
+            ) {
+                Ok(pending_request) => pending.push((index, pending_request)),
+                Err(error) => {
+                    results[index] = Some(PublishedCommand::BeforePublication(error.to_string()));
+                }
+            }
+        }
+
+        for (index, mut pending_request) in pending {
+            let publication = pending_request
+                .publication()
+                .expect("Stage A binds a nonzero publication before pending escapes")
+                .clone();
+            results[index] = Some(match pending_request.complete(call) {
+                Ok(Ok(response)) => PublishedCommand::Response(response),
+                Ok(Err(error)) => PublishedCommand::AfterPublication {
+                    publication,
+                    error: error.to_string(),
+                },
+                Err(error) => PublishedCommand::AfterPublication {
+                    publication,
+                    error: error.to_string(),
+                },
+            });
+        }
+
+        results
+            .into_iter()
+            .map(|result| result.expect("every admitted PessimisticLock has a completion result"))
             .collect()
     }
 
