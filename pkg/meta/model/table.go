@@ -234,6 +234,18 @@ type TableInfo struct {
 	StorageClassTier string `json:"storage_class_tier,omitempty"`
 	// StorageClassTransitions is the storage class transition rules of the table level.
 	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
+	// StorageClassTransitionTarget is IA or STANDARD. STANDARD is translated to
+	// Unspecified by TiKV, but TiDB keeps the SQL-facing name in metadata.
+	StorageClassTransitionTarget string `json:"storage_class_transition_target,omitempty"`
+	// StorageClassTransitionStartTS is the operation start timestamp from TSO.
+	StorageClassTransitionStartTS uint64 `json:"storage_class_transition_start_ts,omitempty"`
+	// StorageClassTransitionSchemaName and StorageClassTransitionTableName keep
+	// the SQL object names as they were when the operation started.
+	StorageClassTransitionSchemaName string `json:"storage_class_transition_schema_name,omitempty"`
+	StorageClassTransitionTableName  string `json:"storage_class_transition_table_name,omitempty"`
+	// StorageClassTransitionPendingHistory contains operations that have ended
+	// but have not yet been copied to the system history table.
+	StorageClassTransitionPendingHistory []StorageClassTransitionHistory `json:"storage_class_transition_pending_history,omitempty"`
 
 	Mode TableMode `json:"mode,omitempty"`
 }
@@ -311,6 +323,10 @@ func (t *TableInfo) Clone() *TableInfo {
 
 	if t.Affinity != nil {
 		nt.Affinity = t.Affinity.Clone()
+	}
+	nt.StorageClassTransitionPendingHistory = make([]StorageClassTransitionHistory, len(t.StorageClassTransitionPendingHistory))
+	for i := range t.StorageClassTransitionPendingHistory {
+		nt.StorageClassTransitionPendingHistory[i] = t.StorageClassTransitionPendingHistory[i].Clone()
 	}
 
 	return &nt
@@ -1198,14 +1214,19 @@ type PartitionState struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID                      int64                     `json:"id"`
-	Name                    ast.CIStr                 `json:"name"`
-	LessThan                []string                  `json:"less_than"`
-	InValues                [][]string                `json:"in_values"`
-	PlacementPolicyRef      *PolicyRefInfo            `json:"policy_ref_info"`
-	Comment                 string                    `json:"comment,omitempty"`
-	StorageClassTier        string                    `json:"storage_class_tier,omitempty"`
-	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
+	ID                                  int64                     `json:"id"`
+	Name                                ast.CIStr                 `json:"name"`
+	LessThan                            []string                  `json:"less_than"`
+	InValues                            [][]string                `json:"in_values"`
+	PlacementPolicyRef                  *PolicyRefInfo            `json:"policy_ref_info"`
+	Comment                             string                    `json:"comment,omitempty"`
+	StorageClassTier                    string                    `json:"storage_class_tier,omitempty"`
+	StorageClassTransitions             []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
+	StorageClassTransitionTarget        string                    `json:"storage_class_transition_target,omitempty"`
+	StorageClassTransitionStartTS       uint64                    `json:"storage_class_transition_start_ts,omitempty"`
+	StorageClassTransitionSchemaName    string                    `json:"storage_class_transition_schema_name,omitempty"`
+	StorageClassTransitionTableName     string                    `json:"storage_class_transition_table_name,omitempty"`
+	StorageClassTransitionPartitionName string                    `json:"storage_class_transition_partition_name,omitempty"`
 }
 
 // Clone clones PartitionDefinition.

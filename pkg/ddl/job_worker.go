@@ -1101,6 +1101,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onAlterTableAffinity(jobCtx, job)
 	case model.ActionAlterTableSetRegionSplitPolicy:
 		ver, err = w.onAlterTableSetRegionSplitPolicy(jobCtx, job)
+	case model.ActionFinishStorageClassTransition:
+		ver, err = onFinishStorageClassTransition(jobCtx, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

@@ -295,6 +295,32 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowDistributionJobs(ctx)
 	case ast.ShowAffinity:
 		return e.fetchShowAffinity(ctx)
+	case ast.ShowStorageClassTransitions:
+		return e.fetchShowStorageClassTransitions(ctx)
+	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowStorageClassTransitions(ctx context.Context) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT * FROM information_schema.tikv_storage_class_transitions`)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	for _, row := range rows {
+		if checker != nil && !checker.RequestVerification(
+			e.Ctx().GetSessionVars().ActiveRoles,
+			strings.ToLower(row.GetString(0)),
+			strings.ToLower(row.GetString(1)),
+			"",
+			mysql.AllPrivMask,
+		) {
+			continue
+		}
+		e.result.AppendRow(row)
 	}
 	return nil
 }

@@ -211,6 +211,24 @@ func TestTTLInfoClone(t *testing.T) {
 	require.Equal(t, true, ttlInfo.Enable)
 }
 
+func TestTableInfoCloneStorageClassTransitionHistory(t *testing.T) {
+	tblInfo := &TableInfo{
+		StorageClassTransitionPendingHistory: []StorageClassTransitionHistory{{
+			Target: StorageClassTierIA,
+			Targets: []StorageClassTransitionTarget{{
+				PhysicalID: 1,
+			}},
+		}},
+	}
+
+	cloned := tblInfo.Clone()
+	cloned.StorageClassTransitionPendingHistory[0].Target = StorageClassTierStandard
+	cloned.StorageClassTransitionPendingHistory[0].Targets[0].PhysicalID = 2
+
+	require.Equal(t, StorageClassTierIA, tblInfo.StorageClassTransitionPendingHistory[0].Target)
+	require.Equal(t, int64(1), tblInfo.StorageClassTransitionPendingHistory[0].Targets[0].PhysicalID)
+}
+
 func TestTTLJobInterval(t *testing.T) {
 	ttlInfo := &TTLInfo{}
 

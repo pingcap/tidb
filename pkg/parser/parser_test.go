@@ -1179,6 +1179,12 @@ AAAAAAAAAAAA5gm5Mg==
 		{"show distribution job 1 where id > 0", false, ""},
 		{"show distribution job 1", true, "SHOW DISTRIBUTION JOB 1"},
 
+		// for active storage class transitions
+		{"show storage_class transitions", true, "SHOW STORAGE_CLASS TRANSITIONS"},
+		{"show storage_class transitions like 'orders%'", true, "SHOW STORAGE_CLASS TRANSITIONS LIKE _UTF8MB4'orders%'"},
+		{"show storage_class transitions where direction = 'TO_IA'", true, "SHOW STORAGE_CLASS TRANSITIONS WHERE `direction`=_UTF8MB4'TO_IA'"},
+		{"show storage class transitions", false, ""},
+
 		// for cancel distribution job JOBID
 		{"cancel distribution job", false, ""},
 		{"cancel distribution job 1", true, "CANCEL DISTRIBUTION JOB 1"},

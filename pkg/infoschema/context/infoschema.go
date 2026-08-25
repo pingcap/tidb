@@ -81,9 +81,26 @@ var AffinityAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.Affinity != nil
 }
 
+// StorageClassAttribute is the storage-class attribute filter used by
+// ListTablesWithSpecialAttribute. Transition markers must be retained by
+// infoschema v2 even after the table-level storage-class fields are empty.
+var StorageClassAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
+	if t.StorageClassTransitionStartTS != 0 || len(t.StorageClassTransitionPendingHistory) > 0 {
+		return true
+	}
+	if t.Partition != nil {
+		for _, def := range t.Partition.Definitions {
+			if def.StorageClassTransitionStartTS != 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // HasSpecialAttributes checks if a table has any special attributes.
 func HasSpecialAttributes(t *model.TableInfo) bool {
-	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t) || AffinityAttribute(t)
+	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t) || AffinityAttribute(t) || StorageClassAttribute(t)
 }
 
 // AllSpecialAttribute marks a model.TableInfo with any special attributes.

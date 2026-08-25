@@ -142,6 +142,7 @@ type Executor interface {
 	FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 	// RefreshMeta can only be called by BR during the log restore phase.
 	RefreshMeta(ctx sessionctx.Context, args *model.RefreshMetaArgs) error
+	UpdateStorageClassTransition(ctx sessionctx.Context, schemaID, tableID int64, schemaName, tableName string, args *model.FinishStorageClassTransitionArgs) error
 
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
 	//

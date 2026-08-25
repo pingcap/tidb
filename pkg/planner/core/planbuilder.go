@@ -3675,8 +3675,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	np = p
 	// If we have ShowPredicateExtractor, we do not buildSelection with Pattern
 	if show.Pattern != nil && buildPattern {
+		patternColumn := p.OutputNames()[0].ColName
+		if show.Tp == ast.ShowStorageClassTransitions {
+			patternColumn = ast.NewCIStr("TABLE_NAME")
+		}
 		show.Pattern.Expr = &ast.ColumnNameExpr{
-			Name: &ast.ColumnName{Name: p.OutputNames()[0].ColName},
+			Name: &ast.ColumnName{Name: patternColumn},
 		}
 		np, err = b.buildSelection(ctx, np, show.Pattern, nil)
 		if err != nil {
@@ -6113,8 +6117,19 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowAffinity:
 		names = []string{"Db_name", "Table_name", "Partition_name", "Leader_store_id", "Voter_store_ids", "Status", "Region_count", "Affinity_region_count"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong}
+	case ast.ShowStorageClassTransitions:
+		names = []string{"TABLE_SCHEMA", "TABLE_NAME", "TABLE_ID", "PARTITION_NAME", "PARTITION_ID", "DIRECTION", "TOTAL_REPLICAS", "COMPLETED_REPLICAS", "PROGRESS", "START_TIME", "DURATION", "LAST_UPDATE_TIME"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeDatetime}
+		flags = []uint{0, 0, 0, 0, 0, 0, mysql.UnsignedFlag, mysql.UnsignedFlag, 0, 0, mysql.UnsignedFlag, 0}
 	}
-	return convert2OutputSchemasAndNames(names, ftypes, flags)
+	schema, outputNames = convert2OutputSchemasAndNames(names, ftypes, flags)
+	if s.Tp == ast.ShowStorageClassTransitions {
+		for _, offset := range []int{9, 11} {
+			schema.Columns[offset].RetType.SetFlen(26)
+			schema.Columns[offset].RetType.SetDecimal(types.MaxFsp)
+		}
+	}
+	return schema, outputNames
 }
 
 func convert2OutputSchemasAndNames(names []string, ftypes []byte, flags []uint) (schema *expression.Schema, outputNames []*types.FieldName) {

@@ -206,6 +206,9 @@ const (
 	BackfillTableVersion DDLTableVersion = 3
 	// DDLNotifierTableVersion is for support ddl notifier, it added tidb_ddl_notifier.
 	DDLNotifierTableVersion DDLTableVersion = 4
+	// StorageClassTransitionHistoryDDLTableVersion adds
+	// mysql.tidb_storage_class_transition_history.
+	StorageClassTransitionHistoryDDLTableVersion DDLTableVersion = 5
 )
 
 func encodeIntVal(i int) []byte {

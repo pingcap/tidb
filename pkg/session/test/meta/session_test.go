@@ -48,9 +48,10 @@ func TestInitDDLTables(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
 	})
-	allTables := append(append(append(append([]session.TableBasicInfo{},
+	allTables := append(append(append(append(append([]session.TableBasicInfo{},
 		session.DDLJobTables...), session.MDLTables...),
-		session.BackfillTables...), session.DDLNotifierTables...)
+		session.BackfillTables...), session.DDLNotifierTables...),
+		session.StorageClassTransitionHistoryTables...)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	for _, c := range []struct {
@@ -61,7 +62,8 @@ func TestInitDDLTables(t *testing.T) {
 		{meta.BaseDDLTableVersion, allTables[3:]},
 		{meta.MDLTableVersion, allTables[4:]},
 		{meta.BackfillTableVersion, allTables[6:]},
-		{meta.DDLNotifierTableVersion, []session.TableBasicInfo{}},
+		{meta.DDLNotifierTableVersion, allTables[7:]},
+		{meta.StorageClassTransitionHistoryDDLTableVersion, []session.TableBasicInfo{}},
 	} {
 		if c.initVer != meta.InitDDLTableVersion {
 			require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
@@ -91,7 +93,7 @@ func TestInitDDLTables(t *testing.T) {
 			}))
 			postVer, err2 := m.GetDDLTableVersion()
 			require.NoError(t, err2)
-			require.Equal(t, meta.DDLNotifierTableVersion, postVer)
+			require.Equal(t, meta.StorageClassTransitionHistoryDDLTableVersion, postVer)
 
 			require.NoError(t, m.SetDDLTableVersion(meta.InitDDLTableVersion))
 			require.NoError(t, m.DropDatabase(systemDBID))
@@ -115,12 +117,18 @@ func TestInitMetaTable(t *testing.T) {
 		tk.MustExec(theSQL)
 	}
 
+	for _, sql := range session.StorageClassTransitionHistoryTables {
+		theSQL := strings.Replace(sql.SQL, "mysql.", "", 1)
+		tk.MustExec(theSQL)
+	}
+
 	tbls := map[string]struct{}{
-		"tidb_ddl_job":                    {},
-		"tidb_ddl_reorg":                  {},
-		"tidb_ddl_history":                {},
-		"tidb_background_subtask":         {},
-		"tidb_background_subtask_history": {},
+		"tidb_ddl_job":                          {},
+		"tidb_ddl_reorg":                        {},
+		"tidb_ddl_history":                      {},
+		"tidb_background_subtask":               {},
+		"tidb_background_subtask_history":       {},
+		"tidb_storage_class_transition_history": {},
 	}
 
 	for tbl := range tbls {

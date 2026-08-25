@@ -910,4 +910,22 @@ const (
 		schema_change LONGBLOB COMMENT 'SchemaChangeEvent at rest',
 		processed_by_flag BIGINT UNSIGNED DEFAULT 0 COMMENT 'flag to mark which subscriber has processed the event',
 		PRIMARY KEY(ddl_job_id, sub_job_id))`
+	// CreateTiDBStorageClassTransitionHistoryTable is the CREATE TABLE SQL of
+	// `tidb_storage_class_transition_history`.
+	CreateTiDBStorageClassTransitionHistoryTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_storage_class_transition_history (
+		table_schema VARCHAR(64) NOT NULL,
+		table_name VARCHAR(64) NOT NULL,
+		table_id BIGINT NOT NULL,
+		partition_name VARCHAR(64) DEFAULT NULL,
+		partition_id BIGINT DEFAULT NULL,
+		direction VARCHAR(16) NOT NULL,
+		state VARCHAR(16) NOT NULL,
+		total_replicas BIGINT UNSIGNED DEFAULT NULL,
+		completed_replicas BIGINT UNSIGNED DEFAULT NULL,
+		progress DOUBLE DEFAULT NULL,
+		start_time DATETIME(6) NOT NULL,
+		finish_time DATETIME(6) NOT NULL,
+		duration BIGINT UNSIGNED NOT NULL COMMENT 'seconds',
+		PRIMARY KEY (table_id, start_time, direction),
+		KEY idx_finish_time_table_id (finish_time, table_id))`
 )

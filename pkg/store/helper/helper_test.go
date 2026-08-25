@@ -236,6 +236,87 @@ func TestGetPDRegionStatsKeyspaceEncoding(t *testing.T) {
 	require.Equal(t, expectedEnd, keys.end, "GetPDRegionStats must encode end key with the store's codec")
 }
 
+func TestCollectStorageClassStatusWithCtx(t *testing.T) {
+	var gotPath string
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ready":7,"total":9}`))
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := helper.CollectStorageClassStatusWithCtx(
+		context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(42), 123, "STANDARD")
+	require.NoError(t, err)
+	require.Equal(t, uint64(7), status.Ready)
+	require.Equal(t, uint64(9), status.Total)
+	require.Equal(t, "/kvengine/storage_class_status", gotPath)
+	require.Equal(t, "keyspace_id=42&table_id=123&target=STANDARD", gotQuery)
+}
+
+func TestCollectStorageClassStatusWithCtxRejectsBadResponse(t *testing.T) {
+	t.Run("http status", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+		}))
+		t.Cleanup(server.Close)
+		_, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
+		require.ErrorContains(t, err, "status 503")
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"ready":`))
+		}))
+		t.Cleanup(server.Close)
+		_, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
+		require.Error(t, err)
+	})
+
+	for _, body := range []string{
+		`{}`,
+		`{"ready":0}`,
+		`{"total":0}`,
+		`{"ready":null,"total":0}`,
+		`{"ready":0,"total":null}`,
+	} {
+		t.Run("missing required field "+body, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			t.Cleanup(server.Close)
+			_, err := helper.CollectStorageClassStatusWithCtx(
+				context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
+			require.ErrorContains(t, err, "must contain ready and total")
+		})
+	}
+
+	t.Run("ready greater than total", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"ready":2,"total":1}`))
+		}))
+		t.Cleanup(server.Close)
+		_, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
+		require.ErrorContains(t, err, "ready 2 greater than total 1")
+	})
+
+	t.Run("unknown fields are allowed", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"ready":1,"total":1,"future-field":true}`))
+		}))
+		t.Cleanup(server.Close)
+		status, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
+		require.NoError(t, err)
+		require.Equal(t, helper.StorageClassStatusResp{Ready: 1, Total: 1}, status)
+	})
+}
+
 func TestTiKVRegionsInfo(t *testing.T) {
 	store := createMockStore(t)
 

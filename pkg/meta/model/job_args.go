@@ -1878,6 +1878,49 @@ func GetModifyTableEngineAttributeArgs(job *Job) (*ModifyTableEngineAttributeArg
 	return getOrDecodeArgs[*ModifyTableEngineAttributeArgs](&ModifyTableEngineAttributeArgs{}, job)
 }
 
+// StorageClassTransitionAction is an internal transition metadata update.
+type StorageClassTransitionAction string
+
+const (
+	// StorageClassTransitionActionFinalize atomically replaces a matching active
+	// marker with a pending COMPLETED history record.
+	StorageClassTransitionActionFinalize StorageClassTransitionAction = "FINALIZE"
+	// StorageClassTransitionActionCleanupHistory removes a pending record after
+	// it has been copied to the system history table.
+	StorageClassTransitionActionCleanupHistory StorageClassTransitionAction = "CLEANUP_HISTORY"
+)
+
+// FinishStorageClassTransitionArgs identifies an active or pending operation
+// by its target and start TSO. No separate transition ID is required.
+type FinishStorageClassTransitionArgs struct {
+	Action            StorageClassTransitionAction `json:"action"`
+	Target            string                       `json:"target"`
+	StartTS           uint64                       `json:"start_ts"`
+	FinishTS          uint64                       `json:"finish_ts,omitempty"`
+	TotalReplicas     uint64                       `json:"total_replicas,omitempty"`
+	CompletedReplicas uint64                       `json:"completed_replicas,omitempty"`
+}
+
+func (a *FinishStorageClassTransitionArgs) getArgsV1(*Job) []any {
+	return []any{a.Action, a.Target, a.StartTS, a.FinishTS, a.TotalReplicas, a.CompletedReplicas}
+}
+
+func (a *FinishStorageClassTransitionArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(
+		&a.Action,
+		&a.Target,
+		&a.StartTS,
+		&a.FinishTS,
+		&a.TotalReplicas,
+		&a.CompletedReplicas,
+	))
+}
+
+// GetFinishStorageClassTransitionArgs gets FinishStorageClassTransitionArgs.
+func GetFinishStorageClassTransitionArgs(job *Job) (*FinishStorageClassTransitionArgs, error) {
+	return getOrDecodeArgs[*FinishStorageClassTransitionArgs](&FinishStorageClassTransitionArgs{}, job)
+}
+
 // AlterTableAffinityArgs is the argument for AlterTableAffinity
 type AlterTableAffinityArgs struct {
 	Affinity *TableAffinityInfo `json:"affinity,omitempty"`

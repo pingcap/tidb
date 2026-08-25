@@ -15,6 +15,7 @@
 package infosync
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -918,6 +920,72 @@ func calculateColumnarProgressWithCtx(ctx context.Context, tableID int64, tikvSt
 	}
 
 	return float64(ready) / float64(total), nil
+}
+
+// StorageClassStoreStatus is one non-tombstone TiKV store's contribution to a
+// storage-class transition observation.
+type StorageClassStoreStatus struct {
+	StoreID int64
+	Ready   uint64
+	Total   uint64
+}
+
+// CollectStorageClassStatus fans out requests to all TiKV stores. Any failed
+// non-tombstone store makes the whole observation unusable.
+func CollectStorageClassStatus(ctx context.Context, tableID int64, target string, tikvStores map[int64]pdhttp.StoreInfo) ([]StorageClassStoreStatus, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if is.tikvCodec == nil {
+		return nil, errors.New("tikv codec is not initialized")
+	}
+	target = strings.ToUpper(target)
+	if target != model.StorageClassTierIA && target != model.StorageClassTierStandard {
+		return nil, errors.Errorf("invalid storage class target %q", target)
+	}
+
+	type result struct {
+		store  pdhttp.StoreInfo
+		status helper.StorageClassStatusResp
+		err    error
+	}
+	resultCh := make(chan result, len(tikvStores))
+	requestCount := 0
+	for _, store := range tikvStores {
+		if store.Store.StateName == "Tombstone" {
+			continue
+		}
+		requestCount++
+		store := store
+		go func() {
+			status, err := helper.CollectStorageClassStatusWithCtx(
+				ctx, store.Store.StatusAddress, is.tikvCodec.GetKeyspaceID(), tableID, target)
+			resultCh <- result{store: store, status: status, err: err}
+		}()
+	}
+
+	statuses := make([]StorageClassStoreStatus, 0, requestCount)
+	for range requestCount {
+		result := <-resultCh
+		if result.err != nil {
+			if ctx.Err() != nil {
+				return nil, errors.Trace(ctx.Err())
+			}
+			return nil, errors.Annotatef(result.err,
+				"failed to get storage class status from TiKV store %s in state %s",
+				result.store.Store.StatusAddress, result.store.Store.StateName)
+		}
+		statuses = append(statuses, StorageClassStoreStatus{
+			StoreID: result.store.Store.ID,
+			Ready:   result.status.Ready,
+			Total:   result.status.Total,
+		})
+	}
+	slices.SortFunc(statuses, func(a, b StorageClassStoreStatus) int {
+		return cmp.Compare(a.StoreID, b.StoreID)
+	})
+	return statuses, nil
 }
 
 // UpdateTiFlashProgressCache updates tiflashProgressCache

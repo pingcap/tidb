@@ -19,8 +19,33 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
+
+func TestStorageClassTransitionsTable(t *testing.T) {
+	cols := tableNameToColumns[TableStorageClassTransitions]
+	require.Len(t, cols, 12)
+	require.Equal(t, []string{
+		"TABLE_SCHEMA", "TABLE_NAME", "TABLE_ID", "PARTITION_NAME", "PARTITION_ID", "DIRECTION",
+		"TOTAL_REPLICAS", "COMPLETED_REPLICAS", "PROGRESS", "START_TIME", "DURATION", "LAST_UPDATE_TIME",
+	}, columnNames(cols))
+	require.Equal(t, mysql.TypeDatetime, cols[9].tp)
+	require.Equal(t, 6, cols[9].decimal)
+	require.Equal(t, mysql.TypeLonglong, cols[10].tp)
+	require.Equal(t, uint(mysql.UnsignedFlag), cols[10].flag)
+	require.Equal(t, mysql.TypeDatetime, cols[11].tp)
+	require.Equal(t, 6, cols[11].decimal)
+	require.Equal(t, DDLOwner, GetClusterTableCopDestination(TableStorageClassTransitions))
+}
+
+func columnNames(cols []columnInfo) []string {
+	names := make([]string, len(cols))
+	for i := range cols {
+		names[i] = cols[i].name
+	}
+	return names
+}
 
 func TestIsTiFlashStore(t *testing.T) {
 	// Test with TiFlash store

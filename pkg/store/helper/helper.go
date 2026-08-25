@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -971,6 +972,53 @@ type ColumnarStatusResp struct {
 	Ready            uint `json:"ready"`
 	VectorIndexReady uint `json:"vector-index-ready"`
 	Total            uint `json:"total"`
+}
+
+// StorageClassStatusResp is returned by TiKV's storage-class status endpoint.
+type StorageClassStatusResp struct {
+	Ready uint64 `json:"ready"`
+	Total uint64 `json:"total"`
+}
+
+// CollectStorageClassStatusWithCtx collects a physical table's status from one
+// TiKV store. The target remains SQL-facing IA or STANDARD on the wire.
+func CollectStorageClassStatusWithCtx(ctx context.Context, statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, target string) (StorageClassStatusResp, error) {
+	statURL := fmt.Sprintf("%s://%s/kvengine/storage_class_status?keyspace_id=%d&table_id=%d&target=%s",
+		util.InternalHTTPSchema(), statusAddress, keyspaceID, tableID, target)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statURL, nil)
+	if err != nil {
+		return StorageClassStatusResp{}, errors.Trace(err)
+	}
+	resp, err := util.InternalHTTPClient().Do(req)
+	if err != nil {
+		return StorageClassStatusResp{}, errors.Trace(err)
+	}
+	defer func() { terror.Log(resp.Body.Close()) }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return StorageClassStatusResp{}, errors.Trace(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return StorageClassStatusResp{}, errors.Errorf("TiKV storage class status API returned status %d: %s", resp.StatusCode, string(body))
+	}
+	var wireStatus struct {
+		Ready *uint64 `json:"ready"`
+		Total *uint64 `json:"total"`
+	}
+	if err := json.Unmarshal(body, &wireStatus); err != nil {
+		return StorageClassStatusResp{}, errors.Trace(err)
+	}
+	if wireStatus.Ready == nil || wireStatus.Total == nil {
+		return StorageClassStatusResp{}, errors.New("TiKV storage class status response must contain ready and total")
+	}
+	if *wireStatus.Ready > *wireStatus.Total {
+		return StorageClassStatusResp{}, errors.Errorf(
+			"TiKV storage class status response has ready %d greater than total %d",
+			*wireStatus.Ready,
+			*wireStatus.Total,
+		)
+	}
+	return StorageClassStatusResp{Ready: *wireStatus.Ready, Total: *wireStatus.Total}, nil
 }
 
 // CollectColumnarStatusWithCtx collects the columnar status from the TiKV status API.

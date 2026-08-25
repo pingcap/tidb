@@ -256,6 +256,8 @@ const (
 	ShowDistributionJobsCommand = "SHOW DISTRIBUTION JOB"
 	// ShowAffinityCommand represents SHOW AFFINITY statement
 	ShowAffinityCommand = "SHOW AFFINITY"
+	// ShowStorageClassTransitionsCommand represents SHOW STORAGE_CLASS TRANSITIONS statement.
+	ShowStorageClassTransitionsCommand = "SHOW STORAGE_CLASS TRANSITIONS"
 )
 
 // Admin Commands
@@ -840,6 +842,8 @@ func (n *ShowStmt) SEMCommand() string {
 		return ShowDistributionJobsCommand
 	case ShowAffinity:
 		return ShowAffinityCommand
+	case ShowStorageClassTransitions:
+		return ShowStorageClassTransitionsCommand
 	default:
 		return UnknownCommand
 	}

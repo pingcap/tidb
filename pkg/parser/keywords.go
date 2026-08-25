@@ -629,6 +629,7 @@ var Keywords = []KeywordsType{
 	{"TRADITIONAL", false, "unreserved"},
 	{"TRANSACTION", false, "unreserved"},
 	{"TRANSACTIONAL", false, "unreserved"},
+	{"TRANSITIONS", false, "unreserved"},
 	{"TRIGGERS", false, "unreserved"},
 	{"TRUNCATE", false, "unreserved"},
 	{"TSO", false, "unreserved"},
