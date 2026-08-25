@@ -2203,6 +2203,23 @@ pub trait HasLocks {
     fn take_response_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
         self.take_locks()
     }
+
+    /// Split clean item results from a successful response before retrying
+    /// only locked items. Response-level errors return `None` because their
+    /// item list may be incomplete.
+    fn take_clean_result_for_lock_retry(&mut self) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
+    /// Merge clean item results retained from earlier lock retries.
+    fn merge_clean_lock_retry_result(&mut self, _clean: Self)
+    where
+        Self: Sized,
+    {
+    }
 }
 
 // Return duration in milliseconds until lock expired.

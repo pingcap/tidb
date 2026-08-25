@@ -120,6 +120,69 @@ pub(crate) fn observe_pipelined_flush(len: usize, size: usize, duration: Duratio
     TIKV_PIPELINED_FLUSH_DURATION_HISTOGRAM.observe(duration_to_sec(duration));
 }
 
+pub(crate) struct SnapshotCommandTimer {
+    started: Instant,
+    command: &'static str,
+    scope: &'static str,
+}
+
+impl Drop for SnapshotCommandTimer {
+    fn drop(&mut self) {
+        TIKV_TXN_CMD_DURATION
+            .with_label_values(&[self.command, self.scope])
+            .observe(duration_to_sec(self.started.elapsed()));
+    }
+}
+
+pub(crate) fn snapshot_command_timer(
+    command: &'static str,
+    internal: bool,
+) -> SnapshotCommandTimer {
+    SnapshotCommandTimer {
+        started: Instant::now(),
+        command,
+        scope: if internal { "internal" } else { "general" },
+    }
+}
+
+pub(crate) fn observe_snapshot_regions(internal: bool, regions: usize) {
+    TIKV_TXN_REGIONS_NUM
+        .with_label_values(&["snapshot", if internal { "internal" } else { "general" }])
+        .observe(regions as f64);
+}
+
+pub(crate) fn increment_async_batch_get(result: &'static str) {
+    TIKV_ASYNC_BATCH_GET_COUNTER
+        .with_label_values(&[result])
+        .inc();
+}
+
+#[cfg(test)]
+pub(crate) fn async_batch_get_count(result: &'static str) -> u64 {
+    TIKV_ASYNC_BATCH_GET_COUNTER
+        .with_label_values(&[result])
+        .get()
+}
+
+pub(crate) fn observe_snapshot_read_sli(read_keys: u64, read_time: f64, read_size: f64) {
+    if read_keys == 0 || read_time == 0.0 {
+        return;
+    }
+    if read_keys <= 20 && read_size < 1024.0 * 1024.0 {
+        TIKV_SMALL_READ_DURATION.observe(read_time);
+    } else {
+        TIKV_READ_THROUGHPUT.observe(read_size / read_time);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn snapshot_read_sli_sample_counts() -> (u64, u64) {
+    (
+        TIKV_SMALL_READ_DURATION.get_sample_count(),
+        TIKV_READ_THROUGHPUT.get_sample_count(),
+    )
+}
+
 pub(crate) fn observe_retry_backoff(kind: &'static str, duration: Duration) {
     TIKV_BACKOFF_HISTOGRAM
         .with_label_values(&[kind])
@@ -838,6 +901,58 @@ lazy_static::lazy_static! {
         .buckets(prometheus::exponential_buckets(0.0005, 2.0, 28).unwrap())
     )
     .unwrap();
+    static ref TIKV_TXN_CMD_DURATION: HistogramVec = {
+        let metric = HistogramVec::new(
+            HistogramOpts::new(
+            "tikv_client_go_txn_cmd_duration_seconds",
+            "Bucketed histogram of processing time of txn cmds."
+            )
+            .buckets(prometheus::exponential_buckets(0.0005, 2.0, 29).unwrap()),
+            &["type", "scope"],
+        )
+        .unwrap();
+        prometheus::register(Box::new(metric.clone())).unwrap();
+        metric
+    };
+    static ref TIKV_TXN_REGIONS_NUM: HistogramVec = {
+        let metric = HistogramVec::new(
+            HistogramOpts::new(
+            "tikv_client_go_txn_regions_num",
+            "Number of regions in a transaction."
+            )
+            .buckets(prometheus::exponential_buckets(1.0, 2.0, 25).unwrap()),
+            &["type", "scope"],
+        )
+        .unwrap();
+        prometheus::register(Box::new(metric.clone())).unwrap();
+        metric
+    };
+    static ref TIKV_ASYNC_BATCH_GET_COUNTER: IntCounterVec = register_int_counter_vec!(
+        "tikv_client_go_async_batch_get_total",
+        "Counter of async batch get by txn snapshot.",
+        &["result"]
+    )
+    .unwrap();
+    static ref TIKV_SMALL_READ_DURATION: Histogram = {
+        let metric = Histogram::with_opts(HistogramOpts::new(
+            "tikv_sli_tikv_small_read_duration",
+            "Read time of TiKV small read."
+        )
+        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 28).unwrap()))
+        .unwrap();
+        prometheus::register(Box::new(metric.clone())).unwrap();
+        metric
+    };
+    static ref TIKV_READ_THROUGHPUT: Histogram = {
+        let metric = Histogram::with_opts(HistogramOpts::new(
+            "tikv_sli_tikv_read_throughput",
+            "Read throughput of TiKV read in Bytes/s."
+        )
+        .buckets(prometheus::exponential_buckets(1024.0, 2.0, 13).unwrap()))
+        .unwrap();
+        prometheus::register(Box::new(metric.clone())).unwrap();
+        metric
+    };
     static ref TIKV_BACKOFF_HISTOGRAM: HistogramVec = register_histogram_vec!(
         HistogramOpts::new(
             "tikv_client_go_backoff_seconds",

@@ -247,6 +247,27 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       (lock resolution / reads, both dependencies of a working transaction)
       are still `seed`. Full findings, including exact file:line evidence
       and what remains unverified, in `Surprises & Discoveries`.
+- [x] (2026-08-25, user-flagged update) **`txnkv/txnlock` and
+      `txnkv/txnsnapshot` both reached `complete`**, the same day as
+      `txnkv/transaction`. Combined with `internal/client` and
+      `internal/locate` (already `complete`), the entire core
+      transactional-KV stack this plan cares about -- 2PC/commit, lock
+      resolution, snapshot reads, region/store routing, and BatchCommands
+      transport -- is now upstream-complete. Only the thin top-level `tikv`
+      orchestration package remains `seed`, and its receipt says the gap is
+      the concrete GC visibility provider and live integration gates, not
+      core transaction/lock/snapshot logic. **Not independently
+      source-verified to the same depth as `txnkv/transaction`'s
+      undetermined-commit signal** -- lock resolution
+      (`ResolveLocksForRead`, stale reads) and snapshot reads
+      (async-commit-secondary paths) have their own correctness-critical
+      semantics that still deserve dedicated source-level scrutiny before
+      being trusted, and `remove_from_buffer` in `unionstore`/`art` is still
+      a `panic!("unimplemented")` stub, so `MemBufferBackend` integration
+      remains blocked regardless. **Not started this check-in** for the same
+      reasons as the `txnkv/transaction` entry above (dedicated session +
+      RealTiKV validation required). Full findings in
+      `Surprises & Discoveries`.
 - [ ] Phase 3: rewire `tidb-distsql`'s RPC/region-retry layer onto the vendored
       crate's `request::Plan`/`Shardable`/retry framework, porting the
       documented parity fixes from `rust/docs/distsql-coprocessor-parity.md`.
@@ -263,6 +284,47 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
 
 ## Surprises & Discoveries
 
+- Observation (2026-08-25, user-flagged update): **`txnkv/txnlock` and
+  `txnkv/txnsnapshot` both reached `complete` upstream too**, the same day
+  as `txnkv/transaction`. Together with `internal/client` and
+  `internal/locate` (both already `complete`, see entries below), this
+  means the entire core transactional-KV stack this migration cares about --
+  2PC/commit, lock resolution, snapshot reads, region/store routing, and
+  BatchCommands transport -- is now upstream-complete. Only the thin
+  top-level `tikv` package remains `seed`/incomplete, and its own receipt
+  note says why that is not a blocker for the core path: "Root `tikv`
+  retains the concrete GC visibility provider and live integration gates;
+  no other row is promoted" -- i.e. `tikv`'s remaining scope is orchestration
+  glue (matching client-go's `tikv/kv.go` `KVStore` wrapper) and live-cluster
+  test infrastructure, not core transaction/lock/snapshot logic, which
+  already lives in the three now-complete packages.
+  `txnkv/txnlock`'s receipt: "physical-shard metrics, pipelined observer
+  lifetime, determined FIFO cache, read hints, lite/pessimistic/GC paths,
+  NextGen async requests, resource context, and owner shutdown match the
+  pin" (2,144 lines, five tests + `TestMain`).
+  `txnkv/txnsnapshot`'s receipt: "Get, BatchGet, BufferBatchGet,
+  one-boundary-region scanners, response-versus-pair lock handling, latest
+  point-lock omission, cache/commit-TS/10-GiB behavior... cumulative retry
+  ownership, async future fanout... match the pin" (2,317 lines, ten direct
+  importers).
+  This does not by itself clear this plan's bar for starting the swap (see
+  the `txnkv/transaction` entry below for what independent verification
+  still means, and note that verifying THAT package's specific
+  undetermined-commit signal does not automatically verify these two
+  packages' own correctness-critical behaviors -- lock resolution and
+  snapshot reads have their own subtle semantics, e.g. client-go's
+  `ResolveLocksForRead`/stale-read/async-commit-secondary paths, that
+  deserve the same source-level scrutiny before being trusted). But it
+  substantially raises confidence that a dedicated integration session would
+  be building on a genuinely complete foundation rather than assembling
+  around still-missing pieces, which was every previous session's
+  experience investigating this stack.
+  Evidence: `third_party/tikv-client-rs/doc/client-go-parity-ledger.md` rows
+  `txnkv/txnlock`, `txnkv/txnsnapshot`, `tikv`;
+  `third_party/tikv-client-rs/doc/txnkv-txnlock-source-artifact-audit.md`,
+  `txnkv-txnsnapshot-source-artifact-audit.md` (not yet read in full this
+  session -- referenced from the ledger, contents not independently
+  verified).
 - Observation (2026-08-25, scheduled check-in): **`txnkv/transaction` reached
   `complete` upstream.** This is the single largest blocker this plan has
   tracked -- the 2PC/commit engine itself, previously `unassessed` with the

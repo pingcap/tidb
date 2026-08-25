@@ -263,6 +263,8 @@ pub trait Request: Any + Sync + Send + 'static {
     fn set_task_id(&mut self, _task_id: u64) {}
     /// Sets the source resource-group tag carried by this request's TiKV context.
     fn set_resource_group_tag(&mut self, _resource_group_tag: Vec<u8>) {}
+    /// Sets the source attribution carried by this request's TiKV context.
+    fn set_request_source(&mut self, _request_source: String) {}
     /// Marks a request sent to a selected follower or learner. Leader reads,
     /// including leader-through-proxy forwarding, retain the default false.
     fn set_replica_read(&mut self, _replica_read: bool) {}
@@ -722,6 +724,12 @@ macro_rules! impl_request {
                 self.context
                     .get_or_insert(kvrpcpb::Context::default())
                     .resource_group_tag = resource_group_tag;
+            }
+
+            fn set_request_source(&mut self, request_source: String) {
+                self.context
+                    .get_or_insert(kvrpcpb::Context::default())
+                    .request_source = request_source;
             }
 
             fn set_replica_read(&mut self, replica_read: bool) {

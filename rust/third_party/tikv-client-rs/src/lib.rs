@@ -1,5 +1,7 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
+#![recursion_limit = "256"]
+
 //! This crate provides an easy-to-use client for [TiKV](https://github.com/tikv/tikv), a
 //! distributed, transactional key-value database written in Rust.
 //!
@@ -254,6 +256,8 @@ pub use crate::transaction::ProtoLockInfo;
 pub use crate::transaction::Snapshot;
 pub use crate::transaction::SnapshotIterator;
 #[doc(inline)]
+pub use crate::transaction::SnapshotPoolTaskDetails;
+#[doc(inline)]
 pub use crate::transaction::SnapshotRequestType;
 #[doc(inline)]
 pub use crate::transaction::SnapshotResourceGroupTagger;
@@ -265,6 +269,7 @@ pub use crate::transaction::SnapshotRuntimeStats;
 pub use crate::transaction::SnapshotScanDetail;
 #[doc(inline)]
 pub use crate::transaction::SnapshotTimeDetail;
+pub use crate::transaction::SnapshotVisibilityValidator;
 #[doc(inline)]
 pub use crate::transaction::SyncSnapshot;
 pub use crate::transaction::SyncSnapshotIterator;
@@ -287,3 +292,4 @@ pub use crate::transaction::{
     MutationOptions, PipelinedTxnOptions, PrewriteEncounterLockPolicy, RelatedSchemaChange,
     RequestSource, SchemaLeaseChecker, SchemaVersion,
 };
+pub use crate::transaction::{DEFAULT_SCAN_BATCH_SIZE, GET_MAX_BACKOFF_MS};

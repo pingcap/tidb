@@ -6,7 +6,6 @@ use crate::{
 };
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
-use std::ops::Bound;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -51,34 +50,18 @@ impl<'a, PdC: PdClient> SyncSnapshotIterator<'a, PdC> {
             self.valid = false;
             return Ok(());
         }
-        let pairs = if self.reverse {
-            safe_block_on(
-                &self.snapshot.runtime,
-                self.snapshot
-                    .inner
-                    .scan_reverse(self.range.clone(), self.batch_size),
-            )?
-            .collect::<Vec<_>>()
-        } else {
-            safe_block_on(
-                &self.snapshot.runtime,
-                self.snapshot
-                    .inner
-                    .scan(self.range.clone(), self.batch_size),
-            )?
-            .collect::<Vec<_>>()
-        };
+        let batch = safe_block_on(
+            &self.snapshot.runtime,
+            self.snapshot
+                .inner
+                .iterator_batch(self.range.clone(), self.batch_size, self.reverse),
+        )?;
+        let pairs = batch.pairs;
+        self.range = batch.next_range;
+        self.exhausted = batch.exhausted;
         if pairs.is_empty() {
-            self.exhausted = true;
             self.valid = false;
             return Ok(());
-        }
-        self.exhausted = pairs.len() < self.batch_size as usize;
-        let last_key = pairs.last().expect("non-empty scan batch").key().clone();
-        if self.reverse {
-            self.range.to = Bound::Excluded(last_key);
-        } else {
-            self.range.from = Bound::Included(last_key.next_key());
         }
         self.buffered = pairs.into();
         Ok(())
@@ -112,6 +95,26 @@ impl<PdC: PdClient> SyncSnapshot<PdC> {
         self.inner.set_priority(priority);
     }
 
+    pub fn set_request_source_internal(&mut self, internal: bool) {
+        self.inner.set_request_source_internal(internal);
+    }
+
+    pub fn set_request_source_type(&mut self, source_type: impl Into<String>) {
+        self.inner.set_request_source_type(source_type);
+    }
+
+    pub fn set_explicit_request_source_type(&mut self, source_type: impl Into<String>) {
+        self.inner.set_explicit_request_source_type(source_type);
+    }
+
+    pub fn request_source(&self) -> &crate::RequestSource {
+        self.inner.request_source()
+    }
+
+    pub fn is_internal(&self) -> bool {
+        self.inner.is_internal()
+    }
+
     /// Set the TiKV scan sampling step for subsequent snapshot scans.
     pub fn set_sample_step(&mut self, sample_step: u32) {
         self.inner.set_sample_step(sample_step);
@@ -130,6 +133,16 @@ impl<PdC: PdClient> SyncSnapshot<PdC> {
     /// Attach runtime statistics to subsequent physical snapshot read RPCs.
     pub fn set_runtime_stats(&mut self, stats: Option<Arc<crate::SnapshotRuntimeStats>>) {
         self.inner.set_runtime_stats(stats);
+    }
+
+    /// Install the store-owned GC visibility check used after successful
+    /// snapshot reads.
+    #[doc(hidden)]
+    pub fn set_visibility_validator(
+        &mut self,
+        validator: Arc<dyn crate::SnapshotVisibilityValidator>,
+    ) {
+        self.inner.set_visibility_validator(validator);
     }
 
     /// Set retry variables for subsequent snapshot reads, matching client-go

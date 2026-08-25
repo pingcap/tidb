@@ -2,10 +2,8 @@
 
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
-use std::ops::Bound;
 use std::time::Duration;
 
-use derive_new::new;
 use log::{debug, trace};
 
 use crate::pd::{PdClient, PdRpcClient};
@@ -16,10 +14,31 @@ use crate::KvPair;
 use crate::Priority;
 use crate::Result;
 use crate::RpcInterceptorHandle;
+use crate::TimestampExt;
 use crate::Transaction;
 use crate::Value;
 use crate::ValueEntry;
 use crate::{ReplicaReadAdjuster, ReplicaReadConfig, ReplicaReadType};
+
+/// Default number of pairs requested by one client-go snapshot scanner refill.
+pub const DEFAULT_SCAN_BATCH_SIZE: u32 = 256;
+
+/// Maximum cumulative retry sleep for one client-go snapshot point read.
+///
+/// This is public because client-go exposes the same package constant through
+/// `ConfigProbe.GetGetMaxBackoff` for integration tests.
+pub const GET_MAX_BACKOFF_MS: u64 = 20_000;
+
+/// Store-owned visibility check invoked after a successful snapshot read.
+///
+/// client-go supplies this through the private `kvstore.CheckVisibility`
+/// contract. Keeping it injectable preserves that package boundary: the
+/// snapshot owns the call sites, while the root store owns GC safe-point
+/// tracking.
+#[async_trait::async_trait]
+pub trait SnapshotVisibilityValidator: Send + Sync {
+    async fn check_visibility(&self, start_timestamp: u64) -> Result<()>;
+}
 
 /// A read-only transaction which reads at the given timestamp.
 ///
@@ -28,7 +47,6 @@ use crate::{ReplicaReadAdjuster, ReplicaReadConfig, ReplicaReadType};
 /// but ignores operations after the timestamp.
 ///
 /// See the [Transaction](struct@crate::Transaction) docs for more information on the methods.
-#[derive(new)]
 pub struct Snapshot<PdC: PdClient = PdRpcClient> {
     transaction: Transaction<PdC>,
 }
@@ -68,28 +86,16 @@ impl<'a, PdC: PdClient> SnapshotIterator<'a, PdC> {
             self.valid = false;
             return Ok(());
         }
-        let pairs = if self.reverse {
-            self.snapshot
-                .scan_reverse(self.range.clone(), self.batch_size)
-                .await?
-                .collect::<Vec<_>>()
-        } else {
-            self.snapshot
-                .scan(self.range.clone(), self.batch_size)
-                .await?
-                .collect::<Vec<_>>()
-        };
+        let batch = self
+            .snapshot
+            .iterator_batch(self.range.clone(), self.batch_size, self.reverse)
+            .await?;
+        let pairs = batch.pairs;
+        self.range = batch.next_range;
+        self.exhausted = batch.exhausted;
         if pairs.is_empty() {
-            self.exhausted = true;
             self.valid = false;
             return Ok(());
-        }
-        self.exhausted = pairs.len() < self.batch_size as usize;
-        let last_key = pairs.last().expect("non-empty scan batch").key().clone();
-        if self.reverse {
-            self.range.to = Bound::Excluded(last_key);
-        } else {
-            self.range.from = Bound::Included(last_key.next_key());
         }
         self.buffered = pairs.into();
         Ok(())
@@ -115,8 +121,29 @@ impl<'a, PdC: PdClient> SnapshotIterator<'a, PdC> {
 }
 
 impl<PdC: PdClient> Snapshot<PdC> {
+    /// Create a snapshot and enforce client-go's timestamp boundary.
+    pub fn new(transaction: Transaction<PdC>) -> Self {
+        let version = transaction.start_timestamp().version();
+        assert!(
+            version < i64::MAX as u64 || version == u64::MAX,
+            "try to get snapshot with a large ts {version}"
+        );
+        Self { transaction }
+    }
+
     pub(crate) fn iterator_batch_size(&self) -> u32 {
         self.transaction.snapshot_scan_batch_size()
+    }
+
+    pub(crate) async fn iterator_batch(
+        &mut self,
+        range: BoundRange,
+        batch_size: u32,
+        reverse: bool,
+    ) -> Result<super::transaction::SnapshotScannerBatch> {
+        self.transaction
+            .scan_iterator_batch(range, batch_size, reverse)
+            .await
     }
 
     /// Reset the read timestamp for subsequent snapshot operations.
@@ -189,6 +216,32 @@ impl<PdC: PdClient> Snapshot<PdC> {
         self.transaction.set_priority(priority);
     }
 
+    /// Set whether subsequent reads are attributed to an internal caller.
+    pub fn set_request_source_internal(&mut self, internal: bool) {
+        self.transaction.set_request_source_internal(internal);
+    }
+
+    /// Set the primary request-source type for subsequent reads.
+    pub fn set_request_source_type(&mut self, source_type: impl Into<String>) {
+        self.transaction.set_request_source_type(source_type);
+    }
+
+    /// Set the explicit request-source subtype for subsequent reads.
+    pub fn set_explicit_request_source_type(&mut self, source_type: impl Into<String>) {
+        self.transaction
+            .set_explicit_request_source_type(source_type);
+    }
+
+    /// Return the current request-source attribution.
+    pub fn request_source(&self) -> &crate::RequestSource {
+        self.transaction.request_source()
+    }
+
+    /// Whether the current non-empty source is internal.
+    pub fn is_internal(&self) -> bool {
+        self.request_source().is_internal()
+    }
+
     /// Skip `sample_step - 1` keys after each returned scan key. A step of
     /// zero disables sampling, matching client-go `KVSnapshot.SetSampleStep`.
     pub fn set_sample_step(&mut self, sample_step: u32) {
@@ -216,6 +269,18 @@ impl<PdC: PdClient> Snapshot<PdC> {
         stats: Option<std::sync::Arc<crate::SnapshotRuntimeStats>>,
     ) {
         self.transaction.set_snapshot_runtime_stats(stats);
+    }
+
+    /// Install the store-owned GC visibility check used after successful
+    /// snapshot reads. This exposes client-go's private `kvstore` dependency
+    /// for native Rust store implementations.
+    #[doc(hidden)]
+    pub fn set_visibility_validator(
+        &mut self,
+        validator: std::sync::Arc<dyn SnapshotVisibilityValidator>,
+    ) {
+        self.transaction
+            .set_snapshot_visibility_validator(validator);
     }
 
     /// Set retry variables for subsequent snapshot reads, matching client-go

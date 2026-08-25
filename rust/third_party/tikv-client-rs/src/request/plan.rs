@@ -12,7 +12,7 @@ use log::debug;
 use log::error;
 use log::info;
 use log::warn;
-use tokio::sync::Semaphore;
+use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 use tokio::time::sleep;
 
@@ -461,6 +461,12 @@ pub(crate) trait RegionRetryState: Clone + Send + Sync + 'static {
     fn is_cancelled(&self) -> bool {
         false
     }
+
+    /// Shared snapshot retry owner, when region and lock retries charge one
+    /// client-go Backoffer budget.
+    fn snapshot_retry_owner(&self) -> Option<Arc<Mutex<RetryBackoffer>>> {
+        None
+    }
 }
 
 #[async_trait]
@@ -484,13 +490,21 @@ impl RegionRetryState for Backoff {
 
 /// client-go's `getMaxBackoff`, `batchGetMaxBackoff`, and scanner retry
 /// budget. `RetryBackoffer` applies the configured backoff weight.
-const SNAPSHOT_MAX_BACKOFF_MS: u64 = 20_000;
+const SNAPSHOT_MAX_BACKOFF_MS: u64 = crate::transaction::GET_MAX_BACKOFF_MS;
+
+pub(crate) fn new_snapshot_retry_owner(variables: Arc<Variables>) -> Arc<Mutex<RetryBackoffer>> {
+    Arc::new(Mutex::new(RetryBackoffer::with_variables(
+        Cancellation::default(),
+        SNAPSHOT_MAX_BACKOFF_MS,
+        variables,
+    )))
+}
 
 /// Snapshot-read retry state that owns client-go's cumulative retry budget
 /// while reporting retry-class sleep totals to an optional collector.
 #[derive(Clone)]
 pub(crate) struct SnapshotRegionBackoff {
-    backoff: RetryBackoffer,
+    backoff: Arc<Mutex<RetryBackoffer>>,
     stats: Option<Arc<SnapshotRuntimeStats>>,
     disabled: bool,
 }
@@ -501,16 +515,23 @@ impl SnapshotRegionBackoff {
         stats: Option<Arc<SnapshotRuntimeStats>>,
         variables: Arc<Variables>,
     ) -> Self {
-        let cancellation = Cancellation::default();
         Self {
-            backoff: RetryBackoffer::with_variables(
-                cancellation,
-                SNAPSHOT_MAX_BACKOFF_MS,
-                variables,
-            ),
+            backoff: new_snapshot_retry_owner(variables),
             stats,
             disabled: legacy_backoff.is_none(),
         }
+    }
+
+    pub(crate) fn owner(&self) -> Arc<Mutex<RetryBackoffer>> {
+        Arc::clone(&self.backoff)
+    }
+
+    pub(crate) fn set_owner(&mut self, owner: Arc<Mutex<RetryBackoffer>>) {
+        self.backoff = owner;
+    }
+
+    pub(crate) fn clear_stats(&mut self) {
+        self.stats = None;
     }
 }
 
@@ -520,27 +541,24 @@ impl RegionRetryState for SnapshotRegionBackoff {
         if self.disabled {
             return Ok(false);
         }
-        let before_count = self
-            .backoff
+        let mut backoff = self.backoff.lock().await;
+        let before_count = backoff
             .times_by_type()
             .get(config.name)
             .copied()
             .unwrap_or_default();
-        let before_sleep = self
-            .backoff
+        let before_sleep = backoff
             .sleep_by_type()
             .get(config.name)
             .copied()
             .unwrap_or_default();
-        let result = self.backoff.backoff(config, _reason).await;
-        let after_count = self
-            .backoff
+        let result = backoff.backoff(config, _reason).await;
+        let after_count = backoff
             .times_by_type()
             .get(config.name)
             .copied()
             .unwrap_or_default();
-        let after_sleep = self
-            .backoff
+        let after_sleep = backoff
             .sleep_by_type()
             .get(config.name)
             .copied()
@@ -559,10 +577,14 @@ impl RegionRetryState for SnapshotRegionBackoff {
     }
 
     fn fork(&self) -> (Self, Cancellation) {
-        let (backoff, cancellation) = self.backoff.fork();
+        let backoff = self
+            .backoff
+            .try_lock()
+            .expect("snapshot retry owner must be idle while it is forked");
+        let (backoff, cancellation) = backoff.fork();
         (
             Self {
-                backoff,
+                backoff: Arc::new(Mutex::new(backoff)),
                 stats: self.stats.clone(),
                 disabled: self.disabled,
             },
@@ -571,11 +593,25 @@ impl RegionRetryState for SnapshotRegionBackoff {
     }
 
     fn update_using_forked(&mut self, forked: &Self) {
-        self.backoff.update_using_forked(&forked.backoff);
+        let forked = forked
+            .backoff
+            .try_lock()
+            .expect("completed snapshot retry child must be idle");
+        self.backoff
+            .try_lock()
+            .expect("snapshot retry parent must be idle while it is updated")
+            .update_using_forked(&forked);
     }
 
     fn is_cancelled(&self) -> bool {
-        self.backoff.is_cancelled()
+        self.backoff
+            .try_lock()
+            .expect("snapshot retry owner must be idle before dispatch")
+            .is_cancelled()
+    }
+
+    fn snapshot_retry_owner(&self) -> Option<Arc<Mutex<RetryBackoffer>>> {
+        Some(self.owner())
     }
 }
 
@@ -584,20 +620,24 @@ impl RegionRetryState for SnapshotRegionBackoff {
 /// their legacy [`Backoff`] handling in [`ResolveLock`].
 #[derive(Clone)]
 pub(crate) struct SnapshotLockBackoff {
-    backoff: RetryBackoffer,
+    backoff: Arc<Mutex<RetryBackoffer>>,
     stats: Option<Arc<SnapshotRuntimeStats>>,
 }
 
 impl SnapshotLockBackoff {
     pub(crate) fn new(stats: Option<Arc<SnapshotRuntimeStats>>, variables: Arc<Variables>) -> Self {
         Self {
-            backoff: RetryBackoffer::with_variables(
-                Cancellation::default(),
-                SNAPSHOT_MAX_BACKOFF_MS,
-                variables,
-            ),
+            backoff: new_snapshot_retry_owner(variables),
             stats,
         }
+    }
+
+    pub(crate) fn set_owner(&mut self, owner: Arc<Mutex<RetryBackoffer>>) {
+        self.backoff = owner;
+    }
+
+    pub(crate) fn clear_stats(&mut self) {
+        self.stats = None;
     }
 
     async fn backoff_with_max_sleep_txn_lock_fast(
@@ -605,30 +645,26 @@ impl SnapshotLockBackoff {
         max_sleep_ms: u64,
         reason: String,
     ) -> Result<()> {
-        let before_count = self
-            .backoff
+        let mut backoff = self.backoff.lock().await;
+        let before_count = backoff
             .times_by_type()
             .get("txnLockFast")
             .copied()
             .unwrap_or_default();
-        let before_sleep = self
-            .backoff
+        let before_sleep = backoff
             .sleep_by_type()
             .get("txnLockFast")
             .copied()
             .unwrap_or_default();
-        let result = self
-            .backoff
+        let result = backoff
             .backoff_with_max_sleep_txn_lock_fast(max_sleep_ms, reason)
             .await;
-        let after_count = self
-            .backoff
+        let after_count = backoff
             .times_by_type()
             .get("txnLockFast")
             .copied()
             .unwrap_or_default();
-        let after_sleep = self
-            .backoff
+        let after_sleep = backoff
             .sleep_by_type()
             .get("txnLockFast")
             .copied()
@@ -683,6 +719,12 @@ pub struct RetryableMultiRegion<P: Plan, PdC: PdClient, R: RegionRetryState = Ba
     pub preserve_region_results: bool,
     /// Maximum number of region shards dispatched concurrently.
     pub concurrency: usize,
+    /// Snapshot scanner refills select exactly one boundary region. `true`
+    /// selects the last (reverse) shard and `false` the first (forward) shard.
+    pub(crate) one_region: Option<bool>,
+    /// Initial batch-get sharding reports the number of distinct regions for
+    /// client-go's snapshot metric. Retries deliberately clear this field.
+    pub(crate) snapshot_region_scope: Option<bool>,
 }
 
 #[allow(private_bounds)]
@@ -698,9 +740,32 @@ where
         mut backoff: R,
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
+        one_region: Option<bool>,
+        snapshot_region_scope: Option<bool>,
     ) -> (Result<<Self as Plan>::Result>, R) {
-        let shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
+        let mut shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
+        if let Some(internal) = snapshot_region_scope {
+            if shards.iter().all(Result::is_ok) {
+                let regions = shards
+                    .iter()
+                    .filter_map(|shard| shard.as_ref().ok().map(|(_, region)| region.ver_id()))
+                    .collect::<std::collections::HashSet<_>>()
+                    .len();
+                crate::stats::observe_snapshot_regions(internal, regions);
+            }
+        }
+        if let Some(reverse) = one_region {
+            let selected = if reverse {
+                shards.pop()
+            } else if shards.is_empty() {
+                None
+            } else {
+                Some(shards.remove(0))
+            };
+            shards = selected.into_iter().collect();
+        }
         let shards_len = shards.len();
+        let record_async_batch_get_metric = snapshot_region_scope.is_some() && shards_len > 1;
         debug!("single_plan_handler, shards: {}", shards_len);
         let (forked_backoff, cancel) = backoff.fork();
         let mut join_set = JoinSet::new();
@@ -712,9 +777,13 @@ where
                     return (Err(e), backoff);
                 }
             };
-            let clone = current_plan.clone_then_apply_shard(shard);
+            let mut clone = current_plan.clone_then_apply_shard(shard);
+            clone.set_async_batch_get_metrics(record_async_batch_get_metric);
             let pd_client = pd_client.clone();
             let (backoff, _) = forked_backoff.fork();
+            if let Some(owner) = backoff.snapshot_retry_owner() {
+                clone.set_snapshot_retry_owner(owner);
+            }
             let permits = permits.clone();
             join_set.spawn(async move {
                 (
@@ -726,6 +795,7 @@ where
                         backoff,
                         permits,
                         preserve_region_results,
+                        one_region,
                     )
                     .await,
                 )
@@ -788,6 +858,7 @@ where
         mut backoff: R,
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
+        one_region: Option<bool>,
     ) -> (Result<<Self as Plan>::Result>, R) {
         if backoff.is_cancelled() {
             return (
@@ -838,6 +909,7 @@ where
                     backoff,
                     permits,
                     preserve_region_results,
+                    one_region,
                     err,
                 )
                 .await;
@@ -912,6 +984,7 @@ where
                     backoff,
                     permits,
                     preserve_region_results,
+                    one_region,
                 )
                 .await;
             }
@@ -928,6 +1001,7 @@ where
                     backoff,
                     permits,
                     preserve_region_results,
+                    one_region,
                     e,
                 )
                 .await;
@@ -989,6 +1063,7 @@ where
                     backoff,
                     permits,
                     preserve_region_results,
+                    one_region,
                 )
                 .await;
             }
@@ -1118,6 +1193,8 @@ where
                                 backoff,
                                 permits,
                                 preserve_region_results,
+                                one_region,
+                                None,
                             )
                             .await;
                         }
@@ -1151,6 +1228,7 @@ where
                         backoff,
                         permits,
                         preserve_region_results,
+                        one_region,
                     )
                     .await;
                 }
@@ -1171,6 +1249,7 @@ where
                                 backoff,
                                 permits,
                                 preserve_region_results,
+                                one_region,
                             )
                             .await;
                         }
@@ -1234,6 +1313,7 @@ where
         mut backoff: R,
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
+        one_region: Option<bool>,
         e: Error,
     ) -> (Result<<Self as Plan>::Result>, R) {
         debug!("handle_other_error: {:?}", e);
@@ -1271,6 +1351,7 @@ where
                         backoff,
                         permits,
                         preserve_region_results,
+                        one_region,
                     )
                     .await
                 } else {
@@ -1280,6 +1361,8 @@ where
                         backoff,
                         permits,
                         preserve_region_results,
+                        one_region,
+                        None,
                     )
                     .await
                 }
@@ -1692,6 +1775,8 @@ impl<P: Plan, PdC: PdClient, R: RegionRetryState> Clone for RetryableMultiRegion
             backoff: self.backoff.clone(),
             preserve_region_results: self.preserve_region_results,
             concurrency: self.concurrency,
+            one_region: self.one_region,
+            snapshot_region_scope: self.snapshot_region_scope,
         }
     }
 }
@@ -1716,6 +1801,8 @@ where
             self.backoff.clone(),
             concurrency_permits.clone(),
             self.preserve_region_results,
+            self.one_region,
+            self.snapshot_region_scope,
         )
         .await
         .0
@@ -1953,6 +2040,12 @@ pub struct ResolveLock<P: Plan, PdC: PdClient> {
     /// Prewrite-specific early-conflict behavior from client-go. Normal lock
     /// resolution plans leave this unset.
     pub(crate) prewrite_lock_conflict: Option<PrewriteLockConflict>,
+    /// A latest-version point get is blocked only by the first lock it sees;
+    /// later locks from different transactions are sent as resolved hints.
+    pub(crate) max_timestamp_point_get: bool,
+    /// Count the first response of a native concurrent BatchGet shard using
+    /// client-go's async callback result labels.
+    pub(crate) record_async_batch_get_metric: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1987,29 +2080,125 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
             snapshot_lock_backoff: self.snapshot_lock_backoff.clone(),
             response_locks_only: self.response_locks_only,
             prewrite_lock_conflict: self.prewrite_lock_conflict,
+            max_timestamp_point_get: self.max_timestamp_point_get,
+            record_async_batch_get_metric: self.record_async_batch_get_metric,
         }
+    }
+}
+
+fn async_batch_get_result(response: &dyn std::any::Any) -> Option<&'static str> {
+    let (region_error, key_error, pairs) =
+        if let Some(response) = response.downcast_ref::<kvrpcpb::BatchGetResponse>() {
+            (&response.region_error, &response.error, &response.pairs)
+        } else if let Some(response) = response.downcast_ref::<kvrpcpb::BufferBatchGetResponse>() {
+            (&response.region_error, &response.error, &response.pairs)
+        } else {
+            return None;
+        };
+    let result = if region_error.is_some() {
+        "region_error"
+    } else if let Some(error) = key_error {
+        if error.locked.is_some() {
+            "lock_error"
+        } else {
+            "other_error"
+        }
+    } else {
+        let mut locked = false;
+        let mut other = false;
+        for error in pairs.iter().filter_map(|pair| pair.error.as_ref()) {
+            if error.locked.is_some() {
+                locked = true;
+            } else {
+                other = true;
+                break;
+            }
+        }
+        if other {
+            "other_error"
+        } else if locked {
+            "lock_error"
+        } else {
+            "ok"
+        }
+    };
+    Some(result)
+}
+
+fn record_async_batch_get_result(response: &dyn std::any::Any) {
+    if let Some(result) = async_batch_get_result(response) {
+        crate::stats::increment_async_batch_get(result);
     }
 }
 
 #[async_trait]
 impl<P: Plan + Shardable, PdC: PdClient> Plan for ResolveLock<P, PdC>
 where
-    P::Result: HasLocks,
+    P::Result: HasLocks + 'static,
 {
     type Result = P::Result;
 
     async fn execute(&self) -> Result<Self::Result> {
         let mut clone = self.clone();
         let mut resolving_locks_guard: Option<ResolvingLocksGuard> = None;
-        let mut result = clone.execute_inner().await?;
+        let mut first_lock_txn_id = None;
+        let mut clean_lock_retry_result = None;
+        let mut result = match clone.execute_inner().await {
+            Ok(result) => result,
+            Err(error) => {
+                if clone.record_async_batch_get_metric {
+                    crate::stats::increment_async_batch_get("other_error");
+                }
+                return Err(error);
+            }
+        };
+        if clone.record_async_batch_get_metric {
+            record_async_batch_get_result(&result);
+        }
         loop {
-            let locks = if clone.response_locks_only {
+            let mut locks = if clone.response_locks_only {
                 result.take_response_locks()
             } else {
                 result.take_locks()
             };
             if locks.is_empty() {
+                if let Some(clean) = clean_lock_retry_result {
+                    result.merge_clean_lock_retry_result(clean);
+                }
                 return Ok(result);
+            }
+
+            if !clone.response_locks_only {
+                if let Some(clean) = result.take_clean_result_for_lock_retry() {
+                    if clone.inner.retry_only_lock_keys(&locks) {
+                        if let Some(retained) = clean_lock_retry_result.as_mut() {
+                            retained.merge_clean_lock_retry_result(clean);
+                        } else {
+                            clean_lock_retry_result = Some(clean);
+                        }
+                    }
+                }
+            }
+
+            if clone.max_timestamp_point_get {
+                if let Some(first_lock_txn_id) = first_lock_txn_id {
+                    if let Some(read_lock_context) = &clone.read_lock_context {
+                        locks.retain(|lock| {
+                            if lock.lock_version == first_lock_txn_id {
+                                true
+                            } else {
+                                read_lock_context.add_resolved(lock.lock_version);
+                                false
+                            }
+                        });
+                    }
+                    if locks.is_empty() {
+                        result = clone.execute_inner().await?;
+                        continue;
+                    }
+                } else {
+                    first_lock_txn_id = locks.first().map(|lock| lock.lock_version);
+                }
             }
 
             if let Some((policy, lock)) = self.prewrite_lock_conflict.and_then(|policy| {
@@ -2417,6 +2606,44 @@ mod test {
     use tokio::sync::Barrier;
 
     use super::*;
+
+    #[test]
+    fn source_async_batch_get_result_labels_match_callback_branch() {
+        assert_eq!(
+            async_batch_get_result(&kvrpcpb::BatchGetResponse::default()),
+            Some("ok")
+        );
+        assert_eq!(
+            async_batch_get_result(&kvrpcpb::BatchGetResponse {
+                region_error: Some(crate::proto::errorpb::Error::default()),
+                ..Default::default()
+            }),
+            Some("region_error")
+        );
+        assert_eq!(
+            async_batch_get_result(&kvrpcpb::BatchGetResponse {
+                pairs: vec![kvrpcpb::KvPair {
+                    error: Some(kvrpcpb::KeyError {
+                        locked: Some(kvrpcpb::LockInfo::default()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            Some("lock_error")
+        );
+        assert_eq!(
+            async_batch_get_result(&kvrpcpb::BufferBatchGetResponse {
+                error: Some(kvrpcpb::KeyError {
+                    abort: "abort".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            Some("other_error")
+        );
+    }
     use crate::backoff::Backoff;
     use crate::mock::{MockKvClient, MockPdClient};
     use crate::proto::kvrpcpb;
@@ -3546,10 +3773,18 @@ mod test {
             None,
             Arc::clone(&variables),
         );
-        assert_eq!(region.backoff.max_sleep_ms(), SNAPSHOT_MAX_BACKOFF_MS);
+        assert_eq!(
+            region.backoff.try_lock().unwrap().max_sleep_ms(),
+            SNAPSHOT_MAX_BACKOFF_MS
+        );
 
-        let lock = SnapshotLockBackoff::new(None, variables);
-        assert_eq!(lock.backoff.max_sleep_ms(), SNAPSHOT_MAX_BACKOFF_MS);
+        let mut lock = SnapshotLockBackoff::new(None, variables);
+        assert_eq!(
+            lock.backoff.try_lock().unwrap().max_sleep_ms(),
+            SNAPSHOT_MAX_BACKOFF_MS
+        );
+        lock.set_owner(region.owner());
+        assert!(Arc::ptr_eq(&region.backoff, &lock.backoff));
     }
 
     #[test]
@@ -3625,11 +3860,15 @@ mod test {
                 snapshot_lock_backoff: None,
                 response_locks_only: false,
                 prewrite_lock_conflict: None,
+                max_timestamp_point_get: false,
+                record_async_batch_get_metric: false,
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),
             preserve_region_results: false,
             concurrency: MULTI_REGION_CONCURRENCY,
+            one_region: None,
+            snapshot_region_scope: None,
         };
         assert!(plan.execute().await.is_err())
     }
@@ -3665,6 +3904,8 @@ mod test {
             backoff: retry,
             preserve_region_results: false,
             concurrency: MULTI_REGION_CONCURRENCY,
+            one_region: None,
+            snapshot_region_scope: None,
         };
 
         assert_eq!(plan.execute().await.unwrap().len(), 2);
@@ -3688,6 +3929,8 @@ mod test {
             },
             preserve_region_results: false,
             concurrency: MULTI_REGION_CONCURRENCY,
+            one_region: None,
+            snapshot_region_scope: None,
         };
 
         assert!(plan.execute().await.is_err());

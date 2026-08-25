@@ -16,6 +16,17 @@ use crate::ValueEntry;
 
 use super::transaction::{Mutation, MutationFlags, MutationOptions};
 
+const SNAPSHOT_CACHE_SIZE_LIMIT: i64 = 10 << 30;
+
+fn snapshot_cache_entry_size(key: &Key, value: &Option<ValueEntry>) -> i64 {
+    key.len() as i64
+        + value
+            .as_ref()
+            .map_or(std::mem::size_of::<ValueEntry>() as i64, |value| {
+                value.size() as i64
+            })
+}
+
 /// A caching layer which buffers reads and writes in a transaction.
 pub struct Buffer {
     primary_key: Option<Key>,
@@ -28,6 +39,7 @@ pub struct Buffer {
     mutation_options: BTreeMap<Key, MutationOptions>,
     is_pessimistic: bool,
     snapshot_cache_hits: usize,
+    snapshot_cache_size_bytes: i64,
 }
 
 impl Buffer {
@@ -40,6 +52,7 @@ impl Buffer {
             mutation_options: BTreeMap::new(),
             is_pessimistic,
             snapshot_cache_hits: 0,
+            snapshot_cache_size_bytes: 0,
         }
     }
 
@@ -77,6 +90,8 @@ impl Buffer {
             .retain(|_, entry| !matches!(entry, BufferEntry::Cached(_)));
         self.mutation_options
             .retain(|key, _| self.entry_map.contains_key(key));
+        // SetSnapshotTS drops the source cache map but deliberately leaves its
+        // cachedSize accounting untouched, just as it preserves hitCnt.
     }
 
     /// Return the number of source snapshot-cache hits observed by this
@@ -110,11 +125,20 @@ impl Buffer {
         keys: impl IntoIterator<Item = Key>,
         values: &BTreeMap<Key, ValueEntry>,
     ) {
+        self.update_snapshot_cache_with_limit(keys, values, SNAPSHOT_CACHE_SIZE_LIMIT);
+    }
+
+    fn update_snapshot_cache_with_limit(
+        &mut self,
+        keys: impl IntoIterator<Item = Key>,
+        values: &BTreeMap<Key, ValueEntry>,
+        size_limit: i64,
+    ) {
         for key in keys {
             let value = values.get(&key).cloned();
             match self.entry_map.get(&key) {
                 None | Some(BufferEntry::Cached(_)) => {
-                    self.entry_map.insert(key, BufferEntry::Cached(value));
+                    self.update_source_snapshot_cache_entry(key, value);
                 }
                 // Snapshot instances are read-only, so source cache mutation
                 // never meets a write/lock entry. Preserve a transaction's
@@ -123,12 +147,21 @@ impl Buffer {
                 Some(_) => {}
             }
         }
+        self.evict_unneeded_snapshot_cache(values, size_limit);
     }
 
     pub(crate) fn clean_snapshot_cache(&mut self, keys: impl IntoIterator<Item = Key>) {
         for key in keys {
-            if matches!(self.entry_map.get(&key), Some(BufferEntry::Cached(_))) {
-                self.entry_map.remove(&key);
+            // Preserve client-go's probe-visible accounting exactly: CleanCache
+            // charges the key even when it is absent, and an existing entry
+            // additionally charges only its ValueEntry size.
+            self.snapshot_cache_size_bytes -= key.len() as i64;
+            if let Some(BufferEntry::Cached(value)) = self.entry_map.remove(&key) {
+                self.snapshot_cache_size_bytes -= value
+                    .as_ref()
+                    .map_or(std::mem::size_of::<ValueEntry>() as i64, |value| {
+                        value.size() as i64
+                    });
             }
         }
     }
@@ -179,7 +212,10 @@ impl Buffer {
             MutationValue::Undetermined => {
                 let value = f(key.clone()).await?;
                 if cache_result {
-                    self.update_cache(key, value.clone());
+                    self.update_point_snapshot_cache_entry(
+                        key,
+                        value.clone().map(|value| ValueEntry::new(value, 0)),
+                    );
                 }
                 Ok(value)
             }
@@ -217,7 +253,7 @@ impl Buffer {
 
             let value = f(key.clone()).await?;
             if cache_result {
-                self.update_snapshot_cache_entry(key, value.clone());
+                self.update_point_snapshot_cache_entry(key, value.clone());
             }
             return Ok(value);
         }
@@ -227,7 +263,7 @@ impl Buffer {
             MutationValue::Undetermined => {
                 let value = f(key.clone()).await?;
                 if cache_result {
-                    self.update_snapshot_cache_entry(key, value.clone());
+                    self.update_point_snapshot_cache_entry(key, value.clone());
                 }
                 Ok(value.map(|mut entry| {
                     if !return_commit_ts {
@@ -297,13 +333,11 @@ impl Buffer {
             f(Box::new(undetermined_keys.clone().into_iter())).await?
         };
         if cache_results {
-            let fetched_by_key: HashMap<_, _> = fetched_results
+            let fetched_by_key = fetched_results
                 .iter()
-                .map(|pair| (pair.0.clone(), pair.1.clone()))
-                .collect();
-            for key in undetermined_keys {
-                self.update_cache(key.clone(), fetched_by_key.get(&key).cloned());
-            }
+                .map(|pair| (pair.0.clone(), ValueEntry::new(pair.1.clone(), 0)))
+                .collect::<BTreeMap<_, _>>();
+            self.update_snapshot_cache(undetermined_keys, &fetched_by_key);
         }
 
         Ok(cached_results.into_iter().chain(fetched_results))
@@ -360,9 +394,7 @@ impl Buffer {
             f(Box::new(undetermined_keys.clone().into_iter())).await?
         };
         if cache_results {
-            for key in undetermined_keys {
-                self.update_snapshot_cache_entry(key.clone(), fetched_results.get(&key).cloned());
-            }
+            self.update_snapshot_cache(undetermined_keys, &fetched_results);
         }
 
         cached_results.extend(fetched_results.into_iter().map(|(key, mut value)| {
@@ -475,6 +507,7 @@ impl Buffer {
         } else {
             self.locked_value_exists.entry(key.clone()).or_insert(true);
         }
+        let cache_key = key.clone();
         let entry = self.entry_map.entry(key);
         match entry {
             Entry::Vacant(entry) => {
@@ -486,6 +519,9 @@ impl Buffer {
             }
             Entry::Occupied(mut entry) => match entry.get_mut() {
                 BufferEntry::Cached(value) => {
+                    self.snapshot_cache_size_bytes = self
+                        .snapshot_cache_size_bytes
+                        .saturating_sub(snapshot_cache_entry_size(&cache_key, value));
                     let value = returned.or_else(|| Some(value.take()));
                     if shared {
                         entry.insert(BufferEntry::SharedLocked(value));
@@ -540,7 +576,11 @@ impl Buffer {
         if let Some(value) = self.entry_map.get_mut(key) {
             if let BufferEntry::Locked(v) | BufferEntry::SharedLocked(v) = value {
                 if let Some(v) = v {
-                    *value = BufferEntry::Cached(v.take());
+                    let cached = v.take();
+                    self.snapshot_cache_size_bytes = self
+                        .snapshot_cache_size_bytes
+                        .saturating_add(snapshot_cache_entry_size(key, &cached));
+                    *value = BufferEntry::Cached(cached);
                 } else {
                     self.entry_map.remove(key);
                 }
@@ -730,7 +770,7 @@ impl Buffer {
                     .insert(key, BufferEntry::SharedLocked(Some(value)));
             }
             None => {
-                self.entry_map.insert(key, BufferEntry::Cached(value));
+                self.replace_cached_entry(key, value);
             }
             Some(BufferEntry::Cached(v))
             | Some(BufferEntry::Locked(Some(v)))
@@ -752,12 +792,82 @@ impl Buffer {
         }
     }
 
-    fn update_snapshot_cache_entry(&mut self, key: Key, value: Option<ValueEntry>) {
+    fn update_point_snapshot_cache_entry(&mut self, key: Key, value: Option<ValueEntry>) {
+        self.update_point_snapshot_cache_entry_with_limit(key, value, SNAPSHOT_CACHE_SIZE_LIMIT);
+    }
+
+    fn update_point_snapshot_cache_entry_with_limit(
+        &mut self,
+        key: Key,
+        value: Option<ValueEntry>,
+        size_limit: i64,
+    ) {
         match self.entry_map.get(&key) {
             None | Some(BufferEntry::Cached(_)) => {
-                self.entry_map.insert(key, BufferEntry::Cached(value));
+                let needed = BTreeMap::from([(key.clone(), value.clone().unwrap_or_default())]);
+                self.update_source_snapshot_cache_entry(key, value);
+                self.evict_unneeded_snapshot_cache(&needed, size_limit);
             }
             Some(_) => {}
+        }
+    }
+
+    fn replace_cached_entry(&mut self, key: Key, value: Option<ValueEntry>) {
+        if let Some(BufferEntry::Cached(old)) = self.entry_map.get(&key) {
+            self.snapshot_cache_size_bytes = self
+                .snapshot_cache_size_bytes
+                .saturating_sub(snapshot_cache_entry_size(&key, old));
+        }
+        self.snapshot_cache_size_bytes = self
+            .snapshot_cache_size_bytes
+            .saturating_add(snapshot_cache_entry_size(&key, &value));
+        self.entry_map.insert(key, BufferEntry::Cached(value));
+    }
+
+    fn update_source_snapshot_cache_entry(&mut self, key: Key, value: Option<ValueEntry>) {
+        // UpdateSnapshotCache adds the key and new ValueEntry, then subtracts
+        // only the old ValueEntry on replacement. This intentionally retains
+        // client-go's cumulative key-byte accounting.
+        self.snapshot_cache_size_bytes += snapshot_cache_entry_size(&key, &value);
+        if let Some(BufferEntry::Cached(old)) = self.entry_map.get(&key) {
+            self.snapshot_cache_size_bytes -= old
+                .as_ref()
+                .map_or(std::mem::size_of::<ValueEntry>() as i64, |value| {
+                    value.size() as i64
+                });
+        }
+        self.entry_map.insert(key, BufferEntry::Cached(value));
+    }
+
+    fn remove_cached_entry(&mut self, key: &Key) {
+        if let Some(BufferEntry::Cached(value)) = self.entry_map.remove(key) {
+            self.snapshot_cache_size_bytes = self
+                .snapshot_cache_size_bytes
+                .saturating_sub(snapshot_cache_entry_size(key, &value));
+        }
+    }
+
+    fn evict_unneeded_snapshot_cache(
+        &mut self,
+        needed: &BTreeMap<Key, ValueEntry>,
+        size_limit: i64,
+    ) {
+        if self.snapshot_cache_size_bytes < size_limit {
+            return;
+        }
+        let candidates = self
+            .entry_map
+            .iter()
+            .filter(|(key, entry)| {
+                matches!(entry, BufferEntry::Cached(_)) && !needed.contains_key(*key)
+            })
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        for key in candidates {
+            self.remove_cached_entry(&key);
+            if self.snapshot_cache_size_bytes < size_limit {
+                break;
+            }
         }
     }
 
@@ -765,6 +875,9 @@ impl Buffer {
         let key = key.into();
         if !matches!(entry, BufferEntry::Cached(_) | BufferEntry::CheckNotExist) {
             self.primary_key.get_or_insert_with(|| key.clone());
+        }
+        if matches!(self.entry_map.get(&key), Some(BufferEntry::Cached(_))) {
+            self.remove_cached_entry(&key);
         }
         self.entry_map.insert(key, entry);
     }
@@ -1074,9 +1187,11 @@ mod tests {
         assert!(second.is_empty());
         assert_eq!(buffer.snapshot_cache_hit_count(), 1);
         assert_eq!(buffer.snapshot_cache_size(), 1);
+        let accounted_size = buffer.snapshot_cache_size_bytes;
         buffer.clear_cached_reads();
         assert_eq!(buffer.snapshot_cache_hit_count(), 1);
         assert_eq!(buffer.snapshot_cache_size(), 0);
+        assert_eq!(buffer.snapshot_cache_size_bytes, accounted_size);
     }
 
     #[test]
@@ -1130,6 +1245,92 @@ mod tests {
             buffer.snapshot_cache(),
             BTreeMap::from([(missing, ValueEntry::default())])
         );
+    }
+
+    #[test]
+    fn source_snapshot_cache_limit_evicts_only_entries_unneeded_by_current_fill() {
+        let old: Key = b"old".to_vec().into();
+        let current: Key = b"current".to_vec().into();
+        let old_value = ValueEntry::new(b"old-value".to_vec(), 1);
+        let current_value = ValueEntry::new(b"current-value".to_vec(), 2);
+        let mut buffer = Buffer::new(false);
+        buffer.update_snapshot_cache_with_limit(
+            vec![old.clone()],
+            &BTreeMap::from([(old.clone(), old_value)]),
+            i64::MAX,
+        );
+        let current_size = snapshot_cache_entry_size(&current, &Some(current_value.clone()));
+
+        buffer.update_snapshot_cache_with_limit(
+            vec![current.clone()],
+            &BTreeMap::from([(current.clone(), current_value.clone())]),
+            current_size + 1,
+        );
+
+        assert_eq!(
+            buffer.snapshot_cache(),
+            BTreeMap::from([(current, current_value)])
+        );
+        assert_eq!(buffer.snapshot_cache_size_bytes, current_size);
+    }
+
+    #[test]
+    fn source_point_get_cache_limit_preserves_the_current_missing_key() {
+        let old: Key = b"old".to_vec().into();
+        let current: Key = b"current-missing".to_vec().into();
+        let mut buffer = Buffer::new(false);
+        buffer.update_point_snapshot_cache_entry_with_limit(
+            old.clone(),
+            Some(ValueEntry::new(b"old-value".to_vec(), 1)),
+            i64::MAX,
+        );
+        let current_size = snapshot_cache_entry_size(&current, &None);
+
+        buffer.update_point_snapshot_cache_entry_with_limit(
+            current.clone(),
+            None,
+            current_size + 1,
+        );
+
+        assert_eq!(
+            buffer.snapshot_cache(),
+            BTreeMap::from([(current, ValueEntry::default())])
+        );
+        assert_eq!(buffer.snapshot_cache_size_bytes, current_size);
+    }
+
+    #[test]
+    fn source_snapshot_cache_replacement_and_clean_keep_go_accounting() {
+        let present: Key = b"present".to_vec().into();
+        let absent: Key = b"absent".to_vec().into();
+        let first = Some(ValueEntry::new(b"first".to_vec(), 1));
+        let second = Some(ValueEntry::new(b"second".to_vec(), 2));
+        let mut buffer = Buffer::new(false);
+
+        buffer.update_point_snapshot_cache_entry_with_limit(
+            present.clone(),
+            first.clone(),
+            i64::MAX,
+        );
+        buffer.update_point_snapshot_cache_entry_with_limit(
+            present.clone(),
+            second.clone(),
+            i64::MAX,
+        );
+
+        // UpdateSnapshotCache subtracts only the old value on replacement,
+        // so the key bytes remain cumulatively charged.
+        assert_eq!(
+            buffer.snapshot_cache_size_bytes,
+            snapshot_cache_entry_size(&present, &second) + present.len() as i64
+        );
+
+        buffer.clean_snapshot_cache(vec![present.clone(), absent.clone()]);
+        assert_eq!(
+            buffer.snapshot_cache_size_bytes,
+            present.len() as i64 - absent.len() as i64
+        );
+        assert!(buffer.snapshot_cache().is_empty());
     }
 
     #[test]

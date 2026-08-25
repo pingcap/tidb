@@ -148,6 +148,15 @@ impl MockPdClient {
         client
     }
 
+    pub(crate) fn with_client_and_regions(
+        kv_client: MockKvClient,
+        regions: Vec<RegionWithLeader>,
+    ) -> MockPdClient {
+        let client = Self::new(kv_client);
+        *client.regions.lock().unwrap() = Some(regions);
+        client
+    }
+
     pub fn region1() -> RegionWithLeader {
         let mut region = RegionWithLeader::default();
         region.region.id = 1;

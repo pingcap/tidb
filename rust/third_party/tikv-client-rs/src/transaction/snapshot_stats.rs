@@ -57,6 +57,7 @@ struct SnapshotRuntimeStatsInner {
     time_detail: SnapshotTimeDetail,
     resolve_lock_duration: Duration,
     backoff: BTreeMap<&'static str, BackoffRuntimeStat>,
+    read_pool_task_details: SnapshotPoolTaskDetails,
 }
 
 /// Aggregated TiKV MVCC/RocksDB scan details returned with snapshot reads.
@@ -175,6 +176,351 @@ impl SnapshotTimeDetail {
     }
 }
 
+/// Aggregated scheduling and execution details reported by TiKV read-pool tasks.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SnapshotPoolTaskDetails {
+    pub task_count: u64,
+    pub poll_count: u64,
+    pub max_poll_count: u64,
+    pub min_poll_count: u64,
+    pub dispatch_count: u64,
+    pub max_dispatch_count: u64,
+    pub min_dispatch_count: u64,
+    pub total_wall_time: Duration,
+    pub task_wall_time_sample_count: u64,
+    pub max_task_wall_time: Duration,
+    pub min_task_wall_time: Duration,
+    pub total_queue_wait_time: Duration,
+    pub max_queue_wait_time: Duration,
+    pub min_queue_wait_time: Duration,
+    pub total_wake_wait_time: Duration,
+    pub max_wake_wait_time: Duration,
+    pub min_wake_wait_time: Duration,
+    pub fair_queue_sample_count: u64,
+    pub total_fair_queue_waited_task_slices: u64,
+    pub max_fair_queue_waited_task_slices: u64,
+    pub min_fair_queue_waited_task_slices: u64,
+    pub poll_cpu_time: Duration,
+    pub max_poll_cpu_time: Duration,
+    pub min_poll_cpu_time: Duration,
+    pub poll_wall_time: Duration,
+    pub min_poll_wall_time: Duration,
+    pub max_poll_wall_time: Duration,
+}
+
+impl SnapshotPoolTaskDetails {
+    fn merge_from_pb(&mut self, detail: &kvrpcpb::PoolTaskDetails) {
+        let had_tasks = self.task_count > 0;
+        let had_poll_samples = self.poll_count > 0;
+        let had_queue_wait_samples = !self.total_queue_wait_time.is_zero();
+        let had_wake_wait_samples = !self.total_wake_wait_time.is_zero();
+        let had_fair_queue_samples = self.fair_queue_sample_count > 0;
+        let had_task_wall_samples = self.task_wall_time_sample_count > 0;
+
+        self.task_count += 1;
+        self.poll_count += detail.poll_count;
+        self.max_poll_count = self.max_poll_count.max(detail.poll_count);
+        merge_min(&mut self.min_poll_count, detail.poll_count, had_tasks);
+        self.dispatch_count += detail.dispatch_count;
+        self.max_dispatch_count = self.max_dispatch_count.max(detail.dispatch_count);
+        merge_min(
+            &mut self.min_dispatch_count,
+            detail.dispatch_count,
+            had_tasks,
+        );
+
+        let wall = Duration::from_nanos(detail.total_wall_nanos);
+        self.total_wall_time += wall;
+        if !wall.is_zero() {
+            self.task_wall_time_sample_count += 1;
+            self.max_task_wall_time = self.max_task_wall_time.max(wall);
+            merge_min(&mut self.min_task_wall_time, wall, had_task_wall_samples);
+        }
+
+        let queue_total = Duration::from_nanos(detail.total_queue_wait_nanos);
+        self.total_queue_wait_time += queue_total;
+        self.max_queue_wait_time = self
+            .max_queue_wait_time
+            .max(Duration::from_nanos(detail.max_queue_wait_nanos));
+        if !queue_total.is_zero() {
+            merge_min(
+                &mut self.min_queue_wait_time,
+                Duration::from_nanos(detail.min_queue_wait_nanos),
+                had_queue_wait_samples,
+            );
+        }
+
+        let wake_total = Duration::from_nanos(detail.total_wake_wait_nanos);
+        self.total_wake_wait_time += wake_total;
+        self.max_wake_wait_time = self
+            .max_wake_wait_time
+            .max(Duration::from_nanos(detail.max_wake_wait_nanos));
+        if !wake_total.is_zero() {
+            merge_min(
+                &mut self.min_wake_wait_time,
+                Duration::from_nanos(detail.min_wake_wait_nanos),
+                had_wake_wait_samples,
+            );
+        }
+
+        if detail.fair_queue_enabled {
+            self.fair_queue_sample_count += detail.dispatch_count;
+            self.total_fair_queue_waited_task_slices += detail.total_fair_queue_waited_task_slices;
+            self.max_fair_queue_waited_task_slices = self
+                .max_fair_queue_waited_task_slices
+                .max(detail.max_fair_queue_waited_task_slices);
+            merge_min(
+                &mut self.min_fair_queue_waited_task_slices,
+                detail.min_fair_queue_waited_task_slices,
+                had_fair_queue_samples,
+            );
+        }
+
+        self.poll_cpu_time += Duration::from_nanos(detail.poll_cpu_nanos);
+        self.max_poll_cpu_time = self
+            .max_poll_cpu_time
+            .max(Duration::from_nanos(detail.max_poll_cpu_nanos));
+        self.poll_wall_time += Duration::from_nanos(detail.poll_wall_nanos);
+        self.max_poll_wall_time = self
+            .max_poll_wall_time
+            .max(Duration::from_nanos(detail.max_poll_wall_nanos));
+        if detail.poll_count > 0 {
+            merge_min(
+                &mut self.min_poll_cpu_time,
+                Duration::from_nanos(detail.min_poll_cpu_nanos),
+                had_poll_samples,
+            );
+            merge_min(
+                &mut self.min_poll_wall_time,
+                Duration::from_nanos(detail.min_poll_wall_nanos),
+                had_poll_samples,
+            );
+        }
+    }
+
+    fn merge(&mut self, other: &Self) {
+        if other.is_empty() {
+            return;
+        }
+        let had_tasks = self.task_count > 0;
+        let had_poll_samples = self.poll_count > 0;
+        let had_queue_wait_samples = !self.total_queue_wait_time.is_zero();
+        let had_wake_wait_samples = !self.total_wake_wait_time.is_zero();
+        let had_fair_queue_samples = self.fair_queue_sample_count > 0;
+        let had_task_wall_samples = self.task_wall_time_sample_count > 0;
+
+        self.task_count += other.task_count;
+        self.poll_count += other.poll_count;
+        self.max_poll_count = self.max_poll_count.max(other.max_poll_count);
+        merge_min(&mut self.min_poll_count, other.min_poll_count, had_tasks);
+        self.dispatch_count += other.dispatch_count;
+        self.max_dispatch_count = self.max_dispatch_count.max(other.max_dispatch_count);
+        merge_min(
+            &mut self.min_dispatch_count,
+            other.min_dispatch_count,
+            had_tasks,
+        );
+        self.total_wall_time += other.total_wall_time;
+        self.task_wall_time_sample_count += other.task_wall_time_sample_count;
+        self.max_task_wall_time = self.max_task_wall_time.max(other.max_task_wall_time);
+        if !other.total_wall_time.is_zero() {
+            merge_min(
+                &mut self.min_task_wall_time,
+                other.min_task_wall_time,
+                had_task_wall_samples,
+            );
+        }
+        self.total_queue_wait_time += other.total_queue_wait_time;
+        self.max_queue_wait_time = self.max_queue_wait_time.max(other.max_queue_wait_time);
+        if !other.total_queue_wait_time.is_zero() {
+            merge_min(
+                &mut self.min_queue_wait_time,
+                other.min_queue_wait_time,
+                had_queue_wait_samples,
+            );
+        }
+        self.total_wake_wait_time += other.total_wake_wait_time;
+        self.max_wake_wait_time = self.max_wake_wait_time.max(other.max_wake_wait_time);
+        if !other.total_wake_wait_time.is_zero() {
+            merge_min(
+                &mut self.min_wake_wait_time,
+                other.min_wake_wait_time,
+                had_wake_wait_samples,
+            );
+        }
+        self.fair_queue_sample_count += other.fair_queue_sample_count;
+        self.total_fair_queue_waited_task_slices += other.total_fair_queue_waited_task_slices;
+        self.max_fair_queue_waited_task_slices = self
+            .max_fair_queue_waited_task_slices
+            .max(other.max_fair_queue_waited_task_slices);
+        if other.fair_queue_sample_count > 0 {
+            merge_min(
+                &mut self.min_fair_queue_waited_task_slices,
+                other.min_fair_queue_waited_task_slices,
+                had_fair_queue_samples,
+            );
+        }
+        self.poll_cpu_time += other.poll_cpu_time;
+        self.max_poll_cpu_time = self.max_poll_cpu_time.max(other.max_poll_cpu_time);
+        self.poll_wall_time += other.poll_wall_time;
+        self.max_poll_wall_time = self.max_poll_wall_time.max(other.max_poll_wall_time);
+        if other.poll_count > 0 {
+            merge_min(
+                &mut self.min_poll_cpu_time,
+                other.min_poll_cpu_time,
+                had_poll_samples,
+            );
+            merge_min(
+                &mut self.min_poll_wall_time,
+                other.min_poll_wall_time,
+                had_poll_samples,
+            );
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.task_count == 0
+    }
+}
+
+fn merge_min<T: Ord + Copy>(current: &mut T, candidate: T, has_current: bool) {
+    if !has_current || candidate < *current {
+        *current = candidate;
+    }
+}
+
+impl fmt::Display for SnapshotPoolTaskDetails {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_empty() {
+            return Ok(());
+        }
+        let mut output = format!("{{tasks:{}", self.task_count);
+        write_pool_count(
+            &mut output,
+            "poll_count",
+            self.poll_count,
+            self.task_count,
+            self.max_poll_count,
+            self.min_poll_count,
+        );
+        write_pool_count(
+            &mut output,
+            "dispatch_count",
+            self.dispatch_count,
+            0,
+            self.max_dispatch_count,
+            self.min_dispatch_count,
+        );
+        write_pool_time(
+            &mut output,
+            "task_wall_time",
+            self.total_wall_time,
+            self.task_wall_time_sample_count,
+            self.max_task_wall_time,
+            self.min_task_wall_time,
+        );
+        write_pool_time(
+            &mut output,
+            "queue_wait",
+            self.total_queue_wait_time,
+            self.dispatch_count,
+            self.max_queue_wait_time,
+            self.min_queue_wait_time,
+        );
+        let wake_wait_count = self.dispatch_count.saturating_sub(self.task_count);
+        write_pool_time(
+            &mut output,
+            "wake_wait",
+            self.total_wake_wait_time,
+            wake_wait_count,
+            self.max_wake_wait_time,
+            self.min_wake_wait_time,
+        );
+        output.push_str(&format!(
+            ", fair_queue:{{enabled:{}, waited_task_slices:{{total:{}",
+            self.fair_queue_sample_count > 0,
+            self.total_fair_queue_waited_task_slices
+        ));
+        if self.fair_queue_sample_count > 0 {
+            output.push_str(&format!(
+                ", avg:{}",
+                format_average(
+                    self.total_fair_queue_waited_task_slices,
+                    self.fair_queue_sample_count
+                )
+            ));
+        }
+        output.push_str(&format!(
+            ", max:{}, min:{}}}}}",
+            self.max_fair_queue_waited_task_slices, self.min_fair_queue_waited_task_slices
+        ));
+        write_pool_time(
+            &mut output,
+            "poll_cpu",
+            self.poll_cpu_time,
+            self.poll_count,
+            self.max_poll_cpu_time,
+            self.min_poll_cpu_time,
+        );
+        write_pool_time(
+            &mut output,
+            "poll_wall",
+            self.poll_wall_time,
+            self.poll_count,
+            self.max_poll_wall_time,
+            self.min_poll_wall_time,
+        );
+        output.push('}');
+        formatter.write_str(&output)
+    }
+}
+
+fn write_pool_count(
+    output: &mut String,
+    name: &str,
+    total: u64,
+    average_divisor: u64,
+    maximum: u64,
+    minimum: u64,
+) {
+    output.push_str(&format!(", {name}:{{total:{total}"));
+    if average_divisor > 0 {
+        output.push_str(&format!(", avg:{}", format_average(total, average_divisor)));
+    }
+    output.push_str(&format!(", max:{maximum}, min:{minimum}}}"));
+}
+
+fn format_average(total: u64, count: u64) -> String {
+    format!("{:.2}", total as f64 / count as f64)
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_owned()
+}
+
+fn write_pool_time(
+    output: &mut String,
+    name: &str,
+    total: Duration,
+    sample_count: u64,
+    maximum: Duration,
+    minimum: Duration,
+) {
+    if total.is_zero() {
+        return;
+    }
+    output.push_str(&format!(", {name}:{{total:{}", format_duration(total)));
+    if sample_count > 0 {
+        let average_nanos = total.as_nanos() / u128::from(sample_count);
+        let average = Duration::from_nanos(average_nanos.try_into().unwrap_or(u64::MAX));
+        output.push_str(&format!(", avg:{}", format_duration(average)));
+    }
+    output.push_str(&format!(
+        ", max:{}, min:{}}}",
+        format_duration(maximum),
+        format_duration(minimum)
+    ));
+}
+
 /// Runtime statistics collected for a snapshot's physical TiKV read RPCs.
 ///
 /// Attach this to a [`crate::Snapshot`] with
@@ -247,6 +593,17 @@ impl SnapshotRuntimeStats {
             .clone()
     }
 
+    /// Return a point-in-time copy of TiKV read-pool task details, if any.
+    pub fn read_pool_task_details(&self) -> Option<SnapshotPoolTaskDetails> {
+        let detail = self
+            .inner
+            .lock()
+            .expect("snapshot stats lock poisoned")
+            .read_pool_task_details
+            .clone();
+        (!detail.is_empty()).then_some(detail)
+    }
+
     /// Return time spent resolving locks encountered by this snapshot's reads.
     pub fn resolve_lock_duration(&self) -> Duration {
         self.inner
@@ -305,6 +662,9 @@ impl SnapshotRuntimeStats {
         }
         inner.scan_detail.merge(&other.scan_detail);
         inner.time_detail.merge(&other.time_detail);
+        inner
+            .read_pool_task_details
+            .merge(&other.read_pool_task_details);
         inner.resolve_lock_duration += other.resolve_lock_duration;
         for (retry_type, stat) in other.backoff {
             let merged = inner.backoff.entry(retry_type).or_default();
@@ -340,6 +700,9 @@ impl SnapshotRuntimeStats {
         inner
             .time_detail
             .merge_from_pb(detail.time_detail_v2.as_ref(), detail.time_detail.as_ref());
+        if let Some(detail) = detail.read_pool_task_details.as_ref() {
+            inner.read_pool_task_details.merge_from_pb(detail);
+        }
     }
 
     pub(crate) fn record_resolve_lock(&self, duration: Duration) {
@@ -354,6 +717,37 @@ impl SnapshotRuntimeStats {
         let stat = inner.backoff.entry(retry_type).or_default();
         stat.count += 1;
         stat.duration += duration;
+    }
+}
+
+pub(crate) fn snapshot_read_sli_interceptor() -> Arc<dyn RpcInterceptor> {
+    Arc::new(SnapshotReadSliInterceptor)
+}
+
+struct SnapshotReadSliInterceptor;
+
+impl RpcInterceptor for SnapshotReadSliInterceptor {
+    fn name(&self) -> &str {
+        "snapshot-read-sli"
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn wrap<'a>(
+        &'a self,
+        _: &'a str,
+        _: &'a dyn Request,
+        next: RpcNext<'a>,
+    ) -> BoxFuture<'a, RpcDispatchResult> {
+        Box::pin(async move {
+            let result = next().await;
+            if let Ok(response) = &result {
+                observe_snapshot_read_sli(response.as_ref());
+            }
+            result
+        })
     }
 }
 
@@ -396,6 +790,13 @@ impl fmt::Display for SnapshotRuntimeStats {
         if let Some(detail) = format_scan_detail(&inner.scan_detail) {
             output.push_str(", ");
             output.push_str(&detail);
+        }
+        if !inner.read_pool_task_details.is_empty() {
+            if !output.is_empty() {
+                output.push_str(", ");
+            }
+            output.push_str("read_pool:");
+            output.push_str(&inner.read_pool_task_details.to_string());
         }
         formatter.write_str(&output)?;
         Ok(())
@@ -540,7 +941,7 @@ fn format_bytes(bytes: u64) -> String {
     } else {
         (KIB, "KB")
     };
-    let precision = if bytes % unit == 0 {
+    let precision = if bytes.is_multiple_of(unit) {
         0
     } else if bytes < unit * 10 {
         2
@@ -596,6 +997,44 @@ impl RpcInterceptor for SnapshotRuntimeStatsInterceptor {
             result
         })
     }
+}
+
+fn observe_snapshot_read_sli(response: &dyn Any) {
+    let (read_keys, detail) =
+        if let Some(response) = response.downcast_ref::<kvrpcpb::GetResponse>() {
+            (
+                response.value.len() as u64,
+                response.exec_details_v2.as_ref(),
+            )
+        } else if let Some(response) = response.downcast_ref::<kvrpcpb::BatchGetResponse>() {
+            (
+                response.pairs.len() as u64,
+                response.exec_details_v2.as_ref(),
+            )
+        } else if let Some(response) = response.downcast_ref::<kvrpcpb::BufferBatchGetResponse>() {
+            (
+                response.pairs.len() as u64,
+                response.exec_details_v2.as_ref(),
+            )
+        } else {
+            return;
+        };
+    let Some(detail) = detail else {
+        return;
+    };
+    let read_time = if let Some(time) = detail.time_detail_v2.as_ref() {
+        time.kv_read_wall_time_ns as f64 / 1_000_000_000.0
+    } else {
+        detail
+            .time_detail
+            .as_ref()
+            .map_or(0.0, |time| time.kv_read_wall_time_ms as f64 / 1_000.0)
+    };
+    let read_size = detail
+        .scan_detail_v2
+        .as_ref()
+        .map_or(0.0, |scan| scan.processed_versions_size as f64);
+    crate::stats::observe_snapshot_read_sli(read_keys, read_time, read_size);
 }
 
 fn snapshot_exec_detail(response: &dyn Any) -> Option<&kvrpcpb::ExecDetailsV2> {
@@ -734,6 +1173,45 @@ mod tests {
             stats.to_string(),
             "Get:{num_rpc:1, total_time:9.41ms}, rpc_errors:{region_not_found:1},regionMiss_backoff:{num:1, total_time:10.4ms}, time_detail: {total_process_time: 6ms}, resolve_lock_time:100.5µs, scan_detail: {total_process_keys: 5, total_process_keys_size: 12, total_keys: 9, get_snapshot_time: 1.23ms, ia: {cache_hit_count: 3, remote_read_segment_bytes: 1.50 KB, remote_read_segment_wait_time: 11µs}, rocksdb: {delete_skipped_count: 1, block: {cache_hit_count: 2, read_byte: 1.50 KB, read_time: 12.3µs}}}"
         );
+    }
+
+    #[test]
+    fn read_pool_details_merge_clone_and_format_like_client_go() {
+        let stats = SnapshotRuntimeStats::new();
+        stats.record_exec_detail(&kvrpcpb::ExecDetailsV2 {
+            read_pool_task_details: Some(kvrpcpb::PoolTaskDetails {
+                poll_count: 2,
+                dispatch_count: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            stats.to_string(),
+            "read_pool:{tasks:1, poll_count:{total:2, avg:2, max:2, min:2}, dispatch_count:{total:1, max:1, min:1}, fair_queue:{enabled:false, waited_task_slices:{total:0, max:0, min:0}}}"
+        );
+        let details = stats.read_pool_task_details().unwrap();
+        assert_eq!(details.task_count, 1);
+        assert_eq!(details.poll_count, 2);
+        assert_eq!(details.dispatch_count, 1);
+
+        let cloned = stats.clone();
+        stats.record_exec_detail(&kvrpcpb::ExecDetailsV2 {
+            read_pool_task_details: Some(kvrpcpb::PoolTaskDetails {
+                poll_count: 4,
+                dispatch_count: 3,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        assert_eq!(cloned.read_pool_task_details().unwrap(), details);
+        cloned.merge(&stats);
+        let merged = cloned.read_pool_task_details().unwrap();
+        assert_eq!(merged.task_count, 3);
+        assert_eq!(merged.poll_count, 8);
+        assert_eq!(merged.min_poll_count, 2);
+        assert_eq!(merged.max_poll_count, 4);
     }
 
     #[test]

@@ -154,6 +154,12 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
         self
     }
 
+    /// Set client-go's request-source attribution on every shard and retry.
+    pub fn request_source(mut self, request_source: impl Into<String>) -> Self {
+        self.plan.request.set_request_source(request_source.into());
+        self
+    }
+
     /// Select replicas for this read using client-go's region selector. The
     /// setting is retained through shard and retry clones; leader is default.
     pub fn replica_read(mut self, config: ReplicaReadConfig) -> Self {
@@ -372,6 +378,8 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 snapshot_lock_backoff: None,
                 response_locks_only: false,
                 prewrite_lock_conflict: None,
+                max_timestamp_point_get: false,
+                record_async_batch_get_metric: false,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -428,6 +436,8 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 snapshot_runtime_stats,
                 response_locks_only: false,
                 prewrite_lock_conflict: None,
+                max_timestamp_point_get: false,
+                record_async_batch_get_metric: false,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -481,6 +491,8 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 snapshot_runtime_stats,
                 response_locks_only: true,
                 prewrite_lock_conflict: None,
+                max_timestamp_point_get: false,
+                record_async_batch_get_metric: false,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -627,6 +639,12 @@ where
     P::Result: HasLocks,
     Ph: PlanBuilderPhase,
 {
+    /// Apply client-go's latest-version autocommit point-get lock rule.
+    pub(crate) fn max_timestamp_point_get(mut self, enabled: bool) -> Self {
+        self.plan.max_timestamp_point_get = enabled;
+        self
+    }
+
     /// Apply client-go's prewrite-only lock policy before generic resolution.
     /// `NoResolvePolicy` rejects every holder, while optimistic prewrite also
     /// rejects a holder newer than the transaction because resolution cannot
@@ -689,7 +707,9 @@ where
                 .as_ref()
                 .map(|stats| stats.region_request_runtime_stats()),
         );
-        self.make_retry_multi_region(SnapshotRegionBackoff::new(backoff, stats, variables), false)
+        let snapshot_backoff = SnapshotRegionBackoff::new(backoff, stats, variables);
+        self.plan.set_snapshot_retry_owner(snapshot_backoff.owner());
+        self.make_retry_multi_region(snapshot_backoff, false)
     }
 
     /// Use client-go's cumulative retry accounting for a request path that
@@ -727,6 +747,8 @@ where
                 backoff,
                 preserve_region_results,
                 concurrency: concurrency.max(1),
+                one_region: None,
+                snapshot_region_scope: None,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -735,6 +757,68 @@ where
             ru_details: self.ru_details,
             phantom: PhantomData,
         }
+    }
+}
+
+impl<PdC, P, R> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, R>, Targetted>
+where
+    PdC: PdClient,
+    P: Plan + Shardable,
+    P::Result: HasKeyErrors + HasRegionError,
+    R: RegionRetryState,
+{
+    /// Limit this retry owner to the current scanner boundary region.
+    pub(crate) fn one_region(mut self, reverse: bool) -> Self {
+        self.plan.one_region = Some(reverse);
+        self
+    }
+
+    /// Record the source snapshot's initial distinct-region count.
+    pub(crate) fn observe_snapshot_regions(mut self, internal: bool) -> Self {
+        self.plan.snapshot_region_scope = Some(internal);
+        self
+    }
+}
+
+impl<PdC, P, Ph> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
+where
+    PdC: PdClient,
+    P: Plan + Shardable,
+    P::Result: HasLocks,
+    Ph: PlanBuilderPhase,
+{
+    /// Scanner `Next` owns retry sleeps locally and does not merge them into
+    /// `SnapshotRuntimeStats`; keep RPC and resolve-lock detail collection.
+    pub(crate) fn without_snapshot_lock_backoff_stats(mut self) -> Self {
+        if let Some(backoff) = self.plan.snapshot_lock_backoff.as_mut() {
+            backoff.clear_stats();
+        }
+        self
+    }
+}
+
+impl<PdC, P> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, SnapshotRegionBackoff>, Targetted>
+where
+    PdC: PdClient,
+    P: Plan + Shardable,
+    P::Result: HasKeyErrors + HasRegionError,
+{
+    /// Reuse one client-go scanner Backoffer while a refill crosses empty
+    /// regions and resolves pair-local locks.
+    pub(crate) fn snapshot_retry_owner(
+        mut self,
+        owner: Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
+    ) -> Self {
+        self.plan.backoff.set_owner(Arc::clone(&owner));
+        self.plan.inner.set_snapshot_retry_owner(owner);
+        self
+    }
+
+    /// Preserve scanner RPC/error collection while leaving its local retry
+    /// sleeps out of snapshot runtime stats, matching client-go.
+    pub(crate) fn without_snapshot_region_backoff_stats(mut self) -> Self {
+        self.plan.backoff.clear_stats();
+        self
     }
 }
 

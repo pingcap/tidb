@@ -245,6 +245,23 @@ pub trait Shardable {
     fn disable_stale_read_after_lock(&mut self) -> bool {
         false
     }
+
+    /// Bind snapshot region and lock retries to one source Backoffer owner.
+    #[doc(hidden)]
+    fn set_snapshot_retry_owner(
+        &mut self,
+        _owner: Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
+    ) {
+    }
+
+    /// Narrow a source batch-get retry to keys whose item results were locked.
+    fn retry_only_lock_keys(&mut self, _locks: &[crate::proto::kvrpcpb::LockInfo]) -> bool {
+        false
+    }
+
+    /// Enable client-go async BatchGet outcome accounting for the first
+    /// response of this initial concurrent shard.
+    fn set_async_batch_get_metrics(&mut self, _enabled: bool) {}
 }
 
 impl<P, Pr> Shardable for ProcessResponse<P, Pr>
@@ -253,6 +270,13 @@ where
     Pr: Process<P::Result>,
 {
     impl_inner_shardable!();
+
+    fn set_snapshot_retry_owner(
+        &mut self,
+        owner: Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
+    ) {
+        self.inner.set_snapshot_retry_owner(owner);
+    }
 }
 
 impl<P> Shardable for CountLockResolverAction<P>
@@ -260,6 +284,13 @@ where
     P: Plan + Shardable,
 {
     impl_inner_shardable!();
+
+    fn set_snapshot_retry_owner(
+        &mut self,
+        owner: Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
+    ) {
+        self.inner.set_snapshot_retry_owner(owner);
+    }
 }
 
 pub trait Batchable {
@@ -525,6 +556,25 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         self.replica_read_config.busy_threshold_ms = 0;
         true
     }
+
+    fn retry_only_lock_keys(&mut self, locks: &[crate::proto::kvrpcpb::LockInfo]) -> bool {
+        let keys = locks
+            .iter()
+            .map(|lock| lock.key.clone())
+            .collect::<Vec<_>>();
+        let request = &mut self.request as &mut dyn std::any::Any;
+        if let Some(request) = request.downcast_mut::<crate::proto::kvrpcpb::BatchGetRequest>() {
+            request.keys = keys;
+            true
+        } else if let Some(request) =
+            request.downcast_mut::<crate::proto::kvrpcpb::BufferBatchGetRequest>()
+        {
+            request.keys = keys;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl<Req: KvRequest + NextBatch> NextBatch for Dispatch<Req> {
@@ -621,10 +671,31 @@ impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
     fn disable_stale_read_after_lock(&mut self) -> bool {
         self.inner.disable_stale_read_after_lock()
     }
+
+    fn set_snapshot_retry_owner(
+        &mut self,
+        owner: Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
+    ) {
+        self.inner.set_snapshot_retry_owner(owner);
+    }
 }
 
 impl<P: Plan + Shardable, PdC: PdClient> Shardable for ResolveLock<P, PdC> {
     impl_inner_shardable!();
+
+    fn set_snapshot_retry_owner(
+        &mut self,
+        owner: Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
+    ) {
+        self.inner.set_snapshot_retry_owner(Arc::clone(&owner));
+        if let Some(backoff) = self.snapshot_lock_backoff.as_mut() {
+            backoff.set_owner(owner);
+        }
+    }
+
+    fn set_async_batch_get_metrics(&mut self, enabled: bool) {
+        self.record_async_batch_get_metric = enabled;
+    }
 }
 
 impl<P: Plan + Shardable, PdC: PdClient> Shardable for CleanupLocks<P, PdC> {

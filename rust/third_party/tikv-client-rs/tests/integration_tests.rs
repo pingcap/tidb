@@ -1,5 +1,6 @@
 #![cfg(feature = "integration-tests")]
 #![allow(clippy::result_large_err)]
+#![recursion_limit = "256"]
 
 //! # Naming convention
 //!

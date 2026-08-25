@@ -79,6 +79,23 @@ macro_rules! pair_locks {
                     .into_iter()
                     .collect()
             }
+
+            fn take_clean_result_for_lock_retry(&mut self) -> Option<Self> {
+                if self.error.is_some() {
+                    return None;
+                }
+                let mut clean = Self::default();
+                clean.pairs = std::mem::take(&mut self.pairs)
+                    .into_iter()
+                    .filter(|pair| pair.error.is_none())
+                    .collect();
+                Some(clean)
+            }
+
+            fn merge_clean_lock_retry_result(&mut self, mut clean: Self) {
+                clean.pairs.append(&mut self.pairs);
+                self.pairs = clean.pairs;
+            }
         }
     };
 }
@@ -421,6 +438,41 @@ impl Merge<ScannerBatchResponse> for CollectScannerPairs {
             .into_iter()
             .flat_map_ok(|response| response.pairs)
             .collect()
+    }
+}
+
+/// One source scanner refill together with the exact region shard selected by
+/// the retry owner. The shard drives continuation across empty regions.
+pub(crate) struct ScannerRegionBatch {
+    pub(crate) pairs: Vec<kvrpcpb::KvPair>,
+    pub(crate) range: (Vec<u8>, Vec<u8>),
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct CollectScannerRegionBatch;
+
+impl Merge<ResponseWithShard<ScannerBatchResponse, (Vec<u8>, Vec<u8>)>>
+    for CollectScannerRegionBatch
+{
+    type Out = ScannerRegionBatch;
+
+    fn merge(
+        &self,
+        input: Vec<Result<ResponseWithShard<ScannerBatchResponse, (Vec<u8>, Vec<u8>)>>>,
+    ) -> Result<Self::Out> {
+        let mut input = input.into_iter();
+        let response = input
+            .next()
+            .ok_or_else(|| Error::StringError("scanner selected no region".to_owned()))??;
+        if input.next().is_some() {
+            return Err(Error::StringError(
+                "scanner selected more than one region".to_owned(),
+            ));
+        }
+        Ok(ScannerRegionBatch {
+            pairs: response.0.pairs,
+            range: response.1,
+        })
     }
 }
 
