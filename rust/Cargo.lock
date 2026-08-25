@@ -3630,6 +3630,7 @@ dependencies = [
  "tidb-txnkv",
  "tidb-unistore",
  "tidb-util",
+ "tikv-client",
  "tikv-jemalloc-sys",
  "tikv-jemallocator",
  "toml",

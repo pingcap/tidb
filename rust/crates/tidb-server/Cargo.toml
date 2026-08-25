@@ -43,6 +43,7 @@ tidb-parser = { path = "../tidb-parser" }
 tidb-protocol = { path = "../tidb-protocol" }
 tidb-session = { path = "../tidb-session" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+tikv-client.workspace = true
 tidb-util = { path = "../tidb-util" }
 serde_json = { workspace = true }
 tidb-config = { path = "../tidb-config" }
