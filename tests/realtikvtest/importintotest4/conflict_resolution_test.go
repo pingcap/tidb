@@ -587,6 +587,55 @@ func (s *mockGCSSuite) TestGlobalSortFunctionalIndexConflictAfterAddingVisibleCo
 	s.tk.MustExec("admin check table t")
 }
 
+func (s *mockGCSSuite) TestGlobalSortFunctionalIndexNullConflictAfterAddingVisibleColumn() {
+	if kerneltype.IsClassic() {
+		s.T().Skip("requires the NextGen MinIO object store")
+	}
+
+	sourceStore, err := handle.NewObjStore(s.ctx, realtikvtest.GetNextGenObjStoreURI("issue-70578"))
+	s.NoError(err)
+	s.T().Cleanup(func() {
+		s.NoError(sourceStore.DeleteFile(s.ctx, "issue-70578.csv"))
+		sourceStore.Close()
+	})
+	s.NoError(sourceStore.WriteFile(s.ctx, "issue-70578.csv", []byte("1,10,\\N\n2,10,\\N\n")))
+
+	s.prepareAndUseDB("issue_70578")
+	s.tk.MustExec(`create table t (
+		id bigint primary key clustered,
+		a int,
+		unique key uk_expr ((a + 1))
+	)`)
+	s.tk.MustExec("alter table t add column tail int")
+
+	result := s.tk.MustQuery(fmt.Sprintf(`import into t from '%s'
+		with on_duplicate_key='capture', cloud_storage_uri='%s'`,
+		realtikvtest.GetNextGenObjStoreURI("issue-70578/*.csv"),
+		realtikvtest.GetNextGenObjStoreURI("issue-70578-sort"))).Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+
+	rows := s.tk.MustQuery("select summary from mysql.tidb_import_jobs where id = ?", jobID).Rows()
+	s.Len(rows, 1)
+	var summary importer.Summary
+	s.NoError(json.Unmarshal([]byte(rows[0][0].(string)), &summary))
+	s.Zero(summary.ImportedRows)
+	s.EqualValues(2, summary.ConflictRowCnt)
+
+	s.tk.MustQuery("select * from t").Check(testkit.Rows())
+	s.tk.MustQuery("select * from t force index (uk_expr)").Check(testkit.Rows())
+	s.tk.MustExec("admin check table t")
+
+	s.tk.MustExec("insert into t values (3, 10, NULL)")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("3 10 <nil>"))
+	s.tk.MustQuery("select * from t force index (uk_expr)").Check(testkit.Rows("3 10 <nil>"))
+	s.tk.MustContainErrMsg("insert into t values (4, 10, NULL)", "Duplicate entry '11' for key 't.uk_expr'")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("3 10 <nil>"))
+	s.tk.MustQuery("select * from t force index (uk_expr)").Check(testkit.Rows("3 10 <nil>"))
+	s.tk.MustExec("admin check table t")
+}
+
 func (s *mockGCSSuite) TestGlobalSortConflictResolutionMultipleSubtasks() {
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
