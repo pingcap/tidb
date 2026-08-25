@@ -138,9 +138,27 @@ pub(super) fn group_mutations<C, L>(
 where
     L: RegionLoader,
 {
+    // Mutations arrive in validated key order, so a walk that keeps the last
+    // location routes every same-region run with the lookup it already paid
+    // for. Go `GroupMutationsByRegion` (`2pc.go`) does the same pass over its
+    // sorted mutations; one cache probe per region instead of per key is what
+    // keeps a cold commit's control-plane cost at one lookup per region.
     let mut grouped: BTreeMap<RegionVerId, (Route, Vec<OptimisticMutation>)> = BTreeMap::new();
+    let mut cursor: Option<(Route, Vec<u8>)> = None;
     for mutation in mutations {
+        if let Some((route, end)) = &cursor {
+            let covered = end.is_empty() || mutation.key() < end.as_slice();
+            if covered {
+                grouped
+                    .entry(route.region)
+                    .or_insert_with(|| (route.clone(), Vec::new()))
+                    .1
+                    .push(mutation.clone());
+                continue;
+            }
+        }
         let route = locate_route(runtime, mutation.key())?;
+        cursor = Some((route.clone(), route.region_end_key.clone()));
         grouped
             .entry(route.region)
             .or_insert_with(|| (route.clone(), Vec::new()))
@@ -173,9 +191,25 @@ where
     let mut sorted = keys.to_vec();
     sorted.sort();
     sorted.dedup();
+    // Same region-run walk as `group_mutations`: sorted keys inside one region
+    // reuse the route their first member already paid for, so a commit spanning
+    // N regions costs N lookups no matter how many keys each region holds.
     let mut grouped: BTreeMap<RegionVerId, (Route, Vec<Vec<u8>>)> = BTreeMap::new();
+    let mut cursor: Option<(Route, Vec<u8>)> = None;
     for key in sorted {
+        if let Some((route, end)) = &cursor {
+            let covered = end.is_empty() || key.as_slice() < end.as_slice();
+            if covered {
+                grouped
+                    .entry(route.region)
+                    .or_insert_with(|| (route.clone(), Vec::new()))
+                    .1
+                    .push(key);
+                continue;
+            }
+        }
         let route = locate_route(runtime, &key)?;
+        cursor = Some((route.clone(), route.region_end_key.clone()));
         grouped
             .entry(route.region)
             .or_insert_with(|| (route.clone(), Vec::new()))
