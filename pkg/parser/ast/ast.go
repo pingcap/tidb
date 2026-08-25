@@ -38,8 +38,11 @@ type Node interface {
 	// later elements depends on former elements. Finally, return visitor.Leave.
 	Accept(v Visitor) (node Node, ok bool)
 	// AcceptInPlace accepts InPlaceVisitor to visit itself without replacing nodes.
+	// It is separate from Accept to avoid the runtime replacement checks and child
+	// writebacks that would otherwise make in-place traversal significantly slower.
 	// Implementations must use the same traversal order and control flow as Accept,
-	// but must not assign visitor callback results back to the AST.
+	// but must not assign visitor callback results back to the AST. The generator
+	// derives AcceptInPlace implementations from Accept to keep them in sync.
 	AcceptInPlace(v InPlaceVisitor) bool
 	// Text returns the utf8 encoding text of the element.
 	Text() string
