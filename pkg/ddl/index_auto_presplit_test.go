@@ -45,7 +45,7 @@ const autoPreSplitTestTableSQL = "create table t(a bigint, b bigint, index idx(b
 type fakeAutoPreSplitStatsProvider struct {
 	stats                 *statistics.Table
 	getPhysicalTableStats func()
-	loadColumnStats       func(context.Context, sessionctx.Context, int64, *model.ColumnInfo, int) (*statistics.Column, error)
+	readColumnStats       func(context.Context, sessionctx.Context, int64, *model.ColumnInfo, int) (*statistics.Column, error)
 }
 
 func (p *fakeAutoPreSplitStatsProvider) GetPhysicalTableStats(int64, *model.TableInfo) *statistics.Table {
@@ -55,17 +55,17 @@ func (p *fakeAutoPreSplitStatsProvider) GetPhysicalTableStats(int64, *model.Tabl
 	return p.stats
 }
 
-func (p *fakeAutoPreSplitStatsProvider) LoadColumnDistributionStats(
+func (p *fakeAutoPreSplitStatsProvider) ReadColumnDistributionStats(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalTableID int64,
 	colInfo *model.ColumnInfo,
 	maxTopNKeys int,
 ) (*statistics.Column, error) {
-	if p.loadColumnStats == nil {
-		return nil, errors.New("unexpected column stats load")
+	if p.readColumnStats == nil {
+		return nil, errors.New("unexpected column stats read")
 	}
-	return p.loadColumnStats(ctx, sctx, physicalTableID, colInfo, maxTopNKeys)
+	return p.readColumnStats(ctx, sctx, physicalTableID, colInfo, maxTopNKeys)
 }
 
 type fakeAutoPreSplitStore struct {
@@ -113,26 +113,28 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 	setAutoPreSplitTestHistogram(
 		t, statsTbl.GetCol(tblInfo.Columns[1].ID), tblInfo.Columns[1], 25,
 		types.MakeDatums(20, 40, 60, 80, 100), []int64{10, 10, 10, 10, 10})
-	keys, _, err := planAutoPreSplitIndexRegions(
+	plan, err := planAutoPreSplitWithCache(
 		context.Background(), sctx, &fakeAutoPreSplitStatsProvider{stats: statsTbl},
-		tblInfo, idxInfo, cfg)
+		tblInfo, idxInfo, cfg, nil)
 	require.NoError(t, err)
-	require.Equal(t, []string{"", "10", "50", "80"}, splitKeyFirstValuesForIndex(t, keys, idxInfo.ID))
+	require.Equal(t, autoPreSplitPlanStatePlanned, plan.state)
+	require.Equal(t, []string{"", "10", "50", "80"},
+		splitKeyFirstValuesForIndex(t, plan.splitKeys, idxInfo.ID))
 
 	t.Run("bounded cached TopN", func(t *testing.T) {
 		const topNSize = 1000
-		values := make([]int64, topNSize)
+		topNValues := make([]int64, topNSize)
 		counts := make([]uint64, topNSize)
 		for i := range topNSize {
-			values[i] = int64(i + 1)
+			topNValues[i] = int64(i + 1)
 			counts[i] = uint64(i + 1)
 		}
-		topN := buildAutoPreSplitTopN(t, sctx.GetSessionVars().StmtCtx.TimeZone(), values, counts)
-		events, err := buildAutoPreSplitTopNEvents(sctx, topN, tblInfo.Columns[1], 5)
+		topN := buildAutoPreSplitTopN(t, sctx.GetSessionVars().StmtCtx.TimeZone(), topNValues, counts)
+		weightedValues, err := buildAutoPreSplitTopNValues(sctx, topN, tblInfo.Columns[1], 5)
 		require.NoError(t, err)
-		require.Len(t, events, 5)
-		for i, event := range events {
-			require.Equal(t, int64(i+1), event.value.GetInt64())
+		require.Len(t, weightedValues, 5)
+		for i, value := range weightedValues {
+			require.Equal(t, int64(i+1), value.value.GetInt64())
 		}
 	})
 
@@ -150,7 +152,7 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 		planCtx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		provider := &fakeAutoPreSplitStatsProvider{stats: statsTbl}
-		provider.loadColumnStats = func(
+		provider.readColumnStats = func(
 			loadCtx context.Context,
 			_ sessionctx.Context,
 			physicalTableID int64,
@@ -166,10 +168,12 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 			return loadedStats.GetCol(tblInfo.Columns[1].ID), nil
 		}
 
-		keys, _, err := planAutoPreSplitIndexRegions(
-			planCtx, sctx, provider, tblInfo, idxInfo, cfg)
+		plan, err := planAutoPreSplitWithCache(
+			planCtx, sctx, provider, tblInfo, idxInfo, cfg, nil)
 		require.NoError(t, err)
-		require.Equal(t, []string{"10", "40", "60", "90"}, splitKeyFirstValuesForIndex(t, keys, idxInfo.ID))
+		require.Equal(t, autoPreSplitPlanStatePlanned, plan.state)
+		require.Equal(t, []string{"10", "40", "60", "90"},
+			splitKeyFirstValuesForIndex(t, plan.splitKeys, idxInfo.ID))
 	})
 
 	t.Run("statistics load timeout skips AUTO", func(t *testing.T) {
@@ -179,7 +183,7 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 		statsTbl.GetCol(tblInfo.Columns[1].ID).StatsLoadedStatus =
 			statistics.NewStatsAllEvictedStatus()
 		provider := &fakeAutoPreSplitStatsProvider{stats: statsTbl}
-		provider.loadColumnStats = func(
+		provider.readColumnStats = func(
 			loadCtx context.Context,
 			_ sessionctx.Context,
 			_ int64,
@@ -190,18 +194,26 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 			return nil, loadCtx.Err()
 		}
 
-		keys, reason, err := planAutoPreSplitIndexRegions(
-			context.Background(), sctx, provider, tblInfo, idxInfo, timeoutCfg)
+		plan, err := planAutoPreSplitWithCache(
+			context.Background(), sctx, provider, tblInfo, idxInfo, timeoutCfg, nil)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
-		require.Empty(t, keys)
-		require.Empty(t, reason)
+		require.Equal(t, autoPreSplitPlanStateInvalid, plan.state)
+		require.Empty(t, plan.splitKeys)
+		require.Empty(t, plan.skipReason)
 	})
 
 	defaultCfg := getAutoPreSplitConfig()
 	require.Equal(t, int(vardef.MaxTiDBAnalyzeDefaultNumTopN), defaultCfg.maxTopNKeysPerPhysical)
 	require.Equal(t, 30*time.Second, defaultCfg.statsLoadTimeout)
 
-	t.Run("one event crossing multiple thresholds is emitted once", func(t *testing.T) {
+	t.Run("invalid plan results are rejected", func(t *testing.T) {
+		_, err := plannedAutoPreSplitResult(nil)
+		require.ErrorContains(t, err, "no split keys")
+		_, err = skippedAutoPreSplitResult("")
+		require.ErrorContains(t, err, "no reason")
+	})
+
+	t.Run("one value crossing multiple thresholds is emitted once", func(t *testing.T) {
 		topN := buildAutoPreSplitTopN(
 			t, sctx.GetSessionVars().StmtCtx.TimeZone(),
 			[]int64{10}, []uint64{60})
@@ -210,11 +222,13 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 			t, statsTbl.GetCol(tblInfo.Columns[1].ID), tblInfo.Columns[1], 0,
 			types.MakeDatums(20, 40), []int64{20, 20})
 
-		keys, _, err := planAutoPreSplitIndexRegions(
+		plan, err := planAutoPreSplitWithCache(
 			context.Background(), sctx, &fakeAutoPreSplitStatsProvider{stats: statsTbl},
-			tblInfo, idxInfo, cfg)
+			tblInfo, idxInfo, cfg, nil)
 		require.NoError(t, err)
-		require.Equal(t, []string{"10", "20"}, splitKeyFirstValuesForIndex(t, keys, idxInfo.ID))
+		require.Equal(t, autoPreSplitPlanStatePlanned, plan.state)
+		require.Equal(t, []string{"10", "20"},
+			splitKeyFirstValuesForIndex(t, plan.splitKeys, idxInfo.ID))
 	})
 
 	t.Run("equal TopN and Histogram values are merged", func(t *testing.T) {
@@ -228,11 +242,13 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 
 		equalCfg := cfg
 		equalCfg.boundaryRatioStep = 0.5
-		keys, _, err := planAutoPreSplitIndexRegions(
+		plan, err := planAutoPreSplitWithCache(
 			context.Background(), sctx, &fakeAutoPreSplitStatsProvider{stats: statsTbl},
-			tblInfo, idxInfo, equalCfg)
+			tblInfo, idxInfo, equalCfg, nil)
 		require.NoError(t, err)
-		require.Equal(t, []string{"10"}, splitKeyFirstValuesForIndex(t, keys, idxInfo.ID))
+		require.Equal(t, autoPreSplitPlanStatePlanned, plan.state)
+		require.Equal(t, []string{"10"},
+			splitKeyFirstValuesForIndex(t, plan.splitKeys, idxInfo.ID))
 	})
 
 	for _, tc := range []struct {
@@ -245,14 +261,14 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 		{name: "1", boundaryRatioStep: 1, expected: 0},
 	} {
 		t.Run("boundary ratio step "+tc.name, func(t *testing.T) {
-			events := make([]autoPreSplitEvent, 0, 100)
+			values := make([]autoPreSplitValue, 0, 100)
 			for value := int64(1); value <= 100; value++ {
-				event, err := newAutoPreSplitEvent(
+				weightedValue, err := newAutoPreSplitValue(
 					sctx, types.NewIntDatum(value), 1, tblInfo.Columns[1])
 				require.NoError(t, err)
-				events = append(events, event)
+				values = append(values, weightedValue)
 			}
-			rows := sampleAutoPreSplitEvents(events, 100, tc.boundaryRatioStep)
+			rows := sampleAutoPreSplitValues(values, 100, tc.boundaryRatioStep)
 			require.Len(t, rows, tc.expected)
 		})
 	}
@@ -264,7 +280,7 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 		cachedStats.GetCol(tblInfo.Columns[1].ID).StatsLoadedStatus =
 			statistics.NewStatsAllEvictedStatus()
 		provider := &fakeAutoPreSplitStatsProvider{stats: cachedStats}
-		provider.loadColumnStats = func(
+		provider.readColumnStats = func(
 			context.Context,
 			sessionctx.Context,
 			int64,
@@ -274,11 +290,12 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 			return nil, loadErr
 		}
 
-		keys, reason, err := planAutoPreSplitIndexRegions(
-			context.Background(), sctx, provider, tblInfo, idxInfo, cfg)
+		plan, err := planAutoPreSplitWithCache(
+			context.Background(), sctx, provider, tblInfo, idxInfo, cfg, nil)
 		require.ErrorIs(t, err, loadErr)
-		require.Empty(t, keys)
-		require.Empty(t, reason)
+		require.Equal(t, autoPreSplitPlanStateInvalid, plan.state)
+		require.Empty(t, plan.splitKeys)
+		require.Empty(t, plan.skipReason)
 	})
 
 	for _, collation := range []string{"utf8mb4_general_ci", "utf8mb4_bin"} {
@@ -294,15 +311,16 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 			statsTbl := buildAutoPreSplitTestStats(
 				stringTblInfo.ID, 90, 0, stringTblInfo.Columns[1], topN)
 
-			events, err := buildAutoPreSplitTopNEvents(
+			weightedValues, err := buildAutoPreSplitTopNValues(
 				sctx, topN, stringTblInfo.Columns[1], cfg.maxTopNKeysPerPhysical)
 			require.NoError(t, err)
-			require.Equal(t, types.KindBytes, events[0].value.Kind())
+			require.Equal(t, types.KindBytes, weightedValues[0].value.Kind())
 
-			keys, _, err := planAutoPreSplitIndexRegions(
+			plan, err := planAutoPreSplitWithCache(
 				context.Background(), sctx, &fakeAutoPreSplitStatsProvider{stats: statsTbl},
-				stringTblInfo, stringIdxInfo, collationCfg)
+				stringTblInfo, stringIdxInfo, collationCfg, nil)
 			require.NoError(t, err)
+			require.Equal(t, autoPreSplitPlanStatePlanned, plan.state)
 
 			expectedRows := make([][]types.Datum, 0, len(values))
 			for _, value := range values {
@@ -313,19 +331,20 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 			expectedKeys, err := getSplitIdxKeysFromValueList(
 				sctx, stringTblInfo, stringIdxInfo, expectedRows)
 			require.NoError(t, err)
-			require.Equal(t, sortAndDedupeAutoPreSplitKeys(expectedKeys), keys)
+			require.Equal(t, sortAndDedupeAutoPreSplitKeys(expectedKeys), plan.splitKeys)
 		})
 	}
 
 	t.Run("V1 statistics are skipped", func(t *testing.T) {
 		statsTbl := buildAutoPreSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], nil)
 		statsTbl.GetCol(tblInfo.Columns[1].ID).StatsVer = statistics.Version1
-		keys, reason, err := planAutoPreSplitIndexRegions(
+		plan, err := planAutoPreSplitWithCache(
 			context.Background(), sctx, &fakeAutoPreSplitStatsProvider{stats: statsTbl},
-			tblInfo, idxInfo, cfg)
+			tblInfo, idxInfo, cfg, nil)
 		require.NoError(t, err)
-		require.Empty(t, keys)
-		require.Equal(t, "leading column stats version 1 is not Analyze V2", reason)
+		require.Equal(t, autoPreSplitPlanStateSkipped, plan.state)
+		require.Empty(t, plan.splitKeys)
+		require.Equal(t, "leading column stats version 1 is not Analyze V2", plan.skipReason)
 	})
 }
 
@@ -363,11 +382,12 @@ func TestPlanAutoPreSplitIndexRegionsSkipUnreliableStats(t *testing.T) {
 		{&fakeAutoPreSplitStatsProvider{stats: prefixStats}, prefixTblInfo, prefixIdxInfo, "leading string column uses prefix index"},
 	} {
 		t.Run(tc.reason, func(t *testing.T) {
-			keys, reason, err := planAutoPreSplitIndexRegions(
-				context.Background(), sctx, tc.provider, tc.tblInfo, tc.idxInfo, cfg)
+			plan, err := planAutoPreSplitWithCache(
+				context.Background(), sctx, tc.provider, tc.tblInfo, tc.idxInfo, cfg, nil)
 			require.NoError(t, err)
-			require.Empty(t, keys)
-			require.Equal(t, tc.reason, reason)
+			require.Equal(t, autoPreSplitPlanStateSkipped, plan.state)
+			require.Empty(t, plan.splitKeys)
+			require.Equal(t, tc.reason, plan.skipReason)
 		})
 	}
 }
@@ -424,7 +444,7 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 			statistics.NewStatsAllEvictedStatus()
 		loadErr := errors.New("statistics unavailable")
 		provider := &fakeAutoPreSplitStatsProvider{stats: cachedStats}
-		provider.loadColumnStats = func(
+		provider.readColumnStats = func(
 			context.Context,
 			sessionctx.Context,
 			int64,
@@ -459,7 +479,7 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 
 		loadCount := 0
 		provider := &fakeAutoPreSplitStatsProvider{stats: evictedStats}
-		provider.loadColumnStats = func(
+		provider.readColumnStats = func(
 			context.Context,
 			sessionctx.Context,
 			int64,
@@ -551,7 +571,7 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 		ctx, cancel := context.WithCancelCause(context.Background())
 		pauseErr := dbterror.ErrPausedDDLJob.FastGenByArgs(2)
 		provider := &fakeAutoPreSplitStatsProvider{stats: statsTbl}
-		provider.loadColumnStats = func(
+		provider.readColumnStats = func(
 			loadCtx context.Context,
 			_ sessionctx.Context,
 			_ int64,

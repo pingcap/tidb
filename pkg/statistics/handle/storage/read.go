@@ -88,12 +88,42 @@ func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.Ta
 	return histMetaFromStorage(util.StatsCtx, sctx, item, possibleColInfo, 0, kv.PriorityHigh)
 }
 
-// LoadColumnDistributionStats loads one column's metadata, TopN, and Histogram
-// from one MVCC snapshot with normal priority. Any loading or decoding failure
-// aborts the whole load so callers never plan with a partial distribution.
-// maxTopNKeys limits the loaded TopN entries, while Histogram always loads all
-// buckets.
-func LoadColumnDistributionStats(
+func histMetaFromStorage(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	item *model.TableItemID,
+	possibleColInfo *model.ColumnInfo,
+	snapshot uint64,
+	priority int,
+) (*statistics.Histogram, int64, error) {
+	isIndex := 0
+	var tp *types.FieldType
+	if item.IsIndex {
+		isIndex = 1
+		tp = types.NewFieldType(mysql.TypeBlob)
+	} else {
+		tp = &possibleColInfo.FieldType
+	}
+	sql := statsSelectPrefix(priority) + "distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?"
+	rows, _, err := execRowsAtSnapshot(
+		ctx, sctx, snapshot, sql, item.TableID, item.ID, isIndex)
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(rows) == 0 {
+		return nil, 0, nil
+	}
+	hist := statistics.NewHistogram(item.ID, rows[0].GetInt64(0), rows[0].GetInt64(2), rows[0].GetUint64(1), tp, chunk.InitialCapacity, rows[0].GetInt64(3))
+	hist.Correlation = rows[0].GetFloat64(5)
+	return hist, rows[0].GetInt64(4), nil
+}
+
+// ReadColumnDistributionStats reads one column's metadata, TopN, and Histogram
+// from one MVCC snapshot with normal priority. Any read or decoding failure
+// aborts the whole read so callers never plan with a partial distribution.
+// maxTopNKeys limits how many TopN entries are read, while Histogram always
+// reads all buckets. It does not update the statistics cache.
+func ReadColumnDistributionStats(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalTableID int64,
@@ -169,36 +199,6 @@ func LoadColumnDistributionStats(
 		column.Histogram = *histogram
 	}
 	return column, nil
-}
-
-func histMetaFromStorage(
-	ctx context.Context,
-	sctx sessionctx.Context,
-	item *model.TableItemID,
-	possibleColInfo *model.ColumnInfo,
-	snapshot uint64,
-	priority int,
-) (*statistics.Histogram, int64, error) {
-	isIndex := 0
-	var tp *types.FieldType
-	if item.IsIndex {
-		isIndex = 1
-		tp = types.NewFieldType(mysql.TypeBlob)
-	} else {
-		tp = &possibleColInfo.FieldType
-	}
-	sql := statsSelectPrefix(priority) + "distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?"
-	rows, _, err := execRowsAtSnapshot(
-		ctx, sctx, snapshot, sql, item.TableID, item.ID, isIndex)
-	if err != nil {
-		return nil, 0, err
-	}
-	if len(rows) == 0 {
-		return nil, 0, nil
-	}
-	hist := statistics.NewHistogram(item.ID, rows[0].GetInt64(0), rows[0].GetInt64(2), rows[0].GetUint64(1), tp, chunk.InitialCapacity, rows[0].GetInt64(3))
-	hist.Correlation = rows[0].GetFloat64(5)
-	return hist, rows[0].GetInt64(4), nil
 }
 
 // HistogramFromStorageWithPriority wraps the HistogramFromStorage with the given kv.Priority.

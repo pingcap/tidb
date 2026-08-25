@@ -56,7 +56,7 @@ func TestLoadStats(t *testing.T) {
 	idxBID := tableInfo.Indices[0].ID
 	h := dom.StatsHandle()
 
-	loaded, err := storage.LoadColumnDistributionStats(
+	loaded, err := storage.ReadColumnDistributionStats(
 		context.Background(), testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 1)
 	require.NoError(t, err)
 	require.Len(t, loaded.TopN.TopN, 1)
@@ -64,7 +64,7 @@ func TestLoadStats(t *testing.T) {
 	require.Len(t, loaded.Histogram.Buckets, 2)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = storage.LoadColumnDistributionStats(
+	_, err = storage.ReadColumnDistributionStats(
 		ctx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 1)
 	require.ErrorIs(t, err, context.Canceled)
 
@@ -78,7 +78,7 @@ func TestLoadStats(t *testing.T) {
 				tableInfo.ID, tableInfo.Columns[1].ID)
 		})
 
-		loaded, loadErr := storage.LoadColumnDistributionStats(
+		loaded, loadErr := storage.ReadColumnDistributionStats(
 			context.Background(), testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 1)
 		require.ErrorContains(t, loadErr, "negative null count")
 		require.Nil(t, loaded)
@@ -110,7 +110,7 @@ func TestLoadStats(t *testing.T) {
 			require.NoError(t, failpoint.Disable(histogramFailpointName))
 		})
 
-		loaded, loadErr := storage.LoadColumnDistributionStats(
+		loaded, loadErr := storage.ReadColumnDistributionStats(
 			loadCtx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 1)
 		require.ErrorIs(t, loadErr, context.Canceled)
 		require.Nil(t, loaded)
@@ -131,7 +131,7 @@ func TestLoadStats(t *testing.T) {
 			require.NoError(t, failpoint.Disable(failpointName))
 		})
 
-		loaded, loadErr := storage.LoadColumnDistributionStats(
+		loaded, loadErr := storage.ReadColumnDistributionStats(
 			loadCtx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 0)
 		require.ErrorIs(t, loadErr, context.Canceled)
 		require.Nil(t, loaded)
@@ -178,7 +178,7 @@ func TestLoadStats(t *testing.T) {
 	require.True(t, idx.IsFullLoad())
 }
 
-func TestLoadColumnDistributionStatsUsesOneSnapshot(t *testing.T) {
+func TestReadColumnDistributionStatsUsesOneSnapshot(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	writerTK := testkit.NewTestKit(t, store)
@@ -195,7 +195,7 @@ func TestLoadColumnDistributionStatsUsesOneSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colInfo := tblInfo.Columns[1]
-	before, err := storage.LoadColumnDistributionStats(
+	before, err := storage.ReadColumnDistributionStats(
 		context.Background(), tk.Session(), tblInfo.ID, colInfo, 2)
 	require.NoError(t, err)
 
@@ -231,7 +231,7 @@ func TestLoadColumnDistributionStatsUsesOneSnapshot(t *testing.T) {
 	}
 	resultCh := make(chan loadResult, 1)
 	go func() {
-		stats, loadErr := storage.LoadColumnDistributionStats(
+		stats, loadErr := storage.ReadColumnDistributionStats(
 			context.Background(), tk.Session(), tblInfo.ID, colInfo, 2)
 		resultCh <- loadResult{stats: stats, err: loadErr}
 	}()
@@ -251,7 +251,7 @@ func TestLoadColumnDistributionStatsUsesOneSnapshot(t *testing.T) {
 	require.Equal(t, before.TopN, result.stats.TopN)
 	require.Equal(t, before.Histogram, result.stats.Histogram)
 
-	after, err := storage.LoadColumnDistributionStats(
+	after, err := storage.ReadColumnDistributionStats(
 		context.Background(), tk.Session(), tblInfo.ID, colInfo, 2)
 	require.NoError(t, err)
 	require.NotEqual(t, before.LastUpdateVersion, after.LastUpdateVersion)

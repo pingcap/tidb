@@ -129,15 +129,23 @@ func autoPreSplitIndexRegion(
 	boundaryCache map[int64][][]types.Datum,
 	splitOnTempIdx bool,
 ) (splitResult splitIndexRegionResult, skipReason string, err error) {
-	splitKeys, reason, err := planAutoPreSplitWithCache(
+	plan, err := planAutoPreSplitWithCache(
 		ctx, sctx, statsProvider, tblInfo, idxInfo, getAutoPreSplitConfig(), boundaryCache)
 	if err != nil {
 		return splitIndexRegionResult{}, "", err
 	}
-	if len(splitKeys) == 0 {
-		return splitIndexRegionResult{}, reason, nil
+	switch plan.state {
+	case autoPreSplitPlanStateSkipped:
+		return splitIndexRegionResult{}, plan.skipReason, nil
+	case autoPreSplitPlanStatePlanned:
+		// Continue with the planned split keys below.
+	case autoPreSplitPlanStateInvalid:
+		return splitIndexRegionResult{}, "", fmt.Errorf("invalid auto pre-split plan state")
+	default:
+		return splitIndexRegionResult{}, "", fmt.Errorf("unknown auto pre-split plan state %d", plan.state)
 	}
 
+	splitKeys := plan.splitKeys
 	convertIndexSplitKeysForReorgInPlace(splitKeys, splitOnTempIdx)
 	failpoint.InjectCall("beforePresplitIndex", splitKeys)
 	splitResult, err = splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
