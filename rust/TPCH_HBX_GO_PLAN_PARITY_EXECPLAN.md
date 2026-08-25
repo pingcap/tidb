@@ -142,8 +142,8 @@ The source of truth for a behavioral fix is the complete owning Go package and i
 
 - Observation: plan and result parity does not imply the requested performance
   gate. On the 1 GiB fixture, the same five alternating single-client pairs
-  still measure Rust slower for every accepted shape: q1 1.084x, q2 1.224x,
-  flex 1.198x, swap 1.465x, and the 100-row batch INSERT 1.505x by median.
+  still measure Rust slower for every accepted shape: q1 1.136x, q2 1.266x,
+  flex 1.388x, swap 1.645x, and the 100-row batch INSERT 1.365x by median.
   The benchmark is therefore an explicit unresolved performance blocker even
   though correctness is green.
   Evidence: `/private/tmp/hbx-1g-20260825/bench.json` records the raw samples,
@@ -300,7 +300,7 @@ The source of truth for a behavioral fix is the complete owning Go package and i
   Rationale: the user explicitly requires one-concurrency performance not to
   fall behind baseline. The plan/result gate is green, but median Rust is
   slower for q1/q2/flex/swap and the 100-row batch INSERT (the latest ratios
-  are 1.084x/1.224x/1.198x/1.465x/1.505x). Hiding the unfavorable cases behind
+  are 1.136x/1.266x/1.388x/1.645x/1.365x). Hiding the unfavorable cases behind
   a total would violate the acceptance contract.
   Date/Author: 2026-08-26, Codex.
 
@@ -409,9 +409,9 @@ identical SHA-256 result digests, and their normalized `EXPLAIN FORMAT='brief'`
 rows are byte-equal after only database-name normalization. The flex identity
 Projection and swap Limit estimate differences were fixed through general
 `tidb-executor` contracts with focused regressions. The latest five alternating
-pairs show median Go/Rust times of q1 7.582/8.216 ms, q2 6.536/8.000 ms,
-flex 6.743/8.075 ms, swap 14.450/21.171 ms; the 100-row batch INSERT is
-6.028/9.073 ms. Correctness and plan parity pass; the explicit performance
+pairs show median Go/Rust times of q1 7.190/8.170 ms, q2 6.101/7.726 ms,
+flex 6.002/8.333 ms, swap 11.887/19.554 ms; the 100-row batch INSERT is
+7.042/9.610 ms. Correctness and plan parity pass; the explicit performance
 criterion does not. A longer 30-query diagnostic run and 50-batch run show
 the same direction, so this is not reported as a benchmark pass hidden by a
 single outlier.
@@ -622,5 +622,6 @@ or final goal completion is claimed.
 
 Revision note, 2026-08-26 (final runtime refresh): rebuilt release Rust at
 commit `e1bd552c60`, restarted the task-owned endpoint on `127.0.0.1:14019`,
-and refreshed both `compare.json` and `bench.json`. All four plans/results
-remain matched; the medians recorded above are from this final binary.
+and reran the official five-pair benchmark against Go `14000`. All four
+plans/results remain matched; the medians recorded above are from this final
+receipt.
