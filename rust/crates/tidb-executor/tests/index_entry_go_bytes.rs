@@ -168,6 +168,7 @@ fn index(id: i64, unique: bool, offsets: Vec<usize>) -> KvIndex {
         prefix_lengths,
         visible: true,
         global: false,
+        clustered_primary: false,
     }
 }
 
@@ -204,7 +205,7 @@ fn assert_entry(name: &str, written: &Written) {
 #[test]
 fn a_unique_case_insensitive_entry_carries_gos_restored_data() {
     let (mut t, written) = table(vec![column(2, "s", varchar(Collation::Utf8Mb4GeneralCi))]);
-    t.add_index(index(1, true, vec![0]));
+    t.add_index(index(1, true, vec![0]), false);
     t.insert_row(
         &[Datum::new_collation_string(
             b"A".to_vec(),
@@ -224,8 +225,8 @@ fn one_captured_mode_drives_both_kv_index_key_and_value() {
     let columns = vec![column(2, "s", varchar(Collation::Utf8Mb4GeneralCi))];
     let (mut legacy, legacy_written) = table_with_collation(columns.clone(), false);
     let (mut modern, modern_written) = table_with_collation(columns, true);
-    legacy.add_index(index(1, true, vec![0]));
-    modern.add_index(index(1, true, vec![0]));
+    legacy.add_index(index(1, true, vec![0]), false);
+    modern.add_index(index(1, true, vec![0]), false);
     let row = [Datum::new_collation_string(
         b"A".to_vec(),
         Collation::Utf8Mb4GeneralCi,
@@ -269,7 +270,7 @@ fn one_captured_mode_drives_both_kv_index_key_and_value() {
 #[test]
 fn a_non_unique_case_insensitive_entry_is_not_the_bare_marker_byte() {
     let (mut t, written) = table(vec![column(2, "s", varchar(Collation::Utf8Mb4GeneralCi))]);
-    t.add_index(index(1, false, vec![0]));
+    t.add_index(index(1, false, vec![0]), false);
     t.insert_row(
         &[Datum::new_collation_string(
             b"A".to_vec(),
@@ -287,7 +288,7 @@ fn a_non_unique_case_insensitive_entry_is_not_the_bare_marker_byte() {
 #[test]
 fn a_bin_collation_entry_restores_the_trailing_space_its_key_trimmed() {
     let (mut t, written) = table(vec![column(2, "s", varchar(Collation::Utf8Mb4Bin))]);
-    t.add_index(index(1, true, vec![0]));
+    t.add_index(index(1, true, vec![0]), false);
     t.insert_row(
         &[Datum::new_collation_string(
             b"a ".to_vec(),
@@ -313,7 +314,7 @@ fn a_short_common_handle_entry_matches_gos_padded_key_and_v1_value() {
         column(2, "v", FieldType::new(FieldTypeCode::LongLong)),
     ]);
     t.set_common_handle_offsets(vec![0]);
-    t.add_index(index(2, false, vec![1]));
+    t.add_index(index(2, false, vec![1]), false);
     t.insert_row(
         &[
             Datum::Decimal(tidb_datatype::Decimal::from_int(5)),
@@ -337,7 +338,7 @@ fn a_clustered_varchar_handle_restores_itself_into_every_secondary_entry() {
         column(2, "s", varchar(Collation::Utf8Mb4GeneralCi)),
     ]);
     t.set_common_handle_offsets(vec![0]);
-    t.add_index(index(2, false, vec![1]));
+    t.add_index(index(2, false, vec![1]), false);
     t.insert_row(
         &[
             Datum::new_collation_string(b"Key".to_vec(), Collation::Utf8Mb4GeneralCi),
