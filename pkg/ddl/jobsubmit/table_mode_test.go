@@ -93,3 +93,34 @@ func TestBuildAlterTableModeJobNoopAndInvalidMode(t *testing.T) {
 	require.Nil(t, job)
 	require.Nil(t, args)
 }
+
+// TestBuildAlterTableModeJobExpectedRevisionSkipsNoop is a regression test:
+// when CurrentMode already equals TargetMode but the caller supplied
+// ExpectedRevision (e.g. IMPORT INTO racing a concurrent schema change that
+// itself set the table to TableModeImport), the noop shortcut must not skip
+// job creation, or the Revision would never be checked atomically in
+// onAlterTableMode.
+func TestBuildAlterTableModeJobExpectedRevisionSkipsNoop(t *testing.T) {
+	sctx := newAlterTableModeSession()
+	expectedRevision := uint64(5)
+	target := model.AlterTableModeTarget{
+		SchemaID:         101,
+		SchemaName:       ast.NewCIStr("test"),
+		TableID:          202,
+		TableName:        ast.NewCIStr("t"),
+		CurrentMode:      model.TableModeImport,
+		TargetMode:       model.TableModeImport,
+		ExpectedRevision: &expectedRevision,
+	}
+
+	job, args, noop, err := jobsubmit.BuildAlterTableModeJob(sctx, target)
+	require.NoError(t, err)
+	require.False(t, noop)
+	require.NotNil(t, job)
+	require.Equal(t, &model.AlterTableModeArgs{
+		TableMode:        model.TableModeImport,
+		SchemaID:         101,
+		TableID:          202,
+		ExpectedRevision: &expectedRevision,
+	}, args)
+}
