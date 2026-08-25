@@ -72,6 +72,29 @@ pub trait MetaSnapshot {
     fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError>;
 }
 
+/// A [`MetaSnapshot`] that can also read one record range in bounded pages.
+///
+/// Go's `ANALYZE` streams each region's rows into its sampler as the
+/// coprocessor returns them and never holds the whole table
+/// (`AnalyzeColumnsExec`, `executor/analyze.go`). The paging seam is what lets
+/// this engine do the same over a transaction snapshot: a caller walks a
+/// range by asking for one page, consuming it, and asking again from the key
+/// after the last pair it got, so memory stays bounded by the page size
+/// rather than the table size.
+pub trait PagedMetaSnapshot: MetaSnapshot {
+    /// Reads up to `limit` key/value pairs in `[start, end)`, in key order.
+    ///
+    /// Fewer pairs than `limit` means the range is drained. An implementation
+    /// MUST honour `limit`: returning more would make the caller read rows it
+    /// asked not to be sent.
+    fn scan_page(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+        limit: usize,
+    ) -> Result<MetaPairs, ClusterCatalogError>;
+}
+
 /// The stored JSON of one `DBInfo`, as the catalog itself writes it.
 ///
 /// Re-exported here so a reader outside this crate -- the status server's

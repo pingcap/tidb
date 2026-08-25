@@ -40,7 +40,9 @@ use std::collections::BTreeMap;
 use tidb_codec::encode_row_key;
 use tidb_datatype::Datum;
 use tidb_exec::cluster_analyze::{analyze_table, AnalyzeOptions};
-use tidb_exec::cluster_catalog::{ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_exec::cluster_catalog::{
+    ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot,
+};
 use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
 use tidb_model::column::ColumnDefaultValue;
 use tidb_model::table_info::TableInfo;
@@ -61,6 +63,22 @@ impl MetaSnapshot for RowStore {
             .pairs
             .iter()
             .filter(|(key, _)| key.starts_with(prefix))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect())
+    }
+}
+
+impl PagedMetaSnapshot for RowStore {
+    fn scan_page(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+        limit: usize,
+    ) -> Result<MetaPairs, ClusterCatalogError> {
+        Ok(self
+            .pairs
+            .range(start.to_vec()..end.to_vec())
+            .take(limit)
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect())
     }

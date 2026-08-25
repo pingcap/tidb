@@ -30,7 +30,7 @@ use tidb_txnkv::Key;
 use crate::catalog_reload::{reload_cluster_catalog, ReloadedCatalog};
 use crate::cluster_catalog::{
     load_cluster_catalog, prefix_scan_end, ClusterCatalog, ClusterCatalogError, MetaPairs,
-    MetaSnapshot,
+    MetaSnapshot, PagedMetaSnapshot,
 };
 
 /// One live transaction seen as a meta-key snapshot.
@@ -92,6 +92,25 @@ where
     }
 }
 
+impl<C, L, T> PagedMetaSnapshot for TransactionMetaSnapshot<'_, C, L, T>
+where
+    C: TransactionCommandClient + LockRecoveryClient,
+    L: RegionRecoveryLoader,
+    T: TimestampSource,
+{
+    fn scan_page(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+        limit: usize,
+    ) -> Result<MetaPairs, ClusterCatalogError> {
+        let call = UnaryCallContext::with_timeout(self.timeout);
+        self.transaction
+            .snapshot_scan(start, end, Some(limit), &call)
+            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+    }
+}
+
 /// One open transaction's read handle seen as a meta-key snapshot.
 ///
 /// [`TransactionMetaSnapshot`] borrows the transaction itself, which is right
@@ -132,6 +151,23 @@ impl MetaSnapshot for SnapshotMetaSnapshot {
                 &Key::from_bytes(prefix.to_vec()),
                 &Key::from_bytes(end),
                 None,
+            )
+            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+    }
+}
+
+impl PagedMetaSnapshot for SnapshotMetaSnapshot {
+    fn scan_page(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+        limit: usize,
+    ) -> Result<MetaPairs, ClusterCatalogError> {
+        self.snapshot
+            .scan(
+                &Key::from_bytes(start.to_vec()),
+                &Key::from_bytes(end.to_vec()),
+                Some(limit),
             )
             .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
     }

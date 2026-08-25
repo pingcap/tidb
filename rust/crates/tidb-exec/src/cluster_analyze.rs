@@ -80,9 +80,9 @@ use tidb_executor::analyze::{
 use tidb_model::table_info::TableInfo;
 use tidb_model::SchemaState;
 
-use crate::cluster_catalog::MetaSnapshot;
+use crate::cluster_catalog::{prefix_scan_end, PagedMetaSnapshot};
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
-use crate::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
+use crate::mysql_system_tables::{SystemRow, SystemTableError, SystemTableView};
 use crate::system_row_write::origin_default;
 
 pub use tidb_executor::analyze::{
@@ -172,7 +172,23 @@ pub struct AnalyzeReport {
 /// `start_ts` of the transaction that will store them: that is what makes a
 /// concurrent `ANALYZE` on a Go node either lose the write conflict or be
 /// ordered after this one, rather than interleave with it.
-pub fn analyze_table<S: MetaSnapshot>(
+/// Rows one paged read of the analyzed table returns.
+///
+/// Go's analyze consumes coprocessor batches as they land and never holds
+/// every row of the table; this page size is the same idea over a record-range
+/// walk. A few thousand rows keeps peak residency at a few megabytes while
+/// still amortizing the per-page cursor bookkeeping.
+const ANALYZE_SCAN_PAGE_ROWS: usize = 8_192;
+
+fn finite_successor(key: &[u8]) -> Result<Vec<u8>, AnalyzeError> {
+    prefix_scan_end(key).ok_or_else(|| {
+        AnalyzeError::Read(SystemTableError::Snapshot(
+            "a scanned record key has no successor".to_owned(),
+        ))
+    })
+}
+
+pub fn analyze_table<S: PagedMetaSnapshot>(
     snapshot: &mut S,
     table: &TableInfo,
     options: &AnalyzeOptions,
@@ -188,20 +204,42 @@ pub fn analyze_table<S: MetaSnapshot>(
         .map(|column| column.name.as_str())
         .collect();
     let view = SystemTableView::project(table.name.original(), table, &names);
-    for (key, value) in scan_system_table(snapshot, &view)? {
-        let stored = SystemRow::parse(&view, &key, &value)?;
-        let mut columns = Vec::with_capacity(plan.columns().len());
-        for column in plan.columns() {
-            // `stored_datum`, not `datum`: a stored NULL is NULL, while a
-            // column the row has no entry for reads as its origin default.
-            columns.push(
-                stored
-                    .stored_datum(&column.name)?
-                    .cloned()
-                    .unwrap_or_else(|| column.absent_value.clone()),
-            );
+    // The rows stream into the sampler one page at a time, exactly as Go's
+    // region collectors feed it: nothing here may materialize the whole table
+    // first, because a table this engine analyzes can be the largest thing the
+    // node ever reads at once.
+    let mut cursor = view.record_prefix(&[])?;
+    let range_end = finite_successor(&cursor)?;
+    loop {
+        if cursor.as_slice() >= range_end.as_slice() {
+            break;
         }
-        run.push(&columns)?;
+        let page = snapshot
+            .scan_page(&cursor, &range_end, ANALYZE_SCAN_PAGE_ROWS)
+            .map_err(|error| AnalyzeError::Read(error.into()))?;
+        if page.is_empty() {
+            break;
+        }
+        for (key, value) in &page {
+            let stored = SystemRow::parse(&view, key, value)?;
+            let mut columns = Vec::with_capacity(plan.columns().len());
+            for column in plan.columns() {
+                // `stored_datum`, not `datum`: a stored NULL is NULL, while a
+                // column the row has no entry for reads as its origin default.
+                columns.push(
+                    stored
+                        .stored_datum(&column.name)?
+                        .cloned()
+                        .unwrap_or_else(|| column.absent_value.clone()),
+                );
+            }
+            run.push(&columns)?;
+        }
+        let last_key = page
+            .last()
+            .map(|(key, _)| key.clone())
+            .expect("a non-empty page has a last pair");
+        cursor = finite_successor(&last_key)?;
     }
     let analyzed = run.finish()?;
 
