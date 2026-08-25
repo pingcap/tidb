@@ -591,3 +591,12 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
         Ok(())
     }
 }
+
+impl<PdC: PdClient> TikvTransactionDriver<PdC> {
+    /// Bounds the staged buffer, as TiDB's transaction entry/total size limits.
+    pub fn set_size_limits(&mut self, entry_limit: u64, buffer_limit: u64) {
+        self.transaction
+            .get_mem_buffer()
+            .set_entry_size_limit(entry_limit, buffer_limit);
+    }
+}

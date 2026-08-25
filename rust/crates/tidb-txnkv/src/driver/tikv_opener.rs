@@ -46,6 +46,9 @@ pub trait TikvTransactionSource {
     /// Spends one timestamp from this store's oracle.
     fn current_timestamp(&self) -> Result<Timestamp, TikvTransactionError>;
 
+    /// The PD cluster identity, as Go's store reports it.
+    fn cluster_id(&self) -> Result<u64, TikvTransactionError>;
+
     /// Opens one transaction at the supplied timestamp.
     fn begin(
         &self,
@@ -94,6 +97,7 @@ pub struct TikvTransactionOpener<S: TikvTransactionSource> {
     source: S,
     runtime: Arc<tokio::runtime::Runtime>,
     commit_protocol: TikvCommitProtocol,
+    size_limits: Option<(u64, u64)>,
 }
 
 impl<S: TikvTransactionSource> TikvTransactionOpener<S> {
@@ -105,6 +109,7 @@ impl<S: TikvTransactionSource> TikvTransactionOpener<S> {
             source,
             runtime,
             commit_protocol: TikvCommitProtocol::two_phase_only(),
+            size_limits: None,
         }
     }
 
@@ -197,10 +202,14 @@ impl<S: TikvTransactionSource> TikvTransactionOpener<S> {
         timestamp: Timestamp,
         options: TransactionOptions,
     ) -> Result<TikvTransactionDriver<S::PdC>, TikvTransactionError> {
-        Ok(TikvTransactionDriver::new(
+        let mut driver = TikvTransactionDriver::new(
             self.source.begin(timestamp, options)?,
             self.runtime.clone(),
-        ))
+        );
+        if let Some((entry_limit, buffer_limit)) = self.size_limits {
+            driver.set_size_limits(entry_limit, buffer_limit);
+        }
+        Ok(driver)
     }
 }
 
@@ -209,16 +218,25 @@ impl<S: TikvTransactionSource> TikvTransactionOpener<S> {
 pub struct TikvClusterSource {
     client: tikv_client::TransactionClient,
     runtime: Arc<tokio::runtime::Runtime>,
+    cluster_id: u64,
 }
 
 impl TikvClusterSource {
     /// Wraps one connected transaction client.
     #[must_use]
+    /// The cluster identity is supplied by the caller: the engine exposes it
+    /// on its store handle rather than on the transaction client, and the
+    /// caller that connected the store already holds it.
     pub fn new(
         client: tikv_client::TransactionClient,
         runtime: Arc<tokio::runtime::Runtime>,
+        cluster_id: u64,
     ) -> Self {
-        Self { client, runtime }
+        Self {
+            client,
+            runtime,
+            cluster_id,
+        }
     }
 
     /// The wrapped client, for store-wide operations (GC, safe points, lock
@@ -234,6 +252,10 @@ impl TikvTransactionSource for TikvClusterSource {
 
     fn current_timestamp(&self) -> Result<Timestamp, TikvTransactionError> {
         Ok(self.runtime.block_on(self.client.current_timestamp())?)
+    }
+
+    fn cluster_id(&self) -> Result<u64, TikvTransactionError> {
+        Ok(self.cluster_id)
     }
 
     fn begin(
@@ -286,6 +308,11 @@ impl<PdC: PdClient> TikvTransactionSource for TikvInProcessSource<PdC> {
         Ok(self.runtime.block_on(pd.get_timestamp())?)
     }
 
+    fn cluster_id(&self) -> Result<u64, TikvTransactionError> {
+        // An in-process store has no PD cluster identity of its own.
+        Ok(0)
+    }
+
     fn begin(
         &self,
         timestamp: Timestamp,
@@ -297,5 +324,26 @@ impl<PdC: PdClient> TikvTransactionSource for TikvInProcessSource<PdC> {
             options,
             tikv_client::request::Keyspace::Disable,
         ))
+    }
+}
+
+/// Store-identity and size-limit surface the previous coordinator facade
+/// exposed, kept so consumers that read it do not have to change shape.
+impl<S: TikvTransactionSource> TikvTransactionOpener<S> {
+    /// The PD cluster this opener writes to, as PD itself names it.
+    pub fn cluster_id(&self) -> Result<u64, TikvTransactionError> {
+        self.source.cluster_id()
+    }
+
+    /// Bounds one transaction's staged buffer, as TiDB's
+    /// `kv.TxnEntrySizeLimit` / `kv.TxnTotalSizeLimit` do.
+    ///
+    /// The previous facade took these as planning hints on `begin`; client-go
+    /// has no such parameter, so they are applied to the engine's own buffer
+    /// limits instead, which is where the source enforces them.
+    #[must_use]
+    pub const fn with_size_limits(mut self, entry_limit: u64, buffer_limit: u64) -> Self {
+        self.size_limits = Some((entry_limit, buffer_limit));
+        self
     }
 }

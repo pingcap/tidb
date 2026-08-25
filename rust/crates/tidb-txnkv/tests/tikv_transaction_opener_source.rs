@@ -45,6 +45,10 @@ impl TikvTransactionSource for MockSource {
             .block_on(tikv_client::pd::PdClient::get_timestamp(pd))?)
     }
 
+    fn cluster_id(&self) -> Result<u64, TikvTransactionError> {
+        Ok(0)
+    }
+
     fn begin(
         &self,
         timestamp: Timestamp,
