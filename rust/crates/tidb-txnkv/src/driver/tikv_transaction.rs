@@ -150,7 +150,7 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
                 }
                 return Ok(Some(entry.value));
             }
-            Err(error) if error == TikvMemBufferError::NotFound => {}
+            Err(TikvMemBufferError::NotFound) => {}
             Err(error) => return Err(error.into()),
         }
         Ok(self.transaction.get(key.as_bytes().to_vec()).await?)
