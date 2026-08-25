@@ -577,6 +577,7 @@ where
             key_ranges,
             snapshot_ts: request.snapshot_ts,
             keep_order: request.keep_order,
+            allow_unordered: request.allow_unordered_response,
             desc: request.desc,
             field_types: field_types.clone(),
             time_zone: request.statement.time_zone.clone(),
@@ -709,6 +710,9 @@ struct RemoteScanPlan {
     snapshot_ts: u64,
     /// Whether region tasks and the response stream must preserve key order.
     keep_order: bool,
+    /// Whether region answers may be consumed as they complete. Only set for
+    /// reads whose caller re-orders (or ignores) row order.
+    allow_unordered: bool,
     /// Whether DistSQL must visit region tasks in descending key order. Go
     /// carries this through `pkg/distsql/request_builder.go`'s
     /// `RequestBuilder.SetDesc`; `pkg/store/copr/coprocessor.go`'s
@@ -769,6 +773,7 @@ where
     builder
         .set_start_ts(plan.snapshot_ts)
         .set_keep_order(plan.keep_order)
+        .set_allow_unordered_response(plan.allow_unordered)
         .set_desc(plan.desc)
         .set_non_partitioned_key_ranges(plan.key_ranges)
         .set_dag_request(plan.envelope, plan.dag.encode_to_vec());

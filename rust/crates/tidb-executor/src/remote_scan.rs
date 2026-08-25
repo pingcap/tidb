@@ -441,6 +441,12 @@ pub struct PushdownScanRequest {
     /// staged overlay (whose merge is order-sensitive) and streamed partial
     /// aggregation.
     pub keep_order: bool,
+    /// Whether region responses may arrive in any order. Only sound when the
+    /// caller re-orders (or ignores) row order itself -- go's rolling
+    /// `fetchHandles` keeps up to `2 x DistSQLConcurrency` region requests in
+    /// flight for exactly such unordered double reads, while an ordered
+    /// stream is consumed two regions at a time.
+    pub allow_unordered_response: bool,
     /// Decoded response batches the backend may retain ahead of this scan's
     /// consumer. The backend clamps this to its supported bounded maximum.
     pub read_ahead_batches: usize,

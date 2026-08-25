@@ -2406,6 +2406,19 @@ impl Executor for IndexRangeSourceExec {
             } else {
                 &[]
             };
+        // go's rolling `fetchHandles` keeps up to `2 x DistSQLConcurrency`
+        // region requests in flight and orders them only when the read's
+        // answer IS the walk -- a covering/keep-order read, a TopN, or a
+        // pushed limit whose index-order cut needs a monotone stream. An
+        // UNORDERED double read (this tier's `can_reorder_handles`) re-sorts
+        // every window it collects, so its regions may answer in any order:
+        // send keepOrder:false + unordered-response and let the regions
+        // stream concurrently instead of two-at-a-time.
+        let order_free = self.can_reorder_handles
+            && !self.descending
+            && self.top_n.is_none()
+            && self.limit.is_none()
+            && self.lookup_offset == 0;
         if let Some(aggregate) = self.partial_aggregate.as_ref() {
             self.partial_remote = self
                 .table
@@ -2444,6 +2457,7 @@ impl Executor for IndexRangeSourceExec {
                     // streaming entries the local Limit discards.
                     self.limit
                         .map(|count| self.lookup_offset.saturating_add(count)),
+                    order_free,
                 )
                 .map_err(|_| ExecError::unsupported("remote index scan failed to open"))?;
         }

@@ -601,6 +601,7 @@ impl KvTable {
             aggregate: None,
             desc: descending,
             keep_order,
+            allow_unordered_response: false,
             read_ahead_batches,
             // The storage that owns the snapshot fills this in; the table has
             // no timestamp of its own.
@@ -953,6 +954,8 @@ impl KvTable {
             aggregate: Some(aggregate.clone()),
             desc: false,
             keep_order: false,
+            // Order-free responses are opted into per call site below.
+            allow_unordered_response: false,
             read_ahead_batches: crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             snapshot_ts: 0,
             ranges,
@@ -1156,6 +1159,8 @@ impl KvTable {
             aggregate: Some(remote_aggregate),
             desc: false,
             keep_order: false,
+            // Order-free responses are opted into per call site below.
+            allow_unordered_response: false,
             read_ahead_batches: crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             snapshot_ts: 0,
             ranges: key_ranges,
@@ -1177,6 +1182,7 @@ impl KvTable {
     /// columns and the table handle. The access source consumes those rows as
     /// an ordered handle stream before issuing its table lookup batch.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub fn pushdown_index_handle_cursor(
         &mut self,
         index_id: i64,
@@ -1188,6 +1194,7 @@ impl KvTable {
         statement: &PushdownStatementContext,
         desc: bool,
         index_limit: Option<u64>,
+        unordered: bool,
     ) -> Result<Option<RemoteIndexHandleCursor>, KvTableError> {
         // The wire contract this request once broke -- reordered and
         // truncated columns on real TiKV -- came from the executor schema
@@ -1325,7 +1332,12 @@ impl KvTable {
         if handle_indices.is_empty() {
             return Ok(None);
         }
-        let keep_order = !desc || topn.is_none();
+        // An UNORDERED double read (go's rolling fetchHandles over a
+        // keepOrder:false request) neither needs nor gets stream ordering:
+        // its windows are re-sorted per batch and nothing consumes cross-
+        // window order. Letting the regions answer out of order is what
+        // unlocks go's `2 x DistSQLConcurrency` in-flight window.
+        let keep_order = if unordered { false } else { !desc || topn.is_none() };
         let encoder = Encoder::new(self.use_new_collation);
         let encode = |values: &[Datum]| -> Result<Vec<u8>, KvTableError> {
             encoder
@@ -1390,6 +1402,7 @@ impl KvTable {
             aggregate: None,
             desc,
             keep_order,
+            allow_unordered_response: unordered,
             read_ahead_batches: crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             snapshot_ts: 0,
             ranges: key_ranges,
