@@ -18,10 +18,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -29,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -44,6 +47,83 @@ type dropSuccessfulPessimisticLockResponseClient struct {
 	startTS uint64
 	key     []byte
 	dropped atomic.Bool
+}
+
+type capturedSharedLockRequest struct {
+	addr        string
+	requestCtx  kvrpcpb.Context
+	startTS     uint64
+	forUpdateTS uint64
+	key         []byte
+}
+
+type captureSharedLockClient struct {
+	tikv.Client
+	targetStartTS uint64
+	targetKey     []byte
+	mu            sync.Mutex
+	captured      *capturedSharedLockRequest
+}
+
+func (c *captureSharedLockClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if req.Type == tikvrpc.CmdPessimisticLock {
+		lockReq := req.PessimisticLock()
+		if lockReq.GetStartVersion() == c.targetStartTS {
+			for _, mutation := range lockReq.GetMutations() {
+				if mutation.GetOp() == kvrpcpb.Op_SharedPessimisticLock && bytes.Equal(mutation.GetKey(), c.targetKey) {
+					c.mu.Lock()
+					if c.captured == nil {
+						c.captured = &capturedSharedLockRequest{
+							addr: addr, requestCtx: req.Context,
+							startTS: lockReq.GetStartVersion(), forUpdateTS: lockReq.GetForUpdateTs(),
+							key: bytes.Clone(mutation.GetKey()),
+						}
+					}
+					c.mu.Unlock()
+				}
+			}
+		}
+	}
+	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+func (c *captureSharedLockClient) rollbackCapturedSharedLock(ctx context.Context) error {
+	c.mu.Lock()
+	if c.captured == nil {
+		c.mu.Unlock()
+		return errors.New("shared lock request was not captured")
+	}
+	captured := *c.captured
+	captured.key = bytes.Clone(c.captured.key)
+	c.mu.Unlock()
+
+	req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticRollback, &kvrpcpb.PessimisticRollbackRequest{
+		StartVersion: captured.startTS,
+		ForUpdateTs:  captured.forUpdateTS,
+		Keys:         [][]byte{captured.key},
+	}, captured.requestCtx)
+	resp, err := c.Client.SendRequest(ctx, captured.addr, req, 10*time.Second)
+	if err != nil {
+		return err
+	}
+	if resp == nil {
+		return errors.New("pessimistic rollback returned a nil response")
+	}
+	regionErr, err := resp.GetRegionError()
+	if err != nil {
+		return err
+	}
+	if regionErr != nil {
+		return errors.Errorf("pessimistic rollback region error: %s", regionErr)
+	}
+	rollbackResp, ok := resp.Resp.(*kvrpcpb.PessimisticRollbackResponse)
+	if !ok {
+		return errors.Errorf("unexpected pessimistic rollback response %T", resp.Resp)
+	}
+	if len(rollbackResp.Errors) != 0 {
+		return errors.Errorf("pessimistic rollback key errors: %v", rollbackResp.Errors)
+	}
+	return nil
 }
 
 func (c *dropSuccessfulPessimisticLockResponseClient) SendRequest(
@@ -110,6 +190,22 @@ func requireTxnLockAcquiring(t *testing.T, waitingTk *testkit.TestKit) {
 		info := waitingTk.Session().TxnInfo()
 		return info != nil && info.State == txninfo.TxnLockAcquiring && info.BlockStartTime.Valid
 	}, 10*time.Second, 100*time.Millisecond, "expected session %d to be waiting on lock acquisition", waitingTk.Session().GetSessionVars().ConnectionID)
+}
+
+func requireStorageLockWait(t *testing.T, store kv.Storage, startTS uint64, key []byte) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		entries, err := store.GetLockWaits()
+		if err != nil {
+			return false
+		}
+		for _, entry := range entries {
+			if entry.GetTxn() == startTS && bytes.Equal(entry.GetKey(), key) {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 100*time.Millisecond)
 }
 
 func TestForeignKeySharedLockOptimisticReverseReferenceOrder(t *testing.T) {
@@ -332,6 +428,73 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 		tk1.MustQuery("select * from child order by id").Check(testkit.Rows("1 1", "2 1"))
 		tk1.MustExec("admin check table parent")
 		tk1.MustExec("admin check table child")
+	})
+
+	t.Run("shared_lock_lost_rolls_back_transaction", func(t *testing.T) {
+		if !kerneltype.IsNextGen() {
+			t.Skip("shared lock upgrade rollout acceptance is only required on next-gen")
+		}
+
+		tkU := testkit.NewTestKit(t, store)
+		tkH := testkit.NewTestKit(t, store)
+		tkVerify := testkit.NewTestKit(t, store)
+		for _, tk := range []*testkit.TestKit{tkU, tkH, tkVerify} {
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+		}
+		enableSharedLockUpgrade(tkU, tkH, tkVerify)
+		prepareSharedLockUpgradeTables(tkU, "")
+		parentTableID := external.GetTableByName(t, tkU, "test", "parent").Meta().ID
+		upgradeKey := tablecodec.EncodeRowKeyWithHandle(parentTableID, kv.IntHandle(1))
+
+		tkU.MustExec("begin pessimistic")
+		txnU, err := tkU.Session().Txn(false)
+		require.NoError(t, err)
+		tikvStore, ok := store.(interface {
+			GetTiKVClient() tikv.Client
+			SetTiKVClient(tikv.Client)
+		})
+		require.True(t, ok)
+		originalClient := tikvStore.GetTiKVClient()
+		capturingClient := &captureSharedLockClient{
+			Client: originalClient, targetStartTS: txnU.StartTS(), targetKey: upgradeKey,
+		}
+		tikvStore.SetTiKVClient(capturingClient)
+		t.Cleanup(func() { tikvStore.SetTiKVClient(originalClient) })
+
+		tkU.MustExec("insert into child values(1, 1)")
+		tkH.MustExec("begin pessimistic")
+		tkH.MustExec("insert into child values(2, 1)")
+
+		upgradeDone := make(chan error, 1)
+		go func() {
+			upgradeDone <- tkU.ExecToErr("update parent set v = v + 1 where id = 1")
+		}()
+		requireTxnLockAcquiring(t, tkU)
+		requireStorageLockWait(t, store, txnU.StartTS(), upgradeKey)
+		require.NoError(t, capturingClient.rollbackCapturedSharedLock(context.Background()))
+
+		var upgradeErr error
+		select {
+		case upgradeErr = <-upgradeDone:
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "shared lock upgrader did not return after holder removal")
+		}
+		require.Error(t, upgradeErr)
+		cause, ok := errors.Cause(upgradeErr).(*errors.Error)
+		require.True(t, ok)
+		require.Equal(t, errno.ErrSharedLockLost, int(cause.Code()))
+		require.False(t, tkU.Session().GetSessionVars().InTxn())
+		require.Nil(t, tkU.Session().TxnInfo())
+		require.Nil(t, sessiontxn.GetTxnManager(tkU.Session()).GetContextProvider())
+
+		tikvStore.SetTiKVClient(originalClient)
+		tkVerify.MustExec("insert into child values(1, 1)")
+		tkH.MustExec("rollback")
+		tkVerify.MustQuery("select * from parent order by id").Check(testkit.Rows("1 0", "2 0"))
+		tkVerify.MustQuery("select * from child order by id").Check(testkit.Rows("1 1"))
+		tkVerify.MustExec("admin check table parent")
+		tkVerify.MustExec("admin check table child")
 	})
 
 	t.Run("upgrade_error_keeps_explicit_transaction_usable", func(t *testing.T) {
