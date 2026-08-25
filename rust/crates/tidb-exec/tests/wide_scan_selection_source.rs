@@ -441,7 +441,10 @@ fn tpch_q1_grouped_partial_aggregation_keeps_functions_and_group_keys_on_the_wir
     let aggregation = decoded.executors[1].aggregation.as_ref().unwrap();
     assert_eq!(aggregation.agg_func.len(), 2);
     assert_eq!(aggregation.group_by.len(), 2);
-    assert_eq!(aggregation.streamed, Some(false));
+    // Go's list-form protobuf does not set `Aggregation.streamed`; the
+    // executor type (`TypeAggregation` vs `TypeStreamAgg`) is the mode
+    // discriminator, so the flag stays absent for the hash form.
+    assert_eq!(aggregation.streamed, None);
     assert_eq!(decoded.output_offsets, vec![0, 1, 2, 3]);
 }
 

@@ -473,6 +473,7 @@ fn count_star_lowers_to_count_with_one_constant_child() {
             }],
         }),
         keep_order: false,
+        allow_unordered_response: false,
         // Go's `desc` on the TableScan executor: this request walks its one
         // range forwards.
         desc: false,
@@ -538,6 +539,7 @@ fn a_descending_scan_marks_both_the_dag_and_dist_sql_request() {
         limit: Some(1),
         aggregate: None,
         keep_order: true,
+        allow_unordered_response: false,
         desc: true,
         read_ahead_batches: tidb_executor::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
         snapshot_ts: 4_242,
