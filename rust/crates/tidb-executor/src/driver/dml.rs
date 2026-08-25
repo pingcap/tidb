@@ -1760,39 +1760,64 @@ pub fn run_fast_prepared_update(
     let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else { return Ok(None) };
     let (database, name) = single_table_name(table_ref, current_db)?;
     let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else { return Ok(None) };
-    let handles = kv.common_handle_offsets();
+    let handles = kv.common_handle_offsets().to_vec();
     // Secondary indexes are maintained by `update_row_with_old` itself (old
     // entries deleted, new written, rolled back on failure), so an indexed
     // table no longer refuses the fast arm -- Go's cached point-update plan
-    // keeps every index of the table up to date too.
-    if handles.len() != 1 || !kv.foreign_keys().is_empty()
-        || kv.visible_columns().iter().any(|column| column.generated.is_some()) { return Ok(None); }
+    // keeps every index of the table up to date too. A COMPOSITE clustered
+    // key works the same way: every key column is pinned by the WHERE below,
+    // so nothing about the row moves.
+    if handles.is_empty()
+        || kv.visible_columns().iter().any(|column| column.generated.is_some())
+    {
+        return Ok(None);
+    }
     let qualifier = table_ref.alias.as_deref().or_else(|| table_ref.name.last().map(String::as_str));
     let columns = kv.visible_columns().to_vec();
-    let handle_offset = handles[0];
-    let Some(handle_column) = columns.get(handle_offset) else { return Ok(None) };
     let mut assignment_offsets = Vec::with_capacity(update.assignments.len());
     for assignment in &update.assignments {
         let Some(offset) = columns.iter().position(|column| {
             column.name.eq_ignore_ascii_case(assignment.col.last().map_or("", String::as_str))
                 && assignment_qualifier_matches(&assignment.col, qualifier)
         }) else { return Ok(None) };
-        if offset == handle_offset { return Ok(None); }
+        // Assigning a clustered-key column MOVES the row, and duplicate
+        // targets would make an arithmetic assignment order-dependent. Both
+        // keep the ordinary planner.
+        if handles.contains(&offset) || assignment_offsets.contains(&offset) {
+            return Ok(None);
+        }
         assignment_offsets.push(offset);
     }
-    // The WHERE pins the handle once; every other conjunct must be a simple
-    // column equality, which filters the OLD row before the assignments land
-    // (`WHERE prdaccno = ? AND stsrcd = ?` reads exactly one row or none).
+    // An assignment touching a FOREIGN-KEY column of this table (`fk.cols`)
+    // changes a referential fact; the full planner runs that check. An
+    // assignment touching an INDEXED column keeps the planner too, so index
+    // maintenance above never sees a changed entry pair mid-flight.
+    if kv.indexes().iter().any(|index|
+        index.column_offsets.iter().any(|offset| assignment_offsets.contains(offset)))
+        || kv.foreign_keys().iter().any(|fk| fk.cols.iter().any(|column|
+            update.assignments.iter().any(|assignment|
+                assignment.col.last().is_some_and(|assigned| assigned.eq_ignore_ascii_case(column)))))
+    {
+        return Ok(None);
+    }
+    // The WHERE flattens into conjunction leaves: EACH clustered-key column
+    // is pinned exactly once by one `col = ?`, and every other leaf filters
+    // the OLD row as a simple equality (`WHERE prdaccno = ? AND stsrcd = ?`
+    // reads exactly one row or none).
     let mut residual_eqs = Vec::new();
-    let Some(key_expr) = point_update_where(
+    let Some(key_exprs) = point_update_where(
         update.where_clause.as_ref(),
-        &handle_column.name,
+        &handles,
         qualifier,
         &columns,
         &mut residual_eqs,
     ) else { return Ok(None) };
-    let Some(key_value) = prepared_or_literal(key_expr, params)? else { return Ok(None) };
-    let encoded = tidb_codec::encode_key_in_timezone(&ctx.session_zone(), &[key_value])
+    let mut key_values = Vec::with_capacity(handles.len());
+    for key_expr in key_exprs {
+        let Some(key_value) = prepared_or_literal(key_expr, params)? else { return Ok(None) };
+        key_values.push(key_value);
+    }
+    let encoded = tidb_codec::encode_key_in_timezone(&ctx.session_zone(), &key_values)
         .map_err(|error| DriverError::unsupported(format!("cannot encode common handle: {error:?}")))?;
     let handle = tidb_txnkv::CommonHandle::new(encoded)
         .map_err(|error| DriverError::unsupported(format!("cannot encode common handle: {error:?}")))?;
@@ -1820,7 +1845,11 @@ pub fn run_fast_prepared_update(
     }
     let mut row = old_row.clone();
     for (assignment, offset) in update.assignments.iter().zip(assignment_offsets) {
-        let Some(value) = prepared_or_literal(&assignment.value, params)? else { return Ok(None) };
+        // Go's plan cache serves `SET col = col + ?` shapes unchanged; the
+        // arithmetic evaluates against the selected row's own column.
+        let Some(value) =
+            assignment_new_value(&assignment.value, &assignment.col, qualifier, offset, &row, params)?
+        else { return Ok(None) };
         row[offset] = cast_value_for_update_assignment(value, &field_types[offset], &names[offset], 0, ctx)?;
     }
     let level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
@@ -1838,6 +1867,138 @@ fn prepared_or_literal(expr: &tidb_ast::Expr, params: &[Datum]) -> Result<Option
     params.get(*order).cloned().map(Some).ok_or(DriverError::WrongParamCount)
 }
 
+fn unparen(expr: &tidb_ast::Expr) -> &tidb_ast::Expr {
+    match expr {
+        tidb_ast::Expr::Paren(inner) => unparen(inner),
+        other => other,
+    }
+}
+
+/// Flattens a WHERE tree into its conjunction leaves, each a plain
+/// `column = ?` equality with the column kept UNRESOLVED. An OR, a residual
+/// predicate, or any non-equality leaf makes the whole tree decline the
+/// caller's narrow path.
+fn point_eq_conjunct_leaves<'a>(
+    where_clause: &'a tidb_ast::Expr,
+) -> Option<Vec<(&'a [String], &'a tidb_ast::Expr)>> {
+    let mut out = Vec::new();
+    let mut stack = vec![unparen(where_clause)];
+    while let Some(current) = stack.pop() {
+        match current {
+            tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, left, right) => {
+                stack.push(unparen(left));
+                stack.push(unparen(right));
+            }
+            tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, left, right) => {
+                let (left, right) = (unparen(left), unparen(right));
+                if let tidb_ast::Expr::Column(path) = left {
+                    out.push((path.as_slice(), right));
+                } else if let tidb_ast::Expr::Column(path) = right {
+                    out.push((path.as_slice(), left));
+                } else {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+/// Whether one operand names THE assigned column (its last spelling matches,
+/// and any qualification matches the statement's table alias).
+fn operand_is_assigned_column(
+    expr: &tidb_ast::Expr,
+    target_path: &[String],
+    qualifier: Option<&str>,
+) -> bool {
+    match unparen(expr) {
+        tidb_ast::Expr::Column(path) => {
+            path.last().is_some_and(|leaf| {
+                target_path.last().is_some_and(|target| leaf.eq_ignore_ascii_case(target))
+            }) && assignment_qualifier_matches(path, qualifier)
+        }
+        _ => false,
+    }
+}
+
+/// One UPDATE assignment's new value: a `?` parameter, or Go
+/// plan-cache-eligible arithmetic `col = col +/- ?|integer-literal`
+/// evaluated against the row being updated. Any other shape declines the
+/// narrow path; overflow declines too, so the ordinary planner reports it
+/// exactly as Go would.
+#[allow(clippy::too_many_arguments)]
+fn assignment_new_value(
+    expr: &tidb_ast::Expr,
+    target_path: &[String],
+    qualifier: Option<&str>,
+    target_offset: usize,
+    row: &[Datum],
+    params: &[Datum],
+) -> Result<Option<Datum>, DriverError> {
+    match unparen(expr) {
+        tidb_ast::Expr::ParamMarker { .. } => return prepared_or_literal(expr, params),
+        tidb_ast::Expr::Binary(
+            op @ (tidb_ast::BinaryOp::Plus | tidb_ast::BinaryOp::Minus),
+            left,
+            right,
+        ) => {
+            let sign = if matches!(op, tidb_ast::BinaryOp::Plus) { 1i8 } else { -1i8 };
+            // Exactly one side may name THE assigned column; naming a
+            // DIFFERENT column declines (reading another row column is the
+            // planner's job).
+            let delta_expr = if operand_is_assigned_column(left, target_path, qualifier)
+                && !operand_is_assigned_column(right, target_path, qualifier)
+            {
+                right
+            } else if operand_is_assigned_column(right, target_path, qualifier)
+                && !operand_is_assigned_column(left, target_path, qualifier)
+            {
+                left
+            } else {
+                return Ok(None);
+            };
+            let delta = match unparen(delta_expr) {
+                tidb_ast::Expr::ParamMarker { order, .. } => {
+                    params.get(*order).cloned().ok_or(DriverError::WrongParamCount)?
+                }
+                tidb_ast::Expr::Int(text) => match text.parse::<i64>() {
+                    Ok(value) => Datum::Int(value),
+                    Err(_) => match text.parse::<u64>() {
+                        Ok(value) => Datum::UInt(value),
+                        Err(_) => return Ok(None),
+                    },
+                },
+                _ => return Ok(None),
+            };
+            let current = row.get(target_offset).ok_or(DriverError::unsupported(
+                "assignment offset escaped the visible row",
+            ))?;
+            if current.is_null() || delta.is_null() {
+                // SQL three-valued arithmetic: NULL propagates.
+                return Ok(Some(Datum::Null));
+            }
+            let as_i128 = |datum: &Datum| -> Option<i128> {
+                match datum {
+                    Datum::Int(value) => Some(i128::from(*value)),
+                    Datum::UInt(value) => Some(i128::from(*value)),
+                    _ => None,
+                }
+            };
+            let Some(base) = as_i128(current) else { return Ok(None) };
+            let Some(shift) = as_i128(&delta) else { return Ok(None) };
+            let value = if sign == 1 { base.checked_add(shift) } else { base.checked_sub(shift) };
+            let Some(value) = value else { return Ok(None) };
+            let narrowed = match current {
+                Datum::UInt(_) => u64::try_from(value).ok().map(Datum::UInt),
+                _ => i64::try_from(value).ok().map(Datum::Int),
+            };
+            Ok(narrowed)
+        }
+        _ => Ok(None),
+    }
+}
+
 fn assignment_qualifier_matches(path: &[String], qualifier: Option<&str>) -> bool {
     path.len() < 2
         || qualifier.is_some_and(|qualifier| path[path.len() - 2].eq_ignore_ascii_case(qualifier))
@@ -1851,24 +2012,25 @@ enum ResidualEq {
     Constant(tidb_datatype::Datum),
 }
 
-/// Walks a fast prepared update's WHERE conjunction: the handle column is
-/// pinned exactly once by one `=` (returned as the key expression), and every
-/// remaining conjunct must be a plain column equality pushed onto
-/// `residual_eqs`. Any other shape declines the whole fast arm.
+/// Walks a fast prepared update's WHERE conjunction: EVERY clustered-key
+/// column is pinned exactly once by one `=` (returned as the key
+/// expressions, in handle order), and every remaining conjunct must be a
+/// plain column equality pushed onto `residual_eqs`. Any other shape declines
+/// the whole fast arm.
 fn point_update_where<'a>(
     predicate: Option<&'a tidb_ast::Expr>,
-    column: &str,
+    handles: &[usize],
     qualifier: Option<&str>,
     columns: &[crate::kv_table::KvColumn],
     residual_eqs: &mut Vec<(usize, ResidualEq)>,
-) -> Option<&'a tidb_ast::Expr> {
+) -> Option<Vec<&'a tidb_ast::Expr>> {
     fn unparenthesized(expr: &tidb_ast::Expr) -> &tidb_ast::Expr {
         match expr {
             tidb_ast::Expr::Paren(inner) => unparenthesized(inner),
             other => other,
         }
     }
-    let mut key_expr: Option<&tidb_ast::Expr> = None;
+    let mut key_exprs: Vec<Option<&tidb_ast::Expr>> = vec![None; handles.len()];
     let mut conjuncts = Vec::new();
     fn flatten<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
         match expr {
@@ -1885,12 +2047,20 @@ fn point_update_where<'a>(
         let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, left, right) = conjunct else {
             return None;
         };
-        if is_key_column(left, column, qualifier) || is_key_column(right, column, qualifier) {
-            // The handle pin: exactly one, or the shape declines.
-            if key_expr.is_some() {
+        // Name a CLUSTERED-KEY column? That is a pin: every key column needs
+        // exactly one, or the shape declines.
+        let pin_index = handles.iter().position(|&offset| {
+            columns.get(offset).is_some_and(|column| {
+                is_key_column(left, &column.name, qualifier)
+                    || is_key_column(right, &column.name, qualifier)
+            })
+        });
+        if let Some(index) = pin_index {
+            if key_exprs[index].is_some() {
                 return None;
             }
-            key_expr = Some(if is_key_column(left, column, qualifier) {
+            let handle_name = columns[handles[index]].name.as_str();
+            key_exprs[index] = Some(if is_key_column(left, handle_name, qualifier) {
                 right
             } else {
                 left
@@ -1935,7 +2105,10 @@ fn point_update_where<'a>(
             }
         }
     }
-    key_expr
+    if key_exprs.iter().any(Option::is_none) {
+        return None;
+    }
+    Some(key_exprs.into_iter().map(Option::unwrap).collect())
 }
 
 fn is_key_column(expr: &tidb_ast::Expr, column: &str, qualifier: Option<&str>) -> bool {
