@@ -209,6 +209,11 @@ Latest key-match optimization receipts are:
     /tmp/web3_keymatch_rust_plans.json
     /tmp/web3_optimized_keymatch_perf.json
     /tmp/web3_optimized_keymatch_perf_repeat.json
+    /tmp/web3_final_release_go_results.json
+    /tmp/web3_final_release_rust_results.json
+    /tmp/web3_final_release_go_plans.json
+    /tmp/web3_final_release_rust_plans.json
+    /tmp/web3_optimized_keymatch_perf_final_release.json
 
 The last performance receipt is an alternating one-client run against the
 clean Rust baseline (`884e16945ed`) and the final Rust endpoint. Small-query
