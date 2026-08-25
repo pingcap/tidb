@@ -915,6 +915,24 @@ fn a_star_still_expands_in_the_written_order() {
     assert_eq!(reordered, written, "the reorder moved the output columns");
 }
 
+/// A qualified wildcard is still a direct-column projection.  When join
+/// reorder changes the child layout, Go's projection eliminator absorbs this
+/// identity mapping; retaining it would add a visible Projection below a
+/// derived UNION branch (the Web3Bench R35 shape).
+#[test]
+fn a_qualified_star_does_not_leave_an_identity_projection() {
+    let catalog = tables();
+    let rows = plan(
+        "SELECT t2.* FROM t2 JOIN t3 ON t2.a = t3.a AND t2.b < t3.b",
+        &catalog,
+        0,
+    );
+    assert!(
+        !rows.iter().any(|row| row.contains("Projection")),
+        "qualified wildcard left an identity projection: {rows:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The outer-join group and the `leading` hint
 // ---------------------------------------------------------------------------

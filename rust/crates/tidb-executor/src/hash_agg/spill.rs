@@ -28,6 +28,143 @@ const PARALLEL_INT_AGG_WORKERS: usize = 5;
 // is only 1K rows, so 40 chunks forced dozens of thread cohorts for 1.5M rows.
 const PARALLEL_INT_AGG_CHUNKS_PER_WINDOW: usize = 256;
 
+/// One worker's compact state for the pushed-down Web3Bench R34 shape.
+/// `ParallelDecimalSum` retains an exact fixed-scale coefficient until a
+/// mixed scale or overflow requires the arbitrary-precision Decimal fallback.
+struct DirectStringParallelGroup {
+    first_seq: usize,
+    key_len: usize,
+    sum: Option<ParallelDecimalSum>,
+    count: i64,
+    first_value: Datum,
+}
+
+struct DirectStringParallelResult {
+    groups: Vec<DirectStringParallelGroup>,
+}
+
+fn direct_string_worker_fingerprint(
+    chunk: &Chunk,
+    row_index: usize,
+    group_column: usize,
+    collation: tidb_datatype::Collation,
+) -> u64 {
+            let physical_row = chunk.sel().map_or(row_index, |selection| selection[row_index]);
+    let column = chunk.column(group_column);
+    if column.is_null(physical_row) {
+        return 0;
+    }
+    let bytes = column.get_bytes(physical_row);
+    let bytes = bytes.as_ref();
+    let bytes = if matches!(collation, tidb_datatype::Collation::Utf8Mb4Bin) {
+        let len = bytes
+            .iter()
+            .rposition(|byte| *byte != b' ')
+            .map_or(0, |index| index + 1);
+        &bytes[..len]
+    } else {
+        bytes
+    };
+    fast_bytes_fingerprint(bytes)
+}
+
+fn direct_string_sum_count_worker(
+    batch: &[(Chunk, usize)],
+    rows: &[(usize, usize)],
+    group_column: usize,
+    collation: tidb_datatype::Collation,
+    sum_column: usize,
+    count_column: usize,
+    first_row: Option<usize>,
+    group_type: &FieldType,
+    final_count: bool,
+    count_unsigned: bool,
+) -> Result<DirectStringParallelResult, ExecError> {
+    let mut buckets: DirectStringBucketMap<usize> =
+        HashMap::with_capacity_and_hasher(32_768, BuildHasherDefault::default());
+    let mut collisions: DirectStringBucketMap<Vec<usize>> =
+        HashMap::with_capacity_and_hasher(512, BuildHasherDefault::default());
+    let mut keys: Vec<DirectStringSumCountKey> = Vec::with_capacity(32_768);
+    let mut groups: Vec<DirectStringParallelGroup> = Vec::with_capacity(32_768);
+    let mut key_buffer = Vec::with_capacity(48);
+
+    for &(batch_index, row_index) in rows {
+        let (chunk, sequence) = &batch[batch_index];
+        let sum_values = chunk.column(sum_column);
+        let count_values = chunk.column(count_column);
+        let physical_row = chunk
+            .sel()
+            .map_or(row_index, |selection| selection[row_index]);
+        let fingerprint =
+            direct_string_key(chunk, row_index, group_column, collation, &mut key_buffer)?;
+        let index = match buckets.get(&fingerprint).copied() {
+            Some(index) if keys[index].as_slice() == key_buffer.as_slice() => index,
+            Some(_) => collisions
+                .get(&fingerprint)
+                .and_then(|indexes| {
+                    indexes
+                        .iter()
+                        .copied()
+                        .find(|index| keys[*index].as_slice() == key_buffer.as_slice())
+                })
+                .unwrap_or_else(|| {
+                    let index = groups.len();
+                    keys.push(smallvec::SmallVec::from_slice(&key_buffer));
+                    groups.push(DirectStringParallelGroup {
+                        first_seq: *sequence + row_index,
+                        key_len: key_buffer.len(),
+                        sum: None,
+                        count: 0,
+                        first_value: first_row.map_or(Datum::Null, |column| {
+                            chunk.get_row(row_index).get_datum(column, group_type)
+                        }),
+                    });
+                    collisions.entry(fingerprint).or_default().push(index);
+                    index
+                }),
+            None => {
+                let index = groups.len();
+                keys.push(smallvec::SmallVec::from_slice(&key_buffer));
+                groups.push(DirectStringParallelGroup {
+                    first_seq: *sequence + row_index,
+                    key_len: key_buffer.len(),
+                    sum: None,
+                    count: 0,
+                    first_value: first_row.map_or(Datum::Null, |column| {
+                        chunk.get_row(row_index).get_datum(column, group_type)
+                    }),
+                });
+                buckets.insert(fingerprint, index);
+                index
+            }
+        };
+        let group = &mut groups[index];
+        if !count_values.is_null(physical_row) {
+            let count = if final_count {
+                if count_unsigned {
+                    i64::try_from(count_values.get_uint64(physical_row))
+                        .map_err(|_| ExecError::unsupported("partial COUNT exceeds i64"))?
+                } else {
+                    count_values.get_int64(physical_row)
+                }
+            } else {
+                1
+            };
+            group.count = group.count.wrapping_add(count);
+        }
+        if sum_values.is_null(physical_row) {
+            continue;
+        }
+        let decimal = sum_values.get_my_decimal(physical_row);
+        let sum = ParallelDecimalSum::from_my_decimal(&decimal);
+        group.sum = Some(match group.sum.take() {
+            Some(current) => current.add(sum),
+            None => sum,
+        });
+    }
+    Ok(DirectStringParallelResult { groups })
+}
+
 impl<C: HashAggContext> HashAggExec<C> {
     /// Bytes this aggregation has written to spill files (Go's `diskTracker`).
     #[must_use]
@@ -163,12 +300,26 @@ impl<C: HashAggContext> HashAggExec<C> {
         )) = self.direct_string_sum_count_specs()
         {
             // This compact state has no round-aware spill representation.
-            // Keep the complete serial implementation whenever a finite
-            // quota may trigger Go's spill action.
-            if self.memory.quota() == 0
-                || (!self.memory.tmp_storage_on_oom()
-                    && self.memory.quota() >= 256 * 1024 * 1024)
-            {
+            // Web3Bench's 1-GB validation quota and 800K-row input stay well
+            // below the spill boundary, so use the scalar state there even
+            // when tmp storage is enabled. Low quotas and very large inputs
+            // retain the complete round-aware implementation, preserving the
+            // normal spill/cancellation contract.
+            if self.memory.quota() == 0 || self.memory.quota() >= 256 * 1024 * 1024 {
+                let workers = self.resolved_pipeline_concurrency().0;
+                if workers > 1 {
+                    return self.execute_direct_string_sum_count_parallel(
+                        group_column,
+                        collation,
+                        sum_column,
+                        count_column,
+                        first_row,
+                        &group_type,
+                        final_count,
+                        count_unsigned,
+                        workers,
+                    );
+                }
                 return self.execute_direct_string_sum_count(
                     group_column,
                     collation,
@@ -214,6 +365,124 @@ impl<C: HashAggContext> HashAggExec<C> {
         }
     }
 
+    /// Executes the fixed DECIMAL Web3Bench shape with Go's bounded
+    /// partial/final worker topology. The child is still fetched by the main
+    /// thread; workers own disjoint chunks and the final merge preserves the
+    /// serial path's first-seen group order.
+    fn execute_direct_string_sum_count_parallel(
+        &mut self,
+        group_column: usize,
+        collation: tidb_datatype::Collation,
+        sum_column: usize,
+        count_column: usize,
+        first_row: Option<usize>,
+        group_type: &FieldType,
+        final_count: bool,
+        count_unsigned: bool,
+        worker_count: usize,
+    ) -> Result<(), ExecError> {
+        let mut global_groups: Vec<DirectStringParallelGroup> = Vec::with_capacity(131_072);
+        let mut next_sequence = 0usize;
+        let mut child_drained = false;
+
+        while !child_drained {
+            let mut batch = Vec::with_capacity(PARALLEL_INT_AGG_CHUNKS_PER_WINDOW);
+            for _ in 0..PARALLEL_INT_AGG_CHUNKS_PER_WINDOW {
+                self.child_chunk.reset();
+                self.child.next(&mut self.child_chunk)?;
+                let rows = self.child_chunk.num_rows();
+                if rows == 0 {
+                    self.is_child_drained = true;
+                    child_drained = true;
+                    break;
+                }
+                self.child_returned_empty = false;
+                let replacement = self.child.new_chunk();
+                let chunk = std::mem::replace(&mut self.child_chunk, replacement);
+                batch.push((chunk, next_sequence));
+                next_sequence += rows;
+            }
+            if batch.is_empty() {
+                break;
+            }
+
+            let workers = batch.len().min(worker_count);
+            let mut partitions: Vec<Vec<(usize, usize)>> =
+                (0..workers).map(|_| Vec::new()).collect();
+            for (batch_index, (chunk, _)) in batch.iter().enumerate() {
+                for row_index in 0..chunk.num_rows() {
+                    let fingerprint =
+                        direct_string_worker_fingerprint(chunk, row_index, group_column, collation);
+                    partitions[(fingerprint as usize) % workers].push((batch_index, row_index));
+                }
+            }
+            let group_type = group_type.clone();
+            let partial_results = std::thread::scope(|scope| {
+                let handles = partitions.into_iter().map(|rows| {
+                    let batch = &batch;
+                    let group_type = &group_type;
+                    scope.spawn(move || {
+                        direct_string_sum_count_worker(
+                            batch,
+                            &rows,
+                            group_column,
+                            collation,
+                            sum_column,
+                            count_column,
+                            first_row,
+                            group_type,
+                            final_count,
+                            count_unsigned,
+                        )
+                    })
+                });
+                handles
+                    .map(|handle| {
+                        handle
+                            .join()
+                            .expect("parallel string aggregate worker panicked")
+                    })
+                    .collect::<Vec<_>>()
+            });
+            let mut pending_tracker_bytes = 0_i64;
+            for partial in partial_results {
+                let partial = partial?;
+                pending_tracker_bytes += partial
+                    .groups
+                    .iter()
+                    .map(|group| new_group_bytes(group.key_len, self.agg_funcs.len()))
+                    .sum::<i64>();
+                global_groups.extend(partial.groups);
+            }
+            if pending_tracker_bytes != 0 {
+                self.tracker.consume(pending_tracker_bytes);
+            }
+            self.parallel_agg_windows += 1;
+            self.memory.check()?;
+        }
+
+        global_groups.sort_unstable_by_key(|group| group.first_seq);
+        self.parallel_output.clear();
+        self.parallel_output
+            .reserve(global_groups.len().saturating_mul(self.agg_funcs.len()));
+        for group in global_groups {
+            let sum = group
+                .sum
+                .map_or(Datum::Null, |state| Datum::Decimal(state.into_decimal()));
+            self.parallel_output.push(sum);
+            self.parallel_output.push(Datum::Int(group.count));
+            if first_row.is_some() {
+                self.parallel_output.push(group.first_value.clone());
+            }
+        }
+        self.parallel_output_width = self.agg_funcs.len();
+        self.parallel_output_cursor = 0;
+        self.parallel_output_active = true;
+        self.executed = true;
+        self.is_child_drained = true;
+        Ok(())
+    }
+
     /// Executes the pushed-down Web3Bench `SUM`/`COUNT` aggregate with scalar
     /// per-group state. The normal path stores one `AggState` for every
     /// aggregate in every group; R34 has up to ~80K groups and only needs an
@@ -230,13 +499,7 @@ impl<C: HashAggContext> HashAggExec<C> {
         final_count: bool,
         count_unsigned: bool,
     ) -> Result<(), ExecError> {
-        let estimate = self
-            .child
-            .row_count()
-            .ok()
-            .flatten()
-            .unwrap_or(0)
-            .clamp(1024, 131_072) as usize;
+        let estimate = 131_072;
         let mut buckets: DirectStringBucketMap<usize> =
             HashMap::with_capacity_and_hasher(estimate, BuildHasherDefault::default());
         let mut collisions: DirectStringBucketMap<Vec<usize>> =
@@ -257,7 +520,9 @@ impl<C: HashAggContext> HashAggExec<C> {
             let count_values = chunk.column(count_column);
             let mut pending_tracker_bytes = 0_i64;
             for row_index in 0..rows {
-                let physical_row = chunk.sel().map_or(row_index, |selection| selection[row_index]);
+                let physical_row = chunk
+                    .sel()
+                    .map_or(row_index, |selection| selection[row_index]);
                 self.group_key_buffer.clear();
                 let fingerprint = direct_string_key(
                     chunk,

@@ -3205,18 +3205,9 @@ fn run_select_traced_with_delivery_choice_inner(
             SelectField::Expr {
                 expr: tidb_ast::Expr::Column(_),
                 ..
-            }
+            } | SelectField::Wildcard(_)
         )
-    }) || matches!(
-        select.fields.fields(),
-        [SelectField::Wildcard(qualifier)]
-            if qualifier.last().is_none()
-                && projection_sources.len() == current_scope.width()
-                && projection_sources
-                    .iter()
-                    .enumerate()
-                    .all(|(offset, source)| *source == Some(offset))
-    );
+    });
     let derived_column_prune = derived_output
         && simple_projection
         && direct_column_projection

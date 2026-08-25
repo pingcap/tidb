@@ -3982,6 +3982,47 @@ mod tests {
         }
     }
 
+    /// A test-only source that keeps chunk boundaries visible to the aggregate
+    /// worker-window implementation.
+    struct MultiChunkSource {
+        meta: ExecutorMeta,
+        chunks: Vec<Chunk>,
+        cursor: usize,
+    }
+    impl Executor for MultiChunkSource {
+        fn open(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+        fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+            req.reset();
+            if let Some(chunk) = self.chunks.get(self.cursor) {
+                for row in 0..chunk.num_rows() {
+                    req.append_row(chunk.get_row(row));
+                }
+                self.cursor += 1;
+            }
+            Ok(())
+        }
+        fn close(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+        fn new_chunk(&self) -> Chunk {
+            self.meta.new_chunk()
+        }
+    }
+
     fn col(index: i64) -> Expression {
         let mut c = Column::new(index + 1, long());
         c.index = index;
@@ -4282,6 +4323,109 @@ mod tests {
                 ],
             ]
         );
+    }
+
+    #[test]
+    fn grouped_binary_string_parallel_workers_merge_exact_decimal() {
+        let group_type = binary_varchar();
+        let sum_type = decimal_with_shape(20, 2);
+        let count_type = long();
+        let fields = [group_type.clone(), sum_type.clone(), count_type.clone()];
+        let make_chunk = |rows: &[(&[u8], &str, i64)]| {
+            let mut chunk = Chunk::new_with_capacity(&fields, rows.len());
+            for (group, sum, count) in rows {
+                chunk.append_bytes(0, group);
+                chunk.append_datum(
+                    1,
+                    &Datum::Decimal(tidb_datatype::Decimal::from_literal(sum)),
+                );
+                chunk.append_int64(2, *count);
+            }
+            chunk
+        };
+        let columns = fields
+            .iter()
+            .enumerate()
+            .map(|(index, field_type)| {
+                let mut column = Column::new((index + 1) as i64, field_type.clone());
+                column.index = index as i64;
+                column
+            })
+            .collect();
+        let source = Box::new(MultiChunkSource {
+            meta: ExecutorMeta::new(Schema::new(columns), 0, 2, 1024),
+            chunks: vec![
+                make_chunk(&[(b"a", "1.00", 2), (b"b", "3.00", 1)]),
+                make_chunk(&[(b"a", "2.50", 3), (b"c", "4.00", 1)]),
+            ],
+            cursor: 0,
+        });
+        let output_types = [sum_type.clone(), count_type.clone(), group_type.clone()];
+        let mut exec = HashAggExec::new(
+            out_meta_typed(&output_types),
+            vec![typed_col(0, group_type.clone())],
+            vec![
+                AggFunc::new(AggKind::Sum, Some(typed_col(1, sum_type))),
+                AggFunc::new(AggKind::FinalCount, Some(typed_col(2, count_type))),
+                AggFunc::new(AggKind::FirstRow, Some(typed_col(0, group_type))),
+            ],
+            source,
+            NoColumns,
+            StatementMemory::default(),
+        );
+        assert!(exec.direct_string_sum_count_specs().is_some());
+
+        exec.open().unwrap();
+        let mut req = exec.new_chunk();
+        let mut rows = Vec::new();
+        loop {
+            exec.next(&mut req).unwrap();
+            if req.num_rows() == 0 {
+                break;
+            }
+            for row_index in 0..req.num_rows() {
+                let row = req.get_row(row_index);
+                rows.push(
+                    (0..req.num_cols())
+                        .map(|column| row.get_datum(column, &output_types[column]))
+                        .collect::<Vec<_>>(),
+                );
+            }
+        }
+        assert_eq!(
+            rows,
+            vec![
+                vec![
+                    Datum::Decimal(tidb_datatype::Decimal::from_literal("3.50")),
+                    Datum::Int(5),
+                    Datum::String(tidb_datatype::StringDatum::new(
+                        b"a".to_vec(),
+                        Collation::Binary,
+                    )),
+                ],
+                vec![
+                    Datum::Decimal(tidb_datatype::Decimal::from_literal("3.00")),
+                    Datum::Int(1),
+                    Datum::String(tidb_datatype::StringDatum::new(
+                        b"b".to_vec(),
+                        Collation::Binary,
+                    )),
+                ],
+                vec![
+                    Datum::Decimal(tidb_datatype::Decimal::from_literal("4.00")),
+                    Datum::Int(1),
+                    Datum::String(tidb_datatype::StringDatum::new(
+                        b"c".to_vec(),
+                        Collation::Binary,
+                    )),
+                ],
+            ]
+        );
+        assert!(
+            exec.parallel_agg_windows() > 0,
+            "multiple child chunks must use the bounded direct-string worker path"
+        );
+        exec.close().unwrap();
     }
 
     fn decimal_with_shape(flen: i64, scale: i64) -> FieldType {

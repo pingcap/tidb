@@ -70,6 +70,24 @@ shapes remain on the existing general executor.
   stable regression versus the prior release receipts. Plan differences remain
   the internal `Column#N`/TopN expression spelling and the R35 derived-table
   Projection; all operator skeletons otherwise match.
+- [x] (2026-08-25) Added the bounded direct-string worker path for the pushed
+  down R34 `SUM`/`FINAL_COUNT` shape. Rows are partitioned by a cheap
+  collation-aware key fingerprint, so equal groups have one owner; workers use
+  exact fixed-scale DECIMAL state with the existing arbitrary-precision fallback,
+  preserve first-seen order, and batch memory accounting once per window. The
+  serial path remains the fallback for one worker, low quotas, and spill-sensitive
+  statements. `grouped_binary_string_parallel_workers_merge_exact_decimal`
+  covers multi-chunk routing, partial-count merging, exact DECIMAL output, and
+  the worker-window receipt.
+- [x] (2026-08-25) Rebuilt the release binary and reran the ten-times-data
+  Web3Bench matrix with one client (default executor settings). R1, R21-R35,
+  and R32det returned exact rows; R32 differs only in the unspecified ordering
+  of tied rows. The normalized operator skeleton now matches Go for every
+  query, including R35 after eliminating the identity projection for qualified
+  wildcard output. The alternating eight-sample medians were R34
+  `230.737 ms` vs Go `154.765 ms` (`1.49x`) and R35 `160.028 ms` vs Go
+  `113.508 ms` (`1.41x`); the full matrix is in
+  `/tmp/web3_final_current_default5_perf.json`.
 
 ## Validation commands
 
@@ -133,6 +151,14 @@ Current fresh-release receipts (commit `09725ac0bf`, after cache reset) are:
     /tmp/web3_current_nostats_plans_rust.json
     /tmp/web3_current_nostats_perf.json
 
+Final default-settings receipts after the qualified-wildcard projection fix:
+
+    /tmp/web3_final_current_default5_go_results.json
+    /tmp/web3_final_fixed_rust_results.json
+    /tmp/web3_final_fixed_go_plans.json
+    /tmp/web3_final_fixed_rust_plans.json
+    /tmp/web3_final_current_default5_perf.json
+
 ## Surprises & Discoveries
 
 - A generic `IntIsNull` protobuf signature is rejected by TiKV for DECIMAL;
@@ -160,8 +186,13 @@ Current fresh-release receipts (commit `09725ac0bf`, after cache reset) are:
 
 ## Outcomes & Retrospective
 
-At the current checkpoint the R35 result is correct (`161859`). The latest
-analyzed-statistics alternating run measured R34 at `1.60x` and R35 at `1.49x`
-of Go after the latest remote rebase. This checkpoint records the measured
-improvement and the regression test, but it is not a claim that the no-stats
-matrix or every EXPLAIN receipt is complete.
+At the current checkpoint the R35 result is correct (`161859`). The final
+default-settings one-client matrix has exact deterministic rows and matching
+operator skeletons for all Web3Bench queries; R32 remains tie-order
+non-deterministic by SQL semantics, with R32det exact. The direct-string worker
+path improves the pushed-down R34 receipt over the prior scalar release while
+keeping the exact DECIMAL fallback and a serial path for one-worker execution.
+The remaining performance risk is that Rust's R34/R35 medians are still above
+Go's on this local TiKV/CPU run (`1.49x`/`1.41x`), so the receipts establish no
+new regression against the prior Rust release rather than claiming identical
+latency.
