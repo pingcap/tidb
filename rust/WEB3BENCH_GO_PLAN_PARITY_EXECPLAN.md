@@ -209,18 +209,55 @@ shapes remain on the existing general executor.
   equal in `/tmp/web3_10x_plan_final3_go.json` and
   `/tmp/web3_10x_plan_final3_rust.json`; result rows are exact except the
   unspecified R32 tie boundary.
+- [x] (2026-08-25) Closed the remaining pseudo-statistics R35 plan gap. The
+  index-join trace now carries null-rejecting inner columns that are not
+  covered by the probe index onto the double-read's `Selection(Probe)` and
+  leaves index-covered predicates on `Selection(Build)`, matching Go's
+  `t.value < t2.value` plan without changing the executor path. The new
+  `non_grouped_index_lookup_keeps_null_rejection_on_probe` regression covers
+  the physical shape. Fresh minimum-fixture receipts show all R1, R21-R35
+  operator/task skeletons and all rows equal after both `ANALYZE TABLE` and
+  `DROP STATS`: `/tmp/audit_min_analyzed_go_fix2.json`,
+  `/tmp/audit_min_analyzed_rust_fix2.json`,
+  `/tmp/audit_min_analyzed_results_go_fix2.json`,
+  `/tmp/audit_min_analyzed_results_rust_fix2.json`,
+  `/tmp/audit_min_pseudo_go_fix2.json`,
+  `/tmp/audit_min_pseudo_rust_probe_fix2.json`,
+  `/tmp/audit_min_pseudo_results_go_fix2.json`, and
+  `/tmp/audit_min_pseudo_results_rust_fix2.json`. The same final release
+  binary replay is recorded in `/tmp/audit_min_analyzed_rust_release_fix2.json`,
+  `/tmp/audit_min_analyzed_results_rust_release_fix2.json`,
+  `/tmp/audit_min_pseudo_go_release_fix2.json`,
+  `/tmp/audit_min_pseudo_rust_release_fix2.json`,
+  `/tmp/audit_min_pseudo_results_go_release_fix2.json`, and
+  `/tmp/audit_min_pseudo_results_rust_release_fix2.json`.
+- [x] (2026-08-25) Replayed the ten-times fixture with the final release
+  binary. All normalized operator/task skeletons match in
+  `/tmp/web3_10x_plan_fix2_go.json` and
+  `/tmp/web3_10x_plan_fix2_rust.json`; deterministic results match exactly
+  (`R32` alone remains an unspecified timestamp-tie order, while `R32det`
+  matches). Two alternating eight-sample, one-client rounds combined to
+  `/tmp/web3_10x_perf_fix2_release_combined.json`: Rust/Go medians were R1
+  `0.490/0.358 ms` (`1.37x`), R21 `1.722/1.397` (`1.23x`), R22
+  `0.932/0.924` (`1.01x`), R23 `1.141/1.114` (`1.02x`), R24
+  `1.205/1.017` (`1.18x`), R25 `0.980/0.787` (`1.25x`), R31
+  `1.650/1.478` (`1.12x`), R32 `4.925/3.344` (`1.47x`), R33
+  `115.250/163.391` (`0.71x`), R34 `252.278/190.456` (`1.32x`), R35
+  `152.788/100.398` (`1.52x`), and R32det `5.375/3.521` (`1.53x`).
 
 ## Validation commands
 
 The shared playground currently uses PD `127.0.0.1:14379`, TiKV
-`127.0.0.1:32160`, Go TiDB `127.0.0.1:16000`, and Rust TiDB
-`127.0.0.1:16009`.  The exact query/result/performance scripts live under
+`127.0.0.1:32160`, Go TiDB `127.0.0.1:16000`, and the final release Rust
+endpoint `127.0.0.1:16019`. The exact query/result/performance scripts live under
 `/tmp` in the current test session.  Targeted Rust checks are run from
 `rust/`:
 
     cargo +nightly-2026-08-22 check -p tidb-exec -p tidb-executor -q
     cargo +nightly-2026-08-22 test -p tidb-executor hash_agg --lib -q
     cargo +nightly-2026-08-22 test -p tidb-executor join --lib -q
+    cargo +nightly-2026-08-22 test -p tidb-executor \
+      non_grouped_index_lookup_keeps_null_rejection_on_probe --lib -q
     cargo +nightly-2026-08-22 test -p tidb-session \
       web3bench_small_aggregates_follow_go_cost_boundary --lib -q
 

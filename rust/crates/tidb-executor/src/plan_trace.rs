@@ -2508,6 +2508,7 @@ impl PlanTrace {
             aggregation_partial_info,
             outer_not_null,
             inner_not_null,
+            inner_not_null_info,
         } = path;
         let depth = self.stack.len();
         if depth < 2 {
@@ -3338,6 +3339,38 @@ impl PlanTrace {
             if scan_is_index_join_outer(&left).is_some() {
                 left = index_join_reader(left, None, false, visible);
             }
+        }
+        // A non-grouped index lookup keeps null-rejecting join predicates on
+        // the table-row side of the double read. Go prints this as
+        // `Selection(Probe)` (for example the `t2.value` residue of
+        // `t.value < t2.value`); the index-side filters above are a separate
+        // Build selection and cannot stand in for this row-level check.
+        let inner_reader = if lookup_is_left {
+            &mut left
+        } else {
+            &mut right
+        };
+        if !inner_not_null_info.is_empty()
+            && inner_reader.name == "IndexLookUp"
+            && inner_reader.children.len() == 2
+        {
+            let probe = &mut inner_reader.children[1];
+            let mut selection = PlanNode::new(
+                "Selection",
+                estimated_rows.or(probe.est_rows),
+                String::new(),
+                inner_not_null_info.to_owned(),
+            );
+            selection.task = "cop[tikv]";
+            selection.act_rows = probe.act_rows.clone();
+            selection.key_ndv_ratio = probe.key_ndv_ratio;
+            selection.label = probe.label;
+            probe.label = "";
+            selection.children.push(std::mem::replace(
+                probe,
+                PlanNode::new("TableDual", Some(0.0), String::new(), String::new()),
+            ));
+            *probe = selection;
         }
         self.stack.push(left);
         self.stack.push(right);
@@ -6606,6 +6639,10 @@ pub(crate) struct IndexJoinInnerPathText<'a> {
     pub(crate) outer_not_null: &'a [usize],
     /// Grouped inner output columns rejected when NULL after aggregation.
     pub(crate) inner_not_null: &'a [usize],
+    /// Text for non-grouped inner columns rejected by a comparison. Go keeps
+    /// this residual on the lookup's Probe table read; grouped probes render
+    /// carrier columns as `Column#N` below.
+    pub(crate) inner_not_null_info: &'a str,
 }
 
 /// Unsays `keep order:true` on every leaf under `node` that a join above it
@@ -7207,6 +7244,7 @@ mod tests {
                 aggregation_partial_info: Some("group by:h.h_w_id, funcs:sum(h.amount)->Column#0"),
                 outer_not_null: &[],
                 inner_not_null: &[0],
+                inner_not_null_info: "",
             },
             &[],
             1.0,
@@ -7222,6 +7260,62 @@ mod tests {
             inner.children[0].children[0].children[0].name,
             "IndexRangeScan"
         );
+    }
+
+    #[test]
+    fn non_grouped_index_lookup_keeps_null_rejection_on_probe() {
+        let mut trace = PlanTrace::planning();
+        trace.stack.push(PlanNode::new(
+            "TableFullScan",
+            Some(5.0),
+            "table:t".to_owned(),
+            "keep order:false, stats:pseudo".to_owned(),
+        ));
+        trace.stack.push(PlanNode::new(
+            "IndexFullScan",
+            Some(6.25),
+            "table:t2, index:idx_fa_bn(from_address, block_number)".to_owned(),
+            "keep order:false, stats:pseudo".to_owned(),
+        ));
+
+        let result = trace.index_join_inner_scan(
+            false,
+            IndexJoinInnerPathText {
+                access: "table:t2, index:idx_fa_bn(from_address, block_number)".to_owned(),
+                range_info: "[eq(test.t2.from_address, test.t.to_address)]",
+                index: true,
+                index_lookup: true,
+                visible: "t2",
+                estimated_rows: Some(6.24),
+                estimated_access_rows: Some(6.25),
+                estimated_outer_rows: Some(5.0),
+                unique: false,
+                keep_outer_order: false,
+                grouped_derived: false,
+                composite: false,
+                stream_aggregation: false,
+                aggregation_info: None,
+                aggregation_final_info: None,
+                aggregation_partial_info: None,
+                outer_not_null: &[],
+                inner_not_null: &[6],
+                inner_not_null_info: "not(isnull(test.t2.value))",
+            },
+            &["not(isnull(test.t2.from_address))".to_owned()],
+            0.999,
+        );
+
+        assert!(result.is_ok());
+        let lookup = &trace.stack[1];
+        assert_eq!(lookup.name, "IndexLookUp");
+        assert_eq!(lookup.children.len(), 2);
+        assert_eq!(lookup.children[0].name, "Selection");
+        assert_eq!(lookup.children[0].label, "(Build)");
+        assert_eq!(lookup.children[1].name, "Selection");
+        assert_eq!(lookup.children[1].label, "(Probe)");
+        assert_eq!(lookup.children[1].info, "not(isnull(test.t2.value))");
+        assert_eq!(lookup.children[1].children[0].name, "TableRowIDScan");
+        assert!(lookup.children[1].children[0].label.is_empty());
     }
 
     /// Go's dynamic-range builder retains a Selection only for predicates left
@@ -7268,6 +7362,7 @@ mod tests {
                 aggregation_partial_info: None,
                 outer_not_null: &[],
                 inner_not_null: &[],
+                inner_not_null_info: "",
             },
             &[String::new()],
             1.0,

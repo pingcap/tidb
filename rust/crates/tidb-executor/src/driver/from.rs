@@ -6039,6 +6039,30 @@ fn build_join_with_choice(
                     filters.sort_unstable();
                     filters
                 });
+            let index_columns = match &decision.object {
+                crate::access_path::LookupObject::Index(id) => decision
+                    .table
+                    .indexes()
+                    .iter()
+                    .find(|index| index.id == *id)
+                    .map(|index| index.column_offsets.as_slice())
+                    .unwrap_or_default(),
+                crate::access_path::LookupObject::Handle
+                | crate::access_path::LookupObject::CommonHandle => &[],
+            };
+            let inner_not_null_info = inner_not_null
+                .iter()
+                .filter(|offset| !index_columns.contains(offset))
+                .filter_map(|offset| {
+                    decision.columns.get(*offset).map(|(name, _)| {
+                        format!(
+                            "not(isnull({}.{}.{name}))",
+                            decision.database, decision.table.name
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
             if trace
                 .index_join_inner_scan(
                     lookup_is_left,
@@ -6061,6 +6085,7 @@ fn build_join_with_choice(
                         aggregation_partial_info: decision.aggregation_partial_info.as_deref(),
                         outer_not_null: &outer_not_null,
                         inner_not_null: &inner_not_null,
+                        inner_not_null_info: &inner_not_null_info,
                     },
                     &filters,
                     decision.filter_selectivity,
