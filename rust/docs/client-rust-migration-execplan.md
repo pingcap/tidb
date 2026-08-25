@@ -525,13 +525,35 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       `tikv/safepoint.go`), and `transaction/mutation_buffer` (440 lines, no
       Go counterpart at all). Everything else is `pkg/kv` and
       `pkg/store/driver` and stays.
-      **`tidb-pd-client` -- remove ~4.3K of 5.4K.** `client/{mod,failover,
-      worker,topology,requests}`, `tso.rs`, `security.rs` (its own header
-      says "transcreated from client-go's"). TiDB Go does not implement a PD
-      client: it imports `github.com/tikv/pd/client`, constructs one, and
-      hands it to `tikv.NewKVStore`. The Rust equivalent of that library is
-      client-rust's own `pd` module, so these are a re-implementation of
-      something TiDB does not own. **Keep** `etcd.rs` (1.2K -- TiDB Go uses
+      **`tidb-pd-client` -- CORRECTION: do not remove the client half.**
+      This entry first said to delete `client/{mod,failover,worker,topology,
+      requests}`, `tso.rs`, `security.rs`, reasoning that TiDB Go imports
+      `github.com/tikv/pd/client` rather than implementing one, so the Rust
+      module was a re-implementation of something TiDB does not own. That
+      inference was wrong: *something* has to transcreate that library, and
+      this module is it. `client/failover.rs`'s own header names its Go
+      boundary as `pd/client`'s `pd_service_discovery.go`, and it implements
+      that behavior -- leader tried first, a transport failure walking the
+      current member set in order, a membership refresh making a new leader
+      visible, a per-endpoint connection cache (Go's per-member
+      `grpc.ClientConn` map), and error-class-aware failover where only
+      `Unavailable`/`DeadlineExceeded`/`Cancelled`/timeout trigger it, with
+      `ClusterMismatch` and header errors handled distinctly.
+      client-rust's PD retry (`retry_core!` in `pd/retry.rs`) is a generic
+      loop: N attempts, reconnect on any error but `Unimplemented`, fixed
+      interval, no member-set walk, no leader-first routing, no error
+      classification, no membership refresh. Routing PD through it would
+      replace the faithful `pd_service_discovery.go` transcreation with a
+      strictly weaker one and delete the tests pinning that behavior
+      (`leader_only_previous_region_bypasses_the_active_follower`,
+      `reachable_old_leader_header_errors_refresh_and_retry_the_new_leader`,
+      `membership_refresh_rejects_cluster_mismatch_without_mutation`, ...).
+      That is a fidelity regression, not the fidelity improvement this
+      migration is for. **Decision pending with the user**: keep the client
+      half (removal drops to ~20.4K, all in `tidb-txnkv`), or route through
+      client-rust anyway and first push the member-set/leader-routing policy
+      upstream so the capability lands there before it is dropped here.
+      **Keep regardless:** `etcd.rs` (1.2K -- TiDB Go uses
       `go.etcd.io/etcd/client/v3` directly, and this is already rewritten
       onto the `etcd-client` crate) and `engine.rs` (`pkg/util/engine`).
       **`tidb-distsql` -- remove essentially nothing.** This is the
