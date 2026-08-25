@@ -146,6 +146,20 @@ shapes remain on the existing general executor.
   `/tmp/web3_d62_clean_rust_results.json`,
   `/tmp/web3_d62_clean_go_plans.json`, and
   `/tmp/web3_d62_clean_rust_plans.json`.
+- [x] (2026-08-25) Rebuilt the post-fetch HEAD `385eaf599a8` (including the
+  independent grouped count/sum pipeline change) and reran two complete
+  matrices. The combined sixteen-sample Rust/Go medians were R1
+  `0.489/0.389 ms` (`1.26x`), R21 `1.503/1.536 ms` (`0.98x`), R22
+  `1.098/1.032 ms` (`1.06x`), R23 `1.165/1.260 ms` (`0.93x`), R24
+  `1.228/1.059 ms` (`1.16x`), R25 `1.047/1.072 ms` (`0.98x`), R31
+  `1.793/1.744 ms` (`1.03x`), R32 `5.076/3.546 ms` (`1.43x`), R33
+  `142.334/130.063 ms` (`1.09x`), R34 `274.906/159.250 ms` (`1.73x`),
+  R35 `153.602/113.474 ms` (`1.35x`), and R32det `6.354/4.237 ms`
+  (`1.50x`). All deterministic rows and all plan skeletons remain equal;
+  only R32's unspecified tie-order/ LIMIT-boundary choice differs. Receipts:
+  `/tmp/web3_head_all_perf.json`, `/tmp/web3_head_all_perf_repeat.json`,
+  `/tmp/web3_head_go_results.json`, `/tmp/web3_head_rust_results.json`,
+  `/tmp/web3_head_go_plans.json`, and `/tmp/web3_head_rust_plans.json`.
 
 ## Validation commands
 
