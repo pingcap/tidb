@@ -374,6 +374,11 @@ fn transaction(
     RealOptimisticTransaction<TonicCoprocessorClient, SplitTopology, CountingTimestampSource>,
     Arc<AtomicU64>,
 ) {
+    // The injected client must stay alive for the whole test even though the
+    // transaction that consumes the runtime drops at `commit`: the detached
+    // async-commit secondary flush runs on its own thread holding only a
+    // non-owning clone, and dropping the owner would close the transport
+    // under it — production keeps this owner for the process lifetime.
     let client = TonicCoprocessorClient::new().unwrap();
     let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(SplitTopology { address }));
     let (timestamps, calls) = CountingTimestampSource::new(PD_COMMIT_TS);
@@ -671,6 +676,19 @@ fn an_async_commit_uses_the_largest_min_commit_ts_and_takes_no_second_tso() {
         timestamp_calls, 0,
         "async commit must not allocate a commit timestamp"
     );
+
+    // Go answers the session at the prewrite and flushes the follow-up
+    // secondary Commits on a goroutine (`2pc.go`), so this node hands them to
+    // a detached transport thread too: wait for that flush instead of assuming
+    // it landed before `commit` returned.
+    let deadline = Instant::now() + CALL_TIMEOUT;
+    while recorded.lock().unwrap().commits.len() < 2 {
+        assert!(
+            Instant::now() < deadline,
+            "the detached async-commit secondary flush never published its Commits"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
 
     let recorded = recorded.lock().unwrap();
     assert_eq!(recorded.prewrites.len(), 2);

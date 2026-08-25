@@ -32,8 +32,8 @@ use crate::region::RegionRecoveryLoader;
 use crate::rpc::UnaryCallContext;
 
 use super::super::command_client::{
-    PublishedCommand, TransactionCommitRequest, TransactionCommandClient,
-    TransactionPrewriteRequest,
+    OwnedTransactionCommitRequest, PublishedCommand, TransactionCommitRequest,
+    TransactionCommandClient, TransactionPrewriteRequest,
 };
 use super::super::mutation::{validate_and_sort, MutationSetError, OptimisticMutation};
 use super::super::state::{
@@ -164,6 +164,7 @@ where
                         .collect()
                 }
             };
+
 
             // Every admitted attempt went on the wire, so its keys may hold a
             // prewrite even if a sibling batch fails this round first. A
@@ -466,6 +467,20 @@ where
             self.state
                 .transition(CoordinatorState::AsyncCommitted)
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+            // Go `twoPhaseCommitter.execute` (`2pc.go`): the session returns at
+            // the completed prewrite and a goroutine (`cleanWg.Add(1); go ...`)
+            // flushes the secondary Commits. A client that cannot take over
+            // falls through to the awaited path below.
+            if self.detach_async_commit_secondaries(&all_mutation_keys, &primary_key, min_commit_ts)
+            {
+                self.state
+                    .transition(CoordinatorState::Committed)
+                    .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+                return Ok(OptimisticCommitOutcome::Committed(CommittedTransaction {
+                    receipt,
+                    secondary_failures: Vec::new(),
+                }));
+            }
             let failures = self.commit_secondaries(
                 &all_mutation_keys,
                 &primary_key,
@@ -804,6 +819,62 @@ where
                 }
             }
         }
+    }
+
+    /// Hands an async-commit transaction's secondary Commits to the transport
+    /// without awaiting them.
+    ///
+    /// Go `twoPhaseCommitter.execute` (`2pc.go`) answers the caller at the
+    /// completed async-commit prewrite and lets a background goroutine run the
+    /// follow-up secondary Commits — they only materialize an already-made
+    /// decision, and any reader that meets an unflushed key resolves it through
+    /// the primary lock anyway. Returns `false` when this client cannot take
+    /// ownership or grouping fails up front; the caller then falls back to the
+    /// awaited [`Self::commit_secondaries`], whose failures stay observable in
+    /// the receipt.
+    fn detach_async_commit_secondaries(
+        &mut self,
+        keys: &[Vec<u8>],
+        primary_key: &[u8],
+        commit_ts: u64,
+    ) -> bool {
+        if keys.is_empty() {
+            return true;
+        }
+        let batches = match group_keys(&self.runtime, keys) {
+            Ok(batches) => batches,
+            Err(_) => return false,
+        };
+        let mut requests = Vec::with_capacity(batches.len());
+        for batch in &batches {
+            let holds_primary = batch.keys().iter().any(|key| key.as_slice() == primary_key);
+            requests.push(OwnedTransactionCommitRequest {
+                address: batch.address().to_owned(),
+                request: KvrpcCommitRequest {
+                    start_version: self.start_ts,
+                    keys: batch.keys().to_vec(),
+                    commit_version: commit_ts,
+                    commit_role: if holds_primary {
+                        KvrpcCommitRole::Primary as i32
+                    } else {
+                        KvrpcCommitRole::Secondary as i32
+                    },
+                    primary_key: primary_key.to_vec(),
+                    use_async_commit: true,
+                    ..KvrpcCommitRequest::default()
+                },
+                context: self.write_context(batch.context()),
+            });
+        }
+        let client_authority = self.runtime.client_handle();
+        let taken = match client_authority.try_lock() {
+            Ok(mut client) => {
+                let authority = std::sync::Arc::clone(&client_authority);
+                client.publish_commits_detached(requests, authority)
+            }
+            Err(_) => false,
+        };
+        taken
     }
 
     /// Commits keys whose outcome is already decided.

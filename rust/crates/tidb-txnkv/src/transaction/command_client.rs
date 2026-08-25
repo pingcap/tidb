@@ -25,6 +25,7 @@
 //! on demand.
 
 use prost::Message;
+use std::time::Duration;
 use tidb_proto::{
     KvrpcBatchGetRequest, KvrpcBatchGetResponse, KvrpcBatchRollbackRequest,
     KvrpcBatchRollbackResponse, KvrpcCommitRequest, KvrpcCommitResponse, KvrpcContext,
@@ -38,6 +39,18 @@ use crate::rpc::{
     TonicCoprocessorClient, TransactionBatchPending, TransactionBatchPublication,
     TransactionBatchResponse, UnaryCallContext,
 };
+
+/// The deadline a detached async-commit secondary flush runs under: the same
+/// store-lifetime reasoning as the coordinator's `secondary_commit_call_budget`
+/// (`CommitSecondaryMaxBackoff` plus one full-length RPC). Nothing user-visible
+/// waits on this — only the background thread does.
+const DETACHED_SECONDARY_COMMIT_BUDGET: Duration = Duration::from_millis(41_500);
+
+/// Detached secondary Commits that ended in a transport, region, or key error.
+/// The transaction is committed regardless; the counter exists so a probe can
+/// notice systematic flush failures without touching the session path.
+static DETACHED_FLUSH_FAILURES: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 /// Outcome of one transaction command relative to the publication boundary.
 ///
@@ -103,6 +116,18 @@ pub struct TransactionPrewriteRequest<'a> {
 pub struct TransactionCommitRequest<'a> {
     /// Physical TiKV leader address selected by the region cache.
     pub address: &'a str,
+    /// Region-scoped Commit request.
+    pub request: KvrpcCommitRequest,
+    /// Region context stamped with the transaction's resolved locks.
+    pub context: KvrpcContext,
+}
+
+/// An owned [`TransactionCommitRequest`]: the shape a detached secondary
+/// flush receives, because those requests must outlive the coordinator that
+/// grouped them and the session that already observed the commit.
+pub struct OwnedTransactionCommitRequest {
+    /// Physical TiKV leader address selected by the region cache.
+    pub address: String,
     /// Region-scoped Commit request.
     pub request: KvrpcCommitRequest,
     /// Region context stamped with the transaction's resolved locks.
@@ -237,6 +262,30 @@ pub trait TransactionCommandClient {
                 self.publish_commit(request.address, &request.request, &request.context, call)
             })
             .collect()
+    }
+
+    /// Publishes a round of region-routed Commits WITHOUT waiting on their
+    /// responses, answering `true` only when the round was taken over.
+    ///
+    /// Go `twoPhaseCommitter.execute` (`2pc.go`): an async-commit transaction
+    /// is committed the moment its carrying prewrite succeeds — the follow-up
+    /// secondary Commits only materialize that decision, so the session is
+    /// released immediately and they are flushed on a goroutine
+    /// (`cleanWg.Add(1); go ...`). The caller passes the shared client
+    /// authority it routed through (`SharedReadRuntime::client_handle`), so a
+    /// flush that outlives its transaction still owns a live transport until
+    /// it finishes. The default `false` keeps every other client awaiting
+    /// inline exactly as before.
+    fn publish_commits_detached(
+        &mut self,
+        requests: Vec<OwnedTransactionCommitRequest>,
+        client_authority: std::sync::Arc<std::sync::Mutex<Self>>,
+    ) -> bool
+    where
+        Self: Sized,
+    {
+        let _ = (requests, client_authority);
+        false
     }
 
     /// Publishes one BatchRollback cleaning possibly-prewritten keys.
@@ -530,6 +579,62 @@ impl TransactionCommandClient for TonicCoprocessorClient {
             .into_iter()
             .map(|result| result.expect("every admitted Commit has a completion result"))
             .collect()
+    }
+
+    fn publish_commits_detached(
+        &mut self,
+        requests: Vec<OwnedTransactionCommitRequest>,
+        client_authority: std::sync::Arc<std::sync::Mutex<Self>>,
+    ) -> bool
+    where
+        Self: Sized,
+    {
+        if requests.is_empty() {
+            return true;
+        }
+        let spawned = std::thread::Builder::new()
+            .name("txn-secondary-flush".to_owned())
+            .spawn(move || {
+                // Holding the shared authority (not a clone) keeps the
+                // transport owner alive even when the transaction and its
+                // runtime are already dropped; the lock serializes this flush
+                // against any concurrent user of the same authority.
+                let mut client = match client_authority.lock() {
+                    Ok(client) => client,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                let call =
+                    UnaryCallContext::with_timeout(DETACHED_SECONDARY_COMMIT_BUDGET);
+                let refs: Vec<TransactionCommitRequest> = requests
+                    .iter()
+                    .map(|request| TransactionCommitRequest {
+                        address: &request.address,
+                        request: request.request.clone(),
+                        context: request.context.clone(),
+                    })
+                    .collect();
+                for published in client.publish_commits(&refs, &call) {
+                    match published {
+                        PublishedCommand::Response(response) => {
+                            if response.response.region_error.is_some()
+                                || response.response.error.is_some()
+                            {
+                                // The transaction is committed either way —
+                                // Go logs and moves on; an unmaterialized
+                                // secondary write record resolves through
+                                // the primary lock on read.
+                                DETACHED_FLUSH_FAILURES
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                        _ => {
+                            DETACHED_FLUSH_FAILURES
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                }
+            });
+        spawned.is_ok()
     }
 
     fn publish_pessimistic_locks(
