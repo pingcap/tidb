@@ -1,5 +1,5 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 5b011b5..55298a1 100644
+index 6b0a799..4cfc321 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -11,6 +11,10 @@ rust-version = "1.93.0"
@@ -33,9 +33,9 @@ index 5b011b5..55298a1 100644
  rand = "0.8"
  regex = "1"
  crc32fast = "1"
-@@ -62,7 +67,8 @@ serde_json = "1"
- take_mut = "0.2.2"
+@@ -63,7 +68,8 @@ take_mut = "0.2.2"
  thiserror = "1"
+ unistore = { path = "unistore" }
  tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "macros", "time", "net", "io-util"] }
 -tonic = { version = "0.12", features = ["tls", "gzip"] }
 +tonic = { version = "0.14", features = ["tls-ring", "gzip"] }

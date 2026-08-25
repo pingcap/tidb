@@ -1170,6 +1170,36 @@ pub enum TransactionStatusKind {
 }
 
 impl TransactionStatus {
+    pub fn is_committed(&self) -> bool {
+        matches!(&self.kind, TransactionStatusKind::Committed(..))
+    }
+
+    pub fn is_rolled_back(&self) -> bool {
+        matches!(&self.kind, TransactionStatusKind::RolledBack)
+    }
+
+    pub fn is_status_determined(&self) -> bool {
+        self.is_rolled_back() || self.is_committed()
+    }
+
+    pub fn commit_ts(&self) -> u64 {
+        match &self.kind {
+            TransactionStatusKind::Committed(timestamp) => timestamp.version(),
+            _ => 0,
+        }
+    }
+
+    pub fn ttl(&self) -> u64 {
+        match &self.kind {
+            TransactionStatusKind::Locked(ttl, ..) => *ttl,
+            _ => 0,
+        }
+    }
+
+    pub fn action(&self) -> kvrpcpb::Action {
+        self.action
+    }
+
     pub fn check_ttl(&mut self, current: Timestamp) {
         if let TransactionStatusKind::Locked(ref ttl, ref lock_info) = self.kind {
             if current.physical - Timestamp::from_version(lock_info.lock_version).physical
@@ -1187,6 +1217,27 @@ impl TransactionStatus {
         matches!(
             &self.kind,
             TransactionStatusKind::RolledBack | TransactionStatusKind::Committed(..)
+        )
+    }
+
+    pub fn status_cacheable(&self) -> bool {
+        self.is_cacheable()
+    }
+
+    pub fn has_same_determined_status(&self, other: &Self) -> bool {
+        (self.is_committed() && other.is_committed() && self.commit_ts() == other.commit_ts())
+            || (self.is_rolled_back() && other.is_rolled_back())
+    }
+}
+
+impl std::fmt::Display for TransactionStatus {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "ttl:{} commit_ts:{} action: {}",
+            self.ttl(),
+            self.commit_ts(),
+            self.action.as_str_name(),
         )
     }
 }

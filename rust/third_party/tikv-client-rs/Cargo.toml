@@ -66,6 +66,7 @@ serde_derive = "1.0"
 serde_json = "1"
 take_mut = "0.2.2"
 thiserror = "1"
+unistore = { path = "unistore" }
 tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "macros", "time", "net", "io-util"] }
 tonic = { version = "0.14", features = ["tls-ring", "gzip"] }
 tonic-prost = "0.14"
@@ -83,7 +84,6 @@ serial_test = "0.5.0"
 tempfile = "=3.14.0"
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "net"] }
 tokio-stream = { version = "0.1", features = ["net"] }
-unistore = { path = "unistore" }
 
 [[test]]
 name = "failpoint_tests"

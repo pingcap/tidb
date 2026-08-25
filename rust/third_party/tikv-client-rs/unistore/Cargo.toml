@@ -2,9 +2,15 @@
 name = "unistore"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.93.0"
 license = "Apache-2.0"
-description = "Reusable in-memory MVCC store for TiKV client tests"
+authors = ["The TiKV Project Authors"]
+repository = "https://github.com/tikv/client-rust"
+description = "Reusable in-process MVCC and raw-KV engine for TiKV client tests"
 publish = false
 
 [dependencies]
+farmhash = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 thiserror = "1"

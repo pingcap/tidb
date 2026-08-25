@@ -67,12 +67,14 @@ pub(crate) use lock::reject_shared_locks;
 pub(crate) use lock::resolve_locks_for_read_with_context_result;
 pub(crate) use lock::resolve_locks_with_context;
 pub(crate) use lock::resolve_locks_with_context_result;
+pub use lock::Lock;
 pub use lock::LockResolver;
 pub(crate) use lock::ReadLockContext;
 pub use lock::ResolveLocksContext;
 pub use lock::ResolveLocksOptions;
 pub use lock::ResolvingLock;
 pub(crate) use lock::ResolvingLocksGuard;
+pub use requests::{TransactionStatus, TransactionStatusKind};
 #[doc(hidden)]
 pub mod arena;
 mod snapshot;

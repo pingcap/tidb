@@ -571,6 +571,7 @@ pub(crate) struct StoreRuntime {
     closed: AtomicBool,
     endpoints: Vec<String>,
     security: Arc<SecurityManager>,
+    safe_point_kv_prefix: String,
     keyspace_meta: Option<keyspacepb::KeyspaceMeta>,
 }
 
@@ -579,6 +580,7 @@ impl StoreRuntime {
         pd: Arc<PdRpcClient>,
         endpoints: Vec<String>,
         config: &Config,
+        safe_point_kv_prefix: String,
         keyspace_meta: Option<keyspacepb::KeyspaceMeta>,
     ) -> Result<Arc<Self>> {
         let cluster_id = pd.cluster_id().await;
@@ -601,6 +603,7 @@ impl StoreRuntime {
             closed: AtomicBool::new(false),
             endpoints,
             security,
+            safe_point_kv_prefix,
             keyspace_meta,
         });
         let safe_point = runtime.load_txn_safe_point().await?;
@@ -663,7 +666,12 @@ impl StoreRuntime {
             return Ok(loader.clone());
         }
         let created = Arc::new(
-            EtcdSafePointKv::new(self.endpoints.clone(), self.security.clone(), "").await?,
+            EtcdSafePointKv::new(
+                self.endpoints.clone(),
+                self.security.clone(),
+                self.safe_point_kv_prefix.clone(),
+            )
+            .await?,
         );
         *loader = Some(created.clone());
         Ok(created)
@@ -1095,7 +1103,18 @@ impl KvStore {
         pd_endpoints: Vec<S>,
         config: Config,
     ) -> Result<Self> {
+        Self::new_with_config_and_safe_point_prefix(pd_endpoints, config, "").await
+    }
+
+    /// Constructs a root store with the compatibility etcd namespace selected
+    /// by root `txnkv.WithSafePointKVPrefix`.
+    pub(crate) async fn new_with_config_and_safe_point_prefix<S: Into<String>>(
+        pd_endpoints: Vec<S>,
+        config: Config,
+        safe_point_kv_prefix: impl Into<String>,
+    ) -> Result<Self> {
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
+        let safe_point_kv_prefix = safe_point_kv_prefix.into();
         let inner =
             TransactionClient::new_with_config(pd_endpoints.clone(), config.clone()).await?;
         let pd = inner.pd_client();
@@ -1105,6 +1124,7 @@ impl KvStore {
                 pd.clone(),
                 pd_endpoints,
                 &config,
+                safe_point_kv_prefix,
                 pd.keyspace_meta().cloned(),
             )
             .await,

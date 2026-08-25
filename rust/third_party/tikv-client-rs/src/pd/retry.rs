@@ -194,7 +194,7 @@ pub struct RetryClient<Cl = Cluster> {
     timeout: Duration,
 }
 
-#[cfg(any(test, feature = "mock"))]
+#[cfg(any(test, feature = "internal-tests"))]
 impl<Cl> RetryClient<Cl> {
     pub fn new_with_cluster(
         security_mgr: Arc<SecurityManager>,

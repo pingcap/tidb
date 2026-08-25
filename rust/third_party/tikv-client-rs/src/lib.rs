@@ -117,6 +117,7 @@ pub mod trace;
 pub mod traffic;
 #[doc(hidden)]
 pub mod transaction;
+pub mod txnkv;
 
 mod common;
 mod compat;
@@ -135,10 +136,14 @@ pub mod store;
 mod timestamp;
 pub mod util;
 
-#[cfg(any(test, feature = "mock"))]
+#[cfg(any(test, feature = "internal-tests"))]
+#[doc(hidden)]
 pub mod mock;
 #[cfg(test)]
 mod proptests;
+#[cfg(any(test, feature = "internal-tests"))]
+#[doc(hidden)]
+pub mod testutils;
 
 #[doc(inline)]
 pub use common::security::SecurityManager;

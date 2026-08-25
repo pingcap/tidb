@@ -11,7 +11,7 @@ use std::time::Duration;
 use crate::proto::metapb::{Buckets, Peer, Region, Store, StoreLabel};
 
 /// Changes simulated TiKV cluster state for tests.
-pub(crate) trait Cluster {
+pub trait Cluster {
     /// Allocates an ID usable as a store, region, or peer ID.
     fn alloc_id(&self) -> u64;
 

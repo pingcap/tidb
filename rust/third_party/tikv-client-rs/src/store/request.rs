@@ -128,9 +128,28 @@ streaming_response!(CoprocessorStreamResponse, coprocessor::Response);
 streaming_response!(BatchCoprocessorStreamResponse, coprocessor::BatchResponse);
 streaming_response!(MppStreamResponse, mpp::MppDataPacket);
 
-#[cfg(test)]
 impl CoprocessorStreamResponse {
+    /// Builds an already-buffered mock stream with no remaining transport items.
+    pub fn from_first(first: Option<coprocessor::Response>) -> Self {
+        Self {
+            first,
+            stream: None,
+            timeout: Duration::ZERO,
+            ru_details: None,
+            count_read_rpc: false,
+            bypass_ru_v2: true,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn from_first_for_test(first: Option<coprocessor::Response>) -> Self {
+        Self::from_first(first)
+    }
+}
+
+impl BatchCoprocessorStreamResponse {
+    /// Builds an already-buffered mock batch stream with no remaining transport items.
+    pub fn from_first(first: Option<coprocessor::BatchResponse>) -> Self {
         Self {
             first,
             stream: None,
@@ -172,6 +191,11 @@ impl CoprocessorStreamRequest {
         self
     }
 
+    #[cfg(any(test, feature = "internal-tests"))]
+    pub(crate) fn inner_for_mock(&self) -> &coprocessor::Request {
+        &self.request
+    }
+
     fn wire_request(&self) -> coprocessor::Request {
         let mut request = if let Some(codec) = self.api_v2_codec.as_ref() {
             let mut request = codec.encode_coprocessor_request(&self.request);
@@ -209,6 +233,11 @@ impl BatchCoprocessorStreamRequest {
     pub fn with_api_v2_codec(mut self, codec: ApiV2Codec) -> Self {
         self.api_v2_codec = Some(codec);
         self
+    }
+
+    #[cfg(any(test, feature = "internal-tests"))]
+    pub(crate) fn inner_for_mock(&self) -> &coprocessor::BatchRequest {
+        &self.request
     }
 
     fn wire_request(&self) -> coprocessor::BatchRequest {

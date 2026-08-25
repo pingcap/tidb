@@ -1,8 +1,8 @@
 //! In-memory versioned-key core shared by UniStore consumers.
 //!
-//! This is the first reusable layer of TiDB UniStore's `tikv/mvcc` package.
-//! It deliberately owns only committed-version visibility; lock handling and
-//! TiKV RPC adaptation remain in this crate as later source-complete packets.
+//! This native convenience facade exposes committed-version visibility for
+//! consumers that do not need the complete mock TiKV lock/prewrite protocol.
+//! The source-mapped protocol-independent engine is `MockEngine` in this crate.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
@@ -64,8 +64,8 @@ impl MvccStore {
 
     /// Atomically commits mutations that began at `start_ts`.
     ///
-    /// UniStore's full lock/prewrite protocol will extend this operation; this
-    /// committed core already preserves its essential write-conflict boundary.
+    /// The complete lock/prewrite protocol is available through `MockEngine`;
+    /// this smaller API preserves its committed-version conflict boundary.
     pub fn commit(
         &self,
         start_ts: Timestamp,

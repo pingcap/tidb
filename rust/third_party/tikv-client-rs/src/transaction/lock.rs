@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
+use std::fmt;
 use std::future::Future;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
@@ -53,6 +54,84 @@ use crate::transaction::requests::TransactionStatus;
 use crate::transaction::requests::TransactionStatusKind;
 use crate::Error;
 use crate::Result;
+
+/// Parsed lock metadata exported by client-go's root `txnkv` package.
+///
+/// The resolver keeps protobuf lock records internally so shared-lock wrappers
+/// retain every nested field. This owned view is the source-compatible public
+/// value returned by `txnkv::new_lock`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Lock {
+    pub key: Vec<u8>,
+    pub primary: Vec<u8>,
+    pub txn_id: u64,
+    pub ttl: u64,
+    pub txn_size: u64,
+    pub lock_type: i32,
+    pub use_async_commit: bool,
+    pub lock_for_update_ts: u64,
+    pub min_commit_ts: u64,
+    pub is_txn_file: bool,
+}
+
+impl Lock {
+    pub fn from_lock_info(lock: &kvrpcpb::LockInfo) -> Self {
+        Self {
+            key: lock.key.clone(),
+            primary: lock.primary_lock.clone(),
+            txn_id: lock.lock_version,
+            ttl: lock.lock_ttl,
+            txn_size: lock.txn_size,
+            lock_type: lock.lock_type,
+            use_async_commit: lock.use_async_commit,
+            lock_for_update_ts: lock.lock_for_update_ts,
+            min_commit_ts: lock.min_commit_ts,
+            is_txn_file: lock.is_txn_file,
+        }
+    }
+
+    pub fn is_pessimistic(&self) -> bool {
+        self.lock_type == kvrpcpb::Op::PessimisticLock as i32
+            || self.lock_type == kvrpcpb::Op::SharedPessimisticLock as i32
+    }
+
+    pub fn is_shared(&self) -> bool {
+        self.lock_type == kvrpcpb::Op::SharedLock as i32
+    }
+
+    pub fn operation(&self) -> Option<kvrpcpb::Op> {
+        kvrpcpb::Op::try_from(self.lock_type).ok()
+    }
+}
+
+impl From<&kvrpcpb::LockInfo> for Lock {
+    fn from(lock: &kvrpcpb::LockInfo) -> Self {
+        Self::from_lock_info(lock)
+    }
+}
+
+impl fmt::Display for Lock {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let lock_type = self.operation().map_or_else(
+            || self.lock_type.to_string(),
+            |op| op.as_str_name().to_owned(),
+        );
+        write!(
+            formatter,
+            "key: {}, primary: {}, txnStartTS: {}, lockForUpdateTS:{}, minCommitTs:{}, ttl: {}, type: {}, UseAsyncCommit: {}, txnSize: {}, isTxnFile: {}",
+            crate::redact::key(&self.key),
+            crate::redact::key(&self.primary),
+            self.txn_id,
+            self.lock_for_update_ts,
+            self.min_commit_ts,
+            self.ttl,
+            lock_type,
+            self.use_async_commit,
+            self.txn_size,
+            self.is_txn_file,
+        )
+    }
+}
 
 pub(crate) fn format_key_for_log(key: &[u8]) -> String {
     let prefix_len = key.len().min(16);
