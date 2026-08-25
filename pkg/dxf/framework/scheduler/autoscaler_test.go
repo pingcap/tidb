@@ -89,36 +89,60 @@ func TestCalcMaxNodeCountByDataSize(t *testing.T) {
 
 func TestCalcMaxNodeCountForExport(t *testing.T) {
 	tests := []struct {
+		name          string
 		dataSize      int64
+		tableCount    int64
 		cores         int
 		amplifyFactor float64
 		expected      int
 	}{
-		{0, 8, 1, 1},
-		{10, 0, 1, 0},
-		// exactly baseDataSizeForExport (400MiB/s * 30min) on an 8c node.
-		{int64(baseDataSizeForExport), 8, 1, 1},
-		// the scenario the user is about to benchmark: a single ~5TiB table.
-		{5 * units.TiB, 8, 1, 7},
-		{5 * units.TiB, 4, 1, 15},
-		// 100k tiny tables summing to a trivial total size: table count alone
-		// must not blow up node count (see CalcMaxNodeCountForExport's doc
-		// comment — per-node chunk concurrency handles table count instead).
-		{100 * units.KiB, 8, 1, 1},
-		{100 * units.GiB, 8, 1, 1},
-		{800 * units.GiB, 8, 1, 1},
-		{2000 * units.GiB, 8, 1, 3},
-		// capped at maxNodeCountLimitForExport regardless of how large.
-		{100 * units.TiB, 8, 1, 30},
-		// AmplifyFactor scales both the size and the node-count cap.
-		{5 * units.TiB, 8, 2, 15},
+		{"trivial", 0, 0, 8, 1.0, 1},
+		{"baseline export bytes, table count doesn't add a node", int64(baseDataSizeForExport), 1, 8, 1.0, 1},
+		{"5TiB single table, 8c", 5 * units.TiB, 1, 8, 1.0, 7},
+		// same bytes as the 300k-table case below, but table count alone
+		// doesn't need a second node until baseTableCountForExport.
+		{"100k tiny tables, 7c: bytes and count both trivial", 100_000 * units.KiB, 100_000, 7, 1.0, 1},
+		{"300k tiny tables, 8c: still one node", 300_000 * units.KiB, 300_000, 8, 1.0, 1},
+		{"1M tiny tables, 8c: at the count threshold, still one node", 1_000_000 * units.KiB, 1_000_000, 8, 1.0, 1},
+		{"2M tiny tables, 8c: table count alone now needs a 2nd node", 2_000_000 * units.KiB, 2_000_000, 8, 1.0, 2},
 	}
-	for i, tt := range tests {
-		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			calc := NewRCCalc(tt.dataSize, tt.cores, 0, &schstatus.TuneFactors{AmplifyFactor: tt.amplifyFactor})
-			got := calc.CalcMaxNodeCountForExport()
+			got := calc.CalcMaxNodeCountForExport(tt.tableCount)
 			require.Equal(t, tt.expected, got,
-				fmt.Sprintf("dataSize:%d cores:%d amplify:%v", tt.dataSize, tt.cores, tt.amplifyFactor))
+				fmt.Sprintf("dataSize:%d tableCount:%d cores:%d", tt.dataSize, tt.tableCount, tt.cores))
+		})
+	}
+}
+
+func TestCalcRequiredSlotsForExport(t *testing.T) {
+	tests := []struct {
+		name          string
+		dataSize      int64
+		tableCount    int64
+		cores         int
+		amplifyFactor float64
+		expected      int
+	}{
+		{"trivial", 0, 0, 8, 1.0, 4},
+		// same total bytes as a 100k-table export (~97.7MiB), but 100k tables
+		// alone doesn't need to be pulled above the bytes-driven floor: it
+		// already finishes well inside the 30-minute SLA at 1 slot.
+		{"100k tiny tables, 7c: under SLA even at 1 slot, no change", 100_000 * units.KiB, 100_000, 7, 1.0, 1},
+		// this is the case the bytes-only formula got wrong: bytes are
+		// trivial, but 300k tables at 1 slot would blow the 30-minute SLA
+		// (see CalcMaxNodeCountForExport's doc comment), so slots must rise.
+		{"300k tiny tables, 8c: bytes-only formula would wrongly floor at 1", 300_000 * units.KiB, 300_000, 8, 1.0, 2},
+		{"1M tiny tables, 8c: count term saturates the node", 1_000_000 * units.KiB, 1_000_000, 8, 1.0, 8},
+		{"amplifyFactor doubles the count-driven term too", 300_000 * units.KiB, 300_000, 8, 2.0, 5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calc := NewRCCalc(tt.dataSize, tt.cores, 0, &schstatus.TuneFactors{AmplifyFactor: tt.amplifyFactor})
+			got := calc.CalcRequiredSlotsForExport(tt.tableCount)
+			require.Equal(t, tt.expected, got,
+				fmt.Sprintf("dataSize:%d tableCount:%d cores:%d", tt.dataSize, tt.tableCount, tt.cores))
 		})
 	}
 }

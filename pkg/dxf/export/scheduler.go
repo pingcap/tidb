@@ -129,7 +129,7 @@ func (s *exportScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle, t
 		return err
 	}
 	if kerneltype.IsNextGen() {
-		if err := s.setResources(ctx, task, total); err != nil {
+		if err := s.setResources(ctx, task, total, int64(len(tableInfos))); err != nil {
 			return err
 		}
 	}
@@ -146,8 +146,11 @@ func (s *exportScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle, t
 	return nil
 }
 
-// setResources sizes the task's slots and node count from the total data size.
-func (s *exportScheduler) setResources(ctx context.Context, task *proto.Task, totalSize int64) error {
+// setResources sizes the task's slots and node count from the total data
+// size and table count: bytes drive bandwidth-bound Dump work, tableCount
+// drives latency-bound Dump+Schema work on many small chunks, and both
+// CalcRequiredSlotsForExport/CalcMaxNodeCountForExport take the larger bound.
+func (s *exportScheduler) setResources(ctx context.Context, task *proto.Task, totalSize, tableCount int64) error {
 	nodeCPU, err := scheduler.GetExecCPUNode(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -157,8 +160,8 @@ func (s *exportScheduler) setResources(ctx context.Context, task *proto.Task, to
 		return errors.Trace(err)
 	}
 	calc := scheduler.NewRCCalc(totalSize, nodeCPU, 0, factors)
-	task.RequiredSlots = calc.CalcRequiredSlots()
-	task.MaxNodeCount = calc.CalcMaxNodeCountForExport()
+	task.RequiredSlots = calc.CalcRequiredSlotsForExport(tableCount)
+	task.MaxNodeCount = calc.CalcMaxNodeCountForExport(tableCount)
 	return nil
 }
 
