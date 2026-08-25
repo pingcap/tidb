@@ -208,3 +208,48 @@ fn the_pessimistic_surface_locks_reads_and_reports_locked_keys() {
     );
     reader.finish_without_writes().unwrap();
 }
+
+#[test]
+fn statement_lock_scopes_retry_and_cancel_without_ending_the_transaction() {
+    let opener = opener();
+
+    let mut seed = opener.begin().unwrap();
+    seed.set(k("stmt-row"), b"v1".to_vec()).unwrap();
+    seed.set(k("other-row"), b"v1".to_vec()).unwrap();
+    seed.commit().unwrap();
+
+    let mut txn = opener.begin_pessimistic().unwrap();
+    assert!(!txn.is_statement_locking());
+
+    // A statement takes a lock inside its own scope, then is retried: the
+    // transaction survives and can keep locking.
+    txn.start_statement_locking();
+    assert!(txn.is_statement_locking());
+    txn.lock_keys(&[k("stmt-row")]).unwrap();
+    txn.retry_statement_locking()
+        .expect("the statement retries at a fresh for_update_ts");
+    assert!(
+        txn.is_statement_locking(),
+        "a retry reopens the scope rather than closing it"
+    );
+    txn.lock_keys(&[k("stmt-row")]).unwrap();
+    txn.done_statement_locking()
+        .expect("the scope closes, keeping its locks for the transaction");
+    assert!(!txn.is_statement_locking());
+
+    // A second statement is cancelled: it releases its own locks only, and
+    // the transaction still commits the first statement's work.
+    txn.start_statement_locking();
+    txn.lock_keys(&[k("other-row")]).unwrap();
+    txn.cancel_statement_locking()
+        .expect("the statement rolls back its own locks");
+    assert!(!txn.is_statement_locking());
+
+    txn.set(k("stmt-row"), b"v2".to_vec()).unwrap();
+    txn.commit().expect("the transaction commits after all that");
+
+    let mut reader = opener.begin_read_only().unwrap();
+    assert_eq!(reader.get(&k("stmt-row")).unwrap(), Some(b"v2".to_vec()));
+    assert_eq!(reader.get(&k("other-row")).unwrap(), Some(b"v1".to_vec()));
+    reader.finish_without_writes().unwrap();
+}

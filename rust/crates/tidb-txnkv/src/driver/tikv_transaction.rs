@@ -546,3 +546,48 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
             .collect()
     }
 }
+
+/// Statement-scoped pessimistic locking, TiDB's fair locking.
+///
+/// `@@tidb_pessimistic_txn_fair_locking` is client-go's *aggressive locking*:
+/// a statement's locks are taken inside a scope that can be retried at a fresh
+/// `for_update_ts` (the statement re-runs against newer data) or cancelled
+/// (the statement rolls back, releasing only its own locks) without ending the
+/// transaction. These are the calls the previous facade spelled
+/// `advance_for_update_ts`, `release_statement_locks`, and
+/// `pessimistic_rollback`.
+impl<PdC: PdClient> TikvTransactionDriver<PdC> {
+    /// Opens a statement lock scope.
+    pub fn start_statement_locking(&mut self) {
+        self.transaction.inner_mut().start_aggressive_locking();
+    }
+
+    /// Whether a statement lock scope is open.
+    pub fn is_statement_locking(&mut self) -> bool {
+        self.transaction.inner_mut().is_in_aggressive_locking_mode()
+    }
+
+    /// Retries the statement at a fresh `for_update_ts`, keeping the locks it
+    /// already holds that are still wanted. This is the facade's
+    /// `advance_for_update_ts`.
+    pub fn retry_statement_locking(&mut self) -> Result<(), TikvTransactionError> {
+        self.transaction
+            .block_on(|transaction| transaction.retry_aggressive_locking())?;
+        Ok(())
+    }
+
+    /// Rolls the statement back, releasing the locks it took and nothing else.
+    /// This is the facade's `release_statement_locks`/`pessimistic_rollback`.
+    pub fn cancel_statement_locking(&mut self) -> Result<(), TikvTransactionError> {
+        self.transaction
+            .block_on(|transaction| transaction.cancel_aggressive_locking())?;
+        Ok(())
+    }
+
+    /// Closes the statement scope, keeping its locks for the transaction.
+    pub fn done_statement_locking(&mut self) -> Result<(), TikvTransactionError> {
+        self.transaction
+            .block_on(|transaction| transaction.done_aggressive_locking())?;
+        Ok(())
+    }
+}
