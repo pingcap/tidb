@@ -153,6 +153,21 @@ impl EvaluatorSuite {
         output: &mut Chunk,
     ) -> Result<(), EvaluatorError> {
         let rows = input.num_rows();
+        // TPC-H q17/q19's revenue expression — `mul(col, minus(const, col))`
+        // over DECIMAL input columns — is the single hottest per-row
+        // computation in the suite. The generic path rebuilds two `Decimal`s
+        // (heap storage) and walks signature dispatch for every row; the
+        // specialized form multiplies i128 coefficients in place.
+        if self.calculated.len() == 1
+            && decimal_mul_minus_const_column(
+                &self.calculated[0],
+                self.calculated_output_indexes[0],
+                input,
+                output,
+            )?
+        {
+            return Ok(());
+        }
         if self.vectorizable {
             for (output_index, expression) in
                 self.calculated_output_indexes.iter().zip(&self.calculated)
@@ -180,6 +195,129 @@ impl EvaluatorSuite {
         }
         Ok(())
     }
+}
+
+/// Recognizes `mul(col_a, minus(const_one, col_b))` over two DECIMAL input
+/// columns — TPC-H q17/q19's `l_extendedprice * (1 - l_discount)` — and
+/// evaluates it for the whole chunk with i128 coefficient arithmetic.
+/// Returns `Ok(None)` when the expression does not match the shape; the
+/// caller falls back to per-row evaluation.
+fn decimal_mul_minus_const_column(
+    expression: &Expression,
+    output_index: usize,
+    input: &mut Chunk,
+    output: &mut Chunk,
+) -> Result<bool, EvaluatorError> {
+    use tidb_datatype::{Decimal, FieldTypeCode};
+
+    let Expression::ScalarFunction(mul) = expression else {
+        return Ok(false);
+    };
+    if !mul.func_name.lowercase().eq_ignore_ascii_case("mul") || mul.args.len() != 2 {
+        return Ok(false);
+    }
+    // The two operands in either order: a DECIMAL column, and
+    // `minus(<const 1>, <DECIMAL column>)`.
+    let (column_side, minus_side) = (&mul.args[0], &mul.args[1]);
+    let resolve_pair = |a: &Expression, b: &Expression| -> Option<(usize, usize, i64)> {
+        let Expression::Column(a_col) = a else {
+            return None;
+        };
+        let a_index = usize::try_from(a_col.index).ok()?;
+        let a_decimal =
+            a_col.get_static_type()?.code() == FieldTypeCode::NewDecimal;
+        if !a_decimal {
+            return None;
+        }
+        let Expression::ScalarFunction(minus) = b else {
+            return None;
+        };
+        if !minus.func_name.lowercase().eq_ignore_ascii_case("minus") || minus.args.len() != 2 {
+            return None;
+        }
+        let one = match &minus.args[0] {
+            Expression::Constant(constant) => match &constant.value {
+                tidb_datatype::Datum::Int(value) if *value == 1 => *value,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let Expression::Column(b_col) = &minus.args[1] else {
+            return None;
+        };
+        let b_index = usize::try_from(b_col.index).ok()?;
+        let b_decimal =
+            b_col.get_static_type()?.code() == FieldTypeCode::NewDecimal;
+        if !b_decimal {
+            return None;
+        }
+        Some((a_index, b_index, one))
+    };
+    let Some((a_index, b_index, _one)) =
+        resolve_pair(column_side, minus_side).or_else(|| {
+            resolve_pair(minus_side, column_side)
+        })
+    else {
+        return Ok(false);
+    };
+
+    // Read both columns as i128 coefficients with their scales. A NULL or an
+    // out-of-i128 value on either side falls back to the generic path.
+    let rows = input.num_rows();
+    let mut coefficients = Vec::with_capacity(rows);
+    let mut scale: Option<u32> = None;
+    for row_index in 0..rows {
+        let row = input.get_row(row_index);
+        if row.is_null(a_index) || row.is_null(b_index) {
+            return Ok(false);
+        }
+        let Some((ca, sa)) = input
+            .column(a_index)
+            .get_my_decimal_i128_scaled(row_index)
+        else {
+            return Ok(false);
+        };
+        let Some((cb, sb)) = input
+            .column(b_index)
+            .get_my_decimal_i128_scaled(row_index)
+        else {
+            return Ok(false);
+        };
+        // (1 - discount): rescale the constant 1 into b's scale, then subtract.
+        let one_scaled = match 10i128.checked_pow(sb) {
+            Some(power) => power,
+            None => return Ok(false),
+        };
+        let numerator = one_scaled - cb;
+        // Multiply: coefficient product, scale sum.
+        let Some(product) = ca.checked_mul(numerator) else {
+            return Ok(false);
+        };
+        coefficients.push(product);
+        let combined = sa + sb;
+        match scale {
+            None => scale = Some(combined),
+            Some(existing) if existing != combined => return Ok(false),
+            _ => {}
+        }
+    }
+
+    let Some(result_scale) = scale else {
+        return Ok(false);
+    };
+    for coefficient in coefficients {
+        // The result type's scale may differ from the natural one; building
+        // the Decimal at the natural scale lets the projection's cast (if
+        // any) settle the final form exactly as the generic path does.
+        let decimal = Decimal::from_scaled_i128(coefficient, result_scale);
+        match decimal.to_my_decimal() {
+            Ok(my_decimal) => output.append_my_decimal(output_index, &my_decimal),
+            // An unrepresentable value falls back to NULL exactly like the
+            // generic path's error-to-NULL handling for out-of-range results.
+            Err(_) => output.append_datum(output_index, &tidb_datatype::Datum::Null),
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
