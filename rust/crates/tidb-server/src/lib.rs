@@ -357,6 +357,46 @@ pub(crate) struct MemoryArbitratorAuthority {
     sampler: Option<JoinHandle<()>>,
 }
 
+/// One runtime-stats sample for the arbitrator, in the shape Go's
+/// `memory.ReadMemStats` produces for `HandleRuntimeStats`
+/// (`pkg/util/memory/memory.go`): `heap_alloc` is the LIVE application
+/// allocation -- Go reads `runtime.MemStats.HeapAlloc`, so on the jemalloc
+/// build this is `stats.allocated`, NOT process RSS. `mem_off_heap` carries
+/// what those allocations do not cover (Go derives it from the process
+/// footprint minus its heap), and `total_free` is allocator-held-but-free
+/// memory (Go's `HeapIdle - HeapReleased`).
+///
+/// Feeding raw process RSS as `heap_alloc` made the arbitrator read freed
+/// pages the allocator retains plus non-heap pages as live heap, collapsing
+/// `heapAvailable()` and cancelling statements (`8180`) whose live working
+/// set fit the server limit; `hc_mem_inuse` (= off-heap + in-use) still tracks
+/// the real process footprint either way, which is what the OOM-risk kill
+/// must keep reacting to.
+fn sample_runtime_stats() -> Option<tidb_util::memory::MemStats> {
+    let rss = process_rss_bytes()?;
+    if let Some((allocated, active, resident)) = tidb_util::memory::allocator_live_heap_sample() {
+        return Some(tidb_util::memory::MemStats {
+            heap_alloc: allocated,
+            heap_inuse: active,
+            total_free: (resident - active).max(0),
+            mem_off_heap: (rss - resident).max(0),
+            last_gc: 0,
+        });
+    }
+    // No allocator-statistics seam (non-jemalloc build): process RSS stands
+    // in for both heap gauges because no finer-grained source exists.
+    Some(tidb_util::memory::MemStats {
+        heap_alloc: rss,
+        heap_inuse: rss,
+        ..Default::default()
+    })
+}
+
+fn process_rss_bytes() -> Option<i64> {
+    let bytes = tidb_util::cgroup::current_process_memory_usage().ok()?;
+    Some(i64::try_from(bytes).unwrap_or(i64::MAX))
+}
+
 impl MemoryArbitratorAuthority {
     pub(crate) fn open(config: &NodeConfig) -> Result<Self, RunConfiguredNodeError> {
         let arbitrator = open_memory_arbitrator(config)?;
@@ -367,13 +407,8 @@ impl MemoryArbitratorAuthority {
             std::thread::spawn(move || {
                 while running.load(Ordering::Acquire) {
                     if let Some(arbitrator) = arbitrator.upgrade() {
-                        if let Ok(bytes) = tidb_util::cgroup::current_process_memory_usage() {
-                            let bytes = i64::try_from(bytes).unwrap_or(i64::MAX);
-                            arbitrator.handle_runtime_stats(tidb_util::memory::MemStats {
-                                heap_alloc: bytes,
-                                heap_inuse: bytes,
-                                ..Default::default()
-                            });
+                        if let Some(stats) = sample_runtime_stats() {
+                            arbitrator.handle_runtime_stats(stats);
                         }
                     } else {
                         break;

@@ -124,6 +124,28 @@ pub fn parse_server_memory_limit(text: &str) -> Result<u64, String> {
     Ok(parsed)
 }
 
+/// One live-heap sample from the running allocator:
+/// `(allocated, active, resident)` in bytes.
+///
+/// Go feeds `HandleRuntimeStats` from `runtime.ReadMemStats`, whose
+/// `HeapAlloc` is the live application allocation; on the jemalloc build the
+/// equivalent counters come from this seam (through `tidb-hack`, the only
+/// crate allowed to touch raw pointers). Returns `None` on builds without
+/// the `jemalloc` feature, where callers keep their RSS-based fallback.
+#[cfg(feature = "jemalloc")]
+#[must_use]
+pub fn allocator_live_heap_sample() -> Option<(i64, i64, i64)> {
+    tidb_hack::allocator_stats::sample()
+}
+
+/// Non-jemalloc builds have no allocator-statistics seam: there is no finer
+/// source than process RSS, so callers keep their legacy behaviour.
+#[cfg(not(feature = "jemalloc"))]
+#[must_use]
+pub fn allocator_live_heap_sample() -> Option<(i64, i64, i64)> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

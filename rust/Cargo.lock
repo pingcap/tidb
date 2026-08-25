@@ -2724,6 +2724,7 @@ version = "0.0.0"
 dependencies = [
  "foldhash 0.1.5",
  "hashbrown 0.15.5",
+ "tikv-jemalloc-sys",
 ]
 
 [[package]]
@@ -2938,6 +2939,7 @@ dependencies = [
  "tidb-txnkv",
  "tidb-unistore",
  "tidb-util",
+ "tikv-jemalloc-sys",
  "tikv-jemallocator",
  "toml",
 ]

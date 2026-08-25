@@ -19,6 +19,14 @@ all = "warn"
 [dependencies]
 foldhash.workspace = true
 hashbrown.workspace = true
+tikv-jemalloc-sys = { version = "0.7", optional = true }
+
+[features]
+default = []
+## Exposes [`allocator_stats::sample`]: the running jemalloc's live-allocation
+## counters, read through this crate's raw-pointer seam. Only meaningful when
+## the process global allocator IS the same tikv-jemalloc-sys instance.
+jemalloc = ["dep:tikv-jemalloc-sys"]
 
 [[bench]]
 name = "hack"

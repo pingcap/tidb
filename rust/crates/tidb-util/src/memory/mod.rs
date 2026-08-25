@@ -47,8 +47,8 @@ pub use pool::{
     ResourcePoolState, DEF_MAX_LIMIT, DEF_MAX_UNUSED_BLOCKS, DEF_POOL_ALLOC_ALIGN_SIZE,
 };
 pub use process::{
-    apply_process_memory_setting, install_process_arbitrator, parse_server_memory_limit,
-    validate_process_memory_setting, ProcessArbitratorRegistration,
+    allocator_live_heap_sample, apply_process_memory_setting, install_process_arbitrator,
+    parse_server_memory_limit, validate_process_memory_setting, ProcessArbitratorRegistration,
 };
 pub use tracker::{
     bytes_to_string, format_bytes, KillSignalTransport, Tracker, DEF_MEM_QUOTA_QUERY,

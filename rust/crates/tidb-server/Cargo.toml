@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 base64.workspace = true
 tikv-jemallocator = { version = "0.7", optional = true }
+tikv-jemalloc-sys = { version = "0.7", optional = true }
 ctrlc.workspace = true
 signal-hook.workspace = true
 rcgen.workspace = true
@@ -75,4 +76,4 @@ path = "tests/configured_user_store_source.rs"
 # (the global_allocator in src/bin/tidb-server.rs). The opt-out exists
 # for builds that must stay on the platform allocator.
 default = ["jemalloc"]
-jemalloc = ["dep:tikv-jemallocator"]
+jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]

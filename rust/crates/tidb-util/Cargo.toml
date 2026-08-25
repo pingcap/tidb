@@ -17,6 +17,9 @@ enableassert = []
 intest = []
 race = []
 testexport = []
+## Reads live-allocation counters from the running jemalloc (via `tidb-hack`),
+## the Go-`HeapAlloc`-equivalent input the memory arbitrator samples.
+jemalloc = ["tidb-hack/jemalloc"]
 
 [build-dependencies]
 chrono.workspace = true

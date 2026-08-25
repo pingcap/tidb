@@ -41,6 +41,66 @@
 
 mod map;
 
+/// Live-allocation counters of the running jemalloc, the seam Go gets for
+/// free from `runtime.ReadMemStats`: TiDB's memory arbitrator samples the
+/// LIVE application allocation (`runtime.MemStats.HeapAlloc`), which on a
+/// jemalloc build is `stats.allocated` -- process RSS cannot stand in for it
+/// because RSS also counts freed-but-retained pages and non-heap mappings.
+/// Only this crate's raw-pointer exception may call `_rjem_mallctl`; every
+/// consumer reads plain numbers through [`sample`].
+#[cfg(feature = "jemalloc")]
+pub mod allocator_stats {
+    /// Reads one `size_t` mallctl counter; `None` when the allocator rejects
+    /// the name (e.g. stats compiled out).
+    fn stat(name: &[u8]) -> Option<i64> {
+        let mut value: usize = 0;
+        let mut size = std::mem::size_of::<usize>();
+        // SAFETY: `name` is a NUL-terminated literal, and `value`/`size` are
+        // valid out-parameters for a `size_t` read; no new pointer escapes.
+        let ok = unsafe {
+            tikv_jemalloc_sys::mallctl(
+                name.as_ptr().cast(),
+                (&mut value as *mut usize).cast(),
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        } == 0;
+        ok.then(|| i64::try_from(value).unwrap_or(i64::MAX))
+    }
+
+    /// One coherent-enough sample in bytes:
+    /// `(allocated, active, resident)`.
+    ///
+    /// - `allocated`: live application allocations (Go `HeapAlloc`).
+    /// - `active`: pages backing live allocations (Go `HeapInuse`).
+    /// - `resident`: pages physically mapped by the allocator.
+    ///
+    /// The cached statistics epoch is refreshed first so these are current,
+    /// exactly what Go's stop-the-world read guarantees. `None` when the
+    /// running allocator does not answer statistics queries.
+    #[must_use]
+    pub fn sample() -> Option<(i64, i64, i64)> {
+        let mut epoch: u64 = 0;
+        let mut epoch_size = std::mem::size_of::<u64>();
+        // SAFETY: passing the same `u64` as both old and new value refreshes
+        // the statistics epoch, the documented way to make counters current.
+        let refreshed = unsafe {
+            tikv_jemalloc_sys::mallctl(
+                b"epoch\0".as_ptr().cast(),
+                (&mut epoch as *mut u64).cast(),
+                &mut epoch_size,
+                (&mut epoch as *mut u64).cast(),
+                epoch_size,
+            )
+        } == 0;
+        if !refreshed {
+            return None;
+        }
+        Some((stat(b"stats.allocated\0")?, stat(b"stats.active\0")?, stat(b"stats.resident\0")?))
+    }
+}
+
 use std::cell::UnsafeCell;
 use std::fmt;
 use std::rc::Rc;
