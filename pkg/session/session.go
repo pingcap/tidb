@@ -124,7 +124,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -1512,10 +1511,7 @@ const (
 	bypassSQLToken
 	isSelectSQLToken
 
-	defOOMRiskCheckDur   = time.Millisecond * 100 // 100ms: sleep duration when mem-arbitrator is at memory risk
-	defSuffixSplitDot    = ", "
-	defSuffixParseSQL    = defSuffixSplitDot + "path=ParseSQL"
-	defSuffixCompilePlan = defSuffixSplitDot + "path=CompilePlan"
+	defOOMRiskCheckDur = time.Millisecond * 100 // 100ms: sleep duration when mem-arbitrator is at memory risk
 
 	// mem quota for compiling plan per token.
 	// 1. prepare tpc-c
@@ -1707,9 +1703,8 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 				s.sessionPlanCache.DeleteAll()
 			}
 			for globalMemArbitrator.AtMemRisk() {
-				if globalMemArbitrator.AtOOMRisk() {
-					metrics.GlobalMemArbitratorSubTasks.ForceKillParse.Inc()
-					return nil, nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+defSuffixParseSQL, uid)
+				if err := ctx.Err(); err != nil {
+					return nil, nil, err
 				}
 				time.Sleep(defOOMRiskCheckDur)
 			}
@@ -2571,9 +2566,8 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 				s.sessionPlanCache.DeleteAll()
 			}
 			for globalMemArbitrator.AtMemRisk() {
-				if globalMemArbitrator.AtOOMRisk() {
-					metrics.GlobalMemArbitratorSubTasks.ForceKillPlan.Inc()
-					return nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+defSuffixCompilePlan, sessVars.ConnectionID)
+				if err := ctx.Err(); err != nil {
+					return nil, err
 				}
 				time.Sleep(defOOMRiskCheckDur)
 			}
