@@ -57,8 +57,13 @@ const (
 	ExportDumpConcurrencyMultiplier = 4
 	// ExportSchemaConcurrencyMultiplier is ExportDumpConcurrencyMultiplier's
 	// counterpart for the Schema step, mirroring pkg/dxf/export's
-	// schemaConcurrencyMultiplier.
-	ExportSchemaConcurrencyMultiplier = 8
+	// schemaConcurrencyMultiplier. Schema PUTs are small and latency-bound
+	// with no bandwidth-bound case to protect against (see
+	// schemaConcurrencyMultiplier's own doc comment), and measured
+	// single-stream throughput scales close to linearly from 8x to 16x/core
+	// with no meaningful per-op latency increase, so this is set well past
+	// ExportDumpConcurrencyMultiplier.
+	ExportSchemaConcurrencyMultiplier = 16
 	// baseTableCountForExport is how many small (latency-bound) table chunks
 	// one reference (baseCores-core) node's Dump and Schema phases together
 	// clear within exportTargetSeconds, run sequentially at full concurrency
@@ -67,7 +72,7 @@ const (
 	// measured per-chunk latency in real cluster testing, then rounded down
 	// so this constant only ever under-promises node/slot count, never
 	// over-promises finishing within exportTargetSeconds.
-	baseTableCountForExport = 1_000_000
+	baseTableCountForExport = 1_300_000
 	// To improve performance for small tasks, we assume that on a 8c machine,
 	// importing 200 GiB of data requires full utilization of a single node’s resources.
 	// Therefore, for every additional 25 GiB, add 1 slot as an estimate for task's

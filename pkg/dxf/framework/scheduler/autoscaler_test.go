@@ -103,8 +103,8 @@ func TestCalcMaxNodeCountForExport(t *testing.T) {
 		// doesn't need a second node until baseTableCountForExport.
 		{"100k tiny tables, 7c: bytes and count both trivial", 100_000 * units.KiB, 100_000, 7, 1.0, 1},
 		{"300k tiny tables, 8c: still one node", 300_000 * units.KiB, 300_000, 8, 1.0, 1},
-		{"1M tiny tables, 8c: at the count threshold, still one node", 1_000_000 * units.KiB, 1_000_000, 8, 1.0, 1},
-		{"2M tiny tables, 8c: table count alone now needs a 2nd node", 2_000_000 * units.KiB, 2_000_000, 8, 1.0, 2},
+		{"1.3M tiny tables, 8c: at the count threshold, still one node", 1_300_000 * units.KiB, 1_300_000, 8, 1.0, 1},
+		{"2.6M tiny tables, 8c: table count alone now needs a 2nd node", 2_600_000 * units.KiB, 2_600_000, 8, 1.0, 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -134,8 +134,8 @@ func TestCalcRequiredSlotsForExport(t *testing.T) {
 		// trivial, but 300k tables at 1 slot would blow the 30-minute SLA
 		// (see CalcMaxNodeCountForExport's doc comment), so slots must rise.
 		{"300k tiny tables, 8c: bytes-only formula would wrongly floor at 1", 300_000 * units.KiB, 300_000, 8, 1.0, 2},
-		{"1M tiny tables, 8c: count term saturates the node", 1_000_000 * units.KiB, 1_000_000, 8, 1.0, 8},
-		{"amplifyFactor doubles the count-driven term too", 300_000 * units.KiB, 300_000, 8, 2.0, 5},
+		{"1.3M tiny tables, 8c: count term saturates the node", 1_300_000 * units.KiB, 1_300_000, 8, 1.0, 8},
+		{"amplifyFactor doubles the count-driven term too", 300_000 * units.KiB, 300_000, 8, 2.0, 4},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
