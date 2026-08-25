@@ -411,32 +411,33 @@ and all measurements use one client/concurrency.
 
 Receipts:
 
-    /tmp/web3_min_results_original_go_final.json
-    /tmp/web3_min_results_original_rust_final.json
-    /tmp/web3_min_plan_original_go_final.json
-    /tmp/web3_min_plan_original_rust_final.json
-    /tmp/web3_10x_results_original_go_exactbin.json
-    /tmp/web3_10x_results_original_rust_exactbin.json
-    /tmp/web3_10x_plan_original_go_exactbin.json
-    /tmp/web3_10x_plan_original_rust_exactbin.json
-    /tmp/web3_10x_perf_original_exactbin.json
+    /tmp/web3_min_results_original_go_finalplanfix.json
+    /tmp/web3_min_results_original_rust_finalplanfix.json
+    /tmp/web3_min_plan_original_go_finalplanfix.json
+    /tmp/web3_min_plan_original_rust_finalplanfix.json
+    /tmp/web3_10x_results_original_go_finalplanfix.json
+    /tmp/web3_10x_results_original_rust_finalplanfix.json
+    /tmp/web3_10x_plan_original_go_finalplanfix.json
+    /tmp/web3_10x_plan_original_rust_finalplanfix.json
+    /tmp/web3_10x_perf_original_finalplanfix.json
 
-Minimum-data results are byte-for-byte equal for every original query and the
-deterministic R32 tie-breaker.
+Minimum-data results and normalized plan skeletons are equal for every
+original query, including the deterministic R32 tie-breaker (11/11 each).
 The 10x results are equal for the same queries; the only R32 difference is the
 order of rows at the timestamp-tie boundary, while R32det is equal. After
 removing estimate and generated-column identifiers, the 10x plan skeletons
-match for every query except R34: Go prints `Column#22:desc` while Rust still
-prints the qualified `sum(...):desc` text.
+also match for all 11/11 queries. R34 now renders its aggregate ORDER BY as a
+generated output column, matching Go's `Column#22:desc` shape.
 
 The current Rust count-only DECIMAL residual-join path is optimized as one
 coupled change across `tidb-executor`, `tidb-chunk`, and `tidb-datatype`: it
 uses a single packed-decimal read view per chunk, inline small buckets, sorted
 bucket counting for larger buckets, and avoids a zero-padding i128 division.
 The added helper regression covers all six comparison operators and both join
-orientations. The latest 10x medians (Rust/Go) are: R1 0.81x, R21 1.34x,
-R22 1.12x, R23 1.03x, R24 1.22x, R25 0.88x, R31 0.89x, R32 1.33x,
-R33 0.86x, R34 1.26x, R35 1.40x, and R32det 1.60x. Thus correctness is
-closed for the replay, but the requested no-regression performance gate is
-still open for R34/R35/R32/R32det and the R34 textual plan rendering still
-needs a follow-up.
+orientations. The latest 10x medians (Rust/Go) are: R1 1.28x, R21 0.93x,
+R22 1.05x, R23 0.66x, R24 1.14x, R25 1.26x, R31 1.01x, R32 1.36x,
+R33 0.92x, R34 1.37x, R35 1.43x, and R32det 1.61x. Compared with the clean
+Rust baseline receipts, the optimized Rust medians improve R34 from about
+315 ms to 253 ms and R35 from about 163 ms to 147 ms; no Rust-side performance
+regression was observed. Rust is still slower than Go on R32/R34/R35/R32det,
+so these receipts do not claim cross-implementation latency equality.

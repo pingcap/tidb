@@ -5181,6 +5181,17 @@ fn build_order_and_limit(
                             count,
                         );
                     }
+                } else if !select.group_by.is_empty()
+                    && crate::plan_trace::order_by_has_aggregate(&traced_select.order_by)
+                {
+                    trace.grouped_aggregate_topn(
+                        traced_select,
+                        &qualify,
+                        state.grouped_hash_internal_columns,
+                        physical_source_names,
+                        offset,
+                        count,
+                    );
                 } else {
                     trace.topn(&traced_select.order_by, &qualify, offset, count);
                 }

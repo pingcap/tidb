@@ -4346,10 +4346,23 @@ impl PlanTrace {
                 tidb_ast::SelectField::Wildcard(_) => None,
             })
             .collect::<Vec<_>>();
+        let visible_aggregates = visible_select
+            .fields
+            .fields()
+            .iter()
+            .enumerate()
+            .filter_map(|(field_index, field)| match field {
+                tidb_ast::SelectField::Expr { expr, .. } => {
+                    Some((field_index, aggregate_exprs(expr)))
+                }
+                tidb_ast::SelectField::Wildcard(_) => None,
+            })
+            .collect::<Vec<_>>();
         visible_select
             .order_by
             .iter()
             .map(|item| {
+                let order_aggregate = aggregate_exprs(&item.expr);
                 let expression = match &item.expr {
                     tidb_ast::Expr::Column(path) if path.len() == 1 => visible
                         .iter()
@@ -4367,7 +4380,16 @@ impl PlanTrace {
                                 _ => format!("Column#{index}"),
                             },
                         ),
-                    _ => qualify.expr(&item.expr),
+                    _ => visible_aggregates
+                        .iter()
+                        .find(|(_, candidates)| {
+                            order_aggregate
+                                .iter()
+                                .any(|order| candidates.iter().any(|candidate| candidate == order))
+                        })
+                        .map_or_else(|| qualify.expr(&item.expr), |(index, _)| {
+                            format!("Column#{index}")
+                        }),
                 };
                 if item.desc {
                     format!("{expression}:desc")
@@ -4453,6 +4475,7 @@ impl PlanTrace {
         let mut aggregate_index = 0;
         let mut aliases = Vec::new();
         let mut visible = Vec::new();
+        let mut field_aggregates = Vec::new();
         for (field_index, field) in select.fields.fields().iter().enumerate() {
             let tidb_ast::SelectField::Expr { expr, alias } = field else {
                 continue;
@@ -4464,6 +4487,7 @@ impl PlanTrace {
                 field_index,
             ));
             let aggregates = aggregate_exprs(expr);
+            field_aggregates.push((field_index, aggregates.clone()));
             if let (Some(alias), [tidb_ast::Expr::Aggregate { .. }]) =
                 (alias.as_ref(), aggregates.as_slice())
             {
@@ -4475,6 +4499,7 @@ impl PlanTrace {
             .order_by
             .iter()
             .map(|item| {
+                let order_aggregates = aggregate_exprs(&item.expr);
                 let expression = match &item.expr {
                     tidb_ast::Expr::Column(path) if path.len() == 1 => {
                         let candidates = if internal_columns { &visible } else { &aliases };
@@ -4486,7 +4511,17 @@ impl PlanTrace {
                                 |(_, index)| format!("Column#{index}"),
                             )
                     }
-                    _ => qualify.expr_with_physical_columns(&item.expr, column_names),
+                    _ => field_aggregates
+                        .iter()
+                        .find(|(_, candidates)| {
+                            order_aggregates
+                                .iter()
+                                .any(|order| candidates.iter().any(|candidate| candidate == order))
+                        })
+                        .map_or_else(
+                            || qualify.expr_with_physical_columns(&item.expr, column_names),
+                            |(index, _)| format!("Column#{index}"),
+                        ),
                 };
                 if item.desc {
                     format!("{expression}:desc")
@@ -5882,6 +5917,12 @@ fn aggregate_exprs(expr: &tidb_ast::Expr) -> Vec<tidb_ast::Expr> {
     collect.0
 }
 
+pub(crate) fn order_by_has_aggregate(order_by: &[tidb_ast::OrderItem]) -> bool {
+    order_by
+        .iter()
+        .any(|item| !aggregate_exprs(&item.expr).is_empty())
+}
+
 fn grouped_aggregate_info(
     select: &tidb_ast::SelectStmt,
     qualify: &Qualifier<'_>,
@@ -7106,6 +7147,45 @@ mod tests {
                 "H_C_ID".to_owned(),
             ])),
             "tpcc.history.h_c_id"
+        );
+    }
+
+    #[test]
+    fn aggregation_pushdown_topn_maps_ordered_aggregate_to_output_column() {
+        let stmt = tidb_parser::parse(
+            "select sum(value) as totalamount, count(value) as transactioncount, \
+             from_address as fromaddress from transactions group by from_address \
+             order by sum(value) desc limit 10",
+        )
+        .expect("aggregate TopN SQL parses");
+        let tidb_ast::Stmt::Query(query) = stmt else {
+            panic!("expected query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            panic!("expected select")
+        };
+        let scope = PlanTrace::single_table_scope(
+            "transactions",
+            Some("test".to_owned()),
+            vec![
+                (
+                    "value".to_owned(),
+                    FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal),
+                ),
+                (
+                    "from_address".to_owned(),
+                    FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
+                ),
+            ],
+        );
+        let qualify = Qualifier {
+            db: "test",
+            scope: &scope,
+            catalog: None,
+        };
+        assert_eq!(
+            PlanTrace::aggregation_pushdown_by_items(select, select, &qualify, &[]),
+            "Column#0:desc"
         );
     }
 
