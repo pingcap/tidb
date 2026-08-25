@@ -480,6 +480,40 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       is the TTL manager setting the flag on timeout. TiDB-Rust can be
       written in the final Go-faithful shape today, passing its own flag
       in, and it starts working the moment upstream wires it.
+- [ ] **The chain migration, executed and checkpointed (2026-08-25).** Drove
+      the whole consumer chain -- `MultiStatementTransaction`,
+      `SessionTransaction`, `RealTiKvSessionFactory` -- onto the engine, and
+      it works: the three-capability generics collapse to one engine
+      parameter, and the code gets materially smaller and more Go-faithful.
+      `finish()` loses its optimistic/pessimistic branch and the explicit
+      `pessimistic_rollback(held)` + `into_two_pc()` dance (client-go's
+      `Rollback` releases pessimistic locks itself); the `OpenTransaction`
+      enum disappears (client-go has one `KVTxn` with a flag); the
+      440-line `TransactionMutationBuffer` disappears (statements stage into
+      the transaction's own memdb); the fair-locking retry loop becomes the
+      engine's statement lock scope; `LockKeepAlive` gives way to the
+      engine's own TTL manager, with TiDB passing its `lock_expire` flag in
+      through the lock context exactly as `pkg/executor/select.go` does.
+      **Where it stopped: the embedded store has no backend yet.** The last
+      errors are not in the chain -- they are that `tidb-unistore` does not
+      implement `tikv_client`'s `PdClient`/`KvClient`. That is precisely
+      what Go does: `pkg/store/mockstore/unistore.New` builds
+      `unistore.NewPDClient` and `unistore.NewRPCClient` and hands them to
+      `tikv.NewTestTiKVStore` -- the injected-client path upstream just
+      ungated. So the remaining work is a well-defined sub-project, not a
+      blocker: implement those two traits over the existing in-process
+      store. `PdClient` is small (an associated `KvClient` type plus
+      `map_region_to_store`, `region_for_key`, `region_for_id`,
+      `get_timestamp` and a few more); `KvClient::dispatch` is the
+      type-erased surface flagged early in this plan, and mapping each
+      request type is the real content.
+      The chain rewrite is preserved verbatim at
+      `docs/migrated-multi-statement-transaction.rs.txt` so it does not have
+      to be redone; the driver API it needs
+      (`staged_value`, `staged_entries`, `stage_mutation`, `commit_staged`,
+      `lock_statement_keys` with `AcquiredStatementLocks`) is committed and
+      tested. Consumer files were reverted to keep the tree compiling rather
+      than land a half-migration.
 - [ ] Phase 4: full-workspace build, targeted + aggregate test pass, `make
       bazel_prepare` (Go-file-count is unaffected, but Bazel metadata for the
       Rust crates does not apply — confirm scope; see `Concrete Steps`),

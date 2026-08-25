@@ -357,8 +357,6 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
         &mut self,
         mutations: Vec<crate::transaction::OptimisticMutation>,
     ) -> Result<crate::transaction::OptimisticCommitOutcome, TikvTransactionError> {
-        use crate::transaction::OptimisticMutationKind as Kind;
-
         let mutation_count = mutations.len();
         let primary_key = mutations
             .iter()
@@ -367,6 +365,20 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
             .unwrap_or_default();
 
         for mutation in mutations {
+            self.stage_mutation(&mutation)?;
+        }
+
+        Ok(self.finish_commit(primary_key, mutation_count))
+    }
+
+    /// Stages one source mutation with its op and assertion, the way client-go's
+    /// `initKeysAndMutations` reads them back off the memdb at commit.
+    pub fn stage_mutation(
+        &mut self,
+        mutation: &crate::transaction::OptimisticMutation,
+    ) -> Result<(), TikvTransactionError> {
+        use crate::transaction::OptimisticMutationKind as Kind;
+        {
             let key = Key::from(mutation.key().to_vec());
             let value = mutation.value().to_vec();
             match mutation.kind() {
@@ -395,7 +407,26 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
                 }
             }
         }
+        Ok(())
+    }
 
+    /// Commits whatever the transaction's statements have already staged.
+    ///
+    /// This is the multi-statement shape: statements stage into the buffer as
+    /// they run, and the commit has no separate mutation set to hand over --
+    /// client-go's `KVTxn.Commit` reads its mutations off the memdb the same
+    /// way. The receipt's primary is the buffer's smallest key, which is the
+    /// primary the engine pins.
+    pub fn commit_staged(
+        &mut self,
+    ) -> Result<crate::transaction::OptimisticCommitOutcome, TikvTransactionError> {
+        let staged = self.staged_entries();
+        let mutation_count = staged.len();
+        let primary_key = staged
+            .into_iter()
+            .map(|(key, _)| key.as_bytes().to_vec())
+            .min()
+            .unwrap_or_default();
         Ok(self.finish_commit(primary_key, mutation_count))
     }
 
@@ -598,5 +629,95 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
         self.transaction
             .get_mem_buffer()
             .set_entry_size_limit(entry_limit, buffer_limit);
+    }
+}
+
+/// Staged-buffer inspection, the union-scan half of read-your-own-writes.
+///
+/// Go's `UnionScanExec` builds its overlay from the `MemBuffer` entries in the
+/// scanned range, and `tikvTxn.Get` answers a staged key from the buffer
+/// before consulting the snapshot. Both read the same buffer these do.
+impl<PdC: PdClient> TikvTransactionDriver<PdC> {
+    /// This transaction's own staged value for one key, without consulting the
+    /// snapshot. `None` means the transaction has not written the key; an
+    /// empty value is its deletion tombstone.
+    pub fn staged_value(&mut self, key: &Key) -> Option<Vec<u8>> {
+        self.transaction.get_mem_buffer().get(key.as_bytes()).ok()
+    }
+
+    /// Every key this transaction has staged, with its value, in key order.
+    /// An empty value is a deletion tombstone.
+    pub fn staged_entries(&mut self) -> Vec<(Key, Vec<u8>)> {
+        let memdb = self.transaction.get_mem_buffer();
+        let mut entries = Vec::new();
+        let mut iterator = memdb.iter(None, None);
+        while iterator.valid() {
+            entries.push((
+                Key::from(iterator.key().to_vec()),
+                iterator.value().to_vec(),
+            ));
+            if iterator.next().is_err() {
+                break;
+            }
+        }
+        entries
+    }
+}
+
+/// One statement's pessimistic lock acquisition, as Go builds it.
+///
+/// TiDB fills a `kv.LockCtx` -- `InitReturnValues` when the statement needs
+/// the rows it is about to modify, a `LockExpired` pointer so client-go's TTL
+/// manager can report a timed-out transaction -- hands it to `LockKeys`, and
+/// reads the results back out of the same context. This is that shape.
+pub struct AcquiredStatementLocks {
+    /// Rows TiKV returned with the locks, when return-values was requested.
+    pub values: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    /// Set when fair locking granted a lock despite a newer committed version:
+    /// the lock stands, but the statement's result is stale and must be
+    /// recomputed at a timestamp that can see that version.
+    pub max_locked_with_conflict_ts: u64,
+}
+
+impl<PdC: PdClient> TikvTransactionDriver<PdC> {
+    /// Acquires this statement's pessimistic locks.
+    ///
+    /// `lock_expired` is TiDB's own flag, shared with the engine exactly as Go
+    /// shares `&sessionVars.TxnCtx.LockExpire` through `lockCtx.LockExpired`:
+    /// the TTL manager writes through it when the transaction outlives
+    /// `MaxTxnTTL`, and TiDB then admits only COMMIT and ROLLBACK.
+    pub fn lock_statement_keys(
+        &mut self,
+        keys: &[Key],
+        return_values: bool,
+        lock_wait_time_ms: i64,
+        lock_expired: Option<Arc<std::sync::atomic::AtomicU32>>,
+    ) -> Result<AcquiredStatementLocks, TikvTransactionError> {
+        let mut context =
+            tikv_client::kv::LockContext::new(0, lock_wait_time_ms, std::time::SystemTime::now());
+        if return_values {
+            context.init_return_values(keys.len());
+        }
+        context.lock_expired = lock_expired;
+        let raw: Vec<Vec<u8>> = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
+        self.transaction.block_on(|transaction| {
+            let context = &mut context;
+            let raw = raw.clone();
+            async move { transaction.lock_keys_with_context(context, raw).await }
+        })?;
+        let values = if return_values {
+            keys.iter()
+                .map(|key| {
+                    let (value, _) = context.value_not_locked(key.as_bytes());
+                    (key.as_bytes().to_vec(), value)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Ok(AcquiredStatementLocks {
+            values,
+            max_locked_with_conflict_ts: context.max_locked_with_conflict_ts,
+        })
     }
 }
