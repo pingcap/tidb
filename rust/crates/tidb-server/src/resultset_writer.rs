@@ -182,11 +182,27 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         })
         .collect::<Vec<_>>();
     let mut stream = ResultSetStream::new(columns, options);
-    for payload in stream
+    // One coalesced transport write for ALL metadata packets. A socket sink
+    // flushes per `write_payload`, which used to send every column definition
+    // as its own segment; batching them here (and letting the first row
+    // batch's boundary below carry them onto the wire together) turns a
+    // small SELECT into two segments instead of one per packet. Framed sinks
+    // keep the identical byte sequence either way.
+    let metadata = stream
         .metadata_packets()
-        .map_err(|error| tracked_after_pull(error.to_string(), sink, false))?
-    {
-        write_payload(sink, &payload).map_err(|error| tracked(error, false))?;
+        .map_err(|error| tracked_after_pull(error.to_string(), sink, false))?;
+    if !metadata.is_empty() {
+        let refs: Vec<&[u8]> = metadata.iter().map(|payload| payload.as_slice()).collect();
+        sink.write_payloads(&refs).map_err(|error| {
+            tracked(
+                ResultSetWriteError {
+                    message: error.message,
+                    retryable: true,
+                    bytes_escaped: false,
+                },
+                false,
+            )
+        })?;
     }
 
     loop {
@@ -210,6 +226,23 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
                 .map_err(|error| tracked_after_pull(error.to_string(), sink, false))?;
             payloads.push(payload);
         }
+        // Prefetch the NEXT batch before writing this one: when it comes
+        // back empty this batch is the last, and the terminal packet can join
+        // its coalesced write instead of forcing a second segment. A small
+        // result set therefore leaves as ONE transport write, which is what
+        // Go's buffered connection gives a small SELECT.
+        batch = source
+            .next_batch(batch_size)
+            .map_err(|message| tracked_after_pull(message, sink, false))?;
+        if batch.is_empty() {
+            source
+                .finish()
+                .map_err(|message| tracked_after_pull(message, sink, true))?;
+            let terminal = stream
+                .finish_packet()
+                .map_err(|error| tracked_after_pull(error.to_string(), sink, true))?;
+            payloads.push(terminal);
+        }
         let refs: Vec<&[u8]> = payloads.iter().map(|payload| payload.as_slice()).collect();
         sink.write_payloads(&refs).map_err(|error| {
             tracked(
@@ -222,19 +255,7 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
             )
         })?;
         flush_sink(sink).map_err(|error| tracked(error, false))?;
-        batch = source
-            .next_batch(batch_size)
-            .map_err(|message| tracked_after_pull(message, sink, false))?;
     }
-
-    source
-        .finish()
-        .map_err(|message| tracked_after_pull(message, sink, true))?;
-    let terminal = stream
-        .finish_packet()
-        .map_err(|error| tracked_after_pull(error.to_string(), sink, true))?;
-    write_payload(sink, &terminal).map_err(|error| tracked(error, true))?;
-    flush_sink(sink).map_err(|error| tracked(error, true))?;
 
     Ok(ResultSetWriteOutcome {
         rows_written: stream.row_count(),
