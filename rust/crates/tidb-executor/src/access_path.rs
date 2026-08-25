@@ -2438,6 +2438,12 @@ impl Executor for IndexRangeSourceExec {
                     self.decode_context.zone(),
                     &self.statement,
                     self.descending,
+                    // Go buildIndexLookUpReader plants the sunk PushedLimit
+                    // as a Limit offset+count executor under the index DAG,
+                    // so TiKV stops after the capped prefix instead of
+                    // streaming entries the local Limit discards.
+                    self.limit
+                        .map(|count| self.lookup_offset.saturating_add(count)),
                 )
                 .map_err(|_| ExecError::unsupported("remote index scan failed to open"))?;
         }

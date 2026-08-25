@@ -1187,6 +1187,7 @@ impl KvTable {
         zone: &SessionTimeZone,
         statement: &PushdownStatementContext,
         desc: bool,
+        index_limit: Option<u64>,
     ) -> Result<Option<RemoteIndexHandleCursor>, KvTableError> {
         // The wire contract this request once broke -- reordered and
         // truncated columns on real TiKV -- came from the executor schema
@@ -1385,7 +1386,7 @@ impl KvTable {
             predicates,
             output_offsets: None,
             topn,
-            limit: None,
+            limit: index_limit,
             aggregate: None,
             desc,
             keep_order,
