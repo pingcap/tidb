@@ -120,6 +120,14 @@ shapes remain on the existing general executor.
   identical normalized operator skeletons. In the repeat receipt, R34 was
   `353.816 ms` vs Go `175.340 ms` (`2.02x`) and R35 `158.309 ms` vs Go
   `109.937 ms` (`1.44x`).
+- [x] (2026-08-25) Replaced the R34 worker's stop-and-merge windows with
+  bounded streaming queues. The caller continues pulling TiKV chunks while
+  persistent fingerprint-partitioned workers aggregate them; each worker's
+  map is merged only once at EOF, preserving first-seen order and exact key
+  collision checks. The full one-client matrix remained result- and plan-
+  aligned with Go (R32 only differs in unspecified tie order). The repeat
+  receipt improved R34 to `254.971 ms` vs Go `148.261 ms` (`1.72x`), while
+  R35 stayed at `162.565 ms` vs Go `110.591 ms` (`1.47x`).
 
 ## Validation commands
 
@@ -214,6 +222,12 @@ Latest key-match optimization receipts are:
     /tmp/web3_final_release_go_plans.json
     /tmp/web3_final_release_rust_plans.json
     /tmp/web3_optimized_keymatch_perf_final_release.json
+    /tmp/web3_streaming_go_results.json
+    /tmp/web3_streaming_rust_results.json
+    /tmp/web3_streaming_go_plans.json
+    /tmp/web3_streaming_rust_plans.json
+    /tmp/web3_streaming_worker_perf.json
+    /tmp/web3_streaming_worker_perf_repeat.json
 
 The last performance receipt is an alternating one-client run against the
 clean Rust baseline (`884e16945ed`) and the final Rust endpoint. Small-query

@@ -21,6 +21,7 @@
 //! the executor's private state, which is the state a round mutates.
 
 use super::*;
+use std::sync::{mpsc::Receiver, Arc};
 
 const PARALLEL_INT_AGG_WORKERS: usize = 5;
 // Keep the bounded input window large enough that the five short-lived worker
@@ -41,6 +42,147 @@ struct DirectStringParallelGroup {
 
 struct DirectStringParallelResult {
     groups: Vec<DirectStringParallelGroup>,
+}
+
+type DirectStringParallelJob = (Arc<(Chunk, usize)>, Vec<(usize, u64)>);
+
+struct DirectStringParallelWorker {
+    buckets: DirectStringBucketMap<usize>,
+    collisions: DirectStringBucketMap<Vec<usize>>,
+    keys: Vec<DirectStringSumCountKey>,
+    groups: Vec<DirectStringParallelGroup>,
+}
+
+impl DirectStringParallelWorker {
+    fn new() -> Self {
+        Self {
+            buckets: HashMap::with_capacity_and_hasher(32_768, BuildHasherDefault::default()),
+            collisions: HashMap::with_capacity_and_hasher(512, BuildHasherDefault::default()),
+            keys: Vec::with_capacity(32_768),
+            groups: Vec::with_capacity(32_768),
+        }
+    }
+
+    fn process(
+        &mut self,
+        chunk: &Chunk,
+        sequence: usize,
+        rows: &[(usize, u64)],
+        group_column: usize,
+        collation: tidb_datatype::Collation,
+        sum_column: usize,
+        count_column: usize,
+        first_row: Option<usize>,
+        group_type: &FieldType,
+        final_count: bool,
+        count_unsigned: bool,
+    ) -> Result<(), ExecError> {
+        let sum_values = chunk.column(sum_column);
+        let count_values = chunk.column(count_column);
+        for &(row_index, fingerprint) in rows {
+            let physical_row = chunk
+                .sel()
+                .map_or(row_index, |selection| selection[row_index]);
+            let mut index = None;
+            if let Some(primary) = self.buckets.get(&fingerprint).copied() {
+                if direct_string_key_matches(
+                    chunk,
+                    row_index,
+                    group_column,
+                    collation,
+                    self.keys[primary].as_slice(),
+                )? {
+                    index = Some(primary);
+                } else if let Some(candidates) = self.collisions.get(&fingerprint) {
+                    for &candidate in candidates {
+                        if direct_string_key_matches(
+                            chunk,
+                            row_index,
+                            group_column,
+                            collation,
+                            self.keys[candidate].as_slice(),
+                        )? {
+                            index = Some(candidate);
+                            break;
+                        }
+                    }
+                }
+            }
+            let index = match index {
+                Some(index) => index,
+                None => {
+                    let mut key_buffer = Vec::with_capacity(48);
+                    direct_string_key(
+                        chunk,
+                        row_index,
+                        group_column,
+                        collation,
+                        &mut key_buffer,
+                    )?;
+                    let index = self.groups.len();
+                    self.keys
+                        .push(smallvec::SmallVec::from_slice(&key_buffer));
+                    self.groups.push(DirectStringParallelGroup {
+                        first_seq: sequence + row_index,
+                        key_len: key_buffer.len(),
+                        sum: None,
+                        count: 0,
+                        first_value: first_row.map_or(Datum::Null, |column| {
+                            direct_string_first_value(chunk, row_index, column, group_type)
+                        }),
+                    });
+                    match self.buckets.entry(fingerprint) {
+                        std::collections::hash_map::Entry::Vacant(entry) => {
+                            entry.insert(index);
+                        }
+                        std::collections::hash_map::Entry::Occupied(_) => {
+                            self.collisions.entry(fingerprint).or_default().push(index);
+                        }
+                    }
+                    index
+                }
+            };
+            let group = &mut self.groups[index];
+            if !count_values.is_null(physical_row) {
+                let count = if final_count {
+                    if count_unsigned {
+                        i64::try_from(count_values.get_uint64(physical_row))
+                            .map_err(|_| ExecError::unsupported("partial COUNT exceeds i64"))?
+                    } else {
+                        count_values.get_int64(physical_row)
+                    }
+                } else {
+                    1
+                };
+                group.count = group.count.wrapping_add(count);
+            }
+            if sum_values.is_null(physical_row) {
+                continue;
+            }
+            // The Web3Bench partial is DECIMAL(38,0). Read its compact i128
+            // representation directly in the common case; materializing a
+            // `MyDecimal` here would redo the conversion for every input row.
+            let sum = sum_values
+                .get_my_decimal_i128_scaled(physical_row)
+                .map_or_else(
+                    || {
+                        ParallelDecimalSum::from_my_decimal(&sum_values.get_my_decimal(physical_row))
+                    },
+                    |(coefficient, scale)| ParallelDecimalSum::Fixed { coefficient, scale },
+                );
+            group.sum = Some(match group.sum.take() {
+                Some(current) => current.add(sum),
+                None => sum,
+            });
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> DirectStringParallelResult {
+        DirectStringParallelResult {
+            groups: self.groups,
+        }
+    }
 }
 
 fn direct_string_worker_fingerprint(
@@ -71,8 +213,7 @@ fn direct_string_worker_fingerprint(
 }
 
 fn direct_string_sum_count_worker(
-    batch: &[(Chunk, usize)],
-    rows: &[(usize, usize, u64)],
+    receiver: Receiver<Option<DirectStringParallelJob>>,
     group_column: usize,
     collation: tidb_datatype::Collation,
     sum_column: usize,
@@ -82,110 +223,23 @@ fn direct_string_sum_count_worker(
     final_count: bool,
     count_unsigned: bool,
 ) -> Result<DirectStringParallelResult, ExecError> {
-    let mut buckets: DirectStringBucketMap<usize> =
-        HashMap::with_capacity_and_hasher(32_768, BuildHasherDefault::default());
-    let mut collisions: DirectStringBucketMap<Vec<usize>> =
-        HashMap::with_capacity_and_hasher(512, BuildHasherDefault::default());
-    let mut keys: Vec<DirectStringSumCountKey> = Vec::with_capacity(32_768);
-    let mut groups: Vec<DirectStringParallelGroup> = Vec::with_capacity(32_768);
-
-    for &(batch_index, row_index, fingerprint) in rows {
-        let (chunk, sequence) = &batch[batch_index];
-        let sum_values = chunk.column(sum_column);
-        let count_values = chunk.column(count_column);
-        let physical_row = chunk
-            .sel()
-            .map_or(row_index, |selection| selection[row_index]);
-        let mut index = None;
-        if let Some(primary) = buckets.get(&fingerprint).copied() {
-            if direct_string_key_matches(
-                chunk,
-                row_index,
-                group_column,
-                collation,
-                keys[primary].as_slice(),
-            )? {
-                index = Some(primary);
-            } else if let Some(candidates) = collisions.get(&fingerprint) {
-                for &candidate in candidates {
-                    if direct_string_key_matches(
-                        chunk,
-                        row_index,
-                        group_column,
-                        collation,
-                        keys[candidate].as_slice(),
-                    )? {
-                        index = Some(candidate);
-                        break;
-                    }
-                }
-            }
-        }
-        let index = match index {
-            Some(index) => index,
-            None => {
-                let mut key_buffer = Vec::with_capacity(48);
-                direct_string_key(
-                    chunk,
-                    row_index,
-                    group_column,
-                    collation,
-                    &mut key_buffer,
-                )?;
-                let index = groups.len();
-                keys.push(smallvec::SmallVec::from_slice(&key_buffer));
-                groups.push(DirectStringParallelGroup {
-                    first_seq: *sequence + row_index,
-                    key_len: key_buffer.len(),
-                    sum: None,
-                    count: 0,
-                    first_value: first_row.map_or(Datum::Null, |column| {
-                        direct_string_first_value(chunk, row_index, column, group_type)
-                    }),
-                });
-                match buckets.entry(fingerprint) {
-                    std::collections::hash_map::Entry::Vacant(entry) => {
-                        entry.insert(index);
-                    }
-                    std::collections::hash_map::Entry::Occupied(_) => {
-                        collisions.entry(fingerprint).or_default().push(index);
-                    }
-                }
-                index
-            }
-        };
-        let group = &mut groups[index];
-        if !count_values.is_null(physical_row) {
-            let count = if final_count {
-                if count_unsigned {
-                    i64::try_from(count_values.get_uint64(physical_row))
-                        .map_err(|_| ExecError::unsupported("partial COUNT exceeds i64"))?
-                } else {
-                    count_values.get_int64(physical_row)
-                }
-            } else {
-                1
-            };
-            group.count = group.count.wrapping_add(count);
-        }
-        if sum_values.is_null(physical_row) {
-            continue;
-        }
-        // The Web3Bench partial is DECIMAL(38,0). Read its compact i128
-        // representation directly in the common case; materializing a
-        // `MyDecimal` here would redo the conversion for every input row.
-        let sum = sum_values
-            .get_my_decimal_i128_scaled(physical_row)
-            .map_or_else(
-                || ParallelDecimalSum::from_my_decimal(&sum_values.get_my_decimal(physical_row)),
-                |(coefficient, scale)| ParallelDecimalSum::Fixed { coefficient, scale },
-            );
-        group.sum = Some(match group.sum.take() {
-            Some(current) => current.add(sum),
-            None => sum,
-        });
+    let mut worker = DirectStringParallelWorker::new();
+    while let Ok(Some((input, rows))) = receiver.recv() {
+        worker.process(
+            &input.0,
+            input.1,
+            &rows,
+            group_column,
+            collation,
+            sum_column,
+            count_column,
+            first_row,
+            group_type,
+            final_count,
+            count_unsigned,
+        )?;
     }
-    Ok(DirectStringParallelResult { groups })
+    Ok(worker.finish())
 }
 
 impl<C: HashAggContext> HashAggExec<C> {
@@ -388,10 +442,11 @@ impl<C: HashAggContext> HashAggExec<C> {
         }
     }
 
-    /// Executes the fixed DECIMAL Web3Bench shape with Go's bounded
-    /// partial/final worker topology. The child is still fetched by the main
-    /// thread; workers own disjoint chunks and the final merge preserves the
-    /// serial path's first-seen group order.
+    /// Executes the fixed DECIMAL Web3Bench shape with a streaming partial
+    /// worker topology. The child remains pull-driven on the caller thread,
+    /// while bounded per-worker queues let aggregation overlap subsequent
+    /// child fetches. Each worker owns a disjoint fingerprint partition for
+    /// the full input, so the final merge only sorts the completed groups.
     fn execute_direct_string_sum_count_parallel(
         &mut self,
         group_column: usize,
@@ -404,85 +459,105 @@ impl<C: HashAggContext> HashAggExec<C> {
         count_unsigned: bool,
         worker_count: usize,
     ) -> Result<(), ExecError> {
-        let mut global_groups: Vec<DirectStringParallelGroup> = Vec::with_capacity(131_072);
-        let mut next_sequence = 0usize;
-        let mut child_drained = false;
+        let group_type = group_type.clone();
+        let (execution, partial_results) = std::thread::scope(|scope| {
+            let mut senders = Vec::with_capacity(worker_count);
+            let mut handles = Vec::with_capacity(worker_count);
+            for _ in 0..worker_count {
+                let (sender, receiver) =
+                    std::sync::mpsc::sync_channel::<Option<DirectStringParallelJob>>(2);
+                senders.push(sender);
+                let group_type = &group_type;
+                handles.push(scope.spawn(move || {
+                    direct_string_sum_count_worker(
+                        receiver,
+                        group_column,
+                        collation,
+                        sum_column,
+                        count_column,
+                        first_row,
+                        group_type,
+                        final_count,
+                        count_unsigned,
+                    )
+                }));
+            }
 
-        while !child_drained {
-            let mut batch = Vec::with_capacity(PARALLEL_INT_AGG_CHUNKS_PER_WINDOW);
-            for _ in 0..PARALLEL_INT_AGG_CHUNKS_PER_WINDOW {
+            let mut execution = Ok(());
+            let mut next_sequence = 0usize;
+            loop {
                 self.child_chunk.reset();
-                self.child.next(&mut self.child_chunk)?;
+                if let Err(error) = self.child.next(&mut self.child_chunk) {
+                    execution = Err(error);
+                    break;
+                }
                 let rows = self.child_chunk.num_rows();
                 if rows == 0 {
                     self.is_child_drained = true;
-                    child_drained = true;
                     break;
                 }
                 self.child_returned_empty = false;
                 let replacement = self.child.new_chunk();
                 let chunk = std::mem::replace(&mut self.child_chunk, replacement);
-                batch.push((chunk, next_sequence));
+                let input = Arc::new((chunk, next_sequence));
                 next_sequence += rows;
-            }
-            if batch.is_empty() {
-                break;
-            }
-            let workers = batch.len().min(worker_count);
-            let mut partitions: Vec<Vec<(usize, usize, u64)>> =
-                (0..workers).map(|_| Vec::new()).collect();
-            for (batch_index, (chunk, _)) in batch.iter().enumerate() {
-                for row_index in 0..chunk.num_rows() {
-                    let fingerprint =
-                        direct_string_worker_fingerprint(chunk, row_index, group_column, collation);
-                    partitions[(fingerprint as usize) % workers]
-                        .push((batch_index, row_index, fingerprint));
+                let mut partitions: Vec<Vec<(usize, u64)>> =
+                    (0..worker_count).map(|_| Vec::new()).collect();
+                for row_index in 0..rows {
+                    let fingerprint = direct_string_worker_fingerprint(
+                        &input.0,
+                        row_index,
+                        group_column,
+                        collation,
+                    );
+                    partitions[(fingerprint as usize) % worker_count]
+                        .push((row_index, fingerprint));
+                }
+                for (sender, rows) in senders.iter().zip(partitions) {
+                    if sender.send(Some((Arc::clone(&input), rows))).is_err() {
+                        execution = Err(ExecError::unsupported(
+                            "direct string aggregate worker stopped",
+                        ));
+                        break;
+                    }
+                }
+                if execution.is_err() {
+                    break;
+                }
+                if let Err(error) = self.memory.check() {
+                    execution = Err(error);
+                    break;
                 }
             }
-            let group_type = group_type.clone();
-            let partial_results = std::thread::scope(|scope| {
-                let handles = partitions.into_iter().map(|rows| {
-                    let batch = &batch;
-                    let group_type = &group_type;
-                    scope.spawn(move || {
-                        direct_string_sum_count_worker(
-                            batch,
-                            &rows,
-                            group_column,
-                            collation,
-                            sum_column,
-                            count_column,
-                            first_row,
-                            group_type,
-                            final_count,
-                            count_unsigned,
-                        )
-                    })
-                });
-                handles
-                    .map(|handle| {
-                        handle
-                            .join()
-                            .expect("parallel string aggregate worker panicked")
-                    })
-                    .collect::<Vec<_>>()
-            });
-            let mut pending_tracker_bytes = 0_i64;
-            for partial in partial_results {
-                let partial = partial?;
-                pending_tracker_bytes += partial
-                    .groups
-                    .iter()
-                    .map(|group| new_group_bytes(group.key_len, self.agg_funcs.len()))
-                    .sum::<i64>();
-                global_groups.extend(partial.groups);
-            }
-            if pending_tracker_bytes != 0 {
-                self.tracker.consume(pending_tracker_bytes);
-            }
-            self.parallel_agg_windows += 1;
-            self.memory.check()?;
+            drop(senders);
+            let partial_results = handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .expect("parallel string aggregate worker panicked")
+                })
+                .collect::<Vec<_>>();
+            (execution, partial_results)
+        });
+        execution?;
+
+        let mut global_groups: Vec<DirectStringParallelGroup> = Vec::with_capacity(131_072);
+        let mut pending_tracker_bytes = 0_i64;
+        for partial in partial_results {
+            let partial = partial?;
+            pending_tracker_bytes += partial
+                .groups
+                .iter()
+                .map(|group| new_group_bytes(group.key_len, self.agg_funcs.len()))
+                .sum::<i64>();
+            global_groups.extend(partial.groups);
         }
+        if pending_tracker_bytes != 0 {
+            self.tracker.consume(pending_tracker_bytes);
+        }
+        self.parallel_agg_windows += 1;
+        self.memory.check()?;
 
         global_groups.sort_unstable_by_key(|group| group.first_seq);
         self.parallel_output.clear();
