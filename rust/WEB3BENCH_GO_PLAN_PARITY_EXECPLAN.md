@@ -33,8 +33,9 @@ shapes remain on the existing general executor.
 - [x] (2026-08-24) Ran the complete Web3Bench ten-times-data result, plan, and
   single-client performance matrix after the rebase, both after `ANALYZE TABLE`
   and after `DROP STATS` on all five benchmark tables. Results were exact for
-  every deterministic query; the intentionally unordered R32 differs only in
-  row order, while `R32det` (with `hash` as a tie breaker) is exact.
+  every deterministic query; the intentionally unordered R32 may choose a
+  different subset/order among tied rows, while `R32det` (with `hash` as a tie
+  breaker) is exact.
 - [x] (2026-08-24) Removed the temporary `TIDB_DEBUG_COP_SCAN` diagnostics,
   rebuilt the release server, and completed the targeted Rust regression tests
   and diff review.
@@ -57,14 +58,18 @@ shapes remain on the existing general executor.
   count accumulation and exact decimal output.
 - [x] (2026-08-25) After the final rebase onto `c90c1b6b71`, the release build
   matched Go for every deterministic Web3 query (R1, R21-R25, R31-R35 and
-  `R32det`). R32 without a hash tie-breaker differs only in the allowed order
-  of tied rows. The alternating one-client medians were R34 `248.702 ms` vs Go
+  `R32det`). R32 without a hash tie-breaker may choose a different subset or
+  order of tied rows. The alternating one-client medians were R34 `248.702 ms` vs Go
   `155.265 ms` (`1.60x`) and R35 `160.203 ms` vs Go `107.171 ms` (`1.49x`).
-- [ ] Rerun the complete analyzed/no-stats acceptance matrix from this pushed
-  checkpoint. Remaining plan-receipt differences are limited to internal
-  `Column#N` labels and the R35 derived-table Projection; these do not change
-  the operator skeleton or deterministic results, but Web3 completion still
-  requires recording the no-stats evidence.
+- [x] (2026-08-25) Rebuilt the release server from `09725ac0bf`, restarted the
+  task-owned Rust endpoint to clear its statistics cache, and reran the
+  analyzed/no-stats result, plan, and alternating one-client matrix. Every
+  deterministic query (R1, R21-R25, R31, R33-R35, and R32det) is byte-exact;
+  R32's tied-row choice is intentionally unspecified. The no-stats Rust/Go
+  median ratios stayed within `1.42x` (R1) through `1.95x` (R34), with no
+  stable regression versus the prior release receipts. Plan differences remain
+  the internal `Column#N`/TopN expression spelling and the R35 derived-table
+  Projection; all operator skeletons otherwise match.
 
 ## Validation commands
 
@@ -114,6 +119,19 @@ Current post-rebase scalar R34 receipts are:
     /tmp/web3_rebase_c90_plans_go.json
     /tmp/web3_rebase_c90_plans_rust.json
     /tmp/web3_rebase_c90_perf.json
+
+Current fresh-release receipts (commit `09725ac0bf`, after cache reset) are:
+
+    /tmp/web3_current_fresh_go.json
+    /tmp/web3_current_fresh_rust.json
+    /tmp/web3_current_fresh_plans_go.json
+    /tmp/web3_current_fresh_plans_rust.json
+    /tmp/web3_current_fresh_perf.json
+    /tmp/web3_current_nostats_go.json
+    /tmp/web3_current_nostats_rust.json
+    /tmp/web3_current_nostats_plans_go.json
+    /tmp/web3_current_nostats_plans_rust.json
+    /tmp/web3_current_nostats_perf.json
 
 ## Surprises & Discoveries
 
