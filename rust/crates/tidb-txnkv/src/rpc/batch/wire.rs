@@ -491,3 +491,72 @@ impl TryFrom<BatchCommandsResponse> for BatchWireResponse {
         )
     }
 }
+
+/// Env-gated outbound-command diagnostics (`TIKV_RPC_COUNT_LOG=1`).
+///
+/// Counts every [`OpaqueBatchCommand`] created anywhere in the transport so a
+/// measurement window can diff exact per-tag totals against the Go client's
+/// `tidb_tikvclient_txn_cmd_duration_seconds_count`. Purely additive: one
+/// relaxed fetch_add per outbound command, plus one stderr dumper thread when
+/// the environment variable is set.
+pub mod wire_diag {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
+
+    static OUTBOUND: [AtomicU64; 48] = {
+        #[allow(clippy::declare_interior_mutable_const)]
+        const ZERO: AtomicU64 = AtomicU64::new(0);
+        [ZERO; 48]
+    };
+
+    /// Records one outbound command of this tag.
+    pub fn note_outbound(tag: super::BatchCommandTag) {
+        let idx = tag as u32 as usize;
+        if idx < OUTBOUND.len() {
+            OUTBOUND[idx].fetch_add(1, Ordering::Relaxed);
+        }
+        start_dumper();
+    }
+
+    /// Cumulative snapshot as `(tag debug name, count)` pairs, nonzero only.
+    #[must_use]
+    pub fn snapshot() -> Vec<(String, u64)> {
+        super::BatchCommandTag::ALL
+            .iter()
+            .filter_map(|t| {
+                let idx = *t as u32 as usize;
+                (idx < OUTBOUND.len())
+                    .then(|| OUTBOUND[idx].load(Ordering::Relaxed))
+                    .filter(|c| *c > 0)
+                    .map(|c| (format!("{t:?}"), c))
+            })
+            .collect()
+    }
+
+    fn start_dumper() {
+        static START: OnceLock<()> = OnceLock::new();
+        START.get_or_init(|| {
+            if std::env::var_os("TIKV_RPC_COUNT_LOG").is_none() {
+                return;
+            }
+            let period_ms = std::env::var("TIKV_RPC_COUNT_LOG_PERIOD_MS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(10_000)
+                .clamp(100, 60_000);
+            let spawned = std::thread::Builder::new()
+                .name("rpc-count-log".to_owned())
+                .spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_millis(period_ms));
+                    let snap = snapshot();
+                    let total: u64 = snap.iter().map(|(_, c)| c).sum();
+                    let body: Vec<String> =
+                        snap.into_iter().map(|(n, c)| format!("{n}={c}")).collect();
+                    eprintln!("RPC_COUNTS total={total} {}", body.join(" "));
+                });
+            if let Err(err) = spawned {
+                eprintln!("rpc-count-log failed to spawn: {err}");
+            }
+        });
+    }
+}

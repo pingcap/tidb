@@ -33,7 +33,7 @@ mod scan;
 mod scheduler;
 mod transport;
 mod txn_heart_beat;
-mod wire;
+pub(crate) mod wire;
 
 pub(in crate::rpc) use transport::{BatchStreamEvent, BatchTransportState};
 

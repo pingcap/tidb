@@ -41,6 +41,7 @@ impl BatchCoprocessorPending {
         forwarded_host: Option<&str>,
     ) -> (BatchCommandEntry, Self) {
         let (completion, pull) = completion_pair(CompletionRunLoop::new(), || {});
+        super::wire::wire_diag::note_outbound(BatchCommandTag::Coprocessor);
         let command = OpaqueBatchCommand::new(BatchCommandTag::Coprocessor, encoded_request);
         let mut entry = BatchCommandEntry::new(command, completion);
         if let Some(forwarded_host) = forwarded_host {
