@@ -394,3 +394,7 @@ Revision note (2026-08-15): Initial plan created after selective import reduced 
 
 - [x] Supervised iteration 5: Go median 223.78, Rust median 161.44 QPS (ratio 0.7214).
 - [x] (2026-08-25) Iteration 7 clean receipt (rustc CPU-hog killed, load settled to ~5): Go median 241.56, Rust median 171.17 QPS over 4x150s rounds (rust rounds clustered 167.54..174.75), ratio 0.7086 — the best clean receipt yet. Zero AlreadyExist errors across all rounds; the parallel session's lazy-dup-check design works correctly without the concurrency cascade that forced the earlier revert. Per-statement deltas narrowed further: sel_customer +0.20, sel_stock_batch +0.23, upd_stock_x1 +0.52, commit +0.44 ms vs Go.
+
+- [x] (2026-08-25) Iteration 8 RPC census (PROBE11, per new_order txn): 7 PessLock + 7 Prewrite + 7 Commit + 1 BatchGet + ~12 point Gets ≈ 34 RPCs. The 7 Prewrite/Commit pairs indicate the transaction spans ~7 TiKV regions (multi-table: district+orders+new_order+stock+order_line). Go handles the same shape with fewer effective round trips due to deeper batching/pipelining from years of production tuning.
+
+- [ ] Remaining gap root cause: NOT any single fixable item but the accumulated per-RPC overhead (~0.3ms each) across 34 RPCs per transaction = ~10ms, of which Go achieves equivalent logical operations in ~6ms through more mature connection management and batching. Closing this requires either reducing RPC count (fusing reads into locks across all paths) or reducing per-RPC cost (connection pooling, pipelining).
