@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -143,7 +142,6 @@ func NewReorgCopContext(
 		tblInfo,
 		allIdxInfo,
 		requestSource,
-		reorgMeta.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
 	)
 }
 
@@ -154,8 +152,13 @@ func newDefaultReorgDistSQLCtx(kvClient kv.Client, warnHandler contextutil.WarnA
 	var execDetails execdetails.SyncExecDetails
 	var cpuUsages ppcpuusage.SQLCPUUsages
 	return &distsqlctx.DistSQLContext{
-		WarnHandler:                          warnHandler,
-		Client:                               kvClient,
+		WarnHandler: warnHandler,
+		Client:      kvClient,
+		// Reorg scans are single-pass bulk reads over the whole table/index range: the blocks
+		// they touch are never re-read by the reorg, so caching them brings no benefit and can
+		// evict the working set that concurrent foreground traffic relies on. Skip filling the
+		// block cache for all reorg coprocessor scans.
+		NotFillCache:                         true,
 		EnableChunkRPC:                       true,
 		EnabledRateLimitAction:               vardef.DefTiDBEnableRateLimitAction,
 		KVVars:                               tikvstore.NewVariables(&sqlKiller.Signal),

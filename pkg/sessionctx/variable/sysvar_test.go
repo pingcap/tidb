@@ -2162,6 +2162,23 @@ func TestTiDBAnalyzeDefaultBucketAndTopNOptions(t *testing.T) {
 	require.Equal(t, strconv.FormatUint(vardef.MaxTiDBAnalyzeDefaultNumTopN, 10), val)
 }
 
+func TestTiDBAnalyzeStoreBatchSize(t *testing.T) {
+	vars := NewSessionVars(nil)
+	require.Equal(t, vardef.DefTiDBAnalyzeStoreBatchSize, vars.AnalyzeStoreBatchSize)
+
+	sysVar := GetSysVar(vardef.TiDBAnalyzeStoreBatchSize)
+	require.NotNil(t, sysVar)
+	require.True(t, sysVar.HasGlobalScope())
+	require.True(t, sysVar.HasSessionScope())
+	require.Equal(t, strconv.Itoa(vardef.DefTiDBAnalyzeStoreBatchSize), sysVar.Value)
+
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBAnalyzeStoreBatchSize, "0"))
+	require.Zero(t, vars.AnalyzeStoreBatchSize)
+
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBAnalyzeStoreBatchSize, strconv.FormatUint(vardef.MaxTiDBAnalyzeStoreBatchSize+1, 10)))
+	require.Equal(t, int(vardef.MaxTiDBAnalyzeStoreBatchSize), vars.AnalyzeStoreBatchSize)
+}
+
 func TestTiDBOptSelectivityFactor(t *testing.T) {
 	ctx := context.Background()
 	vars := NewSessionVars(nil)

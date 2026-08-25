@@ -14,18 +14,6 @@
 
 package csvfile
 
-// FieldKind classifies a column for CSV framing.
-type FieldKind uint8
-
-const (
-	// KindNumber is written unquoted.
-	KindNumber FieldKind = iota
-	// KindString is delimiter-quoted and escaped.
-	KindString
-	// KindBytes is a binary value, rendered per Config.BinaryFormat.
-	KindBytes
-)
-
 // BinaryFormat controls how KindBytes values are rendered.
 type BinaryFormat uint8
 

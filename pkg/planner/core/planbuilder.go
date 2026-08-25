@@ -3343,7 +3343,7 @@ func buildShowSlowSchema() (*expression.Schema, types.NameSlice) {
 	timestampSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeTimestamp)
 	durationSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDuration)
 
-	schema := newColumnsWithNames(11)
+	schema := newColumnsWithNames(17)
 	schema.Append(buildColumnWithName("", "SQL", mysql.TypeVarchar, 4096))
 	schema.Append(buildColumnWithName("", "START", mysql.TypeTimestamp, timestampSize))
 	schema.Append(buildColumnWithName("", "DURATION", mysql.TypeDuration, durationSize))
@@ -3358,6 +3358,9 @@ func buildShowSlowSchema() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "INTERNAL", mysql.TypeTiny, tinySize))
 	schema.Append(buildColumnWithName("", "DIGEST", mysql.TypeVarchar, 64))
 	schema.Append(buildColumnWithName("", "SESSION_ALIAS", mysql.TypeVarchar, 64))
+	schema.Append(buildColumnWithName("", "IA_REMOTE_READ_SEGMENT_COUNT", mysql.TypeLonglong, longlongSize))
+	schema.Append(buildColumnWithName("", "IA_REMOTE_READ_SEGMENT_SIZE", mysql.TypeLonglong, longlongSize))
+	schema.Append(buildColumnWithName("", "IA_REMOTE_READ_SEGMENT_WAIT_TIME", mysql.TypeDouble, mysql.MaxRealWidth))
 	return schema.col2Schema(), schema.names
 }
 

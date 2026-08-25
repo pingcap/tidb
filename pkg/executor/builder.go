@@ -1958,10 +1958,6 @@ func (b *executorBuilder) buildHashJoinV2FromChildExecs(leftExec, rightExec exec
 }
 
 func (b *executorBuilder) buildHashJoin(v *physicalop.PhysicalHashJoin) exec.Executor {
-	if v.JoinType == base.FullOuterJoin {
-		b.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
-		return nil
-	}
 	if b.sctx.GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && v.CanUseHashJoinV2() {
 		return b.buildHashJoinV2(v)
 	}
@@ -1992,17 +1988,23 @@ func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.E
 	e.HashJoinCtxV1.JoinType = v.JoinType
 	e.HashJoinCtxV1.Concurrency = v.Concurrency
 	e.HashJoinCtxV1.ChunkAllocPool = e.AllocPool
+	if v.JoinType == base.FullOuterJoin && v.UseOuterToBuild {
+		b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "full outer join only supports UseOuterToBuild=false")
+		return nil
+	}
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
-	if v.InnerChildIdx == 1 {
-		if len(v.RightConditions) > 0 {
-			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
-			return nil
-		}
-	} else {
-		if len(v.LeftConditions) > 0 {
-			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
-			return nil
+	if v.JoinType != base.FullOuterJoin {
+		if v.InnerChildIdx == 1 {
+			if len(v.RightConditions) > 0 {
+				b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
+				return nil
+			}
+		} else {
+			if len(v.LeftConditions) > 0 {
+				b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
+				return nil
+			}
 		}
 	}
 
@@ -2041,6 +2043,18 @@ func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.E
 			defaultValues = make([]types.Datum, buildSideExec.Schema().Len())
 		}
 	}
+	if v.JoinType == base.FullOuterJoin {
+		// full outer join keeps side filters inside hash join:
+		// build filter decides whether a build row enters hash table;
+		// probe filter decides whether a probe row enters probe matching.
+		if leftIsBuildSide {
+			e.FullOuterJoinBuildFilter = v.LeftConditions
+			e.FullOuterJoinProbeFilter = v.RightConditions
+		} else {
+			e.FullOuterJoinBuildFilter = v.RightConditions
+			e.FullOuterJoinProbeFilter = v.LeftConditions
+		}
+	}
 	probeKeyColIdx := make([]int, len(probeKeys))
 	probeNAKeColIdx := make([]int, len(probeNAKeys))
 	buildKeyColIdx := make([]int, len(buildKeys))
@@ -2063,14 +2077,55 @@ func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.E
 		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
 	}
 	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
+	var fullJoinBuildJoinerJoinType, fullJoinProbeJoinerJoinType base.JoinType
+	var fullJoinBuildJoinerOuterIsRight, fullJoinProbeJoinerOuterIsRight bool
+	var fullJoinBuildJoinerDefaultValues, fullJoinProbeJoinerDefaultValues []types.Datum
+	if v.JoinType == base.FullOuterJoin {
+		// Full outer join uses two outer-joiners:
+		// 1) build joiner: handles matched rows + tail unmatched build rows.
+		// 2) probe joiner: handles unmatched probe rows.
+		// `outerIsRight` here is joiner row-layout metadata (whether joiner's
+		// outer row is from original right child), not UseOuterToBuild.
+		if leftIsBuildSide {
+			// build=left, probe=right
+			// build unmatched output: (left, NULL-right)
+			fullJoinBuildJoinerJoinType = base.LeftOuterJoin
+			fullJoinBuildJoinerOuterIsRight = false
+			fullJoinBuildJoinerDefaultValues = make([]types.Datum, len(rhsTypes))
+
+			// probe unmatched output: (NULL-left, right)
+			fullJoinProbeJoinerJoinType = base.RightOuterJoin
+			fullJoinProbeJoinerOuterIsRight = true
+			fullJoinProbeJoinerDefaultValues = make([]types.Datum, len(lhsTypes))
+		} else {
+			// build=right, probe=left
+			// build unmatched output: (NULL-left, right)
+			fullJoinBuildJoinerJoinType = base.RightOuterJoin
+			fullJoinBuildJoinerOuterIsRight = true
+			fullJoinBuildJoinerDefaultValues = make([]types.Datum, len(lhsTypes))
+
+			// probe unmatched output: (left, NULL-right)
+			fullJoinProbeJoinerJoinType = base.LeftOuterJoin
+			fullJoinProbeJoinerOuterIsRight = false
+			fullJoinProbeJoinerDefaultValues = make([]types.Datum, len(rhsTypes))
+		}
+	}
 	for i := range e.Concurrency {
-		e.ProbeWorkers[i] = &join.ProbeWorkerV1{
+		worker := &join.ProbeWorkerV1{
 			HashJoinCtx:      e.HashJoinCtxV1,
-			Joiner:           join.NewJoiner(b.sctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, isNAJoin),
 			ProbeKeyColIdx:   probeKeyColIdx,
 			ProbeNAKeyColIdx: probeNAKeColIdx,
 		}
-		e.ProbeWorkers[i].WorkerID = i
+		if v.JoinType == base.FullOuterJoin {
+			worker.FullJoinBuildJoiner = join.NewJoiner(b.sctx, fullJoinBuildJoinerJoinType, fullJoinBuildJoinerOuterIsRight, fullJoinBuildJoinerDefaultValues, v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, false)
+			worker.FullJoinProbeJoiner = join.NewJoiner(b.sctx, fullJoinProbeJoinerJoinType, fullJoinProbeJoinerOuterIsRight, fullJoinProbeJoinerDefaultValues, nil, lhsTypes, rhsTypes, childrenUsedSchema, false)
+			// Keep Joiner as probe-mismatch joiner for shared non-full code paths.
+			worker.Joiner = worker.FullJoinProbeJoiner
+		} else {
+			worker.Joiner = join.NewJoiner(b.sctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, isNAJoin)
+		}
+		worker.WorkerID = i
+		e.ProbeWorkers[i] = worker
 	}
 	e.BuildWorker.BuildKeyColIdx, e.BuildWorker.BuildNAKeyColIdx, e.BuildWorker.BuildSideExec, e.BuildWorker.HashJoinCtx = buildKeyColIdx, buildNAKeyColIdx, buildSideExec, e.HashJoinCtxV1
 	e.HashJoinCtxV1.IsNullAware = isNAJoin
@@ -5314,6 +5369,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		err = e.open(ctx, kvRanges)
 		return e, err
 	}
+	e.rangeMemTracker = memoryTracker
 
 	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	if is.Index.Global {
@@ -5374,6 +5430,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		err = e.open(ctx)
 		return e, err
 	}
+	e.rangeMemTracker = memTracker
 
 	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	if is.Index.Global {

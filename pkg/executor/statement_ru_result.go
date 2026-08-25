@@ -27,12 +27,16 @@ import (
 // only together with the external model documentation until a later PR adds a
 // configured model.
 const (
+	statementRUCPUWorkWeight             = 1.0
 	statementRUScanByteWeight            = 1.0
 	statementRUNetByteWeight             = 1.0
 	statementRUFrontendCompileByteWeight = 1.0
 )
 
 type statementRURawUnits struct {
+	// CPUWork is the sum of occurrence-local operator work from the supported
+	// root and coprocessor operators in the flat plan.
+	CPUWork float64
 	// ScanBytes is the sum of physical-byte estimates from supported Reader
 	// request components. Each contribution is collected once from the pushed
 	// plan root recorded for that Reader.
@@ -50,10 +54,12 @@ type statementRUResultOnly struct {
 	TotalRU float64
 }
 
-// Complete means the supported traversal consumed every unit required by the
-// current model after the result reached EOF. Incomplete snapshots are still
-// passed through the dormant calibration publication boundary so a future
-// consumer can reject them explicitly.
+// The current producers cannot prove that all successful or canceled remote
+// work contributed execution details. ResultOnly therefore publishes a
+// best-effort value from visible evidence, while every supported snapshot is
+// marked incomplete for the dormant calibration consumer. "Best-effort lower
+// bound" means missing units are not imputed; the aggregate scan-byte proxy is
+// non-monotone, so it is not a strict mathematical bound.
 type statementRUCalibrationState uint8
 
 const (
@@ -62,6 +68,19 @@ const (
 	statementRUCalibrationComplete
 	statementRUCalibrationIncomplete
 )
+
+func (state statementRUCalibrationState) String() string {
+	switch state {
+	case statementRUCalibrationUnknown:
+		return "unknown"
+	case statementRUCalibrationComplete:
+		return "complete"
+	case statementRUCalibrationIncomplete:
+		return "incomplete"
+	default:
+		return "invalid"
+	}
+}
 
 type statementRUCalibrationSnapshot struct {
 	State statementRUCalibrationState
@@ -81,7 +100,6 @@ type statementRUFinalizedSnapshot struct {
 	units            statementRURawUnits
 	result           statementRUResultOnly
 	calibrationState statementRUCalibrationState
-	hasResult        bool
 }
 
 func installStatementRUOwner(stmt *ExecStmt) {
@@ -128,11 +146,9 @@ func statementRUFrontendCompileBytes(stmt *ExecStmt) float64 {
 }
 
 // statementRUCalculator is terminal-local. It accumulates only typed scalar
-// units and invalid evidence; no plan or execution-detail pointer survives
-// calculateStatementRU.
+// units; no plan or execution-detail pointer survives calculateStatementRU.
 type statementRUCalculator struct {
-	units           statementRURawUnits
-	invalidEvidence bool
+	units statementRURawUnits
 }
 
 func newStatementRUCalculator(setup statementRUCalculationSetup) statementRUCalculator {
@@ -143,62 +159,79 @@ func newStatementRUCalculator(setup statementRUCalculationSetup) statementRUCalc
 	}
 }
 
-// statementRUScanBytes converts a value copy of one Reader's scan evidence into
-// one raw-unit contribution. It does not retain RuntimeStatsColl or ScanDetail.
-func statementRUScanBytes(totalKeys, processedKeys, processedBytes int64) (float64, statementRUCalibrationState) {
+type statementRUScanEvidenceState uint8
+
+const (
+	statementRUScanEvidenceInvalid statementRUScanEvidenceState = iota
+	statementRUScanEvidenceUnavailable
+	statementRUScanEvidenceValid
+)
+
+type statementRUScanEvidence struct {
+	state     statementRUScanEvidenceState
+	scanBytes float64
+}
+
+// classifyStatementRUScanEvidence converts a value copy of one Reader's scan
+// evidence into one raw-unit contribution. Zero-valued fields have no presence
+// bit, so a tuple that cannot run the demo formula is unavailable unless it is
+// provably contradictory. No RuntimeStatsColl or ScanDetail pointer survives.
+func classifyStatementRUScanEvidence(totalKeys, processedKeys, processedBytes int64) statementRUScanEvidence {
 	if totalKeys < 0 || processedKeys < 0 || processedBytes < 0 {
-		return 0, statementRUCalibrationUnknown
+		return statementRUScanEvidence{state: statementRUScanEvidenceInvalid}
 	}
-	if processedKeys == 0 && (totalKeys != 0 || processedBytes != 0) {
-		return 0, statementRUCalibrationUnknown
+	if processedKeys == 0 {
+		// A branch with no processed-key evidence contributes zero even when
+		// TotalKeys is present. Processed bytes without processed keys is
+		// contradictory evidence and remains fail closed.
+		if processedBytes == 0 {
+			return statementRUScanEvidence{state: statementRUScanEvidenceValid}
+		}
+		return statementRUScanEvidence{state: statementRUScanEvidenceInvalid}
 	}
-	if totalKeys == 0 || processedKeys == 0 || processedBytes == 0 {
-		return 0, statementRUCalibrationIncomplete
+	if totalKeys == 0 || processedBytes == 0 {
+		return statementRUScanEvidence{state: statementRUScanEvidenceUnavailable}
 	}
 
 	scanBytes := float64(processedBytes) / float64(processedKeys) * float64(totalKeys)
-	if scanBytes > math.MaxFloat64 {
-		return 0, statementRUCalibrationUnknown
+	if scanBytes < 0 || math.IsNaN(scanBytes) || math.IsInf(scanBytes, 0) {
+		return statementRUScanEvidence{state: statementRUScanEvidenceInvalid}
 	}
-	return scanBytes, statementRUCalibrationComplete
+	return statementRUScanEvidence{state: statementRUScanEvidenceValid, scanBytes: scanBytes}
 }
 
-func (calculator statementRUCalculator) finalize(evidenceComplete bool) statementRUFinalizedSnapshot {
-	finalized := statementRUFinalizedSnapshot{
+func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot, bool) {
+	if !validStatementRURawUnits(calculator.units) {
+		return statementRUFinalizedSnapshot{}, false
+	}
+	result := calculateStatementRUResultOnly(calculator.units)
+	if result.TotalRU < 0 || math.IsNaN(result.TotalRU) || math.IsInf(result.TotalRU, 0) {
+		return statementRUFinalizedSnapshot{}, false
+	}
+	return statementRUFinalizedSnapshot{
 		units:            calculator.units,
-		calibrationState: statementRUCalibrationComplete,
-	}
-	if calculator.invalidEvidence {
-		finalized.calibrationState = statementRUCalibrationUnknown
-		return finalized
-	}
-	if !evidenceComplete || calculator.units.ScanBytes <= 0 {
-		// A successful statement may still be closed before the client consumes
-		// the result to EOF (for example, after a connection write failure). In
-		// that case the recorded aggregates describe only the work observed before
-		// close. Traversal also fails closed when it cannot associate the existing
-		// statement evidence with a supported operator occurrence.
-		finalized.calibrationState = statementRUCalibrationIncomplete
-		return finalized
-	}
+		result:           result,
+		calibrationState: statementRUCalibrationIncomplete,
+	}, true
+}
 
-	if finalized.units.FrontendCompileBytes == 0 {
-		// Frontend text is optional for ResultOnly in this first slice, where its
-		// contribution is explicitly projected as zero. Calibration still marks
-		// the same finalized evidence incomplete rather than learning from that zero.
-		finalized.calibrationState = statementRUCalibrationIncomplete
+func validStatementRURawUnits(units statementRURawUnits) bool {
+	for _, unit := range []float64{
+		units.CPUWork,
+		units.ScanBytes,
+		units.NetBytes,
+		units.FrontendCompileBytes,
+	} {
+		if unit < 0 || math.IsNaN(unit) || math.IsInf(unit, 0) {
+			return false
+		}
 	}
-	finalized.result = calculateStatementRUResultOnly(finalized.units)
-	if finalized.result.TotalRU < 0 || math.IsNaN(finalized.result.TotalRU) || math.IsInf(finalized.result.TotalRU, 0) {
-		finalized.calibrationState = statementRUCalibrationUnknown
-		return finalized
-	}
-	finalized.hasResult = true
-	return finalized
+	return true
 }
 
 func calculateStatementRUResultOnly(units statementRURawUnits) statementRUResultOnly {
-	return statementRUResultOnly{TotalRU: statementRUScanByteWeight*units.ScanBytes +
+	return statementRUResultOnly{TotalRU: statementRUCPUWorkWeight*units.CPUWork +
+		statementRUScanByteWeight*units.ScanBytes +
 		statementRUNetByteWeight*units.NetBytes +
 		statementRUFrontendCompileByteWeight*units.FrontendCompileBytes}
 }
@@ -207,21 +240,18 @@ func publishStatementRUFinalizedSnapshot(
 	stmt *ExecStmt,
 	finalized statementRUFinalizedSnapshot,
 ) {
-	if finalized.hasResult {
-		publishStatementRUMetricsSafely(finalized)
-	}
-	if finalized.calibrationState != statementRUCalibrationUnknown {
-		publishStatementRUCalibrationSafely(stmt, statementRUCalibrationSnapshot{
-			State: finalized.calibrationState,
-			Units: finalized.units,
-		})
-	}
+	publishStatementRUMetricsSafely(finalized)
+	publishStatementRUCalibrationSafely(stmt, statementRUCalibrationSnapshot{
+		State: finalized.calibrationState,
+		Units: finalized.units,
+	})
 }
 
 // publishStatementRUMetricsSafely projects one immutable finalized snapshot to
-// the RU v3 counters. The supported slice is read-only and TiKV-only. The
-// engine counter excludes frontend compilation because that work belongs to
-// TiDB rather than the storage engine.
+// the existing RU v3 counters. ResultOnly retains aggregate CPUWork rather than
+// a site split, so this layer preserves the lower-layer engine boundary:
+// TiKV receives only scan and network work, while Total and SQLType receive the
+// complete best-effort result.
 func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
 	defer func() {
 		_ = recover()
@@ -252,7 +282,8 @@ func publishStatementRUCalibrationSafely(
 	failpoint.InjectCall(
 		"observeStatementRUCalibrationUnitsForTest",
 		connectionID,
-		uint8(snapshot.State),
+		snapshot.State.String(),
+		snapshot.Units.CPUWork,
 		snapshot.Units.ScanBytes,
 		snapshot.Units.NetBytes,
 		snapshot.Units.FrontendCompileBytes,

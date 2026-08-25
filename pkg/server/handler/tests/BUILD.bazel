@@ -60,7 +60,6 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/codec",
-        "//pkg/util/collate",
         "//pkg/util/deadlockhistory",
         "//pkg/util/rowcodec",
         "//pkg/util/topsql/state",

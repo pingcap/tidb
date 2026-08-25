@@ -3602,6 +3602,116 @@ func runClientDisconnectAutocommitInsert(t *testing.T, dbt *testkit.DBTestKit, t
 	require.Equal(t, 0, cnt)
 }
 
+func TestClientDisconnectKillsExplicitTxn(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	for _, txnSetup := range []string{"autocommit_off", "begin"} {
+		for _, prepared := range []bool{false, true} {
+			protocol := "query"
+			if prepared {
+				protocol = "prepared"
+			}
+			name := txnSetup + "/" + protocol
+			t.Run(name, func(t *testing.T) {
+				ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+					tableName := "issue68682_" + txnSetup + "_" + protocol
+					dbt.MustExec("drop table if exists " + tableName)
+					dbt.MustExec("create table " + tableName + " (id int primary key, v int)")
+					dbt.MustExec("insert into " + tableName + " values (1, 0), (2, 0)")
+					runClientDisconnectExplicitTxn(t, dbt, tableName, txnSetup, prepared)
+				})
+			})
+		}
+	}
+}
+
+func runClientDisconnectExplicitTxn(t *testing.T, dbt *testkit.DBTestKit, tableName, txnSetup string, prepared bool) {
+	conn, err := dbt.GetDB().Conn(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	blockedSQL := fmt.Sprintf("update %s set v = 2 where id = 2", tableName)
+	var stmt *sql.Stmt
+	if prepared {
+		stmt, err = conn.PrepareContext(context.Background(), blockedSQL)
+		require.NoError(t, err)
+		defer func() {
+			_ = stmt.Close()
+		}()
+	}
+
+	_, err = conn.ExecContext(context.Background(), "set tidb_txn_mode = 'pessimistic'")
+	require.NoError(t, err)
+	if txnSetup == "autocommit_off" {
+		_, err = conn.ExecContext(context.Background(), "set autocommit = 0")
+	} else {
+		_, err = conn.ExecContext(context.Background(), "begin pessimistic")
+	}
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.Background(), "update "+tableName+" set v = 1 where id = 1")
+	require.NoError(t, err)
+
+	blocker, err := dbt.GetDB().Conn(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		_, _ = blocker.ExecContext(context.Background(), "rollback")
+		_ = blocker.Close()
+	}()
+	_, err = blocker.ExecContext(context.Background(), "begin pessimistic")
+	require.NoError(t, err)
+	_, err = blocker.ExecContext(context.Background(), "update "+tableName+" set v = 3 where id = 2")
+	require.NoError(t, err)
+
+	netConn := getRawNetConn(t, conn)
+	done := make(chan error, 1)
+	go func() {
+		var execErr error
+		if prepared {
+			_, execErr = stmt.ExecContext(context.Background())
+		} else {
+			_, execErr = conn.ExecContext(context.Background(), blockedSQL)
+		}
+		done <- execErr
+	}()
+
+	pattern := fmt.Sprintf("update %s%%", tableName)
+	require.Eventually(t, func() bool {
+		return processlistCountByInfo(t, dbt, pattern) == 1
+	}, 5*time.Second, 50*time.Millisecond)
+	processID, ok := processlistIDByInfo(t, dbt, pattern)
+	require.True(t, ok)
+	cleanupProcessByID(t, dbt.GetDB(), processID)
+
+	require.NoError(t, netConn.Close())
+
+	var execErr error
+	require.Eventually(t, func() bool {
+		select {
+		case execErr = <-done:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 50*time.Millisecond)
+	require.Error(t, execErr)
+	require.Eventually(t, func() bool {
+		return processlistCountByInfo(t, dbt, pattern) == 0
+	}, 5*time.Second, 50*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = dbt.GetDB().ExecContext(ctx, "update "+tableName+" set v = 2 where id = 1")
+	require.NoError(t, err)
+
+	var row1, row2 int
+	err = dbt.GetDB().QueryRowContext(context.Background(), "select sum(if(id = 1, v, 0)), sum(if(id = 2, v, 0)) from "+tableName).Scan(&row1, &row2)
+	require.NoError(t, err)
+	require.Equal(t, 2, row1)
+	require.Equal(t, 0, row2)
+}
+
 func getRawNetConn(t *testing.T, conn *sql.Conn) net.Conn {
 	var netConn net.Conn
 	err := conn.Raw(func(driverConn any) error {

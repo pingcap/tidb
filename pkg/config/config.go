@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config/configtypes"
@@ -102,6 +103,8 @@ const (
 	DefMemoryUsageAlarmRatio = 0.8
 	// DefDXFResourceLimit is the default resource percentage available for DXF.
 	DefDXFResourceLimit = 100
+	// DefStarterMaxImportDataSize is the default IMPORT INTO source data size limit for Starter deployments.
+	DefStarterMaxImportDataSize configtypes.ByteSize = 25 * units.GiB
 	// MinDXFResourceLimit is the minimum resource percentage available for DXF.
 	// Keep it at 10 while mysql.dist_framework_meta.cpu_count changes from total
 	// node CPU to usable DXF CPU, so the stored value stays non-zero.
@@ -1135,7 +1138,7 @@ type StarterParams struct {
 	// It is populated from --starter-additional-params and is not file-backed config.
 	EnableRGFallback bool `toml:"-" json:"-"`
 	// MaxImportDataSize is the maximum total real source data size allowed for IMPORT INTO.
-	// Zero means unlimited.
+	// Starter deployments default to DefStarterMaxImportDataSize. An explicitly configured zero means unlimited.
 	MaxImportDataSize configtypes.ByteSize `toml:"max-import-data-size" json:"max-import-data-size,omitempty"`
 }
 
@@ -1630,6 +1633,9 @@ func (c *Config) Load(confFile string) error {
 	}
 	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
 		c.Standby.EnableZeroBackend = true
+	}
+	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("starter-params", "max-import-data-size") {
+		c.StarterParams.MaxImportDataSize = DefStarterMaxImportDataSize
 	}
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
