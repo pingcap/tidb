@@ -16,7 +16,10 @@ go_library(
 
 go_test(
     name = "nameroute_test",
+    timeout = "short",
     srcs = ["router_test.go"],
+    flaky = True,
+    shard_count = 8,
     deps = [
         ":nameroute",
         "//pkg/parser/ast",

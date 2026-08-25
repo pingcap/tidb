@@ -175,7 +175,11 @@ func TestBuildRestoreNamePlanRejectsSnapshotDependencies(t *testing.T) {
 	table := &metautil.Table{DB: db.Info, Info: &model.TableInfo{
 		ID:          10,
 		Name:        ast.NewCIStr("t"),
-		ForeignKeys: []*model.FKInfo{{Name: ast.NewCIStr("fk")}},
+		ForeignKeys: []*model.FKInfo{{
+			Name:      ast.NewCIStr("fk"),
+			RefSchema: ast.NewCIStr("source"),
+			RefTable:  ast.NewCIStr("t"),
+		}},
 	}}
 	db.Tables = []*metautil.Table{table}
 
@@ -187,8 +191,8 @@ func TestBuildRestoreNamePlanRejectsSnapshotDependencies(t *testing.T) {
 	require.ErrorContains(t, err, "does not support selected view")
 }
 
-func TestBuildRestoreNamePlanRejectsUnroutedSnapshotDependencies(t *testing.T) {
-	router, err := nameroute.Parse([]string{"source.parent:target.copy"})
+func TestBuildRestoreNamePlanChecksSnapshotDependencies(t *testing.T) {
+	router, err := nameroute.Parse([]string{"source.unrelated:target.copy"})
 	require.NoError(t, err)
 	db := &metautil.Database{Info: &model.DBInfo{ID: 1, Name: ast.NewCIStr("source")}}
 	parent := &metautil.Table{DB: db.Info, Info: &model.TableInfo{ID: 10, Name: ast.NewCIStr("parent")}}
@@ -201,10 +205,46 @@ func TestBuildRestoreNamePlanRejectsUnroutedSnapshotDependencies(t *testing.T) {
 			RefTable:  ast.NewCIStr("parent"),
 		}},
 	}}
-	db.Tables = []*metautil.Table{parent, child}
+	unrelated := &metautil.Table{DB: db.Info, Info: &model.TableInfo{ID: 12, Name: ast.NewCIStr("unrelated")}}
+	db.Tables = []*metautil.Table{parent, child, unrelated}
 
 	_, err = buildRestoreNamePlan(router, []*metautil.Database{db}, db.Tables, nil)
+	require.NoError(t, err)
+
+	// Renaming the child itself does not change the FK reference target.
+	router, err = nameroute.Parse([]string{"source.child:target.child"})
+	require.NoError(t, err)
+	_, err = buildRestoreNamePlan(router, []*metautil.Database{db}, db.Tables, nil)
+	require.NoError(t, err)
+
+	// A route affecting the FK parent is unsafe even when the child itself is
+	// identity-mapped, because this first-stage implementation preserves the FK
+	// reference verbatim.
+	router, err = nameroute.Parse([]string{"source.parent:target.parent"})
+	require.NoError(t, err)
+	_, err = buildRestoreNamePlan(router, []*metautil.Database{db}, db.Tables, nil)
 	require.ErrorContains(t, err, "selected table source.child with foreign keys")
+}
+
+func TestHasRoutedForeignKey(t *testing.T) {
+	router, err := nameroute.Parse([]string{"other.t:target.t"})
+	require.NoError(t, err)
+	table := &model.TableInfo{
+		Name: ast.NewCIStr("child"),
+		ForeignKeys: []*model.FKInfo{{
+			RefSchema: ast.NewCIStr("source"),
+			RefTable:  ast.NewCIStr("parent"),
+		}},
+	}
+	require.False(t, hasRoutedForeignKey(router, nameroute.ObjectName{
+		Schema: ast.NewCIStr("source"), Table: ast.NewCIStr("child"),
+	}, table))
+
+	router, err = nameroute.Parse([]string{"source.child:target.child"})
+	require.NoError(t, err)
+	require.False(t, hasRoutedForeignKey(router, nameroute.ObjectName{
+		Schema: ast.NewCIStr("source"), Table: ast.NewCIStr("child"),
+	}, table))
 }
 
 func TestBuildRestoreNamePlanChoosesTargetDBMetadataDeterministically(t *testing.T) {

@@ -45,10 +45,22 @@ type TableReplace struct {
 	TargetDBName   string
 	TargetDBID     DownstreamID
 	HasForeignKeys bool
-	IsView         bool
-	PartitionMap   map[UpstreamID]DownstreamID
-	IndexMap       map[UpstreamID]DownstreamID
-	FilteredOut    bool
+	// ForeignKeyReferences contains source names observed while scanning log
+	// metadata. It is intentionally runtime-only for the first-stage rename
+	// support; old persisted ID maps therefore fall back to HasForeignKeys.
+	ForeignKeyReferences []ForeignKeyReference
+	IsView               bool
+	PartitionMap         map[UpstreamID]DownstreamID
+	IndexMap             map[UpstreamID]DownstreamID
+	FilteredOut          bool
+}
+
+// ForeignKeyReference identifies a source object named by a table's foreign
+// key. Names are kept in source form so the restore task can determine whether
+// a configured route would change the reference without rewriting it yet.
+type ForeignKeyReference struct {
+	Schema string
+	Table  string
 }
 
 // EffectiveDBName returns the table-level target database name when present.

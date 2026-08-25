@@ -208,7 +208,7 @@ func buildRestoreNamePlan(
 			return nil, errors.Annotatef(berrors.ErrInvalidArgument,
 				"restore rename does not support selected view %s.%s", sourceObject.Schema.O, sourceObject.Table.O)
 		}
-		if len(router.Rules()) > 0 && len(table.Info.ForeignKeys) > 0 {
+		if hasRoutedForeignKey(router, sourceObject, table.Info) {
 			return nil, errors.Annotatef(berrors.ErrInvalidArgument,
 				"restore rename does not support selected table %s.%s with foreign keys", sourceObject.Schema.O, sourceObject.Table.O)
 		}
@@ -249,6 +249,32 @@ func buildRestoreNamePlan(
 		}
 	}
 	return plan, nil
+}
+
+// hasRoutedForeignKey reports whether applying the configured routes would
+// change any object named by one of the table's foreign keys. The first-stage
+// rename support keeps FK metadata unchanged, so only a routed reference can
+// make the existing constraint point at a different object. Renaming the child
+// itself does not alter its RefSchema/RefTable fields and is therefore allowed
+// in this stage.
+func hasRoutedForeignKey(router *nameroute.Router, sourceObject nameroute.ObjectName, tableInfo *model.TableInfo) bool {
+	if len(tableInfo.ForeignKeys) == 0 {
+		return false
+	}
+	for _, fk := range tableInfo.ForeignKeys {
+		if fk == nil {
+			continue
+		}
+		refSchema, refTable := fk.RefSchema, fk.RefTable
+		if refSchema.O == "" {
+			refSchema = sourceObject.Schema
+		}
+		targetRefSchema, targetRefTable, _ := router.Route(refSchema, refTable)
+		if targetRefSchema.L != refSchema.L || targetRefTable.L != refTable.L {
+			return true
+		}
+	}
+	return false
 }
 
 func sourceDBPrecedes(candidate, existing *model.DBInfo) bool {

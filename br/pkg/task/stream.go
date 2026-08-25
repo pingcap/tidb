@@ -67,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
@@ -2547,7 +2548,14 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	}
 	// The dependency classification is persisted with the ID map, so a direct
 	// phase-2 run makes the same pre-DDL decision as the initial scan.
-	if err := cfg.tableMappingManager.ValidateRoutedDependencies(); err != nil {
+	nameRouter, err := cfg.getNameRouter()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := cfg.tableMappingManager.ValidateRoutedDependenciesWithRoute(func(schema, table string) (string, string, bool) {
+		targetSchema, targetTable, matched := nameRouter.Route(ast.NewCIStr(schema), ast.NewCIStr(table))
+		return targetSchema.O, targetTable.O, matched
+	}); err != nil {
 		return errors.Trace(err)
 	}
 	if err := checkLogOnlyPiTRRegistryConflicts(ctx, cfg, cfg.RestoreRegistry); err != nil {

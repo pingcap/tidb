@@ -1620,7 +1620,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		// the log interval. Filter first so unrelated objects don't block a
 		// partial restore, then reject before snapshot DDL starts.
 		cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
-		if err := cfg.tableMappingManager.ValidateRoutedDependencies(); err != nil {
+		if err := cfg.tableMappingManager.ValidateRoutedDependenciesWithRoute(func(schema, table string) (string, string, bool) {
+			targetSchema, targetTable, matched := nameRouter.Route(ast.NewCIStr(schema), ast.NewCIStr(table))
+			return targetSchema.O, targetTable.O, matched
+		}); err != nil {
 			return errors.Trace(err)
 		}
 	}

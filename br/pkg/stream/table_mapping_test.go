@@ -767,6 +767,36 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		require.NoError(t, tm.ValidateRoutedDependencies())
 	})
 
+	t.Run("allow routed child when foreign key target is unchanged", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name: "source",
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {
+						Name: "target_child", TargetDBName: "target", HasForeignKeys: true,
+						ForeignKeyReferences: []ForeignKeyReference{{Schema: "source", Table: "parent"}},
+					},
+				},
+			},
+		}
+		route := func(schema, table string) (string, string, bool) {
+			if schema == "source" && table == "child" {
+				return "target", "target_child", true
+			}
+			return schema, table, false
+		}
+		require.NoError(t, tm.ValidateRoutedDependenciesWithRoute(route))
+
+		tm.DBReplaceMap[1].TableMap[11].ForeignKeyReferences[0].Table = "target_parent"
+		require.ErrorContains(t, tm.ValidateRoutedDependenciesWithRoute(func(schema, table string) (string, string, bool) {
+			if schema == "source" && table == "target_parent" {
+				return "target", "renamed_parent", true
+			}
+			return schema, table, false
+		}), "foreign key reference")
+	})
+
 	t.Run("update one exact table route without remapping its source database", func(t *testing.T) {
 		dom := domain.NewMockDomain()
 		dom.MockInfoCacheAndLoadInfoSchema(createMockInfoSchemaWithDBs(map[string]int64{"target": 900}))
@@ -939,10 +969,14 @@ func TestMergeBaseDBReplace(t *testing.T) {
 
 func TestExtractTableSimpleInfoTracksUnsupportedDependencies(t *testing.T) {
 	tableInfo := &model.TableInfo{
-		ID:          10,
-		Name:        ast.NewCIStr("v"),
-		View:        &model.ViewInfo{},
-		ForeignKeys: []*model.FKInfo{{Name: ast.NewCIStr("fk")}},
+		ID:   10,
+		Name: ast.NewCIStr("v"),
+		View: &model.ViewInfo{},
+		ForeignKeys: []*model.FKInfo{{
+			Name:      ast.NewCIStr("fk"),
+			RefSchema: ast.NewCIStr("source"),
+			RefTable:  ast.NewCIStr("parent"),
+		}},
 	}
 	value, err := json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -953,6 +987,7 @@ func TestExtractTableSimpleInfoTracksUnsupportedDependencies(t *testing.T) {
 	require.Equal(t, "v", simpleInfo.Name)
 	require.True(t, simpleInfo.IsView)
 	require.True(t, simpleInfo.HasForeignKeys)
+	require.Equal(t, []ForeignKeyReference{{Schema: "source", Table: "parent"}}, simpleInfo.ForeignKeyReferences)
 }
 
 func TestFilterDBReplaceMap(t *testing.T) {

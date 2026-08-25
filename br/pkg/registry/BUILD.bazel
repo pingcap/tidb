@@ -17,7 +17,9 @@ go_library(
         "//pkg/domain",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
+        "//pkg/parser/types",
         "//pkg/util/chunk",
         "//pkg/util/sqlexec",
         "//pkg/util/table-filter",
@@ -30,10 +32,17 @@ go_library(
 
 go_test(
     name = "registry_test",
+    timeout = "short",
     srcs = ["registration_test.go"],
     embed = [":registry"],
+    flaky = True,
+    shard_count = 4,
     deps = [
         "//br/pkg/restore/nameroute",
+        "//br/pkg/utils",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/parser/types",
         "//pkg/util/table-filter",
         "@com_github_stretchr_testify//require",
     ],

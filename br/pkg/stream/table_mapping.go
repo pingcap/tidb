@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"maps"
 	"sort"
+	"strings"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -51,10 +52,11 @@ type tableMetaKey struct {
 }
 
 type tableSimpleInfo struct {
-	Name           string
-	PartitionIds   []int64
-	HasForeignKeys bool
-	IsView         bool
+	Name                 string
+	PartitionIds         []int64
+	HasForeignKeys       bool
+	ForeignKeyReferences []ForeignKeyReference
+	IsView               bool
 }
 
 type dbMetaKey struct {
@@ -428,11 +430,19 @@ func extractTableSimpleInfo(value []byte) (int64, *tableSimpleInfo, error) {
 			partitionIds = append(partitionIds, def.ID)
 		}
 	}
+	fkRefs := make([]ForeignKeyReference, 0, len(tableInfo.ForeignKeys))
+	for _, fk := range tableInfo.ForeignKeys {
+		if fk == nil {
+			continue
+		}
+		fkRefs = append(fkRefs, ForeignKeyReference{Schema: fk.RefSchema.O, Table: fk.RefTable.O})
+	}
 	return tableInfo.ID, &tableSimpleInfo{
-		Name:           tableInfo.Name.O,
-		PartitionIds:   partitionIds,
-		HasForeignKeys: len(tableInfo.ForeignKeys) > 0,
-		IsView:         tableInfo.View != nil,
+		Name:                 tableInfo.Name.O,
+		PartitionIds:         partitionIds,
+		HasForeignKeys:       len(tableInfo.ForeignKeys) > 0,
+		ForeignKeyReferences: fkRefs,
+		IsView:               tableInfo.View != nil,
 	}, nil
 }
 
@@ -547,6 +557,21 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(
 	// routed object is unsupported if any replayed version is a view or carries
 	// a foreign key, even if a later DDL removes that dependency.
 	tableReplace.HasForeignKeys = tableReplace.HasForeignKeys || tableSimpleInfo.HasForeignKeys
+	for _, ref := range tableSimpleInfo.ForeignKeyReferences {
+		if ref.Schema == "" {
+			ref.Schema = dbReplace.Name
+		}
+		found := false
+		for _, existing := range tableReplace.ForeignKeyReferences {
+			if strings.EqualFold(existing.Schema, ref.Schema) && strings.EqualFold(existing.Table, ref.Table) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			tableReplace.ForeignKeyReferences = append(tableReplace.ForeignKeyReferences, ref)
+		}
+	}
 	tableReplace.IsView = tableReplace.IsView || tableSimpleInfo.IsView
 
 	// update table ID and partition ID.
@@ -563,6 +588,21 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(
 	}
 	collector.OnTableInfo(dbId, tableId, tableSimpleInfo, commitTs)
 	return nil
+}
+
+func mergeForeignKeyReferences(dst, src *TableReplace) {
+	for _, ref := range src.ForeignKeyReferences {
+		found := false
+		for _, existing := range dst.ForeignKeyReferences {
+			if strings.EqualFold(existing.Schema, ref.Schema) && strings.EqualFold(existing.Table, ref.Table) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			dst.ForeignKeyReferences = append(dst.ForeignKeyReferences, ref)
+		}
+	}
 }
 
 func (tm *TableMappingManager) CleanError(rewriteTs uint64) {
@@ -634,6 +674,7 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 					existingTableReplace.TargetDBID = base.table.EffectiveDBID(base.db)
 				}
 				existingTableReplace.HasForeignKeys = existingTableReplace.HasForeignKeys || base.table.HasForeignKeys
+				mergeForeignKeyReferences(existingTableReplace, base.table)
 				existingTableReplace.IsView = existingTableReplace.IsView || base.table.IsView
 			}
 
@@ -664,6 +705,7 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 						existingTableReplace.TargetDBID = baseTableReplace.EffectiveDBID(baseDBReplace)
 					}
 					existingTableReplace.HasForeignKeys = existingTableReplace.HasForeignKeys || baseTableReplace.HasForeignKeys
+					mergeForeignKeyReferences(existingTableReplace, baseTableReplace)
 					existingTableReplace.IsView = existingTableReplace.IsView || baseTableReplace.IsView
 					for partUpID, partDownID := range baseTableReplace.PartitionMap {
 						existingTableReplace.PartitionMap[partUpID] = partDownID
@@ -939,12 +981,28 @@ func (tm *TableMappingManager) LookupTableRoute(upstreamTableID UpstreamID) (Tab
 	return result, found, nil
 }
 
-// ValidateRoutedDependencies rejects dependency metadata that cannot be
-// rewritten safely when any selected table is routed. The flags are accumulated
-// while scanning log metadata and persisted in the PiTR ID map so phased
-// restores make the same decision. Checking every selected table is deliberate:
-// an identity-mapped foreign key or view can still reference a renamed object.
+// ValidateRoutedDependencies preserves the conservative behavior for persisted
+// mappings that do not carry source FK reference names. The flags are
+// accumulated while scanning log metadata and persisted in the PiTR ID map so
+// phased restores make the same decision.
 func (tm *TableMappingManager) ValidateRoutedDependencies() error {
+	return tm.validateRoutedDependencies(nil)
+}
+
+// ValidateRoutedDependenciesWithRoute applies the first-stage FK rename
+// policy with source-name route information. It allows an identity-mapped
+// table whose FK references are also identity-mapped, while retaining the
+// conservative rejection for routed tables and old ID maps without reference
+// details.
+func (tm *TableMappingManager) ValidateRoutedDependenciesWithRoute(
+	route func(schema, table string) (targetSchema, targetTable string, matched bool),
+) error {
+	return tm.validateRoutedDependencies(route)
+}
+
+func (tm *TableMappingManager) validateRoutedDependencies(
+	route func(schema, table string) (targetSchema, targetTable string, matched bool),
+) error {
 	hasTableRoute := false
 	for _, dbReplace := range tm.DBReplaceMap {
 		if dbReplace.FilteredOut {
@@ -978,9 +1036,23 @@ func (tm *TableMappingManager) ValidateRoutedDependencies() error {
 					upstreamDBID, upstreamTableID)
 			}
 			if tableReplace.HasForeignKeys {
-				return errors.Annotatef(berrors.ErrInvalidArgument,
-					"restore rename does not support routed table with foreign keys, upstream database ID %d and table ID %d",
-					upstreamDBID, upstreamTableID)
+				// Old persisted maps only retain the boolean flag. Keep their
+				// previous fail-fast behavior because the referenced source names
+				// are unavailable for a safe route check.
+				if route == nil || len(tableReplace.ForeignKeyReferences) == 0 {
+					return errors.Annotatef(berrors.ErrInvalidArgument,
+						"restore rename does not support routed table with foreign keys, upstream database ID %d and table ID %d",
+						upstreamDBID, upstreamTableID)
+				}
+				for _, ref := range tableReplace.ForeignKeyReferences {
+					targetSchema, targetTable, matched := route(ref.Schema, ref.Table)
+					if matched && (!strings.EqualFold(targetSchema, ref.Schema) || !strings.EqualFold(targetTable, ref.Table)) {
+						return errors.Annotatef(berrors.ErrInvalidArgument,
+							"restore rename does not support selected table with foreign key reference %s.%s",
+							ref.Schema, ref.Table)
+					}
+				}
+				continue
 			}
 		}
 	}
