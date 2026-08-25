@@ -8,10 +8,30 @@ pub struct GetRequest {
     #[prost(bytes = "vec", tag = "3")]
     pub key: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for GetRequest {
+    const NAME: &'static str = "GetRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.GetRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.GetRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetResponse {
     #[prost(bytes = "vec", tag = "1")]
     pub value: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for GetResponse {
+    const NAME: &'static str = "GetResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.GetResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.GetResponse".into()
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RaftLogRequest {
@@ -20,15 +40,45 @@ pub struct RaftLogRequest {
     #[prost(uint64, tag = "2")]
     pub log_index: u64,
 }
+impl ::prost::Name for RaftLogRequest {
+    const NAME: &'static str = "RaftLogRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.RaftLogRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.RaftLogRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RaftLogResponse {
     #[prost(message, optional, tag = "1")]
     pub entry: ::core::option::Option<super::eraftpb::Entry>,
 }
+impl ::prost::Name for RaftLogResponse {
+    const NAME: &'static str = "RaftLogResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.RaftLogResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.RaftLogResponse".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RegionInfoRequest {
     #[prost(uint64, tag = "1")]
     pub region_id: u64,
+}
+impl ::prost::Name for RegionInfoRequest {
+    const NAME: &'static str = "RegionInfoRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.RegionInfoRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.RegionInfoRequest".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RegionInfoResponse {
@@ -41,12 +91,32 @@ pub struct RegionInfoResponse {
         super::raft_serverpb::RegionLocalState,
     >,
 }
+impl ::prost::Name for RegionInfoResponse {
+    const NAME: &'static str = "RegionInfoResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.RegionInfoResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.RegionInfoResponse".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RegionSizeRequest {
     #[prost(uint64, tag = "1")]
     pub region_id: u64,
     #[prost(string, repeated, tag = "2")]
     pub cfs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+impl ::prost::Name for RegionSizeRequest {
+    const NAME: &'static str = "RegionSizeRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.RegionSizeRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.RegionSizeRequest".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RegionSizeResponse {
@@ -62,6 +132,26 @@ pub mod region_size_response {
         #[prost(uint64, tag = "2")]
         pub size: u64,
     }
+    impl ::prost::Name for Entry {
+        const NAME: &'static str = "Entry";
+        const PACKAGE: &'static str = "debugpb";
+        fn full_name() -> ::prost::alloc::string::String {
+            "debugpb.RegionSizeResponse.Entry".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/debugpb.RegionSizeResponse.Entry".into()
+        }
+    }
+}
+impl ::prost::Name for RegionSizeResponse {
+    const NAME: &'static str = "RegionSizeResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.RegionSizeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.RegionSizeResponse".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ScanMvccRequest {
@@ -72,12 +162,32 @@ pub struct ScanMvccRequest {
     #[prost(uint64, tag = "3")]
     pub limit: u64,
 }
+impl ::prost::Name for ScanMvccRequest {
+    const NAME: &'static str = "ScanMvccRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.ScanMvccRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.ScanMvccRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ScanMvccResponse {
     #[prost(bytes = "vec", tag = "1")]
     pub key: ::prost::alloc::vec::Vec<u8>,
     #[prost(message, optional, tag = "2")]
     pub info: ::core::option::Option<super::kvrpcpb::MvccInfo>,
+}
+impl ::prost::Name for ScanMvccResponse {
+    const NAME: &'static str = "ScanMvccResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.ScanMvccResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.ScanMvccResponse".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CompactRequest {
@@ -94,8 +204,28 @@ pub struct CompactRequest {
     #[prost(enumeration = "BottommostLevelCompaction", tag = "6")]
     pub bottommost_level_compaction: i32,
 }
+impl ::prost::Name for CompactRequest {
+    const NAME: &'static str = "CompactRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.CompactRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.CompactRequest".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CompactResponse {}
+impl ::prost::Name for CompactResponse {
+    const NAME: &'static str = "CompactResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.CompactResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.CompactResponse".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct InjectFailPointRequest {
     #[prost(string, tag = "1")]
@@ -103,17 +233,67 @@ pub struct InjectFailPointRequest {
     #[prost(string, tag = "2")]
     pub actions: ::prost::alloc::string::String,
 }
+impl ::prost::Name for InjectFailPointRequest {
+    const NAME: &'static str = "InjectFailPointRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.InjectFailPointRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.InjectFailPointRequest".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct InjectFailPointResponse {}
+impl ::prost::Name for InjectFailPointResponse {
+    const NAME: &'static str = "InjectFailPointResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.InjectFailPointResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.InjectFailPointResponse".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RecoverFailPointRequest {
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
 }
+impl ::prost::Name for RecoverFailPointRequest {
+    const NAME: &'static str = "RecoverFailPointRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.RecoverFailPointRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.RecoverFailPointRequest".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RecoverFailPointResponse {}
+impl ::prost::Name for RecoverFailPointResponse {
+    const NAME: &'static str = "RecoverFailPointResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.RecoverFailPointResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.RecoverFailPointResponse".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListFailPointsRequest {}
+impl ::prost::Name for ListFailPointsRequest {
+    const NAME: &'static str = "ListFailPointsRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.ListFailPointsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.ListFailPointsRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListFailPointsResponse {
     #[prost(message, repeated, tag = "1")]
@@ -128,11 +308,41 @@ pub mod list_fail_points_response {
         #[prost(string, tag = "2")]
         pub actions: ::prost::alloc::string::String,
     }
+    impl ::prost::Name for Entry {
+        const NAME: &'static str = "Entry";
+        const PACKAGE: &'static str = "debugpb";
+        fn full_name() -> ::prost::alloc::string::String {
+            "debugpb.ListFailPointsResponse.Entry".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/debugpb.ListFailPointsResponse.Entry".into()
+        }
+    }
+}
+impl ::prost::Name for ListFailPointsResponse {
+    const NAME: &'static str = "ListFailPointsResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.ListFailPointsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.ListFailPointsResponse".into()
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetMetricsRequest {
     #[prost(bool, tag = "1")]
     pub all: bool,
+}
+impl ::prost::Name for GetMetricsRequest {
+    const NAME: &'static str = "GetMetricsRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.GetMetricsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.GetMetricsRequest".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetMetricsResponse {
@@ -147,13 +357,43 @@ pub struct GetMetricsResponse {
     #[prost(uint64, tag = "5")]
     pub store_id: u64,
 }
+impl ::prost::Name for GetMetricsResponse {
+    const NAME: &'static str = "GetMetricsResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.GetMetricsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.GetMetricsResponse".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RegionConsistencyCheckRequest {
     #[prost(uint64, tag = "1")]
     pub region_id: u64,
 }
+impl ::prost::Name for RegionConsistencyCheckRequest {
+    const NAME: &'static str = "RegionConsistencyCheckRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.RegionConsistencyCheckRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.RegionConsistencyCheckRequest".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RegionConsistencyCheckResponse {}
+impl ::prost::Name for RegionConsistencyCheckResponse {
+    const NAME: &'static str = "RegionConsistencyCheckResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.RegionConsistencyCheckResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.RegionConsistencyCheckResponse".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ModifyTikvConfigRequest {
     #[prost(enumeration = "Module", tag = "1")]
@@ -163,8 +403,28 @@ pub struct ModifyTikvConfigRequest {
     #[prost(string, tag = "3")]
     pub config_value: ::prost::alloc::string::String,
 }
+impl ::prost::Name for ModifyTikvConfigRequest {
+    const NAME: &'static str = "ModifyTikvConfigRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.ModifyTikvConfigRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.ModifyTikvConfigRequest".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ModifyTikvConfigResponse {}
+impl ::prost::Name for ModifyTikvConfigResponse {
+    const NAME: &'static str = "ModifyTikvConfigResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.ModifyTikvConfigResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.ModifyTikvConfigResponse".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Property {
     #[prost(string, tag = "1")]
@@ -172,18 +432,58 @@ pub struct Property {
     #[prost(string, tag = "2")]
     pub value: ::prost::alloc::string::String,
 }
+impl ::prost::Name for Property {
+    const NAME: &'static str = "Property";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.Property".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.Property".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetRegionPropertiesRequest {
     #[prost(uint64, tag = "1")]
     pub region_id: u64,
+}
+impl ::prost::Name for GetRegionPropertiesRequest {
+    const NAME: &'static str = "GetRegionPropertiesRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.GetRegionPropertiesRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.GetRegionPropertiesRequest".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetRegionPropertiesResponse {
     #[prost(message, repeated, tag = "1")]
     pub props: ::prost::alloc::vec::Vec<Property>,
 }
+impl ::prost::Name for GetRegionPropertiesResponse {
+    const NAME: &'static str = "GetRegionPropertiesResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.GetRegionPropertiesResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.GetRegionPropertiesResponse".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetStoreInfoRequest {}
+impl ::prost::Name for GetStoreInfoRequest {
+    const NAME: &'static str = "GetStoreInfoRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.GetStoreInfoRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.GetStoreInfoRequest".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetStoreInfoResponse {
     #[prost(uint64, tag = "1")]
@@ -191,33 +491,113 @@ pub struct GetStoreInfoResponse {
     #[prost(enumeration = "super::kvrpcpb::ApiVersion", tag = "2")]
     pub api_version: i32,
 }
+impl ::prost::Name for GetStoreInfoResponse {
+    const NAME: &'static str = "GetStoreInfoResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.GetStoreInfoResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.GetStoreInfoResponse".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetClusterInfoRequest {}
+impl ::prost::Name for GetClusterInfoRequest {
+    const NAME: &'static str = "GetClusterInfoRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.GetClusterInfoRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.GetClusterInfoRequest".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetClusterInfoResponse {
     #[prost(uint64, tag = "1")]
     pub cluster_id: u64,
 }
+impl ::prost::Name for GetClusterInfoResponse {
+    const NAME: &'static str = "GetClusterInfoResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.GetClusterInfoResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.GetClusterInfoResponse".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetAllRegionsInStoreRequest {}
+impl ::prost::Name for GetAllRegionsInStoreRequest {
+    const NAME: &'static str = "GetAllRegionsInStoreRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.GetAllRegionsInStoreRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.GetAllRegionsInStoreRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetAllRegionsInStoreResponse {
     #[prost(uint64, repeated, tag = "1")]
     pub regions: ::prost::alloc::vec::Vec<u64>,
+}
+impl ::prost::Name for GetAllRegionsInStoreResponse {
+    const NAME: &'static str = "GetAllRegionsInStoreResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.GetAllRegionsInStoreResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.GetAllRegionsInStoreResponse".into()
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResetToVersionRequest {
     #[prost(uint64, tag = "1")]
     pub ts: u64,
 }
+impl ::prost::Name for ResetToVersionRequest {
+    const NAME: &'static str = "ResetToVersionRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.ResetToVersionRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.ResetToVersionRequest".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResetToVersionResponse {}
+impl ::prost::Name for ResetToVersionResponse {
+    const NAME: &'static str = "ResetToVersionResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.ResetToVersionResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.ResetToVersionResponse".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetRangePropertiesRequest {
     #[prost(bytes = "vec", tag = "1")]
     pub start_key: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "2")]
     pub end_key: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for GetRangePropertiesRequest {
+    const NAME: &'static str = "GetRangePropertiesRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.GetRangePropertiesRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.GetRangePropertiesRequest".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetRangePropertiesResponse {
@@ -234,6 +614,26 @@ pub mod get_range_properties_response {
         pub key: ::prost::alloc::string::String,
         #[prost(string, tag = "2")]
         pub value: ::prost::alloc::string::String,
+    }
+    impl ::prost::Name for RangeProperty {
+        const NAME: &'static str = "RangeProperty";
+        const PACKAGE: &'static str = "debugpb";
+        fn full_name() -> ::prost::alloc::string::String {
+            "debugpb.GetRangePropertiesResponse.RangeProperty".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/debugpb.GetRangePropertiesResponse.RangeProperty".into()
+        }
+    }
+}
+impl ::prost::Name for GetRangePropertiesResponse {
+    const NAME: &'static str = "GetRangePropertiesResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.GetRangePropertiesResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.GetRangePropertiesResponse".into()
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -253,10 +653,30 @@ pub struct FlashbackToVersionRequest {
     #[prost(uint64, tag = "7")]
     pub commit_ts: u64,
 }
+impl ::prost::Name for FlashbackToVersionRequest {
+    const NAME: &'static str = "FlashbackToVersionRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.FlashbackToVersionRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.FlashbackToVersionRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct FlashbackToVersionResponse {
     #[prost(string, tag = "1")]
     pub error: ::prost::alloc::string::String,
+}
+impl ::prost::Name for FlashbackToVersionResponse {
+    const NAME: &'static str = "FlashbackToVersionResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.FlashbackToVersionResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.FlashbackToVersionResponse".into()
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetRegionReadProgressRequest {
@@ -268,6 +688,16 @@ pub struct GetRegionReadProgressRequest {
     /// only print locks whose start_ts >= min_start_ts. Can be used to find certain transaction.
     #[prost(uint64, tag = "3")]
     pub min_start_ts: u64,
+}
+impl ::prost::Name for GetRegionReadProgressRequest {
+    const NAME: &'static str = "GetRegionReadProgressRequest";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.GetRegionReadProgressRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.GetRegionReadProgressRequest".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetRegionReadProgressResponse {
@@ -313,6 +743,16 @@ pub struct GetRegionReadProgressResponse {
     pub num_transactions: u64,
     #[prost(string, tag = "15")]
     pub error: ::prost::alloc::string::String,
+}
+impl ::prost::Name for GetRegionReadProgressResponse {
+    const NAME: &'static str = "GetRegionReadProgressResponse";
+    const PACKAGE: &'static str = "debugpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "debugpb.GetRegionReadProgressResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/debugpb.GetRegionReadProgressResponse".into()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

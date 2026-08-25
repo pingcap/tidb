@@ -10,6 +10,16 @@ pub struct NotLeader {
     #[prost(message, optional, tag = "2")]
     pub leader: ::core::option::Option<super::metapb::Peer>,
 }
+impl ::prost::Name for NotLeader {
+    const NAME: &'static str = "NotLeader";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.NotLeader".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.NotLeader".into()
+    }
+}
 /// IsWitness is the error variant that tells a request be handle by witness
 /// which should be forbidden and retry.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -17,6 +27,16 @@ pub struct IsWitness {
     /// The requested region ID
     #[prost(uint64, tag = "1")]
     pub region_id: u64,
+}
+impl ::prost::Name for IsWitness {
+    const NAME: &'static str = "IsWitness";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.IsWitness".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.IsWitness".into()
+    }
 }
 /// BucketVersionNotMatch is the error variant that tells the request buckets version is not match.
 /// client should update the buckets version and retry.
@@ -27,6 +47,16 @@ pub struct BucketVersionNotMatch {
     #[prost(bytes = "vec", repeated, tag = "2")]
     pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
+impl ::prost::Name for BucketVersionNotMatch {
+    const NAME: &'static str = "BucketVersionNotMatch";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.BucketVersionNotMatch".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.BucketVersionNotMatch".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DiskFull {
     /// The requested store ID
@@ -35,6 +65,16 @@ pub struct DiskFull {
     /// The detailed info
     #[prost(string, tag = "2")]
     pub reason: ::prost::alloc::string::String,
+}
+impl ::prost::Name for DiskFull {
+    const NAME: &'static str = "DiskFull";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.DiskFull".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.DiskFull".into()
+    }
 }
 /// StoreNotMatch is the error variant that tells the request is sent to wrong store.
 /// (i.e. inconsistency of the store ID that request shows and the real store ID of this server.)
@@ -47,6 +87,16 @@ pub struct StoreNotMatch {
     #[prost(uint64, tag = "2")]
     pub actual_store_id: u64,
 }
+impl ::prost::Name for StoreNotMatch {
+    const NAME: &'static str = "StoreNotMatch";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.StoreNotMatch".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.StoreNotMatch".into()
+    }
+}
 /// RegionNotFound is the error variant that tells there isn't any region in this TiKV
 /// matches the requested region ID.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -55,6 +105,16 @@ pub struct RegionNotFound {
     #[prost(uint64, tag = "1")]
     pub region_id: u64,
 }
+impl ::prost::Name for RegionNotFound {
+    const NAME: &'static str = "RegionNotFound";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.RegionNotFound".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.RegionNotFound".into()
+    }
+}
 /// RegionNotInitialized is the error variant that tells there isn't any initialized peer
 /// matchesthe request region ID.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -62,6 +122,16 @@ pub struct RegionNotInitialized {
     /// The request region ID
     #[prost(uint64, tag = "1")]
     pub region_id: u64,
+}
+impl ::prost::Name for RegionNotInitialized {
+    const NAME: &'static str = "RegionNotInitialized";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.RegionNotInitialized".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.RegionNotInitialized".into()
+    }
 }
 /// KeyNotInRegion is the error variant that tells the key the request requires isn't present in
 /// this region.
@@ -80,6 +150,16 @@ pub struct KeyNotInRegion {
     #[prost(bytes = "vec", tag = "4")]
     pub end_key: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for KeyNotInRegion {
+    const NAME: &'static str = "KeyNotInRegion";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.KeyNotInRegion".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.KeyNotInRegion".into()
+    }
+}
 /// EpochNotMatch is the error variant that tells a region has been updated.
 /// (e.g. by splitting / merging, or raft Confchange.)
 /// Hence, a command is based on a stale version of a region.
@@ -88,6 +168,16 @@ pub struct EpochNotMatch {
     /// Available regions that may be siblings of the requested one.
     #[prost(message, repeated, tag = "1")]
     pub current_regions: ::prost::alloc::vec::Vec<super::metapb::Region>,
+}
+impl ::prost::Name for EpochNotMatch {
+    const NAME: &'static str = "EpochNotMatch";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.EpochNotMatch".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.EpochNotMatch".into()
+    }
 }
 /// ServerIsBusy is the error variant that tells the server is too busy to response.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -103,11 +193,31 @@ pub struct ServerIsBusy {
     #[prost(uint64, tag = "4")]
     pub applied_index: u64,
 }
+impl ::prost::Name for ServerIsBusy {
+    const NAME: &'static str = "ServerIsBusy";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.ServerIsBusy".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.ServerIsBusy".into()
+    }
+}
 /// StaleCommand is the error variant that tells the command is stale, that is,
 /// the current request term is lower than current raft term.
 /// This can be retried at most time.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StaleCommand {}
+impl ::prost::Name for StaleCommand {
+    const NAME: &'static str = "StaleCommand";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.StaleCommand".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.StaleCommand".into()
+    }
+}
 /// RaftEntryTooLarge is the error variant that tells the request is too large to be serialized to a
 /// reasonable small raft entry.
 /// (i.e. greater than the configured value `raft_entry_max_size` in `raftstore`)
@@ -120,12 +230,32 @@ pub struct RaftEntryTooLarge {
     #[prost(uint64, tag = "2")]
     pub entry_size: u64,
 }
+impl ::prost::Name for RaftEntryTooLarge {
+    const NAME: &'static str = "RaftEntryTooLarge";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.RaftEntryTooLarge".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.RaftEntryTooLarge".into()
+    }
+}
 /// MaxTimestampNotSynced is the error variant that tells the peer has just become a leader and
 /// updating the max timestamp in the concurrency manager from PD TSO is ongoing. In this case,
 /// the prewrite of an async commit transaction cannot succeed. The client can backoff and
 /// resend the request.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MaxTimestampNotSynced {}
+impl ::prost::Name for MaxTimestampNotSynced {
+    const NAME: &'static str = "MaxTimestampNotSynced";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.MaxTimestampNotSynced".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.MaxTimestampNotSynced".into()
+    }
+}
 /// ReadIndexNotReady is the error variant that tells the read index request is not ready, that is,
 /// the current region is in a status that not ready to serve the read index request. For example,
 /// region is in splitting or merging status.
@@ -139,6 +269,16 @@ pub struct ReadIndexNotReady {
     #[prost(uint64, tag = "2")]
     pub region_id: u64,
 }
+impl ::prost::Name for ReadIndexNotReady {
+    const NAME: &'static str = "ReadIndexNotReady";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.ReadIndexNotReady".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.ReadIndexNotReady".into()
+    }
+}
 /// ProposalInMergingMode is the error variant that tells the proposal is rejected because raft is
 /// in the merging mode. This may happen when BR/Lightning try to ingest SST.
 /// This can be retried at most time.
@@ -147,6 +287,16 @@ pub struct ProposalInMergingMode {
     /// The requested region ID
     #[prost(uint64, tag = "1")]
     pub region_id: u64,
+}
+impl ::prost::Name for ProposalInMergingMode {
+    const NAME: &'static str = "ProposalInMergingMode";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.ProposalInMergingMode".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.ProposalInMergingMode".into()
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DataIsNotReady {
@@ -158,11 +308,31 @@ pub struct DataIsNotReady {
     #[prost(uint64, tag = "3")]
     pub safe_ts: u64,
 }
+impl ::prost::Name for DataIsNotReady {
+    const NAME: &'static str = "DataIsNotReady";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.DataIsNotReady".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.DataIsNotReady".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RecoveryInProgress {
     /// The requested region ID
     #[prost(uint64, tag = "1")]
     pub region_id: u64,
+}
+impl ::prost::Name for RecoveryInProgress {
+    const NAME: &'static str = "RecoveryInProgress";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.RecoveryInProgress".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.RecoveryInProgress".into()
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct FlashbackInProgress {
@@ -172,11 +342,31 @@ pub struct FlashbackInProgress {
     #[prost(uint64, tag = "2")]
     pub flashback_start_ts: u64,
 }
+impl ::prost::Name for FlashbackInProgress {
+    const NAME: &'static str = "FlashbackInProgress";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.FlashbackInProgress".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.FlashbackInProgress".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct FlashbackNotPrepared {
     /// The requested region ID
     #[prost(uint64, tag = "1")]
     pub region_id: u64,
+}
+impl ::prost::Name for FlashbackNotPrepared {
+    const NAME: &'static str = "FlashbackNotPrepared";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.FlashbackNotPrepared".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.FlashbackNotPrepared".into()
+    }
 }
 /// MismatchPeerId is the error variant that tells the request is sent to wrong peer.
 /// Client receives this error should reload the region info and retry.
@@ -187,12 +377,32 @@ pub struct MismatchPeerId {
     #[prost(uint64, tag = "2")]
     pub store_peer_id: u64,
 }
+impl ::prost::Name for MismatchPeerId {
+    const NAME: &'static str = "MismatchPeerId";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.MismatchPeerId".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.MismatchPeerId".into()
+    }
+}
 /// UndeterminedResult is the error variant that tells the result is not determined yet.
 /// For example, the raft protocol timed out and the apply result is unknown.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UndeterminedResult {
     #[prost(string, tag = "1")]
     pub message: ::prost::alloc::string::String,
+}
+impl ::prost::Name for UndeterminedResult {
+    const NAME: &'static str = "UndeterminedResult";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.UndeterminedResult".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.UndeterminedResult".into()
+    }
 }
 /// Error wraps all region errors, indicates an error encountered by a request.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -252,4 +462,14 @@ pub struct Error {
     /// UndeterminedResult is the error variant that tells the result is not determined yet.
     #[prost(message, optional, tag = "22")]
     pub undetermined_result: ::core::option::Option<UndeterminedResult>,
+}
+impl ::prost::Name for Error {
+    const NAME: &'static str = "Error";
+    const PACKAGE: &'static str = "errorpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "errorpb.Error".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/errorpb.Error".into()
+    }
 }

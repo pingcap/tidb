@@ -26,6 +26,16 @@ pub struct Entry {
     #[prost(bool, tag = "5")]
     pub sync_log: bool,
 }
+impl ::prost::Name for Entry {
+    const NAME: &'static str = "Entry";
+    const PACKAGE: &'static str = "eraftpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "eraftpb.Entry".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/eraftpb.Entry".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SnapshotMetadata {
     /// The current `ConfState`.
@@ -38,12 +48,32 @@ pub struct SnapshotMetadata {
     #[prost(uint64, tag = "3")]
     pub term: u64,
 }
+impl ::prost::Name for SnapshotMetadata {
+    const NAME: &'static str = "SnapshotMetadata";
+    const PACKAGE: &'static str = "eraftpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "eraftpb.SnapshotMetadata".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/eraftpb.SnapshotMetadata".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Snapshot {
     #[prost(bytes = "vec", tag = "1")]
     pub data: ::prost::alloc::vec::Vec<u8>,
     #[prost(message, optional, tag = "2")]
     pub metadata: ::core::option::Option<SnapshotMetadata>,
+}
+impl ::prost::Name for Snapshot {
+    const NAME: &'static str = "Snapshot";
+    const PACKAGE: &'static str = "eraftpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "eraftpb.Snapshot".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/eraftpb.Snapshot".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Message {
@@ -83,6 +113,16 @@ pub struct Message {
     #[prost(int64, tag = "15")]
     pub priority: i64,
 }
+impl ::prost::Name for Message {
+    const NAME: &'static str = "Message";
+    const PACKAGE: &'static str = "eraftpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "eraftpb.Message".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/eraftpb.Message".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct HardState {
     #[prost(uint64, tag = "1")]
@@ -91,6 +131,16 @@ pub struct HardState {
     pub vote: u64,
     #[prost(uint64, tag = "3")]
     pub commit: u64,
+}
+impl ::prost::Name for HardState {
+    const NAME: &'static str = "HardState";
+    const PACKAGE: &'static str = "eraftpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "eraftpb.HardState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/eraftpb.HardState".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConfState {
@@ -111,6 +161,16 @@ pub struct ConfState {
     #[prost(bool, tag = "5")]
     pub auto_leave: bool,
 }
+impl ::prost::Name for ConfState {
+    const NAME: &'static str = "ConfState";
+    const PACKAGE: &'static str = "eraftpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "eraftpb.ConfState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/eraftpb.ConfState".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConfChange {
     #[prost(enumeration = "ConfChangeType", tag = "2")]
@@ -122,6 +182,16 @@ pub struct ConfChange {
     #[prost(uint64, tag = "1")]
     pub id: u64,
 }
+impl ::prost::Name for ConfChange {
+    const NAME: &'static str = "ConfChange";
+    const PACKAGE: &'static str = "eraftpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "eraftpb.ConfChange".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/eraftpb.ConfChange".into()
+    }
+}
 /// ConfChangeSingle is an individual configuration change operation. Multiple
 /// such operations can be carried out atomically via a ConfChangeV2.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -130,6 +200,16 @@ pub struct ConfChangeSingle {
     pub change_type: i32,
     #[prost(uint64, tag = "2")]
     pub node_id: u64,
+}
+impl ::prost::Name for ConfChangeSingle {
+    const NAME: &'static str = "ConfChangeSingle";
+    const PACKAGE: &'static str = "eraftpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "eraftpb.ConfChangeSingle".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/eraftpb.ConfChangeSingle".into()
+    }
 }
 /// ConfChangeV2 messages initiate configuration changes. They support both the
 /// simple "one at a time" membership change protocol and full Joint Consensus
@@ -171,6 +251,16 @@ pub struct ConfChangeV2 {
     pub changes: ::prost::alloc::vec::Vec<ConfChangeSingle>,
     #[prost(bytes = "vec", tag = "3")]
     pub context: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for ConfChangeV2 {
+    const NAME: &'static str = "ConfChangeV2";
+    const PACKAGE: &'static str = "eraftpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "eraftpb.ConfChangeV2".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/eraftpb.ConfChangeV2".into()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

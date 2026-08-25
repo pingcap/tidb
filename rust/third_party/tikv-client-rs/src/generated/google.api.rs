@@ -18,6 +18,16 @@ pub struct Http {
     #[prost(bool, tag = "2")]
     pub fully_decode_reserved_expansion: bool,
 }
+impl ::prost::Name for Http {
+    const NAME: &'static str = "Http";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.Http".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/google.api.Http".into()
+    }
+}
 /// # gRPC Transcoding
 ///
 /// gRPC Transcoding is a feature for mapping between a gRPC method and one or
@@ -365,6 +375,16 @@ pub mod http_rule {
         Custom(super::CustomHttpPattern),
     }
 }
+impl ::prost::Name for HttpRule {
+    const NAME: &'static str = "HttpRule";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.HttpRule".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/google.api.HttpRule".into()
+    }
+}
 /// A custom pattern is used for defining custom HTTP verb.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CustomHttpPattern {
@@ -374,4 +394,14 @@ pub struct CustomHttpPattern {
     /// The path matched by this custom verb.
     #[prost(string, tag = "2")]
     pub path: ::prost::alloc::string::String,
+}
+impl ::prost::Name for CustomHttpPattern {
+    const NAME: &'static str = "CustomHttpPattern";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.CustomHttpPattern".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/google.api.CustomHttpPattern".into()
+    }
 }

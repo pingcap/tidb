@@ -11,3 +11,13 @@ pub struct KeyspaceIdentity {
     #[prost(uint32, tag = "2")]
     pub keyspace_id: u32,
 }
+impl ::prost::Name for KeyspaceIdentity {
+    const NAME: &'static str = "KeyspaceIdentity";
+    const PACKAGE: &'static str = "apipb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "apipb.KeyspaceIdentity".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/apipb.KeyspaceIdentity".into()
+    }
+}

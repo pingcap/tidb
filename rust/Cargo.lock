@@ -590,7 +590,7 @@ dependencies = [
 name = "difftest-transaction-tests"
 version = "0.0.0"
 dependencies = [
- "prost",
+ "prost 0.14.4",
  "tidb-codec",
  "tidb-datatype",
  "tidb-distsql",
@@ -684,7 +684,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef5da6e9a6ae89f4a91f80ba1caae45a5a924397a19947e18f5121a43285e9bc"
 dependencies = [
  "http 1.4.2",
- "prost",
+ "prost 0.14.4",
  "tokio",
  "tokio-stream",
  "tonic",
@@ -2070,12 +2070,22 @@ dependencies = [
 
 [[package]]
 name = "prost"
+version = "0.13.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2796faa41db3ec313a31f7624d9286acf277b52de526150b7e69f3debf891ee5"
+dependencies = [
+ "bytes",
+ "prost-derive 0.13.5",
+]
+
+[[package]]
+name = "prost"
 version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "528ac67416ff8646872a3c02cad9cc4ee5dc9f9540c9b10771855c95cb2e5ae1"
 dependencies = [
  "bytes",
- "prost-derive",
+ "prost-derive 0.14.4",
 ]
 
 [[package]]
@@ -2090,13 +2100,26 @@ dependencies = [
  "multimap",
  "petgraph",
  "prettyplease",
- "prost",
- "prost-types",
+ "prost 0.14.4",
+ "prost-types 0.14.4",
  "pulldown-cmark",
  "pulldown-cmark-to-cmark",
  "regex",
  "syn 2.0.118",
  "tempfile",
+]
+
+[[package]]
+name = "prost-derive"
+version = "0.13.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
+dependencies = [
+ "anyhow",
+ "itertools",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -2113,12 +2136,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "prost-reflect"
+version = "0.15.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37587d5a8a1b3dc9863403d084fc2254b91ab75a702207098837950767e2260b"
+dependencies = [
+ "prost 0.13.5",
+ "prost-types 0.13.5",
+]
+
+[[package]]
+name = "prost-types"
+version = "0.13.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52c2c1bf36ddb1a1c396b3601a3cec27c2462e45f07c386894ec3ccf5332bd16"
+dependencies = [
+ "prost 0.13.5",
+]
+
+[[package]]
 name = "prost-types"
 version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a"
 dependencies = [
- "prost",
+ "prost 0.14.4",
 ]
 
 [[package]]
@@ -3210,7 +3252,7 @@ dependencies = [
 name = "tidb-distsql"
 version = "0.0.0"
 dependencies = [
- "prost",
+ "prost 0.14.4",
  "tidb-chunk",
  "tidb-codec",
  "tidb-datatype",
@@ -3260,8 +3302,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
- "crossbeam-channel",
- "prost",
+ "prost 0.14.4",
  "regex",
  "reqwest 0.13.4",
  "serde_json",
@@ -3336,7 +3377,7 @@ dependencies = [
  "getrandom 0.3.4",
  "jsonschema",
  "md-5",
- "prost",
+ "prost 0.14.4",
  "regex",
  "serde_json",
  "sha1",
@@ -3471,7 +3512,7 @@ name = "tidb-pd-client"
 version = "0.0.0"
 dependencies = [
  "etcd-client",
- "prost",
+ "prost 0.14.4",
  "tidb-proto",
  "tikv-client",
  "tokio",
@@ -3513,7 +3554,7 @@ dependencies = [
 name = "tidb-proto"
 version = "0.0.0"
 dependencies = [
- "prost",
+ "prost 0.14.4",
  "prost-build",
  "tonic",
  "tonic-prost",
@@ -3557,7 +3598,7 @@ version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
  "ctrlc",
- "prost",
+ "prost 0.14.4",
  "rcgen",
  "rustix 1.1.4",
  "rustls",
@@ -3698,7 +3739,7 @@ name = "tidb-txnkv"
 version = "0.0.0"
 dependencies = [
  "bytes",
- "prost",
+ "prost 0.14.4",
  "serde_json",
  "tidb-codec",
  "tidb-datatype",
@@ -3714,7 +3755,7 @@ dependencies = [
 name = "tidb-unistore"
 version = "0.0.0"
 dependencies = [
- "prost",
+ "prost 0.14.4",
  "tidb-codec",
  "tidb-datatype",
  "tidb-distsql",
@@ -3741,7 +3782,7 @@ dependencies = [
  "nix",
  "num-traits",
  "prometheus 0.14.0",
- "prost",
+ "prost 0.14.4",
  "regex",
  "regex-syntax",
  "rustix 1.1.4",
@@ -3775,6 +3816,7 @@ version = "0.4.0"
 dependencies = [
  "async-recursion",
  "async-trait",
+ "chrono",
  "crc32fast",
  "derive-new",
  "either",
@@ -3786,7 +3828,9 @@ dependencies = [
  "openssl",
  "pin-project",
  "prometheus 0.13.4",
- "prost",
+ "prost 0.14.4",
+ "prost-reflect",
+ "prost-types 0.14.4",
  "rand 0.8.7",
  "regex",
  "reqwest 0.11.27",
@@ -4040,7 +4084,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50849f68853be452acf590cde0b146665b8d507b3b8af17261df47e02c209ea0"
 dependencies = [
  "bytes",
- "prost",
+ "prost 0.14.4",
  "tonic",
 ]
 
@@ -4053,7 +4097,7 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "prost-build",
- "prost-types",
+ "prost-types 0.14.4",
  "quote",
  "syn 2.0.118",
  "tempfile",

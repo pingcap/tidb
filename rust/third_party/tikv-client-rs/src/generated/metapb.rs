@@ -10,6 +10,16 @@ pub struct Cluster {
     #[prost(uint32, tag = "2")]
     pub max_peer_count: u32,
 }
+impl ::prost::Name for Cluster {
+    const NAME: &'static str = "Cluster";
+    const PACKAGE: &'static str = "metapb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "metapb.Cluster".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/metapb.Cluster".into()
+    }
+}
 /// Case insensitive key/value for replica constraints.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StoreLabel {
@@ -17,6 +27,16 @@ pub struct StoreLabel {
     pub key: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub value: ::prost::alloc::string::String,
+}
+impl ::prost::Name for StoreLabel {
+    const NAME: &'static str = "StoreLabel";
+    const PACKAGE: &'static str = "metapb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "metapb.StoreLabel".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/metapb.StoreLabel".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Store {
@@ -55,6 +75,16 @@ pub struct Store {
     #[prost(enumeration = "NodeState", tag = "13")]
     pub node_state: i32,
 }
+impl ::prost::Name for Store {
+    const NAME: &'static str = "Store";
+    const PACKAGE: &'static str = "metapb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "metapb.Store".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/metapb.Store".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RegionEpoch {
     /// Conf change version, auto increment when add or remove peer
@@ -63,6 +93,16 @@ pub struct RegionEpoch {
     /// Region version, auto increment when split or merge
     #[prost(uint64, tag = "2")]
     pub version: u64,
+}
+impl ::prost::Name for RegionEpoch {
+    const NAME: &'static str = "RegionEpoch";
+    const PACKAGE: &'static str = "metapb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "metapb.RegionEpoch".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/metapb.RegionEpoch".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BucketStats {
@@ -85,6 +125,16 @@ pub struct BucketStats {
     #[prost(uint64, repeated, tag = "6")]
     pub write_keys: ::prost::alloc::vec::Vec<u64>,
 }
+impl ::prost::Name for BucketStats {
+    const NAME: &'static str = "BucketStats";
+    const PACKAGE: &'static str = "metapb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "metapb.BucketStats".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/metapb.BucketStats".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Buckets {
     #[prost(uint64, tag = "1")]
@@ -102,6 +152,16 @@ pub struct Buckets {
     #[prost(uint64, tag = "5")]
     pub period_in_ms: u64,
 }
+impl ::prost::Name for Buckets {
+    const NAME: &'static str = "Buckets";
+    const PACKAGE: &'static str = "metapb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "metapb.Buckets".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/metapb.Buckets".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BucketMeta {
     /// A hint indicate if keys have changed.
@@ -110,6 +170,16 @@ pub struct BucketMeta {
     /// keys of buckets, include start/end key of region
     #[prost(bytes = "vec", repeated, tag = "2")]
     pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
+impl ::prost::Name for BucketMeta {
+    const NAME: &'static str = "BucketMeta";
+    const PACKAGE: &'static str = "metapb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "metapb.BucketMeta".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/metapb.BucketMeta".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Region {
@@ -138,6 +208,16 @@ pub struct Region {
     #[prost(uint64, tag = "8")]
     pub flashback_start_ts: u64,
 }
+impl ::prost::Name for Region {
+    const NAME: &'static str = "Region";
+    const PACKAGE: &'static str = "metapb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "metapb.Region".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/metapb.Region".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Peer {
     #[prost(uint64, tag = "1")]
@@ -148,6 +228,16 @@ pub struct Peer {
     pub role: i32,
     #[prost(bool, tag = "4")]
     pub is_witness: bool,
+}
+impl ::prost::Name for Peer {
+    const NAME: &'static str = "Peer";
+    const PACKAGE: &'static str = "metapb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "metapb.Peer".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/metapb.Peer".into()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

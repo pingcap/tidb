@@ -5,7 +5,7 @@ use std::time::Duration;
 /// Render a non-negative duration with client-go's `util.FormatDuration`
 /// precision policy. Rust's standard duration formatters use different
 /// rounding rules, so source-compatible diagnostics share this helper.
-pub(crate) fn format_duration(duration: Duration) -> String {
+pub fn format_duration(duration: Duration) -> String {
     let nanos = duration.as_nanos();
     if nanos <= 1_000 {
         return match nanos {
@@ -30,7 +30,7 @@ pub(crate) fn format_duration(duration: Duration) -> String {
     let fraction = rounded % precision;
     if fraction == 0 {
         format!("{whole}{suffix}")
-    } else if precision == 100 && fraction % 10 == 0 {
+    } else if precision == 100 && fraction.is_multiple_of(10) {
         format!("{whole}.{}{suffix}", fraction / 10)
     } else if precision == 100 {
         format!("{whole}.{fraction:02}{suffix}")

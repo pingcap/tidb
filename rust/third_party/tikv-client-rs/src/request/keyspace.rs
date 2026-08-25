@@ -909,7 +909,11 @@ impl EncodeKeyspace for BoundRange {
                         keyspace_end_prefix(keyspace_id, key_mode).to_vec(),
                     ))
                 }
-                _ => Bound::Excluded(Key::EMPTY),
+                // V1/V1TTL carry an unbounded upper endpoint as an empty key
+                // only at protobuf lowering. Keep it logically unbounded here
+                // so high-level RawKV scan loops do not mistake it for an
+                // empty range before dispatch.
+                _ => Bound::Unbounded,
             },
         };
         self

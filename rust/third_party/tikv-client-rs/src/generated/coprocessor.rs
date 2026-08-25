@@ -7,6 +7,16 @@ pub struct KeyRange {
     #[prost(bytes = "vec", tag = "2")]
     pub end: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for KeyRange {
+    const NAME: &'static str = "KeyRange";
+    const PACKAGE: &'static str = "coprocessor";
+    fn full_name() -> ::prost::alloc::string::String {
+        "coprocessor.KeyRange".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/coprocessor.KeyRange".into()
+    }
+}
 /// KeyRange with an attached read_ts (version).
 /// It is used by TiCI versioned lookup. Callers must ensure `range` is a point range.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -15,6 +25,16 @@ pub struct VersionedKeyRange {
     pub range: ::core::option::Option<KeyRange>,
     #[prost(uint64, tag = "2")]
     pub read_ts: u64,
+}
+impl ::prost::Name for VersionedKeyRange {
+    const NAME: &'static str = "VersionedKeyRange";
+    const PACKAGE: &'static str = "coprocessor";
+    fn full_name() -> ::prost::alloc::string::String {
+        "coprocessor.VersionedKeyRange".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/coprocessor.VersionedKeyRange".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Request {
@@ -79,6 +99,16 @@ pub struct Request {
     #[prost(uint64, tag = "17")]
     pub paging_size_bytes: u64,
 }
+impl ::prost::Name for Request {
+    const NAME: &'static str = "Request";
+    const PACKAGE: &'static str = "coprocessor";
+    fn full_name() -> ::prost::alloc::string::String {
+        "coprocessor.Request".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/coprocessor.Request".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Response {
     #[prost(bytes = "vec", tag = "1")]
@@ -113,6 +143,16 @@ pub struct Response {
     #[prost(message, repeated, tag = "13")]
     pub batch_responses: ::prost::alloc::vec::Vec<StoreBatchTaskResponse>,
 }
+impl ::prost::Name for Response {
+    const NAME: &'static str = "Response";
+    const PACKAGE: &'static str = "coprocessor";
+    fn full_name() -> ::prost::alloc::string::String {
+        "coprocessor.Response".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/coprocessor.Response".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RegionInfo {
     #[prost(uint64, tag = "1")]
@@ -121,6 +161,16 @@ pub struct RegionInfo {
     pub region_epoch: ::core::option::Option<super::metapb::RegionEpoch>,
     #[prost(message, repeated, tag = "3")]
     pub ranges: ::prost::alloc::vec::Vec<KeyRange>,
+}
+impl ::prost::Name for RegionInfo {
+    const NAME: &'static str = "RegionInfo";
+    const PACKAGE: &'static str = "coprocessor";
+    fn full_name() -> ::prost::alloc::string::String {
+        "coprocessor.RegionInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/coprocessor.RegionInfo".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ShardInfo {
@@ -131,6 +181,16 @@ pub struct ShardInfo {
     #[prost(message, repeated, tag = "3")]
     pub ranges: ::prost::alloc::vec::Vec<KeyRange>,
 }
+impl ::prost::Name for ShardInfo {
+    const NAME: &'static str = "ShardInfo";
+    const PACKAGE: &'static str = "coprocessor";
+    fn full_name() -> ::prost::alloc::string::String {
+        "coprocessor.ShardInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/coprocessor.ShardInfo".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TableShardInfos {
     /// The executor ID is used to identify the tici executor.
@@ -139,6 +199,16 @@ pub struct TableShardInfos {
     /// The shard_infos contains the shard information for each tici executor.
     #[prost(message, repeated, tag = "2")]
     pub shard_infos: ::prost::alloc::vec::Vec<ShardInfo>,
+}
+impl ::prost::Name for TableShardInfos {
+    const NAME: &'static str = "TableShardInfos";
+    const PACKAGE: &'static str = "coprocessor";
+    fn full_name() -> ::prost::alloc::string::String {
+        "coprocessor.TableShardInfos".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/coprocessor.TableShardInfos".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TiCiEstimateCountRequest {
@@ -159,6 +229,16 @@ pub struct TiCiEstimateCountRequest {
     #[prost(message, repeated, tag = "8")]
     pub shard_infos: ::prost::alloc::vec::Vec<ShardInfo>,
 }
+impl ::prost::Name for TiCiEstimateCountRequest {
+    const NAME: &'static str = "TiCIEstimateCountRequest";
+    const PACKAGE: &'static str = "coprocessor";
+    fn full_name() -> ::prost::alloc::string::String {
+        "coprocessor.TiCIEstimateCountRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/coprocessor.TiCIEstimateCountRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TiCiEstimateCountResponse {
     #[prost(uint64, tag = "1")]
@@ -166,12 +246,32 @@ pub struct TiCiEstimateCountResponse {
     #[prost(string, tag = "2")]
     pub other_error: ::prost::alloc::string::String,
 }
+impl ::prost::Name for TiCiEstimateCountResponse {
+    const NAME: &'static str = "TiCIEstimateCountResponse";
+    const PACKAGE: &'static str = "coprocessor";
+    fn full_name() -> ::prost::alloc::string::String {
+        "coprocessor.TiCIEstimateCountResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/coprocessor.TiCIEstimateCountResponse".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TableRegions {
     #[prost(int64, tag = "1")]
     pub physical_table_id: i64,
     #[prost(message, repeated, tag = "2")]
     pub regions: ::prost::alloc::vec::Vec<RegionInfo>,
+}
+impl ::prost::Name for TableRegions {
+    const NAME: &'static str = "TableRegions";
+    const PACKAGE: &'static str = "coprocessor";
+    fn full_name() -> ::prost::alloc::string::String {
+        "coprocessor.TableRegions".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/coprocessor.TableRegions".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BatchRequest {
@@ -203,6 +303,16 @@ pub struct BatchRequest {
     #[prost(message, repeated, tag = "11")]
     pub table_shard_infos: ::prost::alloc::vec::Vec<TableShardInfos>,
 }
+impl ::prost::Name for BatchRequest {
+    const NAME: &'static str = "BatchRequest";
+    const PACKAGE: &'static str = "coprocessor";
+    fn full_name() -> ::prost::alloc::string::String {
+        "coprocessor.BatchRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/coprocessor.BatchRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BatchResponse {
     #[prost(bytes = "vec", tag = "1")]
@@ -215,6 +325,16 @@ pub struct BatchResponse {
     pub retry_regions: ::prost::alloc::vec::Vec<super::metapb::Region>,
     #[prost(message, repeated, tag = "5")]
     pub retry_shards: ::prost::alloc::vec::Vec<ShardInfo>,
+}
+impl ::prost::Name for BatchResponse {
+    const NAME: &'static str = "BatchResponse";
+    const PACKAGE: &'static str = "coprocessor";
+    fn full_name() -> ::prost::alloc::string::String {
+        "coprocessor.BatchResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/coprocessor.BatchResponse".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StoreBatchTask {
@@ -236,6 +356,16 @@ pub struct StoreBatchTask {
     #[prost(uint64, tag = "7")]
     pub buckets_version: u64,
 }
+impl ::prost::Name for StoreBatchTask {
+    const NAME: &'static str = "StoreBatchTask";
+    const PACKAGE: &'static str = "coprocessor";
+    fn full_name() -> ::prost::alloc::string::String {
+        "coprocessor.StoreBatchTask".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/coprocessor.StoreBatchTask".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StoreBatchTaskResponse {
     #[prost(bytes = "vec", tag = "1")]
@@ -250,6 +380,16 @@ pub struct StoreBatchTaskResponse {
     pub task_id: u64,
     #[prost(message, optional, tag = "6")]
     pub exec_details_v2: ::core::option::Option<super::kvrpcpb::ExecDetailsV2>,
+}
+impl ::prost::Name for StoreBatchTaskResponse {
+    const NAME: &'static str = "StoreBatchTaskResponse";
+    const PACKAGE: &'static str = "coprocessor";
+    fn full_name() -> ::prost::alloc::string::String {
+        "coprocessor.StoreBatchTaskResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/coprocessor.StoreBatchTaskResponse".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DelegateRequest {
@@ -268,6 +408,16 @@ pub struct DelegateRequest {
     #[prost(uint64, tag = "5")]
     pub snapshot_sequence: u64,
 }
+impl ::prost::Name for DelegateRequest {
+    const NAME: &'static str = "DelegateRequest";
+    const PACKAGE: &'static str = "coprocessor";
+    fn full_name() -> ::prost::alloc::string::String {
+        "coprocessor.DelegateRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/coprocessor.DelegateRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DelegateResponse {
     #[prost(bytes = "vec", tag = "1")]
@@ -283,4 +433,14 @@ pub struct DelegateResponse {
     /// Used for avoid redundant mem-table copying.
     #[prost(uint64, tag = "6")]
     pub mem_table_sequence: u64,
+}
+impl ::prost::Name for DelegateResponse {
+    const NAME: &'static str = "DelegateResponse";
+    const PACKAGE: &'static str = "coprocessor";
+    fn full_name() -> ::prost::alloc::string::String {
+        "coprocessor.DelegateResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/coprocessor.DelegateResponse".into()
+    }
 }

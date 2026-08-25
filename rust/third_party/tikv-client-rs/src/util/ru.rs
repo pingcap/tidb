@@ -1,5 +1,6 @@
 // Copyright 2026 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::fmt;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -12,6 +13,7 @@ pub struct RuDetails {
     read_ru: Mutex<f64>,
     write_ru: Mutex<f64>,
     ru_wait_duration: Mutex<Duration>,
+    tiflash_ru: Mutex<f64>,
     tikv_ru_v2: Mutex<f64>,
     raw_ru_v2: Mutex<Option<Ruv2>>,
 }
@@ -19,6 +21,38 @@ pub struct RuDetails {
 impl RuDetails {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn new_with(read_ru: f64, write_ru: f64, wait_duration: Duration) -> Self {
+        Self {
+            read_ru: Mutex::new(read_ru),
+            write_ru: Mutex::new(write_ru),
+            ru_wait_duration: Mutex::new(wait_duration),
+            tiflash_ru: Mutex::new(0.0),
+            tikv_ru_v2: Mutex::new(0.0),
+            raw_ru_v2: Mutex::new(None),
+        }
+    }
+
+    pub fn cloned(&self) -> Self {
+        Self {
+            read_ru: Mutex::new(self.read_ru()),
+            write_ru: Mutex::new(self.write_ru()),
+            ru_wait_duration: Mutex::new(self.ru_wait_duration()),
+            tiflash_ru: Mutex::new(self.tiflash_ru()),
+            tikv_ru_v2: Mutex::new(self.tikv_ru_v2()),
+            raw_ru_v2: Mutex::new(self.raw_ru_v2.lock().unwrap().clone()),
+        }
+    }
+
+    pub fn merge(&self, other: &Self) {
+        *self.read_ru.lock().unwrap() += other.read_ru();
+        *self.write_ru.lock().unwrap() += other.write_ru();
+        *self.ru_wait_duration.lock().unwrap() += other.ru_wait_duration();
+        *self.tiflash_ru.lock().unwrap() += other.tiflash_ru();
+        *self.tikv_ru_v2.lock().unwrap() += other.tikv_ru_v2();
+        let raw = other.raw_ru_v2.lock().unwrap().clone();
+        self.add_ru_v2(raw.as_ref());
     }
 
     pub fn tikv_ru_v2(&self) -> f64 {
@@ -40,12 +74,22 @@ impl RuDetails {
         *self.ru_wait_duration.lock().unwrap()
     }
 
+    pub fn tiflash_ru(&self) -> f64 {
+        *self.tiflash_ru.lock().unwrap()
+    }
+
     /// Source `RUDetails.Update`: accumulate resource-controller consumption
     /// and the time spent waiting for resource tokens.
     pub fn update(&self, consumption: &Consumption, wait_duration: Duration) {
         *self.read_ru.lock().unwrap() += consumption.r_r_u;
         *self.write_ru.lock().unwrap() += consumption.w_r_u;
         *self.ru_wait_duration.lock().unwrap() += wait_duration;
+    }
+
+    pub fn update_tiflash(&self, consumption: &Consumption) {
+        *self.read_ru.lock().unwrap() += consumption.r_r_u;
+        *self.write_ru.lock().unwrap() += consumption.w_r_u;
+        *self.tiflash_ru.lock().unwrap() += consumption.r_r_u + consumption.w_r_u;
     }
 
     pub fn add_tikv_ru_v2(&self, delta: f64) {
@@ -67,6 +111,18 @@ impl RuDetails {
 
     pub fn drain_ru_v2(&self) -> Option<Ruv2> {
         self.raw_ru_v2.lock().unwrap().take()
+    }
+}
+
+impl fmt::Display for RuDetails {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "RRU:{:.6}, WRU:{:.6}, WaitDuration:{}",
+            self.read_ru(),
+            self.write_ru(),
+            crate::util::format_duration(self.ru_wait_duration())
+        )
     }
 }
 
@@ -145,5 +201,37 @@ mod tests {
         assert_eq!(details.read_ru(), 2.0);
         assert_eq!(details.write_ru(), 3.0);
         assert_eq!(details.ru_wait_duration(), Duration::from_millis(8));
+    }
+
+    #[test]
+    fn source_clone_merge_tiflash_and_string_contract() {
+        let details = RuDetails::new_with(1.0, 2.0, Duration::from_millis(3));
+        details.update_tiflash(&Consumption {
+            r_r_u: 3.0,
+            w_r_u: 4.0,
+            ..Default::default()
+        });
+        details.add_tikv_ru_v2(5.0);
+        details.add_ru_v2(Some(&Ruv2 {
+            read_rpc_count: 1,
+            ..Default::default()
+        }));
+        let cloned = details.cloned();
+        assert_eq!(cloned.read_ru(), 4.0);
+        assert_eq!(cloned.write_ru(), 6.0);
+        assert_eq!(cloned.tiflash_ru(), 7.0);
+        assert_eq!(cloned.tikv_ru_v2(), 5.0);
+        assert_eq!(cloned.drain_ru_v2().unwrap().read_rpc_count, 1);
+        assert_eq!(details.drain_ru_v2().unwrap().read_rpc_count, 1);
+        assert_eq!(
+            details.to_string(),
+            "RRU:4.000000, WRU:6.000000, WaitDuration:3ms"
+        );
+
+        let merged = RuDetails::new();
+        merged.merge(&details);
+        assert_eq!(merged.read_ru(), 4.0);
+        assert_eq!(merged.write_ru(), 6.0);
+        assert_eq!(merged.tiflash_ru(), 7.0);
     }
 }

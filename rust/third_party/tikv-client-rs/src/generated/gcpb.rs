@@ -8,6 +8,16 @@ pub struct RequestHeader {
     #[prost(uint64, tag = "2")]
     pub sender_id: u64,
 }
+impl ::prost::Name for RequestHeader {
+    const NAME: &'static str = "RequestHeader";
+    const PACKAGE: &'static str = "gcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "gcpb.RequestHeader".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/gcpb.RequestHeader".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResponseHeader {
     /// cluster_id is the ID of the cluster which sent the response.
@@ -16,6 +26,16 @@ pub struct ResponseHeader {
     #[prost(message, optional, tag = "2")]
     pub error: ::core::option::Option<Error>,
 }
+impl ::prost::Name for ResponseHeader {
+    const NAME: &'static str = "ResponseHeader";
+    const PACKAGE: &'static str = "gcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "gcpb.ResponseHeader".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/gcpb.ResponseHeader".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Error {
     #[prost(enumeration = "ErrorType", tag = "1")]
@@ -23,12 +43,32 @@ pub struct Error {
     #[prost(string, tag = "2")]
     pub message: ::prost::alloc::string::String,
 }
+impl ::prost::Name for Error {
+    const NAME: &'static str = "Error";
+    const PACKAGE: &'static str = "gcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "gcpb.Error".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/gcpb.Error".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct KeySpace {
     #[prost(bytes = "vec", tag = "1")]
     pub space_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(uint64, tag = "2")]
     pub gc_safe_point: u64,
+}
+impl ::prost::Name for KeySpace {
+    const NAME: &'static str = "KeySpace";
+    const PACKAGE: &'static str = "gcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "gcpb.KeySpace".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/gcpb.KeySpace".into()
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListKeySpacesRequest {
@@ -38,6 +78,16 @@ pub struct ListKeySpacesRequest {
     #[prost(bool, tag = "2")]
     pub with_gc_safe_point: bool,
 }
+impl ::prost::Name for ListKeySpacesRequest {
+    const NAME: &'static str = "ListKeySpacesRequest";
+    const PACKAGE: &'static str = "gcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "gcpb.ListKeySpacesRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/gcpb.ListKeySpacesRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListKeySpacesResponse {
     #[prost(message, optional, tag = "1")]
@@ -45,12 +95,32 @@ pub struct ListKeySpacesResponse {
     #[prost(message, repeated, tag = "2")]
     pub key_spaces: ::prost::alloc::vec::Vec<KeySpace>,
 }
+impl ::prost::Name for ListKeySpacesResponse {
+    const NAME: &'static str = "ListKeySpacesResponse";
+    const PACKAGE: &'static str = "gcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "gcpb.ListKeySpacesResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/gcpb.ListKeySpacesResponse".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetMinServiceSafePointRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
     #[prost(bytes = "vec", tag = "2")]
     pub space_id: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for GetMinServiceSafePointRequest {
+    const NAME: &'static str = "GetMinServiceSafePointRequest";
+    const PACKAGE: &'static str = "gcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "gcpb.GetMinServiceSafePointRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/gcpb.GetMinServiceSafePointRequest".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetMinServiceSafePointResponse {
@@ -62,6 +132,16 @@ pub struct GetMinServiceSafePointResponse {
     /// preventing cases where new services register their safe points after min is obtained by gc worker
     #[prost(int64, tag = "3")]
     pub revision: i64,
+}
+impl ::prost::Name for GetMinServiceSafePointResponse {
+    const NAME: &'static str = "GetMinServiceSafePointResponse";
+    const PACKAGE: &'static str = "gcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "gcpb.GetMinServiceSafePointResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/gcpb.GetMinServiceSafePointResponse".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UpdateGcSafePointRequest {
@@ -76,6 +156,16 @@ pub struct UpdateGcSafePointRequest {
     #[prost(int64, tag = "4")]
     pub revision: i64,
 }
+impl ::prost::Name for UpdateGcSafePointRequest {
+    const NAME: &'static str = "UpdateGCSafePointRequest";
+    const PACKAGE: &'static str = "gcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "gcpb.UpdateGCSafePointRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/gcpb.UpdateGCSafePointRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UpdateGcSafePointResponse {
     #[prost(message, optional, tag = "1")]
@@ -86,6 +176,16 @@ pub struct UpdateGcSafePointResponse {
     pub succeeded: bool,
     #[prost(uint64, tag = "3")]
     pub new_safe_point: u64,
+}
+impl ::prost::Name for UpdateGcSafePointResponse {
+    const NAME: &'static str = "UpdateGCSafePointResponse";
+    const PACKAGE: &'static str = "gcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "gcpb.UpdateGCSafePointResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/gcpb.UpdateGCSafePointResponse".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UpdateServiceSafePointRequest {
@@ -103,6 +203,16 @@ pub struct UpdateServiceSafePointRequest {
     #[prost(uint64, tag = "5")]
     pub safe_point: u64,
 }
+impl ::prost::Name for UpdateServiceSafePointRequest {
+    const NAME: &'static str = "UpdateServiceSafePointRequest";
+    const PACKAGE: &'static str = "gcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "gcpb.UpdateServiceSafePointRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/gcpb.UpdateServiceSafePointRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UpdateServiceSafePointResponse {
     #[prost(message, optional, tag = "1")]
@@ -117,6 +227,16 @@ pub struct UpdateServiceSafePointResponse {
     pub old_safe_point: u64,
     #[prost(uint64, tag = "5")]
     pub new_safe_point: u64,
+}
+impl ::prost::Name for UpdateServiceSafePointResponse {
+    const NAME: &'static str = "UpdateServiceSafePointResponse";
+    const PACKAGE: &'static str = "gcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "gcpb.UpdateServiceSafePointResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/gcpb.UpdateServiceSafePointResponse".into()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

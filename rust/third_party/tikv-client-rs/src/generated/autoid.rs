@@ -16,6 +16,16 @@ pub struct AutoIdRequest {
     #[prost(uint32, tag = "7")]
     pub keyspace_id: u32,
 }
+impl ::prost::Name for AutoIdRequest {
+    const NAME: &'static str = "AutoIDRequest";
+    const PACKAGE: &'static str = "autoid";
+    fn full_name() -> ::prost::alloc::string::String {
+        "autoid.AutoIDRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/autoid.AutoIDRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AutoIdResponse {
     #[prost(int64, tag = "1")]
@@ -24,6 +34,16 @@ pub struct AutoIdResponse {
     pub max: i64,
     #[prost(bytes = "vec", tag = "3")]
     pub errmsg: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for AutoIdResponse {
+    const NAME: &'static str = "AutoIDResponse";
+    const PACKAGE: &'static str = "autoid";
+    fn full_name() -> ::prost::alloc::string::String {
+        "autoid.AutoIDResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/autoid.AutoIDResponse".into()
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RebaseRequest {
@@ -38,10 +58,30 @@ pub struct RebaseRequest {
     #[prost(bool, tag = "5")]
     pub force: bool,
 }
+impl ::prost::Name for RebaseRequest {
+    const NAME: &'static str = "RebaseRequest";
+    const PACKAGE: &'static str = "autoid";
+    fn full_name() -> ::prost::alloc::string::String {
+        "autoid.RebaseRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/autoid.RebaseRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RebaseResponse {
     #[prost(bytes = "vec", tag = "1")]
     pub errmsg: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for RebaseResponse {
+    const NAME: &'static str = "RebaseResponse";
+    const PACKAGE: &'static str = "autoid";
+    fn full_name() -> ::prost::alloc::string::String {
+        "autoid.RebaseResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/autoid.RebaseResponse".into()
+    }
 }
 /// Generated client implementations.
 pub mod auto_id_alloc_client {

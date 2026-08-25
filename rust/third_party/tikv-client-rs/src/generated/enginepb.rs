@@ -17,6 +17,16 @@ pub struct CommandRequestHeader {
     #[prost(bytes = "vec", tag = "6")]
     pub context: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for CommandRequestHeader {
+    const NAME: &'static str = "CommandRequestHeader";
+    const PACKAGE: &'static str = "enginepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "enginepb.CommandRequestHeader".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/enginepb.CommandRequestHeader".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommandRequest {
     #[prost(message, optional, tag = "1")]
@@ -31,10 +41,30 @@ pub struct CommandRequest {
     #[prost(message, optional, tag = "4")]
     pub admin_response: ::core::option::Option<super::raft_cmdpb::AdminResponse>,
 }
+impl ::prost::Name for CommandRequest {
+    const NAME: &'static str = "CommandRequest";
+    const PACKAGE: &'static str = "enginepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "enginepb.CommandRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/enginepb.CommandRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommandRequestBatch {
     #[prost(message, repeated, tag = "1")]
     pub requests: ::prost::alloc::vec::Vec<CommandRequest>,
+}
+impl ::prost::Name for CommandRequestBatch {
+    const NAME: &'static str = "CommandRequestBatch";
+    const PACKAGE: &'static str = "enginepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "enginepb.CommandRequestBatch".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/enginepb.CommandRequestBatch".into()
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CommandResponseHeader {
@@ -43,6 +73,16 @@ pub struct CommandResponseHeader {
     /// Region is destroyed.
     #[prost(bool, tag = "2")]
     pub destroyed: bool,
+}
+impl ::prost::Name for CommandResponseHeader {
+    const NAME: &'static str = "CommandResponseHeader";
+    const PACKAGE: &'static str = "enginepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "enginepb.CommandResponseHeader".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/enginepb.CommandResponseHeader".into()
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CommandResponse {
@@ -53,10 +93,30 @@ pub struct CommandResponse {
     #[prost(uint64, tag = "3")]
     pub applied_term: u64,
 }
+impl ::prost::Name for CommandResponse {
+    const NAME: &'static str = "CommandResponse";
+    const PACKAGE: &'static str = "enginepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "enginepb.CommandResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/enginepb.CommandResponse".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommandResponseBatch {
     #[prost(message, repeated, tag = "1")]
     pub responses: ::prost::alloc::vec::Vec<CommandResponse>,
+}
+impl ::prost::Name for CommandResponseBatch {
+    const NAME: &'static str = "CommandResponseBatch";
+    const PACKAGE: &'static str = "enginepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "enginepb.CommandResponseBatch".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/enginepb.CommandResponseBatch".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SnapshotState {
@@ -67,6 +127,16 @@ pub struct SnapshotState {
     #[prost(message, optional, tag = "3")]
     pub apply_state: ::core::option::Option<super::raft_serverpb::RaftApplyState>,
 }
+impl ::prost::Name for SnapshotState {
+    const NAME: &'static str = "SnapshotState";
+    const PACKAGE: &'static str = "enginepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "enginepb.SnapshotState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/enginepb.SnapshotState".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SnapshotData {
     #[prost(string, tag = "1")]
@@ -75,6 +145,16 @@ pub struct SnapshotData {
     pub checksum: u32,
     #[prost(message, repeated, tag = "3")]
     pub data: ::prost::alloc::vec::Vec<super::raft_serverpb::KeyValue>,
+}
+impl ::prost::Name for SnapshotData {
+    const NAME: &'static str = "SnapshotData";
+    const PACKAGE: &'static str = "enginepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "enginepb.SnapshotData".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/enginepb.SnapshotData".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SnapshotRequest {
@@ -94,8 +174,28 @@ pub mod snapshot_request {
         Data(super::SnapshotData),
     }
 }
+impl ::prost::Name for SnapshotRequest {
+    const NAME: &'static str = "SnapshotRequest";
+    const PACKAGE: &'static str = "enginepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "enginepb.SnapshotRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/enginepb.SnapshotRequest".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SnapshotDone {}
+impl ::prost::Name for SnapshotDone {
+    const NAME: &'static str = "SnapshotDone";
+    const PACKAGE: &'static str = "enginepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "enginepb.SnapshotDone".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/enginepb.SnapshotDone".into()
+    }
+}
 /// Generated client implementations.
 pub mod engine_client {
     #![allow(

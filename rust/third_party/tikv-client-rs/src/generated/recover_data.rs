@@ -5,10 +5,30 @@ pub struct ReadRegionMetaRequest {
     #[prost(uint64, tag = "1")]
     pub store_id: u64,
 }
+impl ::prost::Name for ReadRegionMetaRequest {
+    const NAME: &'static str = "ReadRegionMetaRequest";
+    const PACKAGE: &'static str = "recover_data";
+    fn full_name() -> ::prost::alloc::string::String {
+        "recover_data.ReadRegionMetaRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/recover_data.ReadRegionMetaRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Error {
     #[prost(string, tag = "1")]
     pub msg: ::prost::alloc::string::String,
+}
+impl ::prost::Name for Error {
+    const NAME: &'static str = "Error";
+    const PACKAGE: &'static str = "recover_data";
+    fn full_name() -> ::prost::alloc::string::String {
+        "recover_data.Error".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/recover_data.Error".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RegionMeta {
@@ -32,6 +52,16 @@ pub struct RegionMeta {
     #[prost(bytes = "vec", tag = "9")]
     pub end_key: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for RegionMeta {
+    const NAME: &'static str = "RegionMeta";
+    const PACKAGE: &'static str = "recover_data";
+    fn full_name() -> ::prost::alloc::string::String {
+        "recover_data.RegionMeta".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/recover_data.RegionMeta".into()
+    }
+}
 /// command to store for recover region
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RecoverRegionRequest {
@@ -44,6 +74,16 @@ pub struct RecoverRegionRequest {
     #[prost(bool, tag = "3")]
     pub tombstone: bool,
 }
+impl ::prost::Name for RecoverRegionRequest {
+    const NAME: &'static str = "RecoverRegionRequest";
+    const PACKAGE: &'static str = "recover_data";
+    fn full_name() -> ::prost::alloc::string::String {
+        "recover_data.RecoverRegionRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/recover_data.RecoverRegionRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RecoverRegionResponse {
     #[prost(message, optional, tag = "1")]
@@ -51,22 +91,62 @@ pub struct RecoverRegionResponse {
     #[prost(uint64, tag = "2")]
     pub store_id: u64,
 }
+impl ::prost::Name for RecoverRegionResponse {
+    const NAME: &'static str = "RecoverRegionResponse";
+    const PACKAGE: &'static str = "recover_data";
+    fn full_name() -> ::prost::alloc::string::String {
+        "recover_data.RecoverRegionResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/recover_data.RecoverRegionResponse".into()
+    }
+}
 /// wait apply to last index
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WaitApplyRequest {
     #[prost(uint64, tag = "1")]
     pub store_id: u64,
 }
+impl ::prost::Name for WaitApplyRequest {
+    const NAME: &'static str = "WaitApplyRequest";
+    const PACKAGE: &'static str = "recover_data";
+    fn full_name() -> ::prost::alloc::string::String {
+        "recover_data.WaitApplyRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/recover_data.WaitApplyRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WaitApplyResponse {
     #[prost(message, optional, tag = "1")]
     pub error: ::core::option::Option<Error>,
+}
+impl ::prost::Name for WaitApplyResponse {
+    const NAME: &'static str = "WaitApplyResponse";
+    const PACKAGE: &'static str = "recover_data";
+    fn full_name() -> ::prost::alloc::string::String {
+        "recover_data.WaitApplyResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/recover_data.WaitApplyResponse".into()
+    }
 }
 /// resolve data by resolved_ts
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResolveKvDataRequest {
     #[prost(uint64, tag = "1")]
     pub resolved_ts: u64,
+}
+impl ::prost::Name for ResolveKvDataRequest {
+    const NAME: &'static str = "ResolveKvDataRequest";
+    const PACKAGE: &'static str = "recover_data";
+    fn full_name() -> ::prost::alloc::string::String {
+        "recover_data.ResolveKvDataRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/recover_data.ResolveKvDataRequest".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResolveKvDataResponse {
@@ -81,6 +161,16 @@ pub struct ResolveKvDataResponse {
     /// progress is (current_commit_ts - resolved_ts) / (backup_ts - resolved_ts) x 100%
     #[prost(uint64, tag = "4")]
     pub current_commit_ts: u64,
+}
+impl ::prost::Name for ResolveKvDataResponse {
+    const NAME: &'static str = "ResolveKvDataResponse";
+    const PACKAGE: &'static str = "recover_data";
+    fn full_name() -> ::prost::alloc::string::String {
+        "recover_data.ResolveKvDataResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/recover_data.ResolveKvDataResponse".into()
+    }
 }
 /// Generated client implementations.
 pub mod recover_data_client {

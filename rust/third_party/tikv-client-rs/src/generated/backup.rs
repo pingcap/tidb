@@ -12,6 +12,16 @@ pub struct PrepareSnapshotBackupRequest {
     #[prost(uint64, tag = "3")]
     pub lease_in_seconds: u64,
 }
+impl ::prost::Name for PrepareSnapshotBackupRequest {
+    const NAME: &'static str = "PrepareSnapshotBackupRequest";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.PrepareSnapshotBackupRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.PrepareSnapshotBackupRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PrepareSnapshotBackupResponse {
     /// The type of the event.
@@ -28,6 +38,16 @@ pub struct PrepareSnapshotBackupResponse {
     /// For "UpdateLease" and "Finish".
     #[prost(bool, tag = "4")]
     pub last_lease_is_valid: bool,
+}
+impl ::prost::Name for PrepareSnapshotBackupResponse {
+    const NAME: &'static str = "PrepareSnapshotBackupResponse";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.PrepareSnapshotBackupResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.PrepareSnapshotBackupResponse".into()
+    }
 }
 /// The message save the metadata of a backup.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -119,6 +139,16 @@ pub struct BackupMeta {
     #[prost(uint64, tag = "25")]
     pub backup_size: u64,
 }
+impl ::prost::Name for BackupMeta {
+    const NAME: &'static str = "BackupMeta";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.BackupMeta".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.BackupMeta".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BackupRange {
     #[prost(bytes = "vec", tag = "1")]
@@ -127,6 +157,16 @@ pub struct BackupRange {
     pub end_key: ::prost::alloc::vec::Vec<u8>,
     #[prost(message, repeated, tag = "3")]
     pub files: ::prost::alloc::vec::Vec<File>,
+}
+impl ::prost::Name for BackupRange {
+    const NAME: &'static str = "BackupRange";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.BackupRange".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.BackupRange".into()
+    }
 }
 /// The message saves the physical table checksum
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -140,6 +180,16 @@ pub struct TableMeta {
     pub total_kvs: u64,
     #[prost(uint64, tag = "4")]
     pub total_bytes: u64,
+}
+impl ::prost::Name for TableMeta {
+    const NAME: &'static str = "TableMeta";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.TableMeta".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.TableMeta".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct File {
@@ -173,6 +223,16 @@ pub struct File {
     #[prost(bytes = "vec", tag = "12")]
     pub cipher_iv: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for File {
+    const NAME: &'static str = "File";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.File".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.File".into()
+    }
+}
 /// MetaFile describes a multi-level index of data used in backup.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MetaFile {
@@ -196,10 +256,30 @@ pub struct MetaFile {
     #[prost(bytes = "vec", repeated, tag = "5")]
     pub ddls: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
+impl ::prost::Name for MetaFile {
+    const NAME: &'static str = "MetaFile";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.MetaFile".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.MetaFile".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PlacementPolicy {
     #[prost(bytes = "vec", tag = "1")]
     pub info: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for PlacementPolicy {
+    const NAME: &'static str = "PlacementPolicy";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.PlacementPolicy".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.PlacementPolicy".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StatsBlock {
@@ -210,11 +290,31 @@ pub struct StatsBlock {
     #[prost(bytes = "vec", tag = "2")]
     pub json_table: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for StatsBlock {
+    const NAME: &'static str = "StatsBlock";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.StatsBlock".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.StatsBlock".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StatsFile {
     /// A set of files that contains json_tables.
     #[prost(message, repeated, tag = "1")]
     pub blocks: ::prost::alloc::vec::Vec<StatsBlock>,
+}
+impl ::prost::Name for StatsFile {
+    const NAME: &'static str = "StatsFile";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.StatsFile".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.StatsFile".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StatsFileIndex {
@@ -234,6 +334,16 @@ pub struct StatsFileIndex {
     /// If the size of the stats is very small, save the data into the metafile
     #[prost(bytes = "vec", tag = "6")]
     pub inline_data: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for StatsFileIndex {
+    const NAME: &'static str = "StatsFileIndex";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.StatsFileIndex".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.StatsFileIndex".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Schema {
@@ -268,12 +378,32 @@ pub struct Schema {
         bool,
     >,
 }
+impl ::prost::Name for Schema {
+    const NAME: &'static str = "Schema";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.Schema".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.Schema".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct IdMap {
     #[prost(int64, tag = "1")]
     pub upstream_id: i64,
     #[prost(int64, tag = "2")]
     pub downstream_id: i64,
+}
+impl ::prost::Name for IdMap {
+    const NAME: &'static str = "IDMap";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.IDMap".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.IDMap".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PitrTableMap {
@@ -286,6 +416,16 @@ pub struct PitrTableMap {
     /// whether this table has been filtered out
     #[prost(bool, tag = "4")]
     pub filtered_out: bool,
+}
+impl ::prost::Name for PitrTableMap {
+    const NAME: &'static str = "PitrTableMap";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.PitrTableMap".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.PitrTableMap".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PitrDbMap {
@@ -303,6 +443,16 @@ pub struct PitrDbMap {
     #[prost(bool, tag = "5")]
     pub reused: bool,
 }
+impl ::prost::Name for PitrDbMap {
+    const NAME: &'static str = "PitrDBMap";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.PitrDBMap".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.PitrDBMap".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RawRange {
     #[prost(bytes = "vec", tag = "1")]
@@ -312,12 +462,32 @@ pub struct RawRange {
     #[prost(string, tag = "3")]
     pub cf: ::prost::alloc::string::String,
 }
+impl ::prost::Name for RawRange {
+    const NAME: &'static str = "RawRange";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.RawRange".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.RawRange".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClusterIdError {
     #[prost(uint64, tag = "1")]
     pub current: u64,
     #[prost(uint64, tag = "2")]
     pub request: u64,
+}
+impl ::prost::Name for ClusterIdError {
+    const NAME: &'static str = "ClusterIDError";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.ClusterIDError".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.ClusterIDError".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Error {
@@ -338,6 +508,16 @@ pub mod error {
         RegionError(super::super::errorpb::Error),
     }
 }
+impl ::prost::Name for Error {
+    const NAME: &'static str = "Error";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.Error".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.Error".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StreamBackupTaskSecurityConfig {
     #[prost(oneof = "stream_backup_task_security_config::Encryption", tags = "1, 2")]
@@ -356,12 +536,32 @@ pub mod stream_backup_task_security_config {
         MasterKeyConfig(super::MasterKeyConfig),
     }
 }
+impl ::prost::Name for StreamBackupTaskSecurityConfig {
+    const NAME: &'static str = "StreamBackupTaskSecurityConfig";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.StreamBackupTaskSecurityConfig".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.StreamBackupTaskSecurityConfig".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CipherInfo {
     #[prost(enumeration = "super::encryptionpb::EncryptionMethod", tag = "1")]
     pub cipher_type: i32,
     #[prost(bytes = "vec", tag = "2")]
     pub cipher_key: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for CipherInfo {
+    const NAME: &'static str = "CipherInfo";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.CipherInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.CipherInfo".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MasterKeyConfig {
@@ -370,10 +570,30 @@ pub struct MasterKeyConfig {
     #[prost(message, repeated, tag = "2")]
     pub master_keys: ::prost::alloc::vec::Vec<super::encryptionpb::MasterKey>,
 }
+impl ::prost::Name for MasterKeyConfig {
+    const NAME: &'static str = "MasterKeyConfig";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.MasterKeyConfig".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.MasterKeyConfig".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SortedSubRanges {
     #[prost(message, repeated, tag = "1")]
     pub sub_ranges: ::prost::alloc::vec::Vec<super::kvrpcpb::KeyRange>,
+}
+impl ::prost::Name for SortedSubRanges {
+    const NAME: &'static str = "SortedSubRanges";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.SortedSubRanges".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.SortedSubRanges".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BackupRequest {
@@ -442,6 +662,16 @@ pub struct BackupRequest {
     #[prost(message, optional, tag = "20")]
     pub context: ::core::option::Option<super::kvrpcpb::Context>,
 }
+impl ::prost::Name for BackupRequest {
+    const NAME: &'static str = "BackupRequest";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.BackupRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.BackupRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StreamBackupTaskInfo {
     /// The storage for backup, parsed by BR.
@@ -466,6 +696,16 @@ pub struct StreamBackupTaskInfo {
     /// security config for backup files
     #[prost(message, optional, tag = "7")]
     pub security_config: ::core::option::Option<StreamBackupTaskSecurityConfig>,
+}
+impl ::prost::Name for StreamBackupTaskInfo {
+    const NAME: &'static str = "StreamBackupTaskInfo";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.StreamBackupTaskInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.StreamBackupTaskInfo".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StorageBackend {
@@ -492,14 +732,44 @@ pub mod storage_backend {
         AzureBlobStorage(super::AzureBlobStorage),
     }
 }
+impl ::prost::Name for StorageBackend {
+    const NAME: &'static str = "StorageBackend";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.StorageBackend".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.StorageBackend".into()
+    }
+}
 /// Noop storage backend saves files into void.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Noop {}
+impl ::prost::Name for Noop {
+    const NAME: &'static str = "Noop";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.Noop".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.Noop".into()
+    }
+}
 /// Local storage backend saves files into local disk
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Local {
     #[prost(string, tag = "1")]
     pub path: ::prost::alloc::string::String,
+}
+impl ::prost::Name for Local {
+    const NAME: &'static str = "Local";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.Local".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.Local".into()
+    }
 }
 /// S3 storage backend saves files into S3 compatible storages
 /// For non-aws providers, endpoint must be provided
@@ -541,6 +811,16 @@ pub struct S3 {
     #[prost(string, tag = "17")]
     pub profile: ::prost::alloc::string::String,
 }
+impl ::prost::Name for S3 {
+    const NAME: &'static str = "S3";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.S3".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.S3".into()
+    }
+}
 /// GCS storage backend saves files into google cloud storage.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Gcs {
@@ -563,6 +843,16 @@ pub struct Gcs {
     #[prost(string, tag = "6")]
     pub credentials_blob: ::prost::alloc::string::String,
 }
+impl ::prost::Name for Gcs {
+    const NAME: &'static str = "GCS";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.GCS".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.GCS".into()
+    }
+}
 /// The encryption algorithm must be AES256.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AzureCustomerKey {
@@ -572,6 +862,16 @@ pub struct AzureCustomerKey {
     /// The Base64-encoded SHA256 of the encryption key.
     #[prost(string, tag = "2")]
     pub encryption_key_sha256: ::prost::alloc::string::String,
+}
+impl ::prost::Name for AzureCustomerKey {
+    const NAME: &'static str = "AzureCustomerKey";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.AzureCustomerKey".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.AzureCustomerKey".into()
+    }
 }
 /// AzureBlobStorage storage backend saves files into azure blob storage.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -629,6 +929,16 @@ pub struct AzureBlobStorage {
     #[prost(message, optional, tag = "10")]
     pub encryption_key: ::core::option::Option<AzureCustomerKey>,
 }
+impl ::prost::Name for AzureBlobStorage {
+    const NAME: &'static str = "AzureBlobStorage";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.AzureBlobStorage".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.AzureBlobStorage".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Bucket {
     #[prost(string, tag = "1")]
@@ -641,6 +951,16 @@ pub struct Bucket {
     pub prefix: ::prost::alloc::string::String,
     #[prost(string, tag = "6")]
     pub storage_class: ::prost::alloc::string::String,
+}
+impl ::prost::Name for Bucket {
+    const NAME: &'static str = "Bucket";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.Bucket".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.Bucket".into()
+    }
 }
 /// CloudDynamic allows testing new cloud providers and new fields without changing protobuf definitions
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -656,12 +976,32 @@ pub struct CloudDynamic {
         ::prost::alloc::string::String,
     >,
 }
+impl ::prost::Name for CloudDynamic {
+    const NAME: &'static str = "CloudDynamic";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.CloudDynamic".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.CloudDynamic".into()
+    }
+}
 /// HDFS storage backend saves file into HDFS compatible storages
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Hdfs {
     /// a URL: hdfs:///some/path or hdfs://host:port/some/path
     #[prost(string, tag = "1")]
     pub remote: ::prost::alloc::string::String,
+}
+impl ::prost::Name for Hdfs {
+    const NAME: &'static str = "HDFS";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.HDFS".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.HDFS".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BackupResponse {
@@ -677,12 +1017,32 @@ pub struct BackupResponse {
     #[prost(enumeration = "super::kvrpcpb::ApiVersion", tag = "5")]
     pub api_version: i32,
 }
+impl ::prost::Name for BackupResponse {
+    const NAME: &'static str = "BackupResponse";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.BackupResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.BackupResponse".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CleanupRequest {
     /// unique_id represents the unique handle of the whole backup predecure.
     /// it generated in prepare request and corrosponed to one specific backup.
     #[prost(string, tag = "1")]
     pub unique_id: ::prost::alloc::string::String,
+}
+impl ::prost::Name for CleanupRequest {
+    const NAME: &'static str = "CleanupRequest";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.CleanupRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.CleanupRequest".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CleanupResponse {
@@ -691,11 +1051,31 @@ pub struct CleanupResponse {
     #[prost(bool, tag = "2")]
     pub success: bool,
 }
+impl ::prost::Name for CleanupResponse {
+    const NAME: &'static str = "CleanupResponse";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.CleanupResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.CleanupResponse".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PrepareRequest {
     /// whether save state to the storage.
     #[prost(bool, tag = "1")]
     pub save_to_storage: bool,
+}
+impl ::prost::Name for PrepareRequest {
+    const NAME: &'static str = "PrepareRequest";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.PrepareRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.PrepareRequest".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PrepareResponse {
@@ -711,8 +1091,28 @@ pub struct PrepareResponse {
     #[prost(uint64, tag = "4")]
     pub collect_file_size: u64,
 }
+impl ::prost::Name for PrepareResponse {
+    const NAME: &'static str = "PrepareResponse";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.PrepareResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.PrepareResponse".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CheckAdminRequest {}
+impl ::prost::Name for CheckAdminRequest {
+    const NAME: &'static str = "CheckAdminRequest";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.CheckAdminRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.CheckAdminRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CheckAdminResponse {
     #[prost(message, optional, tag = "1")]
@@ -721,6 +1121,16 @@ pub struct CheckAdminResponse {
     pub region: ::core::option::Option<super::metapb::Region>,
     #[prost(bool, tag = "3")]
     pub has_pending_admin: bool,
+}
+impl ::prost::Name for CheckAdminResponse {
+    const NAME: &'static str = "CheckAdminResponse";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.CheckAdminResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.CheckAdminResponse".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ExternalStorageRestoreRequest {
@@ -733,8 +1143,28 @@ pub struct ExternalStorageRestoreRequest {
     #[prost(uint64, tag = "4")]
     pub content_length: u64,
 }
+impl ::prost::Name for ExternalStorageRestoreRequest {
+    const NAME: &'static str = "ExternalStorageRestoreRequest";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.ExternalStorageRestoreRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.ExternalStorageRestoreRequest".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ExternalStorageRestoreResponse {}
+impl ::prost::Name for ExternalStorageRestoreResponse {
+    const NAME: &'static str = "ExternalStorageRestoreResponse";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.ExternalStorageRestoreResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.ExternalStorageRestoreResponse".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ExternalStorageSaveRequest {
     #[prost(message, optional, tag = "1")]
@@ -744,8 +1174,28 @@ pub struct ExternalStorageSaveRequest {
     #[prost(uint64, tag = "3")]
     pub content_length: u64,
 }
+impl ::prost::Name for ExternalStorageSaveRequest {
+    const NAME: &'static str = "ExternalStorageSaveRequest";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.ExternalStorageSaveRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.ExternalStorageSaveRequest".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ExternalStorageSaveResponse {}
+impl ::prost::Name for ExternalStorageSaveResponse {
+    const NAME: &'static str = "ExternalStorageSaveResponse";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.ExternalStorageSaveResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.ExternalStorageSaveResponse".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Metadata {
     /// deprecated after(in) v6.3.0 TiKV cluster
@@ -763,6 +1213,16 @@ pub struct Metadata {
     pub min_ts: u64,
     #[prost(enumeration = "MetaVersion", tag = "7")]
     pub meta_version: i32,
+}
+impl ::prost::Name for Metadata {
+    const NAME: &'static str = "Metadata";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.Metadata".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.Metadata".into()
+    }
 }
 /// DataFileGroup is the merged file info in log-backup
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -786,6 +1246,16 @@ pub struct DataFileGroup {
     /// The file length after compressed.
     #[prost(uint64, tag = "6")]
     pub length: u64,
+}
+impl ::prost::Name for DataFileGroup {
+    const NAME: &'static str = "DataFileGroup";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.DataFileGroup".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.DataFileGroup".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DataFileInfo {
@@ -872,6 +1342,16 @@ pub struct DataFileInfo {
         super::encryptionpb::FileEncryptionInfo,
     >,
 }
+impl ::prost::Name for DataFileInfo {
+    const NAME: &'static str = "DataFileInfo";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.DataFileInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.DataFileInfo".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StreamBackupError {
     /// the unix epoch time (in millisecs) of the time the error reported.
@@ -887,6 +1367,16 @@ pub struct StreamBackupError {
     #[prost(uint64, tag = "4")]
     pub store_id: u64,
 }
+impl ::prost::Name for StreamBackupError {
+    const NAME: &'static str = "StreamBackupError";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.StreamBackupError".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.StreamBackupError".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Span {
     #[prost(uint64, tag = "1")]
@@ -894,12 +1384,32 @@ pub struct Span {
     #[prost(uint64, tag = "2")]
     pub length: u64,
 }
+impl ::prost::Name for Span {
+    const NAME: &'static str = "Span";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.Span".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.Span".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SpansOfFile {
     #[prost(string, tag = "1")]
     pub path: ::prost::alloc::string::String,
     #[prost(message, repeated, tag = "2")]
     pub spans: ::prost::alloc::vec::Vec<Span>,
+}
+impl ::prost::Name for SpansOfFile {
+    const NAME: &'static str = "SpansOfFile";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.SpansOfFile".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.SpansOfFile".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LogFileSubcompactionMeta {
@@ -937,6 +1447,16 @@ pub struct LogFileSubcompactionMeta {
     #[prost(message, repeated, tag = "12")]
     pub sources: ::prost::alloc::vec::Vec<SpansOfFile>,
 }
+impl ::prost::Name for LogFileSubcompactionMeta {
+    const NAME: &'static str = "LogFileSubcompactionMeta";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.LogFileSubcompactionMeta".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.LogFileSubcompactionMeta".into()
+    }
+}
 /// A subcompaction from a compaction.
 /// Subcompactions are actions that collect then sort key values from one region.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -952,6 +1472,16 @@ pub struct LogFileSubcompaction {
     #[prost(message, repeated, tag = "3")]
     pub region_meta_hints: ::prost::alloc::vec::Vec<RegionMetaHint>,
 }
+impl ::prost::Name for LogFileSubcompaction {
+    const NAME: &'static str = "LogFileSubcompaction";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.LogFileSubcompaction".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.LogFileSubcompaction".into()
+    }
+}
 /// You may get region id from `LogFileSubcompactionMeta`.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RegionMetaHint {
@@ -966,12 +1496,32 @@ pub struct RegionMetaHint {
     #[prost(message, optional, tag = "3")]
     pub region_epoch: ::core::option::Option<super::metapb::RegionEpoch>,
 }
+impl ::prost::Name for RegionMetaHint {
+    const NAME: &'static str = "RegionMetaHint";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.RegionMetaHint".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.RegionMetaHint".into()
+    }
+}
 /// Batched version of `LogFileSubcompaction`.
 /// So we can store many subcompactions to one file, to reduce the number of file.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LogFileSubcompactions {
     #[prost(message, repeated, tag = "1")]
     pub subcompactions: ::prost::alloc::vec::Vec<LogFileSubcompaction>,
+}
+impl ::prost::Name for LogFileSubcompactions {
+    const NAME: &'static str = "LogFileSubcompactions";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.LogFileSubcompactions".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.LogFileSubcompactions".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LogFileCompaction {
@@ -1017,6 +1567,16 @@ pub struct LogFileCompaction {
     #[prost(uint64, tag = "11")]
     pub generated_sst_files_total_size: u64,
 }
+impl ::prost::Name for LogFileCompaction {
+    const NAME: &'static str = "LogFileCompaction";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.LogFileCompaction".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.LogFileCompaction".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MetaEdit {
     /// Path to the meta file.
@@ -1040,6 +1600,16 @@ pub struct MetaEdit {
     #[prost(bool, tag = "5")]
     pub all_data_files_compacted: bool,
 }
+impl ::prost::Name for MetaEdit {
+    const NAME: &'static str = "MetaEdit";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.MetaEdit".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.MetaEdit".into()
+    }
+}
 /// RewrittenTableID records a sort of modification over the SSTs during restoring.
 ///
 /// When "backing up" this "restored" SST, we want to backup the original SST before any rewrite.
@@ -1053,6 +1623,16 @@ pub struct RewrittenTableId {
     /// The rewritten table ID during restoring.
     #[prost(int64, tag = "2")]
     pub upstream: i64,
+}
+impl ::prost::Name for RewrittenTableId {
+    const NAME: &'static str = "RewrittenTableID";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.RewrittenTableID".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.RewrittenTableID".into()
+    }
 }
 /// IngestedSSTs is created by a client that wants to put data to the cluster by `Ingest` APIs,
 /// these write cannot be directly recorded by log backup. The client should put a migration
@@ -1092,6 +1672,16 @@ pub struct IngestedSsTs {
     #[prost(bytes = "vec", tag = "6")]
     pub backup_uuid: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for IngestedSsTs {
+    const NAME: &'static str = "IngestedSSTs";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.IngestedSSTs".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.IngestedSSTs".into()
+    }
+}
 /// An extended version of `SpansOfFile`, added more metadata for the
 /// execution of delayed deletion.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1104,6 +1694,16 @@ pub struct DeleteSpansOfFile {
     /// So we can easily check whether a set of spans consists the whole file.
     #[prost(uint64, tag = "3")]
     pub whole_file_length: u64,
+}
+impl ::prost::Name for DeleteSpansOfFile {
+    const NAME: &'static str = "DeleteSpansOfFile";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.DeleteSpansOfFile".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.DeleteSpansOfFile".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Migration {
@@ -1124,6 +1724,16 @@ pub struct Migration {
     /// It is mutable during restoring, hence a reference.
     #[prost(string, repeated, tag = "7")]
     pub ingested_sst_paths: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+impl ::prost::Name for Migration {
+    const NAME: &'static str = "Migration";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.Migration".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.Migration".into()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

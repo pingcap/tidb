@@ -52,6 +52,13 @@ pub mod google {
         include!("google.api.rs");
     }
 }
+pub mod grpc {
+    pub mod channelz {
+        pub mod v1 {
+            include!("grpc.channelz.v1.rs");
+        }
+    }
+}
 pub mod import_kvpb {
     include!("import_kvpb.rs");
 }

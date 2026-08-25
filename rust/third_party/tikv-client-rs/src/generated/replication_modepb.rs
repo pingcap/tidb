@@ -7,6 +7,16 @@ pub struct ReplicationStatus {
     #[prost(message, optional, tag = "2")]
     pub dr_auto_sync: ::core::option::Option<DrAutoSync>,
 }
+impl ::prost::Name for ReplicationStatus {
+    const NAME: &'static str = "ReplicationStatus";
+    const PACKAGE: &'static str = "replication_modepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "replication_modepb.ReplicationStatus".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/replication_modepb.ReplicationStatus".into()
+    }
+}
 /// The status of dr-autosync mode.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DrAutoSync {
@@ -28,6 +38,16 @@ pub struct DrAutoSync {
     #[prost(bool, tag = "6")]
     pub pause_region_split: bool,
 }
+impl ::prost::Name for DrAutoSync {
+    const NAME: &'static str = "DRAutoSync";
+    const PACKAGE: &'static str = "replication_modepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "replication_modepb.DRAutoSync".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/replication_modepb.DRAutoSync".into()
+    }
+}
 /// The replication status sync from TiKV to PD.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RegionReplicationStatus {
@@ -37,12 +57,32 @@ pub struct RegionReplicationStatus {
     #[prost(uint64, tag = "2")]
     pub state_id: u64,
 }
+impl ::prost::Name for RegionReplicationStatus {
+    const NAME: &'static str = "RegionReplicationStatus";
+    const PACKAGE: &'static str = "replication_modepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "replication_modepb.RegionReplicationStatus".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/replication_modepb.RegionReplicationStatus".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StoreDrAutoSyncStatus {
     #[prost(enumeration = "DrAutoSyncState", tag = "1")]
     pub state: i32,
     #[prost(uint64, tag = "2")]
     pub state_id: u64,
+}
+impl ::prost::Name for StoreDrAutoSyncStatus {
+    const NAME: &'static str = "StoreDRAutoSyncStatus";
+    const PACKAGE: &'static str = "replication_modepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "replication_modepb.StoreDRAutoSyncStatus".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/replication_modepb.StoreDRAutoSyncStatus".into()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

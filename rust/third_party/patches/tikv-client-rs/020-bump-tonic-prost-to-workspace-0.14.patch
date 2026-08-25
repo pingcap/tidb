@@ -1,5 +1,5 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index a968600..f7cc380 100644
+index 5b011b5..55298a1 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -11,6 +11,10 @@ rust-version = "1.93.0"
@@ -20,20 +20,23 @@ index a968600..f7cc380 100644
 +tokio-stream = { version = "0.1", features = ["net"], optional = true }
  async-recursion = "0.3"
  async-trait = "0.1"
- derive-new = "0.5"
-@@ -44,7 +49,7 @@ log = "0.4"
+ chrono = { version = "0.4", default-features = false, features = ["std"] }
+@@ -45,9 +50,9 @@ log = "0.4"
  openssl = "0.10"
  pin-project = "1"
  prometheus = { version = "0.13", default-features = false }
 -prost = "0.13"
 +prost = "0.14"
+ prost-reflect = "=0.15.3"
+-prost-types = "0.13"
++prost-types = "0.14"
  rand = "0.8"
  regex = "1"
  crc32fast = "1"
-@@ -59,7 +64,8 @@ serde_json = "1"
+@@ -62,7 +67,8 @@ serde_json = "1"
  take_mut = "0.2.2"
  thiserror = "1"
- tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "macros", "time"] }
+ tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "macros", "time", "net", "io-util"] }
 -tonic = { version = "0.12", features = ["tls", "gzip"] }
 +tonic = { version = "0.14", features = ["tls-ring", "gzip"] }
 +tonic-prost = "0.14"
@@ -41,35 +44,33 @@ index a968600..f7cc380 100644
  
  [dev-dependencies]
 diff --git a/proto-build/Cargo.toml b/proto-build/Cargo.toml
-index ca3fad6..445ac04 100644
+index a3a5a7a..91a927a 100644
 --- a/proto-build/Cargo.toml
 +++ b/proto-build/Cargo.toml
-@@ -12,6 +12,6 @@ edition = "2021"
+@@ -12,7 +12,7 @@ edition = "2021"
  
  [dependencies]
  glob = "0.3"
+-prost-build = "0.12"
 -tonic-build = { version = "0.10", features = ["cleanup-markdown"] }
++prost-build = "0.14"
 +tonic-prost-build = "0.14"
  # Keep this compatible with rust-toolchain 1.84.1.
  tempfile = "=3.14.0"
 diff --git a/proto-build/src/main.rs b/proto-build/src/main.rs
-index c856bec..27ab898 100644
+index 89756bd..8fc09e3 100644
 --- a/proto-build/src/main.rs
 +++ b/proto-build/src/main.rs
-@@ -1,18 +1,18 @@
- // Copyright 2023 TiKV Project Authors. Licensed under Apache-2.0.
+@@ -4,7 +4,7 @@ fn main() {
+     let mut prost = prost_build::Config::new();
+     prost.enable_type_names();
  
- fn main() {
 -    tonic_build::configure()
 +    tonic_prost_build::configure()
          .emit_rerun_if_changed(false)
          .build_server(true)
          .server_mod_attribute(".", "#[allow(non_camel_case_types)]")
-         .include_file("mod.rs")
-         .out_dir("src/generated")
--        .compile(
-+        .compile_protos(
-             &glob::glob("proto/*.proto")
+@@ -17,7 +17,7 @@ fn main() {
                  .unwrap()
                  .collect::<Result<Vec<_>, _>>()
                  .unwrap(),

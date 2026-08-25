@@ -136,6 +136,8 @@ static TIKV_PIPELINED_FLUSH_DURATION_HISTOGRAM: ClientHistogram =
     ClientHistogram("TiKVPipelinedFlushDuration");
 static TIKV_TXN_CMD_DURATION: ClientObserverVec = ClientObserverVec("TiKVTxnCmdHistogram");
 static TIKV_TXN_REGIONS_NUM: ClientObserverVec = ClientObserverVec("TiKVTxnRegionsNumHistogram");
+static TIKV_RAWKV_CMD_DURATION: ClientObserverVec = ClientObserverVec("TiKVRawkvCmdHistogram");
+static TIKV_RAWKV_SIZE: ClientObserverVec = ClientObserverVec("TiKVRawkvSizeHistogram");
 static TIKV_ASYNC_BATCH_GET_COUNTER: ClientCounterVec =
     ClientCounterVec("TiKVAsyncBatchGetCounter");
 static TIKV_SMALL_READ_DURATION: ClientHistogram = ClientHistogram("TiKVSmallReadDuration");
@@ -271,6 +273,29 @@ pub fn pd_stats(cmd: &'static str) -> RequestStats {
 
 pub(crate) fn increment_write_conflict() {
     TIKV_TXN_WRITE_CONFLICT_COUNTER.inc();
+}
+
+/// Observe one high-level RawKV operation. These labels are owned by
+/// client-go's `rawkv` package rather than by the physical RPC dispatcher.
+pub(crate) fn observe_rawkv_command(command: &str, duration: Duration) {
+    TIKV_RAWKV_CMD_DURATION
+        .with_label_values(&[command])
+        .observe(duration_to_sec(duration));
+}
+
+/// Observe the key/value sizes recorded by client-go's `PutWithTTL` path.
+pub(crate) fn observe_rawkv_size(kind: &str, size: usize) {
+    TIKV_RAWKV_SIZE
+        .with_label_values(&[kind])
+        .observe(size as f64);
+}
+
+/// Preserve the pinned source's unusual checksum shortcut: it is registered
+/// against `TiKVRawkvSizeHistogram`, not `TiKVRawkvCmdHistogram`.
+pub(crate) fn observe_rawkv_checksum(duration: Duration) {
+    TIKV_RAWKV_SIZE
+        .with_label_values(&["raw_checksum"])
+        .observe(duration_to_sec(duration));
 }
 
 pub(crate) fn increment_batch_receive_loop_panic() {

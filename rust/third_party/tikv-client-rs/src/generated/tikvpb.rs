@@ -103,6 +103,26 @@ pub mod batch_commands_request {
             Empty(super::super::BatchCommandsEmptyRequest),
         }
     }
+    impl ::prost::Name for Request {
+        const NAME: &'static str = "Request";
+        const PACKAGE: &'static str = "tikvpb";
+        fn full_name() -> ::prost::alloc::string::String {
+            "tikvpb.BatchCommandsRequest.Request".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/tikvpb.BatchCommandsRequest.Request".into()
+        }
+    }
+}
+impl ::prost::Name for BatchCommandsRequest {
+    const NAME: &'static str = "BatchCommandsRequest";
+    const PACKAGE: &'static str = "tikvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tikvpb.BatchCommandsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tikvpb.BatchCommandsRequest".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BatchCommandsResponse {
@@ -213,6 +233,26 @@ pub mod batch_commands_response {
             Empty(super::super::BatchCommandsEmptyResponse),
         }
     }
+    impl ::prost::Name for Response {
+        const NAME: &'static str = "Response";
+        const PACKAGE: &'static str = "tikvpb";
+        fn full_name() -> ::prost::alloc::string::String {
+            "tikvpb.BatchCommandsResponse.Response".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/tikvpb.BatchCommandsResponse.Response".into()
+        }
+    }
+}
+impl ::prost::Name for BatchCommandsResponse {
+    const NAME: &'static str = "BatchCommandsResponse";
+    const PACKAGE: &'static str = "tikvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tikvpb.BatchCommandsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tikvpb.BatchCommandsResponse".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BatchRaftMessage {
@@ -221,6 +261,16 @@ pub struct BatchRaftMessage {
     /// Used for measure the send duration.
     #[prost(uint64, tag = "13")]
     pub last_observed_time: u64,
+}
+impl ::prost::Name for BatchRaftMessage {
+    const NAME: &'static str = "BatchRaftMessage";
+    const PACKAGE: &'static str = "tikvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tikvpb.BatchRaftMessage".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tikvpb.BatchRaftMessage".into()
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BatchCommandsEmptyRequest {
@@ -231,11 +281,31 @@ pub struct BatchCommandsEmptyRequest {
     #[prost(uint64, tag = "2")]
     pub delay_time: u64,
 }
+impl ::prost::Name for BatchCommandsEmptyRequest {
+    const NAME: &'static str = "BatchCommandsEmptyRequest";
+    const PACKAGE: &'static str = "tikvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tikvpb.BatchCommandsEmptyRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tikvpb.BatchCommandsEmptyRequest".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BatchCommandsEmptyResponse {
     /// ID of the test request.
     #[prost(uint64, tag = "1")]
     pub test_id: u64,
+}
+impl ::prost::Name for BatchCommandsEmptyResponse {
+    const NAME: &'static str = "BatchCommandsEmptyResponse";
+    const PACKAGE: &'static str = "tikvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tikvpb.BatchCommandsEmptyResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tikvpb.BatchCommandsEmptyResponse".into()
+    }
 }
 /// Generated client implementations.
 pub mod tikv_client {

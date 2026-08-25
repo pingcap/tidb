@@ -54,10 +54,30 @@ pub mod search_log_request {
         }
     }
 }
+impl ::prost::Name for SearchLogRequest {
+    const NAME: &'static str = "SearchLogRequest";
+    const PACKAGE: &'static str = "diagnosticspb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "diagnosticspb.SearchLogRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/diagnosticspb.SearchLogRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SearchLogResponse {
     #[prost(message, repeated, tag = "1")]
     pub messages: ::prost::alloc::vec::Vec<LogMessage>,
+}
+impl ::prost::Name for SearchLogResponse {
+    const NAME: &'static str = "SearchLogResponse";
+    const PACKAGE: &'static str = "diagnosticspb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "diagnosticspb.SearchLogResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/diagnosticspb.SearchLogResponse".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LogMessage {
@@ -68,10 +88,30 @@ pub struct LogMessage {
     #[prost(string, tag = "3")]
     pub message: ::prost::alloc::string::String,
 }
+impl ::prost::Name for LogMessage {
+    const NAME: &'static str = "LogMessage";
+    const PACKAGE: &'static str = "diagnosticspb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "diagnosticspb.LogMessage".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/diagnosticspb.LogMessage".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ServerInfoRequest {
     #[prost(enumeration = "ServerInfoType", tag = "1")]
     pub tp: i32,
+}
+impl ::prost::Name for ServerInfoRequest {
+    const NAME: &'static str = "ServerInfoRequest";
+    const PACKAGE: &'static str = "diagnosticspb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "diagnosticspb.ServerInfoRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/diagnosticspb.ServerInfoRequest".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ServerInfoPair {
@@ -79,6 +119,16 @@ pub struct ServerInfoPair {
     pub key: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub value: ::prost::alloc::string::String,
+}
+impl ::prost::Name for ServerInfoPair {
+    const NAME: &'static str = "ServerInfoPair";
+    const PACKAGE: &'static str = "diagnosticspb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "diagnosticspb.ServerInfoPair".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/diagnosticspb.ServerInfoPair".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ServerInfoItem {
@@ -100,10 +150,30 @@ pub struct ServerInfoItem {
     #[prost(message, repeated, tag = "3")]
     pub pairs: ::prost::alloc::vec::Vec<ServerInfoPair>,
 }
+impl ::prost::Name for ServerInfoItem {
+    const NAME: &'static str = "ServerInfoItem";
+    const PACKAGE: &'static str = "diagnosticspb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "diagnosticspb.ServerInfoItem".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/diagnosticspb.ServerInfoItem".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ServerInfoResponse {
     #[prost(message, repeated, tag = "1")]
     pub items: ::prost::alloc::vec::Vec<ServerInfoItem>,
+}
+impl ::prost::Name for ServerInfoResponse {
+    const NAME: &'static str = "ServerInfoResponse";
+    const PACKAGE: &'static str = "diagnosticspb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "diagnosticspb.ServerInfoResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/diagnosticspb.ServerInfoResponse".into()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

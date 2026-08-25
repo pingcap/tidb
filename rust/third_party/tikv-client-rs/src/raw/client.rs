@@ -3,8 +3,10 @@ use core::ops::Range;
 
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use log::debug;
 
@@ -17,6 +19,7 @@ use crate::pd::PdRpcClient;
 use crate::proto::kvrpcpb::{RawScanRequest, RawScanResponse};
 use crate::proto::metapb;
 use crate::raw::lowering::*;
+use crate::raw::MAX_RAW_KV_SCAN_LIMIT;
 use crate::request::CollectSingle;
 use crate::request::Dispatch;
 use crate::request::EncodeKeyspace;
@@ -38,13 +41,48 @@ use crate::KvPair;
 use crate::Result;
 use crate::Value;
 
-const MAX_RAW_KV_SCAN_LIMIT: u32 = 10240;
 /// `rawkv.rawkvMaxBackoff`: every client-go RawKV request owns a fresh,
 /// cumulative 20-second retry budget.
 const RAWKV_MAX_BACKOFF_MS: u64 = 20_000;
 /// client-go's `internal/client.MaxWriteExecutionTime`: `ReadTimeoutShort`
 /// (30 seconds) minus the 10-second post-proposal allowance.
 const RAW_MAX_WRITE_EXECUTION_DURATION: Duration = Duration::from_secs(20);
+
+enum RawKvMetric {
+    Command(&'static str),
+    Checksum,
+}
+
+struct RawKvMetricTimer {
+    metric: RawKvMetric,
+    started: Instant,
+}
+
+impl RawKvMetricTimer {
+    fn command(command: &'static str) -> Self {
+        Self {
+            metric: RawKvMetric::Command(command),
+            started: Instant::now(),
+        }
+    }
+
+    fn checksum() -> Self {
+        Self {
+            metric: RawKvMetric::Checksum,
+            started: Instant::now(),
+        }
+    }
+}
+
+impl Drop for RawKvMetricTimer {
+    fn drop(&mut self) {
+        let duration = self.started.elapsed();
+        match self.metric {
+            RawKvMetric::Command(command) => crate::stats::observe_rawkv_command(command, duration),
+            RawKvMetric::Checksum => crate::stats::observe_rawkv_checksum(duration),
+        }
+    }
+}
 
 /// The TiKV raw `Client` is used to interact with TiKV using raw requests.
 ///
@@ -66,7 +104,7 @@ pub struct Client<PdC: PdClient = PdRpcClient> {
     keyspace_name: Option<String>,
 }
 
-impl Clone for Client {
+impl<PdC: PdClient> Clone for Client<PdC> {
     fn clone(&self) -> Self {
         Self {
             rpc: self.rpc.clone(),
@@ -109,7 +147,7 @@ impl Client<PdRpcClient> {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use tikv_client::{Config, RawClient};
+    /// # use tikv_client::{Value, Config, RawClient};
     /// # use futures::prelude::*;
     /// # use std::time::Duration;
     /// # futures::executor::block_on(async {
@@ -177,6 +215,23 @@ impl Client<PdRpcClient> {
 }
 
 impl<PdC: PdClient> Client<PdC> {
+    #[cfg(test)]
+    pub(super) fn from_test_rpc(
+        rpc: Arc<PdC>,
+        keyspace: Keyspace,
+        keyspace_name: Option<String>,
+    ) -> Self {
+        Self {
+            rpc,
+            cluster_id: 0,
+            cf: None,
+            backoff: DEFAULT_REGION_BACKOFF,
+            atomic: false,
+            keyspace,
+            keyspace_name,
+        }
+    }
+
     /// Return the PD cluster ID associated with this client.
     ///
     /// This is retained during construction, matching client-go's
@@ -388,7 +443,7 @@ impl<PdC: PdClient> Client<PdC> {
     ///
     /// # Examples
     /// ```rust,no_run
-    /// # use tikv_client::{Value, Config, RawClient};
+    /// # use tikv_client::{Config, RawClient, Value};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
@@ -398,6 +453,7 @@ impl<PdC: PdClient> Client<PdC> {
     /// # });
     /// ```
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
+        let _metric = RawKvMetricTimer::command("get");
         debug!("invoking raw get request");
         let key = key.into().encode_keyspace(self.keyspace, KeyMode::Raw);
         let request = new_raw_get_request(key, self.cf.clone());
@@ -437,6 +493,7 @@ impl<PdC: PdClient> Client<PdC> {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<Option<Value>>> {
+        let _metric = RawKvMetricTimer::command("batch_get");
         debug!("invoking raw batch_get request");
         let keys = keys.into_iter().map(Into::into).collect::<Vec<Key>>();
         let request_keys = keys
@@ -470,6 +527,7 @@ impl<PdC: PdClient> Client<PdC> {
         &self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
+        let _metric = RawKvMetricTimer::command("batch_get");
         debug!("invoking raw batch_get_pairs request");
         let keys = keys
             .into_iter()
@@ -491,17 +549,21 @@ impl<PdC: PdClient> Client<PdC> {
     /// Retuning `Ok(None)` indicates the key does not exist in TiKV.
     ///
     /// # Examples
-    /// # use tikv_client::{Value, Config, RawClient};
+    /// ```rust,no_run
+    /// # use tikv_client::{Config, RawClient};
     /// # use futures::prelude::*;
     /// # futures::executor::block_on(async {
     /// # let client = RawClient::new(vec!["192.168.0.100"]).await.unwrap();
     /// let key = "TiKV".to_owned();
     /// let req = client.get_key_ttl_secs(key);
-    /// let result: Option<Value> = req.await.unwrap();
+    /// let result: Option<u64> = req.await.unwrap();
     /// # });
+    /// ```
     pub async fn get_key_ttl_secs(&self, key: impl Into<Key>) -> Result<Option<u64>> {
         debug!("invoking raw get_key_ttl_secs request");
-        let key = key.into().encode_keyspace(self.keyspace, KeyMode::Raw);
+        let key = key.into();
+        crate::stats::observe_rawkv_size("key", key.len());
+        let key = key.encode_keyspace(self.keyspace, KeyMode::Raw);
         let request = new_raw_get_key_ttl_request(key, self.cf.clone());
         let plan = self
             .plan(request)
@@ -539,10 +601,14 @@ impl<PdC: PdClient> Client<PdC> {
         value: impl Into<Value>,
         ttl_secs: u64,
     ) -> Result<()> {
+        let _metric = RawKvMetricTimer::command("batch_put");
         debug!("invoking raw put request");
-        let key = key.into().encode_keyspace(self.keyspace, KeyMode::Raw);
-        let request =
-            new_raw_put_request(key, value.into(), self.cf.clone(), ttl_secs, self.atomic);
+        let key = key.into();
+        let value = value.into();
+        crate::stats::observe_rawkv_size("key", key.len());
+        crate::stats::observe_rawkv_size("value", value.len());
+        let key = key.encode_keyspace(self.keyspace, KeyMode::Raw);
+        let request = new_raw_put_request(key, value, self.cf.clone(), ttl_secs, self.atomic);
         let plan = self
             .plan(request)
             .retry_multi_region_with_retry_backoffer(self.retry_backoffer())
@@ -574,6 +640,7 @@ impl<PdC: PdClient> Client<PdC> {
         &self,
         pairs: impl IntoIterator<Item = impl Into<KvPair>>,
     ) -> Result<()> {
+        let _metric = RawKvMetricTimer::command("batch_put");
         let pairs = pairs
             .into_iter()
             .map(|pair| pair.into().encode_keyspace(self.keyspace, KeyMode::Raw))
@@ -592,6 +659,7 @@ impl<PdC: PdClient> Client<PdC> {
         pairs: impl IntoIterator<Item = impl Into<KvPair>>,
         ttls: impl IntoIterator<Item = u64>,
     ) -> Result<()> {
+        let _metric = RawKvMetricTimer::command("batch_put");
         let pairs = pairs
             .into_iter()
             .map(|pair| pair.into().encode_keyspace(self.keyspace, KeyMode::Raw))
@@ -611,6 +679,24 @@ impl<PdC: PdClient> Client<PdC> {
 
     async fn batch_put_encoded(&self, pairs: Vec<KvPair>, ttls: Vec<u64>) -> Result<()> {
         debug!("invoking raw batch_put request");
+        // client-go builds key-to-value and key-to-TTL maps before grouping.
+        // Duplicate input keys are therefore all sent with the final value and
+        // TTL for that key. Retain that observable edge case.
+        let latest = pairs
+            .iter()
+            .cloned()
+            .zip(ttls.iter().copied())
+            .map(|(pair, ttl)| (pair.0, (pair.1, ttl)))
+            .collect::<HashMap<_, _>>();
+        let (pairs, ttls): (Vec<_>, Vec<_>) = pairs
+            .into_iter()
+            .map(|pair| {
+                let (value, ttl) = latest
+                    .get(pair.key())
+                    .expect("every input key has a final RawKV batch value");
+                (KvPair(pair.0, value.clone()), *ttl)
+            })
+            .unzip();
         let request = new_raw_batch_put_request(
             pairs.into_iter(),
             ttls.into_iter(),
@@ -644,6 +730,7 @@ impl<PdC: PdClient> Client<PdC> {
     /// # });
     /// ```
     pub async fn delete(&self, key: impl Into<Key>) -> Result<()> {
+        let _metric = RawKvMetricTimer::command("delete");
         debug!("invoking raw delete request");
         let key = key.into().encode_keyspace(self.keyspace, KeyMode::Raw);
         let request = new_raw_delete_request(key, self.cf.clone(), self.atomic);
@@ -675,6 +762,7 @@ impl<PdC: PdClient> Client<PdC> {
     /// # });
     /// ```
     pub async fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
+        let _metric = RawKvMetricTimer::command("batch_delete");
         debug!("invoking raw batch_delete request");
         let keys = keys
             .into_iter()
@@ -705,8 +793,21 @@ impl<PdC: PdClient> Client<PdC> {
     /// # });
     /// ```
     pub async fn delete_range(&self, range: impl Into<BoundRange>) -> Result<()> {
+        let started = Instant::now();
+        let result = self.delete_range_inner(range.into()).await;
+        crate::stats::observe_rawkv_command(
+            if result.is_ok() {
+                "delete_range"
+            } else {
+                "delete_range_error"
+            },
+            started.elapsed(),
+        );
+        result
+    }
+
+    async fn delete_range_inner(&self, range: BoundRange) -> Result<()> {
         debug!("invoking raw delete_range request");
-        let range = range.into();
         let (start_key, end_key) = range.clone().into_keys();
         // Client-go's `for startKey < endKey` loop performs no routing or RPC
         // for an empty bounded half-open range. An inclusive Rust range has
@@ -734,6 +835,7 @@ impl<PdC: PdClient> Client<PdC> {
     /// intersecting the range. An unbounded end scans to the end of the current
     /// keyspace.
     pub async fn checksum(&self, range: impl Into<BoundRange>) -> Result<crate::RawChecksum> {
+        let _metric = RawKvMetricTimer::checksum();
         debug!("invoking raw checksum request");
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Raw);
         let request = new_raw_checksum_request(range);
@@ -765,6 +867,7 @@ impl<PdC: PdClient> Client<PdC> {
     /// # });
     /// ```
     pub async fn scan(&self, range: impl Into<BoundRange>, limit: u32) -> Result<Vec<KvPair>> {
+        let _metric = RawKvMetricTimer::command("raw_scan");
         debug!("invoking raw scan request");
         self.scan_inner(range.into(), limit, false, false).await
     }
@@ -799,6 +902,7 @@ impl<PdC: PdClient> Client<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<Vec<KvPair>> {
+        let _metric = RawKvMetricTimer::command("raw_reverse_scan");
         debug!("invoking raw reverse scan request");
         self.scan_inner(range.into(), limit, false, true).await
     }
@@ -823,6 +927,7 @@ impl<PdC: PdClient> Client<PdC> {
     /// # });
     /// ```
     pub async fn scan_keys(&self, range: impl Into<BoundRange>, limit: u32) -> Result<Vec<Key>> {
+        let _metric = RawKvMetricTimer::command("raw_scan");
         debug!("invoking raw scan_keys request");
         Ok(self
             .scan_inner(range, limit, true, false)
@@ -856,6 +961,7 @@ impl<PdC: PdClient> Client<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<Vec<Key>> {
+        let _metric = RawKvMetricTimer::command("raw_reverse_scan");
         debug!("invoking raw scan_keys_reverse request");
         Ok(self
             .scan_inner(range, limit, true, true)
@@ -1020,10 +1126,11 @@ impl<PdC: PdClient> Client<PdC> {
         key_only: bool,
         reverse: bool,
     ) -> Result<Vec<KvPair>> {
-        if limit > MAX_RAW_KV_SCAN_LIMIT {
+        let max_scan_limit = MAX_RAW_KV_SCAN_LIMIT.load(Ordering::Relaxed);
+        if limit > max_scan_limit {
             return Err(Error::MaxScanLimitExceeded {
                 limit,
-                max_limit: MAX_RAW_KV_SCAN_LIMIT,
+                max_limit: max_scan_limit,
             });
         }
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Raw);
@@ -1074,6 +1181,11 @@ impl<PdC: PdClient> Client<PdC> {
             if (!reverse && end_key.clone().is_some_and(|end| end <= next_key))
                 || (reverse && next_key <= start_key)
             {
+                break;
+            } else if next_key.is_empty() {
+                // The empty region boundary is the physical end (forward) or
+                // beginning (reverse) of the keyspace. Client-go stops here;
+                // restarting from the empty key would repeat the first region.
                 break;
             } else {
                 current_key = next_key;
@@ -1192,10 +1304,11 @@ impl<PdC: PdClient> Client<PdC> {
         each_limit: u32,
         key_only: bool,
     ) -> Result<Vec<KvPair>> {
-        if each_limit > MAX_RAW_KV_SCAN_LIMIT {
+        let max_scan_limit = MAX_RAW_KV_SCAN_LIMIT.load(Ordering::Relaxed);
+        if each_limit > max_scan_limit {
             return Err(Error::MaxScanLimitExceeded {
                 limit: each_limit,
-                max_limit: MAX_RAW_KV_SCAN_LIMIT,
+                max_limit: max_scan_limit,
             });
         }
 
@@ -1545,8 +1658,10 @@ mod tests {
                     assert_eq!(crate::request::context_keyspace_id(context), Some(0));
                     assert_eq!(context.keyspace_name, "tenant");
                     assert_eq!(req.cf, "tenant_cf");
-                    assert_eq!(req.ttl, 7);
-                    assert_eq!(req.ttls, vec![7, 11]);
+                    // client-go's key maps retain the final TTL for every
+                    // duplicate occurrence before batching.
+                    assert_eq!(req.ttl, 11);
+                    assert_eq!(req.ttls, vec![11, 11]);
                     let resp = kvrpcpb::RawBatchPutResponse {
                         ..Default::default()
                     };

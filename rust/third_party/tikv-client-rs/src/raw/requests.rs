@@ -1140,7 +1140,12 @@ mod test {
         let scan = plan.execute().await.unwrap();
 
         assert_eq!(scan.len(), 49);
-        // FIXME test the keys returned.
+        assert_eq!(
+            scan.iter()
+                .map(|pair| pair.key().to_vec())
+                .collect::<Vec<_>>(),
+            (1_u8..50).map(|key| vec![key]).collect::<Vec<_>>()
+        );
     }
 
     #[tokio::test]

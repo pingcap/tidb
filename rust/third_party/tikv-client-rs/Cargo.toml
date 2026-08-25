@@ -40,6 +40,7 @@ members = [
 tokio-stream = { version = "0.1", features = ["net"], optional = true }
 async-recursion = "0.3"
 async-trait = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 derive-new = "0.5"
 either = "1.6"
 fail = "0.4"
@@ -50,6 +51,8 @@ openssl = "0.10"
 pin-project = "1"
 prometheus = { version = "0.13", default-features = false }
 prost = "0.14"
+prost-reflect = "=0.15.3"
+prost-types = "0.14"
 rand = "0.8"
 regex = "1"
 crc32fast = "1"
@@ -63,7 +66,7 @@ serde_derive = "1.0"
 serde_json = "1"
 take_mut = "0.2.2"
 thiserror = "1"
-tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "macros", "time"] }
+tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "macros", "time", "net", "io-util"] }
 tonic = { version = "0.14", features = ["tls-ring", "gzip"] }
 tonic-prost = "0.14"
 url = "2"

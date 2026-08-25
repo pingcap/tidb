@@ -65,6 +65,7 @@ use crate::transaction::ReadLockContext;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::SnapshotRuntimeStats;
 use crate::transaction::SnapshotVisibilityValidator;
+pub use crate::util::RequestSource;
 use crate::BoundRange;
 
 /// Result returned by a transaction binlog prewrite.
@@ -85,42 +86,6 @@ pub trait BinlogExecutor: Send + Sync {
     async fn commit(&self, cancellation: crate::async_util::Cancellation, commit_timestamp: i64);
 
     fn skip(&self);
-}
-
-/// Source request identity used by resource control and txn-file admission.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct RequestSource {
-    pub internal: bool,
-    pub source_type: String,
-    pub explicit_source_type: String,
-}
-
-impl RequestSource {
-    pub fn context_value(&self) -> String {
-        if self.source_type.is_empty() && self.explicit_source_type.is_empty() {
-            return "unknown".to_owned();
-        }
-        let origin = if self.internal {
-            "internal"
-        } else {
-            "external"
-        };
-        let source = if self.source_type.is_empty() {
-            "unknown"
-        } else {
-            self.source_type.as_str()
-        };
-        let mut value = format!("{origin}_{source}");
-        if !self.explicit_source_type.is_empty() && self.explicit_source_type != self.source_type {
-            value.push('_');
-            value.push_str(&self.explicit_source_type);
-        }
-        value
-    }
-
-    pub fn is_internal(&self) -> bool {
-        self.context_value().starts_with("internal")
-    }
 }
 
 /// Options for client-go's pipelined transaction path.
@@ -5612,6 +5577,11 @@ impl<PdC: PdClient> Committer<PdC> {
                 return Ok(false);
             };
             if let Some(expired) = key_error.commit_ts_expired.as_ref() {
+                info!(
+                    "2PC commitTS rejected by TiKV, retry with a newer commitTS, txnStartTS: {}, info: {}",
+                    self.start_version.version(),
+                    crate::logutil::hex(expired)
+                );
                 let primary = self.primary_key.as_ref().ok_or(Error::NoPrimaryKey)?;
                 if !batch.is_primary || expired.key.as_slice() != <&[u8]>::from(primary) {
                     return Err(Error::StringError(
@@ -6094,8 +6064,11 @@ impl<PdC: PdClient> Committer<PdC> {
                     Some(Error::KeyError(key_err)) => {
                         if let Some(expired) = key_err.commit_ts_expired {
                             // Ref: https://github.com/tikv/client-go/blob/tidb-8.5/txnkv/transaction/commit.go
-                            info!("2PC commit_ts rejected by TiKV, retry with a newer commit_ts, start_ts: {}",
-                                self.start_version.version());
+                            info!(
+                                "2PC commit_ts rejected by TiKV, retry with a newer commit_ts, start_ts: {}, info: {}",
+                                self.start_version.version(),
+                                crate::logutil::hex(&expired)
+                            );
 
                             let primary_key = self.primary_key.as_ref().unwrap();
                             if primary_key != expired.key.as_ref() {

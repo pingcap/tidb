@@ -11,6 +11,7 @@
 
 use std::convert::TryFrom;
 use std::fmt;
+use std::sync::atomic::AtomicU32;
 
 pub use self::client::Client;
 use crate::Error;
@@ -18,6 +19,13 @@ use crate::Error;
 mod client;
 pub mod lowering;
 mod requests;
+
+/// Maximum number of pairs accepted by one RawKV scan operation.
+///
+/// This is the race-safe Rust mapping of client-go's exported mutable
+/// `MaxRawKVScanLimit` value. Callers that intentionally change the process
+/// limit use the standard atomic `load`/`store` API.
+pub static MAX_RAW_KV_SCAN_LIMIT: AtomicU32 = AtomicU32::new(10_240);
 
 /// Aggregate checksum for the key/value pairs in a raw-key range.
 ///
@@ -97,6 +105,19 @@ impl fmt::Display for ColumnFamily {
     }
 }
 
+trait RawRpcRequest: Default {
+    fn set_cf(&mut self, cf: String);
+
+    fn maybe_set_cf(&mut self, cf: Option<ColumnFamily>) {
+        if let Some(cf) = cf {
+            self.set_cf(cf.to_string());
+        }
+    }
+}
+
+#[cfg(test)]
+mod source_tests;
+
 #[cfg(test)]
 mod tests {
     use super::ColumnFamily;
@@ -112,15 +133,5 @@ mod tests {
             ColumnFamily::try_from("tenant_cf").unwrap().to_string(),
             "tenant_cf"
         );
-    }
-}
-
-trait RawRpcRequest: Default {
-    fn set_cf(&mut self, cf: String);
-
-    fn maybe_set_cf(&mut self, cf: Option<ColumnFamily>) {
-        if let Some(cf) = cf {
-            self.set_cf(cf.to_string());
-        }
     }
 }

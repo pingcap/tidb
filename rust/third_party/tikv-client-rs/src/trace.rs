@@ -152,6 +152,11 @@ pub(crate) fn current_execution_details_trace_handler() -> Option<ExecutionDetai
         .ok()
 }
 
+/// Return whether the current asynchronous scope requests TiKV execution details.
+pub fn trace_exec_details_enabled() -> bool {
+    EXECUTION_DETAILS_TRACE_HANDLER.try_with(|_| ()).is_ok()
+}
+
 /// Build client-go's exact execution-detail span tree.
 pub fn build_execution_detail_span(
     details: &kvrpcpb::ExecDetailsV2,

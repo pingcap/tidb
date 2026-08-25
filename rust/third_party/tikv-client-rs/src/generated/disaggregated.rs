@@ -16,18 +16,58 @@ pub mod s3_lock_result {
         Conflict(super::Conflict),
     }
 }
+impl ::prost::Name for S3LockResult {
+    const NAME: &'static str = "S3LockResult";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.S3LockResult".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.S3LockResult".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Success {}
+impl ::prost::Name for Success {
+    const NAME: &'static str = "Success";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.Success".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.Success".into()
+    }
+}
 /// Error caused by S3GC owner changed
 /// client should retry
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct NotOwner {}
+impl ::prost::Name for NotOwner {
+    const NAME: &'static str = "NotOwner";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.NotOwner".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.NotOwner".into()
+    }
+}
 /// Error caused by concurrency conflict,
 /// request cancel
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Conflict {
     #[prost(string, tag = "1")]
     pub reason: ::prost::alloc::string::String,
+}
+impl ::prost::Name for Conflict {
+    const NAME: &'static str = "Conflict";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.Conflict".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.Conflict".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TryAddLockRequest {
@@ -41,10 +81,30 @@ pub struct TryAddLockRequest {
     #[prost(uint64, tag = "4")]
     pub lock_seq: u64,
 }
+impl ::prost::Name for TryAddLockRequest {
+    const NAME: &'static str = "TryAddLockRequest";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.TryAddLockRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.TryAddLockRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TryAddLockResponse {
     #[prost(message, optional, tag = "1")]
     pub result: ::core::option::Option<S3LockResult>,
+}
+impl ::prost::Name for TryAddLockResponse {
+    const NAME: &'static str = "TryAddLockResponse";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.TryAddLockResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.TryAddLockResponse".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TryMarkDeleteRequest {
@@ -52,13 +112,43 @@ pub struct TryMarkDeleteRequest {
     #[prost(bytes = "vec", tag = "1")]
     pub data_file_key: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for TryMarkDeleteRequest {
+    const NAME: &'static str = "TryMarkDeleteRequest";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.TryMarkDeleteRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.TryMarkDeleteRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TryMarkDeleteResponse {
     #[prost(message, optional, tag = "1")]
     pub result: ::core::option::Option<S3LockResult>,
 }
+impl ::prost::Name for TryMarkDeleteResponse {
+    const NAME: &'static str = "TryMarkDeleteResponse";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.TryMarkDeleteResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.TryMarkDeleteResponse".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetDisaggConfigRequest {}
+impl ::prost::Name for GetDisaggConfigRequest {
+    const NAME: &'static str = "GetDisaggConfigRequest";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.GetDisaggConfigRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.GetDisaggConfigRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DisaggS3Config {
     #[prost(string, tag = "1")]
@@ -68,10 +158,30 @@ pub struct DisaggS3Config {
     #[prost(string, tag = "3")]
     pub endpoint: ::prost::alloc::string::String,
 }
+impl ::prost::Name for DisaggS3Config {
+    const NAME: &'static str = "DisaggS3Config";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.DisaggS3Config".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.DisaggS3Config".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetDisaggConfigResponse {
     #[prost(message, optional, tag = "1")]
     pub s3_config: ::core::option::Option<DisaggS3Config>,
+}
+impl ::prost::Name for GetDisaggConfigResponse {
+    const NAME: &'static str = "GetDisaggConfigResponse";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.GetDisaggConfigResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.GetDisaggConfigResponse".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DisaggTaskMeta {
@@ -122,12 +232,32 @@ pub mod disagg_task_meta {
         KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
     }
 }
+impl ::prost::Name for DisaggTaskMeta {
+    const NAME: &'static str = "DisaggTaskMeta";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.DisaggTaskMeta".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.DisaggTaskMeta".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DisaggReadError {
     #[prost(int32, tag = "1")]
     pub code: i32,
     #[prost(string, tag = "2")]
     pub msg: ::prost::alloc::string::String,
+}
+impl ::prost::Name for DisaggReadError {
+    const NAME: &'static str = "DisaggReadError";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.DisaggReadError".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.DisaggReadError".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EstablishDisaggTaskError {
@@ -146,6 +276,16 @@ pub mod establish_disagg_task_error {
         ErrorOther(super::ErrorOther),
     }
 }
+impl ::prost::Name for EstablishDisaggTaskError {
+    const NAME: &'static str = "EstablishDisaggTaskError";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.EstablishDisaggTaskError".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.EstablishDisaggTaskError".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ErrorRegion {
     #[prost(string, tag = "1")]
@@ -153,6 +293,16 @@ pub struct ErrorRegion {
     /// The read node needs to update its region cache about these regions.
     #[prost(uint64, repeated, tag = "2")]
     pub region_ids: ::prost::alloc::vec::Vec<u64>,
+}
+impl ::prost::Name for ErrorRegion {
+    const NAME: &'static str = "ErrorRegion";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.ErrorRegion".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.ErrorRegion".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ErrorLocked {
@@ -162,12 +312,32 @@ pub struct ErrorLocked {
     #[prost(message, repeated, tag = "2")]
     pub locked: ::prost::alloc::vec::Vec<super::kvrpcpb::LockInfo>,
 }
+impl ::prost::Name for ErrorLocked {
+    const NAME: &'static str = "ErrorLocked";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.ErrorLocked".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.ErrorLocked".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ErrorOther {
     #[prost(int32, tag = "1")]
     pub code: i32,
     #[prost(string, tag = "2")]
     pub msg: ::prost::alloc::string::String,
+}
+impl ::prost::Name for ErrorOther {
+    const NAME: &'static str = "ErrorOther";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.ErrorOther".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.ErrorOther".into()
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EstablishDisaggTaskRequest {
@@ -193,6 +363,16 @@ pub struct EstablishDisaggTaskRequest {
     #[prost(bytes = "vec", tag = "7")]
     pub encoded_plan: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for EstablishDisaggTaskRequest {
+    const NAME: &'static str = "EstablishDisaggTaskRequest";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.EstablishDisaggTaskRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.EstablishDisaggTaskRequest".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EstablishDisaggTaskResponse {
     #[prost(message, optional, tag = "1")]
@@ -211,13 +391,43 @@ pub struct EstablishDisaggTaskResponse {
     #[prost(bytes = "vec", repeated, tag = "5")]
     pub tables: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
+impl ::prost::Name for EstablishDisaggTaskResponse {
+    const NAME: &'static str = "EstablishDisaggTaskResponse";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.EstablishDisaggTaskResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.EstablishDisaggTaskResponse".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CancelDisaggTaskRequest {
     #[prost(message, optional, tag = "1")]
     pub meta: ::core::option::Option<DisaggTaskMeta>,
 }
+impl ::prost::Name for CancelDisaggTaskRequest {
+    const NAME: &'static str = "CancelDisaggTaskRequest";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.CancelDisaggTaskRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.CancelDisaggTaskRequest".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CancelDisaggTaskResponse {}
+impl ::prost::Name for CancelDisaggTaskResponse {
+    const NAME: &'static str = "CancelDisaggTaskResponse";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.CancelDisaggTaskResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.CancelDisaggTaskResponse".into()
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct FetchDisaggPagesRequest {
     /// The snapshot id to fetch pages
@@ -231,6 +441,16 @@ pub struct FetchDisaggPagesRequest {
     /// in EstablishDisaggTaskResponse.segments
     #[prost(uint64, repeated, tag = "4")]
     pub page_ids: ::prost::alloc::vec::Vec<u64>,
+}
+impl ::prost::Name for FetchDisaggPagesRequest {
+    const NAME: &'static str = "FetchDisaggPagesRequest";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.FetchDisaggPagesRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.FetchDisaggPagesRequest".into()
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PagesPacket {
@@ -248,4 +468,14 @@ pub struct PagesPacket {
     /// last packet
     #[prost(bytes = "vec", repeated, tag = "4")]
     pub summaries: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
+impl ::prost::Name for PagesPacket {
+    const NAME: &'static str = "PagesPacket";
+    const PACKAGE: &'static str = "disaggregated";
+    fn full_name() -> ::prost::alloc::string::String {
+        "disaggregated.PagesPacket".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/disaggregated.PagesPacket".into()
+    }
 }
