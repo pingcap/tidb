@@ -1529,17 +1529,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
     }
 
     fn run_accept_loop(self, limit: Option<usize>) -> Result<(), SqlNodeError> {
-        self.run_accept_loop_with(limit, |stream, timeout| {
-            stream
-                .set_nonblocking(false)
-                .map_err(SqlNodeError::Listener)?;
-            stream
-                .set_read_timeout(Some(timeout))
-                .map_err(SqlNodeError::Listener)?;
-            stream
-                .set_write_timeout(Some(timeout))
-                .map_err(SqlNodeError::Listener)
-        })
+        self.run_accept_loop_with(limit, prepare_accepted_stream)
     }
 
     fn run_accept_loop_with<P>(
@@ -2079,6 +2069,31 @@ impl std::error::Error for SqlNodeError {
     }
 }
 
+/// readies one accepted MySQL socket for serving, exactly as the production
+/// accept loop does.
+///
+/// TCP_NODELAY comes first because Go puts it on every accepted connection:
+/// `net.setDefaultListenerSockopts` runs `setNoDelayConn` on each fd out of
+/// `Accept`, so a Go TiDB never lets Nagle hold a response segment back. A
+/// server that skips it pays ~40ms per statement whenever a response leaves in
+/// more than one small write and the client's delayed ACK loses that race --
+/// which is precisely what an OLTP pooler's request/response pattern produces
+/// through any proxy or tunnel hop between the peers.
+pub(crate) fn prepare_accepted_stream(stream: &TcpStream, timeout: Duration) -> Result<(), SqlNodeError> {
+    stream
+        .set_nodelay(true)
+        .map_err(SqlNodeError::Listener)?;
+    stream
+        .set_nonblocking(false)
+        .map_err(SqlNodeError::Listener)?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(SqlNodeError::Listener)?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(SqlNodeError::Listener)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2500,5 +2515,24 @@ mod tests {
         assert!(cancellation.is_cancelled());
         let mut byte = [0_u8; 1];
         assert_eq!(client.read(&mut byte).unwrap(), 0);
+    }
+
+    #[test]
+    fn an_accepted_mysql_socket_leaves_preparation_with_nodelay_set() {
+        let listener = TcpListener::bind((IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).unwrap();
+        let (server, _) = listener.accept().unwrap();
+
+        prepare_accepted_stream(&server, Duration::from_secs(30)).unwrap();
+
+        // Go's `setDefaultListenerSockopts` puts TCP_NODELAY on every accepted
+        // connection; the Rust accept loop must match it or a Nagle-enabled
+        // hop between server and client stalls small responses behind the
+        // client's delayed ACK.
+        assert_eq!(server.nodelay().unwrap(), true);
+        assert_eq!(server.read_timeout().unwrap(), Some(Duration::from_secs(30)));
+        assert_eq!(server.write_timeout().unwrap(), Some(Duration::from_secs(30)));
+        drop(client);
     }
 }
