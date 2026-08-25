@@ -109,8 +109,61 @@ func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) 
 
 func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
 	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
-	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
-		return
+
+	// Check if we can preserve ordering from the probe side.
+	// This allows ORDER BY ... LIMIT queries to avoid a sort when the probe side has an index.
+	// We should only consider order-preserving hash join when the build side (inner)
+	// cannot provide sorted output on join keys - otherwise MergeJoin is more appropriate.
+	keepProbeOrder := false
+	sortColsFromLeft := false
+	sortColsFromRight := false
+	if !prop.IsSortItemEmpty() {
+		_, _, leftSchema, rightSchema := getJoinChildStatsAndSchema(ge, super)
+		if leftSchema != nil && rightSchema != nil {
+			for _, item := range prop.SortItems {
+				if leftSchema.Contains(item.Col) {
+					sortColsFromLeft = true
+				}
+				if rightSchema.Contains(item.Col) {
+					sortColsFromRight = true
+				}
+			}
+
+			// Only enable order-preserving hash join if all sort columns come from exactly one side
+			if (sortColsFromLeft && !sortColsFromRight) || (sortColsFromRight && !sortColsFromLeft) {
+				// Check if ORDER BY columns match the join keys.
+				// If they do AND the build side can also provide sorted output (has index),
+				// MergeJoin can satisfy ORDER BY directly - don't generate order-preserving hash join.
+				// If ORDER BY matches join keys but build side cannot provide order (no index),
+				// order-preserving hash join is beneficial and should be generated.
+				leftJoinKeys, rightJoinKeys, _, _ := p.GetJoinKeys()
+				sortColsAreJoinKeys := false
+
+				if sortColsFromLeft {
+					sortColsAreJoinKeys = columnsMatchJoinKeys(prop.SortItems, leftJoinKeys)
+				} else {
+					sortColsAreJoinKeys = columnsMatchJoinKeys(prop.SortItems, rightJoinKeys)
+				}
+
+				if sortColsAreJoinKeys {
+					// ORDER BY matches join keys. Check if build side can provide sorted output.
+					// For order-preserving hash join, the ORDER BY side becomes the probe side.
+					// So the OTHER side becomes the build side.
+					// Only skip order-preserving hash join if BOTH sides can provide sorted output
+					// (i.e., both have indexes on join keys), making MergeJoin optimal.
+					buildSideCanProvideOrder := buildSideHasIndexOnJoinKeys(super, sortColsFromLeft, leftJoinKeys, rightJoinKeys)
+					if !buildSideCanProvideOrder {
+						// Build side cannot provide order - order-preserving hash join is beneficial
+						keepProbeOrder = true
+					}
+					// If build side CAN provide order, MergeJoin is optimal - don't set keepProbeOrder
+				} else {
+					// ORDER BY doesn't match join keys - order-preserving hash join helps
+					keepProbeOrder = true
+				}
+			}
+			// If sort columns from both sides or neither - can't preserve order
+		}
 	}
 
 	forceLeftToBuild := ((p.PreferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferRightAsHJProbe) > 0)
@@ -133,13 +186,13 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 		leftNAJoinKeys, _ := p.GetNAJoinKeys()
 		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && physicalop.CanUseHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) {
 			if !forceLeftToBuild {
-				appendHashJoins(getHashJoin(ge, p, prop, 1, false))
+				appendHashJoins(getHashJoin(ge, p, prop, 1, false, keepProbeOrder, sortColsFromLeft))
 			}
 			if !forceRightToBuild {
-				appendHashJoins(getHashJoin(ge, p, prop, 1, true))
+				appendHashJoins(getHashJoin(ge, p, prop, 1, true, keepProbeOrder, sortColsFromLeft))
 			}
 		} else {
-			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false, keepProbeOrder, sortColsFromLeft))
 			if forceLeftToBuild || forceRightToBuild {
 				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
 					"The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for %s with hash join version 1. "+
@@ -150,7 +203,7 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 			}
 		}
 	case base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
-		appendHashJoins(getHashJoin(ge, p, prop, 1, false))
+		appendHashJoins(getHashJoin(ge, p, prop, 1, false, keepProbeOrder, sortColsFromLeft))
 		if forceLeftToBuild || forceRightToBuild {
 			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
 				"HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for %s because the build side is fixed. "+
@@ -161,37 +214,37 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 		}
 	case base.LeftOuterJoin:
 		if !forceLeftToBuild {
-			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false, keepProbeOrder, sortColsFromLeft))
 		}
 		if !forceRightToBuild {
-			appendHashJoins(getHashJoin(ge, p, prop, 1, true))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, true, keepProbeOrder, sortColsFromLeft))
 		}
 	case base.RightOuterJoin:
 		if !forceLeftToBuild {
-			appendHashJoins(getHashJoin(ge, p, prop, 0, true))
+			appendHashJoins(getHashJoin(ge, p, prop, 0, true, keepProbeOrder, sortColsFromLeft))
 		}
 		if !forceRightToBuild {
-			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 0, false, keepProbeOrder, sortColsFromLeft))
 		}
 	case base.InnerJoin:
 		if forceLeftToBuild {
-			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 0, false, keepProbeOrder, sortColsFromLeft))
 		} else if forceRightToBuild {
-			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false, keepProbeOrder, sortColsFromLeft))
 		} else {
-			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
-			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false, keepProbeOrder, sortColsFromLeft))
+			appendHashJoins(getHashJoin(ge, p, prop, 0, false, keepProbeOrder, sortColsFromLeft))
 		}
 	case base.FullOuterJoin:
 		// For full outer join in the root phase, always use the regular
 		// hash join probe path. Build side is still chosen by cost / hints.
 		if forceLeftToBuild {
-			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 0, false, keepProbeOrder, sortColsFromLeft))
 		} else if forceRightToBuild {
-			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false, keepProbeOrder, sortColsFromLeft))
 		} else {
-			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
-			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false, keepProbeOrder, sortColsFromLeft))
+			appendHashJoins(getHashJoin(ge, p, prop, 0, false, keepProbeOrder, sortColsFromLeft))
 		}
 	}
 
@@ -207,13 +260,163 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 	return
 }
 
-func getHashJoin(ge base.GroupExpression, p *logicalop.LogicalJoin, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) []*physicalop.PhysicalHashJoin {
+// columnsMatchJoinKeys checks if the ORDER BY sort columns match the join keys.
+// This is used to determine if MergeJoin can satisfy the ORDER BY (when both sides have indexes).
+// If sort columns match join keys, we should NOT generate order-preserving hash join.
+func columnsMatchJoinKeys(sortItems []property.SortItem, joinKeys []*expression.Column) bool {
+	if len(sortItems) == 0 || len(joinKeys) == 0 {
+		return false
+	}
+	// Check if all sort columns are in the join keys
+	for _, item := range sortItems {
+		found := false
+		for _, key := range joinKeys {
+			if item.Col.EqualColumn(key) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// buildSideHasIndexOnJoinKeys checks if the build side (opposite of ORDER BY side) has an index
+// on the join keys. If the build side can provide sorted output, MergeJoin is optimal and we
+// should not generate order-preserving hash join.
+// sortColsFromLeft: true if ORDER BY columns come from left side (so right is build side)
+func buildSideHasIndexOnJoinKeys(super base.LogicalPlan, sortColsFromLeft bool, leftJoinKeys, rightJoinKeys []*expression.Column) bool {
+	// Get the join's children
+	children := super.Children()
+	if len(children) != 2 {
+		return false
+	}
+
+	// Determine which child is the build side (opposite of ORDER BY side)
+	var buildChild base.LogicalPlan
+	var buildJoinKeys []*expression.Column
+	if sortColsFromLeft {
+		// ORDER BY from left, so right is build side
+		buildChild = children[1]
+		buildJoinKeys = rightJoinKeys
+	} else {
+		// ORDER BY from right, so left is build side
+		buildChild = children[0]
+		buildJoinKeys = leftJoinKeys
+	}
+
+	// Traverse to find DataSource
+	return hasIndexOnColumns(buildChild, buildJoinKeys)
+}
+
+// hasIndexOnColumns recursively checks if any DataSource under the plan has an index
+// covering the given columns (typically join keys).
+func hasIndexOnColumns(plan base.LogicalPlan, cols []*expression.Column) bool {
+	if len(cols) == 0 {
+		return false
+	}
+
+	// Check if this is a DataSource
+	if ds, ok := plan.(*logicalop.DataSource); ok {
+		// Check if any index covers the join key columns
+		for _, path := range ds.PossibleAccessPaths {
+			if path.IsTablePath() {
+				continue
+			}
+			// Check if this index covers the join key
+			if indexCoversColumns(path, cols, ds) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Recursively check children
+	for _, child := range plan.Children() {
+		if hasIndexOnColumns(child, cols) {
+			return true
+		}
+	}
+	return false
+}
+
+// indexCoversColumns checks if an index path covers the specified columns.
+// This is a simplified check - we verify that the join key columns match leading index columns.
+func indexCoversColumns(path *util.AccessPath, cols []*expression.Column, ds *logicalop.DataSource) bool {
+	if path.Index == nil || len(path.Index.Columns) == 0 {
+		return false
+	}
+
+	// Get the table info to find column offset
+	tblInfo := ds.TableInfo
+	if tblInfo == nil {
+		return false
+	}
+
+	// Check if join key columns match the leading index columns
+	for _, col := range cols {
+		found := false
+		// Find this column's offset in the table
+		colOffset := -1
+		for i, tblCol := range tblInfo.Columns {
+			if col.ID == tblCol.ID {
+				colOffset = i
+				break
+			}
+		}
+		if colOffset < 0 {
+			continue
+		}
+
+		// Check if this column is a leading index column
+		for i, idxCol := range path.Index.Columns {
+			if i >= len(cols) {
+				break
+			}
+			if idxCol.Offset == colOffset {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func getHashJoin(ge base.GroupExpression, p *logicalop.LogicalJoin, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool, keepProbeOrder bool, sortColsFromLeft bool) []*physicalop.PhysicalHashJoin {
 	var stats0, stats1 *property.StatsInfo
 	if ge != nil {
 		stats0, stats1, _, _ = ge.GetJoinChildStatsAndSchema()
 	} else {
 		stats0, stats1, _, _ = p.GetJoinChildStatsAndSchema()
 	}
+
+	// Determine which side is the probe side
+	// When useOuterToBuild=false: build = innerIdx, probe = 1-innerIdx
+	// When useOuterToBuild=true: build = 1-innerIdx, probe = innerIdx
+	var probeIdx int
+	if useOuterToBuild {
+		probeIdx = innerIdx
+	} else {
+		probeIdx = 1 - innerIdx
+	}
+
+	// If we need to preserve order, check if the probe side matches the sort columns side
+	if keepProbeOrder {
+		// sortColsFromLeft=true means we need left (idx 0) to be probe
+		// sortColsFromLeft=false means we need right (idx 1) to be probe
+		if sortColsFromLeft && probeIdx != 0 {
+			return nil // Can't preserve order with this configuration
+		}
+		if !sortColsFromLeft && probeIdx != 1 {
+			return nil // Can't preserve order with this configuration
+		}
+	}
+
 	var outerStats *property.StatsInfo
 	if 1-innerIdx == 0 {
 		outerStats = stats0
@@ -221,10 +424,15 @@ func getHashJoin(ge base.GroupExpression, p *logicalop.LogicalJoin, prop *proper
 		outerStats = stats1
 	}
 	newTwoBaseProps := func() [2]*property.PhysicalProperty {
-		return [2]*property.PhysicalProperty{
+		props := [2]*property.PhysicalProperty{
 			{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown},
 			{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown},
 		}
+		// If preserving order, pass the sort items down to the probe side child.
+		if keepProbeOrder {
+			props[probeIdx].SortItems = prop.SortItems
+		}
+		return props
 	}
 	adjustStatsAndGetJoin := func(chReqProps [2]*property.PhysicalProperty) *physicalop.PhysicalHashJoin {
 		if prop.ExpectedCnt < p.StatsInfo().RowCount {
@@ -233,6 +441,14 @@ func getHashJoin(ge base.GroupExpression, p *logicalop.LogicalJoin, prop *proper
 		}
 		hashJoin := physicalop.NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), chReqProps[0], chReqProps[1])
 		hashJoin.SetSchema(p.Schema())
+		// Set KeepProbeOrder for order-preserving hash join.
+		// Note: We don't set Concurrency=1 here because we want full concurrency for the BUILD phase.
+		// Single-threaded PROBING is handled in the executor when KeepProbeOrder is true.
+		if keepProbeOrder {
+			hashJoin.KeepProbeOrder = true
+			// Pass expected count for early termination optimization
+			hashJoin.ExpectedCnt = prop.ExpectedCnt
+		}
 		return hashJoin
 	}
 	res := make([]*physicalop.PhysicalHashJoin, 0, 2)
@@ -2352,7 +2568,7 @@ func pushLimitOrTopNForcibly(p base.LogicalPlan, pp base.PhysicalPlan) (preferPu
 
 // GetHashJoin is public for cascades planner.
 func GetHashJoin(ge base.GroupExpression, la *logicalop.LogicalApply, prop *property.PhysicalProperty) *physicalop.PhysicalHashJoin {
-	joins := getHashJoin(ge, &la.LogicalJoin, prop, 1, false)
+	joins := getHashJoin(ge, &la.LogicalJoin, prop, 1, false, false, false)
 	if len(joins) == 0 {
 		panic("GetHashJoin for LogicalApply should always produce at least one hash join plan")
 	}

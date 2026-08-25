@@ -97,6 +97,16 @@ type PhysicalHashJoin struct {
 	// use the outer table to build a hash table when the outer table is smaller.
 	UseOuterToBuild bool
 
+	// KeepProbeOrder indicates whether the join should preserve the order of the probe side.
+	// When true, the join will use single-threaded probing to maintain order from an index scan
+	// on the probe side, allowing ORDER BY ... LIMIT queries to avoid a sort operation.
+	KeepProbeOrder bool
+
+	// ExpectedCnt is the expected number of rows to be returned when KeepProbeOrder is true.
+	// This is used to optimize chunk sizes for ORDER BY ... LIMIT queries by using smaller
+	// chunks when the limit is small, reducing unnecessary row processing.
+	ExpectedCnt float64
+
 	// on which store the join executes.
 	StoreTp        kv.StoreType
 	MppShuffleJoin bool
@@ -195,6 +205,8 @@ func (p *PhysicalHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, er
 	cloned.BasePhysicalJoin = *base
 	cloned.Concurrency = p.Concurrency
 	cloned.UseOuterToBuild = p.UseOuterToBuild
+	cloned.KeepProbeOrder = p.KeepProbeOrder
+	cloned.ExpectedCnt = p.ExpectedCnt
 	for _, c := range p.EqualConditions {
 		cloned.EqualConditions = append(cloned.EqualConditions, c.Clone().(*expression.ScalarFunction))
 	}

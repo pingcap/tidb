@@ -140,8 +140,9 @@ type spillStats struct {
 }
 
 type hashJoinRuntimeStatsV2 struct {
-	concurrent     int
-	probeCollision int64
+	concurrent      int
+	buildConcurrent int
+	probeCollision  int64
 
 	fetchAndBuildHashTable int64
 
@@ -217,7 +218,7 @@ func (e *hashJoinRuntimeStatsV2) String() string {
 	if e.fetchAndBuildHashTable > 0 {
 		if e.isHashJoinGA {
 			buf.WriteString("build_hash_table:{concurrency:")
-			buf.WriteString(strconv.Itoa(e.concurrent))
+			buf.WriteString(strconv.Itoa(e.buildConcurrent))
 			buf.WriteString(", time:")
 			buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndBuildHashTable)))
 			buf.WriteString(", fetch:")
@@ -294,6 +295,7 @@ func (e *hashJoinRuntimeStatsV2) String() string {
 func (e *hashJoinRuntimeStatsV2) Clone() execdetails.RuntimeStats {
 	return &hashJoinRuntimeStatsV2{
 		concurrent:                            e.concurrent,
+		buildConcurrent:                       e.buildConcurrent,
 		probeCollision:                        e.probeCollision,
 		fetchAndBuildHashTable:                e.fetchAndBuildHashTable,
 		partitionData:                         e.partitionData,
