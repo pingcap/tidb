@@ -193,14 +193,9 @@ type ChunkDecoder struct {
 
 // NewChunkDecoder creates a NewChunkDecoder.
 func NewChunkDecoder(columns []ColInfo, handleColIDs []int64, defDatum func(i int, chk *chunk.Chunk) error, loc *time.Location) *ChunkDecoder {
-	return &ChunkDecoder{
-		decoder: decoder{
-			columns:      columns,
-			handleColIDs: handleColIDs,
-			loc:          loc,
-		},
-		defDatum: defDatum,
-	}
+	d := new(ChunkDecoder)
+	d.Reset(columns, handleColIDs, defDatum, loc)
+	return d
 }
 
 // Reset resets a ChunkDecoder with new column metadata.
