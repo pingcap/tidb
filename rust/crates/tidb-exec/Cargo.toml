@@ -32,6 +32,7 @@ tidb-stats = { path = "../tidb-stats" }
 tidb-protocol = { path = "../tidb-protocol" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+tikv-client.workspace = true
 tidb-vardef = { path = "../tidb-vardef" }
 tidb-util = { path = "../tidb-util" }
 chrono.workspace = true

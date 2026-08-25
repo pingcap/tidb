@@ -3329,6 +3329,7 @@ dependencies = [
  "tidb-txnkv",
  "tidb-util",
  "tidb-vardef",
+ "tikv-client",
  "tokio",
 ]
 

@@ -92,22 +92,59 @@ where
     }
 }
 
-impl<C, L, T> PagedMetaSnapshot for TransactionMetaSnapshot<'_, C, L, T>
-where
-    C: TransactionCommandClient + LockRecoveryClient,
-    L: RegionRecoveryLoader,
-    T: TimestampSource,
-{
-    fn scan_page(
-        &mut self,
-        start: &[u8],
-        end: &[u8],
-        limit: usize,
-    ) -> Result<MetaPairs, ClusterCatalogError> {
-        let call = UnaryCallContext::with_timeout(self.timeout);
+/// The same meta-key snapshot over a transaction from the client-rust engine.
+///
+/// [`TransactionMetaSnapshot`] adapts this crate's own coordinator
+/// transaction; this adapts [`tidb_txnkv::TikvTransactionDriver`], so the
+/// catalog loader is written once and serves either engine while the
+/// migration runs.
+pub struct TikvMetaSnapshot<'transaction, PdC: tikv_client::pd::PdClient> {
+    transaction: &'transaction mut tidb_txnkv::TikvTransactionDriver<PdC>,
+    /// Per-request deadline template, stamped fresh per read for the same
+    /// reason [`TransactionMetaSnapshot`] does it.
+    timeout: Duration,
+}
+
+impl<'transaction, PdC: tikv_client::pd::PdClient> TikvMetaSnapshot<'transaction, PdC> {
+    /// Binds one transaction and the per-request deadline every read stamps.
+    pub fn new(
+        transaction: &'transaction mut tidb_txnkv::TikvTransactionDriver<PdC>,
+        timeout: Duration,
+    ) -> Self {
+        Self {
+            transaction,
+            timeout,
+        }
+    }
+}
+
+impl<PdC: tikv_client::pd::PdClient> MetaSnapshot for TikvMetaSnapshot<'_, PdC> {
+    fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
+        let _ = self.timeout;
         self.transaction
-            .snapshot_scan(start, end, Some(limit), &call)
+            .get(&Key::from_bytes(key.to_vec()))
             .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+    }
+
+    fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+        let Some(end) = prefix_scan_end(prefix) else {
+            return Err(ClusterCatalogError::Snapshot(
+                "catalog prefix has no finite scan end".to_owned(),
+            ));
+        };
+        // The source scan is unbounded; the engine's scan takes a limit and
+        // pages internally, so the widest limit is what "no limit" means here.
+        Ok(self
+            .transaction
+            .scan(
+                &Key::from_bytes(prefix.to_vec()),
+                &Key::from_bytes(end),
+                u32::MAX,
+            )
+            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?
+            .into_iter()
+            .map(|(key, value)| (key.as_bytes().to_vec(), value))
+            .collect())
     }
 }
 
@@ -220,4 +257,29 @@ pub fn reload_catalog_from_cluster<
         .finish_without_writes()
         .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?;
     Ok(reloaded)
+}
+
+/// Loads the whole cluster catalog through one fresh client-rust transaction.
+///
+/// The engine-backed counterpart of [`load_catalog_from_cluster`], carried
+/// alongside it while store construction sites migrate one at a time. When the
+/// last caller of the coordinator-backed loader is gone, that one and
+/// [`TransactionMetaSnapshot`] go with it.
+pub fn load_catalog_from_tikv_cluster<S: tidb_txnkv::TikvTransactionSource>(
+    opener: &tidb_txnkv::TikvTransactionOpener<S>,
+    timeout: Duration,
+) -> Result<ClusterCatalog, ClusterCatalogError> {
+    let mut transaction = opener
+        .begin_read_only()
+        .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?;
+    let catalog = {
+        let mut snapshot = TikvMetaSnapshot::new(&mut transaction, timeout);
+        load_cluster_catalog(&mut snapshot)?
+    };
+    // A read-only transaction holds no locks and never prewrote, so finishing
+    // it is the no-op the engine requires rather than a rollback.
+    transaction
+        .finish_without_writes()
+        .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?;
+    Ok(catalog)
 }
