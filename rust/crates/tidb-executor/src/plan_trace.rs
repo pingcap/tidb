@@ -4730,11 +4730,14 @@ impl PlanTrace {
         let mut lookup = lookup;
         let mut probe = lookup.children.remove(1);
         probe.label = "";
-        // Go reports the probe selection using the lookup's physical output
-        // estimate (the index-side estimate), not the logical input-row
-        // estimate used to shape the parent plan. Keep the logical estimate
-        // only as a fallback for traces that do not carry one.
-        let output_estimate = lookup.est_rows.or(logical_rows);
+        // Go reports the probe selection and the lookup output using the
+        // logical filtered-row estimate when one is available. The index-side
+        // access estimate can be higher (for example, pseudo statistics on a
+        // wide IN/range path); retaining it at the reader boundary leaves a
+        // root LIMIT/Projection at that inflated cardinality even though the
+        // residual Selection has already reduced the rows. Keep the physical
+        // estimate only as a fallback for traces without a logical estimate.
+        let output_estimate = logical_rows.or(lookup.est_rows);
         selection.task = "cop[tikv]";
         selection.label = "(Probe)";
         selection.est_rows = output_estimate;
@@ -7112,6 +7115,38 @@ fn binary_func_name(op: tidb_ast::BinaryOp) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn probe_residual_uses_filtered_logical_rows_for_lookup_output() {
+        let mut trace = PlanTrace::planning();
+        let mut lookup = PlanNode::new("IndexLookUp", Some(1.25), String::new(), String::new());
+        lookup.children.push(PlanNode::new(
+            "IndexRangeScan",
+            Some(1.25),
+            String::new(),
+            String::new(),
+        ));
+        lookup.children.push(PlanNode::new(
+            "TableRowIDScan",
+            Some(1.25),
+            String::new(),
+            String::new(),
+        ));
+        let mut residual = PlanNode::new("Selection", Some(1.0), String::new(), String::new());
+        residual.children.push(lookup);
+        trace.stack.push(residual);
+
+        assert!(trace.lookup_probe_selection(Some(1.0)));
+        assert_eq!(trace.stack.last().and_then(|node| node.est_rows), Some(1.0));
+        assert_eq!(
+            trace
+                .stack
+                .last()
+                .and_then(|node| node.children.get(1))
+                .and_then(|node| node.est_rows),
+            Some(1.0)
+        );
+    }
 
     #[test]
     fn qualifier_prints_catalog_identifier_spelling() {

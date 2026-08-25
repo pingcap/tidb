@@ -2611,11 +2611,14 @@ fn run_select_traced_with_delivery_choice_inner(
         full_row_projection = false;
     }
     // Go keeps the written `SELECT *` Projection above a non-covering,
-    // ordered index lookup when its LIMIT is fused into the lookup window
-    // (Web3Bench R21/R23).  The scan already returns the same values, but the
-    // operator boundary is observable in EXPLAIN and is part of the plan
-    // contract; table scans and covering index paths remain elided.
-    if index_order.is_some() && select.limit.is_some() {
+    // ordered index lookup only when the lookup itself satisfies the written
+    // order and its LIMIT is fused into the lookup window (Web3Bench R21/R23).
+    // When an ordered index only supplies a pushed TopN below a root TopN, Go's
+    // ProjectionEliminator still removes the identity projection above the
+    // TopN. The scan already returns the same values, but the operator
+    // boundary is observable in EXPLAIN and is part of the plan contract;
+    // table scans and covering-index paths remain elided.
+    if index_order.is_some() && select.limit.is_some() && order_satisfied {
         full_row_projection = false;
     }
     if order_satisfied {

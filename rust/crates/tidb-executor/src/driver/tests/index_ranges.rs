@@ -1261,3 +1261,49 @@ fn an_ascending_handle_order_limit_pushes_a_limit_not_a_topn() {
         "the LIMIT rides the ordered scan as a Limit: {operators:?}"
     );
 }
+
+/// Go's projection eliminator removes the identity `SELECT *` projection even
+/// when an ordered index contributes only a pushed partial TopN. The root
+/// TopN still owns the final ordering, but it does not need a row-shape
+/// projection above the non-covering lookup. This is the shape exercised by
+/// hbx-web3's two-key flex query.
+#[test]
+fn partial_index_topn_eliminates_identity_projection() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE flex_plan (a INT, b INT, c INT, d INT, KEY idx_ab (a, b DESC, d))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO flex_plan VALUES (1,10,3,1),(1,10,2,2),(1,9,1,3),(2,20,1,4)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let sql = "SELECT * FROM flex_plan WHERE a=1 AND b>0 ORDER BY b DESC, c ASC LIMIT 2";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let operators = rows
+        .iter()
+        .map(|row| datum_text_for_test(&row[0]))
+        .collect::<Vec<_>>();
+    assert!(
+        operators.first().is_some_and(|row| row.starts_with("TopN")),
+        "the final order remains a root TopN: {operators:?}"
+    );
+    assert!(
+        operators.iter().all(|row| !row.starts_with("Projection")),
+        "the identity SELECT * projection must be eliminated: {operators:?}"
+    );
+}
