@@ -332,7 +332,6 @@ func (n *IndexPartSpecification) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*IndexPartSpecification)
-
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
@@ -427,7 +426,6 @@ func (n *ReferenceDef) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ReferenceDef)
-
 	if n.Table != nil {
 		node, ok := n.Table.Accept(v)
 		if !ok {
@@ -707,7 +705,6 @@ func (n *ColumnOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ColumnOption)
-
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
@@ -911,7 +908,6 @@ func (n *IndexOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*IndexOption)
-
 	if n.SplitOpt != nil {
 		node, ok := n.SplitOpt.Accept(v)
 		if !ok {
@@ -1077,7 +1073,6 @@ func (n *Constraint) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*Constraint)
-
 	for i, val := range n.Keys {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -1149,7 +1144,6 @@ func (n *ColumnDef) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Name = node.(*ColumnName)
 	for i, val := range n.Options {
 		node, ok := val.Accept(v)
@@ -1319,7 +1313,6 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Table = node.(*TableName)
 	if n.ReferTable != nil {
 		node, ok = n.ReferTable.Accept(v)
@@ -1422,7 +1415,6 @@ func (n *DropTableStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropTableStmt)
-
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -1561,7 +1553,6 @@ func (n *DropSequenceStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropSequenceStmt)
-
 	for i, val := range n.Sequences {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -1643,7 +1634,6 @@ func (n *TableToTable) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.OldTable = node.(*TableName)
 	node, ok = n.NewTable.Accept(v)
 	if !ok {
@@ -1737,7 +1727,6 @@ func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.ViewName = node.(*TableName)
 	selnode, ok := n.Select.Accept(v)
 	if !ok {
@@ -1918,7 +1907,6 @@ func (n *CreateMaskingPolicyStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreateMaskingPolicyStmt)
-
 	if n.Table != nil {
 		node, ok := n.Table.Accept(v)
 		if !ok {
@@ -2034,7 +2022,6 @@ func (n *CreateSequenceStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Name = node.(*TableName)
 	return v.Leave(n)
 }
@@ -2176,7 +2163,6 @@ func (n *CreateIndexStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Table = node.(*TableName)
 	for i, val := range n.IndexPartSpecifications {
 		node, ok = val.Accept(v)
@@ -2248,7 +2234,6 @@ func (n *DropIndexStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Table = node.(*TableName)
 	if n.LockAlg != nil {
 		node, ok := n.LockAlg.Accept(v)
@@ -2280,7 +2265,6 @@ func (n *LockTablesStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*LockTablesStmt)
-
 	for i := range n.TableLocks {
 		node, ok := n.TableLocks[i].Table.Accept(v)
 		if !ok {
@@ -2337,7 +2321,6 @@ func (n *CleanupTableLockStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CleanupTableLockStmt)
-
 	for i := range n.Tables {
 		node, ok := n.Tables[i].Accept(v)
 		if !ok {
@@ -2380,7 +2363,6 @@ func (n *RepairTableStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Table = node.(*TableName)
 	node, ok = n.CreateStmt.Accept(v)
 	if !ok {
@@ -3271,7 +3253,6 @@ func (n *TableOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*TableOption)
-
 	if n.Value != nil {
 		node, ok := n.Value.Accept(v)
 		if !ok {
@@ -3398,7 +3379,6 @@ func (n *ColumnPosition) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ColumnPosition)
-
 	if n.RelativeColumn != nil {
 		node, ok := n.RelativeColumn.Accept(v)
 		if !ok {
@@ -4240,7 +4220,6 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*AlterTableSpec)
-
 	if n.Constraint != nil {
 		node, ok := n.Constraint.Accept(v)
 		if !ok {
@@ -4396,7 +4375,6 @@ func (n *AlterTableStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Table = node.(*TableName)
 	for i, val := range n.Specs {
 		node, ok = val.Accept(v)
@@ -4436,7 +4414,6 @@ func (n *TruncateTableStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Table = node.(*TableName)
 	return v.Leave(n)
 }
@@ -4533,7 +4510,6 @@ func (n *PartitionDefinitionClauseLessThan) restore(ctx *format.RestoreCtx) erro
 }
 
 func (n *PartitionDefinitionClauseLessThan) acceptWithVisitor(v Visitor) bool {
-
 	for i, expr := range n.Exprs {
 		newExpr, ok := expr.Accept(v)
 		if !ok {
@@ -4614,7 +4590,6 @@ func (n *PartitionDefinitionClauseIn) restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *PartitionDefinitionClauseIn) acceptWithVisitor(v Visitor) bool {
-
 	for _, valList := range n.Values {
 		for j, val := range valList {
 			newVal, ok := val.Accept(v)
@@ -4906,7 +4881,6 @@ func (n *PartitionMethod) Restore(ctx *format.RestoreCtx) error {
 
 // acceptWithVisitor is like Node.Accept but does not allow replacing the node itself.
 func (n *PartitionMethod) acceptWithVisitor(v Visitor) bool {
-
 	if n.Expr != nil {
 		expr, ok := n.Expr.Accept(v)
 		if !ok {
@@ -5109,7 +5083,6 @@ func (n *RecoverTableStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*RecoverTableStmt)
-
 	if n.Table != nil {
 		node, ok := n.Table.Accept(v)
 		if !ok {
@@ -5168,7 +5141,6 @@ func (n *FlashBackToTimestampStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*FlashBackToTimestampStmt)
-
 	if len(n.Tables) != 0 {
 		for i, val := range n.Tables {
 			node, ok := val.Accept(v)
@@ -5218,7 +5190,6 @@ func (n *FlashBackTableStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*FlashBackTableStmt)
-
 	if n.Table != nil {
 		node, ok := n.Table.Accept(v)
 		if !ok {
@@ -5432,7 +5403,6 @@ func (n *AlterSequenceStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Name = node.(*TableName)
 	return v.Leave(n)
 }

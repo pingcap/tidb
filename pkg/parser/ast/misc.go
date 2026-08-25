@@ -166,7 +166,6 @@ func (n *TraceStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Stmt = node.(StmtNode)
 	return v.Leave(n)
 }
@@ -275,7 +274,6 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ExplainStmt)
-
 	if n.Stmt != nil {
 		node, ok := n.Stmt.Accept(v)
 		if !ok {
@@ -650,7 +648,6 @@ func (n *CompactTableStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Table = node.(*TableName)
 	return v.Leave(n)
 }
@@ -691,7 +688,6 @@ func (n *PrepareStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*PrepareStmt)
-
 	if n.SQLVar != nil {
 		node, ok := n.SQLVar.Accept(v)
 		if !ok {
@@ -775,7 +771,6 @@ func (n *ExecuteStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ExecuteStmt)
-
 	for i, val := range n.UsingVars {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -1065,7 +1060,6 @@ func (n *VariableAssignment) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Value = node.(ExprNode)
 	return v.Leave(n)
 }
@@ -1198,7 +1192,6 @@ func (n *FlushStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*FlushStmt)
-
 	for i, t := range n.Tables {
 		node, ok := t.Accept(v)
 		if !ok {
@@ -1331,7 +1324,6 @@ func (n *SetStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetStmt)
-
 	for i, val := range n.Variables {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -1384,7 +1376,6 @@ func (n *SetConfigStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Value = node.(ExprNode)
 	return v.Leave(n)
 }
@@ -2213,7 +2204,6 @@ func (n *StringOrUserVar) Accept(v Visitor) (node Node, ok bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*StringOrUserVar)
-
 	if n.UserVar != nil {
 		node, ok = n.UserVar.Accept(v)
 		if !ok {
@@ -2341,7 +2331,6 @@ func (n *CreateBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreateBindingStmt)
-
 	if n.OriginNode != nil {
 		origNode, ok := n.OriginNode.Accept(v)
 		if !ok {
@@ -2413,7 +2402,6 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropBindingStmt)
-
 	if n.OriginNode != nil {
 		//  OriginNode is nil means we build drop binding by sql digest
 		origNode, ok := n.OriginNode.Accept(v)
@@ -2492,7 +2480,6 @@ func (n *SetBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetBindingStmt)
-
 	if n.OriginNode != nil {
 		// OriginNode is nil means we set binding stmt by sql digest
 		origNode, ok := n.OriginNode.Accept(v)
@@ -2585,7 +2572,6 @@ func (n *CreateStatisticsStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Table = node.(*TableName)
 	for i, col := range n.Columns {
 		node, ok = col.Accept(v)
@@ -2652,7 +2638,6 @@ func (n *DoStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DoStmt)
-
 	for i, val := range n.Exprs {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -3019,7 +3004,6 @@ func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*AdminStmt)
-
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -3112,7 +3096,6 @@ func (n *PrivElem) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*PrivElem)
-
 	for i, val := range n.Cols {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -3247,7 +3230,6 @@ func (n *RevokeStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*RevokeStmt)
-
 	for i, val := range n.Privs {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -3380,7 +3362,6 @@ func (n *GrantStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*GrantStmt)
-
 	for i, val := range n.Privs {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -3879,7 +3860,6 @@ func (n *BRIEStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*BRIEStmt)
-
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -4511,7 +4491,6 @@ func (n *DynamicCalibrateResourceOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DynamicCalibrateResourceOption)
-
 	if n.Ts != nil {
 		node, ok := n.Ts.Accept(v)
 		if !ok {
@@ -4621,7 +4600,6 @@ func (n *QueryWatchOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*QueryWatchOption)
-
 	if n.ResourceGroupOption != nil && n.ResourceGroupOption.GroupNameExpr != nil {
 		node, ok := n.ResourceGroupOption.GroupNameExpr.Accept(v)
 		if !ok {
@@ -4708,7 +4686,6 @@ func (n *QueryWatchTextOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*QueryWatchTextOption)
-
 	if n.PatternExpr != nil {
 		node, ok := n.PatternExpr.Accept(v)
 		if !ok {

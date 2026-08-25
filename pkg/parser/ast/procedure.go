@@ -173,7 +173,6 @@ func (n *ProcedureDecl) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureDecl)
-
 	if n.DeclDefault != nil {
 		node, ok := n.DeclDefault.Accept(v)
 		if !ok {
@@ -220,7 +219,6 @@ func (n *ProcedureBlock) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureBlock)
-
 	for i, ProcedureVar := range n.ProcedureVars {
 		node, ok := ProcedureVar.Accept(v)
 		if !ok {
@@ -277,7 +275,6 @@ func (n *ProcedureInfo) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureInfo)
-
 	for i, ProcedureParam := range n.ProcedureParam {
 		node, ok := ProcedureParam.Accept(v)
 		if !ok {
@@ -352,7 +349,6 @@ func (n *ProcedureIfInfo) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.IfBody = node.(*ProcedureIfBlock)
 	return v.Leave(n)
 }
@@ -384,7 +380,6 @@ func (n *ProcedureElseIfBlock) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.ProcedureIfStmt = node.(*ProcedureIfBlock)
 	return v.Leave(n)
 }
@@ -456,7 +451,6 @@ func (n *ProcedureIfBlock) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureIfBlock)
-
 	if n.IfExpr != nil {
 		node, ok := n.IfExpr.Accept(v)
 		if !ok {
@@ -508,7 +502,6 @@ func (n *SimpleWhenThenStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SimpleWhenThenStmt)
-
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
@@ -569,7 +562,6 @@ func (n *SimpleCaseStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Condition = node.(ExprNode)
 
 	for i, stmt := range n.WhenCases {
@@ -625,7 +617,6 @@ func (n *SearchWhenThenStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SearchWhenThenStmt)
-
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
@@ -780,7 +771,6 @@ func (n *ProcedureWhileStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Condition = node.(ExprNode)
 
 	for i, stmt := range n.Body {
@@ -866,7 +856,6 @@ func (n *ProcedureErrorControl) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureErrorControl)
-
 	for i, errorInfo := range n.ErrorCon {
 		node, ok := errorInfo.Accept(v)
 		if !ok {
@@ -1071,7 +1060,6 @@ func (n *ProcedureLabelBlock) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Block = node.(*ProcedureBlock)
 	// Store Procedure do not check sql justifiability, so don't traverse 	ProcedureProcStmts.
 	return v.Leave(n)
@@ -1134,7 +1122,6 @@ func (n *ProcedureLabelLoop) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Block = node.(StmtNode)
 	// Store Procedure do not check sql justifiability, so don't traverse 	ProcedureProcStmts.
 	return v.Leave(n)

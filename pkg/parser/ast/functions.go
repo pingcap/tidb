@@ -600,7 +600,6 @@ func (n *FuncCallExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*FuncCallExpr)
-
 	for i, val := range n.Args {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -666,7 +665,6 @@ func (n *JSONSumCrc32Expr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Expr = node.(ExprNode)
 	return v.Leave(n)
 }
@@ -747,7 +745,6 @@ func (n *FuncCastExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Expr = node.(ExprNode)
 	return v.Leave(n)
 }
@@ -938,7 +935,6 @@ func (n *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*AggregateFuncExpr)
-
 	for i, val := range n.Args {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -1043,7 +1039,6 @@ func (n *WindowFuncExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*WindowFuncExpr)
-
 	for i, val := range n.Args {
 		node, ok := val.Accept(v)
 		if !ok {

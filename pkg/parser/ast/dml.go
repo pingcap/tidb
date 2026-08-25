@@ -251,7 +251,6 @@ func (n *Join) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Left = node.(ResultSetNode)
 	if n.Right != nil {
 		node, ok = n.Right.Accept(v)
@@ -444,7 +443,6 @@ func (n *TableName) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*TableName)
-
 	if n.TableSample != nil {
 		newTs, ok := n.TableSample.Accept(v)
 		if !ok {
@@ -488,7 +486,6 @@ func (n *DeleteTableList) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DeleteTableList)
-
 	if n != nil {
 		for i, t := range n.Tables {
 			node, ok := t.Accept(v)
@@ -528,7 +525,6 @@ func (n *OnCondition) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Expr = node.(ExprNode)
 	return v.Leave(n)
 }
@@ -660,7 +656,6 @@ func (n *TableSource) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Source = node.(ResultSetNode)
 	return v.Leave(n)
 }
@@ -828,7 +823,6 @@ func (n *SelectField) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SelectField)
-
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
@@ -900,7 +894,6 @@ func (n *FieldList) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*FieldList)
-
 	for i, val := range n.Fields {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -937,7 +930,6 @@ func (n *TableRefsClause) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.TableRefs = node.(*Join)
 	return v.Leave(n)
 }
@@ -973,7 +965,6 @@ func (n *ByItem) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Expr = node.(ExprNode)
 	return v.Leave(n)
 }
@@ -1009,7 +1000,6 @@ func (n *GroupByClause) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*GroupByClause)
-
 	for i, val := range n.Items {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -1046,7 +1036,6 @@ func (n *HavingClause) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Expr = node.(ExprNode)
 	return v.Leave(n)
 }
@@ -1079,7 +1068,6 @@ func (n *OrderByClause) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*OrderByClause)
-
 	for i, val := range n.Items {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -1156,7 +1144,6 @@ func (s *TableSample) Accept(v Visitor) (node Node, ok bool) {
 		return v.Leave(newNode)
 	}
 	s = newNode.(*TableSample)
-
 	if s.Expr != nil {
 		node, ok = s.Expr.Accept(v)
 		if !ok {
@@ -1246,7 +1233,6 @@ func (c *CommonTableExpression) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return c, false
 	}
-
 	c.Query = node.(*SubqueryExpr)
 	return v.Leave(c)
 }
@@ -1753,7 +1739,6 @@ func (n *SetOprSelectList) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetOprSelectList)
-
 	if n.With != nil {
 		node, ok := n.With.Accept(v)
 		if !ok {
@@ -1871,7 +1856,6 @@ func (n *SetOprStmt) Accept(v Visitor) (Node, bool) {
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-
 	if n.With != nil {
 		node, ok := n.With.Accept(v)
 		if !ok {
@@ -1935,7 +1919,6 @@ func (n *Assignment) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Column = node.(*ColumnName)
 	node, ok = n.Expr.Accept(v)
 	if !ok {
@@ -1971,7 +1954,6 @@ func (n *ColumnNameOrUserVar) Accept(v Visitor) (node Node, ok bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ColumnNameOrUserVar)
-
 	if n.ColumnName != nil {
 		node, ok = n.ColumnName.Accept(v)
 		if !ok {
@@ -2113,7 +2095,6 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*LoadDataStmt)
-
 	if n.Table != nil {
 		node, ok := n.Table.Accept(v)
 		if !ok {
@@ -2326,7 +2307,6 @@ func (n *ImportIntoStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ImportIntoStmt)
-
 	if n.Table != nil {
 		node, ok := n.Table.Accept(v)
 		if !ok {
@@ -2602,7 +2582,6 @@ func (n *InsertStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*InsertStmt)
-
 	if n.Select != nil {
 		node, ok := n.Select.Accept(v)
 		if !ok {
@@ -2815,7 +2794,6 @@ func (n *DeleteStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*DeleteStmt)
-
 	if n.With != nil {
 		node, ok := n.With.Accept(v)
 		if !ok {
@@ -2942,7 +2920,6 @@ func (n *NonTransactionalDMLStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*NonTransactionalDMLStmt)
-
 	if n.ShardColumn != nil {
 		node, ok := n.ShardColumn.Accept(v)
 		if !ok {
@@ -3072,7 +3049,6 @@ func (n *UpdateStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*UpdateStmt)
-
 	if n.With != nil {
 		node, ok := n.With.Accept(v)
 		if !ok {
@@ -3167,7 +3143,6 @@ func (n *Limit) Accept(v Visitor) (Node, bool) {
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-
 	if n.Count != nil {
 		node, ok := n.Count.Accept(v)
 		if !ok {
@@ -3700,7 +3675,6 @@ func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ShowStmt)
-
 	if n.Table != nil {
 		node, ok := n.Table.Accept(v)
 		if !ok {
@@ -3837,7 +3811,6 @@ func (n *WindowSpec) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*WindowSpec)
-
 	if n.PartitionBy != nil {
 		node, ok := n.PartitionBy.Accept(v)
 		if !ok {
@@ -3938,7 +3911,6 @@ func (n *PartitionByClause) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*PartitionByClause)
-
 	for i, val := range n.Items {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -4001,7 +3973,6 @@ func (n *FrameClause) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Extent.Start = *node.(*FrameBound)
 	node, ok = n.Extent.End.Accept(v)
 	if !ok {
@@ -4076,7 +4047,6 @@ func (n *FrameBound) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*FrameBound)
-
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
@@ -4145,7 +4115,6 @@ func (n *DistributeTableStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Table = node.(*TableName)
 	return v.Leave(n)
 }
@@ -4232,7 +4201,6 @@ func (n *SplitRegionStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Table = node.(*TableName)
 
 	if n.SplitOpt != nil {
@@ -4339,7 +4307,6 @@ func (n *SplitIndexOption) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.SplitOpt = node.(*SplitOption)
 
 	return v.Leave(n)
@@ -4407,7 +4374,6 @@ func (n *AsOfClause) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.TsExpr = node.(ExprNode)
 	return v.Leave(n)
 }

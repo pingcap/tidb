@@ -187,7 +187,6 @@ func (n *AnalyzeTableStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*AnalyzeTableStmt)
-
 	for i, val := range n.TableNames {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -245,7 +244,6 @@ func (n *DropStatsStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropStatsStmt)
-
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -308,7 +306,6 @@ func (n *LockStatsStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*LockStatsStmt)
-
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -347,7 +344,6 @@ func (n *UnlockStatsStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*UnlockStatsStmt)
-
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {

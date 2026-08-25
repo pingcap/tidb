@@ -137,7 +137,6 @@ func (n *BetweenExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Expr = node.(ExprNode)
 
 	node, ok = n.Left.Accept(v)
@@ -257,7 +256,6 @@ func (n *BinaryOperationExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.L = node.(ExprNode)
 
 	node, ok = n.R.Accept(v)
@@ -303,7 +301,6 @@ func (n *WhenClause) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Expr = node.(ExprNode)
 
 	node, ok = n.Result.Accept(v)
@@ -381,7 +378,6 @@ func (n *CaseExpr) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*CaseExpr)
-
 	if n.Value != nil {
 		node, ok := n.Value.Accept(v)
 		if !ok {
@@ -447,7 +443,6 @@ func (n *SubqueryExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Query = node.(ResultSetNode)
 	return v.Leave(n)
 }
@@ -503,7 +498,6 @@ func (n *CompareSubqueryExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.L = node.(ExprNode)
 	node, ok = n.R.Accept(v)
 	if !ok {
@@ -550,7 +544,6 @@ func (n *TableNameExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Name = node.(*TableName)
 	return v.Leave(n)
 }
@@ -654,7 +647,6 @@ func (n *ColumnNameExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Name = node.(*ColumnName)
 	return v.Leave(n)
 }
@@ -732,7 +724,6 @@ func (n *ExistsSubqueryExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Sel = node.(ExprNode)
 	return v.Leave(n)
 }
@@ -807,7 +798,6 @@ func (n *PatternInExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Expr = node.(ExprNode)
 	for i, val := range n.List {
 		node, ok = val.Accept(v)
@@ -869,7 +859,6 @@ func (n *IsNullExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Expr = node.(ExprNode)
 	return v.Leave(n)
 }
@@ -933,7 +922,6 @@ func (n *IsTruthExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Expr = node.(ExprNode)
 	return v.Leave(n)
 }
@@ -1025,7 +1013,6 @@ func (n *PatternLikeOrIlikeExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*PatternLikeOrIlikeExpr)
-
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
@@ -1089,7 +1076,6 @@ func (n *ParenthesesExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ParenthesesExpr)
-
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
@@ -1272,7 +1258,6 @@ func (n *PositionExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*PositionExpr)
-
 	if n.P != nil {
 		node, ok := n.P.Accept(v)
 		if !ok {
@@ -1340,7 +1325,6 @@ func (n *PatternRegexpExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Expr = node.(ExprNode)
 	node, ok = n.Pattern.Accept(v)
 	if !ok {
@@ -1386,7 +1370,6 @@ func (n *RowExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*RowExpr)
-
 	for i, val := range n.Values {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -1434,7 +1417,6 @@ func (n *UnaryOperationExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.V = node.(ExprNode)
 	return v.Leave(n)
 }
@@ -1476,7 +1458,6 @@ func (n *ValuesExpr) Accept(v Visitor) (Node, bool) {
 	}
 	// `node` may be *ast.ValueExpr, to avoid panic, we write `_` and do not use
 	// it.
-
 	n.Column, _ = node.(*ColumnNameExpr)
 	return v.Leave(n)
 }
@@ -1547,7 +1528,6 @@ func (n *VariableExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Value = node.(ExprNode)
 	return v.Leave(n)
 }
@@ -1642,7 +1622,6 @@ func (n *MatchAgainst) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*MatchAgainst)
-
 	for i, colName := range n.ColumnNames {
 		newColName, ok := colName.Accept(v)
 		if !ok {
@@ -1694,7 +1673,6 @@ func (n *SetCollationExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-
 	n.Expr = node.(ExprNode)
 	return v.Leave(n)
 }
