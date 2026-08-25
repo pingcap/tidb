@@ -370,7 +370,40 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       tests (their behavioral responsibility lives upstream now). Gated on
       upstream unifying `Transaction`'s buffer with the memdb
       (`GetMemBuffer` surface) for exact Go semantics without the
-      drain-at-commit bridge.
+      drain-at-commit bridge. **That gate cleared** (upstream `05b350c`),
+      and the driver/opener side is built; what remains is the consumer
+      chain below.
+- [ ] **The consumer chain, measured by experiment (2026-08-25).** Flipping a
+      store's opener type produces no fallout by itself — the cascade runs
+      through a chain of *types that hold the opener*, each of which must
+      move with it:
+      `RealTiKvSessionFactory` (`real_tikv_node/mod.rs`, 25
+      `transaction_opener` sites, 5 generic params of which 3 are the
+      opener's) → `SessionTransaction` (`session_transaction.rs`, small) →
+      `MultiStatementTransaction` (`tidb-exec`, 1,463 lines, 18 generic
+      sites, 4 referencing files) → `RealOptimisticTransaction`.
+      Transforming the factory alone leaves 30 errors, nearly all of them
+      the next link in that chain, so the sweep has to run bottom-up in one
+      pass.
+      The transaction-method mapping for the deepest link is complete —
+      `start_ts`, `locked_keys`, `is_pessimistic`, `set_commit_protocol`,
+      `pessimistic_rollback`, `finish_without_writes`, `commit`,
+      `snapshot_get`, `into_two_pc`, `advance_for_update_ts`,
+      `acquire_locks` all have driver equivalents — but
+      `MultiStatementTransaction` is not mechanical: it carries an
+      `OpenTransaction` mode enum, a lock keep-alive, Go's pessimistic
+      lock-value cache (`TxnCtx.SetPessimisticLockCache`), and TiDB's own
+      `TransactionMutationBuffer` layered above the memdb. Getting its DML
+      semantics right is reasoning work, not substitution, and it wants its
+      own session with the statement tests in view.
+      Migration style that is working and should continue: **strangler**.
+      Parallel engine-backed implementations beside the coordinator-backed
+      ones (`TikvMetaSnapshot` beside `TransactionMetaSnapshot`,
+      `load_catalog_from_tikv_cluster` beside `load_catalog_from_cluster`,
+      `publish_bootstrap_over_tikv` beside `publish_bootstrap`), so the tree
+      stays compiling and sites move one at a time. The old implementations
+      become unreferenced as the chain completes, and the deletion is then
+      mechanical.
 - [ ] Phase 4: full-workspace build, targeted + aggregate test pass, `make
       bazel_prepare` (Go-file-count is unaffected, but Bazel metadata for the
       Rust crates does not apply — confirm scope; see `Concrete Steps`),
