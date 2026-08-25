@@ -151,11 +151,16 @@ func decodeSubtaskMeta(ctx context.Context, subtask *proto.Subtask) (*SubtaskMet
 // packSubtasks), so a single fixed worker count either over-concurrents big
 // chunks (bandwidth contention) or under-uses small ones (idle capacity while
 // latency-bound). Instead, each chunk is admitted against two caps sized to
-// the node's CPU: a byte-weighted cap (weightCap = nodeCPU * chunkSize, the
-// number of chunkSize-sized streams that saturate a node's egress bandwidth)
-// that a large chunk consumes almost entirely by itself, and a flat count cap
-// (countCap) that bounds how many small, near-zero-weight chunks can run at
-// once regardless of how little bandwidth they use.
+// the node's CPU: a byte-weighted cap (weightCap = nodeCPU * FileSize, one
+// FileSize-sized stream per CPU — a single chunk writer already saturates
+// roughly one core's share of egress bandwidth once it's writing a full
+// output file, so more concurrent big chunks than that just burns memory for
+// no extra throughput) that a chunk at or above FileSize consumes almost
+// entirely by itself, and a flat count cap (countCap) that bounds how many
+// small, near-zero-weight chunks can run at once regardless of how little
+// bandwidth they use. This assumes each open chunk writer's own memory stays
+// well under nodeMem/nodeCPU (see uploadConcurrency/uploadPartSize) — the
+// weight budget doesn't itself account for memory, it relies on that holding.
 func (e *dumpStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	stMeta, err := decodeSubtaskMeta(ctx, subtask)
@@ -163,7 +168,8 @@ func (e *dumpStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtas
 		return err
 	}
 	nodeCPU := int64(max(1, int(e.GetResource().CPU.Capacity())))
-	weightCap := nodeCPU * chunkSize
+	fileSize := max(int64(1), e.taskMeta.FileSize)
+	weightCap := nodeCPU * fileSize
 	countCap := countCapMultiplier * nodeCPU
 	e.logger.Info("run export dump subtask",
 		zap.Int64("subtask-id", subtask.ID),
@@ -194,7 +200,7 @@ func (e *dumpStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtas
 	countSem := semaphore.NewWeighted(countCap)
 	eg, egCtx := errgroup.WithContext(ctx)
 	for _, c := range stMeta.Chunks {
-		w := max(int64(1), min(c.Size, weightCap))
+		w := max(int64(1), min(c.Size, fileSize))
 		if err := weightSem.Acquire(egCtx, w); err != nil {
 			break
 		}

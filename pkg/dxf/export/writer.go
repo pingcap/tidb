@@ -33,10 +33,16 @@ import (
 )
 
 // Per-file multipart upload: a cross-region write is per-connection RTT-bound,
-// so a file needs many parts in flight to use the bandwidth.
+// so a file needs several parts in flight to use the bandwidth. Measured
+// single-stream on a same-region S3 bucket: even 2x5MiB (S3's minimum part
+// size) sustains ~83MiB/s, well past the ~60MiB/s per-core target: 4x5MiB
+// keeps a real margin (~140MiB/s) while using an order of magnitude less
+// in-flight buffer (20MiB) than a naively large setting would, since this
+// buffer is allocated per concurrently-open file and multiplies by however
+// many chunks a node runs at once.
 const (
-	uploadConcurrency = 16
-	uploadPartSize    = 8 * 1024 * 1024
+	uploadConcurrency = 4
+	uploadPartSize    = 5 * 1024 * 1024
 )
 
 // csvConfig returns the default CSV framing, byte-compatible with Dumpling's
