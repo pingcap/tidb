@@ -1862,6 +1862,20 @@ fn round_avg_result(kind: &AggKind, output_type: &FieldType, value: Datum) -> Da
     let Datum::Decimal(value) = value else {
         return value;
     };
+    if matches!(kind, AggKind::Sum)
+        && output_type.code() == FieldTypeCode::NewDecimal
+        && output_type.decimal() != UNSPECIFIED_LENGTH
+        && value.scale() > output_type.decimal() as u32
+    {
+        // Go `baseSumAggFunc.AppendFinalResult2Chunk` writes the accumulated
+        // decimal through the SUM result's own FieldType, so the appended
+        // value carries the inferred scale. Division feeds SUM full-precision
+        // quotients on purpose (UnspecifiedLength into MyDecimal.Div), which
+        // makes this final rounding the only place that scale becomes real --
+        // without it a `SUM(a/b)` datum keeps 9+ fractional digits where Go
+        // holds 6 (TPC-DS q66 comparisons).
+        return Datum::Decimal(value.round_to_scale(output_type.decimal() as i32));
+    }
     if !matches!(kind, AggKind::Avg) {
         return Datum::Decimal(value);
     }
