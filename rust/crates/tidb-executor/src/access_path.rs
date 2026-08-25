@@ -1832,42 +1832,28 @@ impl IndexRangeSourceExec {
                 ready: Some(outcome),
             });
         }
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let worker_handles = handles.clone();
         let worker = move || {
-            let outcome = crate::kv_table::KvTable::finish_rows_by_handles(
-                &worker_handles,
-                staged,
-            )
+            crate::kv_table::KvTable::finish_rows_by_handles(&worker_handles, staged)
             .map_err(|error| format!("{error:?}"))
             .map(|answer| match answer {
-                Some((rows, applied, wire_rows)) => LookupFetch::Remote(rows, applied, wire_rows),
+                Some((rows, applied, wire_rows)) => {
+                    LookupFetch::Remote(rows, applied, wire_rows)
+                }
                 None => LookupFetch::LocalFallback,
-            });
-            sender.send(outcome).is_ok()
+            })
         };
-        let spawned = std::thread::Builder::new()
-            .name("idx-lookup".to_owned())
-            .spawn(worker);
-        match spawned {
-            Ok(_handle) => Ok(LookupBatchJob {
-                handles,
-                receiver: Some(receiver),
-                ready: None,
-            }),
-            // No worker thread available: drain right here, serially -- the
-            // answer is identical, only the overlap is lost.
-            Err(_) => {
-                let payload = receiver.recv().map_err(|_| {
-                    ExecError::unsupported("remote table lookup failed: fetch worker exited")
-                })?;
-                Ok(LookupBatchJob {
-                    handles,
-                    receiver: None,
-                    ready: Some(payload),
-                })
-            }
-        }
+        // Reuse the executor's persistent pool instead of creating one native
+        // thread for every lookup window. The task owns all non-Send storage
+        // state, and only its result crosses the channel, exactly as in the
+        // dedicated-thread path. A queued task has the same bounded pipeline
+        // width and ordered emission; it only avoids repeated pthread setup.
+        let receiver = crate::worker_pool::spawn(worker);
+        Ok(LookupBatchJob {
+            handles,
+            receiver: Some(receiver),
+            ready: None,
+        })
     }
 
     /// Abandons in-flight lookup fetches. Dropping the receivers tells each

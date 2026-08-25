@@ -964,7 +964,10 @@ fn points_from_in(
                 (collation.key(string.bytes()), value)
             })
             .collect::<Vec<_>>();
-        keyed.sort_by(|left, right| left.0.cmp(&right.0));
+        // Go's `slices.SortFunc` is an unstable sort. The collation key is
+        // the complete ordering identity here, so equal-key endpoints may be
+        // permuted without changing the subsequent duplicate elimination.
+        keyed.sort_unstable_by(|left, right| left.0.cmp(&right.0));
         keyed.dedup_by(|left, right| left.0 == right.0);
 
         let mut points = Vec::with_capacity(keyed.len() * 2);
@@ -980,7 +983,10 @@ fn points_from_in(
         points.push(Point::start(value.clone(), false));
         points.push(Point::end(value, false));
     }
-    points.sort_by(|left, right| point_cmp(left, right, collation));
+    // Go's ranger uses `slices.SortFunc`; the point comparator already orders
+    // interval side before value-equal duplicates, so stability is not part
+    // of the range contract and an unstable sort avoids merge-buffer work.
+    points.sort_unstable_by(|left, right| point_cmp(left, right, collation));
     // Go's duplicate removal: keep an endpoint only when it alternates
     // start/end with the one before it.
     let mut cur = 0;

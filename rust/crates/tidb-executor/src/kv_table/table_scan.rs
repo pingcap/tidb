@@ -852,7 +852,7 @@ impl KvTable {
     ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64)>, KvTableError> {
         let wire_rows = staged.cursor.rows_returned();
         let predicates_applied = staged.cursor.predicates_applied();
-        let mut rows = Vec::new();
+        let mut rows = Vec::with_capacity(handles.len());
         // This helper asks the remote cursor to retain the synthetic
         // `_tidb_rowid` appended by `pushdown_row_cursor_with_context`.
         // Ordinary consumers intentionally truncate that transport-only
@@ -869,7 +869,16 @@ impl KvTable {
             rows.push((handle, row));
         }
         let wire_rows = staged.cursor.rows_returned().saturating_sub(wire_rows);
-        rows.sort_by_key(|(handle, _)| handles.iter().position(|candidate| candidate == handle));
+        // The coprocessor returns rows in record-key order, while the lookup
+        // executor must restore the index window's handle order. Keep the
+        // source order in a map once instead of scanning `handles` for every
+        // returned row (the old position lookup was O(n²) for a large window).
+        let positions = handles
+            .iter()
+            .enumerate()
+            .map(|(position, handle)| (handle, position))
+            .collect::<BTreeMap<_, _>>();
+        rows.sort_by_key(|(handle, _)| positions.get(handle).copied());
         Ok(Some((rows, predicates_applied, wire_rows)))
     }
 
