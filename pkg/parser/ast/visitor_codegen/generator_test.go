@@ -47,7 +47,9 @@ func TestGenerateTraversalGrammar(t *testing.T) {
 	}
 	for _, exact := range []string{
 		`func (n *LeafNode) AcceptInPlace(v InPlaceVisitor) bool {
-	v.Enter(n)
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
 	return v.Leave(n)
 }`,
 		`func (n *InlineNode) AcceptInPlace(v InPlaceVisitor) bool {
@@ -135,7 +137,7 @@ func TestGenerateTraversalGrammar(t *testing.T) {
 	}
 	typeCheckFixture(t, traversalFixture, result.Source)
 
-	t.Run("ignored_composite_skip", func(t *testing.T) {
+	t.Run("ignored_leaf_and_composite_skip", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFixture(t, dir, "ignored_skip.go", ignoredCompositeSkipFixture)
 
@@ -146,7 +148,9 @@ func TestGenerateTraversalGrammar(t *testing.T) {
 		})
 		for _, exact := range []string{
 			`func (n *ConcreteChild) AcceptInPlace(v InPlaceVisitor) bool {
-	v.Enter(n)
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
 	return v.Leave(n)
 }`,
 			`func (n *CompositeNode) AcceptInPlace(v InPlaceVisitor) bool {

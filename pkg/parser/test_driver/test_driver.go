@@ -190,7 +190,9 @@ func (n *ValueExpr) Accept(v ast.Visitor) (ast.Node, bool) {
 
 // AcceptInPlace implements direct in-place traversal for ast.Walk.
 func (n *ValueExpr) AcceptInPlace(v ast.InPlaceVisitor) bool {
-	v.Enter(n)
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
 	return v.Leave(n)
 }
 
@@ -232,7 +234,9 @@ func (n *ParamMarkerExpr) Accept(v ast.Visitor) (ast.Node, bool) {
 
 // AcceptInPlace implements direct in-place traversal for ast.Walk.
 func (n *ParamMarkerExpr) AcceptInPlace(v ast.InPlaceVisitor) bool {
-	v.Enter(n)
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
 	return v.Leave(n)
 }
 

@@ -523,6 +523,7 @@ func TestWalkWritebackInventory(t *testing.T) {
 	var cacheIssues []string
 	var forbiddenSymbols []string
 	var leafAcceptMethods []leafAcceptMethod
+	var acceptInPlaceContractViolations []string
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -570,11 +571,12 @@ func TestWalkWritebackInventory(t *testing.T) {
 				}
 				legacyHelperCount++
 			case "AcceptInPlace":
-				if function.Type.Params == nil || len(function.Type.Params.List) != 1 ||
-					renderExpr(t, fset, function.Type.Params.List[0].Type) != "InPlaceVisitor" {
-					continue
-				}
 				acceptInPlaceCount++
+				if !hasAcceptInPlaceSkipChildrenGuard(function) {
+					acceptInPlaceContractViolations = append(acceptInPlaceContractViolations, fmt.Sprintf(
+						"%s:%d %s", name, fset.Position(function.Pos()).Line, renderExpr(t, fset, function.Recv.List[0].Type),
+					))
+				}
 				continue
 			default:
 				continue
@@ -635,6 +637,9 @@ func TestWalkWritebackInventory(t *testing.T) {
 	require.Equal(t, 140, functionsWithWritebacks)
 	require.Empty(t, cacheIssues, "replacement-mode cache issues: %s", formatCacheIssues(cacheIssues))
 	require.Empty(t, forbiddenSymbols, "removed in-place replacement symbols remain: %s", strings.Join(forbiddenSymbols, ", "))
+	require.Empty(t, acceptInPlaceContractViolations,
+		"AcceptInPlace methods must branch on Enter's skipChildren result and call Leave: %s",
+		strings.Join(acceptInPlaceContractViolations, ", "))
 	require.Len(t, candidates, 271, "writeback candidates: %s", formatWritebackCandidates(candidates))
 
 	var guarded []writebackCandidate
@@ -645,6 +650,48 @@ func TestWalkWritebackInventory(t *testing.T) {
 	}
 	require.Empty(t, guarded, "guarded writebacks: %s", formatWritebackCandidates(guarded))
 	require.Equal(t, 271, len(candidates)-len(guarded), "unguarded writebacks: %s", formatWritebackCandidates(candidates))
+}
+
+func hasAcceptInPlaceSkipChildrenGuard(function *goast.FuncDecl) bool {
+	if len(function.Recv.List) != 1 || len(function.Recv.List[0].Names) != 1 ||
+		function.Type.Params == nil || len(function.Type.Params.List) != 1 || len(function.Type.Params.List[0].Names) != 1 ||
+		len(function.Body.List) == 0 {
+		return false
+	}
+	receiverName := function.Recv.List[0].Names[0].Name
+	visitorName := function.Type.Params.List[0].Names[0].Name
+
+	guard, ok := function.Body.List[0].(*goast.IfStmt)
+	if !ok || guard.Else != nil || len(guard.Body.List) != 1 {
+		return false
+	}
+	assignment, ok := guard.Init.(*goast.AssignStmt)
+	if !ok || assignment.Tok != token.DEFINE || len(assignment.Lhs) != 1 || len(assignment.Rhs) != 1 {
+		return false
+	}
+	skipChildren, ok := assignment.Lhs[0].(*goast.Ident)
+	if !ok || !isIdentifierNamed(guard.Cond, skipChildren.Name) ||
+		!isMethodCall(assignment.Rhs[0], visitorName, "Enter", receiverName) || countMethodCalls(function.Body, visitorName, "Enter") != 1 {
+		return false
+	}
+	returnStatement, ok := guard.Body.List[0].(*goast.ReturnStmt)
+	return ok && len(returnStatement.Results) == 1 && isMethodCall(returnStatement.Results[0], visitorName, "Leave", receiverName)
+}
+
+func countMethodCalls(body *goast.BlockStmt, receiver, method string) int {
+	count := 0
+	goast.Inspect(body, func(node goast.Node) bool {
+		call, ok := node.(*goast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*goast.SelectorExpr)
+		if ok && selector.Sel.Name == method && isIdentifierNamed(selector.X, receiver) {
+			count++
+		}
+		return true
+	})
+	return count
 }
 
 func hasChildTraversalCall(body *goast.BlockStmt) bool {
@@ -695,12 +742,16 @@ func isLeafAcceptFastPath(function *goast.FuncDecl) bool {
 }
 
 func isVisitorCall(expr goast.Expr, method, argument string) bool {
+	return isMethodCall(expr, "v", method, argument)
+}
+
+func isMethodCall(expr goast.Expr, receiver, method, argument string) bool {
 	call, ok := expr.(*goast.CallExpr)
 	if !ok || len(call.Args) != 1 || !isIdentifierNamed(call.Args[0], argument) {
 		return false
 	}
 	selector, ok := call.Fun.(*goast.SelectorExpr)
-	return ok && selector.Sel.Name == method && isIdentifierNamed(selector.X, "v")
+	return ok && selector.Sel.Name == method && isIdentifierNamed(selector.X, receiver)
 }
 
 func isIdentifierNamed(expr goast.Expr, name string) bool {

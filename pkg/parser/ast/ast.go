@@ -42,7 +42,9 @@ type Node interface {
 	// writebacks that would otherwise make in-place traversal significantly slower.
 	// Implementations must use the same traversal order and control flow as Accept,
 	// but must not assign visitor callback results back to the AST. The generator
-	// derives AcceptInPlace implementations from Accept to keep them in sync.
+	// derives AcceptInPlace implementations from Accept to keep them in sync. Every
+	// implementation must honor Enter's skipChildren result by skipping children
+	// while still calling Leave for the current node.
 	AcceptInPlace(v InPlaceVisitor) bool
 	// Text returns the utf8 encoding text of the element.
 	Text() string
@@ -168,7 +170,8 @@ type Visitor interface {
 // synchronization with concurrent access are the caller's responsibility.
 type InPlaceVisitor interface {
 	// Enter is called before children nodes are visited.
-	// skipChildren returns true means children nodes should be skipped.
+	// When skipChildren is true, AcceptInPlace must skip all children and call Leave
+	// for the current node.
 	Enter(n Node) (skipChildren bool)
 	// Leave is called after children nodes have been visited.
 	// ok returns false to stop visiting.

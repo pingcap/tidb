@@ -19,12 +19,19 @@ go_test(
     name = "parser_driver_test",
     timeout = "short",
     srcs = [
+        "accept_in_place_test.go",
         "main_test.go",
         "value_expr_test.go",
     ],
     embed = [":parser_driver"],
+    embedsrcs = [
+        "accept_in_place_test.go",
+        "main_test.go",
+        "value_expr.go",
+        "value_expr_test.go",
+    ],
     flaky = True,
-    shard_count = 2,
+    shard_count = 3,
     deps = [
         "//pkg/parser/ast",
         "//pkg/parser/format",

@@ -586,33 +586,19 @@ func transformAccept(pkg *parsedPackage, filename string, fn *ast.FuncDecl) (*as
 			receiverVar: {typ: &ast.StarExpr{X: ast.NewIdent(receiverName)}},
 		},
 	}
-	standardLeaf := isStandardLeafAccept(fn)
 	body, err := transformer.transformBlock(fn.Body)
 	if err != nil {
 		return nil, err
 	}
 	// Legacy Accept methods may ignore Enter's skip result for compatibility. AcceptInPlace
-	// is a traversal framework API, so synthesize the missing skip branch for composites.
-	if transformer.ignoredEnterCall != nil && hasInPlaceChildTraversal(body) {
+	// is a traversal framework API, so every generated method must honor that result.
+	if transformer.ignoredEnterCall != nil {
 		if !addSkipChildrenBranch(body, transformer.ignoredEnterCall, visitorVar, receiverVar) {
 			return nil, transformer.errorAt(transformer.ignoredEnterCall.Pos(), "failed to add the missing Visitor.Enter skip check")
 		}
 	}
 	if err := transformer.validateTransformedBody(body); err != nil {
 		return nil, err
-	}
-	// A leaf calls Leave for either Enter result, so direct traversal does not need the skip branch.
-	if standardLeaf {
-		body = &ast.BlockStmt{List: []ast.Stmt{
-			&ast.ExprStmt{X: &ast.CallExpr{
-				Fun:  &ast.SelectorExpr{X: ast.NewIdent(visitorVar), Sel: ast.NewIdent("Enter")},
-				Args: []ast.Expr{ast.NewIdent(receiverVar)},
-			}},
-			&ast.ReturnStmt{Results: []ast.Expr{&ast.CallExpr{
-				Fun:  &ast.SelectorExpr{X: ast.NewIdent(visitorVar), Sel: ast.NewIdent("Leave")},
-				Args: []ast.Expr{ast.NewIdent(receiverVar)},
-			}}},
-		}}
 	}
 	return &ast.FuncDecl{
 		Recv: fn.Recv,
@@ -735,23 +721,6 @@ func (t *methodTransformer) transformBlock(block *ast.BlockStmt) (*ast.BlockStmt
 	}
 	result = removeUnusedMakeAssignments(result)
 	return &ast.BlockStmt{List: result}, nil
-}
-
-func hasInPlaceChildTraversal(body *ast.BlockStmt) bool {
-	found := false
-	ast.Inspect(body, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		selector, ok := call.Fun.(*ast.SelectorExpr)
-		if ok && (selector.Sel.Name == "AcceptInPlace" || selector.Sel.Name == "acceptInPlace") {
-			found = true
-			return false
-		}
-		return true
-	})
-	return found
 }
 
 func addSkipChildrenBranch(body *ast.BlockStmt, enterCall *ast.CallExpr, visitorVar, receiverVar string) bool {
@@ -1310,65 +1279,6 @@ type childCall struct {
 	receiver ast.Expr
 	nodeName string
 	okName   string
-}
-
-func isStandardLeafAccept(method *ast.FuncDecl) bool {
-	if method == nil || method.Recv == nil || len(method.Recv.List) != 1 || len(method.Recv.List[0].Names) != 1 ||
-		method.Type.Params == nil || len(method.Type.Params.List) != 1 || len(method.Type.Params.List[0].Names) != 1 ||
-		method.Body == nil || len(method.Body.List) != 4 {
-		return false
-	}
-	receiverName := method.Recv.List[0].Names[0].Name
-	visitorName := method.Type.Params.List[0].Names[0].Name
-
-	enter, ok := method.Body.List[0].(*ast.AssignStmt)
-	if !ok || enter.Tok != token.DEFINE || len(enter.Lhs) != 2 || len(enter.Rhs) != 1 {
-		return false
-	}
-	enteredName := identName(enter.Lhs[0])
-	skipName := identName(enter.Lhs[1])
-	enterCall, ok := enter.Rhs[0].(*ast.CallExpr)
-	if !ok || enteredName == "" || skipName == "" || !isMethodCall(enterCall, visitorName, "Enter") ||
-		len(enterCall.Args) != 1 || !isIdent(enterCall.Args[0], receiverName) {
-		return false
-	}
-
-	skip, ok := method.Body.List[1].(*ast.IfStmt)
-	if !ok || skip.Init != nil || skip.Else != nil || !isIdent(skip.Cond, skipName) || len(skip.Body.List) != 1 {
-		return false
-	}
-	skipReturn, ok := skip.Body.List[0].(*ast.ReturnStmt)
-	if !ok || len(skipReturn.Results) != 1 {
-		return false
-	}
-	skipLeave, ok := skipReturn.Results[0].(*ast.CallExpr)
-	if !ok || !isMethodCall(skipLeave, visitorName, "Leave") || len(skipLeave.Args) != 1 || !isIdent(skipLeave.Args[0], enteredName) {
-		return false
-	}
-
-	rebind, ok := method.Body.List[2].(*ast.AssignStmt)
-	if !ok || rebind.Tok != token.ASSIGN || len(rebind.Lhs) != 1 || len(rebind.Rhs) != 1 || !isIdent(rebind.Lhs[0], receiverName) {
-		return false
-	}
-	assertion, ok := rebind.Rhs[0].(*ast.TypeAssertExpr)
-	if !ok || !isIdent(assertion.X, enteredName) {
-		return false
-	}
-	pointer, ok := assertion.Type.(*ast.StarExpr)
-	if !ok {
-		return false
-	}
-	receiverType, ok := anyReceiverTypeName(method)
-	if !ok || !isIdent(pointer.X, receiverType) {
-		return false
-	}
-
-	leave, ok := method.Body.List[3].(*ast.ReturnStmt)
-	if !ok || len(leave.Results) != 1 {
-		return false
-	}
-	leaveCall, ok := leave.Results[0].(*ast.CallExpr)
-	return ok && isMethodCall(leaveCall, visitorName, "Leave") && len(leaveCall.Args) == 1 && isIdent(leaveCall.Args[0], receiverName)
 }
 
 func childAssignment(statement ast.Stmt, visitor string) (childCall, bool) {
