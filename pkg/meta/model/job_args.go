@@ -1097,6 +1097,9 @@ type AlterTableModeArgs struct {
 	TableMode TableMode `json:"table_mode,omitempty"`
 	SchemaID  int64     `json:"schema_id,omitempty"`
 	TableID   int64     `json:"table_id,omitempty"`
+	// ExpectedRevision, when non-nil, is checked against the table's current
+	// Revision at job-execution time; see AlterTableModeTarget.ExpectedRevision.
+	ExpectedRevision *uint64 `json:"expected_revision,omitempty"`
 }
 
 func (a *AlterTableModeArgs) getArgsV1(*Job) []any {

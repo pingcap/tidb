@@ -5918,12 +5918,13 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 	}
 
 	job, jobArgs, noop, err := jobsubmit.BuildAlterTableModeJob(sctx, model.AlterTableModeTarget{
-		SchemaID:    args.SchemaID,
-		SchemaName:  schema.Name,
-		TableID:     args.TableID,
-		TableName:   table.Meta().Name,
-		CurrentMode: table.Meta().Mode,
-		TargetMode:  args.TableMode,
+		SchemaID:         args.SchemaID,
+		SchemaName:       schema.Name,
+		TableID:          args.TableID,
+		TableName:        table.Meta().Name,
+		CurrentMode:      table.Meta().Mode,
+		TargetMode:       args.TableMode,
+		ExpectedRevision: args.ExpectedRevision,
 	})
 	if err != nil {
 		return errors.Trace(err)

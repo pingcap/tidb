@@ -169,6 +169,7 @@ go_test(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/codec",
+        "//pkg/util/dbterror",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/etcd",
         "//pkg/util/mock",

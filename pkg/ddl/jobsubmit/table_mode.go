@@ -36,9 +36,10 @@ func BuildAlterTableModeJob(
 	}
 
 	args := &model.AlterTableModeArgs{
-		TableMode: target.TargetMode,
-		SchemaID:  target.SchemaID,
-		TableID:   target.TableID,
+		TableMode:        target.TargetMode,
+		SchemaID:         target.SchemaID,
+		TableID:          target.TableID,
+		ExpectedRevision: target.ExpectedRevision,
 	}
 	job := &model.Job{
 		Version:    model.JobVersion2,
