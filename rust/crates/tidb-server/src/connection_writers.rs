@@ -341,7 +341,20 @@ pub(crate) struct TcpResultSetSink<'a, O: ConnectionPacketOutput + ?Sized> {
     output: &'a mut O,
     sequence: u8,
     packets: usize,
+    /// Payloads accepted but not yet handed to the transport. Go's
+    /// `clientConn` buffers each command's response through one
+    /// `bufio.Writer` flushed once (`pkt.flush`), so a column-definition /
+    /// row / EOF sequence leaves the server as ONE stream write. Flushing
+    /// per packet instead makes every small frame race the client's delayed
+    /// ACK through any Nagle-enabled hop between the peers (~40ms stalls per
+    /// statement over real networks).
+    pending: Vec<Vec<u8>>,
+    pending_bytes: usize,
 }
+
+/// Coalesced frames leave for the wire once this many bytes queue up, so a
+/// huge result set streams instead of accumulating without bound.
+const SINK_COALESCE_FLUSH_BYTES: usize = 256 * 1024;
 
 impl<'a, O: ConnectionPacketOutput + ?Sized> TcpResultSetSink<'a, O> {
     pub(crate) const fn new(output: &'a mut O, sequence: u8) -> Self {
@@ -349,6 +362,8 @@ impl<'a, O: ConnectionPacketOutput + ?Sized> TcpResultSetSink<'a, O> {
             output,
             sequence,
             packets: 0,
+            pending: Vec::new(),
+            pending_bytes: 0,
         }
     }
 
@@ -358,18 +373,33 @@ impl<'a, O: ConnectionPacketOutput + ?Sized> TcpResultSetSink<'a, O> {
     pub(crate) const fn next_sequence(&self) -> u8 {
         self.sequence
     }
+
+    /// Hands every queued frame to the transport in ONE coalesced write.
+    fn flush_pending(&mut self) -> Result<(), SinkWriteError> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        let refs: Vec<&[u8]> = self.pending.iter().map(|payload| payload.as_slice()).collect();
+        let result = self.output.write_packets(self.sequence, &refs);
+        self.pending.clear();
+        self.pending_bytes = 0;
+        result.map(|sequence| {
+            self.sequence = sequence;
+        }).map_err(|error| SinkWriteError {
+            message: error.to_string(),
+            bytes_escaped: true,
+        })
+    }
 }
 
 impl<O: ConnectionPacketOutput + ?Sized> ResultSetSink for TcpResultSetSink<'_, O> {
     fn write_payload(&mut self, payload: &[u8]) -> Result<(), SinkWriteError> {
-        self.sequence = self
-            .output
-            .write_packet(self.sequence, payload)
-            .map_err(|error| SinkWriteError {
-                message: error.to_string(),
-                bytes_escaped: true,
-            })?;
         self.packets += 1;
+        self.pending_bytes += payload.len();
+        self.pending.push(payload.to_vec());
+        if self.pending_bytes >= SINK_COALESCE_FLUSH_BYTES {
+            self.flush_pending()?;
+        }
         Ok(())
     }
 
@@ -377,19 +407,18 @@ impl<O: ConnectionPacketOutput + ?Sized> ResultSetSink for TcpResultSetSink<'_, 
         if payloads.is_empty() {
             return Ok(());
         }
-        self.sequence = self
-            .output
-            .write_packets(self.sequence, payloads)
-            .map_err(|error| SinkWriteError {
-                message: error.to_string(),
-                bytes_escaped: true,
-            })?;
-        self.packets += payloads.len();
+        for payload in payloads {
+            self.write_payload(payload)?;
+        }
         Ok(())
     }
 
     fn packets_written(&self) -> usize {
         self.packets
+    }
+
+    fn flush(&mut self) -> Result<(), SinkWriteError> {
+        self.flush_pending()
     }
 }
 
