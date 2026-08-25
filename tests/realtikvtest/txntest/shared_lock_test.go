@@ -15,19 +15,61 @@
 package txntest
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
+
+type dropSuccessfulPessimisticLockResponseClient struct {
+	tikv.Client
+	startTS uint64
+	key     []byte
+	dropped atomic.Bool
+}
+
+func (c *dropSuccessfulPessimisticLockResponseClient) SendRequest(
+	ctx context.Context,
+	addr string,
+	req *tikvrpc.Request,
+	timeout time.Duration,
+) (*tikvrpc.Response, error) {
+	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
+	if err != nil || resp == nil || req.Type != tikvrpc.CmdPessimisticLock {
+		return resp, err
+	}
+	lockReq := req.PessimisticLock()
+	if lockReq.GetStartVersion() != c.startTS || len(lockReq.Mutations) != 1 {
+		return resp, nil
+	}
+	mutation := lockReq.Mutations[0]
+	if mutation.Op != kvrpcpb.Op_PessimisticLock || !bytes.Equal(mutation.Key, c.key) {
+		return resp, nil
+	}
+	lockResp, ok := resp.Resp.(*kvrpcpb.PessimisticLockResponse)
+	if !ok || lockResp.GetRegionError() != nil || len(lockResp.Errors) > 0 || !c.dropped.CompareAndSwap(false, true) {
+		return resp, nil
+	}
+	return &tikvrpc.Response{}, nil
+}
 
 func prepareForeignKeyTables(tk *testkit.TestKit) {
 	tk.MustExec("drop table if exists child, parent")
@@ -290,6 +332,87 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 		tk1.MustQuery("select * from child order by id").Check(testkit.Rows("1 1", "2 1"))
 		tk1.MustExec("admin check table parent")
 		tk1.MustExec("admin check table child")
+	})
+
+	t.Run("upgrade_error_keeps_explicit_transaction_usable", func(t *testing.T) {
+		if !kerneltype.IsNextGen() {
+			t.Skip("shared lock upgrade rollout acceptance is only required on next-gen")
+		}
+
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+		enableSharedLockUpgrade(tk)
+		prepareSharedLockUpgradeTables(tk, "")
+
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into child values(1, 1)")
+
+		const failpointName = "tikvclient/beforePessimisticLock"
+		testfailpoint.Enable(t, failpointName, `return("fail")`)
+		err := tk.ExecToErr("update parent set v = v + 1 where id = 1")
+		require.Error(t, err)
+		require.False(t, terror.ErrResultUndetermined.Equal(err), "unexpected error: %v", err)
+		require.ErrorContains(t, err, "injected failure at pessimistic lock")
+		require.True(t, tk.Session().GetSessionVars().InTxn())
+		require.NotNil(t, tk.Session().TxnInfo())
+		testfailpoint.Disable(t, failpointName)
+
+		tk.MustExec("update parent set v = v + 1 where id = 1")
+		tk.MustExec("commit")
+		tk.MustQuery("select * from parent order by id").Check(testkit.Rows("1 1", "2 0"))
+		tk.MustQuery("select * from child order by id").Check(testkit.Rows("1 1"))
+		tk.MustExec("admin check table parent")
+		tk.MustExec("admin check table child")
+	})
+
+	t.Run("applied_upgrade_with_missing_response_keeps_explicit_transaction_usable", func(t *testing.T) {
+		if !kerneltype.IsNextGen() {
+			t.Skip("shared lock upgrade rollout acceptance is only required on next-gen")
+		}
+
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+		enableSharedLockUpgrade(tk)
+		prepareSharedLockUpgradeTables(tk, "")
+
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into child values(1, 1)")
+		txn, err := tk.Session().Txn(false)
+		require.NoError(t, err)
+		parentTableID := external.GetTableByName(t, tk, "test", "parent").Meta().ID
+		upgradeKey := tablecodec.EncodeRowKeyWithHandle(parentTableID, kv.IntHandle(1))
+
+		tikvStore, ok := store.(interface {
+			GetTiKVClient() tikv.Client
+			SetTiKVClient(tikv.Client)
+		})
+		require.True(t, ok)
+		originalClient := tikvStore.GetTiKVClient()
+		droppingClient := &dropSuccessfulPessimisticLockResponseClient{
+			Client:  originalClient,
+			startTS: txn.StartTS(),
+			key:     upgradeKey,
+		}
+		tikvStore.SetTiKVClient(droppingClient)
+		t.Cleanup(func() { tikvStore.SetTiKVClient(originalClient) })
+		err = tk.ExecToErr("update parent set v = v + 1 where id = 1")
+		tikvStore.SetTiKVClient(originalClient)
+
+		require.Error(t, err)
+		require.False(t, terror.ErrResultUndetermined.Equal(err), "unexpected error: %v", err)
+		require.ErrorContains(t, err, "response body is missing")
+		require.True(t, droppingClient.dropped.Load())
+		require.True(t, tk.Session().GetSessionVars().InTxn())
+		require.NotNil(t, tk.Session().TxnInfo())
+
+		tk.MustExec("update parent set v = v + 1 where id = 1")
+		tk.MustExec("commit")
+		tk.MustQuery("select * from parent order by id").Check(testkit.Rows("1 1", "2 0"))
+		tk.MustQuery("select * from child order by id").Check(testkit.Rows("1 1"))
+		tk.MustExec("admin check table parent")
+		tk.MustExec("admin check table child")
 	})
 
 	t.Run("second_upgrader_returns_deadlock", func(t *testing.T) {
