@@ -200,6 +200,7 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 
 	cli := &client{
 		svc:          oss.NewClient(ossCfg, ossOptFns...),
+		presignSvc:   newPresignClient(ossCfg, ossOptFns...),
 		BucketPrefix: bucketPrefix,
 		options:      &qs,
 	}
@@ -219,11 +220,22 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 	}, nil
 }
 
+// newPresignClient disables SDK logging for presign operations. The OSS SDK sends
+// presigning through its request pipeline and logs the signed raw query at debug
+// level, exposing the URL signature and temporary security token. Copying the
+// resolved config keeps logging enabled for normal OSS operations.
+func newPresignClient(config *oss.Config, optFns ...func(*oss.Options)) *oss.Client {
+	presignConfig := config.Copy()
+	presignConfig.WithLogLevel(oss.LogOff)
+	return oss.NewClient(&presignConfig, optFns...)
+}
+
 func newOSSStorageForTest(svc API, options *backuppb.S3, accessRec *recording.AccessStats) *s3like.Storage {
 	bucketPrefix := storeapi.NewBucketPrefix(options.Bucket, options.Prefix)
 	return s3like.NewStorage(
 		&client{
 			svc:          svc,
+			presignSvc:   svc,
 			BucketPrefix: bucketPrefix,
 			options:      options,
 		},
