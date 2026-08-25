@@ -101,10 +101,32 @@ pub(crate) fn decorrelate_where(
                 .collect::<Vec<_>>();
             let pending_local = conjuncts
                 .iter()
-                .filter(|conjunct| exists(conjunct).is_none())
+                .filter(|conjunct| {
+                    exists(conjunct).is_none()
+                        && !crate::driver::subquery::expr_has_subquery(conjunct)
+                })
                 .map(|conjunct| (*conjunct).clone())
                 .collect::<Vec<_>>();
             let local_where = crate::driver::predicate_push_down::combined(&local);
+            // Correlated EXISTS below a boolean expression must be lifted by
+            // the enclosing Apply path before any leaf Selection is built.
+            // Keep only ordinary predicates in this physical source request;
+            // the complete local predicate remains as the residual above the
+            // semi join so its correlated children can be extracted there.
+            let local_pushdown = crate::driver::predicate_push_down::combined(
+                &local
+                    .iter()
+                    .filter(|conjunct| !crate::driver::subquery::expr_has_subquery(conjunct))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            );
+            let deferred_local = crate::driver::predicate_push_down::combined(
+                &local
+                    .iter()
+                    .filter(|conjunct| crate::driver::subquery::expr_has_subquery(conjunct))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            );
             // Go's Apply decorrelation starts from the preserved DataSource
             // after its ordinary local predicates. A candidate built from the
             // original SELECT may already include the semi predicate's
@@ -131,27 +153,50 @@ pub(crate) fn decorrelate_where(
                 .or(outer_rows_hint)
                 .or(candidate_outer_rows);
             let mut logical_outer_rows = initial_outer_rows;
-            let mut final_residual = local_where.clone();
+            let mut final_residual = deferred_local.clone();
             let mut physical_outer_scope = outer.clone();
             let mut consumed_outer_projection = false;
             for (position, (_, prepared, not)) in prepared.into_iter().enumerate() {
+                let mut inner_from = prepared
+                    .select
+                    .from
+                    .as_ref()
+                    .expect("prepared SELECT has FROM")
+                    .clone();
+                let mut inner_conditions = Vec::new();
+                let mut outer_conditions = Vec::new();
+                for condition in &prepared.conditions {
+                    // A condition which resolves entirely in the inner
+                    // scope belongs to the inner FROM tree. Keeping it on
+                    // that tree lets the normal join planner see the key
+                    // before it chooses a physical algorithm (q10's
+                    // date_dim/store_sales join is the important case).
+                    // Conditions mentioning the outer row stay on the
+                    // enclosing semi join's ON clause.
+                    if rewrite_expr_resolved(
+                        condition,
+                        &ScopeResolver {
+                            scope: &prepared.inner_scope,
+                        },
+                    )
+                    .is_ok()
+                    {
+                        inner_conditions.push((*condition).clone());
+                    } else {
+                        outer_conditions.push((*condition).clone());
+                    }
+                }
+                let inner_conditions =
+                    append_inner_join_conditions(&mut inner_from, inner_conditions);
                 let physical_join = tidb_ast::Join {
                     left: tidb_ast::JoinNode::Join(Box::new(outer_from.clone())),
-                    right: Some(tidb_ast::JoinNode::Join(Box::new(
-                        prepared
-                            .select
-                            .from
-                            .as_ref()
-                            .expect("prepared SELECT has FROM")
-                            .clone(),
-                    ))),
+                    right: Some(tidb_ast::JoinNode::Join(Box::new(inner_from))),
                     tp: tidb_ast::JoinType::Cross,
                     straight: false,
                     on: crate::driver::predicate_push_down::combined(
-                        &prepared
-                            .conditions
-                            .iter()
-                            .map(|condition| (*condition).clone())
+                        &outer_conditions
+                            .into_iter()
+                            .chain(inner_conditions)
                             .collect::<Vec<_>>(),
                     ),
                     using: Vec::new(),
@@ -160,7 +205,7 @@ pub(crate) fn decorrelate_where(
                 };
                 let mut physical_select = select.clone();
                 physical_select.from = Some(physical_join.clone());
-                physical_select.where_clause = local_where.clone();
+                physical_select.where_clause = local_pushdown.clone();
                 let offered = crate::driver::predicate_push_down::offered_conjuncts(
                     physical_select.where_clause.as_ref(),
                 );
@@ -233,7 +278,15 @@ pub(crate) fn decorrelate_where(
                 physical_outer_scope = planned_scope;
                 delivered = planned_delivered;
                 logical_outer_rows = next_outer_rows;
-                final_residual = rows.residual_where();
+                final_residual = match (deferred_local.clone(), rows.residual_where()) {
+                    (Some(local), Some(residual)) => Some(tidb_ast::Expr::Binary(
+                        tidb_ast::BinaryOp::LogicAnd,
+                        Box::new(local),
+                        Box::new(residual),
+                    )),
+                    (Some(local), None) => Some(local),
+                    (None, residual) => residual,
+                };
             }
             return Ok(DecorrelatedWhere {
                 source,
@@ -332,6 +385,37 @@ pub(crate) fn decorrelate_where(
         semi_join_count,
         consumed_outer_projection: false,
     })
+}
+
+/// Attach predicates that only reference the inner side to its own cross-join
+/// tree. The AST uses `JoinType::Cross` for comma and ordinary inner joins;
+/// pushing into an outer join would change NULL-extension semantics, so those
+/// predicates remain on the enclosing join's ON clause.
+fn append_inner_join_conditions(
+    join: &mut tidb_ast::Join,
+    conditions: Vec<tidb_ast::Expr>,
+) -> Vec<tidb_ast::Expr> {
+    let Some(condition) = crate::driver::predicate_push_down::combined(&conditions) else {
+        return Vec::new();
+    };
+    if join.tp != tidb_ast::JoinType::Cross || join.natural || !join.using.is_empty() {
+        return vec![condition];
+    }
+    if join.right.is_none() && join.on.is_none() {
+        if let tidb_ast::JoinNode::Join(inner) = &mut join.left {
+            return append_inner_join_conditions(inner, vec![condition]);
+        }
+        return vec![condition];
+    }
+    join.on = match join.on.take() {
+        Some(existing) => Some(tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::LogicAnd,
+            Box::new(existing),
+            Box::new(condition),
+        )),
+        None => Some(condition),
+    };
+    Vec::new()
 }
 
 struct Prepared<'a> {

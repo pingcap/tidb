@@ -3273,7 +3273,22 @@ fn build_aggregation(
                         || super::correlated_agg_decorrelate::is_pulled_scalar_sum(select)
                         || super::correlated_agg_decorrelate::is_pulled_scalar_sum_wrapper(select)
                     {
-                        let mut physical = rewrite_expr_resolved(predicate, resolver)
+                        // Once a correlated WHERE subquery has become an
+                        // Apply column, the written predicate is no longer
+                        // the expression the physical Selection can resolve:
+                        // its raw EXISTS belongs to the pre-rewrite scope and
+                        // the expression rewriter intentionally rejects it.
+                        // Use the residual that was actually planned, with
+                        // the widened scope carrying the Apply columns.  Keep
+                        // the original path for statements that did not go
+                        // through subquery extraction.
+                        let physical_expr = selection_written.as_ref().unwrap_or(predicate);
+                        let physical_resolver = ScopeResolver {
+                            scope: executed_where
+                                .as_ref()
+                                .map_or(resolver.scope, |(_, scope)| scope),
+                        };
+                        let mut physical = rewrite_expr_resolved(physical_expr, &physical_resolver)
                             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
                         refine_comparisons(&mut physical, ctx)
                             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;

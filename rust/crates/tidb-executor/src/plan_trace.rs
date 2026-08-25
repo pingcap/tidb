@@ -5262,6 +5262,7 @@ impl PlanTrace {
             crate::join::JoinKind::Left => "left outer join",
             crate::join::JoinKind::Right => "right outer join",
             crate::join::JoinKind::Semi => "semi join",
+            crate::join::JoinKind::LeftOuterSemi => "left outer semi join",
             crate::join::JoinKind::AntiSemi => "anti semi join",
         };
         // `equal_mask` comes from the executor's own condition split, so the

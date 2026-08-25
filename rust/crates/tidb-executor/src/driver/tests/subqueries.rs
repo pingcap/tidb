@@ -6,6 +6,7 @@
 //! `pkg/planner/core`'s correlated-column handling.
 
 use super::*;
+use tidb_datatype::{Collation, StringDatum};
 
 /// TPC-H q2's correlated `min(ps_supplycost)`, decorrelated and planned exactly
 /// as Go records it in `tests/integrationtest/r/tpch.result`.
@@ -3142,4 +3143,215 @@ fn an_aggregate_over_a_correlated_exists_decorrelates() {
     })
     .collect();
     assert_eq!(grouped, [["a", "3"], ["b", "7"]]);
+}
+
+/// Go keeps an uncorrelated IN subquery below an OR as a left-outer semi join
+/// so the other OR arm can still admit a row when the subquery has no match.
+/// Leaving that IN node for the scalar expression rewriter is an 1105 plan
+/// error; the derived-key rewrite must preserve both the plan boundary and
+/// the filtered rows.
+#[test]
+fn nested_in_subquery_under_or_is_explainable() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    for ddl in [
+        "CREATE TABLE outer_t (id BIGINT PRIMARY KEY CLUSTERED, k BIGINT NOT NULL)",
+        "CREATE TABLE inner_t (id BIGINT PRIMARY KEY CLUSTERED, k BIGINT NOT NULL)",
+    ] {
+        crate::run_create_table_on(ddl, &mut catalog).unwrap();
+    }
+    run_insert_on(
+        "INSERT INTO outer_t VALUES (1, 100), (2, 20), (3, 30), (4, 40)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO inner_t VALUES (2, 20), (3, 30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT id FROM outer_t WHERE id = 1 OR k IN \
+        (SELECT k FROM inner_t WHERE id IN (2, 3)) ORDER BY id";
+    let statement = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .expect("nested IN under OR must remain explainable");
+    assert!(
+        plan.iter().any(|row| {
+            let info = match &row[4] {
+                Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
+                other => format!("{other:?}"),
+            };
+            info.contains("left outer join") || info.contains("left outer semi join")
+        }),
+        "nested IN must retain the left-outer semi-join boundary: {plan:#?}",
+    );
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![
+            vec![Datum::Int(1)],
+            vec![Datum::Int(2)],
+            vec![Datum::Int(3)]
+        ],
+    );
+}
+
+/// Correlated EXISTS predicates may be chained through an OR, as in TPC-DS
+/// q10. Plain execution already handles the Apply sequence; plain EXPLAIN
+/// must also consume every correlated child instead of leaving the second
+/// one for the scalar rewriter.
+#[test]
+fn correlated_exists_under_or_is_explainable() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE exists_t (id BIGINT PRIMARY KEY CLUSTERED, k BIGINT NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE exists_d (id BIGINT PRIMARY KEY CLUSTERED, k BIGINT NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO exists_t VALUES (1, 10), (2, 20), (3, 30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO exists_d VALUES (1, 10), (2, 20), (3, 30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let sql = "SELECT c.k, count(*) FROM exists_t c, exists_d d \
+        WHERE c.id = d.id \
+        AND EXISTS (SELECT * FROM exists_t s, exists_d sd \
+                    WHERE s.k = c.k AND sd.id = s.id) \
+        AND (EXISTS (SELECT * FROM exists_t w, exists_d wd \
+                     WHERE w.k = c.k AND wd.id = w.id AND w.id = 2) \
+             OR EXISTS (SELECT * FROM exists_t x, exists_d xd \
+                        WHERE x.k = c.k AND xd.id = x.id AND x.id = 3)) \
+        GROUP BY c.k";
+    let statement = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .expect("correlated EXISTS under OR must remain explainable");
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![
+            vec![Datum::Int(20), Datum::Int(1)],
+            vec![Datum::Int(30), Datum::Int(1)]
+        ],
+    );
+}
+
+/// TPC-DS q10 has the same correlated EXISTS shape over several joined
+/// dimensions, with an aggregate above the WHERE. Keep that full source
+/// layout here so EXPLAIN does not regress while the compact fixture above
+/// continues to cover the Apply result rows.
+#[test]
+fn tpcds_q10_correlated_exists_under_or_is_explainable() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    for ddl in [
+        "CREATE TABLE q10_customer (c_customer_sk BIGINT PRIMARY KEY CLUSTERED, c_current_addr_sk BIGINT, c_current_cdemo_sk BIGINT)",
+        "CREATE TABLE q10_customer_address (ca_address_sk BIGINT PRIMARY KEY CLUSTERED, ca_county VARCHAR(64))",
+        "CREATE TABLE q10_customer_demographics (cd_demo_sk BIGINT PRIMARY KEY CLUSTERED, cd_gender VARCHAR(8), cd_marital_status VARCHAR(8), cd_education_status VARCHAR(8), cd_purchase_estimate BIGINT, cd_credit_rating VARCHAR(8), cd_dep_count BIGINT, cd_dep_employed_count BIGINT, cd_dep_college_count BIGINT)",
+        "CREATE TABLE q10_store_sales (ss_customer_sk BIGINT, ss_sold_date_sk BIGINT)",
+        "CREATE TABLE q10_web_sales (ws_bill_customer_sk BIGINT, ws_sold_date_sk BIGINT)",
+        "CREATE TABLE q10_catalog_sales (cs_ship_customer_sk BIGINT, cs_sold_date_sk BIGINT)",
+        "CREATE TABLE q10_date_dim (d_date_sk BIGINT PRIMARY KEY CLUSTERED, d_year BIGINT, d_moy BIGINT)",
+    ] {
+        crate::run_create_table_on(ddl, &mut catalog).unwrap();
+    }
+    for insert in [
+        "INSERT INTO q10_customer VALUES (1, 1, 1), (2, 2, 2), (3, 3, 3)",
+        "INSERT INTO q10_customer_address VALUES (1, 'Rush County'), (2, 'Rush County'), (3, 'Other')",
+        "INSERT INTO q10_customer_demographics VALUES (1, 'M', 'S', 'P', 1, 'A', 1, 1, 1), (2, 'F', 'M', 'C', 2, 'B', 2, 2, 2), (3, 'F', 'M', 'C', 2, 'B', 2, 2, 2)",
+        "INSERT INTO q10_store_sales VALUES (2, 1)",
+        "INSERT INTO q10_web_sales VALUES (2, 1)",
+        "INSERT INTO q10_catalog_sales VALUES (1, 1)",
+        "INSERT INTO q10_date_dim VALUES (1, 2002, 1)",
+    ] {
+        run_insert_on(insert, &mut catalog, &ctx).unwrap();
+    }
+    let sql = "SELECT cd_gender, cd_marital_status, cd_education_status, count(*) cnt1, cd_purchase_estimate, count(*) cnt2, cd_credit_rating, count(*) cnt3, cd_dep_count, count(*) cnt4, cd_dep_employed_count, count(*) cnt5, cd_dep_college_count, count(*) cnt6 FROM q10_customer c, q10_customer_address ca, q10_customer_demographics WHERE c.c_current_addr_sk = ca.ca_address_sk AND ca_county IN ('Rush County') AND cd_demo_sk = c.c_current_cdemo_sk AND EXISTS (SELECT * FROM q10_store_sales, q10_date_dim WHERE c.c_customer_sk = ss_customer_sk AND ss_sold_date_sk = d_date_sk AND d_year = 2002 AND d_moy BETWEEN 1 AND 4) AND (EXISTS (SELECT * FROM q10_web_sales, q10_date_dim WHERE c.c_customer_sk = ws_bill_customer_sk AND ws_sold_date_sk = d_date_sk AND d_year = 2002 AND d_moy BETWEEN 1 AND 4) OR EXISTS (SELECT * FROM q10_catalog_sales, q10_date_dim WHERE c.c_customer_sk = cs_ship_customer_sk AND cs_sold_date_sk = d_date_sk AND d_year = 2002 AND d_moy BETWEEN 1 AND 4)) GROUP BY cd_gender, cd_marital_status, cd_education_status, cd_purchase_estimate, cd_credit_rating, cd_dep_count, cd_dep_employed_count, cd_dep_college_count";
+    let statement = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .expect("TPC-DS q10 correlated EXISTS tree must remain explainable");
+    let left_joins = plan
+        .iter()
+        .filter(|row| {
+            let info = match &row[4] {
+                Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
+                _ => String::new(),
+            };
+            info.contains("left outer join") || info.contains("left outer semi join")
+        })
+        .count();
+    assert!(
+        left_joins >= 2,
+        "q10 OR-correlated EXISTS must expose both inner join subtrees: {plan:#?}"
+    );
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![
+            Datum::String(StringDatum::new(b"F".to_vec(), Collation::Utf8Mb4Bin)),
+            Datum::String(StringDatum::new(b"M".to_vec(), Collation::Utf8Mb4Bin)),
+            Datum::String(StringDatum::new(b"C".to_vec(), Collation::Utf8Mb4Bin)),
+            Datum::Int(1),
+            Datum::Int(2),
+            Datum::Int(1),
+            Datum::String(StringDatum::new(b"B".to_vec(), Collation::Utf8Mb4Bin)),
+            Datum::Int(1),
+            Datum::Int(2),
+            Datum::Int(1),
+            Datum::Int(2),
+            Datum::Int(1),
+            Datum::Int(2),
+            Datum::Int(1),
+        ]],
+    );
 }

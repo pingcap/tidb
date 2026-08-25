@@ -33,6 +33,10 @@ use std::any::Any;
 use std::borrow::Cow;
 
 use super::*;
+
+/// Alias prefix used for the synthetic left-outer-semi join lowered from a
+/// correlated `EXISTS` below a boolean filter.
+pub(crate) const EXISTS_SEMI_RELATION_PREFIX: &str = "__in_subquery_exists_semi_";
 use crate::plan_trace::{GoLogicalPlanColumns, GoLogicalQuerySourceColumns};
 use tidb_ast::{Join, JoinType, Visitable, Visitor};
 
@@ -63,20 +67,9 @@ pub(crate) fn rewrite_filter_in_subqueries(
     };
     let mut conjuncts = Vec::new();
     collect_filter_conjuncts(where_clause, &mut conjuncts);
-    let has_candidate = conjuncts.iter().any(|conjunct| {
-        matches!(
-            conjunct,
-            tidb_ast::Expr::InSubquery {
-                expr,
-                subquery,
-                ..
-            } if !matches!(expr.as_ref(), tidb_ast::Expr::Row(_))
-                && matches!(subquery.as_ref(), QueryStmt::Select(inner)
-                    if inner.limit.is_none()
-                        && matches!(inner.fields.fields(), [SelectField::Expr { .. }]))
-        )
-    });
-    if !has_candidate {
+    if !conjuncts.iter().any(|expr| filter_in_candidate(expr))
+        && !where_has_nested_correlated_exists(where_clause)
+    {
         return Ok(None);
     }
     let outer = select_outer_scope(select, catalog, current_db, ctx);
@@ -248,7 +241,44 @@ pub(crate) fn rewrite_filter_in_subqueries(
     }
 
     if rewritten == 0 {
-        return Ok(None);
+        // Go keeps an IN subquery that occurs below a boolean expression as a
+        // left-outer semi join.  The ordinary inner-join rewrite above is
+        // only valid for a top-level WHERE conjunct; applying it to
+        // `a = 1 OR b IN (subquery)` would discard rows for which `a = 1` is
+        // already true.  Lower the narrow, non-nullable form to the same
+        // left-join boundary so the residual predicate can test whether the
+        // distinct inner key was found.  This is deliberately restricted to
+        // WHERE boolean trees and a NOT NULL inner key: in that domain
+        // `IN`'s unmatched/NULL result is indistinguishable for row
+        // filtering, while the left join preserves the OR semantics.
+        let Some(where_clause) = select.where_clause.as_ref() else {
+            return Ok(None);
+        };
+        let outer = select_outer_scope(select, catalog, current_db, ctx);
+        let mut rewritten_from = from.clone();
+        let mut ordinal = 0;
+        let mut nested_rewritten = false;
+        let rewritten_where = rewrite_nested_filter_in_expr(
+            where_clause,
+            &outer,
+            catalog,
+            current_db,
+            ctx,
+            &mut rewritten_from,
+            &mut ordinal,
+            &mut nested_rewritten,
+            true,
+        )?;
+        if !nested_rewritten {
+            return Ok(None);
+        }
+        let mut result = select.clone();
+        if !expand_unqualified_wildcards(&mut result, &outer) {
+            return Ok(None);
+        }
+        result.from = Some(rewritten_from);
+        result.where_clause = Some(rewritten_where);
+        return Ok(Some(result));
     }
     let mut result = select.clone();
     if !expand_unqualified_wildcards(&mut result, &outer) {
@@ -257,6 +287,417 @@ pub(crate) fn rewrite_filter_in_subqueries(
     result.from = Some(rewritten_from);
     result.where_clause = combine_filter_conjuncts(residual);
     Ok(Some(result))
+}
+
+/// A planning-free admission check for the two filter-context IN rewrites.
+/// Keep this ahead of [`select_outer_scope`]: constructing a scope may search
+/// join candidates, and a SELECT with no IN subquery must not perturb those
+/// observable planner receipts merely because this optimization was probed.
+fn filter_in_candidate(expr: &tidb_ast::Expr) -> bool {
+    use tidb_ast::Expr;
+    match expr {
+        Expr::InSubquery {
+            expr,
+            subquery,
+            ..
+        } => {
+            !matches!(expr.as_ref(), Expr::Row(_))
+                && matches!(subquery.as_ref(), QueryStmt::Select(inner)
+                    if inner.limit.is_none()
+                        && matches!(inner.fields.fields(), [SelectField::Expr { .. }]))
+        }
+        Expr::Paren(inner) => filter_in_candidate(inner),
+        Expr::Binary(_, lhs, rhs) => filter_in_candidate(lhs) || filter_in_candidate(rhs),
+        _ => false,
+    }
+}
+
+/// A planning-free gate for the correlated `EXISTS` rewrite below.  Direct
+/// conjuncts are deliberately excluded: those are handled by
+/// `decorrelate_where`, and probing their inner FROM here would perturb the
+/// join-search receipts of statements that already have the ordinary path.
+fn where_has_nested_correlated_exists(expr: &tidb_ast::Expr) -> bool {
+    fn visit(expr: &tidb_ast::Expr, top_level: bool) -> bool {
+        use tidb_ast::{BinaryOp, Expr};
+        match expr {
+            Expr::Paren(inner) => visit(inner, top_level),
+            Expr::Binary(op, left, right) => {
+                let child_top_level = top_level && matches!(op, BinaryOp::LogicAnd);
+                visit(left, child_top_level) || visit(right, child_top_level)
+            }
+            Expr::Exists { not: false, .. } => !top_level,
+            _ => false,
+        }
+    }
+    visit(expr, true)
+}
+
+/// Rewrites a positive, uncorrelated `IN (subquery)` that appears inside a
+/// boolean WHERE expression.  Go's `handleInSubquery` represents this as a
+/// left-outer semi join whose last column is the match marker.  The AST
+/// adapter has no logical Apply node for an uncorrelated scalar boolean, so a
+/// left join to a DISTINCT derived key is the equivalent representation: a
+/// matched key is non-NULL and an unmatched key is NULL.
+///
+/// `top_level` tracks the conjunction boundary used by
+/// [`rewrite_filter_in_subqueries`].  A direct child of a top-level AND is
+/// left for the existing inner-join/anti-semi rewrites; a child below OR (or
+/// another boolean operator) is the left-join shape handled here.
+fn rewrite_nested_filter_in_expr(
+    expr: &tidb_ast::Expr,
+    outer: &FromScope,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    from: &mut tidb_ast::Join,
+    ordinal: &mut usize,
+    changed: &mut bool,
+    top_level: bool,
+) -> Result<tidb_ast::Expr, DriverError> {
+    use tidb_ast::{BinaryOp, Expr};
+    if let Expr::Exists {
+        subquery,
+        not: false,
+    } = expr
+    {
+        if !top_level {
+            if let Some(rewritten) = rewrite_correlated_exists_to_left_join(
+                subquery,
+                outer,
+                catalog,
+                current_db,
+                ctx,
+                from,
+                ordinal,
+            )? {
+                *changed = true;
+                return Ok(rewritten);
+            }
+        }
+        return Ok(expr.clone());
+    }
+    match expr {
+        Expr::InSubquery {
+            expr: lhs,
+            subquery,
+            not: false,
+        } if !top_level => {
+            let QueryStmt::Select(inner) = subquery.as_ref() else {
+                return Ok(expr.clone());
+            };
+            if inner.limit.is_some() || !matches!(inner.fields.fields(), [SelectField::Expr { .. }])
+            {
+                return Ok(expr.clone());
+            }
+            let mut correlated = Vec::new();
+            collect_correlated_columns_query(
+                subquery,
+                outer,
+                catalog,
+                current_db,
+                &mut correlated,
+                ctx,
+            );
+            if !correlated.is_empty() {
+                return Ok(expr.clone());
+            }
+            let lhs_expression = match rewrite_expr_resolved(lhs, &ScopeResolver { scope: outer }) {
+                Ok(expression) => expression,
+                Err(_) => return Ok(expr.clone()),
+            };
+            let Some(lhs_type) = lhs_expression.static_type() else {
+                return Ok(expr.clone());
+            };
+            let output = plan_select_meta_stmt(inner, catalog, current_db, ctx)?;
+            let [(_, inner_type)] = output.as_slice() else {
+                return Ok(expr.clone());
+            };
+            if !inner_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+                || !tidb_datatype::compatible_collate(
+                    lhs_type.collation_name(),
+                    inner_type.collation_name(),
+                )
+            {
+                return Ok(expr.clone());
+            }
+            let key_cast = match comparison_key_cast(&lhs_expression, lhs_type, inner_type) {
+                KeyCast::None => None,
+                KeyCast::To(cast_type) => Some(cast_type),
+                KeyCast::Inexpressible => return Ok(expr.clone()),
+            };
+            let relation_alias = fresh_in_subquery_alias(outer, *ordinal, "semi");
+            *ordinal += 1;
+            let key_alias = format!("__in_subquery_key_{}", *ordinal - 1);
+            let mut distinct = (**inner).clone();
+            distinct.distinct = true;
+            distinct.all = false;
+            let [SelectField::Expr {
+                expr: inner_expr,
+                alias,
+            }] = distinct.fields.fields_mut()
+            else {
+                unreachable!("the one-field shape was checked above");
+            };
+            if let Some(cast_type) = key_cast {
+                *inner_expr = Expr::Cast(tidb_ast::CastExpr {
+                    expr: Box::new(inner_expr.clone()),
+                    cast_type,
+                    style: tidb_ast::CastStyle::Cast,
+                    array: false,
+                });
+            }
+            *alias = Some(key_alias.clone());
+            let rhs = Expr::Column(vec![relation_alias.clone(), key_alias.clone()]);
+            let on = Expr::Binary(BinaryOp::Eq, Box::new((**lhs).clone()), Box::new(rhs));
+            *from = tidb_ast::Join {
+                left: tidb_ast::JoinNode::Join(Box::new(from.clone())),
+                right: Some(tidb_ast::JoinNode::Derived {
+                    subquery: tidb_ast::NodeBox::new(QueryStmt::Select(Box::new(distinct))),
+                    alias: Some(relation_alias.clone()),
+                    lateral: false,
+                    column_names: Vec::new(),
+                }),
+                tp: tidb_ast::JoinType::Left,
+                straight: false,
+                on: Some(on),
+                using: Vec::new(),
+                natural: false,
+                explicit_parens: false,
+            };
+            *changed = true;
+            return Ok(Expr::Is {
+                expr: Box::new(Expr::Column(vec![relation_alias, key_alias])),
+                target: tidb_ast::IsTarget::Null,
+                not: true,
+            });
+        }
+        Expr::Paren(inner) => Ok(Expr::Paren(Box::new(rewrite_nested_filter_in_expr(
+            inner, outer, catalog, current_db, ctx, from, ordinal, changed, top_level,
+        )?))),
+        Expr::Binary(op, lhs, rhs) => {
+            // A top-level conjunction owns its direct children; every other
+            // boolean operator places its children below the filter boundary.
+            let child_top_level = top_level && matches!(op, BinaryOp::LogicAnd);
+            let left = rewrite_nested_filter_in_expr(
+                lhs,
+                outer,
+                catalog,
+                current_db,
+                ctx,
+                from,
+                ordinal,
+                changed,
+                child_top_level,
+            )?;
+            let right = rewrite_nested_filter_in_expr(
+                rhs,
+                outer,
+                catalog,
+                current_db,
+                ctx,
+                from,
+                ordinal,
+                changed,
+                child_top_level,
+            )?;
+            Ok(Expr::Binary(*op, Box::new(left), Box::new(right)))
+        }
+        _ => Ok(expr.clone()),
+    }
+}
+
+/// Lowers the common TPC-DS shape
+///
+/// ```text
+/// EXISTS (SELECT * FROM inner WHERE outer.key = inner.key AND predicates)
+/// ```
+///
+/// below a boolean filter to Go's left-outer-semi join shape.  The equality is
+/// the only allowed outer reference; all other forms remain on the Apply
+/// path.  The derived child intentionally keeps duplicate keys: the physical
+/// `LeftOuterSemi` executor emits one left row and a 0/1 match marker instead
+/// of materializing a DISTINCT hash aggregate.  For an `EXISTS`, a NULL inner
+/// key is simply not a match, so the marker has the same WHERE semantics even
+/// when the catalog does not declare the key `NOT NULL`.
+fn rewrite_correlated_exists_to_left_join(
+    subquery: &tidb_ast::NodeBox<QueryStmt>,
+    outer: &FromScope,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    from: &mut tidb_ast::Join,
+    ordinal: &mut usize,
+) -> Result<Option<tidb_ast::Expr>, DriverError> {
+    use tidb_ast::{BinaryOp, Expr};
+
+    let QueryStmt::Select(inner) = subquery.as_ref() else {
+        return Ok(None);
+    };
+    if inner.from.is_none()
+        || inner.limit.is_some()
+        || inner.with.is_some()
+        || inner.distinct
+        || inner.rollup
+        || !inner.group_by.is_empty()
+        || inner.having.is_some()
+        || !inner.windows.is_empty()
+        || inner.lock.is_some()
+        || inner.into_outfile.is_some()
+        || !inner.order_by.is_empty()
+    {
+        return Ok(None);
+    }
+    if inner
+        .fields
+        .fields()
+        .iter()
+        .any(|field| matches!(field, SelectField::Expr { expr, .. } if expr_has_subquery(expr)))
+        || inner.where_clause.as_ref().is_some_and(expr_has_subquery)
+    {
+        return Ok(None);
+    }
+
+    let inner_scope = select_outer_scope(inner, catalog, current_db, ctx);
+    let mut correlated = Vec::new();
+    collect_correlated_columns_query(
+        subquery,
+        outer,
+        catalog,
+        current_db,
+        &mut correlated,
+        ctx,
+    );
+    if correlated.len() != 1 {
+        return Ok(None);
+    }
+
+    let mut predicates = Vec::new();
+    if let Some(where_clause) = &inner.where_clause {
+        collect_filter_conjuncts(where_clause, &mut predicates);
+    } else {
+        return Ok(None);
+    }
+
+    let outer_resolver = ScopeResolver { scope: outer };
+    let inner_resolver = ScopeResolver { scope: &inner_scope };
+    let mut match_pair: Option<(tidb_ast::Expr, tidb_ast::Expr)> = None;
+    let mut remaining = Vec::with_capacity(predicates.len());
+    for predicate in predicates {
+        let tidb_ast::Expr::Binary(BinaryOp::Eq, left, right) = &predicate else {
+            remaining.push(predicate);
+            continue;
+        };
+        let left_outer = collect_correlated_columns_expr(left, &inner_scope, outer);
+        let right_outer = collect_correlated_columns_expr(right, &inner_scope, outer);
+        let left_inner = matches!(left.as_ref(), Expr::Column(path) if inner_resolver.resolve(path).is_some());
+        let right_inner = matches!(right.as_ref(), Expr::Column(path) if inner_resolver.resolve(path).is_some());
+        let left_is_target = left_outer.len() == 1
+            && right_outer.is_empty()
+            && right_inner
+            && matches!(left.as_ref(), Expr::Column(path) if outer_resolver.resolve(path).is_some());
+        let right_is_target = right_outer.len() == 1
+            && left_outer.is_empty()
+            && left_inner
+            && matches!(right.as_ref(), Expr::Column(path) if outer_resolver.resolve(path).is_some());
+        if left_is_target || right_is_target {
+            if match_pair.is_some() {
+                return Ok(None);
+            }
+            match_pair = if left_is_target {
+                Some(((**left).clone(), (**right).clone()))
+            } else {
+                Some(((**right).clone(), (**left).clone()))
+            };
+        } else {
+            remaining.push(predicate);
+        }
+    }
+    let Some((outer_key, inner_key)) = match_pair else {
+        return Ok(None);
+    };
+    if !matches!(&outer_key, Expr::Column(path) if path == &correlated[0]) {
+        return Ok(None);
+    }
+
+    let outer_expression = rewrite_expr_resolved(&outer_key, &outer_resolver).ok();
+    let inner_expression = rewrite_expr_resolved(&inner_key, &inner_resolver).ok();
+    let (Some(outer_expression), Some(inner_expression)) = (outer_expression, inner_expression)
+    else {
+        return Ok(None);
+    };
+    let (Some(outer_type), Some(inner_type)) = (
+        outer_expression.static_type(),
+        inner_expression.static_type(),
+    ) else {
+        return Ok(None);
+    };
+    if !tidb_datatype::compatible_collate(
+        outer_type.collation_name(),
+        inner_type.collation_name(),
+    ) {
+        return Ok(None);
+    }
+    let key_cast = match comparison_key_cast(&outer_expression, outer_type, inner_type) {
+        KeyCast::None => None,
+        KeyCast::To(cast_type) => Some(cast_type),
+        KeyCast::Inexpressible => return Ok(None),
+    };
+
+    // This prefix is consumed by `from::build_join_with_choice`, which turns
+    // the syntactic LEFT join into the physical LeftOuterSemi operator and
+    // publishes the marker as the sole synthetic output column.
+    let relation_alias = fresh_in_subquery_alias(outer, *ordinal, "exists_semi");
+    *ordinal += 1;
+    let key_alias = format!("__exists_subquery_key_{}", *ordinal - 1);
+    let mut distinct = (**inner).clone();
+    distinct.distinct = false;
+    distinct.all = false;
+    distinct.where_clause = combine_filter_conjuncts(remaining);
+    let projected = if let Some(cast_type) = key_cast {
+        Expr::Cast(tidb_ast::CastExpr {
+            expr: Box::new(inner_key),
+            cast_type,
+            style: tidb_ast::CastStyle::Cast,
+            array: false,
+        })
+    } else {
+        inner_key
+    };
+    distinct.fields = vec![SelectField::Expr {
+        expr: projected,
+        alias: Some(key_alias.clone()),
+    }]
+    .into();
+    let inner_key_column = Expr::Column(vec![relation_alias.clone(), key_alias.clone()]);
+    // The right-hand key is used only by the join condition.  The expression
+    // above this join addresses the executor's synthetic marker column; the
+    // FROM builder swaps the derived relation's visible scope from `key` to
+    // `__match` after the physical join is committed.
+    let marker = Expr::Column(vec![relation_alias.clone(), "__match".to_owned()]);
+    *from = tidb_ast::Join {
+        left: tidb_ast::JoinNode::Join(Box::new(from.clone())),
+        right: Some(tidb_ast::JoinNode::Derived {
+            subquery: tidb_ast::NodeBox::new(QueryStmt::Select(Box::new(distinct))),
+            alias: Some(relation_alias),
+            lateral: false,
+            column_names: Vec::new(),
+        }),
+        tp: tidb_ast::JoinType::Left,
+        straight: false,
+        on: Some(Expr::Binary(
+            BinaryOp::Eq,
+            Box::new(outer_key),
+            Box::new(inner_key_column),
+        )),
+        using: Vec::new(),
+        natural: false,
+        explicit_parens: false,
+    };
+    // `LeftOuterSemi` already materializes a non-NULL 0/1 flag.  Returning
+    // that flag directly preserves the boolean truth value under OR; using
+    // `IS NOT NULL` here would turn both the matched and unmatched rows into
+    // TRUE after the physical key has been replaced by the marker.
+    Ok(Some(marker))
 }
 
 /// Expands an unqualified `*` against `scope`, which must be the scope of the

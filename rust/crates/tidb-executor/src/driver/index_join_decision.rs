@@ -882,7 +882,9 @@ pub(crate) fn index_join_decisions_with_context(
         crate::join::JoinKind::Inner => &[false, true],
         crate::join::JoinKind::Left => &[false],
         crate::join::JoinKind::Right => &[true],
-        crate::join::JoinKind::Semi | crate::join::JoinKind::AntiSemi => &[false],
+        crate::join::JoinKind::Semi
+        | crate::join::JoinKind::LeftOuterSemi
+        | crate::join::JoinKind::AntiSemi => &[false],
     };
     let mut decisions = Vec::with_capacity(sides.len() * 2);
     for lookup_is_left in sides.iter().copied() {

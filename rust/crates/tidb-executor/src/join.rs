@@ -263,6 +263,8 @@ pub enum JoinKind {
     Right,
     /// `EXISTS`: emit the left row once when at least one right row matches.
     Semi,
+    /// Go `LeftOuterSemiJoin`: emit every left row with a 0/1 match marker.
+    LeftOuterSemi,
     /// `NOT EXISTS`: emit the left row once when no right row matches.
     AntiSemi,
 }
@@ -1241,6 +1243,7 @@ impl<C: Columns> JoinExec<C> {
                 | JoinKind::Left
                 | JoinKind::Right
                 | JoinKind::Semi
+                | JoinKind::LeftOuterSemi
                 | JoinKind::AntiSemi
         ) {
             self.hash_build_is_left = Some(build_is_left);
@@ -1290,7 +1293,7 @@ impl<C: Columns> JoinExec<C> {
             JoinKind::Right => return false,
             // Semi joins always preserve and return the logical left rows,
             // including when HashJoin v2 builds that side and probes right.
-            JoinKind::Semi | JoinKind::AntiSemi => return true,
+            JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi => return true,
             JoinKind::Inner => {}
         }
         match &self.index_lookup {
@@ -1314,7 +1317,10 @@ impl<C: Columns> JoinExec<C> {
     fn hash_builds_preserved_side(&self) -> bool {
         matches!(
             (self.kind, self.hash_build_is_left()),
-            (JoinKind::Left | JoinKind::Semi | JoinKind::AntiSemi, true) | (JoinKind::Right, false)
+            (
+                JoinKind::Left | JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi,
+                true,
+            ) | (JoinKind::Right, false)
         )
     }
 
@@ -1669,6 +1675,11 @@ impl<C: Columns> JoinExec<C> {
                     self.append(req, outer_row);
                     break;
                 }
+                JoinKind::LeftOuterSemi => {
+                    self.append(req, outer_row);
+                    req.append_datum(outer_row.len(), &Datum::Int(1));
+                    break;
+                }
                 JoinKind::AntiSemi => break,
             }
         }
@@ -1678,6 +1689,10 @@ impl<C: Columns> JoinExec<C> {
                     self.append(req, &self.padded_row(outer_row));
                 }
                 JoinKind::AntiSemi => self.append(req, outer_row),
+                JoinKind::LeftOuterSemi => {
+                    self.append(req, outer_row);
+                    req.append_datum(outer_row.len(), &Datum::Int(0));
+                }
                 JoinKind::Inner | JoinKind::Semi => {}
             }
         }
@@ -1719,6 +1734,11 @@ impl<C: Columns> JoinExec<C> {
                     self.append(req, outer_row);
                     break;
                 }
+                JoinKind::LeftOuterSemi => {
+                    self.append(req, outer_row);
+                    req.append_datum(outer_row.len(), &Datum::Int(1));
+                    break;
+                }
                 JoinKind::AntiSemi => break,
             }
         }
@@ -1728,6 +1748,10 @@ impl<C: Columns> JoinExec<C> {
                     self.append(req, &self.padded_row(outer_row));
                 }
                 JoinKind::AntiSemi => self.append(req, outer_row),
+                JoinKind::LeftOuterSemi => {
+                    self.append(req, outer_row);
+                    req.append_datum(outer_row.len(), &Datum::Int(0));
+                }
                 JoinKind::Inner | JoinKind::Semi => {}
             }
         }
@@ -1746,6 +1770,7 @@ impl<C: Columns> JoinExec<C> {
                 | JoinKind::Left
                 | JoinKind::Right
                 | JoinKind::Semi
+                | JoinKind::LeftOuterSemi
                 | JoinKind::AntiSemi
         ) {
             self.index_lookup = Some(plan);
@@ -4058,7 +4083,11 @@ impl<C: Columns> JoinExec<C> {
             self.kind == JoinKind::Inner
                 || (matches!(
                     self.kind,
-                    JoinKind::Left | JoinKind::Right | JoinKind::Semi | JoinKind::AntiSemi
+                    JoinKind::Left
+                        | JoinKind::Right
+                        | JoinKind::Semi
+                        | JoinKind::LeftOuterSemi
+                        | JoinKind::AntiSemi
                 ) && self.residual_conditions.is_empty()),
         );
         table.mem_tracker().attach_to(&self.tracker);
@@ -4175,6 +4204,7 @@ impl<C: Columns> JoinExec<C> {
                 | JoinKind::Left
                 | JoinKind::Right
                 | JoinKind::Semi
+                | JoinKind::LeftOuterSemi
                 | JoinKind::AntiSemi
         ) && self.residual_conditions.is_empty()
         {
@@ -4283,6 +4313,11 @@ impl<C: Columns> JoinExec<C> {
                                 self.append(req, &probe_row);
                                 break;
                             }
+                            JoinKind::LeftOuterSemi => {
+                                self.append(req, &probe_row);
+                                req.append_datum(probe_row.len(), &Datum::Int(1));
+                                break;
+                            }
                             JoinKind::AntiSemi => break,
                         }
                     }
@@ -4292,6 +4327,10 @@ impl<C: Columns> JoinExec<C> {
                                 self.append(req, &self.padded_row(&probe_row));
                             }
                             JoinKind::AntiSemi => self.append(req, &probe_row),
+                            JoinKind::LeftOuterSemi => {
+                                self.append(req, &probe_row);
+                                req.append_datum(probe_row.len(), &Datum::Int(0));
+                            }
                             JoinKind::Inner | JoinKind::Semi => {}
                         }
                     }
@@ -4324,6 +4363,12 @@ impl<C: Columns> JoinExec<C> {
                                             req.append_datum(column, value);
                                         }
                                     }
+                                    JoinKind::LeftOuterSemi => {
+                                        for (column, value) in probe_row.iter().enumerate() {
+                                            req.append_datum(column, value);
+                                        }
+                                        req.append_datum(probe_row.len(), &Datum::Int(1));
+                                    }
                                     JoinKind::AntiSemi => {}
                                 }
                             })
@@ -4340,6 +4385,10 @@ impl<C: Columns> JoinExec<C> {
                             self.append(req, &self.padded_row(&probe_row));
                         }
                         JoinKind::AntiSemi => self.append(req, &probe_row),
+                        JoinKind::LeftOuterSemi => {
+                            self.append(req, &probe_row);
+                            req.append_datum(probe_row.len(), &Datum::Int(0));
+                        }
                         JoinKind::Inner | JoinKind::Semi => {}
                     }
                 }
@@ -4448,6 +4497,11 @@ impl<C: Columns> JoinExec<C> {
                                 JoinKind::Semi if !builds_preserved => {
                                     req.append_partial_row(0, probe_row);
                                 }
+                                JoinKind::LeftOuterSemi if !builds_preserved => {
+                                    req.append_partial_row(0, probe_row);
+                                    req.append_datum(probe_row.len(), &Datum::Int(1));
+                                }
+                                JoinKind::LeftOuterSemi => {}
                                 JoinKind::Semi | JoinKind::AntiSemi => {}
                             }
                             Ok(true)
@@ -4465,7 +4519,10 @@ impl<C: Columns> JoinExec<C> {
                     // First match settles a probe-side semi join, but when the
                     // preserved side was built every matching build row must
                     // still be marked for the post-probe scan.
-                    if matches!(kind, JoinKind::Semi) && matched && !builds_preserved {
+                    if matches!(kind, JoinKind::Semi | JoinKind::LeftOuterSemi)
+                        && matched
+                        && !builds_preserved
+                    {
                         break;
                     }
                 }
@@ -4491,6 +4548,10 @@ impl<C: Columns> JoinExec<C> {
                         build_types.len(),
                     ),
                     JoinKind::AntiSemi => req.append_partial_row(0, probe_row),
+                    JoinKind::LeftOuterSemi => {
+                        req.append_partial_row(0, probe_row);
+                        req.append_datum(probe_row.len(), &Datum::Int(0));
+                    }
                     JoinKind::Inner | JoinKind::Semi => {}
                 }
             }
@@ -4681,21 +4742,26 @@ impl<C: Columns> JoinExec<C> {
                 let emit = match self.kind {
                     JoinKind::Left | JoinKind::Right | JoinKind::AntiSemi => !matched,
                     JoinKind::Semi => matched,
+                    JoinKind::LeftOuterSemi => true,
                     JoinKind::Inner => false,
                 };
                 if !emit {
                     None
                 } else {
-                    Some(
+                    Some((
                         hash.table
                             .row(ptr, &mut hash.build_buf, &hash.build_types)
                             .map_err(|error| ExecError::SpillFailed(error.to_string()))?,
-                    )
+                        matched,
+                    ))
                 }
             };
-            if let Some(row) = row {
+            if let Some((row, matched)) = row {
                 if matches!(self.kind, JoinKind::Left | JoinKind::Right) {
                     self.append(req, &self.padded_row(&row));
+                } else if self.kind == JoinKind::LeftOuterSemi {
+                    self.append(req, &row);
+                    req.append_datum(row.len(), &Datum::Int(i64::from(matched)));
                 } else {
                     self.append(req, &row);
                 }

@@ -3692,12 +3692,28 @@ fn build_join_with_choice(
     scan_cap: Option<u64>,
 ) -> Result<(Box<dyn Executor>, FromScope, Delivered), DriverError> {
     let source_join = join;
-    let kind = kind_override.unwrap_or(match join.tp {
+    let parsed_kind = kind_override.unwrap_or(match join.tp {
         tidb_ast::JoinType::Cross => JoinKind::Inner,
         tidb_ast::JoinType::Left => JoinKind::Left,
         tidb_ast::JoinType::Right => JoinKind::Right,
     });
-    let semi_join = matches!(kind, JoinKind::Semi | JoinKind::AntiSemi);
+    let left_outer_semi = parsed_kind == JoinKind::Left
+        && matches!(
+            join.right.as_ref(),
+            Some(JoinNode::Derived {
+                alias: Some(alias),
+                ..
+            }) if alias.starts_with(crate::driver::subquery::EXISTS_SEMI_RELATION_PREFIX)
+        );
+    let kind = if left_outer_semi {
+        JoinKind::LeftOuterSemi
+    } else {
+        parsed_kind
+    };
+    let semi_join = matches!(
+        kind,
+        JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi
+    );
     let consumption_before = demand
         .rows
         .map(crate::driver::join_reorder::RowSource::filter_consumption_checkpoint);
@@ -3741,7 +3757,7 @@ fn build_join_with_choice(
         (incoming, None) => incoming,
     };
     let (left_scan_cap, right_scan_cap) = match (&kind, scan_cap_for_children) {
-        (JoinKind::Left, Some(cap)) => (Some(cap), None),
+        (JoinKind::Left | JoinKind::LeftOuterSemi, Some(cap)) => (Some(cap), None),
         (JoinKind::Right, Some(cap)) => (None, Some(cap)),
         _ => (None, None),
     };
@@ -4556,11 +4572,14 @@ fn build_join_with_choice(
         join_input_columns.as_ref(),
         left_width..scope.width(),
     );
-    let output_cost_types = logical_cost_types(
-        &scope,
-        demand.output_columns,
-        0..if semi_join { left_width } else { scope.width() },
-    );
+    let output_width = if left_outer_semi {
+        left_width + 1
+    } else if semi_join {
+        left_width
+    } else {
+        scope.width()
+    };
+    let output_cost_types = logical_cost_types(&scope, demand.output_columns, 0..output_width);
     let mut estimated_matched_rows = crate::driver::join_search::estimated_rows(join, demand.rows);
     if let (Some(rows), Some(matching_outer_rows)) =
         (&mut estimated_matched_rows, prebuilt_left_matching_rows)
@@ -4666,7 +4685,7 @@ fn build_join_with_choice(
         )
         .unwrap_or(true)
     });
-    let meta_schema = join_executor_schema(semi_join, &left_schema, &right_schema);
+    let meta_schema = join_executor_schema(kind, &left_schema, &right_schema);
     let meta = ExecutorMeta::new(meta_schema, 6, INIT_CAP, MAX_CHUNK_SIZE);
     let mut join_exec = JoinExec::new(
         meta,
@@ -4784,7 +4803,9 @@ fn build_join_with_choice(
                 JoinKind::Inner => tidb_planner::find_best_task::LogicalJoinType::Inner,
                 JoinKind::Left => tidb_planner::find_best_task::LogicalJoinType::LeftOuter,
                 JoinKind::Right => tidb_planner::find_best_task::LogicalJoinType::RightOuter,
-                JoinKind::Semi => tidb_planner::find_best_task::LogicalJoinType::Semi,
+                JoinKind::Semi | JoinKind::LeftOuterSemi => {
+                    tidb_planner::find_best_task::LogicalJoinType::Semi
+                }
                 JoinKind::AntiSemi => tidb_planner::find_best_task::LogicalJoinType::AntiSemi,
             },
             keys: &split.keys,
@@ -4812,7 +4833,10 @@ fn build_join_with_choice(
             )
     );
     let mut cast_probe_ordinal = None;
-    let index_joins = (demand.runtime_lookup.is_none() && !coalescing && index_enumerated)
+    let index_joins = (demand.runtime_lookup.is_none()
+        && !coalescing
+        && !left_outer_semi
+        && index_enumerated)
         .then(|| {
             let (left_side, right_side) = crate::driver::index_join_decision::join_sides(
                 join,
@@ -5265,7 +5289,9 @@ fn build_join_with_choice(
                     // hash orientations. The preserved (left) side is the
                     // build when it is cheaper, which is material for
                     // TPC-H q22's filtered customer/orders join.
-                    JoinKind::Semi | JoinKind::AntiSemi => &[false, true],
+                    JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi => {
+                        &[false, true]
+                    }
                 };
                 let build_orientations = match runtime_target_side {
                     // The runtime target is the physical INNER child. Its
@@ -5333,7 +5359,10 @@ fn build_join_with_choice(
     });
     let fallback_hash_build_is_left = estimated_join_rows.map_or(kind == JoinKind::Right, |rows| {
         kind == JoinKind::Right
-            || matches!(kind, JoinKind::Inner | JoinKind::Semi | JoinKind::AntiSemi)
+            || matches!(
+                kind,
+                JoinKind::Inner | JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi
+            )
                 && rows.left < rows.right
     });
     let winning_choice = committed_choice
@@ -6237,6 +6266,23 @@ fn build_join_with_choice(
         scope.tables.retain(|table| table.offset < left_width);
         scope.coalesced.retain(|offset| *offset < left_width);
         scope.star.retain(|offset| *offset < left_width);
+        if left_outer_semi {
+            let alias = match right_node {
+                JoinNode::Derived { alias: Some(alias), .. } => alias.clone(),
+                _ => unreachable!("left-outer-semi is recognized only for a derived child"),
+            };
+            scope.tables.push(FromTable {
+                name: alias,
+                database: None,
+                columns: vec![(
+                    "__match".to_owned(),
+                    FieldType::new(FieldTypeCode::LongLong),
+                )],
+                offset: left_width,
+                func_deps: Default::default(),
+                physical: None,
+            });
+        }
     }
     Ok((meter(exec, trace), scope, delivered))
 }
@@ -6245,9 +6291,18 @@ fn build_join_with_choice(
 /// schema. The logical FromScope is not suitable for executor chunks: child
 /// column pruning can make it wider or differently ordered than the schemas
 /// the children actually write.
-fn join_executor_schema(semi_join: bool, left: &Schema, right: &Schema) -> Schema {
-    if semi_join {
+fn join_executor_schema(kind: JoinKind, left: &Schema, right: &Schema) -> Schema {
+    if matches!(kind, JoinKind::Semi | JoinKind::AntiSemi) {
         left.clone()
+    } else if kind == JoinKind::LeftOuterSemi {
+        let mut columns = left.columns.clone();
+        let mut marker = Column::new(
+            (columns.len() + 1) as i64,
+            FieldType::new(FieldTypeCode::LongLong),
+        );
+        marker.index = columns.len() as i64;
+        columns.push(marker);
+        Schema::new(columns)
     } else {
         tidb_expr::schema::merge_schema(Some(left), Some(right))
             .expect("a non-semi join has both child schemas")
@@ -7013,6 +7068,7 @@ mod join_schema_tests {
     use super::{FromScope, join_executor_schema, project_composite_lookup_source};
     use crate::driver::FromTable;
     use crate::executor::ExecutorMeta;
+    use crate::join::JoinKind;
     use crate::mem_table::MemTableSourceExec;
     use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode, StringDatum};
     use tidb_expr::column::Column;
@@ -7052,7 +7108,7 @@ mod join_schema_tests {
     fn join_output_schema_follows_pruned_child_order() {
         let left = schema(&[FieldTypeCode::LongLong, FieldTypeCode::Varchar]);
         let right = schema(&[FieldTypeCode::Varchar, FieldTypeCode::LongLong]);
-        let output = join_executor_schema(false, &left, &right);
+        let output = join_executor_schema(JoinKind::Inner, &left, &right);
         let types = output
             .columns
             .iter()
@@ -7074,7 +7130,7 @@ mod join_schema_tests {
     fn semi_join_output_schema_keeps_only_the_left_child() {
         let left = schema(&[FieldTypeCode::LongLong]);
         let right = schema(&[FieldTypeCode::Varchar]);
-        let output = join_executor_schema(true, &left, &right);
+        let output = join_executor_schema(JoinKind::Semi, &left, &right);
         assert_eq!(output.columns.len(), 1);
         assert_eq!(
             output.columns[0].ret_type,
@@ -7295,4 +7351,3 @@ pub(crate) mod composite_inner_memo {
         ENTRIES.with(|entries| entries.borrow_mut().insert(key, candidate));
     }
 }
-

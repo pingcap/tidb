@@ -2107,7 +2107,17 @@ fn run_select_traced_with_delivery_choice_inner(
                 join_consumed_where = select.where_clause.is_some() && residual.is_none();
                 join_residual_where = Some(residual);
             }
-            join_consumed_where |= exec.consumes_where();
+            // A join may consume the ordinary equality conjuncts while a
+            // correlated subquery remains above it.  `consumes_where` is the
+            // receipt for the offered leaf/join predicates, not proof that
+            // the statement-wide WHERE disappeared; forwarding it as the
+            // aggregate's `access_consumed_where` would skip the Apply path
+            // and silently drop the remaining EXISTS filter.
+            let has_subquery_where = select
+                .where_clause
+                .as_ref()
+                .is_some_and(subquery::expr_has_subquery);
+            join_consumed_where |= exec.consumes_where() && !has_subquery_where;
             // Go's `restoreSchemaIfChanged`: the reordered join's schema is
             // the new leaf order, and the statement's output must stay the
             // written one. Go wraps a `Projection`; here the scope carries
