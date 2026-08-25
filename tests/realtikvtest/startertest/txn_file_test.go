@@ -191,7 +191,7 @@ func makeTxnFileRows(base byte) []txnFileRow {
 }
 
 func enableTxnFileSession(ctx context.Context, conn *sql.Conn) error {
-	statement := "SET SESSION tidb_txn_mode='optimistic', SESSION tidb_txn_assertion_level='OFF', SESSION tidb_disable_txn_file=OFF, SESSION tidb_txn_file_min_mutation_size=1048576"
+	statement := "SET SESSION tidb_txn_mode='optimistic', SESSION tidb_txn_assertion_level='OFF', SESSION tidb_enable_txn_file=ON, SESSION tidb_txn_file_min_mutation_size=1048576"
 	if _, err := conn.ExecContext(ctx, statement); err != nil {
 		return fmt.Errorf("configure txn-file session: %w", err)
 	}

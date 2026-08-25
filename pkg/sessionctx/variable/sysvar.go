@@ -4164,8 +4164,8 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableConnectionEventLog.Load()), nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBDisableTxnFile, Value: BoolToOnOff(vardef.DefTiDBDisableTxnFile), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.KVVars.DisableTxnFile = TiDBOptOn(val)
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableTxnFile, Value: BoolToOnOff(vardef.DefTiDBEnableTxnFile), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.KVVars.DisableTxnFile = !TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBTxnFileMinMutationSize, Value: strconv.Itoa(vardef.DefTiDBTxnFileMinMutationSize),

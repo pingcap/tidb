@@ -21,8 +21,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -519,6 +521,9 @@ const (
 
 	// version283 backfills analyze default bucket and TopN global variables.
 	version283 = 283
+
+	// version284 migrate tidb_disable_txn_file (from TiDB-CSE) to tidb_enable_txn_file and inverts its value.
+	version284 = 284
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -532,7 +537,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version283
+var currentBootstrapVersion int64 = version284
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -720,6 +725,7 @@ var (
 		{version: version281, fn: upgradeToVer281},
 		{version: version282, fn: upgradeToVer282},
 		{version: version283, fn: upgradeToVer283},
+		{version: version284, fn: upgradeToVer284},
 	}
 )
 
@@ -2273,4 +2279,46 @@ func upgradeToVer283(s sessionapi.Session, _ int64) {
 	// Backfill only absent rows so @@global reads use defaults while preserving user-set values.
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDefaultNumBuckets, vardef.DefTiDBAnalyzeDefaultNumBuckets)
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDefaultNumTopN, vardef.DefTiDBAnalyzeDefaultNumTopN)
+}
+
+func upgradeToVer284(s sessionapi.Session, _ int64) {
+	if kerneltype.IsClassic() {
+		return
+	}
+
+	const legacyVariable = "tidb_disable_txn_file"
+	// TODO: Delete the legacy variable after rolling upgrade and downgrade compatibility is no longer required.
+
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			failpoint.InjectCall("afterUpgradeToVer284Rollback", s)
+			logutil.BgLogger().Fatal("upgradeToVer284 error", zap.Error(err))
+			return
+		}
+		mustExecute(s, "COMMIT")
+		failpoint.InjectCall("afterUpgradeToVer284Commit", s)
+	}()
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%? FOR UPDATE;", mysql.SystemDB, mysql.GlobalVariablesTable, legacyVariable)
+	if err != nil {
+		return
+	}
+	failpoint.InjectCall("afterUpgradeToVer284Read", s)
+	if len(rows) == 0 {
+		return
+	}
+
+	_, err = sqlexec.ExecSQL(ctx, s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable,
+		vardef.TiDBEnableTxnFile, variable.BoolToOnOff(!variable.TiDBOptOn(rows[0].GetString(0))))
+	if err != nil {
+		return
+	}
+	failpoint.InjectCall("afterUpgradeToVer284Replace", s)
+	failpoint.Inject("mockUpgradeToVer284Error", func() {
+		err = context.Canceled
+	})
 }

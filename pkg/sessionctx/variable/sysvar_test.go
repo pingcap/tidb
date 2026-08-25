@@ -167,16 +167,20 @@ func TestTxnFileSysVars(t *testing.T) {
 	vars := NewSessionVars(nil)
 
 	t.Run("defaults and session propagation", func(t *testing.T) {
-		disableTxnFile := GetSysVar(vardef.TiDBDisableTxnFile)
-		require.NotNil(t, disableTxnFile)
-		require.Equal(t, vardef.ScopeGlobal|vardef.ScopeSession, disableTxnFile.Scope)
-		require.Equal(t, vardef.Off, disableTxnFile.Value)
-		require.False(t, vars.KVVars.DisableTxnFile)
+		enableTxnFile := GetSysVar("tidb_enable_txn_file")
+		require.NotNil(t, enableTxnFile)
+		require.Equal(t, vardef.ScopeGlobal|vardef.ScopeSession, enableTxnFile.Scope)
+		require.Equal(t, vardef.Off, enableTxnFile.Value)
 
-		val, err := disableTxnFile.Validate(vars, vardef.On, vardef.ScopeSession)
+		val, err := enableTxnFile.Validate(vars, vardef.Off, vardef.ScopeSession)
 		require.NoError(t, err)
-		require.NoError(t, disableTxnFile.SetSessionFromHook(vars, val))
+		require.NoError(t, enableTxnFile.SetSessionFromHook(vars, val))
 		require.True(t, vars.KVVars.DisableTxnFile)
+
+		val, err = enableTxnFile.Validate(vars, vardef.On, vardef.ScopeSession)
+		require.NoError(t, err)
+		require.NoError(t, enableTxnFile.SetSessionFromHook(vars, val))
+		require.False(t, vars.KVVars.DisableTxnFile)
 
 		minMutationSize := GetSysVar(vardef.TiDBTxnFileMinMutationSize)
 		require.NotNil(t, minMutationSize)
