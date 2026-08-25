@@ -32,6 +32,102 @@ use super::liveness::check_liveness;
 use super::unary::{prepare_unary, RawUnaryRequest, RawUnaryResponse, UnaryCallContext};
 use super::{DirectUnaryClientError, TransportShutdownError};
 
+/// Env-gated admission diagnostics (`TIKV_ADMISSION_LOG=1`). Purely additive:
+/// relaxed atomics on the measured paths plus one stderr dumper thread.
+pub mod admit_diag {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
+
+    static ADMIT_WAIT_US: AtomicU64 = AtomicU64::new(0);
+    static ADMIT_COUNT: AtomicU64 = AtomicU64::new(0);
+    static ADMIT_MAX_US: AtomicU64 = AtomicU64::new(0);
+    static WORKER_SUBMIT_US: AtomicU64 = AtomicU64::new(0);
+    static WORKER_SUBMIT_COUNT: AtomicU64 = AtomicU64::new(0);
+    static WORKER_SUBMIT_MAX_US: AtomicU64 = AtomicU64::new(0);
+    static WORKER_EVENT_US: AtomicU64 = AtomicU64::new(0);
+    static WORKER_EVENT_COUNT: AtomicU64 = AtomicU64::new(0);
+
+    fn bump(total: &AtomicU64, count: &AtomicU64, max: &AtomicU64, us: u64) {
+        total.fetch_add(us, Ordering::Relaxed);
+        count.fetch_add(1, Ordering::Relaxed);
+        max.fetch_max(us, Ordering::Relaxed);
+    }
+
+    /// Client side: full wait from command send to the worker's reply.
+    pub fn note_admit_wait(wait: std::time::Duration) {
+        if !enabled() {
+            return;
+        }
+        bump(&ADMIT_WAIT_US, &ADMIT_COUNT, &ADMIT_MAX_US, wait.as_micros() as u64);
+        start_dumper();
+    }
+
+    /// Worker side: one BatchSubmit block_on duration.
+    pub fn note_worker_submit(elapsed: std::time::Duration) {
+        if !enabled() {
+            return;
+        }
+        bump(&WORKER_SUBMIT_US, &WORKER_SUBMIT_COUNT, &WORKER_SUBMIT_MAX_US, elapsed.as_micros() as u64);
+    }
+
+    /// Worker side: one BatchEvent block_on duration.
+    pub fn note_worker_event(elapsed: std::time::Duration) {
+        if !enabled() {
+            return;
+        }
+        bump(&WORKER_EVENT_US, &WORKER_EVENT_COUNT, &WORKER_EVENT_MAX_US, elapsed.as_micros() as u64);
+    }
+
+    static WORKER_EVENT_MAX_US: AtomicU64 = AtomicU64::new(0);
+
+    fn enabled() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("TIKV_ADMISSION_LOG").is_some())
+    }
+
+    fn snapshot_line() -> String {
+        let aw = ADMIT_WAIT_US.swap(0, Ordering::Relaxed);
+        let ac = ADMIT_COUNT.swap(0, Ordering::Relaxed);
+        let am = ADMIT_MAX_US.swap(0, Ordering::Relaxed);
+        let ws = WORKER_SUBMIT_US.swap(0, Ordering::Relaxed);
+        let wc = WORKER_SUBMIT_COUNT.swap(0, Ordering::Relaxed);
+        let wm = WORKER_SUBMIT_MAX_US.swap(0, Ordering::Relaxed);
+        let we = WORKER_EVENT_US.swap(0, Ordering::Relaxed);
+        let ec = WORKER_EVENT_COUNT.swap(0, Ordering::Relaxed);
+        let em = WORKER_EVENT_MAX_US.swap(0, Ordering::Relaxed);
+        let avg = |t: u64, c: u64| if c > 0 { t / c } else { 0 };
+        format!(
+            "ADMISSION admit_n={ac} admit_avg_us={} admit_max_us={am} wsubmit_n={wc} wsubmit_avg_us={} wsubmit_max_us={wm} wevent_n={ec} wevent_avg_us={} wevent_max_us={em}",
+            avg(aw, ac),
+            avg(ws, wc),
+            avg(we, ec),
+        )
+    }
+
+    fn start_dumper() {
+        static START: OnceLock<()> = OnceLock::new();
+        START.get_or_init(|| {
+            if !enabled() {
+                return;
+            }
+            let period_ms = std::env::var("TIKV_ADMISSION_LOG_PERIOD_MS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(2_000)
+                .clamp(200, 60_000);
+            let spawned = std::thread::Builder::new()
+                .name("admission-log".to_owned())
+                .spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_millis(period_ms));
+                    eprintln!("{}", snapshot_line());
+                });
+            if let Err(err) = spawned {
+                eprintln!("admission-log failed to spawn: {err}");
+            }
+        });
+    }
+}
+
 pub(super) enum WorkerCommand {
     UnarySend {
         address: String,
@@ -269,6 +365,7 @@ impl TransportHandle {
         entries: Vec<BatchCommandEntry>,
         call: Option<UnaryCallContext>,
     ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
+        let started = std::time::Instant::now();
         let (reply, response) = mpsc::channel();
         self.commands
             .send(WorkerCommand::BatchSubmit {
@@ -278,7 +375,9 @@ impl TransportHandle {
                 reply,
             })
             .map_err(|_| DirectUnaryClientError::Closed)?;
-        response.recv().map_err(|_| DirectUnaryClientError::Closed)
+        let receipts = response.recv().map_err(|_| DirectUnaryClientError::Closed);
+        admit_diag::note_admit_wait(started.elapsed());
+        receipts
     }
 
     pub(super) fn close_address(&self, address: &str) -> Result<(), DirectUnaryClientError> {
@@ -395,6 +494,7 @@ fn run_worker(
                 call,
                 reply,
             } => {
+                let submit_started = std::time::Instant::now();
                 let receipts = runtime.block_on(batch.submit(
                     &mut channels,
                     &runtime,
@@ -403,10 +503,13 @@ fn run_worker(
                     call.as_ref(),
                     &commands,
                 ));
+                admit_diag::note_worker_submit(submit_started.elapsed());
                 let _ = reply.send(receipts);
             }
             WorkerCommand::BatchEvent(event) => {
-                runtime.block_on(batch.handle_event(&mut channels, &runtime, &commands, event))
+                let event_started = std::time::Instant::now();
+                runtime.block_on(batch.handle_event(&mut channels, &runtime, &commands, event));
+                admit_diag::note_worker_event(event_started.elapsed());
             }
             WorkerCommand::CloseAddress { address, reply } => {
                 if let Some(physical_channel) = channels.close_address(&address) {
