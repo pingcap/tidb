@@ -1885,6 +1885,143 @@ fn prefer_stream_agg_for_global_count(input_rows: f64) -> bool {
     stream.value() < hash.value()
 }
 
+fn prefer_stream_agg_for_small_global(input_rows: Option<f64>) -> bool {
+    input_rows.is_none_or(|rows| rows <= 10_000.0)
+}
+
+// Go's candidate coster keeps the root-only grouped aggregate for tiny input
+// ranges.  The Rust direct path otherwise accepts every decomposable grouped
+// aggregate that a scan can execute, which is correct but adds an unnecessary
+// cop partial stage for the small Web3Bench fixture.  Keep the boundary local
+// to this chooser; larger scans still use the normal partial pipeline.
+const SMALL_PARTIAL_AGG_INPUT_ROWS: f64 = 10.0;
+
+fn prefer_partial_agg_for_input(input_rows: Option<f64>) -> bool {
+    input_rows.is_none_or(|rows| rows > SMALL_PARTIAL_AGG_INPUT_ROWS)
+}
+
+/// Returns `(contains_set_operation, max_base_table_rows)` for a derived
+/// source. A UNION child is not represented by the ordinary join row-source
+/// model, so its aggregate input otherwise looks like an unknown cardinality
+/// even when the catalog has real `stats_meta.count` values. Go still costs
+/// that child with those table counts; retain just enough of that signal to
+/// choose the same global aggregate family without changing executor rows.
+fn set_source_stat_rows(
+    join: Option<&tidb_ast::Join>,
+    catalog: &Catalog,
+    current_db: &str,
+) -> (bool, Option<f64>) {
+    fn merge(left: (bool, Option<f64>), right: (bool, Option<f64>)) -> (bool, Option<f64>) {
+        (
+            left.0 || right.0,
+            match (left.1, right.1) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (Some(a), None) => Some(a),
+                (None, Some(b)) => Some(b),
+                (None, None) => None,
+            },
+        )
+    }
+    fn table_rows(
+        table: &tidb_ast::TableRef,
+        catalog: &Catalog,
+        current_db: &str,
+    ) -> (bool, Option<f64>) {
+        let (db, name) = match table.name.as_slice() {
+            [name] => (current_db, name.as_str()),
+            [db, name] => (db.as_str(), name.as_str()),
+            _ => return (false, None),
+        };
+        let rows = catalog
+            .stored_table_id(db, name)
+            .and_then(|id| catalog.table_statistics(id))
+            .map(|stats| stats.row_count.max(0) as f64);
+        (false, rows)
+    }
+    fn query_rows(
+        query: &tidb_ast::QueryStmt,
+        catalog: &Catalog,
+        current_db: &str,
+    ) -> (bool, Option<f64>) {
+        match query {
+            tidb_ast::QueryStmt::Select(select) => {
+                join_rows(select.from.as_ref(), catalog, current_db)
+            }
+            tidb_ast::QueryStmt::SetOpr(set_opr) => set_opr
+                .terms
+                .iter()
+                .map(|term| match &term.body {
+                    tidb_ast::SetOprTermBody::Select(select) => {
+                        join_rows(select.from.as_ref(), catalog, current_db)
+                    }
+                    tidb_ast::SetOprTermBody::Nested(nested) => query_rows(
+                        &tidb_ast::QueryStmt::SetOpr(nested.clone()),
+                        catalog,
+                        current_db,
+                    ),
+                })
+                .fold((true, None), merge),
+        }
+    }
+    fn node_rows(
+        node: &tidb_ast::JoinNode,
+        catalog: &Catalog,
+        current_db: &str,
+    ) -> (bool, Option<f64>) {
+        match node {
+            tidb_ast::JoinNode::Table(table) => table_rows(table, catalog, current_db),
+            tidb_ast::JoinNode::Derived { subquery, .. } => {
+                query_rows(subquery, catalog, current_db)
+            }
+            tidb_ast::JoinNode::Join(join) => join_rows(Some(join), catalog, current_db),
+        }
+    }
+    fn join_rows(
+        join: Option<&tidb_ast::Join>,
+        catalog: &Catalog,
+        current_db: &str,
+    ) -> (bool, Option<f64>) {
+        let Some(join) = join else {
+            return (false, None);
+        };
+        let left = node_rows(&join.left, catalog, current_db);
+        let right = join
+            .right
+            .as_ref()
+            .map(|right| node_rows(right, catalog, current_db))
+            .unwrap_or((false, None));
+        merge(left, right)
+    }
+
+    join_rows(join, catalog, current_db)
+}
+
+fn direct_source_has_real_stats(
+    join: Option<&tidb_ast::Join>,
+    catalog: &Catalog,
+    current_db: &str,
+) -> bool {
+    let Some(join) = join else { return false };
+    if join.right.is_some() {
+        return false;
+    }
+    let tidb_ast::JoinNode::Table(table) = &join.left else {
+        return false;
+    };
+    let (db, name) = match table.name.as_slice() {
+        [name] => (current_db, name.as_str()),
+        [db, name] => (db.as_str(), name.as_str()),
+        _ => return false,
+    };
+    catalog
+        .stored_table_id(db, name)
+        .is_some_and(|id| {
+            catalog
+                .table_statistics(id)
+                .is_some_and(|stats| !stats.pseudo)
+        })
+}
+
 fn contains_logic_or(expression: &tidb_ast::Expr) -> bool {
     match expression {
         tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, _, _) => true,
@@ -3464,6 +3601,35 @@ fn build_aggregation(
         .then(|| single_max_min_elimination(&group_by, state))
         .flatten();
 
+    // Access-path candidates carry the same post-predicate cardinality Go's
+    // physical task chooser prices. Prefer it over the broader join estimate
+    // so a tiny covering index range does not inherit the pseudo-statistics
+    // fallback of its enclosing statement.
+    let candidate_input_rows = input_candidate.as_ref().map(|candidate| {
+        tidb_planner::candidate_cost::evaluate(
+            candidate,
+            &tidb_planner::candidate_cost::CostEnv::default(),
+            tidb_planner::task_type::TaskType::Root,
+        )
+        .rows
+    });
+    let source_input_rows = candidate_input_rows.or(joined_logical_rows).or(logical_rows);
+    let (has_set_source, set_source_rows) = set_source_stat_rows(
+        select.from.as_ref(),
+        catalog,
+        current_db,
+    );
+    let aggregate_input_rows = source_input_rows.or(set_source_rows.filter(|_| has_set_source));
+    let source_is_index_reader = matches!(
+        input_candidate.as_ref(),
+        Some(tidb_planner::candidate_cost::Candidate::Reader {
+            kind: tidb_planner::candidate_cost::ReaderKind::Index,
+            ..
+        })
+    );
+    let source_has_real_stats =
+        direct_source_has_real_stats(select.from.as_ref(), catalog, current_db);
+
     // Go's physical optimizer chooses a root StreamAgg for the two Sysbench
     // range families once the range has been fully consumed by a table/index
     // scan. A global aggregate has no ordering requirement, so Go also
@@ -3474,18 +3640,8 @@ fn build_aggregation(
         && crate::driver::access::single_kv_table(&select.from, catalog, current_db).is_none()
         && state.agg_funcs.len() == 1
         && matches!(state.agg_funcs[0].kind, AggKind::Count);
-    let from_is_union_derived = select.from.as_ref().is_some_and(|from| {
-        matches!(
-            &from.left,
-            tidb_ast::JoinNode::Derived {
-                subquery,
-                ..
-            } if matches!(&**subquery, tidb_ast::QueryStmt::SetOpr(_))
-        )
-    });
-    let complex_stream_agg = !from_is_union_derived
-        && complex_global_count
-        && joined_logical_rows.is_none_or(prefer_stream_agg_for_global_count);
+    let complex_stream_agg =
+        complex_global_count && prefer_stream_agg_for_small_global(aggregate_input_rows);
     // A decorrelated `EXISTS`/`NOT EXISTS` places the aggregate above a semi/
     // anti join rather than a bare consumed scan, so the scan shortcut below
     // must not fire. Go enumerates BOTH root implementations there and lets
@@ -3495,13 +3651,6 @@ fn build_aggregation(
         && joined_logical_rows
             .map(prefer_stream_agg_for_global_count)
             .unwrap_or(false);
-    let source_is_index_reader = matches!(
-        input_candidate.as_ref(),
-        Some(tidb_planner::candidate_cost::Candidate::Reader {
-            kind: tidb_planner::candidate_cost::ReaderKind::Index,
-            ..
-        })
-    );
     let small_index_global_count = source_is_index_reader
         && group_by.is_empty()
         && state.agg_funcs.len() == 1
@@ -3533,9 +3682,15 @@ fn build_aggregation(
     // here is the FROM scope's row estimate AFTER predicate pushdown
     // (`Selection estRows` in Go's plan).
     let global_decimal_sum_preferred = global_decimal_sum_shape
-        && joined_logical_rows
-            .or(logical_rows)
-            .is_some_and(prefer_stream_agg_for_global_count);
+        && source_input_rows.is_some_and(prefer_stream_agg_for_global_count);
+    let small_global_distinct = !complex_global_count
+        && group_by.is_empty()
+        && state.agg_funcs.len() == 1
+        && matches!(state.agg_funcs[0].kind, AggKind::Count)
+        && state.agg_funcs[0].distinct
+        && state.agg_funcs[0].extra_args.is_empty()
+        && state.agg_funcs[0].order_by.is_empty()
+        && prefer_stream_agg_for_small_global(source_input_rows);
     let stream_plan = if !force_stream
         && !select.rollup
         && select.from.is_some()
@@ -3545,17 +3700,14 @@ fn build_aggregation(
             || semi_join_stream_preferred
             || global_decimal_sum_preferred
             || small_index_global_count
+            || small_global_distinct
             || (!complex_global_count
                 && !semi_join_source
                 && scan_consumed_where
-                && joined_logical_rows
-                    .or(logical_rows)
-                    .is_none_or(prefer_stream_agg_for_global_count)
+                && source_input_rows.is_none_or(prefer_stream_agg_for_global_count)
                 && ((!source_is_index_reader
                     || select.where_clause.as_ref().is_some_and(contains_logic_or))
-                    || joined_logical_rows
-                        .or(logical_rows)
-                        .is_some_and(prefer_stream_agg_for_global_count))))
+                    || source_input_rows.is_some_and(prefer_stream_agg_for_global_count))))
         && state.agg_funcs.len() == 1
         && select.fields.fields().len() == 1
     {
@@ -3589,6 +3741,14 @@ fn build_aggregation(
     // estimate and accepts only when that same decision applies; accepting
     // also changes its output schema to the one partial-result column.
     let partial_stream_agg = stream_plan.is_some_and(|plan| {
+        if matches!(plan, GlobalStreamAggPlan::Count)
+            && source_is_index_reader
+            && scan_consumed_where
+            && source_has_real_stats
+            && !prefer_partial_agg_for_input(source_input_rows)
+        {
+            return false;
+        }
         let argument = state.agg_funcs[0]
             .arg
             .as_ref()
@@ -3651,7 +3811,11 @@ fn build_aggregation(
     let partial_global_hash_agg_funcs = (!force_stream
         && aggregation_elimination.is_none()
         && max_min_elimination.is_none()
-        && !partial_stream_agg)
+        && !partial_stream_agg
+        // If Go selected a root StreamAgg but rejected only its cop partial
+        // stage (the tiny covering COUNT range), do not replace that root
+        // candidate with an unordered partial HashAgg.
+        && !matches!(stream_plan, Some(GlobalStreamAggPlan::Count)))
         .then(|| {
             global_hash_partial_plan(
                 select,
@@ -3774,7 +3938,10 @@ fn build_aggregation(
     // partial HashAgg. The final root HashAgg merges the function-first
     // partial rows.
     let partial_grouped_hash_agg_funcs =
-        (!force_stream && aggregation_elimination.is_none() && !partial_grouped_sum)
+        ((derived_output || prefer_partial_agg_for_input(source_input_rows))
+            && !force_stream
+            && aggregation_elimination.is_none()
+            && !partial_grouped_sum)
             .then(|| {
                 grouped_hash_partial_plan(
                     select,
@@ -3803,10 +3970,12 @@ fn build_aggregation(
     // stream the partial groups through the reader. The final root stage
     // keeps the same grouping order; COUNT alone changes kind because it must
     // sum per-region partial counts rather than count partial rows.
-    let partial_grouped_stream_agg_funcs = (!force_stream
-        && aggregation_elimination.is_none()
-        && !partial_grouped_sum
-        && !partial_grouped_hash)
+    let partial_grouped_stream_agg_funcs =
+        ((derived_output || prefer_partial_agg_for_input(source_input_rows))
+            && !force_stream
+            && aggregation_elimination.is_none()
+            && !partial_grouped_sum
+            && !partial_grouped_hash)
         .then(|| {
             grouped_stream_partial_plan(
                 select,
@@ -4487,17 +4656,22 @@ fn build_aggregation(
                     ) {
                         trace.refuse("partial StreamAgg child is not a bare table/index scan");
                     }
-                } else if !matches!(
-                    stream_plan,
-                    GlobalStreamAggPlan::CountComplex
-                        | GlobalStreamAggPlan::CountDistinct
-                        // A decimal SUM without an accepted TiKV partial
-                        // stage folds full rows serially at the root; Go
-                        // prints that StreamAgg over ANY child shape.
-                        | GlobalStreamAggPlan::DecimalSum
-                ) && !trace.scan_reader_or_point_get()
-                {
-                    trace.refuse("global StreamAgg child is not a point get or bare scan");
+                } else {
+                    let reader_ready = trace.scan_reader_or_point_get();
+                    if !reader_ready
+                        && !matches!(
+                            stream_plan,
+                            GlobalStreamAggPlan::CountComplex
+                                | GlobalStreamAggPlan::CountDistinct
+                                // A decimal SUM without an accepted TiKV
+                                // partial stage folds full rows serially at
+                                // the root; Go prints that StreamAgg over ANY
+                                // child shape.
+                                | GlobalStreamAggPlan::DecimalSum
+                        )
+                    {
+                        trace.refuse("global StreamAgg child is not a point get or bare scan");
+                    }
                 }
                 let mut injected_projection = false;
                 if !partial_stream_agg {
@@ -4561,6 +4735,13 @@ fn build_aggregation(
                 {
                     trace.grouped_input_projection(expressions, *injected_for_scalar);
                 }
+                // A root-only grouped aggregate still owns the scan's
+                // coprocessor task boundary.  Go's physical HashAgg does not
+                // require a partial HashAgg to retain that IndexReader or
+                // TableReader, so close the scan task before rendering the
+                // aggregate trace.  Derived/join children simply refuse this
+                // narrow rewrite and remain root-only.
+                let _ = trace.scan_reader_or_cop_selection();
                 if let Some(info) = grouped_stream_physical_agg_trace.as_deref() {
                     trace.physical_hash_agg(info, grouped_logical_rows);
                 } else if let Some((group_by, functions, column_names)) =
@@ -4598,9 +4779,6 @@ fn build_aggregation(
                     // rendering.
                     trace.grouped_hash_agg(traced_select, &qualify, grouped_logical_rows);
                 } else {
-                    if traced_select.group_by.is_empty() {
-                        trace.scan_reader();
-                    }
                     trace.hash_agg(traced_select, &qualify, grouped_logical_rows);
                 }
             }

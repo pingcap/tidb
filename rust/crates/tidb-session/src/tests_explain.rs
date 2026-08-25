@@ -359,6 +359,71 @@ fn explain_select() {
     );
 }
 
+/// Small Web3Bench aggregates must follow Go's root-aggregate cost choice:
+/// COUNT(DISTINCT), a COUNT above a UNION-derived source, and a tiny covering
+/// index range stay serial at the root instead of growing a partial stage.
+#[test]
+fn web3bench_small_aggregates_follow_go_cost_boundary() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE web3_agg (id BIGINT PRIMARY KEY, from_address VARCHAR(32), value BIGINT,
+             KEY idx_from (from_address))",
+        )
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO web3_agg VALUES
+             (1, 'a1', 10), (2, 'a2', 20), (3, 'a1', 30), (4, 'a3', 40)",
+        )
+        .unwrap();
+
+    let has_stream_root = |plan: &[Vec<String>]| {
+        plan.iter().any(|row| {
+            row[2] == "root"
+                && row[0]
+                    .trim_start_matches('└')
+                    .trim_start_matches(' ')
+                    .starts_with("StreamAgg")
+        })
+    };
+    let distinct =
+        row_text(session.run("EXPLAIN SELECT COUNT(DISTINCT from_address) FROM web3_agg"));
+    assert!(
+        has_stream_root(&distinct),
+        "small COUNT(DISTINCT) should use Go's StreamAgg root: {distinct:?}"
+    );
+    assert!(
+        distinct.iter().all(|row| !row[0].contains("HashAgg")),
+        "small COUNT(DISTINCT) must not add a HashAgg stage: {distinct:?}"
+    );
+
+    let union = row_text(session.run(
+        "EXPLAIN SELECT COUNT(*) FROM
+         (SELECT from_address FROM web3_agg WHERE id <= 2
+          UNION ALL
+          SELECT from_address FROM web3_agg WHERE id >= 3) AS temp",
+    ));
+    assert!(
+        has_stream_root(&union),
+        "small UNION-derived COUNT should use Go's StreamAgg root: {union:?}"
+    );
+
+    session.run("ANALYZE TABLE web3_agg").unwrap();
+    let indexed_count =
+        row_text(session.run("EXPLAIN SELECT COUNT(*) FROM web3_agg WHERE from_address = 'a1'"));
+    assert!(
+        has_stream_root(&indexed_count),
+        "tiny covering-index COUNT should use Go's StreamAgg root: {indexed_count:?}"
+    );
+    assert!(
+        indexed_count.iter().all(|row| {
+            row[2] != "cop[tikv]" || (!row[0].contains("Agg") && !row[0].contains("Reader"))
+        }),
+        "tiny covering-index COUNT must not add a cop partial stage: {indexed_count:?}"
+    );
+}
+
 /// A pushed `WHERE` keeps its `Selection` BETWEEN the partial aggregate and
 /// the scan, all three in the same coprocessor task.
 ///

@@ -178,6 +178,37 @@ shapes remain on the existing general executor.
   `/tmp/web3_min_nostats_plans_16000.json`,
   `/tmp/web3_min_nostats_plans_16009.json`, and
   `/tmp/web3_min_semantic_plan_compare.json`.
+- [x] (2026-08-25) Added the final small-input aggregate boundary fixes in
+  `tidb-executor` and a session regression covering direct `COUNT(DISTINCT)`,
+  UNION-derived `COUNT`, and a tiny covering-index COUNT. The boundary uses
+  the candidate's post-filter rows, preserves derived-output carrier
+  aggregates, and uses loaded table counts for UNION sources so the four-row
+  fixture chooses Go's root StreamAgg while the ten-times fixture chooses the
+  large-input HashAgg. `hash_agg` (47 tests), the join suite (220 tests), the
+  TPCC nested-derived regression, and the new session regression pass.
+- [x] (2026-08-25) Final release replay on the TiUP playground compared
+  `/tmp/web3_min_final5_analyzed_go.json` with
+  `/tmp/web3_min_final5_analyzed_rust.json`: all 11 normalized physical
+  operator/task skeletons (R1, R21-R25, R31-R35) are equal after analyzing all
+  five tables, and `/tmp/web3_min_final5_results_go.json` versus
+  `/tmp/web3_min_final5_results_rust.json` is byte-exact, including `R32det`.
+  `R32` without the hash tie-breaker remains intentionally order-dependent.
+  With `DROP STATS`, rows remain exact, but Go's pseudo-cost choices retain
+  two known internal differences (R22's cop partial StreamAgg and R35's probe
+  Selection); those are recorded in `/tmp/web3_min_final5_nostats_go.json`
+  and `/tmp/web3_min_final5_nostats_rust.json` rather than hidden.
+- [x] (2026-08-25) Replayed the ten-times-data fixture with one client and two
+  alternating eight-sample rounds. The combined sixteen-sample medians in
+  `/tmp/web3_10x_perf_final_combined2.json` are Rust/Go: R1 `0.471/0.482 ms`
+  (`0.98x`), R21 `1.371/1.562` (`0.88x`), R22 `0.933/0.935` (`1.00x`),
+  R23 `1.010/1.323` (`0.76x`), R24 `1.229/0.993` (`1.24x`), R25
+  `0.869/0.867` (`1.00x`), R31 `1.523/1.597` (`0.95x`), R32
+  `5.069/3.992` (`1.27x`), R33 `138.687/139.154` (`1.00x`), R34
+  `285.177/172.807` (`1.65x`), R35 `162.165/122.229` (`1.33x`), and
+  `R32det` `5.902/4.525` (`1.30x`). The ten-times plan skeletons are all
+  equal in `/tmp/web3_10x_plan_final3_go.json` and
+  `/tmp/web3_10x_plan_final3_rust.json`; result rows are exact except the
+  unspecified R32 tie boundary.
 
 ## Validation commands
 
@@ -190,6 +221,8 @@ The shared playground currently uses PD `127.0.0.1:14379`, TiKV
     cargo +nightly-2026-08-22 check -p tidb-exec -p tidb-executor -q
     cargo +nightly-2026-08-22 test -p tidb-executor hash_agg --lib -q
     cargo +nightly-2026-08-22 test -p tidb-executor join --lib -q
+    cargo +nightly-2026-08-22 test -p tidb-session \
+      web3bench_small_aggregates_follow_go_cost_boundary --lib -q
 
 Release binaries are rebuilt with:
 
