@@ -4,22 +4,209 @@ use std::collections::HashSet;
 use std::time::Duration;
 use std::time::Instant;
 
-use prometheus::core::Collector;
-use prometheus::register_gauge;
-use prometheus::register_gauge_vec;
 use prometheus::register_histogram;
 use prometheus::register_histogram_vec;
-use prometheus::register_int_counter;
 use prometheus::register_int_counter_vec;
 use prometheus::Gauge;
 use prometheus::GaugeVec;
 use prometheus::Histogram;
-use prometheus::HistogramOpts;
 use prometheus::HistogramVec;
-use prometheus::IntCounter;
 use prometheus::IntCounterVec;
+use prometheus::{Counter, CounterVec};
 
 use crate::Result;
+
+struct ClientCounter(&'static str);
+
+impl ClientCounter {
+    fn metric(&self) -> Counter {
+        crate::metrics::global_metrics()
+            .counter(self.0)
+            .unwrap_or_else(|| panic!("missing client-go counter {}", self.0))
+            .clone()
+    }
+
+    fn inc(&self) {
+        self.metric().inc();
+    }
+
+    #[cfg(test)]
+    fn get(&self) -> f64 {
+        self.metric().get()
+    }
+}
+
+struct ClientCounterVec(&'static str);
+
+impl ClientCounterVec {
+    fn metric(&self) -> CounterVec {
+        crate::metrics::global_metrics()
+            .counter_vec(self.0)
+            .unwrap_or_else(|| panic!("missing client-go counter vector {}", self.0))
+            .clone()
+    }
+
+    fn with_label_values(&self, values: &[&str]) -> Counter {
+        self.metric().with_label_values(values)
+    }
+}
+
+struct ClientGauge(&'static str);
+
+impl ClientGauge {
+    fn metric(&self) -> Gauge {
+        crate::metrics::global_metrics()
+            .gauge(self.0)
+            .unwrap_or_else(|| panic!("missing client-go gauge {}", self.0))
+            .clone()
+    }
+
+    fn set(&self, value: f64) {
+        self.metric().set(value);
+    }
+}
+
+struct ClientGaugeVec(&'static str);
+
+impl ClientGaugeVec {
+    fn metric(&self) -> GaugeVec {
+        crate::metrics::global_metrics()
+            .gauge_vec(self.0)
+            .unwrap_or_else(|| panic!("missing client-go gauge vector {}", self.0))
+            .clone()
+    }
+
+    fn with_label_values(&self, values: &[&str]) -> Gauge {
+        self.metric().with_label_values(values)
+    }
+}
+
+struct ClientHistogram(&'static str);
+
+impl ClientHistogram {
+    fn metric(&self) -> Histogram {
+        crate::metrics::global_metrics()
+            .histogram(self.0)
+            .unwrap_or_else(|| panic!("missing client-go histogram {}", self.0))
+            .clone()
+    }
+
+    fn observe(&self, value: f64) {
+        self.metric().observe(value);
+    }
+
+    #[cfg(test)]
+    fn get_sample_count(&self) -> u64 {
+        self.metric().get_sample_count()
+    }
+}
+
+struct ClientObserverVec(&'static str);
+
+impl ClientObserverVec {
+    fn with_label_values(&self, values: &[&str]) -> crate::metrics::ClientGoObserver {
+        let metrics = crate::metrics::global_metrics();
+        if let Some(metric) = metrics.histogram_vec(self.0) {
+            return crate::metrics::ClientGoObserver::Histogram(metric.with_label_values(values));
+        }
+        if let Some(metric) = metrics.summary_vec(self.0) {
+            return crate::metrics::ClientGoObserver::Summary(
+                metric
+                    .with_label_values(values)
+                    .unwrap_or_else(|error| panic!("invalid labels for {}: {error}", self.0)),
+            );
+        }
+        panic!("missing client-go observer vector {}", self.0);
+    }
+}
+
+static TIKV_TXN_WRITE_CONFLICT_COUNTER: ClientCounter =
+    ClientCounter("TiKVTxnWriteConflictCounter");
+static TIKV_PANIC_COUNTER: ClientCounterVec = ClientCounterVec("TiKVPanicCounter");
+static TIKV_TS_FUTURE_WAIT_DURATION: ClientHistogram = ClientHistogram("TiKVTSFutureWaitDuration");
+static TIKV_VALIDATE_READ_TS_FROM_PD_COUNT: ClientCounter =
+    ClientCounter("TiKVValidateReadTSFromPDCount");
+static TIKV_LOW_RESOLUTION_TSO_UPDATE_INTERVAL_SECONDS: ClientGauge =
+    ClientGauge("TiKVLowResolutionTSOUpdateIntervalSecondsGauge");
+static TIKV_PIPELINED_FLUSH_LEN_HISTOGRAM: ClientHistogram =
+    ClientHistogram("TiKVPipelinedFlushLenHistogram");
+static TIKV_PIPELINED_FLUSH_SIZE_HISTOGRAM: ClientHistogram =
+    ClientHistogram("TiKVPipelinedFlushSizeHistogram");
+static TIKV_PIPELINED_FLUSH_DURATION_HISTOGRAM: ClientHistogram =
+    ClientHistogram("TiKVPipelinedFlushDuration");
+static TIKV_TXN_CMD_DURATION: ClientObserverVec = ClientObserverVec("TiKVTxnCmdHistogram");
+static TIKV_TXN_REGIONS_NUM: ClientObserverVec = ClientObserverVec("TiKVTxnRegionsNumHistogram");
+static TIKV_ASYNC_BATCH_GET_COUNTER: ClientCounterVec =
+    ClientCounterVec("TiKVAsyncBatchGetCounter");
+static TIKV_SMALL_READ_DURATION: ClientHistogram = ClientHistogram("TiKVSmallReadDuration");
+static TIKV_READ_THROUGHPUT: ClientHistogram = ClientHistogram("TiKVReadThroughput");
+static TIKV_BACKOFF_HISTOGRAM: ClientObserverVec = ClientObserverVec("TiKVBackoffHistogram");
+static TIKV_RANGE_TASK_STATS: ClientGaugeVec = ClientGaugeVec("TiKVRangeTaskStats");
+static TIKV_RANGE_TASK_PUSH_DURATION: ClientObserverVec =
+    ClientObserverVec("TiKVRangeTaskPushDuration");
+static TIKV_REGION_CACHE_OPERATIONS: ClientCounterVec = ClientCounterVec("TiKVRegionCacheCounter");
+static TIKV_LOAD_REGION_CACHE_DURATION: ClientObserverVec =
+    ClientObserverVec("TiKVLoadRegionCacheHistogram");
+static TIKV_STALE_REGION_FROM_PD: ClientCounter = ClientCounter("TiKVStaleRegionFromPDCounter");
+static TIKV_STORE_LIMIT_ERROR_COUNTER: ClientCounterVec =
+    ClientCounterVec("TiKVStoreLimitErrorCounter");
+static TIKV_REGION_ERROR_COUNTER: ClientCounterVec = ClientCounterVec("TiKVRegionErrorCounter");
+static TIKV_PREFER_LEADER_FLOWS: ClientGaugeVec = ClientGaugeVec("TiKVPreferLeaderFlowsGauge");
+static TIKV_STORE_LIVENESS: ClientGaugeVec = ClientGaugeVec("TiKVStoreLivenessGauge");
+static TIKV_STORE_SLOW_SCORE: ClientGaugeVec = ClientGaugeVec("TiKVStoreSlowScoreGauge");
+static TIKV_FEEDBACK_SLOW_SCORE: ClientGaugeVec = ClientGaugeVec("TiKVFeedbackSlowScoreGauge");
+static TIKV_HEALTH_FEEDBACK_OPERATIONS: ClientCounterVec =
+    ClientCounterVec("TiKVHealthFeedbackOpsCounter");
+static TIKV_STALE_READ_REQUESTS: ClientCounterVec = ClientCounterVec("TiKVStaleReadReqCounter");
+static TIKV_STALE_READ_BYTES: ClientCounterVec = ClientCounterVec("TiKVStaleReadBytes");
+static TIKV_READ_REQUEST_BYTES: ClientObserverVec = ClientObserverVec("TiKVReadRequestBytes");
+static TIKV_GRPC_CONNECTION_STATE: ClientGaugeVec = ClientGaugeVec("TiKVGrpcConnectionState");
+static TIKV_GRPC_CONNECTION_TRANSIENT_FAILURE_COUNTER: ClientCounterVec =
+    ClientCounterVec("TiKVGRPCConnTransientFailureCounter");
+static TIKV_SEND_REQUEST_DURATION: ClientObserverVec = ClientObserverVec("TiKVSendReqHistogram");
+static TIKV_SEND_REQUEST_BY_SOURCE: ClientObserverVec =
+    ClientObserverVec("TiKVSendReqBySourceSummary");
+static TIKV_RPC_NET_LATENCY: ClientObserverVec = ClientObserverVec("TiKVRPCNetLatencyHistogram");
+static TIKV_LOCK_RESOLVER_ACTIONS: ClientCounterVec = ClientCounterVec("TiKVLockResolverCounter");
+static TIKV_LOCK_RESOLVER_ASYNC_RUNNING_TASKS: ClientGaugeVec =
+    ClientGaugeVec("TiKVLockResolverAsyncRunningTasks");
+static TIKV_BATCH_REQUEST_STAGE_DURATION: ClientObserverVec =
+    ClientObserverVec("TiKVBatchRequestStageDuration");
+static TIKV_BATCH_STREAM_RECV_LOOP_DURATION: ClientObserverVec =
+    ClientObserverVec("TiKVBatchStreamRecvLoopDuration");
+static TIKV_BATCH_STREAM_RECV_TAIL_LATENCY: ClientObserverVec =
+    ClientObserverVec("TiKVBatchStreamRecvTailLatency");
+static TIKV_BATCH_STREAM_TIKV_SEND_TAIL_LATENCY: ClientObserverVec =
+    ClientObserverVec("TiKVBatchStreamTiKVSendTailLatency");
+static TIKV_BATCH_STREAM_CANCELED_ENTRY_TAIL_LATENCY: ClientObserverVec =
+    ClientObserverVec("TiKVBatchStreamCanceledEntryTailLatency");
+static TIKV_BATCH_CLIENT_UNAVAILABLE: ClientHistogram =
+    ClientHistogram("TiKVBatchClientUnavailable");
+static TIKV_BATCH_STREAM_TRACKED_REQUEST_COUNT: ClientCounterVec =
+    ClientCounterVec("TiKVBatchStreamTrackedRequestCount");
+static TIKV_BATCH_STREAM_RETIRED_REQUEST_COUNT: ClientCounterVec =
+    ClientCounterVec("TiKVBatchStreamRetiredRequestCount");
+static TIKV_BATCH_STREAM_COMPLETED_RESPONSE_COUNT: ClientCounterVec =
+    ClientCounterVec("TiKVBatchStreamCompletedResponseCount");
+static TIKV_BATCH_STREAM_OUTDATED_RESPONSE_COUNT: ClientCounterVec =
+    ClientCounterVec("TiKVBatchStreamOutdatedResponseCount");
+static TIKV_BATCH_CLIENT_WAIT_ESTABLISH: ClientHistogram =
+    ClientHistogram("TiKVBatchClientWaitEstablish");
+static TIKV_BATCH_CLIENT_RECYCLE: ClientHistogram = ClientHistogram("TiKVBatchClientRecycle");
+static TIKV_BATCH_SEND_LOOP_DURATION: ClientObserverVec =
+    ClientObserverVec("TiKVBatchSendLoopDuration");
+static TIKV_BATCH_SEND_TAIL_LATENCY: ClientObserverVec =
+    ClientObserverVec("TiKVBatchSendTailLatency");
+static TIKV_BATCH_PENDING_REQUESTS: ClientObserverVec =
+    ClientObserverVec("TiKVBatchPendingRequests");
+static TIKV_BATCH_REQUESTS: ClientObserverVec = ClientObserverVec("TiKVBatchRequests");
+static TIKV_BATCH_HEAD_ARRIVAL_INTERVAL: ClientObserverVec =
+    ClientObserverVec("TiKVBatchHeadArrivalInterval");
+static TIKV_BATCH_BEST_SIZE: ClientObserverVec = ClientObserverVec("TiKVBatchBestSize");
+static TIKV_BATCH_MORE_REQUESTS: ClientObserverVec = ClientObserverVec("TiKVBatchMoreRequests");
+static TIKV_BATCH_WAIT_OVERLOAD: ClientCounter = ClientCounter("TiKVBatchWaitOverLoad");
+static TIKV_NO_AVAILABLE_BATCH_CONNECTION_COUNTER: ClientCounter =
+    ClientCounter("TiKVNoAvailableConnectionCounter");
 
 pub struct RequestStats {
     start: Instant,
@@ -161,7 +348,7 @@ pub(crate) fn increment_async_batch_get(result: &'static str) {
 pub(crate) fn async_batch_get_count(result: &'static str) -> u64 {
     TIKV_ASYNC_BATCH_GET_COUNTER
         .with_label_values(&[result])
-        .get()
+        .get() as u64
 }
 
 pub(crate) fn observe_snapshot_read_sli(read_keys: u64, read_time: f64, read_size: f64) {
@@ -271,7 +458,7 @@ pub(crate) fn region_error_count(error_type: &str, store_id: Option<u64>) -> u64
     let store_id = store_id.map_or_else(|| "nil".to_owned(), |store_id| store_id.to_string());
     TIKV_REGION_ERROR_COUNTER
         .with_label_values(&[error_type, &store_id])
-        .get()
+        .get() as u64
 }
 
 pub(crate) fn set_prefer_leader_flows(destination: &str, store_id: u64, flows: u64) {
@@ -307,11 +494,8 @@ pub(crate) fn increment_health_feedback_operation(store_id: u64, operation: &str
 
 pub(crate) fn remove_store_metrics(store_id: u64) {
     let store_id = store_id.to_string();
-    let _ = TIKV_STORE_LIVENESS.remove_label_values(&[&store_id]);
-    let _ = TIKV_STORE_SLOW_SCORE.remove_label_values(&[&store_id]);
-    let _ = TIKV_FEEDBACK_SLOW_SCORE.remove_label_values(&[&store_id]);
-    for destination in ["ToLeader", "ToFollower"] {
-        let _ = TIKV_PREFER_LEADER_FLOWS.remove_label_values(&[destination, &store_id]);
+    for collector in crate::metrics::global_metrics().store_metric_vec_list() {
+        collector.delete_partial_match(&[(crate::metrics::labels::STORE, &store_id)]);
     }
 }
 
@@ -319,18 +503,11 @@ pub(crate) fn remove_store_metrics(store_id: u64) {
 /// from PD's current non-tombstone store set. Looking at metric labels rather
 /// than cache entries also catches labels retained by a replaced cache.
 pub(crate) fn find_next_stale_store_id(valid_store_ids: &HashSet<u64>) -> Option<u64> {
-    TIKV_STORE_LIVENESS
-        .collect()
-        .into_iter()
-        .flat_map(|family| family.get_metric().to_vec())
-        .flat_map(|metric| metric.get_label().to_vec())
-        .find_map(|label| {
-            if label.get_name() != "store" {
-                return None;
-            }
-            let store_id = label.get_value().parse::<u64>().ok()?;
-            (store_id != 0 && !valid_store_ids.contains(&store_id)).then_some(store_id)
-        })
+    let collector = crate::metrics::global_metrics()
+        .metric_vec("TiKVStoreLivenessGauge")
+        .expect("store liveness must be an initialized metric vector");
+    let store_id = crate::metrics::find_next_stale_store_id(&collector, valid_store_ids);
+    (store_id != 0).then_some(store_id)
 }
 
 #[cfg(test)]
@@ -345,7 +522,7 @@ pub(crate) fn observe_stale_read_request(size: u64, cross_zone: bool) {
     let zone = if cross_zone { "cross-zone" } else { "local" };
     TIKV_STALE_READ_BYTES
         .with_label_values(&[zone, "out"])
-        .inc_by(size);
+        .inc_by(size as f64);
     TIKV_STALE_READ_REQUESTS.with_label_values(&[zone]).inc();
 }
 
@@ -353,7 +530,7 @@ pub(crate) fn observe_stale_read_response(size: u64, cross_zone: bool) {
     let zone = if cross_zone { "cross-zone" } else { "local" };
     TIKV_STALE_READ_BYTES
         .with_label_values(&[zone, "in"])
-        .inc_by(size);
+        .inc_by(size as f64);
 }
 
 pub(crate) fn observe_read_request_bytes(
@@ -373,14 +550,14 @@ pub(crate) fn observe_read_request_bytes(
 
 #[cfg(test)]
 pub(crate) fn stale_read_request_count(zone: &str) -> u64 {
-    TIKV_STALE_READ_REQUESTS.with_label_values(&[zone]).get()
+    TIKV_STALE_READ_REQUESTS.with_label_values(&[zone]).get() as u64
 }
 
 #[cfg(test)]
 pub(crate) fn stale_read_bytes(zone: &str, direction: &str) -> u64 {
     TIKV_STALE_READ_BYTES
         .with_label_values(&[zone, direction])
-        .get()
+        .get() as u64
 }
 
 #[cfg(test)]
@@ -403,7 +580,7 @@ pub(crate) fn grpc_connection_transient_failures(address: &str, store_id: u64) -
     let store_id = store_id.to_string();
     TIKV_GRPC_CONNECTION_TRANSIENT_FAILURE_COUNTER
         .with_label_values(&[address, &store_id])
-        .get()
+        .get() as u64
 }
 
 /// Event-driven native mapping of client-go's one-second grpc-go connection
@@ -448,9 +625,9 @@ pub(crate) fn grpc_connection_state(connection_id: &str, store_ip: &str, state: 
 }
 
 /// Records client-go's per-store request histogram, source-dimensional
-/// summary, and client-minus-server network latency observation. The Go
-/// summary has no configured quantiles, so the native histogram preserves
-/// its count/sum observations while also exposing buckets.
+/// summary, and client-minus-server network latency observation. The source
+/// summary has no configured quantiles; the shared registry preserves its
+/// summary count/sum exposition without adding histogram buckets.
 pub(crate) fn observe_tikv_store_rpc(
     request: &dyn crate::store::Request,
     response: Option<&dyn std::any::Any>,
@@ -543,7 +720,7 @@ pub(crate) fn add_lock_resolver_async_running_tasks(kind: &'static str, delta: i
 pub(crate) fn lock_resolver_action_count(action: &'static str) -> u64 {
     TIKV_LOCK_RESOLVER_ACTIONS
         .with_label_values(&[action])
-        .get()
+        .get() as u64
 }
 
 #[cfg(test)]
@@ -558,7 +735,7 @@ pub(crate) fn store_limit_error_count(address: &str, store_id: u64) -> u64 {
     let store_id = store_id.to_string();
     TIKV_STORE_LIMIT_ERROR_COUNTER
         .with_label_values(&[address, &store_id])
-        .get()
+        .get() as u64
 }
 
 #[cfg(test)]
@@ -590,9 +767,7 @@ pub(crate) fn observe_batch_request_stage(
 }
 
 /// Records the receive-loop timings emitted by client-go's BatchCommands
-/// stream metrics. The native Prometheus crate does not expose summary
-/// vectors, so the source summary is represented by a histogram with the
-/// same metric name and label dimensions.
+/// stream summary with exact label dimensions and count/sum exposition.
 pub(crate) fn observe_batch_stream_recv_loop(
     target: &str,
     connection_index: usize,
@@ -660,12 +835,12 @@ pub(crate) fn increment_batch_stream_request_counter(
     let connection_index = connection_index.to_string();
     let labels = [target, &connection_index, if forwarded { "1" } else { "0" }];
     let counter = match counter {
-        BatchStreamRequestCounter::Tracked => &*TIKV_BATCH_STREAM_TRACKED_REQUEST_COUNT,
-        BatchStreamRequestCounter::Retired => &*TIKV_BATCH_STREAM_RETIRED_REQUEST_COUNT,
-        BatchStreamRequestCounter::Completed => &*TIKV_BATCH_STREAM_COMPLETED_RESPONSE_COUNT,
-        BatchStreamRequestCounter::Outdated => &*TIKV_BATCH_STREAM_OUTDATED_RESPONSE_COUNT,
+        BatchStreamRequestCounter::Tracked => &TIKV_BATCH_STREAM_TRACKED_REQUEST_COUNT,
+        BatchStreamRequestCounter::Retired => &TIKV_BATCH_STREAM_RETIRED_REQUEST_COUNT,
+        BatchStreamRequestCounter::Completed => &TIKV_BATCH_STREAM_COMPLETED_RESPONSE_COUNT,
+        BatchStreamRequestCounter::Outdated => &TIKV_BATCH_STREAM_OUTDATED_RESPONSE_COUNT,
     };
-    counter.with_label_values(&labels).inc_by(count as u64);
+    counter.with_label_values(&labels).inc_by(count as f64);
 }
 
 pub(crate) fn observe_batch_client_unavailable(duration: Duration) {
@@ -732,7 +907,7 @@ pub(crate) fn increment_no_available_batch_connection() {
 
 #[cfg(test)]
 pub(crate) fn write_conflict_count() -> u64 {
-    TIKV_TXN_WRITE_CONFLICT_COUNTER.get()
+    TIKV_TXN_WRITE_CONFLICT_COUNTER.get() as u64
 }
 
 #[cfg(test)]
@@ -767,16 +942,16 @@ pub(crate) fn batch_stream_request_counter_values(
     (
         TIKV_BATCH_STREAM_TRACKED_REQUEST_COUNT
             .with_label_values(&labels)
-            .get(),
+            .get() as u64,
         TIKV_BATCH_STREAM_RETIRED_REQUEST_COUNT
             .with_label_values(&labels)
-            .get(),
+            .get() as u64,
         TIKV_BATCH_STREAM_COMPLETED_RESPONSE_COUNT
             .with_label_values(&labels)
-            .get(),
+            .get() as u64,
         TIKV_BATCH_STREAM_OUTDATED_RESPONSE_COUNT
             .with_label_values(&labels)
-            .get(),
+            .get() as u64,
     )
 }
 
@@ -851,409 +1026,7 @@ lazy_static::lazy_static! {
         "Bucketed histogram of TSO request batch size"
     )
     .unwrap();
-    static ref TIKV_TXN_WRITE_CONFLICT_COUNTER: IntCounter = prometheus::register_int_counter!(
-        "tikv_txn_write_conflict_total",
-        "Total number of write conflicts returned by TiKV"
-    )
-    .unwrap();
-    static ref TIKV_PANIC_COUNTER: IntCounterVec = register_int_counter_vec!(
-        "tikv_client_go_panic_total",
-        "Counter of panics recovered by client background loops.",
-        &["type"]
-    )
-    .unwrap();
-    static ref TIKV_TS_FUTURE_WAIT_DURATION: Histogram = register_histogram!(
-        "tikv_ts_future_wait_seconds",
-        "Bucketed histogram of seconds cost for waiting timestamp future."
-    )
-    .unwrap();
-    static ref TIKV_VALIDATE_READ_TS_FROM_PD_COUNT: IntCounter = register_int_counter!(
-        "tikv_validate_read_ts_from_pd_count",
-        "Counter of validating read ts by getting a timestamp from PD"
-    )
-    .unwrap();
-    static ref TIKV_LOW_RESOLUTION_TSO_UPDATE_INTERVAL_SECONDS: Gauge = register_gauge!(
-        "tikv_low_resolution_tso_update_interval_seconds",
-        "The actual working update interval for the low resolution TSO."
-    )
-    .unwrap();
-    static ref TIKV_PIPELINED_FLUSH_LEN_HISTOGRAM: Histogram = register_histogram!(
-        HistogramOpts::new(
-            "tikv_client_go_pipelined_flush_len",
-            "Bucketed histogram of length of pipelined flushed memdb"
-        )
-        .buckets(prometheus::exponential_buckets(1_000.0, 2.0, 16).unwrap())
-    )
-    .unwrap();
-    static ref TIKV_PIPELINED_FLUSH_SIZE_HISTOGRAM: Histogram = register_histogram!(
-        HistogramOpts::new(
-            "tikv_client_go_pipelined_flush_size",
-            "Bucketed histogram of size of pipelined flushed memdb"
-        )
-        .buckets(prometheus::exponential_buckets(16.0 * 1024.0 * 1024.0, 1.2, 13).unwrap())
-    )
-    .unwrap();
-    static ref TIKV_PIPELINED_FLUSH_DURATION_HISTOGRAM: Histogram = register_histogram!(
-        HistogramOpts::new(
-            "tikv_client_go_pipelined_flush_duration",
-            "Flush time of pipelined memdb."
-        )
-        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 28).unwrap())
-    )
-    .unwrap();
-    static ref TIKV_TXN_CMD_DURATION: HistogramVec = {
-        let metric = HistogramVec::new(
-            HistogramOpts::new(
-            "tikv_client_go_txn_cmd_duration_seconds",
-            "Bucketed histogram of processing time of txn cmds."
-            )
-            .buckets(prometheus::exponential_buckets(0.0005, 2.0, 29).unwrap()),
-            &["type", "scope"],
-        )
-        .unwrap();
-        prometheus::register(Box::new(metric.clone())).unwrap();
-        metric
-    };
-    static ref TIKV_TXN_REGIONS_NUM: HistogramVec = {
-        let metric = HistogramVec::new(
-            HistogramOpts::new(
-            "tikv_client_go_txn_regions_num",
-            "Number of regions in a transaction."
-            )
-            .buckets(prometheus::exponential_buckets(1.0, 2.0, 25).unwrap()),
-            &["type", "scope"],
-        )
-        .unwrap();
-        prometheus::register(Box::new(metric.clone())).unwrap();
-        metric
-    };
-    static ref TIKV_ASYNC_BATCH_GET_COUNTER: IntCounterVec = register_int_counter_vec!(
-        "tikv_client_go_async_batch_get_total",
-        "Counter of async batch get by txn snapshot.",
-        &["result"]
-    )
-    .unwrap();
-    static ref TIKV_SMALL_READ_DURATION: Histogram = {
-        let metric = Histogram::with_opts(HistogramOpts::new(
-            "tikv_sli_tikv_small_read_duration",
-            "Read time of TiKV small read."
-        )
-        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 28).unwrap()))
-        .unwrap();
-        prometheus::register(Box::new(metric.clone())).unwrap();
-        metric
-    };
-    static ref TIKV_READ_THROUGHPUT: Histogram = {
-        let metric = Histogram::with_opts(HistogramOpts::new(
-            "tikv_sli_tikv_read_throughput",
-            "Read throughput of TiKV read in Bytes/s."
-        )
-        .buckets(prometheus::exponential_buckets(1024.0, 2.0, 13).unwrap()))
-        .unwrap();
-        prometheus::register(Box::new(metric.clone())).unwrap();
-        metric
-    };
-    static ref TIKV_BACKOFF_HISTOGRAM: HistogramVec = register_histogram_vec!(
-        HistogramOpts::new(
-            "tikv_client_go_backoff_seconds",
-            "total backoff seconds of a single backoffer."
-        )
-        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 29).unwrap()),
-        &["type"]
-    )
-    .unwrap();
-    static ref TIKV_RANGE_TASK_STATS: GaugeVec = register_gauge_vec!(
-        "tikv_client_go_range_task_stats",
-        "stat of range tasks",
-        &["type", "result"]
-    )
-    .unwrap();
-    static ref TIKV_RANGE_TASK_PUSH_DURATION: HistogramVec = register_histogram_vec!(
-        HistogramOpts::new(
-            "tikv_client_go_range_task_push_duration",
-            "duration to push sub tasks to range task workers"
-        )
-        .buckets(prometheus::exponential_buckets(0.001, 2.0, 20).unwrap()),
-        &["type"]
-    )
-    .unwrap();
-    static ref TIKV_REGION_CACHE_OPERATIONS: IntCounterVec = register_int_counter_vec!(
-        "tikv_client_go_region_cache_operations_total",
-        "Counter of region cache.",
-        &["type", "result"]
-    )
-    .unwrap();
-    static ref TIKV_LOAD_REGION_CACHE_DURATION: HistogramVec = register_histogram_vec!(
-        HistogramOpts::new(
-            "tikv_client_go_load_region_cache_seconds",
-            "Load region information duration"
-        )
-        .buckets(prometheus::exponential_buckets(0.0001, 2.0, 20).unwrap()),
-        &["type"]
-    )
-    .unwrap();
-    static ref TIKV_STALE_REGION_FROM_PD: IntCounter = register_int_counter!(
-        "tikv_client_go_stale_region_from_pd",
-        "Counter of stale region from PD"
-    )
-    .unwrap();
-    static ref TIKV_STORE_LIMIT_ERROR_COUNTER: IntCounterVec = register_int_counter_vec!(
-        "tikv_client_go_get_store_limit_token_error_total",
-        "Store token is up to the limit, probably because the store is hot or unavailable",
-        &["address", "store"]
-    )
-    .unwrap();
-    static ref TIKV_REGION_ERROR_COUNTER: IntCounterVec = register_int_counter_vec!(
-        "tikv_client_go_region_err_total",
-        "Counter of region errors.",
-        &["type", "store"]
-    )
-    .unwrap();
-    static ref TIKV_PREFER_LEADER_FLOWS: GaugeVec = register_gauge_vec!(
-        "tikv_client_go_prefer_leader_flows_gauge",
-        "Counter of flows under PreferLeader mode.",
-        &["type", "store"]
-    )
-    .unwrap();
-    static ref TIKV_STORE_LIVENESS: GaugeVec = register_gauge_vec!(
-        "tikv_client_go_store_liveness_state",
-        "Liveness state of each tikv",
-        &["store"]
-    )
-    .unwrap();
-    static ref TIKV_STORE_SLOW_SCORE: GaugeVec = register_gauge_vec!(
-        "tikv_client_go_store_slow_score",
-        "Slow scores of each tikv node based on RPC timecosts",
-        &["store"]
-    )
-    .unwrap();
-    static ref TIKV_FEEDBACK_SLOW_SCORE: GaugeVec = register_gauge_vec!(
-        "tikv_client_go_feedback_slow_score",
-        "Slow scores calculated by TiKV and sent through health feedback",
-        &["store"]
-    )
-    .unwrap();
-    static ref TIKV_HEALTH_FEEDBACK_OPERATIONS: IntCounterVec = register_int_counter_vec!(
-        "tikv_client_go_health_feedback_ops_counter",
-        "Counter of operations about TiKV health feedback",
-        &["scope", "type"]
-    )
-    .unwrap();
-    static ref TIKV_STALE_READ_REQUESTS: IntCounterVec = register_int_counter_vec!(
-        "tikv_client_go_stale_read_req_counter",
-        "Counter of stale read requests",
-        &["type"]
-    )
-    .unwrap();
-    static ref TIKV_STALE_READ_BYTES: IntCounterVec = register_int_counter_vec!(
-        "tikv_client_go_stale_read_bytes",
-        "Counter of stale read request bytes",
-        &["result", "direction"]
-    )
-    .unwrap();
-    static ref TIKV_READ_REQUEST_BYTES: HistogramVec = register_histogram_vec!(
-        "tikv_client_go_read_request_bytes",
-        "Summary-compatible read request byte observations",
-        &["type", "result"]
-    )
-    .unwrap();
-    static ref TIKV_GRPC_CONNECTION_STATE: GaugeVec = register_gauge_vec!(
-        "tikv_client_go_grpc_connection_state",
-        "State of gRPC connection",
-        &["connection_id", "store_ip", "grpc_state"]
-    )
-    .unwrap();
-    static ref TIKV_GRPC_CONNECTION_TRANSIENT_FAILURE_COUNTER: IntCounterVec =
-        register_int_counter_vec!(
-            "tikv_client_go_connection_transient_failure_count",
-            "Counter of gRPC connection transient failure",
-            &["address", "store"]
-        )
-        .unwrap();
-    static ref TIKV_SEND_REQUEST_DURATION: HistogramVec = register_histogram_vec!(
-        HistogramOpts::new(
-            "tikv_client_go_request_seconds",
-            "Bucketed histogram of sending request duration."
-        )
-        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 24).unwrap()),
-        &["type", "store", "stale_read", "scope"]
-    )
-    .unwrap();
-    static ref TIKV_SEND_REQUEST_BY_SOURCE: HistogramVec = register_histogram_vec!(
-        "tikv_client_go_source_request_seconds",
-        "Summary-compatible sending request observations with source dimensions.",
-        &["type", "store", "stale_read", "scope", "source"]
-    )
-    .unwrap();
-    static ref TIKV_RPC_NET_LATENCY: HistogramVec = register_histogram_vec!(
-        HistogramOpts::new(
-            "tikv_client_go_rpc_net_latency_seconds",
-            "Bucketed histogram of time difference between TiDB and TiKV."
-        )
-        .buckets(prometheus::exponential_buckets(0.0001, 2.0, 20).unwrap()),
-        &["store", "scope"]
-    )
-    .unwrap();
-    static ref TIKV_LOCK_RESOLVER_ACTIONS: IntCounterVec = register_int_counter_vec!(
-        "tikv_client_go_lock_resolver_actions_total",
-        "Counter of lock resolver actions.",
-        &["type"]
-    )
-    .unwrap();
-    static ref TIKV_LOCK_RESOLVER_ASYNC_RUNNING_TASKS: GaugeVec = register_gauge_vec!(
-        "tikv_client_go_lock_resolver_async_running_tasks",
-        "The number of running async resolve lock tasks in lock resolver.",
-        &["type"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_REQUEST_STAGE_DURATION: HistogramVec = register_histogram_vec!(
-        "tikv_client_go_batch_request_stage_duration_seconds",
-        "Batch request stage duration breakdown by store and outcome",
-        &["store", "stage", "result"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_STREAM_RECV_LOOP_DURATION: HistogramVec = register_histogram_vec!(
-        "tikv_client_go_batch_stream_recv_loop_duration_seconds",
-        "Batch stream receive loop duration breakdown by steps",
-        &["target", "conn", "forward", "step"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_STREAM_RECV_TAIL_LATENCY: HistogramVec = register_histogram_vec!(
-        HistogramOpts::new(
-            "tikv_client_go_batch_stream_recv_tail_latency_seconds",
-            "Batch stream receive tail latency"
-        )
-        .buckets(prometheus::exponential_buckets(0.02, 2.0, 8).unwrap()),
-        &["target", "conn", "forward"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_STREAM_TIKV_SEND_TAIL_LATENCY: HistogramVec = register_histogram_vec!(
-        HistogramOpts::new(
-            "tikv_client_go_batch_stream_tikv_send_tail_latency_seconds",
-            "Tail latency from TiKV sending a batch response until client receipt"
-        )
-        .buckets(prometheus::exponential_buckets(0.01, 2.0, 8).unwrap()),
-        &["target", "conn", "forward"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_STREAM_CANCELED_ENTRY_TAIL_LATENCY: HistogramVec = register_histogram_vec!(
-        HistogramOpts::new(
-            "tikv_client_go_batch_stream_canceled_entry_tail_latency_seconds",
-            "Tail latency of cancelled entries that later receive responses"
-        )
-        .buckets(prometheus::exponential_buckets(1.0, 2.0, 8).unwrap()),
-        &["target", "conn", "forward"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_CLIENT_UNAVAILABLE: Histogram = register_histogram!(
-        HistogramOpts::new(
-            "tikv_client_go_batch_client_unavailable_seconds",
-            "Time a BatchCommands client is unavailable while reconnecting"
-        )
-        .buckets(prometheus::exponential_buckets(0.001, 2.0, 28).unwrap())
-    )
-    .unwrap();
-    static ref TIKV_BATCH_STREAM_TRACKED_REQUEST_COUNT: IntCounterVec = register_int_counter_vec!(
-        "tikv_client_go_batch_stream_tracked_request_count",
-        "Count of requests tracked by each batch stream",
-        &["target", "conn", "forward"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_STREAM_RETIRED_REQUEST_COUNT: IntCounterVec = register_int_counter_vec!(
-        "tikv_client_go_batch_stream_retired_request_count",
-        "Count of requests retired from each batch stream",
-        &["target", "conn", "forward"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_STREAM_COMPLETED_RESPONSE_COUNT: IntCounterVec = register_int_counter_vec!(
-        "tikv_client_go_batch_stream_completed_response_count",
-        "Count of responses matched to tracked batch requests",
-        &["target", "conn", "forward"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_STREAM_OUTDATED_RESPONSE_COUNT: IntCounterVec = register_int_counter_vec!(
-        "tikv_client_go_batch_stream_outdated_response_count",
-        "Count of responses for requests no longer tracked by a batch stream",
-        &["target", "conn", "forward"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_CLIENT_WAIT_ESTABLISH: Histogram = register_histogram!(
-        HistogramOpts::new(
-            "tikv_client_go_batch_client_wait_connection_establish",
-            "Batch client wait for a new connection to establish"
-        )
-        .buckets(prometheus::exponential_buckets(0.001, 2.0, 28).unwrap())
-    )
-    .unwrap();
-    static ref TIKV_BATCH_CLIENT_RECYCLE: Histogram = register_histogram!(
-        HistogramOpts::new(
-            "tikv_client_go_batch_client_reset",
-            "Batch client recycle connection and reconnect duration"
-        )
-        .buckets(prometheus::exponential_buckets(0.001, 2.0, 28).unwrap())
-    )
-    .unwrap();
-    static ref TIKV_BATCH_SEND_LOOP_DURATION: HistogramVec = register_histogram_vec!(
-        "tikv_client_go_batch_send_loop_duration_seconds",
-        "Summary-compatible batch send-loop duration breakdown",
-        &["target", "step"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_SEND_TAIL_LATENCY: HistogramVec = register_histogram_vec!(
-        HistogramOpts::new(
-            "tikv_client_go_batch_send_tail_latency_seconds",
-            "Batch send tail latency"
-        )
-        .buckets(prometheus::exponential_buckets(0.02, 2.0, 8).unwrap()),
-        &["target"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_PENDING_REQUESTS: HistogramVec = register_histogram_vec!(
-        HistogramOpts::new(
-            "tikv_client_go_batch_pending_requests",
-            "Number of requests pending in the batch channel"
-        )
-        .buckets(prometheus::exponential_buckets(1.0, 2.0, 11).unwrap()),
-        &["target"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_REQUESTS: HistogramVec = register_histogram_vec!(
-        HistogramOpts::new(
-            "tikv_client_go_batch_requests",
-            "Number of requests in one batch"
-        )
-        .buckets(prometheus::exponential_buckets(1.0, 2.0, 11).unwrap()),
-        &["target"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_HEAD_ARRIVAL_INTERVAL: HistogramVec = register_histogram_vec!(
-        "tikv_client_go_batch_head_arrival_interval_seconds",
-        "Summary-compatible arrival interval of the head request in a batch",
-        &["target"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_BEST_SIZE: HistogramVec = register_histogram_vec!(
-        "tikv_client_go_batch_best_size",
-        "Summary-compatible best batch size estimated by the batch client",
-        &["target"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_MORE_REQUESTS: HistogramVec = register_histogram_vec!(
-        "tikv_client_go_batch_more_requests_total",
-        "Summary-compatible number of requests batched by extra fetch",
-        &["target"]
-    )
-    .unwrap();
-    static ref TIKV_BATCH_WAIT_OVERLOAD: IntCounter = register_int_counter!(
-        "tikv_client_go_batch_wait_overload",
-        "Events where TiKV transport-layer overload extended collection"
-    )
-    .unwrap();
-    static ref TIKV_NO_AVAILABLE_BATCH_CONNECTION_COUNTER: IntCounter = register_int_counter!(
-        "tikv_client_go_batch_client_no_available_connection_total",
-        "Counter of no available batch client"
-    )
-    .unwrap();
+
 }
 
 /// Convert Duration to seconds.
@@ -1268,6 +1041,109 @@ fn duration_to_sec(d: Duration) -> f64 {
 mod tests {
     use super::*;
     use crate::proto::{kvrpcpb, metapb};
+
+    #[test]
+    fn every_production_adapter_resolves_the_source_collector_type() {
+        let metrics = crate::metrics::global_metrics();
+        let counters = [
+            &TIKV_TXN_WRITE_CONFLICT_COUNTER,
+            &TIKV_VALIDATE_READ_TS_FROM_PD_COUNT,
+            &TIKV_STALE_REGION_FROM_PD,
+            &TIKV_BATCH_WAIT_OVERLOAD,
+            &TIKV_NO_AVAILABLE_BATCH_CONNECTION_COUNTER,
+        ];
+        assert_eq!(counters.len(), 5);
+        for metric in counters {
+            assert!(metrics.counter(metric.0).is_some(), "{}", metric.0);
+        }
+
+        let counter_vecs = [
+            &TIKV_PANIC_COUNTER,
+            &TIKV_ASYNC_BATCH_GET_COUNTER,
+            &TIKV_REGION_CACHE_OPERATIONS,
+            &TIKV_STORE_LIMIT_ERROR_COUNTER,
+            &TIKV_REGION_ERROR_COUNTER,
+            &TIKV_HEALTH_FEEDBACK_OPERATIONS,
+            &TIKV_STALE_READ_REQUESTS,
+            &TIKV_STALE_READ_BYTES,
+            &TIKV_GRPC_CONNECTION_TRANSIENT_FAILURE_COUNTER,
+            &TIKV_LOCK_RESOLVER_ACTIONS,
+            &TIKV_BATCH_STREAM_TRACKED_REQUEST_COUNT,
+            &TIKV_BATCH_STREAM_RETIRED_REQUEST_COUNT,
+            &TIKV_BATCH_STREAM_COMPLETED_RESPONSE_COUNT,
+            &TIKV_BATCH_STREAM_OUTDATED_RESPONSE_COUNT,
+        ];
+        assert_eq!(counter_vecs.len(), 14);
+        for metric in counter_vecs {
+            assert!(metrics.counter_vec(metric.0).is_some(), "{}", metric.0);
+        }
+
+        assert!(metrics
+            .gauge(TIKV_LOW_RESOLUTION_TSO_UPDATE_INTERVAL_SECONDS.0)
+            .is_some());
+        let gauge_vecs = [
+            &TIKV_RANGE_TASK_STATS,
+            &TIKV_PREFER_LEADER_FLOWS,
+            &TIKV_STORE_LIVENESS,
+            &TIKV_STORE_SLOW_SCORE,
+            &TIKV_FEEDBACK_SLOW_SCORE,
+            &TIKV_GRPC_CONNECTION_STATE,
+            &TIKV_LOCK_RESOLVER_ASYNC_RUNNING_TASKS,
+        ];
+        assert_eq!(gauge_vecs.len(), 7);
+        for metric in gauge_vecs {
+            assert!(metrics.gauge_vec(metric.0).is_some(), "{}", metric.0);
+        }
+
+        let histograms = [
+            &TIKV_TS_FUTURE_WAIT_DURATION,
+            &TIKV_PIPELINED_FLUSH_LEN_HISTOGRAM,
+            &TIKV_PIPELINED_FLUSH_SIZE_HISTOGRAM,
+            &TIKV_PIPELINED_FLUSH_DURATION_HISTOGRAM,
+            &TIKV_SMALL_READ_DURATION,
+            &TIKV_READ_THROUGHPUT,
+            &TIKV_BATCH_CLIENT_UNAVAILABLE,
+            &TIKV_BATCH_CLIENT_WAIT_ESTABLISH,
+            &TIKV_BATCH_CLIENT_RECYCLE,
+        ];
+        assert_eq!(histograms.len(), 9);
+        for metric in histograms {
+            assert!(metrics.histogram(metric.0).is_some(), "{}", metric.0);
+        }
+
+        let observers = [
+            &TIKV_TXN_CMD_DURATION,
+            &TIKV_TXN_REGIONS_NUM,
+            &TIKV_BACKOFF_HISTOGRAM,
+            &TIKV_RANGE_TASK_PUSH_DURATION,
+            &TIKV_LOAD_REGION_CACHE_DURATION,
+            &TIKV_READ_REQUEST_BYTES,
+            &TIKV_SEND_REQUEST_DURATION,
+            &TIKV_SEND_REQUEST_BY_SOURCE,
+            &TIKV_RPC_NET_LATENCY,
+            &TIKV_BATCH_REQUEST_STAGE_DURATION,
+            &TIKV_BATCH_STREAM_RECV_LOOP_DURATION,
+            &TIKV_BATCH_STREAM_RECV_TAIL_LATENCY,
+            &TIKV_BATCH_STREAM_TIKV_SEND_TAIL_LATENCY,
+            &TIKV_BATCH_STREAM_CANCELED_ENTRY_TAIL_LATENCY,
+            &TIKV_BATCH_SEND_LOOP_DURATION,
+            &TIKV_BATCH_SEND_TAIL_LATENCY,
+            &TIKV_BATCH_PENDING_REQUESTS,
+            &TIKV_BATCH_REQUESTS,
+            &TIKV_BATCH_HEAD_ARRIVAL_INTERVAL,
+            &TIKV_BATCH_BEST_SIZE,
+            &TIKV_BATCH_MORE_REQUESTS,
+        ];
+        assert_eq!(observers.len(), 21);
+        for metric in observers {
+            assert!(
+                metrics.histogram_vec(metric.0).is_some()
+                    || metrics.summary_vec(metric.0).is_some(),
+                "{}",
+                metric.0
+            );
+        }
+    }
 
     #[test]
     fn source_store_rpc_metrics_preserve_dimensions_and_net_latency() {

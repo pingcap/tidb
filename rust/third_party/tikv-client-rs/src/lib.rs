@@ -104,6 +104,7 @@ pub mod interceptor;
 pub mod intest;
 #[doc(hidden)]
 pub mod israce;
+pub mod metrics;
 #[doc(hidden)]
 pub mod raw;
 pub mod redact;
