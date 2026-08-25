@@ -182,7 +182,7 @@ impl RowDecodeContext {
 /// allocated `_tidb_rowid` when the table has none); a common handle is the
 /// codec encoding of a clustered primary key's columns, which is what makes a
 /// string or multi-column primary key clustered.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TableHandle {
     /// Go `kv.IntHandle`.
     Int(i64),
