@@ -84,4 +84,4 @@ Final validation on `nightly-2026-08-22-aarch64-apple-darwin` passed:
 
 The pinned source package has no local test requiring UniStore. Deterministic Rust PD/KV mocks cover its complete local interface boundary; UniStore remains available for reusable high-level integration tests.
 
-The host has no Go toolchain, and no TiKV/PD cluster is attached, so the pinned external Go suites and live cross-client differential tests are not executed locally. Those are repository-level completion gates, not uncounted artifacts of this package.
+The package-local completion used deterministic Rust request and state-machine tests. The configured Go 1.25.12 toolchain and isolated TiKV/PD clusters subsequently passed the complete pinned local, race, integration, and cross-client repository gates; those remain repository-level evidence rather than uncounted artifacts of this package.

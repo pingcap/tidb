@@ -58,10 +58,10 @@ index a3a5a7a..91a927a 100644
  # Keep this compatible with rust-toolchain 1.84.1.
  tempfile = "=3.14.0"
 diff --git a/proto-build/src/main.rs b/proto-build/src/main.rs
-index 89756bd..8fc09e3 100644
+index 9dd58cf..d44da78 100644
 --- a/proto-build/src/main.rs
 +++ b/proto-build/src/main.rs
-@@ -4,7 +4,7 @@ fn main() {
+@@ -20,14 +20,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
      let mut prost = prost_build::Config::new();
      prost.enable_type_names();
  
@@ -70,12 +70,15 @@ index 89756bd..8fc09e3 100644
          .emit_rerun_if_changed(false)
          .build_server(true)
          .server_mod_attribute(".", "#[allow(non_camel_case_types)]")
-@@ -17,7 +17,7 @@ fn main() {
-                 .unwrap()
-                 .collect::<Result<Vec<_>, _>>()
-                 .unwrap(),
--            &["proto/include", "proto"],
+         .include_file("mod.rs")
+         .out_dir(staging.path())
+         .file_descriptor_set_path(staging.path().join(DESCRIPTOR_FILE))
+-        .compile_with_config(prost, &protos, &["proto/include", "proto"])?;
++        .compile_with_config(
++            prost,
++            &protos,
 +            &["proto/include".into(), "proto".into()],
-         )
-         .unwrap();
- }
++        )?;
+ 
+     install_generated_output(staging.path(), Path::new(GENERATED_DIR))?;
+     Ok(())

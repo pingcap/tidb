@@ -17,7 +17,7 @@ There is no `doc.go`, Go test, test/support file, fixture, package-specific buil
 | client-go symbol | Rust surface and behavior |
 | --- | --- |
 | `Cluster` | Public hidden `testutils::Cluster` re-export of the complete `internal/mockstore/cluster` trait. `MockCluster` implements it. |
-| `CoprRPCHandler` | `testutils::CoprRpcHandler`, the complete mocktikv coprocessor handler trait used by unary, batch, and streaming requests. Rust acronym casing is idiomatic; the trait contract is unchanged. |
+| `CoprRPCHandler` | `testutils::CoprRpcHandler`, the complete mocktikv coprocessor handler trait used by unary, batch, and streaming requests. Its generated argument/return types are publicly nameable through `tikv_client::proto`, and an external-crate test implements the trait. Rust acronym casing is idiomatic; the trait contract is unchanged. |
 | `MVCCStore` | `testutils::MvccStore`, the reusable concrete `unistore::MockEngine`. The source exposes an interface; Rust exposes its complete stateful implementation because no dynamic dispatch is needed by consumers. |
 | `MVCCPair` | `testutils::MvccPair`, the mock engine pair with key, value, commit timestamp, and typed error. |
 | `MockCluster` | `testutils::MockCluster`, the concrete completed mocktikv cluster. |
@@ -33,7 +33,7 @@ The facade is compiled only for crate tests or the explicit `internal-tests` fea
 
 ## Tests and support evidence
 
-The source package has no test or support artifacts. The Rust conformance test `testutils::tests::source_facade_aliases_factory_and_bootstrap_helpers` is intentionally source-derived: it proves that `MockCluster` implements the exported cluster contract; constructs every type alias; distinguishes `ErrLocked::Locked`; calls the factory; and executes all three bootstrap exports, including their ID/shape results. Concrete storage, PD, RPC, and topology behavior remains proved by the atomic mocktikv receipt rather than duplicated in this facade package.
+The source package has no test or support artifacts. The Rust conformance test `testutils::tests::source_facade_aliases_factory_and_bootstrap_helpers` is intentionally source-derived: it proves that `MockCluster` implements the exported cluster contract; constructs every type alias; distinguishes `ErrLocked::Locked`; calls the factory; and executes all three bootstrap exports, including their ID/shape results. The external-crate `public_proto_tests` target separately proves that the re-exported handler is actually implementable downstream. Concrete storage, PD, RPC, and topology behavior remains proved by the atomic mocktikv receipt rather than duplicated in this facade package.
 
 ## Dependencies and consumers
 
@@ -51,3 +51,5 @@ Those consumers use only the factory, cluster interface, or three bootstrap help
 Completion requires exact pinned source identity; the 1/1 artifact and 61-line inventory; all 12 exported aliases/functions assigned; all 14 direct consumers assigned; the focused facade conformance test; both complete library configurations; all-target/all-feature compilation and Clippy; rustdoc and doctests; rustfmt; and whitespace checks on `nightly-2026-08-22-aarch64-apple-darwin`. No real cluster applies to an alias/factory-only package; live consumer behavior remains on the final differential milestone.
 
 The final gate satisfies that contract. The focused facade test passes; the complete default and all-feature library configurations each pass 703 active tests with one intentional process-isolation ignore; and the workspace doctest run passes all 51 tests. Workspace/all-target/all-feature `cargo check` and Clippy, all-feature rustdoc, rustfmt, and `git diff --check` pass. The source checkout is clean at `52c1e76cec993571493c81de442bcbef90cdc106`, and mechanical enumeration reconfirms one 61-line artifact, 12 exported symbols, no test/support artifacts, and exactly 14 direct consumers.
+
+Post-completion API remediation proves the facade from a real downstream crate: `public_proto_tests` implements `CoprRpcHandler` using public `tikv_client::proto` request and response types. It passes with `internal-tests`, while the ordinary protocol test also passes without default features; the complete post-remediation gates pass 739 no-default workspace tests, 733 all-feature library tests, strict all-target/all-feature Clippy and rustdoc, and 51 doctests.

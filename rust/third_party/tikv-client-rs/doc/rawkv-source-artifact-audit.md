@@ -48,7 +48,7 @@ The source live suite runs only when `-with-tikv` is explicitly enabled and othe
 
 ## Dependencies and consumers
 
-Production dependencies on `config`, `config/retry`, `internal/client`, `internal/kvrpc`, `internal/locate`, `metrics`, `oracle`, and `tikvrpc` are complete. The source imports root `tikv` for codec construction; Rust's exact codec/PD boundary is already owned by the completed `internal/locate` and API-codec receipts, so root `tikv` is not promoted. The source tests import `internal/mockstore/mocktikv`; Rust uses typed in-memory transport/PD fakes and completed region-cache tests instead, so that large package retains its independent incomplete claim.
+Production dependencies on `config`, `config/retry`, `internal/client`, `internal/kvrpc`, `internal/locate`, `metrics`, `oracle`, and `tikvrpc` are complete. The source imports root `tikv` for codec construction; Rust's exact codec/PD boundary is already owned by the completed `internal/locate` and API-codec receipts, so that claim is not duplicated. The source tests import `internal/mockstore/mocktikv`; Rust uses typed in-memory transport/PD fakes and completed region-cache tests instead, while that large package retains its independent completed receipt.
 
 Exact import matching finds three direct external files: `examples/rawkv/rawkv.go`, `integration_tests/raw/api_mock_test.go`, and `integration_tests/raw/api_test.go`. The example's constructor/Get/Put/Delete flow is covered by doctests and the simple stateful matrix; both integration importers are mapped above. No dependent package is promoted by this receipt.
 

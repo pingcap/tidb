@@ -2199,6 +2199,13 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 to_be_removed.insert(ver_id.clone());
             }
         }
+        // Source sorted-index entries own their Region directly. Rust's start
+        // index stores only a RegionVerId, so an exact-version replacement
+        // must remove its prior alias before changing the canonical entry;
+        // otherwise the old start key can later dereference a missing version.
+        if cache.ver_id_to_region.contains_key(&new_ver_id) {
+            to_be_removed.insert(new_ver_id.clone());
+        }
 
         let mut search_range = {
             if end_key.is_empty() {
@@ -3761,6 +3768,33 @@ mod test {
 
         expected.clear();
         expected.insert(vec![15].into(), replacement);
+        assert(&cache, &expected).await;
+    }
+
+    #[tokio::test]
+    async fn source_region_insert_replaces_an_exact_version_without_an_orphaned_start_key() {
+        let cache = Arc::new(RegionCache::new(Arc::new(MockRetryClient::default())));
+
+        let mut original = region(1, b"a".to_vec(), b"b".to_vec());
+        original.region.region_epoch.as_mut().unwrap().version = 1;
+        assert!(cache.add_region(original).await);
+
+        // Region identity is its ID and epoch. client-go's sorted entries carry
+        // the complete Region, while Rust's start index points into a separate
+        // version map and must remove the old alias explicitly.
+        let mut corrected = region(1, b"c".to_vec(), b"d".to_vec());
+        corrected.region.region_epoch.as_mut().unwrap().version = 1;
+        assert!(cache.add_region(corrected.clone()).await);
+
+        let mut expected = BTreeMap::new();
+        expected.insert(b"c".to_vec().into(), corrected);
+        assert(&cache, &expected).await;
+
+        let mut replacement = region(2, b"b".to_vec(), b"e".to_vec());
+        replacement.region.region_epoch.as_mut().unwrap().version = 2;
+        assert!(cache.add_region(replacement.clone()).await);
+        expected.clear();
+        expected.insert(b"b".to_vec().into(), replacement);
         assert(&cache, &expected).await;
     }
 

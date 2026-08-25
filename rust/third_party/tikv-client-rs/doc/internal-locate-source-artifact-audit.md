@@ -147,15 +147,15 @@ All 28 Go files importing `internal/locate` were assigned. Completing this packa
 | Consumer group | Exact source files and ownership |
 | --- | --- |
 | RawKV | `rawkv/rawkv.go`, `rawkv/rawkv_test.go`, `rawkv/test_prob.go`; retains its independent ledger status and consumes typed cache/sender routing. |
-| Root `tikv` | `tikv/gc.go`, `tikv/interface.go`, `tikv/kv.go`, `tikv/region.go`, `tikv/split_region.go`, `tikv/test_util.go`; remains a separate incomplete package and owns public wrappers/orchestration. |
+| Root `tikv` | `tikv/gc.go`, `tikv/interface.go`, `tikv/kv.go`, `tikv/region.go`, `tikv/split_region.go`, `tikv/test_util.go`; has a separate completed receipt and owns public wrappers/orchestration. |
 | Internal KV batching | `internal/kvrpc/batch.go`; consumes region grouping/routing and retains its own package status. |
 | Range tasks | `txnkv/rangetask/delete_range.go`; its complete package consumes the now-complete locate boundary. |
 | Transaction locks | `txnkv/txnlock/lock_resolver.go`, `txnkv/txnlock/test_probe.go`; lock ownership remains independent. |
-| Transaction package | `txnkv/transaction/2pc.go`, `commit.go`, `pessimistic.go`, `pipelined_flush.go`, `prewrite.go`, `test_probe.go`, `test_util.go`, `txn_file.go`, `txn_file_test.go`, `txn_test.go`; remains incomplete and owns transaction algorithms. |
-| Snapshot package | `txnkv/txnsnapshot/client_helper.go`, `scan.go`, `snapshot.go`, `snapshot_async.go`, `test_probe.go`; remains incomplete and owns snapshot/scanner state. |
+| Transaction package | `txnkv/transaction/2pc.go`, `commit.go`, `pessimistic.go`, `pipelined_flush.go`, `prewrite.go`, `test_probe.go`, `test_util.go`, `txn_file.go`, `txn_file_test.go`, `txn_test.go`; has a separate completed receipt and owns transaction algorithms. |
+| Snapshot package | `txnkv/txnsnapshot/client_helper.go`, `scan.go`, `snapshot.go`, `snapshot_async.go`, `test_probe.go`; has a separate completed receipt and owns snapshot/scanner state. |
 
 ## Validation boundary
 
 The package is exercised through deterministic cache/selector tests and completed real loopback Tonic transport tests. A live TiKV/PD cluster is not required for package-owned selection, retry, index, error, coding, and lifecycle behavior; cross-client live-cluster workflows remain a final repository gate for high-level raw, snapshot, transaction, and root `tikv` consumers.
 
-The original Go tests were inspected at the pinned commit but cannot be re-executed on this host because no Go toolchain is installed. Their 147 declarations are fully mapped above, including duplicated sync/async façades and the goleak harness. Both default and all-feature Rust suites, all-target checking, rustdoc, formatting, and diff validation are required by the ledger receipt before this package is committed.
+The 147 original declarations are fully mapped above, including duplicated sync/async façades and the goleak harness. The configured Go 1.25.12 toolchain subsequently passed the complete pinned `go test --tags=intest ./...` and `go test -race --tags=intest ./...` repository suites. Both default and all-feature Rust suites, all-target checking, rustdoc, formatting, and diff validation remain required by the ledger receipt.

@@ -45,7 +45,7 @@ The source package does not contain a DeleteRange live-cluster test or fixture. 
 Every pinned source consumer was inspected:
 
 - `tikv/kv.go` maps to the transactional client DeleteRange entrypoints and the public stateful task.
-- `tikv/gc.go` and `txnkv/transaction/pipelined_flush.go` consume the now-public generic runner and handler contract; their GC/transaction algorithms remain owned by their separate incomplete ledger packages.
+- `tikv/gc.go` and `txnkv/transaction/pipelined_flush.go` consume the now-public generic runner and handler contract; their GC/transaction algorithms remain owned by their separate completed receipts.
 - `tikv/split_region.go` consumes the now-public locate backoffer factory; split/scatter orchestration remains owned by `tikv`.
 - `integration_tests/range_task_test.go` is fully represented by the two Rust matrices above.
 

@@ -77,7 +77,7 @@ Every pinned source importer was inspected and assigned without promoting its pa
 - `internal/client/client.go` owns transport-time `EncodeRequest`/`DecodeResponse`; the complete Rust transport package consumes typed context and stream transforms.
 - `internal/locate/pd_codec.go`, `region_cache.go`, and locate tests own PD boundary coding and special non-retry treatment of `IsDecodeError`. Rust's `src/pd/codec.rs` uses the complete codecs and typed decode errors; retry policy is now covered by the complete `internal/locate` receipt.
 - `tikv/{client,compatible_txn_safe_point_loader,region,test_util}.go` own public aliases, construction, safe-point prefixing, and test factories. Their broader high-level behavior remains on the root `tikv` row.
-- `txnkv/transaction/txn_file.go` uses only the numeric ID for chunk-writer metadata; the incomplete transaction package retains that integration claim.
+- `txnkv/transaction/txn_file.go` uses only the numeric ID for chunk-writer metadata; the separate completed transaction receipt retains that integration claim.
 - RawKV, transaction, snapshot, and lock request implementations consume the codec through the typed Rust request boundary even though client-go reaches them indirectly through `tikv.Client`. Their complete algorithms remain on their own ledger rows.
 
 ## Completion gates

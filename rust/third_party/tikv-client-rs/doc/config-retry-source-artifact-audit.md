@@ -56,13 +56,13 @@ The Go `TestMain` goleak harness is accounted for: retry owns no spawned worker.
 Every pinned source importer was inspected and assigned to its owning package:
 
 - `internal/client/client_batch.go` owns the long-lived `BoTiKVRPC` stream-reconnect loop; Rust's completed transport creates the source `MaxInt32` owner and stops it through connection cancellation.
-- `internal/locate/{region_cache,region_request,replica_selector,store_cache}.go` and tests own PD, region, store, selector, and deferred fast-retry use. Rust uses the complete class table in cache/sender/selector seeds, but the remaining route-loop coverage stays on the incomplete `internal/locate` receipt.
-- `rawkv/rawkv.go` owns one 20,000-ms operation budget and its fork/cancel/final-child merge topology. Rust has that topology; the rest of RawKV remains on its own incomplete package row.
-- `tikv/{backoff,gc,kv,split_region}.go`, hooks, and tests own the high-level store/GC/split loops and remain on the incomplete root `tikv` row.
-- `txnkv/client.go`, `txnkv/rangetask`, `txnkv/transaction`, `txnkv/txnlock`, and `txnkv/txnsnapshot` own their operation budgets. The complete range-task package and snapshot/lock seeds already consume this implementation; unfinished algorithms remain explicitly attached to their own rows.
+- `internal/locate/{region_cache,region_request,replica_selector,store_cache}.go` and tests own PD, region, store, selector, and deferred fast-retry use. Its separate completed receipt proves the cache/sender/selector loop coverage over this class table.
+- `rawkv/rawkv.go` owns one 20,000-ms operation budget and its fork/cancel/final-child merge topology. Its separate completed receipt proves that topology.
+- `tikv/{backoff,gc,kv,split_region}.go`, hooks, and tests own the high-level store/GC/split loops on the separate completed root `tikv` row.
+- `txnkv/client.go`, `txnkv/rangetask`, `txnkv/transaction`, `txnkv/txnlock`, and `txnkv/txnsnapshot` own their operation budgets and retain their separate completed receipts.
 - External integration tests under `integration_tests` validate those consumer packages and remain part of their package/final live-cluster gates.
 
-Those callers are not source artifacts of `config/retry`. Their own rows must still prove that each loop chooses the correct class, budget, and ownership topology; this receipt establishes that the utility they invoke is complete. It does not promote any incomplete consumer package.
+Those callers are not source artifacts of `config/retry`. Their own receipts prove that each loop chooses the correct class, budget, and ownership topology; this receipt establishes only that the utility they invoke is complete and does not duplicate consumer claims.
 
 ## Completion gates
 

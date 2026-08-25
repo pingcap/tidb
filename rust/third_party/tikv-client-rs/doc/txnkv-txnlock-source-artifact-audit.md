@@ -34,7 +34,7 @@ There is no package `doc.go`, platform/build-tag variant, generated source or in
 
 The source `storage` interface maps to the existing `PdClient`, region cache, store client, and request-plan boundaries. Rust's type-safe request plans replace `SendReq` command assertions, while `SecondaryLocksStatus` is the native merge state corresponding to `asyncResolveData`. `Cancellation`, owned futures, and `oneshot` results replace context cancellation, goroutine pools, channels, and wait groups.
 
-The source resolver intentionally returns TTL and lock classification; the caller owns its retry class. Snapshot Get/BatchGet/Scan already consume that output through the cumulative `txnLockFast` backoffer. Remaining scanner/callback work is charged to the separate incomplete `txnkv/txnsnapshot` package, not hidden in this receipt. Transaction prewrite and pipelined callers use their source `txnLock` policy and share the resolver observer.
+The source resolver intentionally returns TTL and lock classification; the caller owns its retry class. Snapshot Get/BatchGet/Scan consume that output through the cumulative `txnLockFast` backoffer. Scanner/callback work remains charged to the separate completed `txnkv/txnsnapshot` receipt, not duplicated here. Transaction prewrite and pipelined callers use their source `txnLock` policy and share the resolver observer.
 
 ## Original test and support mapping
 
@@ -56,7 +56,7 @@ Additional source-derived tests cover shared-wrapper misuse, resolving token lif
 
 Every direct pinned importer was inspected and assigned:
 
-- Store owners are `tikv/interface.go`, `kv.go`, `gc.go`, `split_region.go`, `test_probe.go`, and `kv_test.go`. Rust integrates shared construction/close and GC/split request behavior here; the broader root `tikv` package retains its own incomplete inventory.
+- Store owners are `tikv/interface.go`, `kv.go`, `gc.go`, `split_region.go`, `test_probe.go`, and `kv_test.go`. Rust integrates shared construction/close and GC/split request behavior here; the broader root `tikv` package retains its own completed receipt.
 - Transaction owners are `txnkv/transaction/2pc.go`, `prewrite.go`, `pessimistic.go`, `pipelined_flush.go`, `txn_file.go`, `test_util.go`, and `txn_file_test.go`. The completed transaction receipt owns caller policy while this receipt owns resolver state; the pipelined observer seam has direct regression evidence.
 - Snapshot owners are `txnkv/txnsnapshot/client_helper.go`, `snapshot.go`, and `scan.go`. Read-through hints, detached cleanup, and `txnLockFast` Get/BatchGet waits are integrated; the package's remaining scanner/iterator receipt stays separate.
 - `txnkv/lock_export.go` is a root re-export façade and remains on the separate `txnkv` row.
@@ -80,4 +80,4 @@ Final validation on `nightly-2026-08-22` used the exact batch code:
 
 Package-local source tests require neither UniStore nor a live TiKV/PD cluster: the original cache test uses a nil store and the pool test uses in-process synchronization. Deterministic Rust PD/KV request mocks therefore cover the complete original local boundary; UniStore remains available for higher-level reusable integration tests when needed.
 
-The host has no Go toolchain, so the pinned Go tests cannot run locally. End-to-end cross-client differential lock tests against one TiKV/PD cluster remain a repository completion gate owned by the high-level integration packages.
+The configured Go 1.25.12 toolchain subsequently passed the complete pinned local and race suites. End-to-end cluster behavior remains owned by the completed high-level integration and differential receipts.

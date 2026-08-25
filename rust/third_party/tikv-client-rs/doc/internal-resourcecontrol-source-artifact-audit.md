@@ -49,7 +49,7 @@ Every pinned source consumer was inspected:
 
 - `internal/client/client_interceptor.go`, `client_async.go`, and `client.go` map to the physical `Dispatch` admission/settlement boundary, streaming wrappers, RU-v2 bypass, and the already complete `internal/client` transport package.
 - `internal/client/client_interceptor_test.go` bypass/admission/error/response behavior maps to the package and transaction dispatch tests listed above.
-- `txnkv/transaction/txn_file.go` consumes precomputed `RequestInfo` and empty `ResponseInfo`. Rust exposes both native forms, but the txn-file protocol itself remains on the separate incomplete `txnkv/transaction` row.
+- `txnkv/transaction/txn_file.go` consumes precomputed `RequestInfo` and empty `ResponseInfo`. Rust exposes both native forms, while the txn-file protocol itself remains owned by the separate completed `txnkv/transaction` receipt.
 
 No other pinned Go production or test file imports this package. Downstream transaction/txn-file completion is not implied by this receipt.
 

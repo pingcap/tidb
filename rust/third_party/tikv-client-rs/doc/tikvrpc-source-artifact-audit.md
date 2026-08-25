@@ -85,4 +85,4 @@ All 74 Go files importing `tikvrpc` were assigned; completion of this foundation
 
 ## Validation boundary
 
-Package behavior is deterministic or already exercised through the completed loopback transport and locate packages. No live TiKV/PD cluster is required for this receipt. The pinned Go tests were inspected but cannot be re-executed on this host because no Go toolchain is installed. Final cross-client live-cluster behavior remains mandatory for the unfinished raw, snapshot, transaction, and high-level `tikv` packages.
+Package behavior is deterministic or already exercised through the completed loopback transport and locate packages. No live TiKV/PD cluster is required for this receipt. The configured Go 1.25.12 toolchain subsequently passed the complete pinned local and race suites. Raw, snapshot, transaction, and high-level `tikv` retain their separate completed receipts and repository live-cluster evidence.

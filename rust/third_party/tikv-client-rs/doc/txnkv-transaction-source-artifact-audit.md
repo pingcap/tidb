@@ -116,6 +116,6 @@ Final validation on `nightly-2026-08-22` used the exact batch code:
 - `cargo +nightly-2026-08-22 fmt --all -- --check` and `git diff --check`: passed.
 - Mechanical declaration comparison: 33 pinned source tests and 33 documented tests, with no missing or extra name.
 
-Package-owned behavior is covered through deterministic request-level mocks and source-derived state-machine tests. The original Go tests were inspected at the pin but cannot be re-executed on this host because no Go toolchain is installed.
+Package-owned behavior is covered through deterministic request-level mocks and source-derived state-machine tests. The configured Go 1.25.12 toolchain subsequently passed the complete pinned local and race suites, and the repository integration workflow passed the transactional package against matching API-v1 PD/TiKV.
 
 A live TiKV/PD cluster is not required by any of the four package-local source test files. End-to-end cross-client differential runs for transaction, snapshot, lock resolver, safe point, and root-store orchestration remain a repository completion gate owned by their high-level packages; they are not an omitted artifact of this atomic package receipt.

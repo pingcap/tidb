@@ -1,4 +1,5 @@
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches:
@@ -17,16 +18,18 @@ jobs:
     name: check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Protoc
-        uses: arduino/setup-protoc@v1
+        uses: arduino/setup-protoc@v3
         with:
-          version: '3.x'
+          version: '35.1'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
       - name: make check
         run: make check
+      - name: make doc
+        run: make doc
       - name: Catch unexpected changes in the generated code
         run: |
           git diff --exit-code
@@ -38,11 +41,11 @@ jobs:
       NEXTEST_PROFILE: ci
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Protoc
-        uses: arduino/setup-protoc@v1
+        uses: arduino/setup-protoc@v3
         with:
-          version: '3.x'
+          version: '35.1'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -64,11 +67,11 @@ jobs:
       RUST_LOG: info
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Protoc
-        uses: arduino/setup-protoc@v1
+        uses: arduino/setup-protoc@v3
         with:
-          version: '3.x'
+          version: '35.1'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -76,12 +79,17 @@ jobs:
         run: curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
       - name: start tiup playground
         run: |
-          # use latest stable version
           ~/.tiup/bin/tiup install tikv:${{ env.TIKV_VERSION }} pd:${{ env.TIKV_VERSION }}
           ~/.tiup/bin/tiup playground ${{ env.TIKV_VERSION }} --mode tikv-slim --kv 3 --tag cluster --without-monitor --kv.config config/tikv.toml --pd.config config/pd.toml &
-          while :; do
+          for attempt in $(seq 1 180); do
             echo "waiting cluster to be ready"
-            [[ "$(curl -I http://127.0.0.1:2379/pd/api/v1/regions 2>/dev/null | head -n 1 | cut -d$' ' -f2)" -ne "405" ]] || break
+            if python3 -c 'import json, urllib.request; stores = json.load(urllib.request.urlopen("http://127.0.0.1:2379/pd/api/v1/stores")); regions = json.load(urllib.request.urlopen("http://127.0.0.1:2379/pd/api/v1/regions")); assert stores.get("count", 0) >= 3 and regions.get("count", 0) >= 3' 2>/dev/null; then
+              exit 0
+            fi
+            if [[ "${attempt}" -eq 180 ]]; then
+              echo "cluster did not report three stores and initialized regions" >&2
+              exit 1
+            fi
             sleep 1
           done
       - name: Install latest nextest release

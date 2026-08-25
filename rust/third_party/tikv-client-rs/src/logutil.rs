@@ -473,7 +473,7 @@ mod tests {
 
     #[test]
     fn descriptor_pool_covers_every_generated_named_message() {
-        assert!(protobuf_descriptors().all_messages().count() >= 927);
+        assert_eq!(protobuf_descriptors().all_messages().count(), 1_029);
         assert!(protobuf_descriptors()
             .get_message_by_name(<metapb::Region as Name>::full_name().as_str())
             .is_some());

@@ -5,8 +5,6 @@ export RUSTFLAGS=-Dwarnings
 export PD_ADDRS     ?= 127.0.0.1:2379
 export MULTI_REGION ?= 1
 
-ALL_FEATURES := integration-tests
-
 NEXTEST_ARGS := --config-file $(shell pwd)/config/nextest.toml
 
 INTEGRATION_TEST_ARGS := --features "integration-tests" --test-threads 1
@@ -19,12 +17,13 @@ generate:
 	cargo run -p tikv-client-proto-build
 
 check: generate
-	cargo check --all --all-targets --features "${ALL_FEATURES}"
+	cargo check --workspace --all-targets --all-features
 	cargo fmt -- --check
-	cargo clippy --all-targets --features "${ALL_FEATURES}" -- -D clippy::all
+	cargo clippy --workspace --all-targets --all-features -- -D warnings -D clippy::all
 
 unit-test: generate
 	cargo nextest run ${NEXTEST_ARGS} --all --no-default-features
+	cargo nextest run ${NEXTEST_ARGS} --all --all-features --lib
 
 integration-test: integration-test-txn integration-test-raw
 
@@ -37,7 +36,8 @@ integration-test-raw: generate
 test: unit-test integration-test
 
 doc:
-	cargo doc --workspace --exclude tikv-client-proto --document-private-items --no-deps
+	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --document-private-items --no-deps
+	RUSTDOCFLAGS="-D warnings" cargo test --doc --workspace --all-features
 
 tiup:
 	tiup playground nightly --mode tikv-slim --kv 3 --without-monitor --kv.config $(shell pwd)/config/tikv.toml --pd.config $(shell pwd)/config/pd.toml &
