@@ -1,0 +1,233 @@
+syntax = "proto3";
+package externalworkloadpb;
+
+import "apipb.proto";
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+// ExternalWorkloadController is the service that an external controller exposes
+// to TiDB instances. TiDB calls into it to register and recycle background
+// workloads (GC, distributed background subtasks, TTL, auto-analyze, remote
+// queries) so that the controller can run them on dedicated TiDB instances and
+// scale those instances on demand.
+service ExternalWorkloadController {
+  // Ping verifies that the controller is reachable.
+  rpc Ping(PingRequest) returns (Response) {}
+
+  // RegisterGC notifies the controller that a new GC delete-range entry was inserted at deletion_ts.
+  rpc RegisterGC(RegisterGCRequest) returns (Response) {}
+  // RecycleGC notifies the controller that all GC delete-range entries at or before safe_point have been processed.
+  rpc RecycleGC(RecycleGCRequest) returns (Response) {}
+
+  // RegisterGCV2 notifies the controller that a round of keyspace-level GC has just been
+  // performed at safe_point. If no further heartbeats are received the controller should
+  // schedule another round after gc_life_time seconds elapse.
+  rpc RegisterGCV2(RegisterGCV2Request) returns (Response) {}
+  // RecycleGCV2 notifies the controller that all keyspace-level GC tasks at or before safe_point are finished.
+  rpc RecycleGCV2(RecycleGCV2Request) returns (Response) {}
+  // UpdateGCLifeTime notifies the controller that the user's gc_life_time changed.
+  rpc UpdateGCLifeTime(UpdateGCLifeTimeRequest) returns (Response) {}
+
+  // GetBgTaskConfig returns the worker-pool configuration for a background task type.
+  rpc GetBgTaskConfig(GetBgTaskConfigRequest) returns (GetBgTaskConfigResponse) {}
+  // RegisterBgTask notifies the controller that a background subtask has been created.
+  rpc RegisterBgTask(RegisterBgTaskRequest) returns (Response) {}
+  // RecycleBgTask notifies the controller that a background subtask has been completed.
+  rpc RecycleBgTask(RecycleBgTaskRequest) returns (Response) {}
+  // UpdateBgTaskExecID notifies the controller that the exec IDs assigned to subtasks of a task have changed.
+  rpc UpdateBgTaskExecID(UpdateBgTaskExecIDRequest) returns (Response) {}
+
+  // RegisterRemoteQuery notifies the controller that a query is being executed remotely.
+  rpc RegisterRemoteQuery(RegisterRemoteQueryRequest) returns (Response) {}
+
+  // RegisterTTLTask notifies the controller that a table with TTL has been created or altered.
+  rpc RegisterTTLTask(RegisterTTLTaskRequest) returns (Response) {}
+  // DeleteTTLTableInfo notifies the controller that a table no longer has TTL or has been dropped.
+  rpc DeleteTTLTableInfo(DeleteTTLTableInfoRequest) returns (Response) {}
+  // RecycleTTLTask notifies the controller that a TTL job has completed.
+  rpc RecycleTTLTask(RecycleTTLTaskRequest) returns (Response) {}
+  // UpdateTTLJobEnable notifies the controller that the tidb_ttl_job_enable system variable changed.
+  rpc UpdateTTLJobEnable(UpdateTTLJobEnableRequest) returns (Response) {}
+
+  // RegisterAutoAnalyze notifies the controller that an auto-analyze task has been registered.
+  rpc RegisterAutoAnalyze(RegisterAutoAnalyzeRequest) returns (Response) {}
+  // RecycleAutoAnalyze notifies the controller that an auto-analyze task has been completed.
+  rpc RecycleAutoAnalyze(RecycleAutoAnalyzeRequest) returns (Response) {}
+}
+
+message PingRequest {}
+
+// Response is the standard reply for RPCs that only need to surface an Error.
+message Response {
+  Error error = 1;
+}
+
+enum ErrorType {
+  OK = 0;
+  UNKNOWN = 1;
+  // PAUSED indicates the controller has temporarily paused the corresponding handler.
+  PAUSED = 2;
+}
+
+message Error {
+  ErrorType type = 1;
+  string message = 2;
+}
+
+// RequestHeader carries TiDB-side identity information used by the controller
+// to route a request to the right pool.
+message RequestHeader {
+  oneof keyspace {
+    // keyspace_id is the V1/V2 keyspace ID of the calling TiDB.
+    // V3 callers must use keyspace_identity instead.
+    uint32 keyspace_id = 1;
+    // keyspace_identity is the V3 keyspace identity of the calling TiDB.
+    apipb.KeyspaceIdentity keyspace_identity = 4;
+  }
+  // keyspace_name is the keyspace name of the calling TiDB. It is not globally
+  // unique in V3 and must not be used as the keyspace identity.
+  string keyspace_name = 2;
+  // tidb_pool is the pool the calling TiDB belongs to.
+  string tidb_pool = 3;
+}
+
+message RegisterGCRequest {
+  RequestHeader header = 1;
+  // deletion_ts is the timestamp at which a new delete-range row was inserted.
+  uint64 deletion_ts = 2;
+}
+
+message RecycleGCRequest {
+  RequestHeader header = 1;
+  // safe_point is the timestamp at or before which all delete-range entries have been processed.
+  uint64 safe_point = 2;
+}
+
+message RegisterGCV2Request {
+  RequestHeader header = 1;
+  // safe_point is the timestamp of the most recent keyspace-level GC.
+  uint64 safe_point = 2;
+  // gc_life_time is the GC life time configured on the calling TiDB, in seconds.
+  int64 gc_life_time = 3;
+}
+
+message RecycleGCV2Request {
+  RequestHeader header = 1;
+  // safe_point is the timestamp at or before which all keyspace-level GC tasks have been processed.
+  uint64 safe_point = 2;
+}
+
+message UpdateGCLifeTimeRequest {
+  RequestHeader header = 1;
+  // gc_life_time is the new gc_life_time value, in seconds.
+  int64 gc_life_time = 2;
+}
+
+message GetBgTaskConfigRequest {
+  RequestHeader header = 1;
+  // worker_type is the background worker type being queried.
+  string worker_type = 2;
+}
+
+message GetBgTaskConfigResponse {
+  Error error = 1;
+  // worker_count is the worker-pool size the controller has provisioned for this type.
+  uint32 worker_count = 2;
+  // auto_scale_enabled reports whether the controller auto-scales this worker type.
+  bool auto_scale_enabled = 3;
+}
+
+message RegisterBgTaskRequest {
+  RequestHeader header = 1;
+  // task_type is the worker type that should execute the subtask.
+  string task_type = 2;
+  // task_key is the key of the distributed task job.
+  string task_key = 3;
+  // global_task_id is the ID of the task in mysql.tidb_global_task.
+  int64 global_task_id = 4;
+  // sub_task_id is the ID of the subtask in mysql.tidb_background_subtask.
+  // A value of 0 is used for a task-level guard entry.
+  int64 sub_task_id = 5;
+  // exec_id is the logical TiDB ID assigned to the subtask, or empty for a task-level guard entry.
+  string exec_id = 6;
+}
+
+message RecycleBgTaskRequest {
+  RequestHeader header = 1;
+  // global_task_id is the ID of the task in mysql.tidb_global_task.
+  int64 global_task_id = 2;
+  // sub_task_id is the ID of the subtask in mysql.tidb_background_subtask.
+  // A value of 0 recycles all subtasks of global_task_id.
+  int64 sub_task_id = 3;
+}
+
+message SubtaskExecIDAssignment {
+  // sub_task_id is the ID of the subtask in mysql.tidb_background_subtask.
+  int64 sub_task_id = 1;
+  // exec_id is the logical TiDB ID assigned to the subtask.
+  string exec_id = 2;
+}
+
+message UpdateBgTaskExecIDRequest {
+  RequestHeader header = 1;
+  // global_task_id is the ID of the task in mysql.tidb_global_task.
+  int64 global_task_id = 2;
+  // assignments are the subtask-to-exec-ID mappings being updated.
+  repeated SubtaskExecIDAssignment assignments = 3;
+}
+
+message RegisterRemoteQueryRequest {
+  RequestHeader header = 1;
+  // query_id is the ID of the query being executed remotely.
+  string query_id = 2;
+  // query_address is the address of the TiDB executing the query.
+  string query_address = 3;
+}
+
+message RegisterTTLTaskRequest {
+  RequestHeader header = 1;
+  // table_id is the ID of the table with TTL configured.
+  int64 table_id = 2;
+  // ttl_job_enable is the current value of the tidb_ttl_job_enable system variable.
+  bool ttl_job_enable = 3;
+}
+
+message DeleteTTLTableInfoRequest {
+  RequestHeader header = 1;
+  // table_id is the ID of the table that no longer has TTL or has been dropped.
+  int64 table_id = 2;
+}
+
+message RecycleTTLTaskRequest {
+  RequestHeader header = 1;
+  // completed_job_create_time is the greatest creation timestamp among TTL jobs
+  // that have completed on the calling TiDB.
+  uint64 completed_job_create_time = 2;
+}
+
+message UpdateTTLJobEnableRequest {
+  RequestHeader header = 1;
+  // ttl_job_enable is the new value of the tidb_ttl_job_enable system variable.
+  bool ttl_job_enable = 2;
+}
+
+message RegisterAutoAnalyzeRequest {
+  RequestHeader header = 1;
+  // task_id is the ID of the registered auto-analyze task.
+  uint64 task_id = 2;
+}
+
+message RecycleAutoAnalyzeRequest {
+  RequestHeader header = 1;
+  // task_id is the ID of the completed auto-analyze task.
+  uint64 task_id = 2;
+}

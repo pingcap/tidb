@@ -62,7 +62,7 @@ use crate::util::iter::FlatMapOkIterExt;
 use crate::Error;
 use crate::Result;
 
-use super::keyspace::Keyspace;
+use super::keyspace::{EncodeKeyspace, KeyMode, Keyspace};
 
 /// A plan for how to execute a request. A user builds up a plan with various
 /// options, then exectutes it.
@@ -2193,10 +2193,13 @@ where
                 }
                 return Ok(result);
             }
+            // Response keys are logical after API V2 transport decoding, but
+            // Rust's sharding and request objects retain physical keys.
+            let resolver_locks = locks.clone().encode_keyspace(self.keyspace, KeyMode::Txn);
 
             if !clone.response_locks_only {
                 if let Some(clean) = result.take_clean_result_for_lock_retry() {
-                    if clone.inner.retry_only_lock_keys(&locks) {
+                    if clone.inner.retry_only_lock_keys(&resolver_locks) {
                         if let Some(retained) = clean_lock_retry_result.as_mut() {
                             retained.merge_clean_lock_retry_result(clean);
                         } else {
@@ -2268,7 +2271,7 @@ where
             let lock_result = match &self.read_lock_context {
                 Some(read_lock_context) => {
                     resolve_locks_for_read_with_context_result(
-                        locks,
+                        resolver_locks,
                         self.timestamp.clone(),
                         pd_client.clone(),
                         self.keyspace,
@@ -2280,7 +2283,7 @@ where
                 }
                 None => {
                     resolve_locks_with_context_result(
-                        locks,
+                        resolver_locks,
                         self.timestamp.clone(),
                         pd_client.clone(),
                         self.keyspace,
@@ -2453,9 +2456,16 @@ where
 
             // Iterate to next batch of inner.
             match scan_lock_resp.has_next_batch() {
-                Some(range) if region.contains(range.0.as_ref()) => {
-                    debug!("CleanupLocks::execute, next range:{:?}", range);
-                    inner.next_batch(range);
+                Some((start, end)) => {
+                    let start: Vec<u8> = crate::Key::from(start)
+                        .encode_keyspace(self.keyspace, KeyMode::Txn)
+                        .into();
+                    if region.contains(start.as_ref()) {
+                        debug!("CleanupLocks::execute, next range:{:?}", (&start, &end));
+                        inner.next_batch((start, end));
+                    } else {
+                        has_more_batch = false;
+                    }
                 }
                 _ => has_more_batch = false,
             }
@@ -2478,6 +2488,7 @@ where
                     .filter(|l| l.use_async_commit)
                     .collect::<Vec<_>>();
             }
+            locks = locks.encode_keyspace(self.keyspace, KeyMode::Txn);
             debug!("CleanupLocks::execute, meet locks:{}", locks.len());
 
             let lock_size = locks.len();
@@ -2968,6 +2979,166 @@ mod test {
         task.abort();
         let _ = task.await;
         assert!(context.resolving_locks().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn api_v2_decoded_lock_is_reencoded_before_status_lookup() {
+        let codec = crate::request::ApiV2Codec::new(crate::request::KeyMode::Txn, 0).unwrap();
+        let get_count = Arc::new(AtomicUsize::new(0));
+        let get_count_by_hook = Arc::clone(&get_count);
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn std::any::Any| {
+                if let Some(request) = request.downcast_ref::<kvrpcpb::GetRequest>() {
+                    assert_eq!(request.key, codec.encode_key(b"locked"));
+                    if get_count_by_hook.fetch_add(1, Ordering::SeqCst) == 0 {
+                        return Ok(Box::new(kvrpcpb::GetResponse {
+                            error: Some(kvrpcpb::KeyError {
+                                locked: Some(kvrpcpb::LockInfo {
+                                    key: codec.encode_key(b"locked"),
+                                    primary_lock: codec.encode_key(b"locked"),
+                                    lock_version: 1,
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }) as Box<dyn std::any::Any>);
+                    }
+                    return Ok(Box::<kvrpcpb::GetResponse>::default() as Box<dyn std::any::Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
+                    assert_eq!(request.primary_key, codec.encode_key(b"locked"));
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn std::any::Any>);
+                }
+                panic!("unexpected API V2 lock-resolution request");
+            },
+        )));
+        let keyspace = Keyspace::Enable { keyspace_id: 0 };
+        let response = PlanBuilder::new(
+            client,
+            keyspace,
+            kvrpcpb::GetRequest {
+                key: codec.encode_key(b"locked"),
+                ..Default::default()
+            },
+        )
+        .resolve_lock(
+            Timestamp::from_version(7),
+            Backoff::no_jitter_backoff(0, 0, 1),
+            keyspace,
+        )
+        .retry_multi_region(Backoff::no_jitter_backoff(0, 0, 1))
+        .plan()
+        .execute()
+        .await
+        .unwrap();
+
+        assert_eq!(response.len(), 1);
+        assert!(response
+            .into_iter()
+            .next()
+            .unwrap()
+            .unwrap()
+            .error
+            .is_none());
+        assert_eq!(get_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn api_v2_batch_get_retries_decoded_lock_keys_in_physical_form() {
+        let codec = crate::request::ApiV2Codec::new(crate::request::KeyMode::Txn, 0).unwrap();
+        let batch_count = Arc::new(AtomicUsize::new(0));
+        let batch_count_by_hook = Arc::clone(&batch_count);
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn std::any::Any| {
+                if let Some(request) = request.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+                    let attempt = batch_count_by_hook.fetch_add(1, Ordering::SeqCst);
+                    if attempt == 0 {
+                        assert_eq!(
+                            request.keys,
+                            [codec.encode_key(b"bar"), codec.encode_key(b"locked")]
+                        );
+                        return Ok(Box::new(kvrpcpb::BatchGetResponse {
+                            pairs: vec![
+                                kvrpcpb::KvPair {
+                                    key: codec.encode_key(b"bar"),
+                                    value: b"clean".to_vec(),
+                                    ..Default::default()
+                                },
+                                kvrpcpb::KvPair {
+                                    key: codec.encode_key(b"locked"),
+                                    error: Some(kvrpcpb::KeyError {
+                                        locked: Some(kvrpcpb::LockInfo {
+                                            key: codec.encode_key(b"locked"),
+                                            primary_lock: codec.encode_key(b"locked"),
+                                            lock_version: 1,
+                                            ..Default::default()
+                                        }),
+                                        ..Default::default()
+                                    }),
+                                    ..Default::default()
+                                },
+                            ],
+                            ..Default::default()
+                        }) as Box<dyn std::any::Any>);
+                    }
+                    assert_eq!(request.keys, [codec.encode_key(b"locked")]);
+                    return Ok(Box::new(kvrpcpb::BatchGetResponse {
+                        pairs: vec![kvrpcpb::KvPair {
+                            key: codec.encode_key(b"locked"),
+                            value: b"resolved".to_vec(),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }) as Box<dyn std::any::Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
+                    assert_eq!(request.primary_key, codec.encode_key(b"locked"));
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn std::any::Any>);
+                }
+                panic!("unexpected API V2 batch-get lock-resolution request");
+            },
+        )));
+        let keyspace = Keyspace::Enable { keyspace_id: 0 };
+        let response = PlanBuilder::new(
+            client,
+            keyspace,
+            kvrpcpb::BatchGetRequest {
+                keys: vec![codec.encode_key(b"bar"), codec.encode_key(b"locked")],
+                ..Default::default()
+            },
+        )
+        .resolve_lock(
+            Timestamp::from_version(7),
+            Backoff::no_jitter_backoff(0, 0, 1),
+            keyspace,
+        )
+        .retry_multi_region(Backoff::no_jitter_backoff(0, 0, 1))
+        .plan()
+        .execute()
+        .await
+        .unwrap();
+
+        assert_eq!(response.len(), 1);
+        let response = response.into_iter().next().unwrap().unwrap();
+        assert_eq!(
+            response
+                .pairs
+                .into_iter()
+                .map(|pair| (pair.key, pair.value))
+                .collect::<Vec<_>>(),
+            [
+                (b"bar".to_vec(), b"clean".to_vec()),
+                (b"locked".to_vec(), b"resolved".to_vec()),
+            ]
+        );
+        assert_eq!(batch_count.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

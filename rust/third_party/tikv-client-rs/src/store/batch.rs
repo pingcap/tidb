@@ -1119,8 +1119,13 @@ struct BatchStreamState {
     outbound: Option<mpsc::Sender<tikvpb::BatchCommandsRequest>>,
 }
 
+type BatchOpenFuture = futures::future::BoxFuture<
+    'static,
+    Result<tonic::codec::Streaming<tikvpb::BatchCommandsResponse>>,
+>;
+
 impl BatchCommandsStream {
-    pub(crate) async fn open_on(
+    pub(crate) fn open_on(
         client: &KvRpcClient,
         connection_index: usize,
         forwarded_host: impl Into<String>,
@@ -1139,8 +1144,7 @@ impl BatchCommandsStream {
         let target = client.batch_metric_target();
         let progress = Arc::new(BatchStreamProgress::default());
         let (outbound, responses) =
-            Self::open_generation(client, connection_index, &forwarded_host, queue_capacity)
-                .await?;
+            Self::start_generation(client, connection_index, &forwarded_host, queue_capacity);
         let state = Arc::new(AsyncMutex::new(BatchStreamState {
             outbound: Some(outbound),
         }));
@@ -1173,23 +1177,25 @@ impl BatchCommandsStream {
         })
     }
 
-    async fn open_generation(
+    fn start_generation(
         client: &KvRpcClient,
         connection_index: usize,
         forwarded_host: &str,
         queue_capacity: usize,
-    ) -> Result<(
-        mpsc::Sender<tikvpb::BatchCommandsRequest>,
-        tonic::codec::Streaming<tikvpb::BatchCommandsResponse>,
-    )> {
+    ) -> (mpsc::Sender<tikvpb::BatchCommandsRequest>, BatchOpenFuture) {
         let (outbound, inbound) = mpsc::channel(queue_capacity);
         let requests = futures::stream::unfold(inbound, |mut inbound| async move {
             inbound.recv().await.map(|request| (request, inbound))
         });
-        let responses = client
-            .open_batch_commands_on(connection_index, forwarded_host, requests)
-            .await?;
-        Ok((outbound, responses))
+        let client = client.clone();
+        let forwarded_host = forwarded_host.to_owned();
+        let responses = async move {
+            client
+                .open_batch_commands_on(connection_index, &forwarded_host, requests)
+                .await
+        }
+        .boxed();
+        (outbound, responses)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1206,24 +1212,32 @@ impl BatchCommandsStream {
         cancellation: Cancellation,
         transport_layer_load: Arc<AtomicU64>,
         event_listener: Arc<std::sync::RwLock<Option<Arc<dyn ClientEventListener>>>>,
-        mut responses: tonic::codec::Streaming<tikvpb::BatchCommandsResponse>,
+        mut opening: BatchOpenFuture,
     ) {
         let target = client.batch_metric_target();
         loop {
-            if run_batch_receive_loop_recovering_panics(
-                responses,
-                pending.clone(),
-                forwarded_host.clone(),
-                &target,
-                connection_index,
-                progress.clone(),
-                cancellation.clone(),
-                transport_layer_load.clone(),
-                event_listener.clone(),
-            )
-            .await
-            {
-                return;
+            match opening.await {
+                Ok(responses) => {
+                    if run_batch_receive_loop_recovering_panics(
+                        responses,
+                        pending.clone(),
+                        forwarded_host.clone(),
+                        &target,
+                        connection_index,
+                        progress.clone(),
+                        cancellation.clone(),
+                        transport_layer_load.clone(),
+                        event_listener.clone(),
+                    )
+                    .await
+                    {
+                        return;
+                    }
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    pending.fail_for_host(&forwarded_host, || Error::StringError(message.clone()));
+                }
             }
             client.mark_connection_transient_failure(connection_index);
             state.lock().await.outbound = None;
@@ -1241,27 +1255,26 @@ impl BatchCommandsStream {
                     return;
                 }
                 let establish_started = Instant::now();
-                let reopen = tokio::time::timeout(
-                    TIKV_DIAL_TIMEOUT,
-                    Self::open_generation(
-                        &client,
-                        connection_index,
-                        &forwarded_host,
-                        queue_capacity,
-                    ),
-                )
-                .await;
+                let (outbound, reopen) = Self::start_generation(
+                    &client,
+                    connection_index,
+                    &forwarded_host,
+                    queue_capacity,
+                );
+                state.lock().await.outbound = Some(outbound);
+                ready.notify_waiters();
+                let reopen = tokio::time::timeout(TIKV_DIAL_TIMEOUT, reopen).await;
                 observe_batch_client_wait_establish(establish_started.elapsed());
                 match reopen {
-                    Ok(Ok((outbound, reopened))) => {
+                    Ok(Ok(reopened)) => {
                         progress.reset();
-                        state.lock().await.outbound = Some(outbound);
-                        ready.notify_waiters();
-                        responses = reopened;
+                        opening = futures::future::ready(Ok(reopened)).boxed();
                         observe_batch_client_unavailable(unavailable_started.elapsed());
                         break;
                     }
                     Ok(Err(error)) => {
+                        state.lock().await.outbound = None;
+                        ready.notify_waiters();
                         if backoffer
                             .backoff(BO_TIKV_RPC, error.to_string())
                             .await
@@ -1271,6 +1284,8 @@ impl BatchCommandsStream {
                         }
                     }
                     Err(_) => {
+                        state.lock().await.outbound = None;
+                        ready.notify_waiters();
                         if backoffer
                             .backoff(
                                 BO_TIKV_RPC,
@@ -1607,9 +1622,7 @@ impl BatchCommandsDispatcher {
                             reconnect_gate.clone(),
                             self.transport_layer_load.clone(),
                             self.client.event_listener(),
-                        )
-                        .await
-                        {
+                        ) {
                             Ok(stream) => {
                                 entry
                                     .insert(stream)
@@ -1906,29 +1919,45 @@ mod tests {
                 && self.served_streams.fetch_add(1, Ordering::Relaxed) == 0;
             let core = self.core.clone();
             let client_send_times = self.client_send_times.clone();
+            let mut requests = request.into_inner();
 
-            let responses: BatchResponseStream = Box::pin(futures::stream::unfold(
-                (Some(request.into_inner()), false),
-                move |(requests, complete)| {
-                    let core = core.clone();
-                    let client_send_times = client_send_times.clone();
-                    async move {
-                        if complete {
-                            return None;
-                        }
-                        let mut requests = requests?;
-                        match requests.message().await {
-                            Ok(Some(request)) => {
-                                client_send_times
-                                    .lock()
-                                    .unwrap()
-                                    .push(request.client_send_time_ns);
-                                let responses: Vec<tikvpb::batch_commands_response::Response> =
-                                    request
-                                        .requests
-                                        .into_iter()
-                                        .map(|request| {
-                                            match request.cmd {
+            Box::pin(async move {
+                // TiKV's grpcio handler does not complete the stream-open
+                // future until it has received the first envelope. Keeping
+                // this test server equally strict catches clients which wait
+                // for response headers before publishing that envelope.
+                let first_request = requests.message().await?;
+                let responses: BatchResponseStream = Box::pin(futures::stream::unfold(
+                    (Some(requests), false, first_request),
+                    move |(requests, complete, buffered_request)| {
+                        let core = core.clone();
+                        let client_send_times = client_send_times.clone();
+                        async move {
+                            if complete {
+                                return None;
+                            }
+                            let mut requests = requests?;
+                            let request = match buffered_request {
+                                Some(request) => Some(request),
+                                None => match requests.message().await {
+                                    Ok(request) => request,
+                                    Err(status) => {
+                                        return Some((Err(status), (None, true, None)));
+                                    }
+                                },
+                            };
+                            match request {
+                                Some(request) => {
+                                    client_send_times
+                                        .lock()
+                                        .unwrap()
+                                        .push(request.client_send_time_ns);
+                                    let responses: Vec<tikvpb::batch_commands_response::Response> =
+                                        request
+                                            .requests
+                                            .into_iter()
+                                            .map(|request| {
+                                                match request.cmd {
                                     Some(tikvpb::batch_commands_request::request::Cmd::Get(
                                         request,
                                     )) => tikvpb::batch_commands_response::Response {
@@ -1954,10 +1983,9 @@ mod tests {
                                     },
                                     _ => tikvpb::batch_commands_response::Response::default(),
                                 }
-                                        })
-                                        .collect();
-                                let response =
-                                    if responses.iter().all(|response| {
+                                            })
+                                            .collect();
+                                    let response = if responses.iter().all(|response| {
                                         matches!(
                                     response.cmd,
                                     Some(tikvpb::batch_commands_response::response::Cmd::Empty(_))
@@ -1974,15 +2002,15 @@ mod tests {
                                             ..Default::default()
                                         })
                                     };
-                                Some((response, (Some(requests), close_after_response)))
+                                    Some((response, (Some(requests), close_after_response, None)))
+                                }
+                                None => None,
                             }
-                            Ok(None) => None,
-                            Err(status) => Some((Err(status), (None, true))),
                         }
-                    }
-                },
-            ));
-            Box::pin(async move { Ok(tonic::Response::new(responses)) })
+                    },
+                ));
+                Ok(tonic::Response::new(responses))
+            })
         }
     }
 

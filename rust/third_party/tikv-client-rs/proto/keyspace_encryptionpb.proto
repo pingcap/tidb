@@ -1,0 +1,71 @@
+// Protobufs for keyspace encryption metadata.
+// Depending on the component, these messages may be persisted (stable on-disk format)
+// and/or transmitted over RPC (e.g. between TiKV and CDC).
+
+syntax = "proto3";
+package keyspace_encryptionpb;
+
+import "apipb.proto";
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+// Top-level metadata that describes the encryption info for a keyspace.
+message EncryptionMeta {
+  oneof keyspace {
+    // V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+    uint32 keyspace_id = 1;
+    // V3 keyspace identity.
+    apipb.KeyspaceIdentity keyspace_identity = 6;
+  }
+  // The current encryption epoch, containing the active data key.
+  EncryptionEpoch current = 2;
+  // The master key used to encrypt the data keys in this meta file.
+  MasterKey master_key = 3;
+  // All known data keys for the keyspace, indexed by their data_key_id.
+  map<uint32, DataKey> data_keys = 4;
+  // Previous encryption epochs (ordered by creation time), useful for auditing
+  // or key recovery.
+  repeated EncryptionEpoch history = 5;
+}
+
+// Describes one encryption epoch: a versioned period during which a specific data key
+// is used to encrypt user files.
+message EncryptionEpoch {
+  // The file ID of the encryption meta associated with this epoch.
+  uint64 file_id = 1;
+  // The data key ID used to encrypt the file.
+  uint32 data_key_id = 2;
+  // The timestamp when this epoch was created (Unix time, seconds).
+  uint64 created_at = 3;
+}
+
+// Describes the encrypted master key and its associated CMEK metadata.
+// With the CMEK info here it's possible to decrypt the master key.
+message MasterKey {
+  // The KMS vendor (e.g., "aws-kms").
+  string vendor = 1;
+  // CMEK identifier.
+  string cmek_id = 2;
+  // The region of the KMS service, if applicable.
+  string region = 3;
+  // The endpoint of the KMS service, if applicable.
+  string endpoint = 4;
+  // The encrypted master key.
+  bytes ciphertext = 5;
+}
+
+// Describes a data key that is used to encrypt user data. The data key itself
+// is encrypted by the master key.
+message DataKey {
+  // The encrypted data key.
+  bytes ciphertext = 1;
+}

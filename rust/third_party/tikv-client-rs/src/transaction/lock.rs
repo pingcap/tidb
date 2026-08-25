@@ -42,6 +42,8 @@ use crate::request::plan::handle_region_error;
 use crate::request::plan::{invalidate_connection_for_error, is_grpc_error};
 use crate::request::CollectSingle;
 use crate::request::CollectWithShard;
+use crate::request::EncodeKeyspace;
+use crate::request::KeyMode;
 use crate::request::Keyspace;
 use crate::request::Plan;
 use crate::store::RegionStore;
@@ -570,7 +572,8 @@ async fn resolve_locks_with_context_inner(
                             .await;
 
                         if let Some(read_lock_context) = read_lock_context {
-                            let keys = secondary_status.keys_to_resolve(&lock.primary_lock);
+                            let keys =
+                                secondary_status.keys_to_resolve(&lock.primary_lock, keyspace);
                             schedule_read_async_commit_cleanup(
                                 &lock,
                                 commit_version,
@@ -593,7 +596,7 @@ async fn resolve_locks_with_context_inner(
 
                         commit_versions.insert(lock.lock_version, commit_version);
                         schedule_grouped_read_cleanup(
-                            secondary_status.keys_to_resolve(&lock.primary_lock),
+                            secondary_status.keys_to_resolve(&lock.primary_lock, keyspace),
                             lock.primary_lock.clone(),
                             false,
                             lock.lock_version,
@@ -2098,6 +2101,19 @@ impl LockResolver {
             return Ok(SecondaryLocksStatus::empty());
         }
 
+        // CheckTxnStatus responses have already been decoded to logical API
+        // V2 keys. The native Rust region cache and request plans retain
+        // physical keys, so cross that boundary exactly once here.
+        let keys = keys
+            .into_iter()
+            .map(|key| {
+                let key: Vec<u8> = crate::Key::from(key)
+                    .encode_keyspace(keyspace, KeyMode::Txn)
+                    .into();
+                key
+            })
+            .collect::<Vec<_>>();
+
         let mut regions: HashMap<RegionVerId, Vec<Vec<u8>>> = HashMap::new();
         for key in keys {
             let store = pd_client.clone().store_for_key(&key.clone().into()).await?;
@@ -3461,6 +3477,83 @@ mod tests {
         assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 1);
         assert_eq!(check_secondary_count.load(Ordering::SeqCst), 1);
         assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn api_v2_async_commit_recovery_reencodes_decoded_secondary_keys() {
+        let codec = crate::request::ApiV2Codec::new(KeyMode::Txn, 7).unwrap();
+        let start_ts = Timestamp {
+            physical: 1,
+            logical: 0,
+            ..Default::default()
+        }
+        .version();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if let Some(request) = request.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
+                    assert_eq!(request.primary_key, codec.encode_key(b"primary"));
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        lock_ttl: 1,
+                        lock_info: Some(kvrpcpb::LockInfo {
+                            lock_version: start_ts,
+                            primary_lock: codec.encode_key(b"primary"),
+                            secondaries: vec![codec.encode_key(b"secondary")],
+                            min_commit_ts: start_ts + 1,
+                            use_async_commit: true,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::CheckSecondaryLocksRequest>()
+                {
+                    assert_eq!(request.keys, [codec.encode_key(b"secondary")]);
+                    return Ok(Box::new(kvrpcpb::CheckSecondaryLocksResponse {
+                        locks: vec![kvrpcpb::LockInfo {
+                            key: codec.encode_key(b"secondary"),
+                            lock_version: start_ts,
+                            min_commit_ts: start_ts + 1,
+                            use_async_commit: true,
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::ResolveLockRequest>() {
+                    assert_eq!(
+                        request.keys,
+                        [codec.encode_key(b"secondary"), codec.encode_key(b"primary")]
+                    );
+                    assert_eq!(request.commit_version, start_ts + 1);
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request type: {:?}", request.type_id());
+            },
+        )));
+        client.set_timestamp(Timestamp {
+            physical: 100,
+            logical: 0,
+            ..Default::default()
+        });
+
+        let live_locks = resolve_locks_with_context(
+            vec![kvrpcpb::LockInfo {
+                key: codec.encode_key(b"primary"),
+                primary_lock: codec.encode_key(b"primary"),
+                lock_version: start_ts,
+                lock_ttl: 1,
+                ..Default::default()
+            }],
+            Timestamp::default(),
+            client,
+            Keyspace::Enable { keyspace_id: 7 },
+            Some("tenant"),
+            ResolveLocksContext::default(),
+        )
+        .await
+        .unwrap();
+
+        assert!(live_locks.is_empty());
     }
 
     #[tokio::test]

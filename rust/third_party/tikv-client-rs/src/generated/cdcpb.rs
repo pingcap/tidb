@@ -436,6 +436,9 @@ pub struct ChangeDataRequest {
     /// Whether to filter out the value write by cdc itself.
     #[prost(bool, tag = "12")]
     pub filter_loop: bool,
+    /// ScanPriority tells the CDC service how to schedule the initial scan.
+    #[prost(enumeration = "ScanPriority", tag = "14")]
+    pub scan_priority: i32,
     #[prost(oneof = "change_data_request::Request", tags = "9, 10, 13")]
     pub request: ::core::option::Option<change_data_request::Request>,
 }
@@ -542,6 +545,35 @@ impl ::prost::Name for ChangeDataRequest {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/cdcpb.ChangeDataRequest".into()
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ScanPriority {
+    Unknown = 0,
+    Low = 1,
+    High = 2,
+}
+impl ScanPriority {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unknown => "SCAN_PRIORITY_UNKNOWN",
+            Self::Low => "SCAN_PRIORITY_LOW",
+            Self::High => "SCAN_PRIORITY_HIGH",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SCAN_PRIORITY_UNKNOWN" => Some(Self::Unknown),
+            "SCAN_PRIORITY_LOW" => Some(Self::Low),
+            "SCAN_PRIORITY_HIGH" => Some(Self::High),
+            _ => None,
+        }
     }
 }
 /// Generated client implementations.

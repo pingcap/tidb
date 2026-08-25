@@ -26,10 +26,10 @@ use crate::proto::kvrpcpb;
 /// bytes. Eg `001` is before `010`.
 ///
 /// **Minimum key**: there is the minimum key: empty key. So a range may not be unbounded below.
-/// The unbounded lower bound in a [`Range`](Range) will be converted to an empty key.
+/// The unbounded lower bound in a [`Range`] will be converted to an empty key.
 ///
 /// **Maximum key**: There is no limit of the maximum key. When an empty key is used as the upper bound, it means upper unbounded.
-/// The unbounded upper bound in a [`Range`](Range). The range covering all keys is just `Key::EMPTY..`.
+/// The unbounded upper bound in a [`Range`]. The range covering all keys is just `Key::EMPTY..`.
 ///
 /// **But, you should not need to worry about all this:** Most functions which operate
 /// on ranges will accept any types which implement `Into<BoundRange>`.

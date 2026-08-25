@@ -2,9 +2,11 @@
 
 //! Key encoding at the PD client boundary.
 //!
-//! PD stores region boundaries in TiKV's physical key format. This wrapper
-//! keeps that representation below the boundary and exposes logical keys to
-//! the region cache, matching client-go's `internal/locate.CodecPDClient`.
+//! PD stores region boundaries in TiKV's memcomparable physical-key format.
+//! The native Rust request plans retain API V2 prefixes while sharding, so the
+//! region cache also retains physical keys and this wrapper owns only the PD
+//! memcomparable layer. Client-go's logical V2 codec remains the source of
+//! truth for request/response fields and is applied at those boundaries.
 
 use std::sync::Arc;
 
@@ -31,32 +33,32 @@ impl PdRegionCodec {
         Ok(Self::V2(ApiV2Codec::new(mode, keyspace_id)?))
     }
 
-    pub(crate) fn encode_region_key(self, key: &[u8]) -> Vec<u8> {
+    /// Codec for the representation actually stored by the Rust region cache.
+    ///
+    /// API V2 request keys already include their four-byte physical prefix in
+    /// this client. PD adds only TiKV's memcomparable region-key encoding; using
+    /// `ApiV2Codec::encode_region_key` here would prepend the keyspace twice.
+    const fn cache_wire_codec(self) -> ApiV1Codec {
         match self {
-            Self::V1(codec) => codec.encode_region_key(key),
-            Self::V2(codec) => codec.encode_region_key(key),
+            Self::V1(codec) => codec,
+            Self::V2(_) => ApiV1Codec::new(KeyMode::Txn),
         }
+    }
+
+    pub(crate) fn encode_region_key(self, key: &[u8]) -> Vec<u8> {
+        self.cache_wire_codec().encode_region_key(key)
     }
 
     pub(crate) fn encode_region_range(self, start: &[u8], end: &[u8]) -> (Vec<u8>, Vec<u8>) {
-        match self {
-            Self::V1(codec) => codec.encode_region_range(start, end),
-            Self::V2(codec) => codec.encode_region_range(start, end),
-        }
+        self.cache_wire_codec().encode_region_range(start, end)
     }
 
     fn decode_region_range(self, start: &[u8], end: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
-        match self {
-            Self::V1(codec) => codec.decode_region_range(start, end),
-            Self::V2(codec) => codec.decode_region_range(start, end),
-        }
+        self.cache_wire_codec().decode_region_range(start, end)
     }
 
     fn decode_bucket_keys(self, keys: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
-        match self {
-            Self::V1(codec) => codec.decode_bucket_keys(keys),
-            Self::V2(codec) => codec.decode_bucket_keys(keys),
-        }
+        self.cache_wire_codec().decode_bucket_keys(keys)
     }
 
     fn decode_region(self, mut region: RegionWithLeader) -> Result<RegionWithLeader> {
@@ -410,7 +412,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_codec_pd_client_covers_v2_region_operations() {
+    async fn native_codec_pd_client_covers_v2_region_operations() {
         let codec = PdRegionCodec::v2(KeyMode::Txn, 7).unwrap();
         let inner = Arc::new(RecordingPdClient::new(physical_region(codec)));
         let client = Arc::new(CodecPdClient::new(inner.clone(), codec));
@@ -517,6 +519,44 @@ mod tests {
                     3,
                 ),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn v2_pd_boundary_memencodes_an_already_physical_key_exactly_once() {
+        let codec = PdRegionCodec::v2(KeyMode::Txn, 0).unwrap();
+        let api = ApiV2Codec::new(KeyMode::Txn, 0).unwrap();
+        let wire = ApiV1Codec::new(KeyMode::Txn);
+        let physical_key = api.encode_key(b"foo");
+        let physical_start = api.encode_key(b"a");
+        let physical_end = api.encode_key(b"z");
+        let inner = Arc::new(RecordingPdClient::new(RegionWithLeader {
+            region: metapb::Region {
+                id: 16,
+                start_key: wire.encode_region_key(&physical_start),
+                end_key: wire.encode_region_key(&physical_end),
+                ..Default::default()
+            },
+            ..Default::default()
+        }));
+        let client = Arc::new(CodecPdClient::new(inner.clone(), codec));
+
+        let region = client
+            .clone()
+            .get_region(physical_key.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(region.region.start_key, physical_start);
+        assert_eq!(region.region.end_key, physical_end);
+        assert_eq!(
+            inner.calls(),
+            [PdCall::Get(wire.encode_region_key(&physical_key))]
+        );
+        assert_ne!(
+            wire.encode_region_key(&physical_key),
+            api.encode_region_key(&physical_key),
+            "the latter would prepend x\\0\\0\\0 a second time"
         );
     }
 

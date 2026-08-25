@@ -1,6 +1,6 @@
 pingcap/kvproto 059694ae4472 (client-go go.mod: kvproto v0.0.0-20260724054804-059694ae4472)
-The API-codec key-bearing inputs apipb, coprocessor, errorpb, keyspacepb,
-kvrpcpb, metapb, mpp, and tikvpb match this revision. Other generated-root
-inputs remain tracked by the repository-level parity artifact gate.
+All 38 top-level kvproto inputs match this revision byte for byte. The extra
+grpc_channelz schema and vendored include tree are independent generator
+dependencies recorded by the repository-level parity artifact receipt.
 Re-vendor from this revision, then run
 `cargo +nightly-2026-08-22 run -p tikv-client-proto-build`.

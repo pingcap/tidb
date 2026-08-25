@@ -274,6 +274,7 @@ impl ::prost::Name for ScatterRegionsResponse {
 pub struct SplitRegionsRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// Physical split key bytes.
     #[prost(bytes = "vec", repeated, tag = "2")]
     pub split_keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
     #[prost(uint64, tag = "3")]

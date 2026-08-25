@@ -1,5 +1,5 @@
 diff --git a/src/pd/client.rs b/src/pd/client.rs
-index c7e5a93..dad47cc 100644
+index 993de0a..275ce57 100644
 --- a/src/pd/client.rs
 +++ b/src/pd/client.rs
 @@ -11,6 +11,7 @@ use futures::stream::BoxStream;
@@ -10,15 +10,15 @@ index c7e5a93..dad47cc 100644
  
  use crate::compat::stream_fn;
  use crate::kv::{ReplicaReadConfig, ReplicaReadType};
-@@ -484,7 +485,7 @@ async fn probe_store_liveness(
-                     service: String::new(),
-                 }),
-                 PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
--                tonic::codec::ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
-+                ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
-             )
-             .await
-             .map_err(crate::Error::from)
+@@ -551,7 +552,7 @@ async fn send_store_health_check(
+                 service: String::new(),
+             }),
+             PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
+-            tonic::codec::ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
++            ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
+         )
+         .await
+         .map_err(crate::Error::from)
 diff --git a/src/store/mockserver.rs b/src/store/mockserver.rs
 index 69bdef8..5d32622 100644
 --- a/src/store/mockserver.rs

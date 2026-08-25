@@ -1,4 +1,6 @@
 #![allow(dead_code)]
+// This harness intentionally exercises the retained legacy RawKV builder.
+#![allow(deprecated)]
 
 mod ctl;
 

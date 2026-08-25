@@ -494,7 +494,7 @@ async fn raw_req() -> Result<()> {
             "k4".to_owned(),
         ])
         .await?;
-    assert_eq!(res.len(), 0);
+    assert_eq!(res, vec![None, None, None, None]);
 
     // empty; batch_put then scan
     client

@@ -123,10 +123,10 @@ async fn txn_cleanup_locks_batch_size() -> Result<()> {
     let scenario = FailScenario::setup();
     let full_range = ..;
 
-    fail::cfg("after-prewrite", "return").unwrap();
+    configure_orphaned_prewrite_locks();
     fail::cfg("before-cleanup-locks", "return").unwrap();
     defer! {{
-        fail::cfg("after-prewrite", "off").unwrap();
+        disable_orphaned_prewrite_locks();
         fail::cfg("before-cleanup-locks", "off").unwrap();
     }}
 
@@ -162,9 +162,9 @@ async fn txn_cleanup_async_commit_locks() -> Result<()> {
     // no commit
     {
         info!("test no commit");
-        fail::cfg("after-prewrite", "return").unwrap();
+        configure_orphaned_prewrite_locks();
         defer! {
-            fail::cfg("after-prewrite", "off").unwrap()
+            disable_orphaned_prewrite_locks()
         }
 
         let client = TransactionClient::new_with_config(
@@ -264,9 +264,9 @@ async fn txn_cleanup_range_async_commit_locks() -> Result<()> {
     init().await?;
     let scenario = FailScenario::setup();
     info!("test range clean lock");
-    fail::cfg("after-prewrite", "return").unwrap();
+    configure_orphaned_prewrite_locks();
     defer! {
-        fail::cfg("after-prewrite", "off").unwrap()
+        disable_orphaned_prewrite_locks()
     }
 
     let client =
@@ -312,9 +312,9 @@ async fn txn_resolve_locks() -> Result<()> {
     init().await?;
     let scenario = FailScenario::setup();
 
-    fail::cfg("after-prewrite", "return").unwrap();
+    configure_orphaned_prewrite_locks();
     defer! {{
-        fail::cfg("after-prewrite", "off").unwrap();
+        disable_orphaned_prewrite_locks();
     }}
 
     let client =
@@ -334,7 +334,11 @@ async fn txn_resolve_locks() -> Result<()> {
 
     let safepoint = client.current_timestamp().await?;
     let locks = client.scan_locks(&safepoint, vec![].., 1024).await?;
-    assert!(locks.iter().any(|lock| lock.key == key));
+    assert!(
+        locks.iter().any(|lock| lock.key == key),
+        "scan_locks returned keys {:?}",
+        locks.iter().map(|lock| &lock.key).collect::<Vec<_>>()
+    );
 
     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
@@ -396,9 +400,9 @@ async fn txn_cleanup_2pc_locks() -> Result<()> {
     // no commit
     {
         info!("test no commit");
-        fail::cfg("after-prewrite", "return").unwrap();
+        configure_orphaned_prewrite_locks();
         defer! {
-            fail::cfg("after-prewrite", "off").unwrap()
+            disable_orphaned_prewrite_locks()
         }
 
         let client = TransactionClient::new_with_config(
@@ -545,6 +549,20 @@ const TXN_COUNT: usize = 16;
 const KEY_COUNT: usize = 32;
 const REGION_BACKOFF: Backoff = Backoff::no_jitter_backoff(2, 5000, 20);
 const OPTIMISTIC_BACKOFF: Backoff = Backoff::no_jitter_backoff(2, 500, 10);
+
+// client-go and the Rust committer both schedule rollback after a determined
+// commit error. Cleanup tests need deliberately orphaned prewrite locks, so
+// block only that automatic rollback while constructing their fixtures. The
+// public cleanup/resolve-lock APIs do not use the committer rollback path.
+fn configure_orphaned_prewrite_locks() {
+    fail::cfg("after-prewrite", "return").unwrap();
+    fail::cfg("before-rollback", "return").unwrap();
+}
+
+fn disable_orphaned_prewrite_locks() {
+    fail::cfg("after-prewrite", "off").unwrap();
+    fail::cfg("before-rollback", "off").unwrap();
+}
 
 async fn write_data(
     client: &Client,

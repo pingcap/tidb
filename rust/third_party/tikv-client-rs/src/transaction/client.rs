@@ -363,7 +363,7 @@ impl Client {
         Ok(self.new_transaction(timestamp, options))
     }
 
-    /// Create a new [`Snapshot`](Snapshot) at the given [`Timestamp`](Timestamp).
+    /// Create a new [`Snapshot`] at the given [`Timestamp`].
     pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> Snapshot {
         debug!("creating new snapshot");
         Snapshot::new(self.new_transaction(timestamp, options.read_only()))
@@ -480,8 +480,6 @@ impl Client {
         range: impl Into<BoundRange>,
         batch_size: u32,
     ) -> Result<Vec<ProtoLockInfo>> {
-        use crate::request::TruncateKeyspace;
-
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         let req = new_scan_lock_request(range, safepoint, batch_size);
         let plan = self
@@ -489,7 +487,9 @@ impl Client {
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(crate::request::Collect)
             .plan();
-        Ok(plan.execute().await?.truncate_keyspace(self.keyspace))
+        // API V2 transport decoding has already restored every LockInfo field
+        // to client-go's logical representation.
+        plan.execute().await
     }
 
     /// Resolves the given locks and returns any that remain live.

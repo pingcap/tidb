@@ -523,17 +523,7 @@ async fn probe_store_liveness(
 ) -> StoreLiveness {
     let request = async {
         let channel = security_mgr.connect(&target, |channel| channel).await?;
-        let mut client = tonic::client::Grpc::new(channel);
-        client
-            .unary(
-                tonic::Request::new(HealthCheckRequest {
-                    service: String::new(),
-                }),
-                PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
-                ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
-            )
-            .await
-            .map_err(crate::Error::from)
+        send_store_health_check(channel).await
     };
     match tokio::time::timeout(timeout, request).await {
         Ok(Ok(response)) => source_health_status_liveness(response.into_inner().status),
@@ -543,6 +533,29 @@ async fn probe_store_liveness(
         }
         Err(_) => StoreLiveness::Unreachable,
     }
+}
+
+async fn send_store_health_check(
+    channel: tonic::transport::Channel,
+) -> Result<tonic::Response<HealthCheckResponse>> {
+    let mut client = tonic::client::Grpc::new(channel);
+    // Tonic's low-level Grpc client does not acquire the Channel buffer permit
+    // for callers. Generated clients always await readiness before dispatch;
+    // doing the same here prevents concurrent liveness probes from calling a
+    // full Tower buffer and panicking the request runtime.
+    client.ready().await.map_err(|error| {
+        crate::Error::StringError(format!("store health service unavailable: {error}"))
+    })?;
+    client
+        .unary(
+            tonic::Request::new(HealthCheckRequest {
+                service: String::new(),
+            }),
+            PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
+            ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
+        )
+        .await
+        .map_err(crate::Error::from)
 }
 
 async fn request_store_liveness_singleflight<F, Fut>(target: String, probe: F) -> StoreLiveness
@@ -1860,6 +1873,16 @@ pub mod test {
         assert_eq!(first, StoreLiveness::Reachable);
         assert_eq!(second, StoreLiveness::Reachable);
         assert_eq!(probes.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn low_level_store_health_check_awaits_channel_readiness() {
+        let channel = tonic::transport::Channel::from_static("http://127.0.0.1:1").connect_lazy();
+        let result = tokio::time::timeout(Duration::from_secs(2), send_store_health_check(channel))
+            .await
+            .expect("an unavailable local endpoint must fail promptly");
+
+        assert!(result.is_err());
     }
 
     #[tokio::test]

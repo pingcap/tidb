@@ -17,6 +17,9 @@ pub mod configpb {
 pub mod coprocessor {
     include!("coprocessor.rs");
 }
+pub mod db9_coprocessor {
+    include!("db9_coprocessor.rs");
+}
 pub mod deadlock {
     include!("deadlock.rs");
 }
@@ -44,6 +47,9 @@ pub mod eraftpb {
 pub mod errorpb {
     include!("errorpb.rs");
 }
+pub mod externalworkloadpb {
+    include!("externalworkloadpb.rs");
+}
 pub mod gcpb {
     include!("gcpb.rs");
 }
@@ -64,6 +70,9 @@ pub mod import_kvpb {
 }
 pub mod import_sstpb {
     include!("import_sstpb.rs");
+}
+pub mod keyspace_encryptionpb {
+    include!("keyspace_encryptionpb.rs");
 }
 pub mod keyspacepb {
     include!("keyspacepb.rs");
@@ -103,6 +112,9 @@ pub mod resource_manager {
 }
 pub mod resource_usage_agent {
     include!("resource_usage_agent.rs");
+}
+pub mod routerpb {
+    include!("routerpb.rs");
 }
 pub mod schedulingpb {
     include!("schedulingpb.rs");

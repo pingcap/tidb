@@ -1133,7 +1133,14 @@ impl<PdC: PdClient> Client<PdC> {
                 max_limit: max_scan_limit,
             });
         }
-        let range = range.into().encode_keyspace(self.keyspace, KeyMode::Raw);
+        let range = range.into();
+        if reverse && range.clone().into_keys().1.is_none() {
+            // Preserve client-go's logical API guard before API V2 turns the
+            // keyspace end into a concrete physical bound. ReverseScan cannot
+            // locate the last region when the caller supplied no upper key.
+            return Ok(Vec::new());
+        }
+        let range = range.encode_keyspace(self.keyspace, KeyMode::Raw);
         let mut result = Vec::new();
         let mut current_limit = limit;
         let (start_key, end_key) = range.clone().into_keys();
@@ -2183,18 +2190,20 @@ mod tests {
 
     #[tokio::test]
     async fn raw_reverse_scan_with_unbounded_upper_endpoint_is_empty() -> Result<()> {
-        let client = Client {
-            rpc: Arc::new(MockPdClient::default()),
-            cluster_id: 0,
-            cf: None,
-            backoff: DEFAULT_REGION_BACKOFF,
-            atomic: false,
-            keyspace: Keyspace::Disable,
-            keyspace_name: None,
-        };
+        for keyspace in [Keyspace::Disable, Keyspace::try_enable(7)?] {
+            let client = Client {
+                rpc: Arc::new(MockPdClient::default()),
+                cluster_id: 0,
+                cf: None,
+                backoff: DEFAULT_REGION_BACKOFF,
+                atomic: false,
+                keyspace,
+                keyspace_name: None,
+            };
 
-        assert!(client.scan_reverse(vec![5].., 10).await?.is_empty());
-        assert!(client.scan_reverse(.., 10).await?.is_empty());
+            assert!(client.scan_reverse(vec![5].., 10).await?.is_empty());
+            assert!(client.scan_reverse(.., 10).await?.is_empty());
+        }
         Ok(())
     }
 

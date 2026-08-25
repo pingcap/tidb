@@ -13,8 +13,20 @@ pub struct AutoIdRequest {
     pub increment: i64,
     #[prost(int64, tag = "6")]
     pub offset: i64,
-    #[prost(uint32, tag = "7")]
-    pub keyspace_id: u32,
+    #[prost(oneof = "auto_id_request::Keyspace", tags = "7, 8")]
+    pub keyspace: ::core::option::Option<auto_id_request::Keyspace>,
+}
+/// Nested message and enum types in `AutoIDRequest`.
+pub mod auto_id_request {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "7")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "8")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 impl ::prost::Name for AutoIdRequest {
     const NAME: &'static str = "AutoIDRequest";
@@ -57,6 +69,20 @@ pub struct RebaseRequest {
     pub base: i64,
     #[prost(bool, tag = "5")]
     pub force: bool,
+    #[prost(oneof = "rebase_request::Keyspace", tags = "6, 7")]
+    pub keyspace: ::core::option::Option<rebase_request::Keyspace>,
+}
+/// Nested message and enum types in `RebaseRequest`.
+pub mod rebase_request {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "6")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "7")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 impl ::prost::Name for RebaseRequest {
     const NAME: &'static str = "RebaseRequest";

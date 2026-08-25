@@ -1,6 +1,7 @@
 syntax = "proto3";
 package autoid;
 
+import "apipb.proto";
 import "gogoproto/gogo.proto";
 import "rustproto.proto";
 
@@ -20,7 +21,12 @@ message AutoIDRequest {
   uint64 n = 4;
   int64 increment = 5;
   int64 offset = 6;
-  uint32 keyspaceID = 7;
+  oneof keyspace {
+    // V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+    uint32 keyspaceID = 7;
+    // V3 keyspace identity.
+    apipb.KeyspaceIdentity keyspace_identity = 8;
+  }
 }
 
 message AutoIDResponse {
@@ -36,6 +42,12 @@ message RebaseRequest {
   bool isUnsigned = 3;
   int64 base = 4;
   bool force = 5;
+  oneof keyspace {
+    // V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+    uint32 keyspaceID = 6;
+    // V3 keyspace identity.
+    apipb.KeyspaceIdentity keyspace_identity = 7;
+  }
 }
 
 message RebaseResponse {

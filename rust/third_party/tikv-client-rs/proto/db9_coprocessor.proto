@@ -1,0 +1,268 @@
+syntax = "proto3";
+package db9_coprocessor;
+
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+// DB9 cop payload carried inside coprocessor.Request.data.
+//
+// Outer envelope:
+//   - coprocessor.Request.tp    = REQ_TYPE_DB9_DAG
+//   - coprocessor.Request.ranges = concrete region-clipped key ranges
+//   - coprocessor.Request.data  = serialized Db9DagRequest
+//
+// Design intent:
+//   1. Reuse TiKV cop request lifecycle and range routing.
+//   2. Do not reuse tipb::DagRequest or TiDB/MySQL expression semantics.
+//   3. Carry enough DB9 schema metadata for DB9 row/index codec and expression eval.
+
+message Db9DagRequest {
+  // DB9 local wire/codec contract version. Start from 1.
+  uint32 codec_version = 1;
+
+  // Tenant / database identity for DB9 key prefixes (d_{db_id}_...).
+  uint64 db_id = 2;
+
+  // Minimal table metadata snapshot needed by the storage-side executor.
+  Db9TableInfo table = 3;
+
+  // Logical scan shape. Physical key spans still come from coprocessor.Request.ranges.
+  Db9ScanSpec scan = 4;
+
+  // Storage-side filter. Absent means no pushed selection.
+  Db9Expr selection = 5;
+
+  // Storage-side projection list. Empty means identity/full-row output.
+  repeated Db9NamedExpr projections = 6;
+
+  // Storage-side limit. Absent means no pushed limit.
+  Db9LimitSpec limit = 7;
+
+  // Storage-side partial aggregate plan. Absent means no pushed aggregate work.
+  Db9AggregatePlan aggregate = 8;
+}
+
+message Db9LimitSpec {
+  uint64 limit = 1;
+}
+
+enum Db9AggregateMode {
+  DB9_AGGREGATE_MODE_UNSPECIFIED = 0;
+  DB9_AGGREGATE_MODE_PARTIAL_ONLY = 1;
+}
+
+message Db9AggregatePlan {
+  Db9AggregateMode mode = 1;
+  repeated Db9Expr group_keys = 2;
+  repeated Db9AggregateSpec aggregates = 3;
+}
+
+message Db9AggregateSpec {
+  string function_name = 1;
+  // Absent means the aggregate is invoked without an input expression
+  // (for example, COUNT(*)).
+  Db9Expr arg = 2;
+  // AVG and future collection aggregates need explicit partial-state layout.
+  repeated Db9Type partial_state_types = 3;
+}
+message Db9TableInfo {
+  string table_name = 1;
+  uint64 table_id = 2;
+  uint64 schema_version = 3;
+  repeated Db9ColumnInfo columns = 4;
+  repeated uint32 pk_indices = 5;
+  repeated Db9IndexInfo indexes = 6;
+}
+
+message Db9ColumnInfo {
+  string name = 1;
+  Db9Type data_type = 2;
+  bool nullable = 3;
+}
+
+message Db9IndexInfo {
+  uint64 index_id = 1;
+  string index_name = 2;
+  repeated string columns = 3;
+  bool unique = 4;
+}
+
+enum Db9ScanKind {
+  DB9_SCAN_KIND_UNSPECIFIED = 0;
+  DB9_SCAN_KIND_TABLE = 1;
+  DB9_SCAN_KIND_INDEX = 2;
+  DB9_SCAN_KIND_INDEX_RANGE = 3;
+  DB9_SCAN_KIND_INDEX_BOUNDED_RANGE = 4;
+  DB9_SCAN_KIND_IN_LIST = 5;
+}
+
+message Db9ScanSpec {
+  Db9ScanKind kind = 1;
+  uint64 index_id = 2;
+  string index_name = 3;
+  bool desc = 4;
+
+  // True for the MVP path: index scan yields PKs, then storage fetches base rows.
+  // Future covering-index optimization may set this to false.
+  bool require_row_fetch = 5;
+}
+
+message Db9NamedExpr {
+  string output_name = 1;
+  Db9Expr expr = 2;
+}
+
+message Db9Expr {
+  Db9Type return_type = 1;
+
+  oneof expr {
+    Db9ConstantExpr constant = 2;
+    Db9ColumnRefExpr column_ref = 3;
+    Db9BinaryExpr binary = 4;
+    Db9UnaryExpr unary = 5;
+    Db9CastExpr cast = 6;
+    Db9FuncCallExpr func_call = 7;
+    Db9IsNullExpr is_null = 8;
+  }
+}
+
+message Db9ConstantExpr {
+  Db9Value value = 1;
+}
+
+message Db9ColumnRefExpr {
+  uint32 column_index = 1;
+  string column_name = 2;
+}
+
+enum Db9BinaryOp {
+  DB9_BINARY_OP_UNSPECIFIED = 0;
+  DB9_BINARY_OP_EQ = 1;
+  DB9_BINARY_OP_NE = 2;
+  DB9_BINARY_OP_LT = 3;
+  DB9_BINARY_OP_LE = 4;
+  DB9_BINARY_OP_GT = 5;
+  DB9_BINARY_OP_GE = 6;
+  DB9_BINARY_OP_AND = 7;
+  DB9_BINARY_OP_OR = 8;
+}
+
+message Db9BinaryExpr {
+  Db9Expr left = 1;
+  Db9BinaryOp op = 2;
+  Db9Expr right = 3;
+}
+
+enum Db9UnaryOp {
+  DB9_UNARY_OP_UNSPECIFIED = 0;
+  DB9_UNARY_OP_NOT = 1;
+  DB9_UNARY_OP_NEG = 2;
+  DB9_UNARY_OP_POS = 3;
+}
+
+message Db9UnaryExpr {
+  Db9UnaryOp op = 1;
+  Db9Expr operand = 2;
+}
+
+message Db9CastExpr {
+  Db9Expr expr = 1;
+  Db9Type target_type = 2;
+}
+
+message Db9FuncCallExpr {
+  string function_name = 1;
+  repeated Db9Expr args = 2;
+}
+
+message Db9IsNullExpr {
+  Db9Expr expr = 1;
+  bool negated = 2; // false => IS NULL, true => IS NOT NULL
+}
+
+enum Db9TypeKind {
+  DB9_TYPE_KIND_UNSPECIFIED = 0;
+  DB9_TYPE_KIND_BOOLEAN = 1;
+  DB9_TYPE_KIND_INT32 = 2;
+  DB9_TYPE_KIND_INT64 = 3;
+  DB9_TYPE_KIND_FLOAT64 = 4;
+  DB9_TYPE_KIND_TEXT = 5;
+  DB9_TYPE_KIND_BYTES = 6;
+  DB9_TYPE_KIND_TIMESTAMP = 7;
+  DB9_TYPE_KIND_INTERVAL = 8;
+  DB9_TYPE_KIND_UUID = 9;
+  DB9_TYPE_KIND_ARRAY = 10;
+  DB9_TYPE_KIND_JSON = 11;
+  DB9_TYPE_KIND_JSONB = 12;
+  DB9_TYPE_KIND_TIME = 13;
+  DB9_TYPE_KIND_DATE = 14;
+  DB9_TYPE_KIND_NUMERIC = 15;
+  DB9_TYPE_KIND_TIMESTAMPTZ = 16;
+  DB9_TYPE_KIND_TSVECTOR = 17;
+  DB9_TYPE_KIND_TSQUERY = 18;
+  DB9_TYPE_KIND_NAME = 19;
+  DB9_TYPE_KIND_VARCHAR = 20;
+  DB9_TYPE_KIND_USER_DEFINED = 21;
+}
+
+message Db9Type {
+  Db9TypeKind kind = 1;
+
+  // ARRAY element type.
+  Db9Type elem_type = 2;
+
+  // VARCHAR(n).
+  uint64 varchar_len = 3;
+
+  // USER_DEFINED(name).
+  string user_defined_name = 4;
+}
+
+message Db9Null {}
+
+message Db9IntervalValue {
+  int32 months = 1;
+  int64 millis = 2;
+}
+message Db9Value {
+  oneof kind {
+    Db9Null null_value = 1;
+    bool bool_value = 2;
+    int32 int32_value = 3;
+    int64 int64_value = 4;
+    double float64_value = 5;
+    string text_value = 6;
+    bytes bytes_value = 7;
+    // Milliseconds since Unix epoch, interpreted as TIMESTAMP.
+    int64 timestamp_value = 8;
+    // Milliseconds since Unix epoch, interpreted as TIMESTAMPTZ.
+    int64 timestamptz_value = 9;
+    Db9IntervalValue interval_value = 10;
+  }
+}
+
+message Db9Row {
+  repeated Db9Value values = 1;
+}
+
+message Db9ExecStats {
+  uint64 scanned_keys = 1;
+  uint64 scanned_rows = 2;
+  uint64 decoded_rows = 3;
+  uint64 returned_rows = 4;
+}
+
+message Db9SelectResponse {
+  repeated Db9Row rows = 1;
+  Db9ExecStats stats = 2;
+  repeated string warnings = 3;
+}

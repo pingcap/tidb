@@ -7,9 +7,6 @@ pub struct RequestHeader {
     /// sender_id is the ID of the sender server.
     #[prost(uint64, tag = "2")]
     pub sender_id: u64,
-    /// keyspace_id is the unique id of the tenant/keyspace.
-    #[prost(uint32, tag = "3")]
-    pub keyspace_id: u32,
     /// keyspace_group_id is the unique id of the keyspace group to which the tenant/keyspace belongs.
     #[prost(uint32, tag = "4")]
     pub keyspace_group_id: u32,
@@ -19,6 +16,21 @@ pub struct RequestHeader {
     /// If it is not matched, the server will return an error.
     #[prost(string, tag = "5")]
     pub callee_id: ::prost::alloc::string::String,
+    #[prost(oneof = "request_header::Keyspace", tags = "3, 6")]
+    pub keyspace: ::core::option::Option<request_header::Keyspace>,
+}
+/// Nested message and enum types in `RequestHeader`.
+pub mod request_header {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// keyspace_id is the unique id of the tenant/keyspace in V1/V2.
+        /// V3 should use keyspace_identity and must not read this legacy field as the full identity.
+        #[prost(uint32, tag = "3")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity of the request.
+        #[prost(message, tag = "6")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 impl ::prost::Name for RequestHeader {
     const NAME: &'static str = "RequestHeader";
@@ -37,12 +49,24 @@ pub struct ResponseHeader {
     pub cluster_id: u64,
     #[prost(message, optional, tag = "2")]
     pub error: ::core::option::Option<Error>,
-    /// keyspace_id is the unique id of the tenant/keyspace as the response receiver.
-    #[prost(uint32, tag = "3")]
-    pub keyspace_id: u32,
     /// keyspace_group_id is the unique id of the keyspace group to which the tenant/keyspace belongs.
     #[prost(uint32, tag = "4")]
     pub keyspace_group_id: u32,
+    #[prost(oneof = "response_header::Keyspace", tags = "3, 5")]
+    pub keyspace: ::core::option::Option<response_header::Keyspace>,
+}
+/// Nested message and enum types in `ResponseHeader`.
+pub mod response_header {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// keyspace_id is the unique id of the tenant/keyspace as the response receiver in V1/V2.
+        /// V3 should use keyspace_identity and must not read this legacy field as the full identity.
+        #[prost(uint32, tag = "3")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity served by this response.
+        #[prost(message, tag = "5")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 impl ::prost::Name for ResponseHeader {
     const NAME: &'static str = "ResponseHeader";
@@ -189,10 +213,22 @@ impl ::prost::Name for KeyspaceGroup {
 pub struct FindGroupByKeyspaceIdRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
-    #[prost(uint32, tag = "2")]
-    pub keyspace_id: u32,
     #[prost(uint64, tag = "3")]
     pub mod_revision: u64,
+    #[prost(oneof = "find_group_by_keyspace_id_request::Keyspace", tags = "2, 4")]
+    pub keyspace: ::core::option::Option<find_group_by_keyspace_id_request::Keyspace>,
+}
+/// Nested message and enum types in `FindGroupByKeyspaceIDRequest`.
+pub mod find_group_by_keyspace_id_request {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "4")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 impl ::prost::Name for FindGroupByKeyspaceIdRequest {
     const NAME: &'static str = "FindGroupByKeyspaceIDRequest";
@@ -413,7 +449,7 @@ pub mod tso_client {
             req.extensions_mut().insert(GrpcMethod::new("tsopb.TSO", "Tso"));
             self.inner.streaming(req, path, codec).await
         }
-        /// Find the keyspace group that the keyspace belongs to by keyspace id.
+        /// Find the keyspace group that the keyspace belongs to.
         pub async fn find_group_by_keyspace_id(
             &mut self,
             request: impl tonic::IntoRequest<super::FindGroupByKeyspaceIdRequest>,
@@ -489,7 +525,7 @@ pub mod tso_server {
             &self,
             request: tonic::Request<tonic::Streaming<super::TsoRequest>>,
         ) -> std::result::Result<tonic::Response<Self::TsoStream>, tonic::Status>;
-        /// Find the keyspace group that the keyspace belongs to by keyspace id.
+        /// Find the keyspace group that the keyspace belongs to.
         async fn find_group_by_keyspace_id(
             &self,
             request: tonic::Request<super::FindGroupByKeyspaceIdRequest>,

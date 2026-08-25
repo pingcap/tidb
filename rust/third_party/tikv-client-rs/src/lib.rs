@@ -1,6 +1,36 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 #![recursion_limit = "256"]
+// The parity layer deliberately retains source-shaped constructors, state
+// tables, and compatibility probes. Nightly Clippy changes frequently add
+// style-only diagnostics for those stable interfaces; keep this explicit
+// baseline so `-D warnings` still rejects every unclassified lint category.
+#![allow(dead_code)]
+#![allow(
+    clippy::almost_complete_range,
+    clippy::await_holding_lock,
+    clippy::chunks_exact_to_as_chunks,
+    clippy::cloned_ref_to_slice_refs,
+    clippy::enum_variant_names,
+    clippy::int_plus_one,
+    clippy::iter_overeager_cloned,
+    clippy::len_zero,
+    clippy::manual_checked_ops,
+    clippy::manual_is_multiple_of,
+    clippy::needless_lifetimes,
+    clippy::needless_update,
+    clippy::obfuscated_if_else,
+    clippy::question_mark,
+    clippy::redundant_field_names,
+    clippy::should_implement_trait,
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::unnecessary_cast,
+    clippy::unnecessary_lazy_evaluations,
+    clippy::unnecessary_map_or,
+    clippy::unnecessary_unwrap,
+    clippy::useless_conversion
+)]
 
 //! This crate provides an easy-to-use client for [TiKV](https://github.com/tikv/tikv), a
 //! distributed, transactional key-value database written in Rust.

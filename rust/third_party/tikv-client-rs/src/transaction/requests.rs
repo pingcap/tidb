@@ -24,7 +24,10 @@ use crate::request::Collect;
 use crate::request::CollectSingle;
 use crate::request::CollectWithShard;
 use crate::request::DefaultProcessor;
+use crate::request::EncodeKeyspace;
 use crate::request::HasNextBatch;
+use crate::request::KeyMode;
+use crate::request::Keyspace;
 use crate::request::KvRequest;
 use crate::request::Merge;
 use crate::request::NextBatch;
@@ -1402,14 +1405,19 @@ impl SecondaryLocksStatus {
     /// when every requested lock is present. A missing lock has already been
     /// resolved by TiKV according to its returned commit timestamp, so only
     /// the primary needs an explicit resolve request.
-    pub fn keys_to_resolve(&self, primary: &[u8]) -> Vec<Vec<u8>> {
+    pub fn keys_to_resolve(&self, primary: &[u8], keyspace: Keyspace) -> Vec<Vec<u8>> {
         if self.missing_lock {
             return vec![primary.to_vec()];
         }
 
         self.locks
             .iter()
-            .map(|lock| lock.key.clone())
+            .map(|lock| {
+                let key: Vec<u8> = Key::from(lock.key.clone())
+                    .encode_keyspace(keyspace, KeyMode::Txn)
+                    .into();
+                key
+            })
             .chain(std::iter::once(primary.to_vec()))
             .collect()
     }

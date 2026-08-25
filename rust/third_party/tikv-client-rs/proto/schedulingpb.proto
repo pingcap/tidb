@@ -168,6 +168,7 @@ message ScatterRegionsResponse {
 
 message SplitRegionsRequest {
   RequestHeader header = 1;
+  // Physical split key bytes.
   repeated bytes split_keys = 2;
   uint64 retry_limit = 3;
 }

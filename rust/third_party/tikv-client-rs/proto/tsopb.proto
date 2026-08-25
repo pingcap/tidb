@@ -1,6 +1,7 @@
 syntax = "proto3";
 package tsopb;
 
+import "apipb.proto";
 import "gogoproto/gogo.proto";
 import "pdpb.proto";
 import "rustproto.proto";
@@ -16,7 +17,7 @@ option (rustproto.lite_runtime_all) = true;
 
 service TSO {
   rpc Tso(stream TsoRequest) returns (stream TsoResponse) {}
-  // Find the keyspace group that the keyspace belongs to by keyspace id.
+  // Find the keyspace group that the keyspace belongs to.
   rpc FindGroupByKeyspaceID(FindGroupByKeyspaceIDRequest) returns (FindGroupByKeyspaceIDResponse) {}
   // Get the minimum timestamp across all keyspace groups served by the TSO server who receives
   // and handle the request. If the TSO server/pod is not serving any keyspace group, return
@@ -31,8 +32,13 @@ message RequestHeader {
   // sender_id is the ID of the sender server.
   uint64 sender_id = 2;
 
-  // keyspace_id is the unique id of the tenant/keyspace.
-  uint32 keyspace_id = 3;
+  oneof keyspace {
+    // keyspace_id is the unique id of the tenant/keyspace in V1/V2.
+    // V3 should use keyspace_identity and must not read this legacy field as the full identity.
+    uint32 keyspace_id = 3;
+    // V3 keyspace identity of the request.
+    apipb.KeyspaceIdentity keyspace_identity = 6;
+  }
   // keyspace_group_id is the unique id of the keyspace group to which the tenant/keyspace belongs.
   uint32 keyspace_group_id = 4;
   // callee_id is the ID of the server which the client expects to receive the request.
@@ -47,8 +53,13 @@ message ResponseHeader {
   uint64 cluster_id = 1;
   Error error = 2;
 
-  // keyspace_id is the unique id of the tenant/keyspace as the response receiver.
-  uint32 keyspace_id = 3;
+  oneof keyspace {
+    // keyspace_id is the unique id of the tenant/keyspace as the response receiver in V1/V2.
+    // V3 should use keyspace_identity and must not read this legacy field as the full identity.
+    uint32 keyspace_id = 3;
+    // V3 keyspace identity served by this response.
+    apipb.KeyspaceIdentity keyspace_identity = 5;
+  }
   // keyspace_group_id is the unique id of the keyspace group to which the tenant/keyspace belongs.
   uint32 keyspace_group_id = 4;
 }
@@ -109,7 +120,12 @@ message KeyspaceGroup {
 
 message FindGroupByKeyspaceIDRequest {
   RequestHeader header = 1;
-  uint32 keyspace_id = 2;
+  oneof keyspace {
+    // V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+    uint32 keyspace_id = 2;
+    // V3 keyspace identity.
+    apipb.KeyspaceIdentity keyspace_identity = 4;
+  }
   uint64 mod_revision = 3;
 }
 

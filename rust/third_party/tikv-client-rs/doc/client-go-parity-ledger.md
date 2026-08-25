@@ -52,9 +52,11 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `util/israce` | `src/israce.rs`, Cargo `race-tests` feature | complete | Receipt below; both race-enabled and non-race build variants are implemented and validated. |
 | `util/redact` | `src/redact.rs` | complete | Receipt below; helper behavior is complete. Consumer call-site integration remains required by each owning package. |
 
-## Non-package artifacts still required
+## Complete repository/non-package artifact receipt
 
-The final repository claim must additionally account for root build and policy files, `go.mod`/`go.sum` dependencies, `.github` CI, `examples`, `integration_tests` including its separate Go module, generated protobuf inputs and outputs, configuration fixtures, and client-rust's `proto-build`, `proto`, `tests`, examples, Cargo features, and toolchain files. The eight directly key-bearing `internal/apicodec` protobuf inputs now match pinned kvproto and include the namespace/lookup/V3 identity expansion, but unrelated generated-root inputs still drift and remain an explicit final artifact gate. These artifacts are not package rows, but no full parity claim is possible without their final receipt.
+The final repository inventory and live gate are complete in [`repository-source-artifact-audit.md`](repository-source-artifact-audit.md). The receipt accounts for all 74 non-package source artifacts/19,306 lines: ten root policy/module files, four CI files, 19 example artifacts, and all 41 integration-test/module/configuration artifacts with 36 top-level test entry points. It also assigns client-rust's Cargo/toolchain/CI/examples/tests/configuration owners, pins a reusable client-go differential module, closes direct API-v1/API-v2 comparison on matching v9 PD/TiKV, and records the 62-test API-v2 multi-region matrix.
+
+All 38 top-level kvproto schemas are now byte-identical to `kvproto@059694ae4472276644613acccefa24cbc89d959f`; together with the independent channelz schema and 17 vendored imports, the 56-input generator emits 42 protocol modules, `mod.rs`, and a 728,127-byte descriptor reproducibly. The stable generated-output SHA-256 manifest is `f88ce01c8e2695560620e4015db06abd4f2ff9537a348bfcb9f00b72595a579c`. No source package, tracked non-package artifact, generated family, example, integration fixture, or final live gate remains unassigned.
 
 ## Complete package receipt: `internal/apicodec`
 
