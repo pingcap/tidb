@@ -540,7 +540,7 @@ func buildColumnProjection(
 		return columnProjection{}, nil
 	}
 
-	sourceColumns, hasGeneratedColumn, err := getWritableColumnNames(tctx, conn, dbName, table.Name)
+	sourceColumns, hasGeneratedColumn, hasInvisibleColumn, err := getWritableColumnNames(tctx, conn, dbName, table.Name)
 	if err != nil {
 		return columnProjection{}, err
 	}
@@ -558,7 +558,10 @@ func buildColumnProjection(
 	projection := columnProjection{
 		selectField: strings.Join(selectedFields, ","),
 	}
-	if !hasGeneratedColumn && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
+	// "*" skips invisible columns, so it only stands in for the full field list
+	// when the table has none.
+	if !hasGeneratedColumn && !hasInvisibleColumn &&
+		len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
 		projection.selectField = "*"
 	}
 
