@@ -49,6 +49,7 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 - [x] Complete all client-go package rows in dependency order recorded in `doc/client-go-parity-ledger.md`.
 - [x] (2026-08-25) Ran the final live matrix: 62 Rust tests passed against one PD plus three TiKV v8.5.5 nodes and 114 API-v2 regions; the committed pinned client-go harness and its Rust counterpart produced identical raw/transaction results against matching v9 API-v1 and API-v2 clusters.
 - [x] (2026-08-25) Closed the complete 74-artifact/19,306-line non-package source inventory, all 38 pinned kvproto inputs and reproducible outputs, and the final full test, strict Clippy/rustdoc, rustfmt, examples, doctest, generated, source-identity, and diff gates.
+- [x] (2026-08-25) Executed the complete pinned client-go integration workflow: both Go packages passed local and race suites, the transactional package passed against matching v9 API V1, and the raw package passed both real-cluster V1TTL and V2 matrix cases.
 
 ## Surprises & Discoveries
 
@@ -211,9 +212,13 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
   Rationale: the 74 root/CI/example/integration artifacts and generated root are not Go packages but remain mandatory completion evidence. Keeping the exact Go pseudo-version and common logical contract in-tree makes API-v1/API-v2 comparison repeatable while leaving it outside Cargo's ordinary offline test graph.
   Date/Author: 2026-08-25 / Codex
 
+- Decision: require PD store and region bootstrap evidence before treating a real-TiKV integration process as ready.
+  Rationale: an HTTP status response can come from a stale listener or a PD that has not bootstrapped. Waiting for one registered store and the expected initial regions prevented an environment-only launch failure from being misclassified as a client failure.
+  Date/Author: 2026-08-25 / Codex
+
 ## Outcomes & Retrospective
 
-Forty-two ledger rows are complete at the pinned client-go revision, including the user-directed native `unistore` crate; every client-go package row is complete and TiDB's unrelated server package is explicitly `not-applicable`. The final receipt accounts for all 74 non-package source artifacts/19,306 lines and every one of the 38 pinned kvproto schemas. Two generator runs are byte-stable. The deep Rust matrix passes 62 tests on one PD, three TiKV nodes, and 114 API-v2 regions; the exact pinned Go client and Rust counterpart produce identical canonical results on matching v9 API-v1 and API-v2 clusters. Default/all-feature library tests, strict pinned-nightly Clippy and rustdoc, all-target compilation, examples, doctests, rustfmt, generated identity, and whitespace gates pass. No package, source artifact, protocol family, or acceptance gate remains open.
+Forty-two ledger rows are complete at the pinned client-go revision, including the user-directed native `unistore` crate; every client-go package row is complete and TiDB's unrelated server package is explicitly `not-applicable`. The final receipt accounts for all 74 non-package source artifacts/19,306 lines and every one of the 38 pinned kvproto schemas. Two generator runs are byte-stable. The deep Rust matrix passes 62 tests on one PD, three TiKV nodes, and 114 API-v2 regions; the exact pinned Go client and Rust counterpart produce identical canonical results on matching v9 API-v1 and API-v2 clusters. A post-push audit also executed all four jobs from the pinned upstream integration workflow: both integration packages pass local and race modes, the transactional package passes on real API V1, and the raw package passes both real V1TTL and V2 cases. Default/all-feature library tests, strict pinned-nightly Clippy and rustdoc, all-target compilation, examples, doctests, rustfmt, generated identity, and whitespace gates pass. No package, source artifact, protocol family, or acceptance gate remains open.
 
 ## Context and Orientation
 

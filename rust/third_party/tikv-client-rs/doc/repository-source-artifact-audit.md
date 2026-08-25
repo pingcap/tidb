@@ -222,6 +222,49 @@ because pinned client-go's 2026 PD dependency uses the newer `QueryRegion`
 router RPC. The matching v9 differential avoids weakening or patching either
 client to accommodate an older control plane.
 
+## Complete pinned client-go integration workflow
+
+The complete integration workflow from the pinned client-go revision was run
+with Go `1.25.12 darwin/arm64`, not merely inventoried or represented by the
+smaller differential harness. Its two source packages and every workflow
+variant passed:
+
+```text
+# integration-local: integration_tests and integration_tests/raw
+go test ./...
+ok integration_tests      90.299s
+ok integration_tests/raw   0.058s
+
+# integration-local-race: integration_tests and integration_tests/raw
+go test ./... -race
+ok integration_tests      98.645s
+ok integration_tests/raw   1.294s
+
+# integration-tikv: API V1, matching PD/TiKV v9
+go test --with-tikv
+ok integration_tests     289.165s
+
+# integration-raw-tikv: V1TTL and V2 matrix cases
+go test --with-tikv
+ok integration_tests/raw   2.648s  # tikv-v1ttl.toml
+ok integration_tests/raw   2.657s  # tikv-v2.toml
+```
+
+The real-cluster runs used the same matching binaries as the direct
+differential: PD `a186e0cc61def1408fc57ae7b3d1044a572c8ae3` and TiKV
+`8e964719db0d2088d47a280a1dde3fefa1b31d6b`. Each run used clean data
+directories and waited for PD to report one store and three regions before
+starting tests. The first transactional launch was discarded as invalid setup
+evidence: port 20160 was occupied by a stale TiKV process, while the newly
+started PD still reported `NOT_BOOTSTRAPPED`. After the stale listener exited,
+the unchanged command passed against a genuinely bootstrapped cluster. This
+was an environment-readiness failure, not a client-go test failure.
+
+The retained logs are under `/private/tmp/client-go-full-v9-v1-20260825-1`,
+`/private/tmp/client-go-full-v9-v1ttl-20260825-1`, and
+`/private/tmp/client-go-full-v9-v2-20260825-1`. All test clusters were stopped;
+ports 2379, 2380, 20160, and 20180 were verified free afterward.
+
 ## Multi-region Rust live matrix
 
 The deeper Rust matrix ran against one PD v8.5.5 and three TiKV v8.5.5 nodes
@@ -275,7 +318,8 @@ the 38/38 kvproto byte comparison remained unchanged.
 Every client-go package row is `complete`, the unrelated TiDB server UniStore
 package is explicitly `not-applicable`, all 74 non-package source artifacts are
 listed and assigned here, all pinned generated inputs are exact and
-reproducible, and the direct V1/V2 and deeper multi-region gates pass. This
-closes the repository source-artifact and live-differential gate without
-claiming text-for-text API or test layout identity where idiomatic Rust uses a
-different shape.
+reproducible, and the complete pinned Go integration workflow, direct V1/V2
+differential, and deeper multi-region Rust gates pass. This closes the
+repository source-artifact, upstream-integration, and live-differential gates
+without claiming text-for-text API or test layout identity where idiomatic
+Rust uses a different shape.

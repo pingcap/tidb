@@ -1371,3 +1371,22 @@ The hidden `tikv_client::testutils` module is a zero-state facade over the compl
 The independent workspace crate has exactly five artifacts/2,788 lines and one-way dependency ownership. Its complete inventory, hashes, 70 public declaration points, 24 internal/external tests, direct consumers, source boundary, and validation contract are recorded in [`unistore-crate-completion-audit.md`](unistore-crate-completion-audit.md).
 
 The source-mapped `MockEngine` owns only protocol-independent state and formats from the completed client-go mocktikv package. A smaller native committed-version facade supports modules that do not need lock/prewrite semantics, and true external-crate tests prove both APIs are reusable without `tikv-client`. Protocol conversion stays in the client adapter, so no dependency cycle exists. TiDB's separate server-side UniStore package is explicitly `not-applicable`; no partial external-package claim is hidden behind this crate completion.
+
+## Repository-wide post-push integration amendment
+
+The complete integration workflow at pinned client-go commit
+`52c1e76cec993571493c81de442bcbef90cdc106` was executed on 2026-08-25 with
+Go `1.25.12 darwin/arm64`. Both `integration_tests` and
+`integration_tests/raw` passed `go test ./...` and `go test ./... -race`.
+Against matching PD/TiKV v9 binaries, `integration_tests` passed its real API
+V1 suite and `integration_tests/raw` passed both source-configured V1TTL and V2
+matrix cases. The exact commands, versions, timings, readiness evidence, and
+retained log paths are recorded in
+[`repository-source-artifact-audit.md`](repository-source-artifact-audit.md).
+
+This repository-wide receipt supersedes the earlier final-validation
+limitation that the complete upstream integration workflow had been
+inventoried but not executed. Historical package receipts that mention an
+unavailable host Go toolchain remain accurate descriptions of their original
+package-completion runs; they are not the current repository-level validation
+state.
