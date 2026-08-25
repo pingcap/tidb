@@ -2146,6 +2146,54 @@ impl KvTable {
         Ok(found)
     }
 
+    /// Checks a batch of ordinary clustered INSERT record keys with one
+    /// storage request. `None` means the table shape cannot use this fast
+    /// path: a secondary unique index, a partitioned table, or a heap table
+    /// still needs the row-by-row conflict machinery because it has more keys
+    /// (or a handle allocated as a side effect) to resolve.
+    ///
+    /// The caller uses the `true` result only for a normal INSERT whose rows
+    /// all have distinct, currently absent clustered keys. In that case the
+    /// per-row `addRecord` existence probe would repeat this same check. A
+    /// staged key from an earlier statement is included by `batch_get`, so an
+    /// explicit transaction falls back rather than hiding a duplicate.
+    pub(crate) fn all_clustered_insert_keys_absent(
+        &mut self,
+        rows: &[Vec<Datum>],
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<Option<bool>, KvTableError> {
+        if rows.is_empty()
+            || (self.pk_handle_offset.is_none() && self.common_handle_offsets.is_empty())
+            || self.partition.is_some()
+            || self.indexes.iter().any(|index| !index.clustered_primary)
+            || self.record_physical_ids().len() != 1
+        {
+            return Ok(None);
+        }
+        let zone = ctx.time_zone();
+        let physical_id = self.record_physical_ids()[0];
+        let mut seen = HashSet::with_capacity(rows.len());
+        let mut keys = Vec::with_capacity(rows.len());
+        for row in rows {
+            let handle = self.handle_of_row(row, &zone, 0)?;
+            let key = Key::from_bytes(encode_row_key_with_handle(
+                physical_id,
+                &handle.record_handle(),
+            ));
+            if !seen.insert(key.as_bytes().to_vec()) {
+                // Two rows in one VALUES list would otherwise overwrite one
+                // another if the per-row probe were skipped.
+                return Ok(Some(false));
+            }
+            keys.push(key);
+        }
+        let found = self
+            .store
+            .batch_get(&keys)
+            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        Ok(Some(found.is_empty()))
+    }
+
     /// The duplicate-entry error a conflicting row would raise, which names
     /// the key it collided on the way Go's `ErrDupEntry` does.
     pub fn duplicate_entry_error(
@@ -2338,7 +2386,7 @@ impl KvTable {
         shard: i64,
         ctx: &impl tidb_expr::Columns,
     ) -> Result<TableHandle, KvTableError> {
-        self.insert_row_in(row, row_id, shard, ctx, false)
+        self.insert_row_in(row, row_id, shard, ctx, false, false)
     }
 
     /// [`Self::insert_row_with_row_id`] for the INSERT executor, which names
@@ -2359,7 +2407,22 @@ impl KvTable {
         ctx: &impl tidb_expr::Columns,
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
-        self.insert_row_in(row, row_id, shard, ctx, lazy_dup_check)
+        self.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, false)
+    }
+
+    /// [`Self::insert_row_with_row_id_checked`] for a normal clustered INSERT
+    /// whose caller already proved every record key absent in one batch read.
+    /// Secondary-index tables never reach this method (the proof helper
+    /// refuses them), so their unique-entry checks remain eager.
+    pub(crate) fn insert_row_with_row_id_checked_without_primary_duplicate_check(
+        &mut self,
+        row: &[Datum],
+        row_id: Option<i64>,
+        shard: i64,
+        ctx: &impl tidb_expr::Columns,
+        lazy_dup_check: bool,
+    ) -> Result<TableHandle, KvTableError> {
+        self.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, true)
     }
 
     fn insert_row_in(
@@ -2369,6 +2432,7 @@ impl KvTable {
         shard: i64,
         ctx: &impl tidb_expr::Columns,
         lazy_dup_check: bool,
+        skip_primary_duplicate_check: bool,
     ) -> Result<TableHandle, KvTableError> {
         let zone = ctx.time_zone();
         // The generated columns are recomputed HERE, at the one place every
@@ -2428,6 +2492,8 @@ impl KvTable {
                 }
                 Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
             }
+        } else if skip_primary_duplicate_check {
+            false
         } else {
             self.row_exists(&handle)?
         };

@@ -36,6 +36,47 @@ fn retryable_storage_errors_keep_their_transaction_identity() {
     ));
 }
 
+/// A normal clustered INSERT may batch its record-key absence probe, but it
+/// must still reject both a key committed before the statement and a repeated
+/// key within one VALUES list. The latter guards the local de-duplication
+/// branch in `all_clustered_insert_keys_absent`.
+#[test]
+fn clustered_batch_insert_keeps_primary_duplicate_errors() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE batch_insert (id BIGINT PRIMARY KEY, value INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO batch_insert VALUES (1, 10), (2, 20), (3, 30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let existing = run_insert_on(
+        "INSERT INTO batch_insert VALUES (2, 200)",
+        &mut catalog,
+        &ctx,
+    )
+    .expect_err("an existing clustered key must not be overwritten");
+    assert!(matches!(existing, DriverError::DuplicateEntry { .. }));
+    let mut repeated_catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE batch_insert (id BIGINT PRIMARY KEY, value INT)",
+        &mut repeated_catalog,
+    )
+    .unwrap();
+    let repeated = run_insert_on(
+        "INSERT INTO batch_insert VALUES (5, 50), (5, 500)",
+        &mut repeated_catalog,
+        &ctx,
+    )
+    .expect_err("duplicate keys in one VALUES list must be rejected");
+    assert!(matches!(repeated, DriverError::DuplicateEntry { .. }));
+}
+
 /// go-tpc's delivery transaction deletes several `new_order` rows with one
 /// row-valued `IN` predicate. The SQL remains one DELETE and must report the
 /// number of matching composite keys exactly as Go TiDB does.

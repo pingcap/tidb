@@ -976,10 +976,31 @@ pub(crate) fn run_insert_traced(
         && !insert.replace
         && insert.on_duplicate.is_empty()
         && !insert.ignore;
-    // Go resolves a conflict per row, before the row is written: REPLACE
-    // deletes every row it collides with, ON DUPLICATE KEY UPDATE applies
-    // its assignments to the first one, and IGNORE skips the row with the
-    // duplicate reported as a warning.
+    // Go resolves a conflict per row, before the row is written, only when
+    // the statement needs the conflicting handle: REPLACE deletes every row
+    // it collides with, ON DUPLICATE KEY UPDATE applies its assignments to
+    // the first one, and IGNORE skips the row with the duplicate reported as
+    // a warning. A normal INSERT does not consume that handle. Its
+    // authoritative `addRecord`/index writes below perform the same one
+    // existence check and retain the duplicate error, so probing here would
+    // issue a redundant remote read for every row in a batch.
+    let resolves_conflicts = insert.replace || !insert.on_duplicate.is_empty() || insert.ignore;
+    // A normal INSERT into a clustered table with no secondary indexes can
+    // prove all record keys absent in one BatchGet. Keep the proof narrow: a
+    // heap handle allocation, partition routing, or a unique secondary key
+    // has additional duplicate semantics that must stay on the row path.
+    let skip_primary_duplicate_check =
+        if !resolves_conflicts && !lazy_dup_check && extra_handle_offset.is_none() {
+            match target(catalog, &database, &table_name)
+                .all_clustered_insert_keys_absent(&new_rows, ctx)
+                .map_err(kv_write_error)?
+            {
+                Some(absent) => absent,
+                None => false,
+            }
+        } else {
+            false
+        };
     inserted = 0;
     for (position, row) in new_rows.iter().enumerate() {
         // Go's `FKCheckExec` runs per row, before the row is added, and
@@ -1005,11 +1026,10 @@ pub(crate) fn run_insert_traced(
         // A lazy normal insert reads nothing here -- Go's addRecord never
         // resolves conflicts it only reports, and the deferred check needs no
         // old-row handles.
-        let conflicts = if lazy_dup_check {
+        let conflicts = if lazy_dup_check || !resolves_conflicts {
             Vec::new()
         } else {
-            match target(catalog, &database, &table_name).conflicting_handles(row, ctx)
-            {
+            match target(catalog, &database, &table_name).conflicting_handles(row, ctx) {
                 Ok(conflicts) => conflicts,
                 Err(error) => {
                     handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
@@ -1120,9 +1140,25 @@ pub(crate) fn run_insert_traced(
         } else {
             0
         };
-        if let Err(error) = target(catalog, &database, &table_name)
-            .insert_row_with_row_id_checked(row, written_row_id, shard, ctx, lazy_dup_check)
-        {
+        let insert_result = if skip_primary_duplicate_check {
+            target(catalog, &database, &table_name)
+                .insert_row_with_row_id_checked_without_primary_duplicate_check(
+                    row,
+                    written_row_id,
+                    shard,
+                    ctx,
+                    lazy_dup_check,
+                )
+        } else {
+            target(catalog, &database, &table_name).insert_row_with_row_id_checked(
+                row,
+                written_row_id,
+                shard,
+                ctx,
+                lazy_dup_check,
+            )
+        };
+        if let Err(error) = insert_result {
             handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
             continue;
         }
