@@ -59,38 +59,29 @@ func (cs *countWithSamples) appendSamples(samples []string) {
 	cs.Samples = append(cs.Samples, samples[:min(remaining, len(samples))]...)
 }
 
-func recordCountWithSamples(cs **countWithSamples, samples ...string) {
+func recordCountWithSamples(cs *countWithSamples, samples ...string) {
 	if len(samples) == 0 {
 		return
 	}
-	if *cs == nil {
-		*cs = &countWithSamples{}
-	}
-	(*cs).Count += int64(len(samples))
-	(*cs).appendSamples(samples)
+	cs.Count += int64(len(samples))
+	cs.appendSamples(samples)
 }
 
-func mergeCountWithSamples(cs **countWithSamples, completed *countWithSamples) {
-	if completed == nil {
-		return
-	}
-	if *cs == nil {
-		*cs = &countWithSamples{}
-	}
-	(*cs).Count += completed.Count
-	(*cs).appendSamples(completed.Samples)
+func mergeCountWithSamples(cs *countWithSamples, completed countWithSamples) {
+	cs.Count += completed.Count
+	cs.appendSamples(completed.Samples)
 }
 
 // cleanupStats uses exported fields so zap.Any can encode them using their JSON tags.
 type cleanupStats struct {
-	DeletedFiles     int64             `json:"deleted-files,omitempty"`
-	MissingTasks     *countWithSamples `json:"missing-tasks,omitempty"`
-	MissingTaskFiles *countWithSamples `json:"missing-task-files,omitempty"`
+	DeletedFiles     int64            `json:"deleted-files,omitempty"`
+	MissingTasks     countWithSamples `json:"missing-tasks,omitzero"`
+	MissingTaskFiles countWithSamples `json:"missing-task-files,omitzero"`
 	// These two cases should be very rare. Keep bounded path samples in the
 	// cleanup log so operators can identify any unexpected files.
-	NonImportIntoTaskFiles *countWithSamples `json:"non-import-into-task-files,omitempty"`
-	UnparsedTaskIDFiles    *countWithSamples `json:"unparsed-task-id-files,omitempty"`
-	Failures               int64             `json:"failures,omitempty"`
+	NonImportIntoTaskFiles countWithSamples `json:"non-import-into-task-files,omitzero"`
+	UnparsedTaskIDFiles    countWithSamples `json:"unparsed-task-id-files,omitzero"`
+	Failures               int64            `json:"failures,omitempty"`
 }
 
 func (stats *cleanupStats) recordUnparsedTaskIDFiles(files []string) {
@@ -259,6 +250,10 @@ func cleanFiles(
 // or reverted tasks, files without matching IMPORT INTO task metadata, and file
 // names without a valid positive task ID are deleted immediately. Files for
 // successful tasks are deleted after the retention period; other states are retained.
+// The initial design used cloud bucket lifecycle policies to manage these files,
+// but that would split ownership between the kernel and control plane, making
+// future changes and maintenance more complex. The policy is simple enough to
+// keep entirely in the kernel.
 func CleanConflictRowFiles(ctx context.Context, infoGetter TaskInfoGetter, cloudStorageURI string) error {
 	if cloudStorageURI == "" {
 		return nil

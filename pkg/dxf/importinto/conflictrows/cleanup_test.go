@@ -97,11 +97,11 @@ func requireLoggedCleanupStats(t *testing.T, value any) (cleanupStats, map[strin
 	return logged, fields
 }
 
-func requireLoggedCountWithSamples(t *testing.T, value json.RawMessage, want *countWithSamples) {
+func requireLoggedCountWithSamples(t *testing.T, value json.RawMessage, want countWithSamples) {
 	t.Helper()
 	var logged countWithSamples
 	require.NoError(t, json.Unmarshal(value, &logged))
-	require.Equal(t, want, &logged)
+	require.Equal(t, want, logged)
 	var fields map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(value, &fields))
 	require.Len(t, fields, 2)
@@ -191,15 +191,15 @@ func TestCleanFiles(t *testing.T) {
 			{
 				name: "missing task",
 				wantStats: cleanupStats{
-					MissingTasks:     &countWithSamples{Count: 1, Samples: []string{"1"}},
-					MissingTaskFiles: &countWithSamples{Count: 2, Samples: files},
+					MissingTasks:     countWithSamples{Count: 1, Samples: []string{"1"}},
+					MissingTaskFiles: countWithSamples{Count: 2, Samples: files},
 				},
 			},
 			{
 				name: "non import into task",
 				info: &storage.TaskCleanupInfo{Type: proto.TaskTypeExample},
 				wantStats: cleanupStats{
-					NonImportIntoTaskFiles: &countWithSamples{Count: 2, Samples: files},
+					NonImportIntoTaskFiles: countWithSamples{Count: 2, Samples: files},
 				},
 			},
 		}
@@ -262,7 +262,7 @@ func TestCleanFiles(t *testing.T) {
 		stats, err := cleanFiles(context.Background(), store, getter, now)
 		require.NoError(t, err)
 		require.Equal(t, int64(4), stats.DeletedFiles)
-		require.Nil(t, stats.MissingTasks)
+		require.Zero(t, stats.MissingTasks)
 		require.Equal(t, int64(1), stats.NonImportIntoTaskFiles.Count)
 		require.Equal(t, int64(1), stats.UnparsedTaskIDFiles.Count)
 		require.Zero(t, stats.Failures)
@@ -382,7 +382,7 @@ func TestCleanFiles(t *testing.T) {
 		stats, err := cleanFiles(context.Background(), store, getter, now)
 		require.ErrorIs(t, err, deleteErr)
 		require.Equal(t, int64(maxObjectsPerFlush+1), stats.DeletedFiles)
-		require.Nil(t, stats.MissingTasks)
+		require.Zero(t, stats.MissingTasks)
 		require.Equal(t, int64(1), stats.Failures)
 
 		store.failDeleteAt = 0
