@@ -510,3 +510,16 @@ the second scan benefited from shared TiKV state. The crossover audit is the
 receipt used for the no-regression conclusion. Against c300, no query exceeds
 1.02x and R33/R34 improve substantially; against Go, R32/R35/R32det remain
 slower and are performance follow-ups rather than correctness regressions.
+
+The current-HEAD Ready audit was repeated after the crossover receipt was
+recorded. The benchmark binary was built from `950fb61c3a`; the only source
+delta through `462ba6e62c` is this ExecPlan document. The Rust regressions
+`sorted_compact_decimal_counts_match_pairwise_comparison`,
+`compact_count_join_key_and_decimal_comparison_are_bounded`,
+`aggregation_pushdown_topn_maps_ordered_aggregate_to_output_column`, and
+`tidb-session::tests_explain::web3bench_small_aggregates_follow_go_cost_boundary`
+passed, as did the Go source tests `TestIndexAdvisorWeb3Bench`,
+`TestTopNPushDown`, `TestGetPushedDownTopNHeavyFunctionNotFirstByItem`,
+`TestAggPushDownEngine`, and `TestBuildFinalModeAggregation`; `make lint`
+also passed. The branch is clean and `origin/hparser-integration` points at
+the recorded HEAD.
