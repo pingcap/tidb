@@ -37,6 +37,10 @@ path = "tests/snapshot_scan_page_deadline_source.rs"
 name = "lock_resolver_source"
 path = "tests/lock_resolver_source.rs"
 
+[[test]]
+name = "region_error_recovery_source"
+path = "tests/region_error_recovery_source.rs"
+
 [[bench]]
 name = "kv"
 harness = false

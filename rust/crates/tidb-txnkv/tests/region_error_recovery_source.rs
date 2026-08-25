@@ -278,13 +278,16 @@ fn bucket_version_mismatch_does_not_synthesize_a_missing_region() {
         }),
         ..Default::default()
     };
+    // Payload-first handling: the publisher's own missing-entry guard keeps
+    // the no-synthesis property, so the stale observation surfaces the same
+    // disposition a live route would -- it never fails the request.
     assert_eq!(
         cache.on_region_error(
             &error,
-            observed.clone(),
+            observed,
             &mut RegionBackoffBudget::campaign_default(),
         ),
-        Err(RegionRecoveryError::StaleObservation(observed))
+        Ok(RegionErrorDisposition::ReturnRegionError)
     );
     assert!(cache.is_empty());
 }
@@ -552,7 +555,10 @@ fn missing_leader_retries_peers_while_unknown_named_leader_rebuilds() {
 }
 
 #[test]
-fn delayed_route_observation_is_rejected_before_cache_mutation() {
+fn delayed_route_observation_never_changes_the_payload_outcome() {
+    // A late response whose route no longer matches the cache must be
+    // handled exactly like a live one: payload-first. `region_not_found`
+    // invalidates and rebuilds; it never fails the request.
     let (mut cache, _) = cache(location(7, 3, 4, b"", b""), []);
     let region = seed(&mut cache);
     let mut stale = attempt(region);
@@ -562,11 +568,49 @@ fn delayed_route_observation_is_rejected_before_cache_mutation() {
         ..Default::default()
     };
 
-    assert!(matches!(
-        cache.on_region_error(&error, stale, &mut RegionBackoffBudget::campaign_default()),
-        Err(RegionRecoveryError::StaleObservation(_))
-    ));
-    assert_eq!(cache.len(), 1);
+    assert_eq!(
+        cache
+            .on_region_error(
+                &error,
+                stale.clone(),
+                &mut RegionBackoffBudget::campaign_default(),
+            )
+            .unwrap(),
+        RegionErrorDisposition::RebuildRanges {
+            delay: Duration::ZERO,
+            action: RegionRebuildAction::CacheReady,
+        }
+    );
+    assert_eq!(cache.len(), 0);
+}
+
+#[test]
+fn stale_observation_while_the_entry_is_cached_keeps_the_same_outcome() {
+    // Identical disposition while a matching entry is still cached:
+    // staleness alone stays invisible to the outcome.
+    let (mut cache, _) = cache(location(7, 3, 4, b"", b""), []);
+    let region = seed(&mut cache);
+    let mut stale = attempt(region);
+    stale.address = "old-address".to_owned();
+    let error = errorpb::Error {
+        region_not_found: Some(errorpb::RegionNotFound { region_id: 7 }),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        cache
+            .on_region_error(
+                &error,
+                stale,
+                &mut RegionBackoffBudget::campaign_default(),
+            )
+            .unwrap(),
+        RegionErrorDisposition::RebuildRanges {
+            delay: Duration::ZERO,
+            action: RegionRebuildAction::CacheReady,
+        }
+    );
+    assert!(cache.is_empty());
 }
 
 #[test]
@@ -1258,4 +1302,132 @@ fn capped_delay_charges_what_it_sleeps() {
     // reserves the full exponential value.
     let uncapped = budget.next_delay(RegionBackoffKind::TxnLockFast).unwrap();
     assert!(uncapped > Duration::from_millis(10));
+}
+
+#[test]
+fn late_duplicate_split_response_after_publication_rebuilds_without_error() {
+    let newer = location(7, 4, 5, b"", b"");
+    let (mut cache, recorded) = cache(
+        location(7, 3, 4, b"", b""),
+        [Ok(newer.clone()), Ok(newer.clone())],
+    );
+    let region = seed(&mut cache);
+    let error = errorpb::Error {
+        epoch_not_match: Some(errorpb::EpochNotMatch {
+            current_regions: vec![current_region(7, 4, 5, b"", b"")],
+        }),
+        ..Default::default()
+    };
+
+    // First delivery: the live route publishes the newer snapshot.
+    assert_eq!(
+        cache
+            .on_region_error(
+                &error,
+                attempt(region),
+                &mut RegionBackoffBudget::campaign_default(),
+            )
+            .unwrap(),
+        RegionErrorDisposition::RebuildRanges {
+            delay: Duration::ZERO,
+            action: RegionRebuildAction::CacheReady,
+        }
+    );
+
+    // A delayed duplicate of the SAME superseded observation arrives after
+    // another caller already published. It must rebuild from fresh topology
+    // -- never abort with a stale-observation error, and never re-hydrate.
+    let RegionErrorDisposition::RebuildRanges { delay, action } = cache
+        .on_region_error(
+            &error,
+            attempt(region),
+            &mut RegionBackoffBudget::campaign_default(),
+        )
+        .unwrap()
+    else {
+        panic!("a superseded duplicate must hand over to a range rebuild")
+    };
+    assert_eq!(delay, Duration::ZERO);
+    assert_eq!(action, RegionRebuildAction::CacheReady);
+    assert_eq!(
+        recorded.borrow().len(),
+        1,
+        "a superseded observation must not hydrate again"
+    );
+    assert_eq!(cache.locate_key(b"k").unwrap().region, newer.region);
+}
+
+#[test]
+fn server_busy_on_a_superseded_route_hands_over_to_range_rebuild() {
+    let (mut cache, _) = cache(location(7, 3, 4, b"", b""), []);
+    let region = seed(&mut cache);
+    let miss = errorpb::Error {
+        region_not_found: Some(errorpb::RegionNotFound { region_id: 7 }),
+        ..Default::default()
+    };
+    cache
+        .on_region_error(
+            &miss,
+            attempt(region),
+            &mut RegionBackoffBudget::campaign_default(),
+        )
+        .unwrap();
+
+    let busy = errorpb::Error {
+        server_is_busy: Some(errorpb::ServerIsBusy {
+            reason: String::new(),
+            backoff_ms: 0,
+            estimated_wait_ms: 0,
+            applied_index: 0,
+        }),
+        ..Default::default()
+    };
+    let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 9);
+    assert_eq!(
+        cache
+            .on_region_error(&busy, attempt(region), &mut budget)
+            .unwrap(),
+        RegionErrorDisposition::RebuildRanges {
+            delay: Duration::ZERO,
+            action: RegionRebuildAction::CacheReady,
+        }
+    );
+    assert_eq!(budget.total_sleep(), Duration::ZERO);
+}
+
+#[test]
+fn disk_full_without_a_cached_route_reserves_its_budget_then_rebuilds() {
+    let (mut cache, _) = cache(location(7, 3, 4, b"", b""), []);
+    let region = seed(&mut cache);
+    let miss = errorpb::Error {
+        region_not_found: Some(errorpb::RegionNotFound { region_id: 7 }),
+        ..Default::default()
+    };
+    cache
+        .on_region_error(
+            &miss,
+            attempt(region),
+            &mut RegionBackoffBudget::campaign_default(),
+        )
+        .unwrap();
+
+    let full = errorpb::Error {
+        disk_full: Some(errorpb::DiskFull {
+            store_id: vec![101],
+            reason: "raft".to_owned(),
+        }),
+        ..Default::default()
+    };
+    let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 11);
+    // TikvDiskFull paces plain exponential backoff: first reservation 500ms.
+    assert_eq!(
+        cache
+            .on_region_error(&full, attempt(region), &mut budget)
+            .unwrap(),
+        RegionErrorDisposition::RebuildRanges {
+            delay: Duration::from_millis(500),
+            action: RegionRebuildAction::CacheReady,
+        }
+    );
+    assert_eq!(budget.total_sleep(), Duration::from_millis(500));
 }

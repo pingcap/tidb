@@ -288,8 +288,13 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
         backoff: &mut RegionBackoffBudget,
         epoch_not_match: &mut Option<EpochNotMatchRecoveryPlan>,
     ) -> Result<RegionErrorDisposition, RegionRecoveryError> {
-        self.validate_attempt(&attempt)?;
-
+        // A reply can arrive after another caller replaced or removed this
+        // cache entry (concurrent split recovery). client-go handles region
+        // errors payload-first -- the error carries the current regions, and
+        // every cache mutation re-finds its entry under the cache lock --
+        // so a superseded observation must not abort the recovery chain.
+        // Dispositions needing a live leader route fall back to an
+        // immediate range rebuild instead of failing the request.
         if error.undetermined_result.is_some() {
             return Ok(RegionErrorDisposition::ReturnRegionError);
         }
@@ -297,7 +302,15 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
             return self.on_not_leader(not_leader, attempt, backoff);
         }
         if error.disk_full.is_some() {
-            let route = self.owned_leader_route(attempt.region)?;
+            let route = match self.owned_leader_route(attempt.region) {
+                Ok(route) => route,
+                Err(_) => {
+                    return Ok(rebuild_with_backoff(
+                        backoff,
+                        RegionBackoffKind::TikvDiskFull,
+                    ));
+                }
+            };
             return Ok(match backoff.next_delay(RegionBackoffKind::TikvDiskFull) {
                 Ok(delay) => RegionErrorDisposition::RetryRoute { route, delay },
                 // Pinned client-go discards the exhausted inner backoff error
@@ -506,12 +519,20 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
             return self.retry_same_route(attempt, backoff, RegionBackoffKind::RegionMiss);
         }
 
-        let observed_location = self
+        let Some(observed_location) = self
             .regions
             .iter()
             .find(|location| location.region == attempt.region)
-            .expect("the region attempt was validated before EpochNotMatch planning")
-            .clone();
+        else {
+            // The base snapshot was already replaced or removed since
+            // dispatch; there is nothing to publish against. Fresh topology
+            // answers the range rebuild.
+            return Ok(RegionErrorDisposition::RebuildRanges {
+                delay: Duration::ZERO,
+                action: RegionRebuildAction::CacheReady,
+            });
+        };
+        let observed_location = observed_location.clone();
         let mut metadata = Vec::with_capacity(mismatch.current_regions.len());
         for current in &mismatch.current_regions {
             metadata.push(region_metadata(current)?);
@@ -557,7 +578,22 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
         backoff: &mut RegionBackoffBudget,
         kind: RegionBackoffKind,
     ) -> Result<RegionErrorDisposition, RegionRecoveryError> {
-        let route = self.owned_leader_route(attempt.region)?;
+        let route = match self.owned_leader_route(attempt.region) {
+            Ok(route) => route,
+            Err(_) => {
+                // The observed entry is gone from the cache: there is no
+                // same-route retry left to pace. Invalidate and hand the
+                // caller an immediate range rebuild; the transport's rebuild
+                // arm owns the single RegionMiss reservation, matching the
+                // one outer `boRegionMiss` sleep TiDB performs per surfaced
+                // region error.
+                self.invalidate(attempt.region);
+                return Ok(RegionErrorDisposition::RebuildRanges {
+                    delay: Duration::ZERO,
+                    action: RegionRebuildAction::CacheReady,
+                });
+            }
+        };
         let delay = match backoff.next_delay(kind) {
             Ok(delay) => delay,
             Err(exhausted) => {
