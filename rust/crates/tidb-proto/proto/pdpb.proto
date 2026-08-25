@@ -7,6 +7,7 @@ service PD {
   rpc Tso(stream TsoRequest) returns (stream TsoResponse) {}
   rpc GetMembers(GetMembersRequest) returns (GetMembersResponse) {}
   rpc GetStore(GetStoreRequest) returns (GetStoreResponse) {}
+  rpc GetAllStores(GetAllStoresRequest) returns (GetAllStoresResponse) {}
   rpc GetRegion(GetRegionRequest) returns (GetRegionResponse) {}
   rpc GetPrevRegion(GetRegionRequest) returns (GetRegionResponse) {}
   rpc GetRegionByID(GetRegionByIDRequest) returns (GetRegionResponse) {}
@@ -108,6 +109,17 @@ message GetStoreRequest {
 message GetStoreResponse {
   ResponseHeader header = 1;
   metapb.Store store = 2;
+}
+
+message GetAllStoresRequest {
+  RequestHeader header = 1;
+  // Do NOT return tombstone stores if set to true.
+  bool exclude_tombstone_stores = 2;
+}
+
+message GetAllStoresResponse {
+  ResponseHeader header = 1;
+  repeated metapb.Store stores = 2;
 }
 
 message GetRegionRequest {

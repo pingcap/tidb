@@ -29,6 +29,8 @@ pub enum PdOperation {
     BatchScanRegions,
     /// Store lookup by ID.
     GetStore,
+    /// Enumeration of every store PD knows about.
+    GetAllStores,
     /// Current timestamp allocation from the PD leader stream.
     Tso,
     /// GC state (txn safe point) lookup.
@@ -45,6 +47,7 @@ impl std::fmt::Display for PdOperation {
             Self::ScanRegions => formatter.write_str("ScanRegions"),
             Self::BatchScanRegions => formatter.write_str("BatchScanRegions"),
             Self::GetStore => formatter.write_str("GetStore"),
+            Self::GetAllStores => formatter.write_str("GetAllStores"),
             Self::Tso => formatter.write_str("Tso"),
             Self::GetGcState => formatter.write_str("GetGCState"),
         }

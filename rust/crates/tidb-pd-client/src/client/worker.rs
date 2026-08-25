@@ -47,9 +47,10 @@ use crate::{PdClientError, PdMemberSet};
 
 use super::failover::{
     batch_scan_regions_with_failover, endpoint_attempt_order, foreground_leader_only,
-    get_gc_state_with_failover, get_prev_region_with_failover, get_region_by_id_with_failover,
-    get_region_with_failover, get_store_with_failover, refresh_membership, retain_member_clients,
-    scan_regions_with_failover, tonic_client, PdChannelCache,
+    get_all_stores_with_failover, get_gc_state_with_failover, get_prev_region_with_failover,
+    get_region_by_id_with_failover, get_region_with_failover, get_store_with_failover,
+    refresh_membership, retain_member_clients, scan_regions_with_failover, tonic_client,
+    PdChannelCache,
 };
 use super::requests::{get_members, get_prev_region, get_region, get_region_by_id, scan_regions};
 use super::topology::invalid_topology;
@@ -96,6 +97,9 @@ pub(super) fn run_worker(
                     let _ = reply.send(Err(PdClientError::Closed));
                 }
                 WorkerCommand::GetStore { reply, .. } => {
+                    let _ = reply.send(Err(PdClientError::Closed));
+                }
+                WorkerCommand::GetAllStores { reply } => {
                     let _ = reply.send(Err(PdClientError::Closed));
                 }
                 WorkerCommand::GetTimestamp { reply, .. } => {
@@ -294,6 +298,16 @@ pub(super) fn run_worker(
                     &state,
                     &shutdown,
                     store_id,
+                );
+                let _ = reply.send(result);
+            }
+            WorkerCommand::GetAllStores { reply } => {
+                let result = get_all_stores_with_failover(
+                    &runtime,
+                    &mut clients,
+                    timeout,
+                    &state,
+                    &shutdown,
                 );
                 let _ = reply.send(result);
             }

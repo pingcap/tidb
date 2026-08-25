@@ -13,6 +13,7 @@ build = "../../scripts/aggregate-tests.rs"
 workspace = true
 
 [dependencies]
+async-trait.workspace = true
 bytes.workspace = true
 prost.workspace = true
 serde_json.workspace = true

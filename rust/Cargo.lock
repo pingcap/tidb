@@ -3740,6 +3740,7 @@ dependencies = [
 name = "tidb-txnkv"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "bytes",
  "prost 0.14.4",
  "serde_json",

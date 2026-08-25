@@ -107,6 +107,9 @@ enum WorkerCommand {
         store_id: u64,
         reply: mpsc::Sender<Result<Option<PdStore>, PdClientError>>,
     },
+    GetAllStores {
+        reply: mpsc::Sender<Result<Vec<PdStore>, PdClientError>>,
+    },
     GetTimestamp {
         deadline: Instant,
         reply: mpsc::Sender<Result<u64, PdClientError>>,
@@ -590,6 +593,19 @@ impl PdClient {
         self.shared
             .commands
             .send(WorkerCommand::GetStore { store_id, reply })
+            .map_err(|_| PdClientError::Closed)?;
+        response.recv().unwrap_or(Err(PdClientError::Closed))
+    }
+
+    /// Lists every store PD currently reports as usable.
+    ///
+    /// Stores PD marks tombstone or removed are omitted rather than reported,
+    /// matching how `GetAllStores` callers treat a decommissioned store.
+    pub fn all_stores(&self) -> Result<Vec<PdStore>, PdClientError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(WorkerCommand::GetAllStores { reply })
             .map_err(|_| PdClientError::Closed)?;
         response.recv().unwrap_or(Err(PdClientError::Closed))
     }

@@ -79,6 +79,7 @@ repository = "https://github.com/pingcap/tidb"
 # (linear-time, no backreferences/lookaround), making it the natural,
 # high-fidelity match rather than an arbitrary choice.
 [workspace.dependencies]
+async-trait = "0.1"
 bytes = "1"
 encoding_rs = "0.8"
 regex = "1"

@@ -85,6 +85,7 @@ struct State {
     scan_regions: Reply<pdpb::ScanRegionsResponse>,
     batch_scan_regions: Reply<pdpb::BatchScanRegionsResponse>,
     stores: HashMap<u64, Reply<pdpb::GetStoreResponse>>,
+    all_stores: Reply<pdpb::GetAllStoresResponse>,
     member_requests: Vec<pdpb::GetMembersRequest>,
     region_requests: Vec<pdpb::GetRegionRequest>,
     prev_region_requests: Vec<pdpb::GetRegionRequest>,
@@ -92,6 +93,7 @@ struct State {
     scan_region_requests: Vec<pdpb::ScanRegionsRequest>,
     batch_scan_region_requests: Vec<pdpb::BatchScanRegionsRequest>,
     store_requests: Vec<pdpb::GetStoreRequest>,
+    all_stores_requests: Vec<pdpb::GetAllStoresRequest>,
     gc_state: Reply<pdpb::GetGcStateResponse>,
     gc_state_requests: Vec<pdpb::GetGcStateRequest>,
 }
@@ -122,6 +124,18 @@ impl Pd for MockPd {
             let mut state = self.state.lock().unwrap();
             state.member_requests.push(request.into_inner());
             state.members.clone()
+        };
+        reply.send().await
+    }
+
+    async fn get_all_stores(
+        &self,
+        request: tonic::Request<pdpb::GetAllStoresRequest>,
+    ) -> Result<tonic::Response<pdpb::GetAllStoresResponse>, tonic::Status> {
+        let reply = {
+            let mut state = self.state.lock().unwrap();
+            state.all_stores_requests.push(request.into_inner());
+            state.all_stores.clone()
         };
         reply.send().await
     }
@@ -416,6 +430,16 @@ fn store_response(
     }
 }
 
+fn store_record(id: u64, state: metapb::StoreState, node_state: metapb::NodeState) -> metapb::Store {
+    metapb::Store {
+        id,
+        address: format!("127.0.0.1:{}", 20000 + id),
+        state: state as i32,
+        labels: Vec::new(),
+        node_state: node_state as i32,
+    }
+}
+
 fn valid_state() -> State {
     State {
         members: Reply::Value(pdpb::GetMembersResponse {
@@ -461,6 +485,24 @@ fn valid_state() -> State {
                 )),
             ),
         ]),
+        all_stores: Reply::Value(pdpb::GetAllStoresResponse {
+            header: Some(header(CLUSTER_ID)),
+            stores: vec![
+                store_record(101, metapb::StoreState::Up, metapb::NodeState::Serving),
+                store_record(
+                    102,
+                    metapb::StoreState::Offline,
+                    metapb::NodeState::Removing,
+                ),
+                // PD keeps reporting decommissioned stores; the projection is
+                // what drops them, so the fixture keeps one of each.
+                store_record(
+                    103,
+                    metapb::StoreState::Tombstone,
+                    metapb::NodeState::Removed,
+                ),
+            ],
+        }),
         member_requests: Vec::new(),
         region_requests: Vec::new(),
         prev_region_requests: Vec::new(),
@@ -468,6 +510,7 @@ fn valid_state() -> State {
         scan_region_requests: Vec::new(),
         batch_scan_region_requests: Vec::new(),
         store_requests: Vec::new(),
+        all_stores_requests: Vec::new(),
         gc_state: Reply::Value(pdpb::GetGcStateResponse {
             header: Some(header(CLUSTER_ID)),
             gc_state: Some(pdpb::GcState {
@@ -647,6 +690,54 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
         assert_exact_header(request.header.as_ref().unwrap());
         true
     }));
+}
+
+#[test]
+fn all_stores_lists_usable_stores_and_omits_decommissioned_ones() {
+    // pd-client/client.go:GetAllStores. PD returns every store it knows,
+    // including tombstone/removed ones; callers treat those as absent.
+    let server = Server::start(valid_state());
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    let stores = client.all_stores().unwrap();
+
+    assert_eq!(stores.len(), 2);
+    assert_eq!(stores[0].id, 101);
+    assert_eq!(stores[0].state, PdStoreState::Up);
+    assert_eq!(stores[0].node_state, PdNodeState::Serving);
+    assert_eq!(stores[0].address, "127.0.0.1:20101");
+    assert_eq!(stores[1].id, 102);
+    assert_eq!(stores[1].state, PdStoreState::Offline);
+    assert_eq!(stores[1].node_state, PdNodeState::Removing);
+
+    let state = server.state.lock().unwrap();
+    assert_eq!(state.all_stores_requests.len(), 1);
+    let request = &state.all_stores_requests[0];
+    // The projection decides which lifecycle states count as absent, so the
+    // request must not ask PD to pre-filter and hide that decision.
+    assert!(!request.exclude_tombstone_stores);
+    assert_exact_header(request.header.as_ref().unwrap());
+}
+
+#[test]
+fn all_stores_rejects_a_response_repeating_one_store_identity() {
+    let mut fixture = valid_state();
+    fixture.all_stores = Reply::Value(pdpb::GetAllStoresResponse {
+        header: Some(header(CLUSTER_ID)),
+        stores: vec![
+            store_record(101, metapb::StoreState::Up, metapb::NodeState::Serving),
+            store_record(101, metapb::StoreState::Up, metapb::NodeState::Serving),
+        ],
+    });
+    let server = Server::start(fixture);
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    let error = client.all_stores().unwrap_err();
+
+    assert!(
+        format!("{error}").contains("repeated store 101"),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]

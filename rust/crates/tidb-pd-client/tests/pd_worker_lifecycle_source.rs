@@ -71,6 +71,13 @@ impl Pd for MembershipPd {
         Err(tonic::Status::unimplemented("unused GetGCState"))
     }
 
+    async fn get_all_stores(
+        &self,
+        _request: tonic::Request<pdpb::GetAllStoresRequest>,
+    ) -> Result<tonic::Response<pdpb::GetAllStoresResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("unused GetAllStores"))
+    }
+
     async fn get_store(
         &self,
         _request: tonic::Request<pdpb::GetStoreRequest>,

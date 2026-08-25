@@ -549,10 +549,27 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       `reachable_old_leader_header_errors_refresh_and_retry_the_new_leader`,
       `membership_refresh_rejects_cluster_mismatch_without_mutation`, ...).
       That is a fidelity regression, not the fidelity improvement this
-      migration is for. **Decision pending with the user**: keep the client
-      half (removal drops to ~20.4K, all in `tidb-txnkv`), or route through
-      client-rust anyway and first push the member-set/leader-routing policy
-      upstream so the capability lands there before it is dropped here.
+      migration is for. **Resolved (2026-08-25): keep the client half and
+      inject it into the engine**, which supersedes both options this entry
+      originally offered. Removal drops to ~20.4K, all in `tidb-txnkv`.
+      The deciding evidence is `pkg/store/driver/tikv_driver.go`: TiDB
+      constructs the PD client itself (`pd.NewClientWithAPIContext`, wrapped
+      in `util.InterceptedPDClient`) and *hands it to* client-go via
+      `tikv.NewKVStore(uuid, pdClient, spkv, rpcClient, ...)`. So PD routing
+      policy is TiDB-owned in Go too, and the Go-faithful move is the
+      reverse of routing PD through client-rust: TiDB-Rust keeps owning the
+      PD client and injects it. Landed as
+      `tidb-txnkv/src/driver/tikv_pd_bridge.rs`, which implements
+      client-rust's `RetryClientTrait` -- the narrow PD-transport seam that
+      is the real `pd.Client` analogue, and the exact bound client-rust's
+      own `RegionCache<C>`/`CodecPdClient<C>` are generic over. That keeps
+      `pd_service_discovery.go`'s routing on TiDB's side while region
+      caching, request retry and store routing stay client-rust's, which is
+      the Go split exactly. Note `PdRpcClient` itself still pins its fields
+      to `RetryClient<Cl>` rather than an arbitrary `RetryClientTrait`, so
+      wiring the bridge into the full engine stack (rather than into a
+      `RegionCache` directly) needs that generalization upstream -- a small
+      mechanical change to raise with the client-rust agent.
       **Keep regardless:** `etcd.rs` (1.2K -- TiDB Go uses
       `go.etcd.io/etcd/client/v3` directly, and this is already rewritten
       onto the `etcd-client` crate) and `engine.rs` (`pkg/util/engine`).

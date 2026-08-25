@@ -31,8 +31,8 @@ use crate::{PdClientError, PdGcState, PdOperation, PdRegion, PdStore};
 
 use super::failover::{tonic_client, PdChannelCache};
 use super::topology::{
-    invalid_topology, project_extended_region, project_member_set, project_region,
-    project_scan_regions, project_store,
+    invalid_topology, project_all_stores, project_extended_region, project_member_set,
+    project_region, project_scan_regions, project_store,
 };
 use super::{block_on_rpc, PdMemberObservation, RpcCompletion, RpcControl};
 
@@ -253,6 +253,37 @@ pub(super) fn get_store(
         return Ok(None);
     }
     project_store(response.store, store_id)
+}
+
+/// Go boundary: `client.go` -> `GetAllStores`. PD answers with every store it
+/// knows; `exclude_tombstone_stores` is left false so the projection decides
+/// which lifecycle states count as absent, keeping that rule in one place.
+pub(super) fn get_all_stores(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut PdChannelCache,
+    endpoint: &str,
+    timeout: Duration,
+    shutdown: &watch::Receiver<bool>,
+    cluster_id: u64,
+) -> Result<Vec<PdStore>, PdClientError> {
+    let client = tonic_client(runtime, clients, endpoint)?;
+    let response = block_on_rpc(
+        runtime,
+        timeout,
+        shutdown,
+        client.get_all_stores(pdpb::GetAllStoresRequest {
+            header: Some(request_header(cluster_id)),
+            exclude_tombstone_stores: false,
+        }),
+    );
+    let response =
+        map_rpc_result(response, PdOperation::GetAllStores, endpoint, timeout)?.into_inner();
+    validate_response_header(
+        PdOperation::GetAllStores,
+        response.header.as_ref(),
+        cluster_id,
+    )?;
+    project_all_stores(response.stores)
 }
 
 pub(super) fn get_gc_state(

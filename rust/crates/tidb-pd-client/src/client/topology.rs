@@ -300,6 +300,37 @@ pub(super) fn project_store(
             format!("requested store {requested_id}, received {}", store.id),
         ));
     }
+    project_store_record(store)
+}
+
+/// Projects every store `GetAllStores` returned, dropping the ones PD reports
+/// as tombstone or removed. Go boundary: `client.go` -> `GetAllStores`, whose
+/// callers treat a decommissioned store as absent rather than as a failure.
+pub(super) fn project_all_stores(
+    stores: Vec<metapb::Store>,
+) -> Result<Vec<PdStore>, PdClientError> {
+    let mut projected = Vec::with_capacity(stores.len());
+    let mut seen = HashSet::with_capacity(stores.len());
+    for store in stores {
+        if store.id == 0 {
+            return Err(invalid_topology("zero_store_id", "store ID is zero"));
+        }
+        if !seen.insert(store.id) {
+            return Err(invalid_topology(
+                "duplicate_store_id",
+                format!("GetAllStores repeated store {}", store.id),
+            ));
+        }
+        if let Some(store) = project_store_record(store)? {
+            projected.push(store);
+        }
+    }
+    Ok(projected)
+}
+
+/// Shared projection of one PD store record. `None` means PD reports the store
+/// as tombstone or removed, which every caller treats as absent.
+fn project_store_record(store: metapb::Store) -> Result<Option<PdStore>, PdClientError> {
     let state = match metapb::StoreState::try_from(store.state) {
         Ok(metapb::StoreState::Up) => PdStoreState::Up,
         Ok(metapb::StoreState::Offline) => PdStoreState::Offline,

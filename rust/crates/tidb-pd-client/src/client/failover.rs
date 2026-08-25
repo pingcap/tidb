@@ -37,8 +37,8 @@ use crate::{
 };
 
 use super::requests::{
-    batch_scan_regions, get_gc_state, get_members, get_prev_region, get_region, get_region_by_id,
-    get_store, scan_regions,
+    batch_scan_regions, get_all_stores, get_gc_state, get_members, get_prev_region, get_region,
+    get_region_by_id, get_store, scan_regions,
 };
 use super::topology::invalid_topology;
 use super::{PdSharedState, RpcControl};
@@ -429,6 +429,75 @@ pub(super) fn get_store_with_failover(
                     Ok(store) => {
                         set_active_endpoint(state, endpoint);
                         return Ok(store);
+                    }
+                    Err(error)
+                        if is_retryable_endpoint_error(
+                            &error,
+                            &endpoint,
+                            &current.members.leader_url,
+                        ) =>
+                    {
+                        last_error = error;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(last_error)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Go boundary: `client.go` -> `GetAllStores`, routed through the same
+/// leader-first, member-set walk every other PD call uses.
+pub(super) fn get_all_stores_with_failover(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut PdChannelCache,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
+) -> Result<Vec<PdStore>, PdClientError> {
+    let snapshot = state.read().expect("PD state lock poisoned").clone();
+    let mut attempted = HashSet::new();
+    attempted.insert(snapshot.active_endpoint.clone());
+    match get_all_stores(
+        runtime,
+        clients,
+        &snapshot.active_endpoint,
+        timeout,
+        shutdown,
+        snapshot.members.cluster_id,
+    ) {
+        Ok(stores) => Ok(stores),
+        Err(error) if needs_failover_probe(&error) => {
+            let direct_failure = is_direct_failure(&error);
+            let mut last_error = error;
+            // A bad membership observation never erases the last accepted
+            // snapshot; its remaining direct endpoints are still candidates.
+            if let Err(error @ PdClientError::ClusterMismatch { .. }) =
+                refresh_membership(runtime, clients, timeout, state, shutdown)
+            {
+                return Err(error);
+            }
+            let current = state.read().expect("PD state lock poisoned").clone();
+            if !direct_failure && snapshot.active_endpoint == current.members.leader_url {
+                return Err(last_error);
+            }
+            for endpoint in endpoint_attempt_order(&current) {
+                if !attempted.insert(endpoint.clone()) {
+                    continue;
+                }
+                match get_all_stores(
+                    runtime,
+                    clients,
+                    &endpoint,
+                    timeout,
+                    shutdown,
+                    current.members.cluster_id,
+                ) {
+                    Ok(stores) => {
+                        set_active_endpoint(state, endpoint);
+                        return Ok(stores);
                     }
                     Err(error)
                         if is_retryable_endpoint_error(
