@@ -160,6 +160,24 @@ shapes remain on the existing general executor.
   `/tmp/web3_head_all_perf.json`, `/tmp/web3_head_all_perf_repeat.json`,
   `/tmp/web3_head_go_results.json`, `/tmp/web3_head_rust_results.json`,
   `/tmp/web3_head_go_plans.json`, and `/tmp/web3_head_rust_plans.json`.
+- [x] (2026-08-25) Loaded the Web3Bench minimum fixture into a fresh shared
+  schema (`web3bench_min_parity_20260825`) and verified the row counts
+  `blocks=3`, `contracts=2`, `transactions=4`, `token_transfers=5`, and
+  `temp_table=0` through both servers. The 11 base queries plus `R32det`
+  returned identical rows for Go and Rust, both with statistics and after
+  `DROP STATS`. The only difference in an original query was R34's
+  unspecified order between two groups tied at `SUM(value)=40`; the result
+  multiset matched and the deterministic `ORDER BY sum(value) DESC,
+  from_address` variant was byte-exact. The minimum-data EXPLAINs have the
+  same semantic operator skeleton (point lookup, TopN, scans, joins, and
+  aggregates); Rust retains implementation-specific partial aggregate nodes
+  and may use `HashAgg` where Go prints `StreamAgg`. Receipts are
+  `/tmp/web3_min_16000.json`, `/tmp/web3_min_16009.json`,
+  `/tmp/web3_min_nostats_16000.json`, `/tmp/web3_min_nostats_16009.json`,
+  `/tmp/web3_min_plans_16000.json`, `/tmp/web3_min_plans_16009.json`,
+  `/tmp/web3_min_nostats_plans_16000.json`,
+  `/tmp/web3_min_nostats_plans_16009.json`, and
+  `/tmp/web3_min_semantic_plan_compare.json`.
 
 ## Validation commands
 
