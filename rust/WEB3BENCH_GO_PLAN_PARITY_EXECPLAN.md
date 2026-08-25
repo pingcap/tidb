@@ -438,6 +438,8 @@ orientations. The latest 10x medians (Rust/Go) are: R1 1.28x, R21 0.93x,
 R22 1.05x, R23 0.66x, R24 1.14x, R25 1.26x, R31 1.01x, R32 1.36x,
 R33 0.92x, R34 1.37x, R35 1.43x, and R32det 1.61x. Compared with the clean
 Rust baseline receipts, the optimized Rust medians improve R34 from about
-315 ms to 253 ms and R35 from about 163 ms to 147 ms; no Rust-side performance
-regression was observed. Rust is still slower than Go on R32/R34/R35/R32det,
-so these receipts do not claim cross-implementation latency equality.
+315 ms to 253 ms and R35 from about 163 ms to 147 ms. The small-query and
+global-aggregate medians vary materially with local process contention across
+the saved runs, so a strict per-query no-regression claim needs a repeated
+isolated baseline run. Rust is still slower than Go on R32/R34/R35/R32det, so
+these receipts do not claim cross-implementation latency equality.
