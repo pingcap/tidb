@@ -489,6 +489,7 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 		require.Nil(t, sessiontxn.GetTxnManager(tkU.Session()).GetContextProvider())
 
 		tikvStore.SetTiKVClient(originalClient)
+		tkVerify.MustExec("set foreign_key_checks = OFF")
 		tkVerify.MustExec("insert into child values(1, 1)")
 		tkH.MustExec("rollback")
 		tkVerify.MustQuery("select * from parent order by id").Check(testkit.Rows("1 0", "2 0"))
