@@ -54,15 +54,20 @@ const (
 	// this times allocated slots. It lives here, not in pkg/dxf/export,
 	// because export imports this package, so the reverse would cycle;
 	// pkg/dxf/export references this instead of defining its own copy.
-	ExportDumpConcurrencyMultiplier = 4
+	// Kept equal to ExportSchemaConcurrencyMultiplier by explicit choice, not
+	// because Dump's per-chunk cost was benchmarked the same way Schema's
+	// 8x->16x jump was (Dump does real KV-scan+encode work, not just a PUT) —
+	// real-cluster timing (2026-08-25, 149,745 tables) still measured Dump at
+	// ~321 tables/s vs Schema's ~1,608 tables/s at this same multiplier, so
+	// this may need its own dedicated benchmark and separate value later.
+	ExportDumpConcurrencyMultiplier = 16
 	// ExportSchemaConcurrencyMultiplier is ExportDumpConcurrencyMultiplier's
 	// counterpart for the Schema step, mirroring pkg/dxf/export's
 	// schemaConcurrencyMultiplier. Schema PUTs are small and latency-bound
 	// with no bandwidth-bound case to protect against (see
 	// schemaConcurrencyMultiplier's own doc comment), and measured
 	// single-stream throughput scales close to linearly from 8x to 16x/core
-	// with no meaningful per-op latency increase, so this is set well past
-	// ExportDumpConcurrencyMultiplier.
+	// with no meaningful per-op latency increase.
 	ExportSchemaConcurrencyMultiplier = 16
 	// baseTableCountForExport is how many small (latency-bound) table chunks
 	// one reference (baseCores-core) node's Dump and Schema phases together
@@ -71,7 +76,10 @@ const (
 	// ExportSchemaConcurrencyMultiplier*baseCores for Schema). Calibrated from
 	// measured per-chunk latency in real cluster testing, then rounded down
 	// so this constant only ever under-promises node/slot count, never
-	// over-promises finishing within exportTargetSeconds.
+	// over-promises finishing within exportTargetSeconds. NOT yet
+	// recalibrated for the ExportDumpConcurrencyMultiplier 4->16 change above
+	// (Dump's per-chunk latency at 16x concurrency hasn't been isolated from
+	// contention effects) — still based on the 4x-multiplier measurement.
 	baseTableCountForExport = 1_300_000
 	// To improve performance for small tasks, we assume that on a 8c machine,
 	// importing 200 GiB of data requires full utilization of a single node’s resources.
