@@ -75,7 +75,48 @@ The Rust TiDB implementation on `hparser-integration` must make the same optimiz
 - [x] (2026-08-24) Remaining per-statement deltas (nocost2, 30-round): reads at or below Go parity (sel_customer -0.04, sel_wh -0.03, upd_district +0.05); commit +0.54ms (multi-region 2PC tail); INSERT/stock-update paths not yet individually benchmarked against Go but covered by the overall txn delta (+3.58ms per txn).
 - [x] (2026-08-24) Loop iteration 5 receipt (clean, latest origin tip incl. all parallel session landings): Go median 249.31, Rust median 177.81 QPS over 4x150s rounds (rust rounds clustered 175.79..179.56), ratio 0.7132 — the best clean receipt yet, Rust +234% since loop baseline. Zero AlreadyExist errors; one symmetric deadline-cutoff PAYMENT_ERR per side.
 - [x] (2026-08-24) Iteration 5 closing receipt: Go median 239.02, Rust median 157.43 QPS
-- [ ] Next levers by measured impact: (a) reduce multi-region 2PC tail — investigate whether region-group count can be reduced via key-space layout or coprocessor-level batching; (b) further reduce per-statement CPU — profile the remaining memmove/malloc band above jemalloc; (c) lazy-dup-check concurrency safety — verify that Op_Insert assertion failures under concurrent same-key inserts are correctly retried or reported. (both TiDB servers freshly started): tpmC Go 6442 vs Rust 4048 (ratio 0.628); per-statement nocost shows Rust FASTER than Go on 5/9 classes (sel_warehouse -7%, ins_orders -17%, ins_new_order -17%, ins_order_line_batch -13%, and txn average -41%). Go's upd_district (2.42ms) and commit (4.75ms) are inflated by post-restart auto-analyze; the stable-state comparison remains Go ~236 / Rust ~158 QPS (ratio ~0.67).
+- [x] (2026-08-24) Systematic hot-path profile on current HEAD under nocost load (perf, 1592 samples). Top actionable items by CPU %:
+  | Item | CPU % | Root cause | Fix |
+  |------|-------|-----------|-----|
+  | thread ctx switch | ~8% | session↔txn-worker channel hop per RPC | batch channel ops |
+  | memmove | 7.1% | string/vec copies in parse+plan+encode | buffer reuse / intern |
+  | kernel spin_unlock | 4.7% | mutex contention in channel send/recv | lock-free queue |
+  | jemalloc malloc/free | 7.1% | per-statement allocations in planning | arena/pool |
+  | KvTable clone+drop | 2.8% | catalog metadata cloned per statement | Arc share |
+  | memcmp | 2.1% | string comparisons in sysvar/catalog lookups | hash-based cache |
+  | get_sys_var + get_system | 2.3% | sysvar lookup chain: lowercase alloc + double HashMap | pre-built index |
+  | Lexer scan | 1.3% | SQL tokenization per statement | prepared stmt cache |
+
+- [ ] Phase A: Eliminate per-statement catalog/table metadata clones (~3% CPU)
+  - `single_kv_table`/`sole_kv_table` clones entire KvTable per statement
+  - Fix: return `Arc<KvTable>` from catalog instead of owned value
+  - Files: tidb-executor/src/driver/access.rs, tidb-executor/src/kv_table.rs
+  - Test: existing executor suite must pass; A/B must not regress
+
+- [ ] Phase B: Cache sysvar resolution results (~2.5% CPU)
+  - `get_system(name)` does: to_lowercase() alloc + sysvar_index HashMap + systems HashMap + String clone
+  - Fix: pre-populate a `HashMap<u64 /*hash*/, String>` at session start; invalidate on SET GLOBAL
+  - Files: tidb-session/src/vars.rs, tidb-session/src/sysvar.rs
+  - Test: existing sysvar tests must pass; benchmark shows reduced memcmp/malloc
+
+- [ ] Phase C: Reduce channel hop overhead (~4% CPU)
+  - Session↔transaction-worker communicates via std::mpsc channel per RPC
+  - Each send/recv pair costs a futex wake/wait cycle
+  - Fix: use a bounded SPSC ring buffer (racycell or crossbeam) for the hot Get/PessLock path
+  - Files: tidb-exec/src/cluster_table_storage.rs (TransactionRequest enum + ask fn)
+  - Test: existing cluster_table_storage tests; A/B improvement
+
+- [ ] Phase D: Plan cache for prepared statements (~2-5% CPU estimated)
+  - Go caches physical plans; Rust re-plans per execute
+  - Fix: cache the planned access path keyed by (statement_id, schema_version)
+  - Scope: start with point SELECT and point UPDATE (highest frequency in TPC-C)
+  - Files: tidb-session/src/dispatch.rs, tidb-session/src/non_prepared_plan_cache.rs
+  - Test: existing plan cache tests + new tests for UPDATE path
+
+- [ ] Phase E: Lazy dup check concurrency safety verification
+  - The parallel session's Op_Insert assertion may fire incorrectly under concurrent same-key inserts
+  - Verify: concurrent nocost against same district must produce exactly one success and one 1062
+  - If broken: add retry-on-assertion-failure logic (a) reduce multi-region 2PC tail — investigate whether region-group count can be reduced via key-space layout or coprocessor-level batching; (b) further reduce per-statement CPU — profile the remaining memmove/malloc band above jemalloc; (c) lazy-dup-check concurrency safety — verify that Op_Insert assertion failures under concurrent same-key inserts are correctly retried or reported. (both TiDB servers freshly started): tpmC Go 6442 vs Rust 4048 (ratio 0.628); per-statement nocost shows Rust FASTER than Go on 5/9 classes (sel_warehouse -7%, ins_orders -17%, ins_new_order -17%, ins_order_line_batch -13%, and txn average -41%). Go's upd_district (2.42ms) and commit (4.75ms) are inflated by post-restart auto-analyze; the stable-state comparison remains Go ~236 / Rust ~158 QPS (ratio ~0.67).
 - [x] (2026-08-24) Loop iteration 3 receipt (post-lazy-insert landing): Go median 236.38, Rust median 146.69 QPS, ratio 0.6206 — up from 0.5176 pre-lazy-insert. The parallel session's `859d338676` lazy-dup-check commit landed cleanly: ZERO AlreadyExist errors across all four rust rounds (the concurrency cascade from the earlier reverted attempt is gone). Round r1 showed a transient lock-timeout burst (21 NEW_ORDER_ERR at 16-second p99.9) during an infrastructure stress window that also degraded Go's round to 28.93; rounds r2-r4 were clean and stable at ~156 QPS.
 - [x] (2026-08-24) Remaining per-statement deltas on current HEAD (nocost, 60-round): sel_customer +0.20, upd_district +0.17, sel_stock_batch +0.23, upd_stock_x1 +0.52, commit +0.44 ms vs Go. The stock UPDATE delta (+0.52) is the single largest item.
 - [x] (2026-08-24) Probe-attribution attempt for the ~10 unaccounted point Gets was INVALIDATED by a worktree race with concurrent sessions (checkout reverted instrumentation mid-measurement, then stash conflicts re-contaminated it); all probes reverted to keep the tree clean. Next attempt must run in a DEDICATED worktree with no concurrent checkouts, and assert probe presence in the log immediately after server start before trusting a zero-hit result. (clean, no infrastructure incidents): Go median 245.73, Rust median 125.87 QPS over 4x150s rounds (rust rounds 115.69..130.99), ratio 0.5122 — holding above halfway with zero errors on the rust side across all four rounds. NEW_ORDER TPM: rust 8,825 max vs go 17,035 max. (PROBE instrumentation, 20 new_order rounds): each transaction issues ~12 sequential point Gets + ~5 PessimisticLocks + ~3 BatchGets. The five pessimistic locks are the district/stock/insert duplicate-checks (expected); the BatchGet is the batched stock lookup (expected); but ~10 of the Gets are UNACCOUNTED — they do NOT pass through the cluster-session `TransactionRequest::Get` handler at all, so they originate from a read seam outside it (most likely the prepared-point-get / session fast-read path issuing its own per-key storage reads). Locating and batching that seam is the highest-value next probe: at ~0.1-0.2 ms per Get on loopback, ten of them are ~1-2 ms of every NEW_ORDER transaction. into its PessimisticLock via `return_values` + a per-statement lock-value cache (Go `InitReturnValues` / `SetPessimisticLockCache`) — needs executor access to locked values inside `run()` and spans planner/executor/storage/session. Second lever: concurrent region admission for multi-batch pessimistic lock acquisition (same doBatches shape already landed for prewrite/secondary-commit). Third: statement-CPU cost (parse/plan/stage) is now the dominant residual; profile-guided allocation trimming above jemalloc.
