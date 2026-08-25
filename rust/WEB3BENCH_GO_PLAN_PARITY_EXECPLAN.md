@@ -600,3 +600,55 @@ The 50x run therefore finds no material Rust regression: every query is
 result-correct, the heavy queries do not regress against either Rust baseline,
 and the largest positive deltas against the accepted Rust binary are small
 sub-millisecond queries (R1/R23/R24) or R35 at +10.6 ms (1.011x).
+
+## 2026-08-25 final-HEAD recheck after remote commits
+
+While this audit was in progress, `origin/hparser-integration` advanced from
+`0ce29ebe27` to `33c66cc66d` with point-get, result-set, and RPC changes. The
+final branch HEAD is `5dafc4c66d` (the documentation commit on top of that
+remote source). I rebuilt `/tmp/tidb-server-current-5dafc4c66d`, replayed all
+plans/results on the same 50x database, and reran the balanced 2x16 crossover
+against Rust 950 and Go nightly. This final-HEAD receipt supersedes the
+intermediate 0ce timing table above.
+
+Receipts:
+
+    /tmp/web3_plan_50x_current_5daf.json
+    /tmp/web3_results_50x_current_5daf.json
+    /tmp/web3_perf_50x_latest5daf_vs_prev950_2x16.json
+    /tmp/web3_perf_50x_latest5daf_vs_go_2x16.json
+
+Final HEAD versus Rust 950, in milliseconds (median of two round medians):
+
+| Query | Rust 5daf | Rust 950 | Delta | Ratio |
+|---|---:|---:|---:|---:|
+| R1 | 0.510 | 0.480 | +0.029 | 1.061x |
+| R21 | 1.573 | 1.558 | +0.015 | 1.010x |
+| R22 | 1.307 | 1.325 | -0.018 | 0.987x |
+| R23 | 1.179 | 1.242 | -0.063 | 0.949x |
+| R24 | 1.831 | 1.898 | -0.067 | 0.965x |
+| R25 | 0.996 | 0.962 | +0.034 | 1.035x |
+| R31 | 2.245 | 2.343 | -0.098 | 0.958x |
+| R32 | 9.449 | 9.287 | +0.162 | 1.017x |
+| R33 | 799.815 | 801.373 | -1.558 | 0.998x |
+| R34 | 1303.479 | 1316.703 | -13.224 | 0.990x |
+| R35 | 943.023 | 924.837 | +18.187 | 1.020x |
+| R32det | 10.737 | 10.765 | -0.028 | 0.997x |
+
+The result rows remain equal to Rust 950, c300, and the Go result for every
+deterministic query; R32 is equal after order-insensitive comparison and
+R32det is exact. Final-HEAD normalized plans still match Rust 950 for every
+query and Go for every query except the known 50x R22 `StreamAgg` versus
+`HashAgg` cost-boundary choice.
+
+Final HEAD versus Go nightly is: R1 0.527/0.554 ms (0.951x), R21
+1.397/1.621 (0.862x), R22 1.155/0.949 (1.217x), R23 1.195/1.394 (0.857x),
+R24 1.836/1.653 (1.111x), R25 0.957/0.953 (1.005x), R31 2.275/2.469
+(0.921x), R32 9.659/8.339 (1.158x), R33 831.518/1253.425 (0.663x),
+R34 1708.917/2284.145 (0.748x), R35 1084.980/958.219 (1.132x), and
+R32det 10.939/8.681 (1.260x), where each pair is Rust/Go and the ratio is
+Rust divided by Go. The largest absolute gaps are favorable Rust wins on R34
+(-575.228 ms) and R33 (-421.906 ms); the largest unfavorable gap is R35
+(+126.761 ms), followed by R32det (+2.258 ms). Neither is a regression
+against the Rust baseline, and the final HEAD retains the no-material-
+regression conclusion for every query.
