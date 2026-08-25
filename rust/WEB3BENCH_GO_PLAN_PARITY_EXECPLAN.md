@@ -109,6 +109,17 @@ shapes remain on the existing general executor.
   matrix. Results and all normalized plan skeletons stayed aligned; the
   isolated repeat medians were R34 `321.100 ms` vs Go `154.159 ms` (`2.08x`)
   and R35 `163.627 ms` vs Go `108.207 ms` (`1.51x`).
+- [x] (2026-08-25) Optimized the direct R34 worker without weakening exact
+  grouping semantics: partitioning now carries the already-computed
+  collation-aware fingerprint, and existing groups compare the source column
+  bytes directly instead of rebuilding a temporary key. DECIMAL(38,0) worker
+  sums use the compact i128 representation, and FIRST_ROW carriers avoid a
+  temporary row wrapper. The R35 compact count path likewise reads DECIMAL
+  coefficients directly and accesses selected columns without row wrappers.
+  The final one-client no-stats matrix returned exact deterministic rows and
+  identical normalized operator skeletons. In the repeat receipt, R34 was
+  `353.816 ms` vs Go `175.340 ms` (`2.02x`) and R35 `158.309 ms` vs Go
+  `109.937 ms` (`1.44x`).
 
 ## Validation commands
 
@@ -189,6 +200,15 @@ Final post-fix receipts after the remote rebase and empty-result writer fix:
     /tmp/web3_final_pushed_rust_plans.json
     /tmp/web3_final_pushed_perf.json
     /tmp/web3_final_pushed_perf_repeat.json
+
+Latest key-match optimization receipts are:
+
+    /tmp/web3_keymatch_go_results.json
+    /tmp/web3_keymatch_rust_results.json
+    /tmp/web3_keymatch_go_plans.json
+    /tmp/web3_keymatch_rust_plans.json
+    /tmp/web3_optimized_keymatch_perf.json
+    /tmp/web3_optimized_keymatch_perf_repeat.json
 
 The last performance receipt is an alternating one-client run against the
 clean Rust baseline (`884e16945ed`) and the final Rust endpoint. Small-query

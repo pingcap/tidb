@@ -3909,6 +3909,7 @@ impl<C: Columns> JoinExec<C> {
         } else {
             return Ok(None);
         };
+
         let compact_key = |chunk: &Chunk,
                            row_index: usize,
                            types: &[FieldType],
@@ -3934,11 +3935,14 @@ impl<C: Columns> JoinExec<C> {
                     "compact join key requires a binary string column",
                 ));
             }
-            let row = chunk.get_row(row_index);
-            if row.is_null(offset) {
+            let physical_row = chunk
+                .sel()
+                .map_or(row_index, |selection| selection[row_index]);
+            let column = chunk.column(offset);
+            if column.is_null(physical_row) {
                 return Ok(None);
             }
-            let bytes = row.get_bytes(offset);
+            let bytes = column.get_bytes(physical_row);
             let bytes = bytes.as_ref();
             let bytes = if matches!(collation, Collation::Utf8Mb4Bin) {
                 let len = bytes
@@ -3962,6 +3966,132 @@ impl<C: Columns> JoinExec<C> {
             KeyClass::Str(collation) => collation,
             _ => return Ok(None),
         };
+
+        // Web3Bench's count-only residual join is DECIMAL(38,0) on both
+        // sides. Every value of that SQL type fits in i128, so the hot
+        // comparison can stay in the integer domain instead of constructing
+        // a MyDecimal/Decimal pair for every matching address. Keep the
+        // general CompactJoinDecimal path below for non-zero scale or a
+        // future schema whose DECIMAL values do not share this narrow proof.
+        if build_types
+            .get(build_offset)
+            .is_some_and(|field_type| {
+                field_type.decimal() == 0 && (0..=38).contains(&field_type.flen())
+            })
+            && probe_types
+                .get(probe_offset)
+                .is_some_and(|field_type| {
+                    field_type.decimal() == 0 && (0..=38).contains(&field_type.flen())
+                })
+        {
+            let mut build_values: CompactBinaryMap<Vec<i128>> =
+                CompactBinaryMap::with_capacity_and_hasher(100_000, BuildHasherDefault::default());
+            let build: &mut dyn Executor = if build_is_left {
+                self.left.as_mut()
+            } else {
+                self.right.as_mut()
+            };
+            let mut chunk = build.new_chunk();
+            loop {
+                build.next(&mut chunk)?;
+                if chunk.num_rows() == 0 {
+                    break;
+                }
+                for row_index in 0..chunk.num_rows() {
+                    let physical_row =
+                        chunk.sel().map_or(row_index, |selection| selection[row_index]);
+                    if chunk.column(build_offset).is_null(physical_row) {
+                        continue;
+                    }
+                    let Some(key) = compact_key(
+                        &chunk,
+                        row_index,
+                        &build_types,
+                        if build_is_left {
+                            self.keys[0].left
+                        } else {
+                            self.keys[0].right
+                        },
+                        collation,
+                    )?
+                    else {
+                        continue;
+                    };
+                    let Some((coefficient, scale)) =
+                        chunk.column(build_offset).get_my_decimal_i128_scaled(physical_row)
+                    else {
+                        return Ok(None);
+                    };
+                    if scale != 0 {
+                        return Ok(None);
+                    }
+                    build_values.entry(key).or_default().push(coefficient);
+                }
+                self.memory.check()?;
+                chunk.reset();
+            }
+            let probe: &mut dyn Executor = if build_is_left {
+                self.right.as_mut()
+            } else {
+                self.left.as_mut()
+            };
+            let mut probe_chunk = probe.new_chunk();
+            let mut total = 0_u64;
+            loop {
+                probe.next(&mut probe_chunk)?;
+                if probe_chunk.num_rows() == 0 {
+                    break;
+                }
+                for row_index in 0..probe_chunk.num_rows() {
+                    let physical_row = probe_chunk
+                        .sel()
+                        .map_or(row_index, |selection| selection[row_index]);
+                    if probe_chunk.column(probe_offset).is_null(physical_row) {
+                        continue;
+                    }
+                    let Some(key) = compact_key(
+                        &probe_chunk,
+                        row_index,
+                        &probe_types,
+                        if build_is_left {
+                            self.keys[0].right
+                        } else {
+                            self.keys[0].left
+                        },
+                        collation,
+                    )?
+                    else {
+                        continue;
+                    };
+                    let Some(values) = build_values.get(&key) else {
+                        continue;
+                    };
+                    let Some((coefficient, scale)) = probe_chunk
+                        .column(probe_offset)
+                        .get_my_decimal_i128_scaled(physical_row)
+                    else {
+                        return Ok(None);
+                    };
+                    if scale != 0 {
+                        return Ok(None);
+                    }
+                    for build_value in values {
+                        let ordering = if build_on_left {
+                            build_value.cmp(&coefficient)
+                        } else {
+                            coefficient.cmp(build_value)
+                        };
+                        if compact_matches(op, ordering) {
+                            total = total.saturating_add(1);
+                        }
+                    }
+                }
+                self.memory.check()?;
+                probe_chunk.reset();
+            }
+            return Ok(Some(total));
+        }
+
         let mut build_values: CompactBinaryMap<Vec<CompactJoinDecimal>> =
             CompactBinaryMap::with_capacity_and_hasher(100_000, BuildHasherDefault::default());
         let build: &mut dyn Executor = if build_is_left {

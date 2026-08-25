@@ -335,6 +335,66 @@ fn direct_string_key(
     Ok(fast_bytes_fingerprint(output))
 }
 
+/// Compares a chunk cell with a materialized direct-string key without
+/// copying the cell bytes. This is the common worker case after the group has
+/// already been created; the full key is only materialized for a new group or
+/// an actual hash collision.
+fn direct_string_key_matches(
+    chunk: &Chunk,
+    row_index: usize,
+    offset: usize,
+    collation: tidb_datatype::Collation,
+    key: &[u8],
+) -> Result<bool, ExecError> {
+    let physical_row = chunk
+        .sel()
+        .map_or(row_index, |selection| selection[row_index]);
+    let column = chunk.column(offset);
+    if column.is_null(physical_row) {
+        return Ok(key == [0]);
+    }
+    let bytes = column.get_bytes(physical_row);
+    let bytes = bytes.as_ref();
+    let bytes = if matches!(collation, tidb_datatype::Collation::Utf8Mb4Bin) {
+        let len = bytes
+            .iter()
+            .rposition(|byte| *byte != b' ')
+            .map_or(0, |index| index + 1);
+        &bytes[..len]
+    } else {
+        bytes
+    };
+    if bytes.len() > DIRECT_STRING_MAX_KEY_BYTES {
+        return Err(ExecError::unsupported(
+            "direct string aggregate key exceeds its declared width",
+        ));
+    }
+    Ok(key.first() == Some(&1) && key.get(1..).is_some_and(|stored| stored == bytes))
+}
+
+/// Materializes the FIRST_ROW carrier for the direct string path without
+/// constructing a temporary [`Row`] wrapper.  The row helper performs the
+/// same byte copy and collation tagging for string-family fields.
+fn direct_string_first_value(
+    chunk: &Chunk,
+    row_index: usize,
+    column_index: usize,
+    field_type: &FieldType,
+) -> Datum {
+    let physical_row = chunk
+        .sel()
+        .map_or(row_index, |selection| selection[row_index]);
+    let column = chunk.column(column_index);
+    if column.is_null(physical_row) {
+        Datum::Null
+    } else {
+        Datum::new_collation_string(
+            column.get_bytes(physical_row).to_vec(),
+            field_type.collation(),
+        )
+    }
+}
+
 const DIRECT_STRING_MAX_KEY_BYTES: usize = 192;
 
 type DirectStringBucketMap<V> =

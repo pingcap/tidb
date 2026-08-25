@@ -49,7 +49,9 @@ fn direct_string_worker_fingerprint(
     group_column: usize,
     collation: tidb_datatype::Collation,
 ) -> u64 {
-            let physical_row = chunk.sel().map_or(row_index, |selection| selection[row_index]);
+    let physical_row = chunk
+        .sel()
+        .map_or(row_index, |selection| selection[row_index]);
     let column = chunk.column(group_column);
     if column.is_null(physical_row) {
         return 0;
@@ -70,7 +72,7 @@ fn direct_string_worker_fingerprint(
 
 fn direct_string_sum_count_worker(
     batch: &[(Chunk, usize)],
-    rows: &[(usize, usize)],
+    rows: &[(usize, usize, u64)],
     group_column: usize,
     collation: tidb_datatype::Collation,
     sum_column: usize,
@@ -86,43 +88,50 @@ fn direct_string_sum_count_worker(
         HashMap::with_capacity_and_hasher(512, BuildHasherDefault::default());
     let mut keys: Vec<DirectStringSumCountKey> = Vec::with_capacity(32_768);
     let mut groups: Vec<DirectStringParallelGroup> = Vec::with_capacity(32_768);
-    let mut key_buffer = Vec::with_capacity(48);
 
-    for &(batch_index, row_index) in rows {
+    for &(batch_index, row_index, fingerprint) in rows {
         let (chunk, sequence) = &batch[batch_index];
         let sum_values = chunk.column(sum_column);
         let count_values = chunk.column(count_column);
         let physical_row = chunk
             .sel()
             .map_or(row_index, |selection| selection[row_index]);
-        let fingerprint =
-            direct_string_key(chunk, row_index, group_column, collation, &mut key_buffer)?;
-        let index = match buckets.get(&fingerprint).copied() {
-            Some(index) if keys[index].as_slice() == key_buffer.as_slice() => index,
-            Some(_) => collisions
-                .get(&fingerprint)
-                .and_then(|indexes| {
-                    indexes
-                        .iter()
-                        .copied()
-                        .find(|index| keys[*index].as_slice() == key_buffer.as_slice())
-                })
-                .unwrap_or_else(|| {
-                    let index = groups.len();
-                    keys.push(smallvec::SmallVec::from_slice(&key_buffer));
-                    groups.push(DirectStringParallelGroup {
-                        first_seq: *sequence + row_index,
-                        key_len: key_buffer.len(),
-                        sum: None,
-                        count: 0,
-                        first_value: first_row.map_or(Datum::Null, |column| {
-                            chunk.get_row(row_index).get_datum(column, group_type)
-                        }),
-                    });
-                    collisions.entry(fingerprint).or_default().push(index);
-                    index
-                }),
+        let mut index = None;
+        if let Some(primary) = buckets.get(&fingerprint).copied() {
+            if direct_string_key_matches(
+                chunk,
+                row_index,
+                group_column,
+                collation,
+                keys[primary].as_slice(),
+            )? {
+                index = Some(primary);
+            } else if let Some(candidates) = collisions.get(&fingerprint) {
+                for &candidate in candidates {
+                    if direct_string_key_matches(
+                        chunk,
+                        row_index,
+                        group_column,
+                        collation,
+                        keys[candidate].as_slice(),
+                    )? {
+                        index = Some(candidate);
+                        break;
+                    }
+                }
+            }
+        }
+        let index = match index {
+            Some(index) => index,
             None => {
+                let mut key_buffer = Vec::with_capacity(48);
+                direct_string_key(
+                    chunk,
+                    row_index,
+                    group_column,
+                    collation,
+                    &mut key_buffer,
+                )?;
                 let index = groups.len();
                 keys.push(smallvec::SmallVec::from_slice(&key_buffer));
                 groups.push(DirectStringParallelGroup {
@@ -131,10 +140,17 @@ fn direct_string_sum_count_worker(
                     sum: None,
                     count: 0,
                     first_value: first_row.map_or(Datum::Null, |column| {
-                        chunk.get_row(row_index).get_datum(column, group_type)
+                        direct_string_first_value(chunk, row_index, column, group_type)
                     }),
                 });
-                buckets.insert(fingerprint, index);
+                match buckets.entry(fingerprint) {
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(index);
+                    }
+                    std::collections::hash_map::Entry::Occupied(_) => {
+                        collisions.entry(fingerprint).or_default().push(index);
+                    }
+                }
                 index
             }
         };
@@ -155,8 +171,15 @@ fn direct_string_sum_count_worker(
         if sum_values.is_null(physical_row) {
             continue;
         }
-        let decimal = sum_values.get_my_decimal(physical_row);
-        let sum = ParallelDecimalSum::from_my_decimal(&decimal);
+        // The Web3Bench partial is DECIMAL(38,0). Read its compact i128
+        // representation directly in the common case; materializing a
+        // `MyDecimal` here would redo the conversion for every input row.
+        let sum = sum_values
+            .get_my_decimal_i128_scaled(physical_row)
+            .map_or_else(
+                || ParallelDecimalSum::from_my_decimal(&sum_values.get_my_decimal(physical_row)),
+                |(coefficient, scale)| ParallelDecimalSum::Fixed { coefficient, scale },
+            );
         group.sum = Some(match group.sum.take() {
             Some(current) => current.add(sum),
             None => sum,
@@ -405,15 +428,15 @@ impl<C: HashAggContext> HashAggExec<C> {
             if batch.is_empty() {
                 break;
             }
-
             let workers = batch.len().min(worker_count);
-            let mut partitions: Vec<Vec<(usize, usize)>> =
+            let mut partitions: Vec<Vec<(usize, usize, u64)>> =
                 (0..workers).map(|_| Vec::new()).collect();
             for (batch_index, (chunk, _)) in batch.iter().enumerate() {
                 for row_index in 0..chunk.num_rows() {
                     let fingerprint =
                         direct_string_worker_fingerprint(chunk, row_index, group_column, collation);
-                    partitions[(fingerprint as usize) % workers].push((batch_index, row_index));
+                    partitions[(fingerprint as usize) % workers]
+                        .push((batch_index, row_index, fingerprint));
                 }
             }
             let group_type = group_type.clone();
@@ -472,7 +495,10 @@ impl<C: HashAggContext> HashAggExec<C> {
             self.parallel_output.push(sum);
             self.parallel_output.push(Datum::Int(group.count));
             if first_row.is_some() {
-                self.parallel_output.push(group.first_value.clone());
+                // The worker owns this first-row datum now; moving it avoids
+                // copying every group key a second time while staging the
+                // final rows for TopN.
+                self.parallel_output.push(group.first_value);
             }
         }
         self.parallel_output_width = self.agg_funcs.len();
@@ -547,7 +573,7 @@ impl<C: HashAggContext> HashAggExec<C> {
                             let key = smallvec::SmallVec::from_slice(&self.group_key_buffer);
                             keys.push(key);
                             let value = first_row.map_or(Datum::Null, |column| {
-                                chunk.get_row(row_index).get_datum(column, group_type)
+                                direct_string_first_value(chunk, row_index, column, group_type)
                             });
                             groups.push(DirectStringSumCountGroup {
                                 first_seq: sequence + row_index,
@@ -568,7 +594,7 @@ impl<C: HashAggContext> HashAggExec<C> {
                         let key = smallvec::SmallVec::from_slice(&self.group_key_buffer);
                         keys.push(key);
                         let value = first_row.map_or(Datum::Null, |column| {
-                            chunk.get_row(row_index).get_datum(column, group_type)
+                            direct_string_first_value(chunk, row_index, column, group_type)
                         });
                         groups.push(DirectStringSumCountGroup {
                             first_seq: sequence + row_index,
