@@ -252,6 +252,11 @@ impl RpcClient {
                 session.resolved_locks(),
             ) {
                 Ok(value) => kvrpcpb::GetResponse {
+                    // Real TiKV reports missing keys through `not_found`, and
+                    // the transaction client's response processor relies on it
+                    // to distinguish an absent key from an empty value; the
+                    // raw-path handler below already sets it.
+                    not_found: value.is_none(),
                     value: value
                         .as_ref()
                         .map_or_else(Vec::new, |value| value.0.clone()),

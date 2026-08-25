@@ -681,8 +681,12 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
 }
 
 impl<PdC: PdClient> Transaction<PdC> {
-    #[cfg(test)]
-    pub(crate) fn new(
+    /// Builds a transaction over an injected PD client at the supplied start
+    /// timestamp. This is the constructor client-go test stores use to run the
+    /// full transaction stack over `mocktikv`; production callers go through
+    /// `TransactionClient`.
+    #[cfg(any(test, feature = "internal-tests"))]
+    pub fn new(
         timestamp: Timestamp,
         rpc: Arc<PdC>,
         options: TransactionOptions,
@@ -691,8 +695,8 @@ impl<PdC: PdClient> Transaction<PdC> {
         Self::new_with_latches(timestamp, rpc, options, keyspace, None)
     }
 
-    #[cfg(test)]
-    pub(crate) fn new_with_latches(
+    #[cfg(any(test, feature = "internal-tests"))]
+    pub fn new_with_latches(
         timestamp: Timestamp,
         rpc: Arc<PdC>,
         options: TransactionOptions,
