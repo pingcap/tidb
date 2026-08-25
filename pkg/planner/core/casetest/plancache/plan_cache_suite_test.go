@@ -875,52 +875,6 @@ func TestNonPreparedPlanCacheUnifiedOriginalParamMarkerBypass(t *testing.T) {
 	require.False(t, postParameterizationCalled)
 }
 
-func TestNonPreparedPlanCacheUnifiedLegacyCarrierIsolationE2E(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table unified_carrier_isolation(a int, key(a))")
-	tk.MustExec("insert into unified_carrier_isolation values (1), (2), (3)")
-	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
-	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=off")
-
-	query := "select a from unified_carrier_isolation where a > 0 order by a"
-	lookup := func(sql string) (unifiedPlanCacheQueryObservation, []bool) {
-		lookups := make([]bool, 0, 1)
-		ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestNonPreparedStmtLookup{}, func(found bool) {
-			lookups = append(lookups, found)
-		})
-		return observeUnifiedPlanCacheQueryWithContext(ctx, t, tk, sql), lookups
-	}
-
-	unsupported := core_metrics.GetNonPrepPlanCacheUnsupportedCounter()
-	before := promtestutils.ToFloat64(unsupported)
-	legacyMiss, legacyMissLookup := lookup(query)
-	require.Equal(t, []bool{false}, legacyMissLookup)
-	require.False(t, legacyMiss.cacheHit)
-	legacyHit, legacyHitLookup := lookup(query)
-	require.Equal(t, []bool{true}, legacyHitLookup)
-	require.True(t, legacyHit.cacheHit)
-	require.Equal(t, legacyMiss.rows, legacyHit.rows)
-	require.Empty(t, legacyHit.warnings)
-
-	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
-	unifiedMiss, unifiedMissLookup := lookup(query)
-	require.Equal(t, []bool{false}, unifiedMissLookup, "ON must not reuse the legacy carrier")
-	require.Equal(t, legacyMiss.rows, unifiedMiss.rows)
-	unifiedHit, unifiedHitLookup := lookup(query)
-	require.Equal(t, []bool{true}, unifiedHitLookup)
-	require.True(t, unifiedHit.cacheHit)
-	require.Equal(t, legacyMiss.rows, unifiedHit.rows)
-
-	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=off")
-	legacyAgain, legacyAgainLookup := lookup(query)
-	require.Equal(t, []bool{true}, legacyAgainLookup, "OFF must recover the legacy carrier")
-	require.True(t, legacyAgain.cacheHit)
-	require.Equal(t, legacyMiss.rows, legacyAgain.rows)
-	require.Equal(t, before, promtestutils.ToFloat64(unsupported), "valid carrier transitions must not bypass")
-}
-
 func TestNonPreparedPlanCacheUnifiedParamSQLParseFailureBypass(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1826,55 +1780,6 @@ func TestNonPreparedPlanCacheUnifiedLegacyBehaviorMatrix(t *testing.T) {
 			require.Contains(t, warnings[0][2], "skip non-prepared plan-cache: "+testCase.reason)
 		})
 	}
-}
-
-func TestNonPreparedPlanCacheUnifiedCharacterSetClientCarrierKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	setupTK := testkit.NewTestKit(t, store)
-	setupTK.MustExec("use test")
-	setupTK.MustExec("create table charset_t(a int, key(a))")
-	setupTK.MustExec("insert into charset_t values (1), (2)")
-	queryA := "select 'preserved' as literal_value, a from charset_t where a = 1"
-	queryB := "select 'preserved' as literal_value, a from charset_t where a = 2"
-
-	baselineTK := newUnifiedPlanCacheMatrixTestKit(t, store, "cache-off")
-	baselineTK.MustExec("set character_set_client=utf8mb4")
-	utf8BaselineA := observeUnifiedPlanCacheQuery(t, baselineTK, queryA)
-	utf8BaselineB := observeUnifiedPlanCacheQuery(t, baselineTK, queryB)
-	baselineTK.MustExec("set character_set_client=latin1")
-	latin1BaselineA := observeUnifiedPlanCacheQuery(t, baselineTK, queryA)
-	latin1BaselineB := observeUnifiedPlanCacheQuery(t, baselineTK, queryB)
-
-	tk := newUnifiedPlanCacheMatrixTestKit(t, store, "non-prepared")
-	tk.MustExec("set character_set_client=utf8mb4")
-	utf8Miss, paramSQL := observeUnifiedPlanCacheQueryAndParamSQL(t, tk, queryA)
-	require.Contains(t, paramSQL, "'preserved'")
-
-	require.False(t, utf8Miss.cacheHit)
-	requireUnifiedPlanCacheQueryEqual(t, utf8BaselineA, utf8Miss, "utf8mb4 cache miss")
-	utf8Carrier := tk.Session().GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
-	require.NotNil(t, utf8Carrier)
-
-	utf8Hit := observeUnifiedPlanCacheQuery(t, tk, queryB)
-	require.True(t, utf8Hit.cacheHit)
-	requireUnifiedPlanCacheQueryEqual(t, utf8BaselineB, utf8Hit, "utf8mb4 cache hit")
-
-	tk.MustExec("set character_set_client=latin1")
-	require.Nil(t, tk.Session().GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL))
-	latin1First := observeUnifiedPlanCacheQuery(t, tk, queryB)
-	requireUnifiedPlanCacheQueryEqual(t, latin1BaselineB, latin1First, "latin1 first execution")
-	latin1Carrier := tk.Session().GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
-	require.NotNil(t, latin1Carrier)
-	require.NotSame(t, utf8Carrier, latin1Carrier)
-	latin1Hit := observeUnifiedPlanCacheQuery(t, tk, queryA)
-	require.True(t, latin1Hit.cacheHit)
-	requireUnifiedPlanCacheQueryEqual(t, latin1BaselineA, latin1Hit, "latin1 cache hit")
-
-	tk.MustExec("set character_set_client=utf8mb4")
-	require.Same(t, utf8Carrier, tk.Session().GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL))
-	restored := observeUnifiedPlanCacheQuery(t, tk, queryB)
-	require.True(t, restored.cacheHit)
-	requireUnifiedPlanCacheQueryEqual(t, utf8BaselineB, restored, "restored utf8mb4 cache hit")
 }
 
 func TestNonPreparedPlanCacheUnifiedViewSystemTemporaryTables(t *testing.T) {

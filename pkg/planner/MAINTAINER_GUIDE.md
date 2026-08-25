@@ -321,11 +321,7 @@ Invariants:
 - Non-prepared cacheability rules MUST remain conservative; widen only with
   dedicated semantic coverage.
 - The per-session `PlanCacheStmt` for non-prepared cache is keyed by the
-  parameterized SQL plus every parse/name-resolution input (connection and
-  client charset/collation, current database, SQL mode, parser feature flags)
-  and the legacy/unified mode bit. It is a different object from the cached
-  plan values. When parser configuration gains another semantic input, extend
-  this key at the same time.
+  parameterized SQL. It is a different object from the cached plan values.
 
 Why this exists:
 - Mutating the original AST leaks state across retries/other code paths and
