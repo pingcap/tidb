@@ -986,15 +986,19 @@ impl KvTable {
         zone: &SessionTimeZone,
         statement: &PushdownStatementContext,
     ) -> Result<Option<Box<dyn PushdownRowStream>>, KvTableError> {
-        // ROUND-4 GATE NOTE: this request goes out with empty
-        // `primary_column_ids`, which real TiKV answers with
+        // Go's `PhysicalIndexReader.ToPB` names the clustered primary's
+        // column ids on the index scan and appends those key columns to the
+        // executor schema (`is.InitSchema(append(path.FullIdxCols,
+        // ds.CommonHandleCols...))`); TiKV reads the executor as
+        // `[index datums..., handle datums...]` by subtracting
+        // `primary_column_ids.len()` from the column count. This builder once
+        // sent empty ids, which real TiKV answered with
         // `Expect to decode index values with common handles in
         // `DecodeCommonHandle` mode` for every CLUSTERED-PK table whose
         // covering index the planner picks post-ANALYZE (`count(*) FROM
-        // bmsql_oorder`). An integer-handle table needs no primary ids, so
-        // its stream stays live; the common-handle shape refuses into the
-        // local partial-aggregate walk until the builder carries them.
-        if !self.common_handle_offsets.is_empty() {
+        // bmsql_customer`), refusing into the local partial-aggregate walk.
+        // Build Go's schema instead.
+        if self.has_dirty_content() || self.partition.is_some() {
             return Ok(None);
         }
         if self.has_dirty_content() || self.partition.is_some() {
@@ -1013,7 +1017,7 @@ impl KvTable {
         {
             return Ok(None);
         }
-        let columns: Vec<PushdownScanColumn> = index
+        let mut columns: Vec<PushdownScanColumn> = index
             .column_offsets
             .iter()
             .filter_map(|offset| self.columns.get(*offset))
@@ -1026,6 +1030,21 @@ impl KvTable {
             .collect();
         if columns.len() != index.column_offsets.len() {
             return Ok(None);
+        }
+        // The handle columns ride AFTER the indexed columns -- duplicates
+        // included, exactly like `pushdown_index_handle_cursor`'s schema --
+        // because TiKV subtracts their count from the executor width before
+        // decoding the record handle.
+        for offset in &self.common_handle_offsets {
+            let Some(column) = self.columns.get(*offset) else {
+                return Ok(None);
+            };
+            columns.push(PushdownScanColumn {
+                id: column.id,
+                field_type: column.field_type.clone(),
+                is_handle: false,
+                origin_default: column.origin_default.clone(),
+            });
         }
         // Go `checkCoverIndex` again: a unique flag over PARTIAL-key ranges
         // asks TiKV for a unique get the range does not name.
@@ -1150,7 +1169,11 @@ impl KvTable {
             }),
             columns,
             handle_index: None,
-            primary_column_ids: Vec::new(),
+            primary_column_ids: self
+                .common_handle_offsets
+                .iter()
+                .filter_map(|offset| self.columns.get(*offset).map(|column| column.id))
+                .collect(),
             primary_prefix_column_ids: Vec::new(),
             predicates: remote_predicates,
             output_offsets: None,
@@ -3791,7 +3814,157 @@ impl crate::table_access::TableAccess for TableScanExec {
 #[cfg(test)]
 mod remote_cursor_tests {
     use super::*;
-    use crate::storage::StorageError;
+    use crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+    use crate::kv_table::KvColumn;
+    use crate::storage::{StorageError, TableStorage};
+
+    /// Records the one request a builder sends, then declines to serve it so
+    /// the test can assert on the wire shape itself.
+    #[derive(Debug)]
+    struct RequestCapture {
+        captured: std::sync::Arc<
+            std::sync::Mutex<Option<crate::remote_scan::PushdownScanRequest>>,
+        >,
+    }
+
+    impl TableStorage for RequestCapture {
+        fn get(&mut self, _key: &Key) -> Result<Vec<u8>, StorageError> {
+            Err(StorageError::NotFound)
+        }
+
+        fn set(&mut self, _key: Key, _value: Vec<u8>) -> Result<(), StorageError> {
+            Err(StorageError::Backend("unused".to_owned()))
+        }
+
+        fn delete(&mut self, _key: Key) -> Result<(), StorageError> {
+            Err(StorageError::Backend("unused".to_owned()))
+        }
+
+        fn iter(
+            &mut self,
+            _start: Option<&Key>,
+            _upper_bound: Option<&Key>,
+        ) -> Result<Box<dyn StorageIterator>, StorageError> {
+            Err(StorageError::Backend("unused".to_owned()))
+        }
+
+        fn open_remote_scan(
+            &mut self,
+            request: &crate::remote_scan::PushdownScanRequest,
+        ) -> Option<Result<crate::remote_scan::PushdownScan, StorageError>> {
+            *self
+                .captured
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()) = Some(request.clone());
+            None
+        }
+
+        fn key_count(&self) -> usize {
+            0
+        }
+
+        fn clear(&mut self) {}
+
+        fn clone_box(&self) -> Box<dyn TableStorage> {
+            Box::new(RequestCapture {
+                captured: std::sync::Arc::clone(&self.captured),
+            })
+        }
+    }
+
+    fn bigint_column(id: i64, name: &str) -> KvColumn {
+        KvColumn {
+            name: name.to_owned(),
+            id,
+            field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            default_value: None,
+            origin_default: None,
+            comment: String::new(),
+            generated: None,
+        }
+    }
+
+    /// Go's `PhysicalIndexReader.ToPB` names the clustered primary's column
+    /// ids on a covering-index aggregate and appends those key columns to the
+    /// executor schema after the indexed ones -- TiKV decodes the executor as
+    /// `[index datums..., handle datums...]` by subtracting their count from
+    /// the width. A common-handle table's `count(*)` through this builder
+    /// must build exactly that shape instead of refusing into the local walk.
+    #[test]
+    fn an_index_aggregate_over_a_common_handle_table_names_its_primary_columns() {
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let mut table = KvTable::with_storage(
+            91,
+            vec![
+                bigint_column(1, "a"),
+                bigint_column(2, "b"),
+                bigint_column(3, "c"),
+            ],
+            Box::new(RequestCapture {
+                captured: std::sync::Arc::clone(&captured),
+            }),
+        );
+        table.set_common_handle_offsets(vec![0, 1]);
+        table.add_index(crate::kv_table::table_meta::KvIndex {
+            id: 5,
+            name: "idx_c".to_owned(),
+            comment: String::new(),
+            unique: false,
+            prefix_lengths: vec![UNSPECIFIED_LENGTH],
+            column_offsets: vec![2],
+            visible: true,
+            global: false,
+            clustered_primary: false,
+        }, false);
+
+        let aggregate = crate::remote_scan::PushdownPartialAggregate::Global {
+            functions: vec![crate::remote_scan::PushdownGlobalAggregateFunction {
+                kind: crate::remote_scan::PushdownAggregateKind::Count,
+                input: None,
+                output_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            }],
+        };
+        let ranges = [IndexRange {
+            low: vec![Datum::Int(1)],
+            high: vec![Datum::Int(9)],
+            low_exclusive: false,
+            high_exclusive: false,
+        }];
+        let statement = PushdownStatementContext::default();
+        let stream = table.pushdown_index_partial_aggregate_cursor(
+            5,
+            &ranges,
+            &[0, 1, 2],
+            &[],
+            &aggregate,
+            &tidb_datatype::SessionTimeZone::utc(),
+            &statement,
+        );
+        // The capture store declines to serve, so the builder reports no
+        // cursor -- but only AFTER the request was built and recorded.
+        assert!(stream.unwrap().is_none());
+
+        let request = captured
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clone()
+            .expect("the aggregate request was built");
+        let index = request.index.as_ref().expect("an index scan request");
+        assert_eq!(index.index_id, 5);
+        assert_eq!(
+            request.primary_column_ids,
+            vec![1, 2],
+            "the clustered primary travels for TiKV's common-handle decode"
+        );
+        let schema_ids: Vec<i64> =
+            request.columns.iter().map(|column| column.id).collect();
+        assert_eq!(
+            schema_ids,
+            vec![3, 1, 2],
+            "handle columns ride after the indexed columns, Go InitSchema order"
+        );
+    }
 
     struct VecStream {
         rows: std::collections::VecDeque<Vec<Datum>>,
