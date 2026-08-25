@@ -448,12 +448,12 @@ pub(crate) trait RegionRetryState: Clone + Send + Sync + 'static {
     /// per-shard behavior.
     fn update_using_forked(&mut self, forked: &Self);
 
-    /// RawKV owns an outer source retry loop: after `RegionRequestSender`
-    /// returns a terminal region error, RawKV charges `BoRegionMiss`, locates
-    /// again, and resends. Ordinary request plans leave that error visible to
-    /// their callers.
+    /// Multi-region source owners regroup their remaining keys after
+    /// `RegionRequestSender` returns a terminal region error. A one-region
+    /// sender still returns the error; [`RetryableMultiRegion`] consumes this
+    /// flag at the outer sharding boundary.
     fn retries_terminal_region_errors(&self) -> bool {
-        false
+        true
     }
 
     /// Whether the source request context was cancelled. Implementations
@@ -1158,6 +1158,10 @@ where
                     plan.mark_replica_deadline_exceeded(peer.id);
                 }
             }
+            // Source `updateLeader` changes the Region object retained by the
+            // selector. Rust routes own a snapshot, so carry the hint into the
+            // immediate retry as well as updating the shared cache.
+            let retry_region = region_for_immediate_retry(&region_store.region_with_leader, &e);
             let region_error_action = if retry_flashback_through_leader {
                 Ok(RegionErrorRetry::Immediate)
             } else if retry_region_not_found_at_leader {
@@ -1221,10 +1225,14 @@ where
                     // already terminal and are rebuilt by their owning
                     // caller path.
                     plan.mark_retry_request();
+                    // `async_recursion` still polls an immediately-ready child
+                    // on the current stack. Source loops are iterative, so
+                    // force a scheduler boundary before a zero-delay retry.
+                    tokio::task::yield_now().await;
                     return Self::single_shard_handler(
                         pd_client,
                         plan,
-                        region_store.region_with_leader,
+                        retry_region,
                         backoff,
                         permits,
                         preserve_region_results,
@@ -1371,6 +1379,21 @@ where
             Err(error) => (Err(error), backoff),
         }
     }
+}
+
+fn region_for_immediate_retry(
+    region: &RegionWithLeader,
+    error: &errorpb::Error,
+) -> RegionWithLeader {
+    let mut retry_region = region.clone();
+    if let Some(leader) = error
+        .not_leader
+        .as_ref()
+        .and_then(|not_leader| not_leader.leader.clone())
+    {
+        retry_region.leader = Some(leader);
+    }
+    retry_region
 }
 
 /// The source selector performs a zero-delay retry through another eligible
@@ -2505,17 +2528,9 @@ where
                 Ok(()) => {
                     result.resolved_locks += lock_size;
                 }
-                Err(Error::ExtractedErrors(mut errors)) => {
-                    // Propagate errors to `retry_multi_region` for retry.
-                    if let Error::RegionError(e) = errors.pop().unwrap() {
-                        result.region_error = Some(*e);
-                    } else {
-                        result.key_error = Some(errors);
-                    }
+                Err(error) => {
+                    propagate_cleanup_locks_error(&mut result, error)?;
                     return Ok(result);
-                }
-                Err(e) => {
-                    return Err(e);
                 }
             }
 
@@ -2527,6 +2542,34 @@ where
 
         Ok(result)
     }
+}
+
+fn propagate_cleanup_locks_error(result: &mut CleanupLocksResult, error: Error) -> Result<()> {
+    // BatchResolveLocks returns `false` for a region change in client-go, then
+    // the GC owner relocates the first lock and either retries this region or
+    // rescans. Preserve that owner boundary for direct and grouped nested
+    // resolver errors; non-region errors remain key/terminal errors.
+    let errors = match error {
+        Error::RegionError(error) => {
+            result.region_error = Some(*error);
+            return Ok(());
+        }
+        Error::ExtractedErrors(errors) | Error::MultipleKeyErrors(errors) => errors,
+        error => return Err(error),
+    };
+    let mut key_errors = Vec::new();
+    for error in errors {
+        match error {
+            Error::RegionError(error) if result.region_error.is_none() => {
+                result.region_error = Some(*error);
+            }
+            error => key_errors.push(error),
+        }
+    }
+    if result.region_error.is_none() {
+        result.key_error = Some(key_errors);
+    }
+    Ok(())
 }
 
 /// When executed, the plan extracts errors from its inner plan, and returns an
@@ -2643,6 +2686,59 @@ mod test {
     use tokio::sync::Barrier;
 
     use super::*;
+
+    #[test]
+    fn source_multi_region_retry_reshards_terminal_region_errors() {
+        let retry = Backoff::no_backoff();
+        assert!(retry.retries_terminal_region_errors());
+        let (forked, _) = retry.fork();
+        assert!(forked.retries_terminal_region_errors());
+    }
+
+    #[test]
+    fn source_cleanup_promotes_nested_region_errors_to_the_scan_owner() {
+        let epoch = errorpb::Error {
+            epoch_not_match: Some(Default::default()),
+            ..Default::default()
+        };
+        let mut direct = CleanupLocksResult::default();
+        propagate_cleanup_locks_error(&mut direct, Error::RegionError(Box::new(epoch.clone())))
+            .unwrap();
+        assert_eq!(direct.region_error, Some(epoch.clone()));
+        assert!(direct.key_error.is_none());
+
+        let mut grouped = CleanupLocksResult::default();
+        propagate_cleanup_locks_error(
+            &mut grouped,
+            Error::ExtractedErrors(vec![Error::RegionError(Box::new(epoch.clone()))]),
+        )
+        .unwrap();
+        assert_eq!(grouped.region_error, Some(epoch));
+        assert!(grouped.key_error.is_none());
+    }
+
+    #[test]
+    fn source_not_leader_immediate_retry_uses_the_hinted_leader() {
+        let region = MockPdClient::region1();
+        let hinted = crate::proto::metapb::Peer {
+            id: 99,
+            store_id: 9,
+            ..Default::default()
+        };
+        let retry = region_for_immediate_retry(
+            &region,
+            &errorpb::Error {
+                not_leader: Some(errorpb::NotLeader {
+                    region_id: region.id(),
+                    leader: Some(hinted.clone()),
+                }),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(retry.leader, Some(hinted));
+        assert_eq!(region.leader, MockPdClient::region1().leader);
+    }
 
     #[test]
     fn source_async_batch_get_result_labels_match_callback_branch() {

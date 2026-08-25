@@ -206,8 +206,11 @@ the request and response types exposed by public traits and test-support APIs.
 generated context with ordinary features, and implements
 `mocktikv::CoprocessorHandler` with `internal-tests` enabled.
 Both focused modes pass; clean generation, all-target/all-feature compilation
-and strict Clippy/rustdoc, 739 no-default workspace tests, 733 all-feature
-library tests, and 51 doctests also pass on the pinned nightly toolchain.
+and strict Clippy/rustdoc, 742 no-default workspace tests, 736 all-feature
+library tests, and 51 doctests also pass on the pinned nightly toolchain. The
+three additional source-derived request tests protect common multi-region
+terminal resharding, nested cleanup-error propagation, and immediate
+NotLeader-hint adoption.
 
 ## Direct client-go/client-rust differential
 

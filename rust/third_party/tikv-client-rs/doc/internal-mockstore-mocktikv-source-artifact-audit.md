@@ -1,6 +1,6 @@
 # `internal/mockstore/mocktikv` source-artifact audit
 
-This is the atomic completion receipt for client-go's `internal/mockstore/mocktikv` package at pinned commit `52c1e76cec993571493c81de442bcbef90cdc106`. The Rust owner is the hidden `tikv_client::mock::mocktikv` adapter plus the reusable standalone `unistore` engine crate. Validation uses `nightly-2026-08-22`. This receipt completes only client-go's mocktikv package; it does not promote the separate TiDB `pkg/store/mockstore/unistore` inventory or the `testutils` facade package.
+This was the atomic completion receipt for client-go's `internal/mockstore/mocktikv` package at pinned commit `52c1e76cec993571493c81de442bcbef90cdc106`. Runtime downstream testing reopened the claim: transactional Get fails to set `GetResponse.not_found` for an absent key, unlike real TiKV and the source contract. The Rust owner remains the hidden `tikv_client::mock::mocktikv` adapter plus the reusable standalone `unistore` engine crate, and validation uses `nightly-2026-08-22`. The row remains `in-progress` until the adapter fix and external regression pass.
 
 ## Complete source inventory
 
