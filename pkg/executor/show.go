@@ -2056,6 +2056,7 @@ func (e *ShowExec) fetchShowPrivileges() error {
 	e.appendRow([]any{"Lock tables", "Databases", "To use LOCK TABLES (together with SELECT privilege)"})
 	e.appendRow([]any{"Process", "Server Admin", "To view the plain text of currently executing queries"})
 	e.appendRow([]any{"Proxy", "Server Admin", "To make proxy user possible"})
+	e.appendRow([]any{"Operate view", "Tables", "To execute materialized view and materialized view log maintenance operations"})
 	e.appendRow([]any{"References", "Databases,Tables", "To have references on tables"})
 	e.appendRow([]any{"Reload", "Server Admin", "To reload or refresh tables, logs and privileges"})
 	e.appendRow([]any{"Replication client", "Server Admin", "To ask where the slave or master servers are"})
