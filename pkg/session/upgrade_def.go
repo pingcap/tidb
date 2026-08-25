@@ -524,6 +524,9 @@ const (
 
 	// version284 migrate tidb_disable_txn_file (from TiDB-CSE) to tidb_enable_txn_file and inverts its value.
 	version284 = 284
+
+	// version285 creates materialized view maintenance system tables.
+	version285 = 285
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -2321,4 +2324,10 @@ func upgradeToVer284(s sessionapi.Session, _ int64) {
 	failpoint.Inject("mockUpgradeToVer284Error", func() {
 		err = context.Canceled
 	})
+}
+
+func upgradeToVer285(s sessionapi.Session, _ int64) {
+	for _, tbl := range systemTablesOfMaterializedViewNextGenVersion {
+		doReentrantDDL(s, tbl.SQL)
+	}
 }
