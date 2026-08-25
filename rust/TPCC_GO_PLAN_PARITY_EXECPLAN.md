@@ -347,3 +347,5 @@ Revision note (2026-08-15): Initial plan created after selective import reduced 
 - [x] Supervised iteration 3: Go median 243.27, Rust median 172.99 QPS (ratio 0.7111).
 
 - [x] Supervised iteration 4: Go median 231.44, Rust median 111.68 QPS (ratio 0.4826).
+
+- [x] Supervised iteration 5: Go median 223.78, Rust median 161.44 QPS (ratio 0.7214).
