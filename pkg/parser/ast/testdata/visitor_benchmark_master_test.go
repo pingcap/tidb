@@ -46,7 +46,9 @@ func BenchmarkVisitorTraversal(b *testing.B) {
 				}
 			})
 
-			b.Run("InPlaceVisitor", func(b *testing.B) {
+			// Master has no in-place traversal API. Repeat the legacy path under the
+			// candidate label so benchstat can compare it with the PR's candidate path.
+			b.Run("Candidate", func(b *testing.B) {
 				root := newBenchmarkSelect(replaceableNodes)
 				visitor := &benchmarkVisitor{}
 				var ok bool

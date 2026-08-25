@@ -116,7 +116,7 @@ func BenchmarkVisitorTraversal(b *testing.B) {
 				}
 			})
 
-			b.Run("InPlaceVisitor", func(b *testing.B) {
+			b.Run("Candidate", func(b *testing.B) {
 				root := newBenchmarkSelect(replaceableNodes)
 				visitor := &benchmarkInPlaceVisitor{}
 				var ok bool
