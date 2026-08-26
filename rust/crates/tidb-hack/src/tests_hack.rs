@@ -91,6 +91,12 @@ fn hack_swiss_table_geometry_and_mem_aware_accounting() {
     assert_eq!(mixed.slot_size, 16);
     assert_eq!(mixed.elem_offset, 8);
 
+    // complex128 block of the Go test: slot size doubles, element offset
+    // equals the key width.
+    let complex = map_type::<(u64, u64), (u64, u64)>();
+    assert_eq!(complex.slot_size, 32);
+    assert_eq!(complex.elem_offset, 16);
+
     // Seeded map block: N+1 entries visible, key 1234 present.
     const N: u64 = 1024;
     let mut mp = MemAwareMap::<u64, u64>::new(0);
@@ -105,6 +111,17 @@ fn hack_swiss_table_geometry_and_mem_aware_accounting() {
         .any(|(k, v)| *k == 1234 && *v == 5678));
     // The accounted size tracks the real allocation exactly.
     assert_eq!(mp.bytes(), mp.real_bytes());
+
+    // String-key block of the Go test: N seeded entries visible through both
+    // len() and the accounted size.
+    const STR_N: usize = 2000;
+    let mut strings = MemAwareMap::<String, i32>::new(0);
+    strings.mock_seed_for_test();
+    for i in 0..STR_N {
+        strings.set(format!("key-{i}"), i as i32);
+    }
+    assert_eq!(strings.len(), STR_N);
+    assert_eq!(strings.bytes(), strings.real_bytes());
 }
 
 /// Port of `map_abi_test.go` `TestSwissTable`, small-map growth block.
