@@ -1395,3 +1395,36 @@ green, while the strict one-concurrency performance no-regression gate is
 still open; no Go executable, Ready-profile `make lint`, full Go unit suite,
 or complete hbx-web3/TPC-H catalog was available in this checkout. The
 commit message continues to include the literal `go 代码` phrase.
+
+Revision note, 2026-08-27 (Go statistics hot-path continuation): after the
+client-rust resync, `git fetch origin hparser-integration` confirmed the same
+upstream tip `4c2914f8b3e6f613e1f7689c668e77ac9af93d1d`. The Rust statistics
+package now follows Go `pkg/statistics/cmsketch.go::FindTopN` by comparing
+source-owned TopN bytes through a scoped borrow instead of allocating a clone
+for every binary-search probe. The Rust planner's
+`get_column_row_count` also follows Go `pkg/planner/cardinality/row_count_column.go`
+for closed point ranges: it prepares and encodes the point once, then enters
+the unchanged equality estimate branches. Both changes are general package
+behavior, not a workload-specific condition. The new
+`source_closed_point_ranges_accumulate_go_point_estimates` regression verifies
+that a multi-value `IN` point expansion still accumulates the Go estimates
+before the final clamp; the existing CMSketch source suite exercises the
+source-owned lookup path.
+
+Focused checks pass: the row-count source module is 14/14, the CMSketch source
+module is 31/31, and the release `tidb-server` build succeeds with the pinned
+OpenSSL environment. On the deterministic 1 GiB fixture, the latest comparison
+still reports four normalized plan matches and four result-hash matches; the
+100-row batch receipt remains 100 rows with
+`5050.000000000000000000` on both endpoints. With lookup width 3 and four
+transport shards, the latest 20-pair medians are Go/Rust q1 `9.670/9.809 ms`
+(`1.014x`), q2 `8.676/9.069 ms` (`1.045x`), flex `7.678/9.679 ms` (`1.261x`),
+swap `14.436/18.330 ms` (`1.270x`), and batch `5.848/6.242 ms` (`1.067x`).
+The point/TopN changes improve the large-`IN` EXPLAIN path but do not yet make
+Rust no slower than Go for every one-client median, so the strict performance
+gate remains open. Receipts are
+`/private/tmp/hbx-1g-20260825/compare-go-client-rust-current-bba0936.json`
+and
+`/private/tmp/hbx-1g-20260825/bench-go-client-rust-current-bba0936.json`.
+The source and regression commit must retain both a `Go code:` source line and
+the literal `go 代码` phrase.

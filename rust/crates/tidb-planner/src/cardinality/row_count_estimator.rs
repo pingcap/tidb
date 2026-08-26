@@ -528,6 +528,32 @@ pub fn get_column_row_count(
     let increase_factor = column.increase_factor(realtime_row_count);
 
     for range in ranges {
+        // Go `getColumnRowCount` enters its point branch after preparing both
+        // bounds. For the closed point ranges produced by `buildFromIn`, the
+        // two written datums are identical, so preparing and encoding them
+        // twice only repeats work; the equality and all estimate branches are
+        // unchanged. Keep every non-point (including collation-distinct or
+        // exclusive) range on the source-shaped path below.
+        if !range.low_exclude && !range.high_exclude && range.low == range.high {
+            let value = to_sort_key(&range.low);
+            let encoded = encode_datum(&value);
+            if pk_is_handle {
+                total.add_all(1.0);
+                continue;
+            }
+            let mut count = equal_row_count_on_column(
+                column,
+                &value,
+                &encoded,
+                Collation::Binary,
+                realtime_row_count,
+                modify_count,
+                options,
+            );
+            count.multiply_all(increase_factor);
+            total.add(count);
+            continue;
+        }
         // Go clones both endpoints and replaces a string with its sort key
         // BEFORE encoding, comparing, or estimating anything from them.
         let range = &ColumnRange {

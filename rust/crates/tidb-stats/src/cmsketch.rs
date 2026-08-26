@@ -820,7 +820,7 @@ impl TopN {
         let mut right = self.entries.len();
         while left < right {
             let middle = left + (right - left) / 2;
-            if self.resolved_bytes(middle).as_slice() < encoded {
+            if self.with_resolved_bytes(middle, |bytes| bytes < encoded) {
                 left = middle + 1;
             } else {
                 right = middle;
@@ -828,7 +828,8 @@ impl TopN {
         }
         (
             left,
-            left < self.entries.len() && self.resolved_bytes(left) == encoded,
+            left < self.entries.len()
+                && self.with_resolved_bytes(left, |bytes| bytes == encoded),
         )
     }
 
@@ -955,6 +956,21 @@ impl TopN {
         )
     }
 
+    /// Runs a comparison against one source-encoded entry without copying its
+    /// bytes. Go's `TopN.FindTopN` compares the stored `[]byte` directly; the
+    /// copy-returning [`Self::resolved_bytes`] accessor is intentionally kept
+    /// for ownership-returning callers such as `entry_bytes` and cloning.
+    fn with_resolved_bytes<R>(&self, index: usize, f: impl FnOnce(&[u8]) -> R) -> R {
+        if let Some(shared) = self.shared_encoded[index].as_ref() {
+            let bytes = shared
+                .read()
+                .expect("shared TopN bytes lock poisoned");
+            f(&bytes)
+        } else {
+            f(&self.entries[index].encoded)
+        }
+    }
+
     /// Returns entries after reading every shared `AppendTopN` byte source.
     #[must_use]
     pub fn resolved_entries(&self) -> Vec<TopNEntry> {
@@ -998,14 +1014,16 @@ pub fn find_topn(topn: Option<&TopN>, encoded: &[u8]) -> Option<usize> {
         return None;
     }
     if topn.entries.len() == 1 {
-        return (topn.resolved_bytes(0) == encoded).then_some(0);
+        return topn
+            .with_resolved_bytes(0, |bytes| bytes == encoded)
+            .then_some(0);
     }
 
     let last_index = topn.entries.len() - 1;
-    if topn.resolved_bytes(last_index).as_slice() < encoded {
+    if topn.with_resolved_bytes(last_index, |bytes| bytes < encoded) {
         return None;
     }
-    if topn.resolved_bytes(0).as_slice() > encoded {
+    if topn.with_resolved_bytes(0, |bytes| bytes > encoded) {
         return None;
     }
 

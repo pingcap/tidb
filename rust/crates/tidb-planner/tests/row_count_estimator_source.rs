@@ -347,6 +347,27 @@ fn source_column_point_estimates_follow_topn_then_histogram_then_uniform() {
 }
 
 #[test]
+fn source_closed_point_ranges_accumulate_go_point_estimates() {
+    let a = column_a();
+    let ranges = [point(1), point(39)];
+    let combined = column_estimate(Some(&a), &ranges, false);
+    let first = column_estimate(Some(&a), std::slice::from_ref(&ranges[0]), false);
+    let second = column_estimate(Some(&a), std::slice::from_ref(&ranges[1]), false);
+
+    // `buildFromIn` emits one closed point range per value. Go's
+    // `getColumnRowCount` sums those point estimates before the final clamp;
+    // keep that exact observable behavior while the Rust implementation takes
+    // its source-aligned point fast path.
+    for (name, got, want) in [
+        ("est", combined.0, first.0 + second.0),
+        ("min", combined.1, first.1 + second.1),
+        ("max", combined.2, first.2 + second.2),
+    ] {
+        assert_close(got, want, &format!("closed_point_ranges.{name}"));
+    }
+}
+
+#[test]
 fn source_column_null_and_range_estimates() {
     let a = column_a();
     let b = column_b();
