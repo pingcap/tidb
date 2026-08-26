@@ -367,3 +367,66 @@ Next-session priorities:
    boundaries per execute.
 2. Collation::from_name caching per FieldType (~2% CPU).
 3. Full-suite acceptance run once the box has rested.
+
+## YCSB gate findings — 2026-08-27 (@ 4dc58bc5, tiup-0 pod, playground nightly)
+
+### Environment & protocol
+- One shared cluster inside the tiup pod (6 CPU / 16 GB cgroup): PD :2379,
+  TiKV :20160, Go nightly TiDB :4000 (`v9.0.0-beta.2.pre-2147-g381ac705f9`)
+  and Rust TiDB :4001 (`--path 127.0.0.1:2379 --store tikv --port 4001
+  --cluster-session --lease-ms 2000 --max-connections 32 --load-privileges`).
+  Data and cargo target dirs live on the pod's nvme (`/tmp/pg-data`,
+  `/tmp/cargo-target`).
+- Dataset: `s3://benchmark/ycsb-100m-new` restored with BR over the anonymous
+  internal minio gateway (`http://minio.pingcap.net:9000`,
+  `force-path-style=true`, `--send-credentials-to-tikv=true`): db `test`,
+  one `usertable`, 200M kv, ~78.6 GB restored, ~6 min per restore.
+  NOTE: ks3 mirror of this backup is NOT usable today — its AK/SK account has
+  KS3 download service disabled ("KS3DownloadServiceNotOpened").
+- BR cannot rename a database on restore, so each side-run starts from a fresh
+  restore: per workload W the gate ran `[drop+BR restore] -> go-ycsb W @go`
+  then `[drop+BR restore] -> W @rust`. Every number below therefore measures an
+  identical pristine snapshot; no cross-side carryover exists by construction.
+- Workloads: stock `/ycsb/workloads/workload{a..f}` templates,
+  `-p threadcount=1 -p operationcount=2000000000`, externally time-boxed at
+  200 s; metrics are the cumulative reporter rows at exactly `Takes(s): 150.0`.
+
+### Results — TOTAL ops/s (p50/p95/p99/p99.9 in us)
+| workload | go TOTAL | rust TOTAL | ratio | go p50→p99.9 | rust p50→p99.9 |
+|---|---|---|---|---|---|
+| a r/u=50/50      |  965.5 | 514.1 | 0.53 | 1169/3235 | 1867/4459 |
+| b r=95,u=5       |  993.1 | 616.8 | 0.62 |  834/3149 | 1450/4067 |
+| c read-only      | 1074.4 | 647.8 | 0.60 |  830/2705 | 1416/4029 |
+| d r/i=50/50      | 1052.4 | 616.9 | 0.59 |  826/2777 | 1428/4375 |
+| e scan-heavy     |  753.6 | 449.9 | 0.60 | 1203/3177 | 2051/4951 |
+| f rmw-heavy      |  831.6 | 512.6 | 0.62 |  965/3451 | 1793/4839 |
+
+Per-op-class ratios are uniform within each workload pair (a: read 0.53 /
+update 0.53; d: insert 0.58), i.e. the deficit is not workload-mix noise.
+Gate bar is ratio >= 0.9 on every workload: current state FAILS all six.
+
+### Reading against the known-gap list
+The measured profile matches exactly the open gaps recorded above:
+1. Every UPDATE-family number still pays the pessimistic return_values gap:
+   each written row costs a separate kv_get where client-go folds the value
+   into the lock response. The driver side IS done on this tip --
+   `TikvTransactionDriver::lock_statement_keys(keys, true, ..)` already fills
+   `AcquiredStatementLocks.values` (crates/tidb-txnkv/src/driver/tikv_transaction.rs,
+   `pub struct AcquiredStatementLocks`) -- but it has ZERO consumers:
+   `crates/tidb-executor/src/driver/dml.rs` (`run_fast_prepared_update`) still
+   re-reads the row via `kv.get_row_by_handle(...)` after locking, which is the
+   exact extra GET this table is paying for. Wiring that surface into the
+   update/delete point paths (mirroring pkg/executor/point_get.go:614
+   `lockCtx.InitReturnValues(1)` + `SetPessimisticLockCache`) is the single
+   highest-leverage next commit.
+2. Per-op CPU (~2x) keeps even pure reads (c: 0.60) and scans (e: 0.60)
+   behind; sysvar registry fast-path landed post-baseline but the statement
+   path volume remains to be profiled at this tip.
+3. RMW (f) pays both: lock-fold missing plus read-modify-write's two-step
+   flow, matching f landing at 0.62 only because inserts are cheap on both.
+
+### Infrastructure notes for reruns
+- go-ycsb + workloads come from the toolset image (`kubectl cp toolset-0:/bin/go-ycsb`,
+  `/ycsb/workloads`); gate driver `/tmp/bench/gate.sh`, aggregator
+  `/tmp/bench/agg.sh`, raw reporter outputs archived under
+  `/tmp/bench/results/gate__/` (a.txt..f.txt = rust-side runs in order).
