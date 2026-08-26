@@ -672,8 +672,8 @@ func (e *BaseTaskExecutor) GetTaskBase() *proto.TaskBase {
 	return &task.TaskBase
 }
 
-// GetExecutorID returns the executor ID, which identifies the TiDB node as IP:port.
-func (e *BaseTaskExecutor) GetExecutorID() string {
+// GetExecID returns the executor ID, which identifies the TiDB node as IP:port.
+func (e *BaseTaskExecutor) GetExecID() string {
 	return e.execID
 }
 

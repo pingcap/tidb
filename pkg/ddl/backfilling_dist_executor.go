@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -36,22 +35,8 @@ import (
 
 var errIndexInfoNotFound = errors.New("index info not found")
 
-type localSortFreeDiskChecker func(execID string, currentTaskRuntimeSlots int) error
-
 func isIndexInfoNotFoundErr(err error) bool {
 	return errors.Cause(err) == errIndexInfoNotFound
-}
-
-func checkBackfillLocalSortFreeDisk(
-	cloudStorageURI string,
-	execID string,
-	currentTaskRuntimeSlots int,
-	check localSortFreeDiskChecker,
-) error {
-	if len(cloudStorageURI) > 0 {
-		return nil
-	}
-	return check(execID, currentTaskRuntimeSlots)
 }
 
 // Version constants for BackfillTaskMeta.
@@ -183,24 +168,9 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.attachTopProfilingInfo(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		executor, err := newReadIndexExecutor(
-			store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
-		if err != nil {
-			return nil, err
-		}
-		// This point-in-time, best-effort precheck accounts for the current local-sort
-		// DXF backfill's estimated growth to reduce the risk of frequent small SST imports.
-		// It does not reserve disk or account for the future growth of concurrent jobs.
-		// It does not recheck disk after a concurrency increase with ADMIN ALTER DDL JOB.
-		if err := checkBackfillLocalSortFreeDisk(
-			cloudStorageURI,
-			s.GetExecutorID(),
-			s.GetTaskBase().GetRuntimeSlots(),
-			ingest.CheckLocalSortFreeDisk,
-		); err != nil {
-			return nil, err
-		}
-		return executor, nil
+		return newReadIndexExecutor(
+			store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize,
+			s.GetExecID(), s.GetTaskBase().GetRuntimeSlots())
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(&s.task.TaskBase, store, jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:

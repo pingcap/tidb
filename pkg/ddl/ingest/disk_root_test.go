@@ -17,13 +17,15 @@ package ingest
 import (
 	"testing"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRiskOfDiskFull(t *testing.T) {
-	require.Equal(t, uint64(10), reservedCapacityBytes(100))
-	require.Equal(t, uint64(11), reservedCapacityBytes(101))
+	require.Equal(t, uint64(10), minFreeDiskBytes(100))
+	require.Equal(t, uint64(11), minFreeDiskBytes(101))
 	require.False(t, riskOfDiskFull(11, 100))
 	require.False(t, riskOfDiskFull(10, 100))
 	require.True(t, riskOfDiskFull(9, 100))
@@ -31,18 +33,18 @@ func TestRiskOfDiskFull(t *testing.T) {
 	require.True(t, riskOfDiskFull(10, 101))
 }
 
-func TestCheckLocalSortFreeDisk(t *testing.T) {
+func TestCheckLocalSortDiskSpace(t *testing.T) {
 	const execID = "10.0.1.8:4000"
 	tests := []struct {
 		name    string
-		check   localSortFreeDiskCheck
+		check   localSortDiskSpaceCheck
 		wantErr bool
 		errMsgs []string
 		notMsgs []string
 	}{
 		{
 			name: "enough space",
-			check: localSortFreeDiskCheck{
+			check: localSortDiskSpaceCheck{
 				execID:                  execID,
 				sortPath:                "/tmp/local-sort",
 				availableBytes:          7 * size.GB,
@@ -52,7 +54,7 @@ func TestCheckLocalSortFreeDisk(t *testing.T) {
 		},
 		{
 			name: "available space equal to required space",
-			check: localSortFreeDiskCheck{
+			check: localSortDiskSpaceCheck{
 				execID:                  execID,
 				sortPath:                "/tmp/local-sort",
 				availableBytes:          6 * size.GB,
@@ -69,7 +71,7 @@ func TestCheckLocalSortFreeDisk(t *testing.T) {
 		},
 		{
 			name: "above 10 percent but insufficient for current task",
-			check: localSortFreeDiskCheck{
+			check: localSortDiskSpaceCheck{
 				execID:                  execID,
 				sortPath:                "/tmp/local-sort",
 				availableBytes:          2 * size.GB,
@@ -80,7 +82,7 @@ func TestCheckLocalSortFreeDisk(t *testing.T) {
 		},
 		{
 			name: "quota cap leaves enough space",
-			check: localSortFreeDiskCheck{
+			check: localSortDiskSpaceCheck{
 				execID:                  execID,
 				sortPath:                "/tmp/local-sort",
 				availableBytes:          121 * size.GB,
@@ -90,7 +92,7 @@ func TestCheckLocalSortFreeDisk(t *testing.T) {
 		},
 		{
 			name: "quota cap still short",
-			check: localSortFreeDiskCheck{
+			check: localSortDiskSpaceCheck{
 				execID:                  execID,
 				sortPath:                "/tmp/local-sort",
 				availableBytes:          120 * size.GB,
@@ -101,7 +103,7 @@ func TestCheckLocalSortFreeDisk(t *testing.T) {
 		},
 		{
 			name: "user-facing error",
-			check: localSortFreeDiskCheck{
+			check: localSortDiskSpaceCheck{
 				execID:                  execID,
 				sortPath:                "/tmp/local-sort",
 				availableBytes:          size.GB,
@@ -122,7 +124,7 @@ func TestCheckLocalSortFreeDisk(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := checkLocalSortFreeDisk(tt.check)
+			err := checkLocalSortDiskSpace(tt.check)
 			if !tt.wantErr {
 				require.NoError(t, err)
 				return
@@ -136,5 +138,26 @@ func TestCheckLocalSortFreeDisk(t *testing.T) {
 			}
 		})
 	}
-	require.EqualValues(t, 2*size.GB, localSortBytesPerSlot)
+	require.EqualValues(t, 2*size.GB, localSortHeadroomBytesPerSlot)
+}
+
+func TestCheckLocalSortDiskSpaceErrorClassification(t *testing.T) {
+	t.Run("probe failure is not ErrIngestCheckEnvFailed", func(t *testing.T) {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceProbeFailed", "return"))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceProbeFailed"))
+		})
+		err := CheckLocalSortDiskSpace("10.0.1.8:4000", 1)
+		require.ErrorContains(t, err, "mock local sort disk probe failed")
+		require.False(t, dbterror.ErrIngestCheckEnvFailed.Equal(err))
+	})
+	t.Run("confirmed insufficient space is ErrIngestCheckEnvFailed", func(t *testing.T) {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceInsufficient", "return"))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceInsufficient"))
+		})
+		err := CheckLocalSortDiskSpace("10.0.1.8:4000", 1)
+		require.True(t, dbterror.ErrIngestCheckEnvFailed.Equal(err))
+		require.ErrorContains(t, err, "mock insufficient local sort disk space")
+	})
 }

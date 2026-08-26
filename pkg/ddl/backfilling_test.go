@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -88,60 +89,16 @@ func TestBackfillRetryableErrors(t *testing.T) {
 		require.False(t, sch.IsRetryableErr(err))
 		require.True(t, sch.IsRetryableErr(errors.New("temporary scheduler error")))
 	})
-}
 
-func TestCheckBackfillLocalSortFreeDisk(t *testing.T) {
-	const (
-		execID       = "10.0.1.8:4000"
-		runtimeSlots = 4
-	)
-	expectedErr := errors.New("local disk precheck failed")
-	tests := []struct {
-		name            string
-		cloudStorageURI string
-		checkErr        error
-		wantCalled      bool
-		wantErr         error
-	}{
-		{
-			name:       "local sort succeeds",
-			wantCalled: true,
-		},
-		{
-			name:       "local sort propagates failure",
-			checkErr:   expectedErr,
-			wantCalled: true,
-			wantErr:    expectedErr,
-		},
-		{
-			name:            "cloud storage skips local check",
-			cloudStorageURI: "s3://bucket/prefix",
-			checkErr:        expectedErr,
-		},
-	}
+	t.Run("local-sort disk probe errors are retryable", func(t *testing.T) {
+		err := errors.New("mock local sort disk probe failed")
+		require.True(t, (&backfillDistExecutor{}).IsRetryableError(err))
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			called := false
-			err := checkBackfillLocalSortFreeDisk(
-				tt.cloudStorageURI,
-				execID,
-				runtimeSlots,
-				func(gotExecID string, gotRuntimeSlots int) error {
-					called = true
-					require.Equal(t, execID, gotExecID)
-					require.Equal(t, runtimeSlots, gotRuntimeSlots)
-					return tt.checkErr
-				},
-			)
-			require.Equal(t, tt.wantCalled, called)
-			if tt.wantErr == nil {
-				require.NoError(t, err)
-				return
-			}
-			require.ErrorIs(t, err, tt.wantErr)
-		})
-	}
+	t.Run("confirmed insufficient local-sort disk is not retryable", func(t *testing.T) {
+		err := dbterror.ErrIngestCheckEnvFailed.FastGenByArgs("mock insufficient local sort disk space")
+		require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
+	})
 }
 
 func TestBuildIndexConditionCheckerUsesFixedCollation(t *testing.T) {

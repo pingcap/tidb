@@ -51,9 +51,10 @@ type DiskRoot interface {
 
 const (
 	capacityThreshold = 0.9
-	// TiDB nodes typically have 2 GiB memory per CPU slot, and local sort flushes
-	// a similar-sized batch.
-	localSortBytesPerSlot = 2 * size.GB
+	// localSortHeadroomBytesPerSlot is a heuristic admission allowance per runtime
+	// slot, not an estimate of total task growth. TiDB nodes typically have 2 GiB
+	// memory per CPU slot, and local sort flushes a similar-sized batch.
+	localSortHeadroomBytesPerSlot = 2 * size.GB
 )
 
 // diskRootImpl implements DiskRoot interface.
@@ -200,38 +201,53 @@ func (d *diskRootImpl) StartupCheck() error {
 	return nil
 }
 
-// reservedCapacityBytes returns the minimum disk capacity to keep available.
-func reservedCapacityBytes(capacity uint64) uint64 {
+// minFreeDiskBytes returns the minimum space that must remain free (10% of capacity).
+func minFreeDiskBytes(capacity uint64) uint64 {
 	return capacity - uint64(float64(capacity)*capacityThreshold)
 }
 
 func riskOfDiskFull(available, capacity uint64) bool {
-	return available < reservedCapacityBytes(capacity)
+	return available < minFreeDiskBytes(capacity)
 }
 
-// CheckLocalSortFreeDisk performs a best-effort precheck of the current task's
-// estimated growth before local sort starts, reducing the risk of frequent small
+// CheckLocalSortDiskSpace performs a best-effort precheck of the current task's
+// disk headroom before local sort starts, reducing the risk of frequent small
 // SST imports when the local disk has little free space.
-func CheckLocalSortFreeDisk(execID string, currentTaskRuntimeSlots int) error {
+// If the ingest temp directory is missing, this function creates it.
+// Failures to create the directory or measure filesystem size are returned as
+// plain errors so DXF can retry them from StepExecutor.Init. Confirmed
+// insufficient space is returned as ErrIngestCheckEnvFailed and is fatal.
+func CheckLocalSortDiskSpace(execID string, currentTaskRuntimeSlots int) error {
+	failpoint.Inject("mockLocalSortDiskSpaceProbeFailed", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("mock local sort disk probe failed"))
+	})
+	failpoint.Inject("mockLocalSortDiskSpaceInsufficient", func(_ failpoint.Value) {
+		failpoint.Return(dbterror.ErrIngestCheckEnvFailed.FastGenByArgs("mock insufficient local sort disk space"))
+	})
 	sortPath, err := GenIngestTempDataDir()
 	if err != nil {
-		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
+		return errors.Trace(err)
 	}
 	sz, err := lcom.GetStorageSize(sortPath)
 	if err != nil {
-		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
+		return errors.Trace(err)
 	}
 
-	return checkLocalSortFreeDisk(localSortFreeDiskCheck{
+	err = checkLocalSortDiskSpace(localSortDiskSpaceCheck{
 		execID:                  execID,
 		sortPath:                sortPath,
 		availableBytes:          sz.Available,
 		totalCapacityBytes:      sz.Capacity,
 		currentTaskRuntimeSlots: currentTaskRuntimeSlots,
 	})
+	if err != nil && runtime.GOOS == "darwin" && dbterror.ErrIngestCheckEnvFailed.Equal(err) {
+		// darwin's disk is too expensive and we only use it in the development environment. so we ignore the error.
+		return nil
+	}
+	return err
 }
 
-type localSortFreeDiskCheck struct {
+type localSortDiskSpaceCheck struct {
 	execID                  string
 	sortPath                string
 	availableBytes          uint64
@@ -239,23 +255,23 @@ type localSortFreeDiskCheck struct {
 	currentTaskRuntimeSlots int
 }
 
-func checkLocalSortFreeDisk(p localSortFreeDiskCheck) error {
-	// Cap the estimate at tidb_ddl_disk_quota because exceeding the quota
+func checkLocalSortDiskSpace(p localSortDiskSpaceCheck) error {
+	// Cap the headroom at tidb_ddl_disk_quota because exceeding the quota
 	// triggers an import that releases local disk space.
-	currentTaskEstimatedGrowthBytes := min(
-		uint64(p.currentTaskRuntimeSlots)*localSortBytesPerSlot,
+	currentTaskHeadroomBytes := min(
+		uint64(p.currentTaskRuntimeSlots)*localSortHeadroomBytesPerSlot,
 		vardef.DDLDiskQuota.Load(),
 	)
-	freeThresholdBytes := reservedCapacityBytes(p.totalCapacityBytes) + currentTaskEstimatedGrowthBytes
+	freeThresholdBytes := minFreeDiskBytes(p.totalCapacityBytes) + currentTaskHeadroomBytes
 	if p.availableBytes > freeThresholdBytes {
-		logutil.DDLIngestLogger().Info("local sort free disk check passed",
+		logutil.DDLIngestLogger().Info("local sort disk space check passed",
 			zap.Uint64("freeDiskThresholdBytes", freeThresholdBytes),
 			zap.Uint64("availableBytes", p.availableBytes),
 			zap.String("sortPath", p.sortPath),
 			zap.Uint64("totalCapacityBytes", p.totalCapacityBytes),
 			zap.Int("currentTaskRuntimeSlots", p.currentTaskRuntimeSlots),
-			zap.Uint64("currentTaskEstimatedGrowthBytes", currentTaskEstimatedGrowthBytes),
-			zap.Uint64("localSortBytesPerSlot", localSortBytesPerSlot))
+			zap.Uint64("currentTaskHeadroomBytes", currentTaskHeadroomBytes),
+			zap.Uint64("localSortHeadroomBytesPerSlot", localSortHeadroomBytesPerSlot))
 		return nil
 	}
 
