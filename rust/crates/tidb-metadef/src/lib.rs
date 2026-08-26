@@ -19,6 +19,8 @@ pub mod bootstrap_tables;
 pub mod db;
 pub mod system;
 pub mod system_tables_def;
+#[cfg(test)]
+mod tests_metadef;
 
 pub use bootstrap_tables::{BootstrapTable, BOOTSTRAP_TABLES};
 pub use db::{
