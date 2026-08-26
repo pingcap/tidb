@@ -278,6 +278,68 @@ enum AppendParamError {
     TooLarge,
 }
 
+/// What the per-command `TIKV_QUERY_TRACE` report carries after the kind: a
+/// statement fingerprint naming the actual SQL. Kind alone cannot say which
+/// of a session's statements owns a tail latency, which is exactly what the
+/// mixed-workload slow-command attribution needs.
+enum CommandFingerprint {
+    /// Kind only -- tracing disabled (the quiet path stays allocation-free)
+    /// or no SQL text is decodable for the command.
+    Kind(&'static str),
+    /// Kind plus the statement's SQL head.
+    Sql(&'static str, String),
+}
+
+/// The first 120 characters of `sql` with control characters flattened to
+/// spaces: enough to name a bank/TPCC statement, short enough that one slow
+/// report stays one greppable line even when the client sent a wide payload.
+fn trace_sql_head(sql: &str) -> String {
+    sql.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(120)
+        .collect()
+}
+
+fn trace_command_kind(command: &Command) -> &'static str {
+    match command {
+        Command::Query(_) => "query",
+        Command::StmtExecute(_) => "stmt_execute",
+        Command::StmtPrepare(_) => "stmt_prepare",
+        _ => "other",
+    }
+}
+
+/// Builds the fingerprint for one decoded command. A COM_QUERY names itself;
+/// a COM_STMT_EXECUTE names the prepare-time SQL recorded for its handle in
+/// `prepared_sql`. Handles are monotonic per connection and never reused, so
+/// entries never collide and stale entries stay attributable.
+fn command_fingerprint(
+    command: &Command,
+    prepared_sql: &HashMap<u32, String>,
+    enabled: bool,
+) -> CommandFingerprint {
+    if !enabled {
+        return CommandFingerprint::Kind(trace_command_kind(command));
+    }
+    match command {
+        Command::Query(bytes) => {
+            let head = trace_sql_head(&String::from_utf8_lossy(bytes));
+            CommandFingerprint::Sql("query", format!("sql={head}"))
+        }
+        Command::StmtExecute(bytes) => match prepared_statement_id(bytes)
+            .ok()
+            .and_then(|id| prepared_sql.get(&id))
+        {
+            Some(sql) => CommandFingerprint::Sql(
+                "stmt_execute",
+                format!("sql={}", trace_sql_head(sql)),
+            ),
+            None => CommandFingerprint::Sql("stmt_execute", "sql=?".to_owned()),
+        },
+        _ => CommandFingerprint::Kind(trace_command_kind(command)),
+    }
+}
+
 struct PreparedStatementRegistry {
     next_id: Option<u32>,
     statements: HashMap<u32, ConnectionPreparedStatement>,
@@ -1131,7 +1193,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     };
     let mut queries = 0_u64;
     let mut prepared = PreparedStatementRegistry::default();
-    let mut last_command: Option<(std::time::Instant, &'static str)> = None;
+    // `TIKV_QUERY_TRACE`: read once per connection; every capture below is
+    // skipped when it is off, so the quiet path keeps today's exact shape.
+    let query_trace_enabled = std::env::var_os("TIKV_QUERY_TRACE").is_some();
+    // Prepared-handle -> prepare-time SQL head. Populated only under tracing.
+    let mut prepared_sql: HashMap<u32, String> = HashMap::new();
+    let mut last_command: Option<(std::time::Instant, CommandFingerprint)> = None;
     loop {
         // A `KILL` that arrived while the previous command ran ends the
         // connection here, before it serves another one.
@@ -1216,20 +1283,31 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             .map(|active| cancellation.install(active));
         // `TIKV_QUERY_TRACE`: report the previous command's full server-side
         // duration when its successor arrives (client-observed latency proxy).
-        if let Some((started, kind)) = last_command.take() {
+        // The report names the statement (SQL head) so slow commands can be
+        // attributed without replaying the client's parameter stream.
+        if let Some((started, fingerprint)) = last_command.take() {
             let elapsed = started.elapsed();
             if elapsed.as_millis() >= 20 {
-                eprintln!("[QTRACE-SQL] {}ms kind={}", elapsed.as_millis(), kind);
+                match &fingerprint {
+                    CommandFingerprint::Kind(kind) => eprintln!(
+                        "[QTRACE-SQL] {}ms conn={} kind={}",
+                        elapsed.as_millis(),
+                        connection_id,
+                        kind
+                    ),
+                    CommandFingerprint::Sql(kind, sql) => eprintln!(
+                        "[QTRACE-SQL] {}ms conn={} kind={} {}",
+                        elapsed.as_millis(),
+                        connection_id,
+                        kind,
+                        sql
+                    ),
+                }
             }
         }
         last_command = Some((
             std::time::Instant::now(),
-            match command {
-                Command::Query(_) => "query",
-                Command::StmtExecute(_) => "stmt_execute",
-                Command::StmtPrepare(_) => "stmt_prepare",
-                _ => "other",
-            },
+            command_fingerprint(&command, &prepared_sql, query_trace_enabled),
         ));
         match command {
             Command::Quit => {
@@ -1506,6 +1584,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         continue;
                     }
                 };
+                if query_trace_enabled {
+                    prepared_sql.insert(statement_id, trace_sql_head(sql));
+                }
                 let parameter_columns = vec![prepared_parameter_column(); parameter_count];
                 // Go `conn_stmt.go:111`/`:129` frames the prepare metadata
                 // with `cc.writeEOF(ctx, cc.ctx.Status())` -- the live word,
