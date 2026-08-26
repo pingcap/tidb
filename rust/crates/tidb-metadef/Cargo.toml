@@ -10,5 +10,13 @@ description = "TiDB meta/metadef: system database/table identifiers and DDL (Rus
 [dependencies]
 tidb-mysql = { path = "../tidb-mysql" }
 
+[dev-dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-error = { path = "../tidb-error" }
+tidb-model = { path = "../tidb-model" }
+tidb-parser = { path = "../tidb-parser" }
+serde_json = { workspace = true }
+
 [lints]
 workspace = true

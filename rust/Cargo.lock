@@ -3466,7 +3466,13 @@ dependencies = [
 name = "tidb-metadef"
 version = "0.0.0"
 dependencies = [
+ "serde_json",
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-error",
+ "tidb-model",
  "tidb-mysql",
+ "tidb-parser",
 ]
 
 [[package]]
