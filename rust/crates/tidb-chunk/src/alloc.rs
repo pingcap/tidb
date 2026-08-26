@@ -763,6 +763,29 @@ mod tests {
         restore_defaults();
     }
 
+    /// Go `TestColumnAllocatorCheck` (`pkg/util/chunk/alloc_test.go:276`):
+    /// with cache bounds (10, 20), four allocations of a (Float, Datetime)
+    /// chunk and one reset leave exactly four cached columns per fixed type
+    /// size -- Float's 4-byte pool and Datetime's 8-byte pool each hold the
+    /// full count, proving per-type accounting rather than one shared pool.
+    #[test]
+    fn go_test_column_allocator_check() {
+        let _guard = CONFIG_TEST_LOCK.lock().expect("config test lock");
+        init_chunk_alloc_size(10, 20);
+        let field_types = vec![
+            FieldType::new(FieldTypeCode::Float),
+            FieldType::new(FieldTypeCode::Datetime),
+        ];
+        let allocator = new_allocator();
+        for _ in 0..4 {
+            drop(allocator.alloc(&field_types, 5, 10));
+        }
+        allocator.reset();
+        assert_eq!(allocator.cached_columns(4), 4); // Go getFixedLen(TypeFloat)
+        assert_eq!(allocator.cached_columns(8), 4); // Go getFixedLen(TypeDatetime)
+        restore_defaults();
+    }
+
     /// Go issue #31981 and `TestColumnAllocatorCheck`.
     #[test]
     fn allocator_rejects_borrowed_and_retyped_columns() {

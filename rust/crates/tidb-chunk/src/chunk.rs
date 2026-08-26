@@ -1059,6 +1059,52 @@ mod tests {
         ]
     }
 
+    /// Go `TestToString` (`pkg/util/chunk/chunk_test.go:711`): two rows over
+    /// float/double/string/date/longlong render as one `"v, v, ..."` line per
+    /// row; zero-date and zero-datetime cells keep their kind-specific
+    /// rendering (`0000-00-00` vs `0000-00-00 00:00:00`).
+    #[test]
+    fn go_test_to_string() {
+        use tidb_datatype::{CoreTime, TimeType};
+        let field_types = vec![
+            FieldType::new(FieldTypeCode::Float),
+            FieldType::new(FieldTypeCode::Double),
+            FieldType::new(FieldTypeCode::VarString),
+            FieldType::new(FieldTypeCode::Date),
+            FieldType::new(FieldTypeCode::LongLong),
+        ];
+        let zero_date = Time::new(
+            CoreTime::from_date(0, 0, 0, 0, 0, 0, 0),
+            TimeType::Date,
+            0,
+        )
+        .expect("the zero date is representable");
+        let zero_datetime = Time::new(
+            CoreTime::from_date(0, 0, 0, 0, 0, 0, 0),
+            TimeType::DateTime,
+            0,
+        )
+        .expect("the zero datetime is representable");
+
+        let mut chk = Chunk::new_with_capacity(&field_types, 2);
+        chk.append_float32(0, 1.0);
+        chk.append_float64(1, 1.0);
+        chk.append_string(2, "1");
+        chk.append_time(3, zero_date);
+        chk.append_int64(4, 1);
+
+        chk.append_float32(0, 2.0);
+        chk.append_float64(1, 2.0);
+        chk.append_string(2, "2");
+        chk.append_time(3, zero_datetime);
+        chk.append_int64(4, 2);
+
+        assert_eq!(
+            chk.to_string(&field_types).as_bytes(),
+            &b"1, 1, 1, 0000-00-00, 1\n2, 2, 2, 0000-00-00 00:00:00, 2\n"[..]
+        );
+    }
+
     /// Go's own `Chunk.MemoryUsage` for the same chunks, captured from
     /// `pkg/util/chunk` in-process (`chunk.New(fields, cap, 1024)`):
     ///
