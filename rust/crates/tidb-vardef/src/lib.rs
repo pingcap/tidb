@@ -82,4 +82,6 @@ pub mod modes;
 mod tests_sysvar_port;
 #[cfg(test)]
 mod tests_vardef_port;
+#[cfg(test)]
+mod tests_variable_p2_port;
 pub mod tidb_vars;
