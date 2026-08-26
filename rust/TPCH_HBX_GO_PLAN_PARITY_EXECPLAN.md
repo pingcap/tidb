@@ -1006,18 +1006,18 @@ open. This remains WIP because the machine has no `go` executable, so
 body line as required.
 
 Revision note, 2026-08-26 (exact committed runtime receipt): rebuilt the
-release binary from local commit `d5c5ded896e9ca028b78e45b459b45c65256161b`
+release binary from local commit `0603ea3537432f15eb7fddd2c240643561f7ffad`
 and confirmed that hash at Rust startup on `127.0.0.1:14019`, using the
 Go-aligned default lookup worker concurrency (`5`). The final deterministic 1G
 `hbx_web3_1g` comparison receipts are
-`/private/tmp/hbx-1g-20260825/compare-d5c5-final-20260826.json` and
-`/private/tmp/hbx-1g-20260825/bench-d5c5-final-20260826.json`. All four
+`/private/tmp/hbx-1g-20260825/compare-0603-final-20260826.json` and
+`/private/tmp/hbx-1g-20260825/bench-0603-final-20260826.json`. All four
 normalized plans and result hashes match; q1/q2/flex/swap each return 100 rows
 with hashes `0c488295...`, `45f8be11...`, `45f8be11...`, and `bf2ce599...`.
 The 100-row batch INSERT returns 100 rows and sum
 `5050.000000000000000000` on both endpoints. Alternating one-client medians
-are Go/Rust q1 `9.341/10.143 ms` (`1.086x`), q2 `7.904/9.634 ms` (`1.219x`),
-flex `8.573/9.782 ms` (`1.141x`), swap `12.654/22.084 ms` (`1.745x`), and
-batch `6.189/7.383 ms` (`1.193x`). Correctness is green, while the strict
+are Go/Rust q1 `9.477/10.307 ms` (`1.088x`), q2 `8.062/9.710 ms` (`1.204x`),
+flex `8.660/10.051 ms` (`1.161x`), swap `13.481/22.169 ms` (`1.644x`), and
+batch `6.237/7.452 ms` (`1.195x`). Correctness is green, while the strict
 single-concurrency performance no-regression gate remains open. The commit
 message includes the required `Go code:` source references.
