@@ -34,6 +34,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal"
@@ -1129,7 +1131,14 @@ func TestConnDMLExecutionTimeout(t *testing.T) {
 	defer srv.Close()
 	go dom.ExpensiveQueryHandle().SetSessionManager(srv).Run()
 
-	runBlockedPrewrite := func(t *testing.T, conn MockConn, sql string, timeout uint64) error {
+	runBlockedRPC := func(
+		t *testing.T,
+		conn MockConn,
+		sql string,
+		target tikvrpc.CmdType,
+		timeout uint64,
+		rpcResultAfterTimeout func(*tikvrpc.Response, error) (*tikvrpc.Response, error),
+	) error {
 		t.Helper()
 		require.NoError(t, failpoint.Enable("tikvclient/onRPCFinishedHook", "return"))
 		defer func() {
@@ -1145,14 +1154,20 @@ func TestConnDMLExecutionTimeout(t *testing.T) {
 		defer releaseHook()
 
 		hook := func(req *tikvrpc.Request, resp *tikvrpc.Response, rpcErr error) (*tikvrpc.Response, error) {
-			if req.Type != tikvrpc.CmdPrewrite {
+			if req.Type != target {
+				return resp, rpcErr
+			}
+			// Only the primary commit determines whether a classic 2PC transaction's
+			// result is known. Do not let a future multi-key test block on a secondary.
+			if target == tikvrpc.CmdCommit && req.Commit().GetCommitRole() != kvrpcpb.CommitRole_Primary {
 				return resp, rpcErr
 			}
 			enteredOnce.Do(func() { close(entered) })
 			<-release
-			return nil, context.Canceled
+			return rpcResultAfterTimeout(resp, rpcErr)
 		}
-		ctx := context.WithValue(context.Background(), "onRPCFinishedHook", hook)
+		ctx, cancel := context.WithCancel(context.WithValue(context.Background(), "onRPCFinishedHook", hook))
+		defer cancel()
 		errCh := make(chan error, 1)
 		go func() {
 			errCh <- conn.Dispatch(ctx, append([]byte{mysql.ComQuery}, sql...))
@@ -1161,7 +1176,7 @@ func TestConnDMLExecutionTimeout(t *testing.T) {
 		select {
 		case <-entered:
 		case <-time.After(5 * time.Second):
-			t.Fatal("prewrite RPC was not reached")
+			t.Fatalf("%s RPC was not reached", target)
 		}
 		require.Eventually(t, func() bool {
 			pi := conn.Context().ShowProcess()
@@ -1169,6 +1184,10 @@ func TestConnDMLExecutionTimeout(t *testing.T) {
 				conn.Context().GetSessionVars().SQLKiller.GetKillSignal() == sqlkiller.MaxExecTimeExceeded
 		}, 5*time.Second, 10*time.Millisecond)
 
+		// killQuery sets the SQLKiller signal before canceling the dispatch context.
+		// Cancel the parent explicitly so the hook result is observed with a canceled
+		// request context even if the test sees the signal in that narrow interval.
+		cancel()
 		releaseHook()
 		select {
 		case err := <-errCh:
@@ -1177,6 +1196,12 @@ func TestConnDMLExecutionTimeout(t *testing.T) {
 			t.Fatal("statement did not return after releasing the RPC hook")
 		}
 		return nil
+	}
+	returnCanceled := func(*tikvrpc.Response, error) (*tikvrpc.Response, error) {
+		return nil, context.Canceled
+	}
+	returnOriginal := func(resp *tikvrpc.Response, rpcErr error) (*tikvrpc.Response, error) {
+		return resp, rpcErr
 	}
 
 	configureConn := func(t *testing.T) (MockConn, *testkit.TestKit) {
@@ -1193,7 +1218,7 @@ func TestConnDMLExecutionTimeout(t *testing.T) {
 	t.Run("autocommit DML", func(t *testing.T) {
 		conn, _ := configureConn(t)
 		defer conn.Close()
-		err := runBlockedPrewrite(t, conn, "insert into dml_timeout values (1)", dmlTimeout)
+		err := runBlockedRPC(t, conn, "insert into dml_timeout values (1)", tikvrpc.CmdPrewrite, dmlTimeout, returnCanceled)
 		require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err), "%v", err)
 		require.NoError(t, conn.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select 1"...)))
 	})
@@ -1203,7 +1228,7 @@ func TestConnDMLExecutionTimeout(t *testing.T) {
 		defer conn.Close()
 		tk.MustExec("begin optimistic")
 		tk.MustExec("insert into dml_timeout values (2)")
-		err := runBlockedPrewrite(t, conn, "commit", dmlTimeout)
+		err := runBlockedRPC(t, conn, "commit", tikvrpc.CmdPrewrite, dmlTimeout, returnCanceled)
 		require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err), "%v", err)
 		require.NoError(t, conn.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select 1"...)))
 	})
@@ -1214,9 +1239,28 @@ func TestConnDMLExecutionTimeout(t *testing.T) {
 		tk.MustExec("prepare prepared_commit from 'commit'")
 		tk.MustExec("begin optimistic")
 		tk.MustExec("insert into dml_timeout values (3)")
-		err := runBlockedPrewrite(t, conn, "execute prepared_commit", dmlTimeout)
+		err := runBlockedRPC(t, conn, "execute prepared_commit", tikvrpc.CmdPrewrite, dmlTimeout, returnCanceled)
 		require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err), "%v", err)
 		require.NoError(t, conn.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select 1"...)))
+	})
+
+	t.Run("autocommit commit succeeds after timeout", func(t *testing.T) {
+		conn, _ := configureConn(t)
+		defer conn.Close()
+		err := runBlockedRPC(t, conn, "insert into dml_timeout values (4)", tikvrpc.CmdCommit, dmlTimeout, returnOriginal)
+		require.NoError(t, err)
+		setup.MustQuery("select id from dml_timeout where id = 4").Check(testkit.Rows("4"))
+		require.NoError(t, conn.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select 1"...)))
+	})
+
+	t.Run("explicit commit result undetermined after timeout", func(t *testing.T) {
+		conn, tk := configureConn(t)
+		defer conn.Close()
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into dml_timeout values (5)")
+		err := runBlockedRPC(t, conn, "commit", tikvrpc.CmdCommit, dmlTimeout, returnCanceled)
+		require.True(t, terror.ErrResultUndetermined.Equal(err), "%v", err)
+		setup.MustQuery("select id from dml_timeout where id = 5").Check(testkit.Rows("5"))
 	})
 }
 
