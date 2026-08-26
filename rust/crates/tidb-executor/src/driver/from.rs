@@ -796,6 +796,86 @@ pub(crate) fn build_from(
     result
 }
 
+/// A cost-only build whose only surviving product is the subtree's candidate
+/// receipt: Go answers such a request from `BaseLogicalPlan.taskMap` when the
+/// same `(plan, property)` was already priced -- `GetTask` before planning,
+/// `StoreTask` after -- so re-asking never re-explores. This tier rebuilds
+/// executors instead of planning logical nodes, so the cached value is the
+/// `Delivered.candidate`; the executor a fresh build would construct is
+/// dropped by every caller of this helper anyway.
+fn build_candidate_cached(
+    node: &JoinNode,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    demand: &crate::driver::leaf_demand::FromDemand<'_>,
+    required: &tidb_planner::physical_property::PhysicalProperty,
+) -> Result<Option<tidb_planner::candidate_cost::Candidate>, DriverError> {
+    // The key is Go's `<planIDsHash><prop.HashCode()>` plus the two inputs a
+    // request here can vary independently of its node: the scan cap and the
+    // partition fan-out split. Every other `FromDemand` field is pinned by the
+    // statement plus the parent join node itself -- a `JoinNode` has exactly
+    // one parent, so all requests for it carry identical pushed predicates,
+    // column demands and hints.
+    let key: candidate_memo::Key = (
+        std::ptr::from_ref(node) as usize,
+        candidate_memo::fingerprint(required),
+        scan_cap_of(demand),
+        demand.partition_fan_out,
+    );
+    // The build reads EXTERNAL mutable state -- the leaf-filter consumption
+    // ledger the speculative passes restore around themselves -- and its
+    // column demands arrive as per-pass allocations whose CONTENT, not
+    // address, decides what a subtree must expose. An entry is therefore only
+    // interchangeable when the requester's fingerprint equals the writer's:
+    // same ledger epoch (the counter moves on every consume or restore), same
+    // statement-level demand objects, same output-column requirement by value.
+    let request: candidate_memo::Request = (
+        demand
+            .rows
+            .map(crate::driver::join_reorder::RowSource::ledger_epoch),
+        demand
+            .rows
+            .map(crate::driver::join_reorder::RowSource::rows_epoch),
+        demand.offered.as_ptr() as usize,
+        demand.pushdown.map(|p| std::ptr::from_ref(p) as usize),
+        demand.columns.map(|c| std::ptr::from_ref(c) as usize),
+        demand.all_names.map(|c| std::ptr::from_ref(c) as usize),
+        demand.rows.map(|r| std::ptr::from_ref(r) as usize),
+        demand.join_hints.map(|h| std::ptr::from_ref(h) as usize),
+        demand.physical_source_names,
+        demand.plan_columns.as_ptr() as usize,
+        demand.plan_columns.len(),
+        demand.output_columns.cloned(),
+    );
+    if let Some((saved_request, cached)) = candidate_memo::get(&key) {
+        if saved_request == request {
+            return Ok(cached);
+        }
+    }
+    let (_, _, delivered) = build_from(
+        node,
+        catalog,
+        current_db,
+        ctx,
+        None,
+        *demand,
+        required,
+        None,
+    )?;
+    candidate_memo::put(key, request, delivered.candidate.clone());
+    Ok(delivered.candidate)
+}
+
+/// A speculative candidate build never carries a leaf scan cap: the cap rides
+/// the preserved side of an outer join and this pass prices unordered
+/// alternatives for the whole subtree. Read through the demand so the memo
+/// key stays honest if that ever changes.
+fn scan_cap_of(demand: &crate::driver::leaf_demand::FromDemand<'_>) -> Option<u64> {
+    let _ = demand;
+    None
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_from_inner(
     node: &JoinNode,
@@ -5101,19 +5181,15 @@ fn build_join_with_choice(
                 } else {
                     index_join_child_props(required, sides.as_ref().map(|(left, _)| left.width))
                 };
-            let mut alternative_left_trace = plan_only.then(PlanTrace::planning);
-            let (_, _, left) = build_from(
+            let left = build_candidate_cached(
                 &source_join.left,
                 catalog,
                 current_db,
                 ctx,
-                alternative_left_trace.as_mut(),
-                child_demand,
+                &child_demand,
                 &alternative_left_required,
-                None,
             )?;
-            let mut alternative_right_trace = plan_only.then(PlanTrace::planning);
-            let (_, _, right) = build_from(
+            let right = build_candidate_cached(
                 source_join
                     .right
                     .as_ref()
@@ -5121,16 +5197,14 @@ fn build_join_with_choice(
                 catalog,
                 current_db,
                 ctx,
-                alternative_right_trace.as_mut(),
-                child_demand,
+                &child_demand,
                 &alternative_right_required,
-                None,
             )?;
             if let (Some(rows), Some(checkpoint)) = (demand.rows, consumption_after_initial.clone())
             {
                 rows.restore_filter_consumption(checkpoint);
             }
-            (left.candidate, right.candidate)
+            (left, right)
         } else {
             (
                 left_delivered.candidate.clone(),
@@ -7374,5 +7448,114 @@ pub(crate) mod composite_inner_memo {
     /// Records what one rebuild produced, under the key it was requested by.
     pub fn put(key: Key, candidate: Option<Candidate>) {
         ENTRIES.with(|entries| entries.borrow_mut().insert(key, candidate));
+    }
+}
+
+/// The statement-scoped cache behind [`build_candidate_cached`]. Go stores a
+/// finished task per `(logical plan, required property)` in
+/// `BaseLogicalPlan.taskMap` and every later `findBestTask` with the same key
+/// returns it; without that sharing, enumerating a JOB-shaped star re-explores
+/// each subtree once per ancestor decision and the count grows as 2^joins
+/// (job 29a: 81,460 join-site decisions for one EXPLAIN). Entries are pure
+/// with respect to their key within one statement -- catalog, statistics,
+/// pushed filters and session variables are fixed -- so they live exactly one
+/// top-level `build_from`, the same lifetime rule [`composite_inner_memo`]
+/// runs under.
+pub(crate) mod candidate_memo {
+    use std::cell::{Cell, RefCell};
+    use std::collections::{BTreeMap, HashMap};
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
+    use tidb_ast::Expr;
+    use tidb_planner::candidate_cost::Candidate;
+    use tidb_planner::physical_property::PhysicalProperty;
+
+    /// One priced request: which subtree, under which required property
+    /// (Go's `prop.HashCode()`), with which scan cap and partition split.
+    pub type Key = (usize, u64, Option<u64>, bool);
+
+    /// Go `PhysicalProperty.HashCode`: the fields that decide a plan's shape,
+    /// folded into one discriminator. Two properties with equal fingerprints
+    /// ask the subtree the same question.
+    pub fn fingerprint(prop: &PhysicalProperty) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        prop.sort_items.len().hash(&mut hasher);
+        for item in &prop.sort_items {
+            item.col.hash(&mut hasher);
+            item.desc.hash(&mut hasher);
+        }
+        std::mem::discriminant(&prop.task_tp).hash(&mut hasher);
+        prop.expected_cnt.to_bits().hash(&mut hasher);
+        prop.can_add_enforcer.hash(&mut hasher);
+        prop.sort_items_for_partition.len().hash(&mut hasher);
+        for item in &prop.sort_items_for_partition {
+            item.col.hash(&mut hasher);
+            item.desc.hash(&mut hasher);
+        }
+        prop.cte_producer_status.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Everything besides [`Key`] that one request reads which can differ
+    /// between two passes over the same node: the filter-ledger EPOCH (the
+    /// counter that moves on every consume or restore), the identity of the
+    /// statement-level demand objects, and the output-column requirement BY
+    /// VALUE -- `LeafDemand` allocations are fresh every pass, so their
+    /// addresses churn while their content stays equal.
+    pub type Request = (
+        Option<u64>,
+        Option<u64>,
+        usize,
+        Option<usize>,
+        Option<usize>,
+        Option<usize>,
+        Option<usize>,
+        Option<usize>,
+        bool,
+        usize,
+        usize,
+        Option<crate::driver::leaf_demand::LeafDemand>,
+    );
+
+    thread_local! {
+        static ENTRIES: RefCell<HashMap<Key, (Request, Option<Candidate>)>> =
+            RefCell::new(HashMap::new());
+        /// Nesting level of `build_from`, to recognise the one top-level call
+        /// whose boundaries delimit a statement's tree.
+        static DEPTH: Cell<u32> = const { Cell::new(0) };
+    }
+
+    /// Drops every entry at a top-level `build_from` boundary; node pointers
+    /// are stable only within one statement's tree.
+    pub fn enter_statement() -> bool {
+        DEPTH.with(|depth| {
+            let nested = depth.get() > 0;
+            depth.set(depth.get() + 1);
+            if !nested {
+                ENTRIES.with(|entries| entries.borrow_mut().clear());
+            }
+            !nested
+        })
+    }
+
+    /// Pops the nesting level; the caller passes [`enter_statement`]'s answer.
+    pub fn exit_statement(top: bool) {
+        if top {
+            ENTRIES.with(|entries| entries.borrow_mut().clear());
+        }
+        DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+
+    /// Returns the cached candidate for `key` together with the ledger state
+    /// it was built under, if a previous build of the same request exists.
+    #[allow(clippy::type_complexity)]
+    pub fn get(key: &Key) -> Option<(Request, Option<Candidate>)> {
+        ENTRIES.with(|entries| entries.borrow().get(key).cloned())
+    }
+
+    /// Records what one build produced, under the key and ledger state it was
+    /// requested by.
+    pub fn put(key: Key, request: Request, candidate: Option<Candidate>) {
+        ENTRIES.with(|entries| entries.borrow_mut().insert(key, (request, candidate)));
     }
 }

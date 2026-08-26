@@ -2530,9 +2530,17 @@ pub(crate) struct RowSource {
 #[derive(Default)]
 struct RowRuntimeState {
     consumed_filter_leaves: BTreeMap<usize, (Vec<Expr>, Vec<Expr>)>,
+    /// Bumped on every mutation of `consumed_filter_leaves`, so callers can
+    /// recognise "the ledger has not changed since I last looked" without
+    /// snapshotting its contents. Restores count as mutations even when they
+    /// write back equal contents, which only ever costs a cache miss.
+    ledger_epoch: u64,
     /// Logical row counts keyed by the complete shape of each current join
     /// subtree. Logical optimization fills this before physical search.
     join_subtree_rows: BTreeMap<Vec<usize>, f64>,
+    /// Bumped whenever `join_subtree_rows` is refilled, for the same purpose
+    /// as [`Self::ledger_epoch`]... its sibling on this map.
+    rows_epoch: u64,
 }
 
 struct WherePart {
@@ -3495,13 +3503,24 @@ impl RowSource {
         self.state.borrow().consumed_filter_leaves.clone()
     }
 
+    /// One number that changes whenever the leaf-filter ledger changes. A
+    /// speculative pass that needs "did the consumed/residual set move?"
+    /// reads this instead of cloning the whole ledger.
+    pub(crate) fn ledger_epoch(&self) -> u64 {
+        self.state.borrow().ledger_epoch
+    }
+
     /// Restores a checkpoint returned by
     /// [`Self::filter_consumption_checkpoint`].
     pub(crate) fn restore_filter_consumption(
         &self,
         checkpoint: BTreeMap<usize, (Vec<Expr>, Vec<Expr>)>,
     ) {
-        self.state.borrow_mut().consumed_filter_leaves = checkpoint;
+        let mut state = self.state.borrow_mut();
+        if state.consumed_filter_leaves != checkpoint {
+            state.consumed_filter_leaves = checkpoint;
+            state.ledger_epoch += 1;
+        }
     }
 
     /// Go's `LogicalPlan.StatsInfo().RowCount` for this complete `FROM`
@@ -3566,8 +3585,18 @@ impl RowSource {
         };
         let mut rows = BTreeMap::new();
         record(self, plan, &derived, &mut rows)?;
-        self.state.borrow_mut().join_subtree_rows = rows;
+        let mut state = self.state.borrow_mut();
+        if state.join_subtree_rows != rows {
+            state.rows_epoch += 1;
+            state.join_subtree_rows = rows;
+        }
         Some(root_rows)
+    }
+
+    /// The [`Self::join_subtree_rows`] generation: moves whenever the exact
+    /// per-shape row estimates are refilled. See [`Self::ledger_epoch`].
+    pub(crate) fn rows_epoch(&self) -> u64 {
+        self.state.borrow().rows_epoch
     }
 
     /// Whether installing every leaf-local filter and every join equality
@@ -3585,8 +3614,11 @@ impl RowSource {
             .enumerate()
             .find(|(_, leaf)| leaf.visible.eq_ignore_ascii_case(visible))
         {
-            self.state
-                .borrow_mut()
+            let mut state = self.state.borrow_mut();
+            if state.consumed_filter_leaves.get(&leaf) != Some(&(Vec::new(), Vec::new())) {
+                state.ledger_epoch += 1;
+            }
+            state
                 .consumed_filter_leaves
                 .insert(leaf, (Vec::new(), Vec::new()));
         }
@@ -3606,8 +3638,17 @@ impl RowSource {
             .enumerate()
             .find(|(_, leaf)| leaf.visible.eq_ignore_ascii_case(visible))
         {
-            self.state
-                .borrow_mut()
+            let mut state = self.state.borrow_mut();
+            let changed = state
+                .consumed_filter_leaves
+                .get(&leaf)
+                .map_or(true, |(existing_residuals, existing_traced)| {
+                    *existing_residuals != residuals || *existing_traced != traced_residuals
+                });
+            if changed {
+                state.ledger_epoch += 1;
+            }
+            state
                 .consumed_filter_leaves
                 .insert(leaf, (residuals, traced_residuals));
         }

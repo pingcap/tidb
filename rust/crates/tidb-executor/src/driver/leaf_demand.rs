@@ -195,7 +195,7 @@ pub(crate) const EXTRA_HANDLE_NAME: &str = "_tidb_rowid";
 
 /// The column names a statement reads, keyed the way a `FROM` leaf can be
 /// named. See the module doc for the rules and for why they may over-count.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct LeafDemand {
     /// A bare `*`, or a construct this walk cannot see through: every leaf
     /// needs every column.
