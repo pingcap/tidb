@@ -1208,7 +1208,7 @@ func TestUpgradeVersion280MaskingPolicy(t *testing.T) {
 	}
 }
 
-func TestUpgradeVersion284MaterializedViewBootstrap(t *testing.T) {
+func TestUpgradeVersion285MaterializedViewBootstrap(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
