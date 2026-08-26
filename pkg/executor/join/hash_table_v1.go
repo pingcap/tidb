@@ -17,6 +17,7 @@ package join
 import (
 	"hash"
 	"hash/fnv"
+	"math"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -530,6 +531,21 @@ func (c *hashRowContainer) GetRow(ptr chunk.RowPtr) (chunk.Row, error) {
 // Len returns number of records in the hash table.
 func (c *hashRowContainer) Len() uint64 {
 	return c.hashTable.Len()
+}
+
+// hashStateRows returns rows admitted to completed lookup structures. Rows
+// sharing a key count separately; ordinary null-key rows rejected from the
+// hash table do not count, while NAAJ rows retained in its null bucket do.
+func (c *hashRowContainer) hashStateRows() uint64 {
+	rows := c.Len()
+	if c.hashNANullBucket == nil {
+		return rows
+	}
+	nullRows := uint64(len(c.hashNANullBucket.entries))
+	if nullRows > math.MaxUint64-rows {
+		return math.MaxUint64
+	}
+	return rows + nullRows
 }
 
 func (c *hashRowContainer) Close() error {

@@ -16,6 +16,7 @@ package execdetails
 
 import (
 	"bytes"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -72,6 +73,8 @@ const (
 	TpRURuntimeStats
 	// TpExplainRURuntimeStats is the tp for ExplainRURuntimeStats
 	TpExplainRURuntimeStats
+	// TpHashStateRuntimeStats is the tp for typed hash-state evidence.
+	TpHashStateRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -80,6 +83,135 @@ type RuntimeStats interface {
 	Merge(RuntimeStats)
 	Clone() RuntimeStats
 	Tp() int
+}
+
+type hashStateRowsState uint32
+
+const (
+	hashStateRowsIncomplete hashStateRowsState = iota
+	hashStateRowsComplete
+	hashStateRowsInvalid
+)
+
+// HashStateRowsSnapshot is a value-only snapshot of hash-backed operator
+// state. Rows counts entries admitted to lookup/group structures. Its state
+// distinguishes an observed zero from partially constructed or invalid
+// evidence across repeated executions without exposing lifecycle counters as
+// consumer API. RuntimeStatsColl's lookup result reports whether evidence is
+// present for the plan ID.
+type HashStateRowsSnapshot struct {
+	Rows  int64
+	state hashStateRowsState
+}
+
+// Complete reports whether every observed execution completed state
+// construction and all row arithmetic remained valid.
+func (s HashStateRowsSnapshot) Complete() bool {
+	return s.state == hashStateRowsComplete && s.Rows >= 0
+}
+
+// Invalid reports whether producer lifecycle or row arithmetic was invalid.
+func (s HashStateRowsSnapshot) Invalid() bool {
+	return s.state == hashStateRowsInvalid || s.Rows < 0
+}
+
+// HashStateRuntimeStats carries one root executor Open's hash-state evidence.
+// It is display-neutral and merges independently from an operator's existing
+// EXPLAIN runtime statistics.
+type HashStateRuntimeStats struct {
+	rows  atomic.Int64
+	state atomic.Uint32
+}
+
+// NewHashStateRuntimeStats begins one hash-state construction lifecycle.
+func NewHashStateRuntimeStats() *HashStateRuntimeStats {
+	return &HashStateRuntimeStats{}
+}
+
+// AddRows records rows admitted to a successfully constructed lookup or group
+// structure. Producers may call it for multiple spill/restore partitions.
+func (s *HashStateRuntimeStats) AddRows(rows uint64) {
+	if rows > math.MaxInt64 {
+		s.Invalidate()
+		return
+	}
+	delta := int64(rows)
+	for {
+		current := s.rows.Load()
+		if current < 0 || delta > math.MaxInt64-current {
+			s.Invalidate()
+			return
+		}
+		if s.rows.CompareAndSwap(current, current+delta) {
+			return
+		}
+	}
+}
+
+// Complete marks the lifecycle complete after every state partition is built.
+// Duplicate completion is invalid.
+func (s *HashStateRuntimeStats) Complete() {
+	if !s.state.CompareAndSwap(uint32(hashStateRowsIncomplete), uint32(hashStateRowsComplete)) {
+		s.Invalidate()
+	}
+}
+
+// Invalidate marks the lifecycle unusable after a producer error.
+func (s *HashStateRuntimeStats) Invalidate() {
+	s.state.Store(uint32(hashStateRowsInvalid))
+}
+
+// HashStateRowsSnapshot returns a scalar copy of the typed evidence.
+func (s *HashStateRuntimeStats) HashStateRowsSnapshot() HashStateRowsSnapshot {
+	// Complete is published after every AddRows call for the execution.
+	state := hashStateRowsState(s.state.Load())
+	return HashStateRowsSnapshot{Rows: s.rows.Load(), state: state}
+}
+
+// String keeps typed evidence out of EXPLAIN runtime-stat rendering.
+func (*HashStateRuntimeStats) String() string { return "" }
+
+// Tp implements RuntimeStats.
+func (*HashStateRuntimeStats) Tp() int { return TpHashStateRuntimeStats }
+
+// Clone implements RuntimeStats.
+func (s *HashStateRuntimeStats) Clone() RuntimeStats {
+	snapshot := s.HashStateRowsSnapshot()
+	cloned := &HashStateRuntimeStats{}
+	cloned.rows.Store(snapshot.Rows)
+	cloned.state.Store(uint32(snapshot.state))
+	return cloned
+}
+
+// Merge implements RuntimeStats.
+func (s *HashStateRuntimeStats) Merge(other RuntimeStats) {
+	if other, ok := other.(*HashStateRuntimeStats); ok {
+		s.merge(other.HashStateRowsSnapshot())
+	}
+}
+
+func (s *HashStateRuntimeStats) merge(snapshot HashStateRowsSnapshot) {
+	if snapshot.Rows >= 0 {
+		s.AddRows(uint64(snapshot.Rows))
+	}
+	for {
+		current := hashStateRowsState(s.state.Load())
+		if current == hashStateRowsInvalid {
+			return
+		}
+		merged := snapshot.state
+		switch {
+		case snapshot.state > hashStateRowsInvalid:
+			merged = hashStateRowsInvalid
+		case current == hashStateRowsIncomplete || snapshot.state == hashStateRowsIncomplete:
+			merged = hashStateRowsIncomplete
+		case current == hashStateRowsComplete && snapshot.state == hashStateRowsComplete:
+			return
+		}
+		if s.state.CompareAndSwap(uint32(current), uint32(merged)) {
+			return
+		}
+	}
 }
 
 type basicCopRuntimeStats struct {
@@ -222,6 +354,12 @@ type CopRuntimeStats struct {
 	timeDetail          util.TimeDetail
 	readPoolTaskDetails *util.PoolTaskDetails
 	storeType           kv.StoreType
+	// summaryRows and summaryCount are a checked evidence path for consumers
+	// that must distinguish missing execution summaries from an observed zero.
+	// The legacy basic stats above remain unchanged for EXPLAIN formatting.
+	summaryRows    int64
+	summaryCount   uint64
+	summaryInvalid bool
 }
 
 // GetActRows return total rows of CopRuntimeStats.
@@ -232,6 +370,25 @@ func (crs *CopRuntimeStats) GetActRows() int64 {
 // GetTasks return total tasks of CopRuntimeStats
 func (crs *CopRuntimeStats) GetTasks() int32 {
 	return int32(crs.stats.procTimes.size)
+}
+
+func (crs *CopRuntimeStats) recordSummaryEvidence(summary *tipb.ExecutorExecutionSummary) {
+	if summary == nil || summary.NumProducedRows == nil {
+		crs.summaryInvalid = true
+		return
+	}
+	rows := summary.GetNumProducedRows()
+	if rows > math.MaxInt64 || crs.summaryCount == math.MaxUint64 {
+		crs.summaryInvalid = true
+		return
+	}
+	rowDelta := int64(rows)
+	if crs.summaryRows < 0 || rowDelta > math.MaxInt64-crs.summaryRows {
+		crs.summaryInvalid = true
+		return
+	}
+	crs.summaryRows += rowDelta
+	crs.summaryCount++
 }
 
 var zeroTimeDetail = util.TimeDetail{}
@@ -462,10 +619,16 @@ func (e *BasicRuntimeStats) GetTime() int64 {
 
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
-	rootStats    map[int]*RootRuntimeStats
-	copStats     map[int]*CopRuntimeStats
-	stmtCopStats StmtCopRuntimeStats
-	mu           sync.Mutex
+	rootStats                  map[int]*RootRuntimeStats
+	copStats                   map[int]*CopRuntimeStats
+	copResponseSummaryExpected map[int]copResponseSummaryExpectation
+	stmtCopStats               StmtCopRuntimeStats
+	mu                         sync.Mutex
+}
+
+type copResponseSummaryExpectation struct {
+	count   uint64
+	invalid bool
 }
 
 // NewRuntimeStatsColl creates new executor collector.
@@ -482,11 +645,15 @@ func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
 		for k := range reuse.copStats {
 			delete(reuse.copStats, k)
 		}
+		for k := range reuse.copResponseSummaryExpected {
+			delete(reuse.copResponseSummaryExpected, k)
+		}
 		return reuse
 	}
 	return &RuntimeStatsColl{
-		rootStats: make(map[int]*RootRuntimeStats),
-		copStats:  make(map[int]*CopRuntimeStats),
+		rootStats:                  make(map[int]*RootRuntimeStats),
+		copStats:                   make(map[int]*CopRuntimeStats),
+		copResponseSummaryExpected: make(map[int]copResponseSummaryExpectation),
 	}
 }
 
@@ -564,6 +731,137 @@ func (e *RuntimeStatsColl) GetPlanActRows(planID int) int64 {
 		return 0
 	}
 	return runtimeStats.GetActRows()
+}
+
+// RootRowsSnapshot is a value-only copy of one root operator's row evidence.
+type RootRowsSnapshot struct {
+	Rows     int64
+	observed bool
+	invalid  bool
+}
+
+// Observed reports whether at least one executor Next call recorded rows.
+func (s RootRowsSnapshot) Observed() bool {
+	return !s.invalid && s.Rows >= 0 && s.observed
+}
+
+// Invalid reports malformed row or record counters.
+func (s RootRowsSnapshot) Invalid() bool {
+	return s.invalid || s.Rows < 0
+}
+
+// GetRootRowsSnapshot returns scalar evidence without creating a root-stats
+// entry or exposing a live BasicRuntimeStats pointer.
+func (e *RuntimeStatsColl) GetRootRowsSnapshot(planID int) RootRowsSnapshot {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	root, ok := e.rootStats[planID]
+	if !ok || root == nil || root.basic == nil {
+		return RootRowsSnapshot{}
+	}
+	rows := root.basic.rows.Load()
+	records := root.basic.loop.Load()
+	return RootRowsSnapshot{
+		Rows:     rows,
+		observed: records > 0,
+		invalid:  rows < 0 || records < 0,
+	}
+}
+
+// CopRowsSnapshot is a value-only copy of TiKV execution-summary evidence.
+// ExpectedSummaries counts received responses that should contain this plan's
+// summary; it is response-summary coverage, not physical-attempt coverage.
+type CopRowsSnapshot struct {
+	Rows              int64
+	ObservedSummaries uint64
+	ExpectedSummaries uint64
+	Invalid           bool
+}
+
+// Complete reports whether every received-response expectation has one valid
+// execution summary. A real zero has equal positive counts and Rows == 0.
+func (s CopRowsSnapshot) Complete() bool {
+	return s.Observed() && s.ObservedSummaries == s.ExpectedSummaries
+}
+
+// Observed reports whether at least one valid response summary can contribute
+// rows. Missing summary slots remain visible through Complete and are skipped;
+// contradictory counts and invalid row arithmetic are not usable.
+func (s CopRowsSnapshot) Observed() bool {
+	return !s.Invalid && s.Rows >= 0 && s.ExpectedSummaries > 0 &&
+		s.ObservedSummaries > 0 && s.ObservedSummaries <= s.ExpectedSummaries
+}
+
+// RecordExpectedCopResponseSummaries records the summary slots owned by one
+// consumed TiKV response. It must run before validating the returned summary
+// slice so missing or mismatched summaries remain observable.
+func (e *RuntimeStatsColl) RecordExpectedCopResponseSummaries(planIDs []int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, planID := range planIDs {
+		if planID <= 0 {
+			continue
+		}
+		expectation := e.copResponseSummaryExpected[planID]
+		if expectation.count == math.MaxUint64 {
+			expectation.invalid = true
+		} else {
+			expectation.count++
+		}
+		e.copResponseSummaryExpected[planID] = expectation
+	}
+}
+
+// InvalidateCopResponseSummaries marks every summary slot in one malformed
+// response vector unusable. The caller records the response expectations first,
+// so missing vectors can remain partial without being classified as malformed.
+func (e *RuntimeStatsColl) InvalidateCopResponseSummaries(planIDs []int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, planID := range planIDs {
+		if planID <= 0 {
+			continue
+		}
+		expectation := e.copResponseSummaryExpected[planID]
+		expectation.invalid = true
+		e.copResponseSummaryExpected[planID] = expectation
+	}
+}
+
+// GetCopRowsSnapshot returns checked row and response-summary evidence for one
+// cop plan lookup key without exposing its mutable runtime-stat object.
+func (e *RuntimeStatsColl) GetCopRowsSnapshot(planID int) CopRowsSnapshot {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	expectation := e.copResponseSummaryExpected[planID]
+	snapshot := CopRowsSnapshot{
+		ExpectedSummaries: expectation.count,
+		Invalid:           expectation.invalid,
+	}
+	if stats, ok := e.copStats[planID]; ok && stats != nil {
+		snapshot.Rows = stats.summaryRows
+		snapshot.ObservedSummaries = stats.summaryCount
+		snapshot.Invalid = snapshot.Invalid || stats.summaryInvalid ||
+			snapshot.ObservedSummaries > snapshot.ExpectedSummaries
+	}
+	return snapshot
+}
+
+// GetRootHashStateRowsSnapshot returns the typed hash-state provider's scalar
+// snapshot without exposing the live runtime-stat object.
+func (e *RuntimeStatsColl) GetRootHashStateRowsSnapshot(planID int) (HashStateRowsSnapshot, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	root, ok := e.rootStats[planID]
+	if !ok || root == nil {
+		return HashStateRowsSnapshot{}, false
+	}
+	for _, stats := range root.groupRss {
+		if provider, ok := stats.(*HashStateRuntimeStats); ok {
+			return provider.HashStateRowsSnapshot(), true
+		}
+	}
+	return HashStateRowsSnapshot{}, false
 }
 
 // GetCopStats gets the CopRuntimeStats specified by planID.
@@ -652,6 +950,7 @@ func (e *RuntimeStatsColl) RecordCopStats(
 				e.copStats[planID] = copStats
 			}
 		}
+		copStats.recordSummaryEvidence(summary)
 		copStats.stats.mergeExecSummary(summary)
 		e.stmtCopStats.mergeExecSummary(summary)
 	}
@@ -674,6 +973,7 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType kv.StoreType, 
 		}
 		e.copStats[planID] = copStats
 	}
+	copStats.recordSummaryEvidence(summary)
 	copStats.stats.mergeExecSummary(summary)
 	e.stmtCopStats.mergeExecSummary(summary)
 	return planID

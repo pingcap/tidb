@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -45,7 +46,8 @@ type HashAggFinalWorker struct {
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
 
-	spillHelper *parallelHashAggSpillHelper
+	spillHelper    *parallelHashAggSpillHelper
+	hashStateStats *execdetails.HashStateRuntimeStats
 
 	restoredAggResultMapperMem int64
 }
@@ -155,6 +157,9 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 	execStart := time.Now()
 	updateExecTime(w.stats, execStart)
 	if w.spillHelper.isSpilledChunksIOEmpty() {
+		if w.hashStateStats != nil {
+			w.hashStateStats.AddRows(uint64(len(w.partialResultMap.M)))
+		}
 		w.generateResultAndSend(sctx, result)
 	} else {
 		for {
@@ -168,6 +173,9 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 			}
 			if eof {
 				break
+			}
+			if w.hashStateStats != nil {
+				w.hashStateStats.AddRows(uint64(len(w.partialResultMap.M)))
 			}
 			w.generateResultAndSend(sctx, result)
 		}

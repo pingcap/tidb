@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
@@ -91,6 +92,26 @@ func (htc *hashTableContext) getAllMemoryUsageInHashTable() int64 {
 		totalMemoryUsage += mem
 	}
 	return totalMemoryUsage
+}
+
+// hashStateRows returns valid rows admitted to the current round's lookup
+// tables. Spilled rows are counted when their restore round builds them.
+func (htc *hashTableContext) hashStateRows() uint64 {
+	if htc == nil || htc.hashTable == nil {
+		return 0
+	}
+	var rows uint64
+	for _, table := range htc.hashTable.tables {
+		if table == nil || table.rowData == nil {
+			continue
+		}
+		validRows := table.rowData.validKeyCount()
+		if validRows > math.MaxUint64-rows {
+			return math.MaxUint64
+		}
+		rows += validRows
+	}
+	return rows
 }
 
 func (htc *hashTableContext) clearHashTable() {
@@ -266,6 +287,7 @@ type HashJoinCtxV2 struct {
 	ProbeKeyTypes       []*types.FieldType
 	BuildKeyTypes       []*types.FieldType
 	stats               *hashJoinRuntimeStatsV2
+	hashStateStats      *execdetails.HashStateRuntimeStats
 
 	RightAsBuildSide               bool
 	BuildFilter                    expression.CNFExprs
@@ -678,6 +700,9 @@ func (e *HashJoinV2Exec) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
+	if e.hashStateStats != nil {
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.hashStateStats)
+	}
 	e.releaseDisk()
 	if e.spillHelper != nil {
 		e.spillHelper.close()
@@ -688,6 +713,7 @@ func (e *HashJoinV2Exec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *HashJoinV2Exec) Open(ctx context.Context) error {
+	e.hashStateStats = nil
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		e.closeCh = nil
 		e.prepared = false
@@ -738,14 +764,13 @@ func (e *HashJoinV2Exec) OpenSelf() error {
 	e.finished.Store(false)
 
 	if e.RuntimeStats() != nil && e.stats == nil {
-		e.stats = &hashJoinRuntimeStatsV2{}
-		e.stats.concurrent = int(e.Concurrency)
+		e.stats = &hashJoinRuntimeStatsV2{concurrent: int(e.Concurrency)}
 	}
-
 	if e.stats != nil {
 		e.stats.reset()
 		e.stats.spill.partitionNum = int(e.partitionNumber)
 		e.stats.isHashJoinGA = e.IsGA
+		e.hashStateStats = execdetails.NewHashStateRuntimeStats()
 	}
 	return nil
 }
@@ -1099,6 +1124,12 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		e.fetchAndProbeHashTable(ctx)
 
 		e.waiterWg.Wait()
+		if !e.ProbeSideTupleFetcher.buildSuccess {
+			if e.hashStateStats != nil {
+				e.hashStateStats.Invalidate()
+			}
+			return
+		}
 		e.collectSpillStats()
 		e.reset()
 
@@ -1112,6 +1143,9 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		restoredPartition := e.spillHelper.stack.pop()
 		if restoredPartition == nil {
 			// No more data to restore
+			if e.hashStateStats != nil {
+				e.hashStateStats.Complete()
+			}
 			return
 		}
 		e.spillHelper.round = restoredPartition.round
@@ -1324,7 +1358,12 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 
 	buildTaskCh := e.createBuildTasks(totalSegmentCnt, wg, errCh, doneCh)
 	e.buildHashTable(buildTaskCh, wg, errCh, doneCh)
-	waitJobDone(wg, errCh)
+	if !waitJobDone(wg, errCh) {
+		return
+	}
+	if e.hashStateStats != nil {
+		e.hashStateStats.AddRows(e.hashTableContext.hashStateRows())
+	}
 }
 
 func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) chan *chunk.Chunk {

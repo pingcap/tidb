@@ -660,6 +660,19 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
+	if forUnconsumedStats {
+		// selectResp still refers to the last consumed response. Keep the generic
+		// RPC/scan/time evidence above, but do not invent a response-summary
+		// expectation or replay summaries from the last consumed response.
+		return nil
+	}
+	if r.storeType == kv.TiKV {
+		// Every consumed TiKV response is expected to carry one execution summary
+		// for each cop plan ID. Record that expectation before validating the
+		// returned summary slice so missing summaries remain explicit.
+		r.ctx.RuntimeStatsColl.RecordExpectedCopResponseSummaries(r.copPlanIDs)
+	}
+
 	// If hasExecutor is true, it means the summary is returned from TiFlash.
 	hasExecutor := false
 	for _, detail := range r.selectResp.GetExecutionSummaries() {
@@ -684,6 +697,33 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 	if copStats.TimeDetail.ProcessTime > 0 {
 		r.ctx.CPUUsage.MergeTikvCPUTime(copStats.TimeDetail.ProcessTime)
+	}
+	if r.storeType == kv.TiKV {
+		summaries := r.selectResp.GetExecutionSummaries()
+		if len(summaries) == 0 {
+			// The response contributes no operator rows, but its request-root scan,
+			// time, and read-pool evidence remain chargeable.
+			if len(r.copPlanIDs) > 0 {
+				r.ctx.RuntimeStatsColl.RecordCopStats(
+					r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType,
+					copStats.ScanDetail, copStats.TimeDetail, copStats.ReadPoolTaskDetails, nil)
+			}
+			return nil
+		}
+		malformed := len(summaries) != len(r.copPlanIDs)
+		for _, summary := range summaries {
+			if summary == nil || summary.TimeProcessedNs == nil ||
+				summary.NumProducedRows == nil || summary.NumIterations == nil {
+				malformed = true
+				break
+			}
+		}
+		if malformed {
+			r.ctx.RuntimeStatsColl.InvalidateCopResponseSummaries(r.copPlanIDs)
+			logutil.Logger(ctx).Warn("invalid cop task execution summaries",
+				zap.Int("expected", len(r.copPlanIDs)), zap.Int("received", len(summaries)))
+			return nil
+		}
 	}
 	if hasExecutor {
 		if len(r.copPlanIDs) > 0 {
@@ -780,17 +820,12 @@ func (r *selectResult) close() error {
 		r.memConsume(-respSize)
 	}
 	if r.ctx != nil {
-		if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
-			unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
-			for _, copStats := range unconsumedCopStats {
-				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0), true)
-				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
-				r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
-			}
-		}
-	}
-	if r.stats != nil && r.ctx != nil {
 		defer func() {
+			// Close-time unconsumed evidence can allocate r.stats after this defer is
+			// installed. Recheck it at return so that evidence is not dropped.
+			if r.stats == nil {
+				return
+			}
 			if ci, ok := r.resp.(copr.CopInfo); ok {
 				r.stats.buildTaskDuration = ci.GetBuildTaskElapsed()
 				batched, fallback := ci.GetStoreBatchInfo()
@@ -805,7 +840,18 @@ func (r *selectResult) close() error {
 			r.ctx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
 		}()
 	}
-	return r.resp.Close()
+	closeErr := r.resp.Close()
+	if r.ctx != nil {
+		if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
+			unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
+			for _, copStats := range unconsumedCopStats {
+				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0), true)
+				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
+				r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
+			}
+		}
+	}
+	return closeErr
 }
 
 type selRespChannelIter struct {

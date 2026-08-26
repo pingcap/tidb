@@ -15,6 +15,7 @@
 package execdetails
 
 import (
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -440,6 +441,39 @@ func TestCopRuntimeStats(t *testing.T) {
 	require.Equal(t, "", zeroScanDetail.String())
 	require.Equal(t, "", zeroTimeDetail.String())
 	require.Equal(t, "", zeroCopStats.String())
+
+	t.Run("checked summary rows and coverage", func(t *testing.T) {
+		coverage := NewRuntimeStatsColl(nil)
+		coverage.RecordExpectedCopResponseSummaries([]int{aggID})
+		coverage.RecordExpectedCopResponseSummaries([]int{aggID})
+		require.False(t, coverage.GetCopRowsSnapshot(aggID).Observed())
+		zeroRows := mockExecutorExecutionSummary(1, 0, 1)
+		coverage.RecordOneCopTask(aggID, kv.TiKV, zeroRows)
+		snapshot := coverage.GetCopRowsSnapshot(aggID)
+		require.Equal(t, uint64(1), snapshot.ObservedSummaries)
+		require.Equal(t, uint64(2), snapshot.ExpectedSummaries)
+		require.True(t, snapshot.Observed())
+		require.False(t, snapshot.Complete())
+
+		coverage.RecordOneCopTask(aggID, kv.TiKV, mockExecutorExecutionSummary(1, 0, 1))
+		snapshot = coverage.GetCopRowsSnapshot(aggID)
+		require.True(t, snapshot.Observed())
+		require.True(t, snapshot.Complete())
+		require.Zero(t, snapshot.Rows)
+
+		maxRows := uint64(math.MaxUint64)
+		zero := uint64(0)
+		coverage.RecordExpectedCopResponseSummaries([]int{tableScanID})
+		coverage.RecordOneCopTask(tableScanID, kv.TiKV, &tipb.ExecutorExecutionSummary{
+			TimeProcessedNs: &zero,
+			NumProducedRows: &maxRows,
+			NumIterations:   &zero,
+		})
+		overflow := coverage.GetCopRowsSnapshot(tableScanID)
+		require.True(t, overflow.Invalid)
+		require.False(t, overflow.Observed())
+		require.False(t, overflow.Complete())
+	})
 }
 
 func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
@@ -1039,6 +1073,71 @@ func TestRootRuntimeStats(t *testing.T) {
 	stats := stmtStats.GetRootStats(1)
 	expect := "total_time:3.11s, total_open:10ms, total_close:100ms, loops:2, worker:15, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
 	require.Equal(t, expect, stats.String())
+
+	rows := stmtStats.GetRootRowsSnapshot(pid)
+	require.True(t, rows.Observed())
+	require.Equal(t, int64(50), rows.Rows)
+
+	t.Run("zero versus missing root rows", func(t *testing.T) {
+		coll := NewRuntimeStatsColl(nil)
+		basic := coll.GetBasicRuntimeStats(99, true)
+		require.False(t, coll.GetRootRowsSnapshot(99).Observed())
+		basic.SetRowNum(0)
+		require.False(t, coll.GetRootRowsSnapshot(99).Observed())
+		basic.Record(0, 0)
+		zeroRows := coll.GetRootRowsSnapshot(99)
+		require.True(t, zeroRows.Observed())
+		require.Zero(t, zeroRows.Rows)
+	})
+
+	t.Run("checked hash state lifecycle", func(t *testing.T) {
+		zeroValue := (&HashStateRuntimeStats{}).HashStateRowsSnapshot()
+		require.False(t, zeroValue.Complete())
+		require.False(t, zeroValue.Invalid())
+
+		state := NewHashStateRuntimeStats()
+		require.False(t, state.HashStateRowsSnapshot().Complete())
+		state.Complete()
+		require.True(t, state.HashStateRowsSnapshot().Complete())
+		require.Zero(t, state.HashStateRowsSnapshot().Rows)
+		require.Empty(t, state.String())
+
+		merged := state.Clone().(*HashStateRuntimeStats)
+		second := NewHashStateRuntimeStats()
+		second.AddRows(3)
+		second.Complete()
+		merged.Merge(second)
+		require.True(t, merged.HashStateRowsSnapshot().Complete())
+		require.Equal(t, int64(3), merged.HashStateRowsSnapshot().Rows)
+
+		partial := NewHashStateRuntimeStats()
+		merged.Merge(partial)
+		require.False(t, merged.HashStateRowsSnapshot().Complete())
+		require.False(t, merged.HashStateRowsSnapshot().Invalid())
+
+		overflow := NewHashStateRuntimeStats()
+		overflow.AddRows(math.MaxUint64)
+		overflow.Complete()
+		require.True(t, overflow.HashStateRowsSnapshot().Invalid())
+		require.False(t, overflow.HashStateRowsSnapshot().Complete())
+
+		concurrent := NewHashStateRuntimeStats()
+		var wg sync.WaitGroup
+		for range 32 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				concurrent.AddRows(1)
+			}()
+		}
+		wg.Wait()
+		concurrent.Complete()
+		concurrentSnapshot := concurrent.HashStateRowsSnapshot()
+		require.True(t, concurrentSnapshot.Complete())
+		require.Equal(t, int64(32), concurrentSnapshot.Rows)
+		concurrent.Complete()
+		require.True(t, concurrent.HashStateRowsSnapshot().Invalid())
+	})
 }
 
 func TestFormatDurationForExplain(t *testing.T) {
