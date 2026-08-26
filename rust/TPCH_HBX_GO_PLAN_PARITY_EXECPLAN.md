@@ -1108,3 +1108,34 @@ Correctness and Go-reference gates are green; the strict one-concurrency
 performance no-regression gate remains open. This is WIP because the machine
 has no `go` executable, so the Ready profile and `make lint` are not locally
 available. The source commit message contains the required `Go code:` line.
+
+Revision note, 2026-08-26 (latest upstream plus duplicate handle semantics):
+explicitly fetched `hparser-integration` at upstream tip `82062c8204`, rebased
+the executor fix onto it, and rebuilt the release `tidb-server` from exact
+production head `8e9579c4ce`. A final pre-push fetch then advanced upstream to
+`9b050a5ef0`; those two additional commits only add parser/statistics test-port
+sources and receipts. The implementation was rebased again as `0742af3dd7`,
+its documentation correction as `f9a4b8b24b`, and the receipt as
+`5a122492b2`; the post-rebase focused suites below were rerun. Following Go code
+`pkg/distsql/request_builder.go:626-674`, the Rust table-lookup request now
+sorts handles without deduplicating them: duplicate handles from a non-unique
+index become duplicate point ranges with row-count hints `[1, 1, ...]`, while
+only strictly consecutive handles are grouped. The focused regression proves
+`[5, 5, 7, 8]` becomes three ranges with hints `[1, 1, 2]`; the post-rebase
+`remote_cursor_tests` and `access_path` suites pass 13/13 and 30/30. Both
+local commits contain the required `Go code:` body line.
+
+The production-equivalent release binary is running on `127.0.0.1:14019`.
+The intervening upstream rebase adds no production source. On the
+deterministic 1G `hbx_web3_1g` fixture, q1/q2/flex/swap normalized plans,
+100-row result hashes, and all 20 alternating result pairs match Go. All 20
+100-row batch INSERT pairs also match at 100 rows and sum
+`5050.000000000000000000`. Receipts:
+`/private/tmp/hbx-1g-20260825/compare-final-8e9579-20260826.json` and
+`/private/tmp/hbx-1g-20260825/bench-final-8e9579-20260826.json`. Alternating
+one-client medians are Go/Rust q1 `9.563/9.951 ms` (`1.041x`), q2
+`8.041/9.362 ms` (`1.164x`), flex `8.722/9.740 ms` (`1.117x`), swap
+`13.874/17.195 ms` (`1.239x`), and batch `6.073/7.400 ms` (`1.219x`). Go
+behavior and correctness are green; the strict one-concurrency performance
+no-regression gate remains open. This is WIP because no `go` executable is
+available for the Ready profile and `make lint`.
