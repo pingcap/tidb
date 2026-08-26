@@ -870,15 +870,22 @@ impl KvTable {
         }
         let wire_rows = staged.cursor.rows_returned().saturating_sub(wire_rows);
         // The coprocessor returns rows in record-key order, while the lookup
-        // executor must restore the index window's handle order. Keep the
-        // source order in a map once instead of scanning `handles` for every
-        // returned row (the old position lookup was O(n²) for a large window).
-        let positions = handles
-            .iter()
-            .enumerate()
-            .map(|(position, handle)| (handle, position))
-            .collect::<BTreeMap<_, _>>();
-        rows.sort_by_key(|(handle, _)| positions.get(handle).copied());
+        // executor must restore the index window's handle order. Unordered
+        // lookup windows are sorted before the request is opened, so their
+        // caller order already is record-key order. Avoid building a map and
+        // sorting that common path; keep the map for keep-order windows, where
+        // the index order is intentionally different from record-key order.
+        if !handles.windows(2).all(|window| window[0] <= window[1]) {
+            // Keep the source order in a map once instead of scanning
+            // `handles` for every returned row (the old position lookup was
+            // O(n²) for a large window).
+            let positions = handles
+                .iter()
+                .enumerate()
+                .map(|(position, handle)| (handle, position))
+                .collect::<BTreeMap<_, _>>();
+            rows.sort_by_key(|(handle, _)| positions.get(handle).copied());
+        }
         Ok(Some((rows, predicates_applied, wire_rows)))
     }
 
@@ -1227,6 +1234,7 @@ impl KvTable {
         desc: bool,
         index_limit: Option<u64>,
         unordered: bool,
+        handle_only: bool,
     ) -> Result<Option<RemoteIndexHandleCursor>, KvTableError> {
         // The wire contract this request once broke -- reordered and
         // truncated columns on real TiKV -- came from the executor schema
@@ -1407,6 +1415,16 @@ impl KvTable {
                     && !range.low.iter().any(|datum| matches!(datum, Datum::Null))
                     && !range.high.iter().any(|datum| matches!(datum, Datum::Null))
             });
+        // `output_offsets` addresses the full executor schema, while the
+        // cursor consumes the projected response schema. Keep both mappings
+        // explicit: a plain double read projects the original handle slots
+        // and then sees them densely at positions 0..handle_count.
+        let output_offsets = handle_only.then(|| handle_indices.clone());
+        let returned_handle_indices = if handle_only {
+            (0..handle_indices.len()).collect::<Vec<_>>()
+        } else {
+            handle_indices.clone()
+        };
         let request = PushdownScanRequest {
             table_id: self.table_id,
             index: Some(PushdownIndexScan {
@@ -1417,7 +1435,7 @@ impl KvTable {
             }),
             columns,
             handle_index: if self.common_handle_offsets.is_empty() {
-                handle_indices.first().copied()
+                returned_handle_indices.first().copied()
             } else {
                 None
             },
@@ -1428,7 +1446,10 @@ impl KvTable {
                 .collect(),
             primary_prefix_column_ids: Vec::new(),
             predicates,
-            output_offsets: None,
+            // A plain double read does not consume indexed values. Select
+            // only the trailing handle columns after TiKV evaluates the
+            // index scan; predicates and TopN retain the complete schema.
+            output_offsets,
             topn,
             limit: index_limit,
             aggregate: None,
@@ -1451,7 +1472,7 @@ impl KvTable {
         crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
         Ok(Some(RemoteIndexHandleCursor {
             inner: scan.stream,
-            handle_indices,
+            handle_indices: returned_handle_indices,
             common_handle: !self.common_handle_offsets.is_empty(),
             zone: zone.clone(),
             use_new_collation: self.use_new_collation,

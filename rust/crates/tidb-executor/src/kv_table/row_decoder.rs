@@ -84,6 +84,13 @@ pub struct RowDecoder {
     use_new_collation: bool,
     keep: Option<Vec<usize>>,
     context: RowDecodeContext,
+    /// Row V2 metadata built once per cursor rather than once per row.
+    v2_columns: Vec<tidb_codec::ColumnInfo>,
+    /// Column IDs supplied by the clustered handle in Row V2.
+    v2_handle_column_ids: Vec<i64>,
+    /// The common table-read shape can decode directly into a datum vector.
+    /// Generated/default/DDL shapes retain the map-based compatibility path.
+    v2_fast_path: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -495,6 +502,28 @@ impl RowDecoder {
             Some(Arc::new(evaluation_columns))
         };
 
+        let v2_columns = columns
+            .iter()
+            .enumerate()
+            .map(|(offset, column)| tidb_codec::ColumnInfo {
+                id: column.id,
+                is_pk_handle: pk_handle_offset == Some(offset),
+                virtual_generated: false,
+                field_type: column.field_type.clone(),
+            })
+            .collect();
+        let v2_handle_column_ids = pk_handle_offset
+            .and_then(|offset| columns.get(offset).map(|column| column.id))
+            .into_iter()
+            .chain(
+                common_handle_offsets
+                    .iter()
+                    .filter_map(|offset| columns.get(*offset).map(|column| column.id)),
+            )
+            .collect();
+        let v2_fast_path = generated_offsets.is_empty()
+            && columns.iter().all(|column| column.origin_default.is_none());
+
         Ok(Self {
             columns,
             evaluation_columns,
@@ -507,6 +536,9 @@ impl RowDecoder {
             use_new_collation,
             keep: keep.map(<[usize]>::to_vec),
             context,
+            v2_columns,
+            v2_handle_column_ids,
+            v2_fast_path,
         })
     }
 
@@ -532,6 +564,7 @@ impl RowDecoder {
         }
         self.changing_dependencies
             .insert(target_offset, dependency_offset);
+        self.v2_fast_path = false;
         Ok(self)
     }
 
@@ -722,6 +755,39 @@ impl RowDecoder {
         value: &[u8],
     ) -> Result<(TableHandle, Vec<Datum>), KvTableError> {
         let handle = self.record_handle(key)?;
+        if self.v2_fast_path && tidb_codec::is_new_format(value) {
+            let codec_handle = match &handle {
+                TableHandle::Int(value) => tidb_codec::Handle::Int(*value),
+                TableHandle::Common(encoded) => {
+                    let common = tidb_txnkv::CommonHandle::new(encoded.clone())
+                        .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+                    tidb_codec::Handle::Common(
+                        (0..self.common_handle_offsets.len())
+                            .filter_map(|part| common.encoded_column(part).map(<[u8]>::to_vec))
+                            .collect(),
+                    )
+                }
+            };
+            let mut values = tidb_codec::decode_row_to_datums(
+                value,
+                &self.v2_columns,
+                &tidb_codec::DecodeRowOptions {
+                    handle_column_ids: &self.v2_handle_column_ids,
+                    handle: Some(&codec_handle),
+                    timezone: Some(self.context.zone()),
+                    ..tidb_codec::DecodeRowOptions::default()
+                },
+            )
+            .map_err(|error| KvTableError::Decode(format!("{error:?}")))?
+            .values;
+            if let Some(keep) = &self.keep {
+                values = keep
+                    .iter()
+                    .map(|offset| std::mem::replace(&mut values[*offset], Datum::Null))
+                    .collect();
+            }
+            return Ok((handle, values));
+        }
         let decoded = self.decode_and_eval(&handle, value)?;
         let (mut values, _) = decoded.into_parts();
         if let Some(keep) = &self.keep {

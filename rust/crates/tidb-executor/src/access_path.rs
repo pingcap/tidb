@@ -2458,6 +2458,12 @@ impl Executor for IndexRangeSourceExec {
                     self.limit
                         .map(|count| self.lookup_offset.saturating_add(count)),
                     order_free,
+                    // A double-read index worker consumes only handles from
+                    // the index side when no predicate or TopN is evaluated
+                    // there. Go's `buildIndexScanOutputOffsets` emits exactly
+                    // those handle columns; a covering reader must retain
+                    // its indexed values because they are the result rows.
+                    !self.covering && lowered.is_empty() && self.top_n.is_none(),
                 )
                 .map_err(|_| ExecError::unsupported("remote index scan failed to open"))?;
         }
