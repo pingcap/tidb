@@ -645,8 +645,8 @@ impl<'a> Lexer<'a> {
             return self.scan_identifier(start);
         }
         let ch0 = self.r.read_byte(); // first digit
-        // Mirrors Go's `tok` variable in `startWithNumber`: the hex/bit arms
-        // only SET the kind; control always reaches the shared tail below.
+                                      // Mirrors Go's `tok` variable in `startWithNumber`: the hex/bit arms
+                                      // only SET the kind; control always reaches the shared tail below.
         let mut kind = TokenKind::IntLit;
         if ch0 == b'0' {
             match self.r.peek() {
@@ -1051,7 +1051,11 @@ fn uppercased_into<'b>(text: &str, buffer: &'b mut [u8]) -> Option<&'b str> {
         return None;
     }
     for (slot, &byte) in buffer.iter_mut().zip(bytes) {
-        *slot = if byte.is_ascii_lowercase() { byte - 32 } else { byte };
+        *slot = if byte.is_ascii_lowercase() {
+            byte - 32
+        } else {
+            byte
+        };
     }
     // The transform only rewrites ASCII letters in place, so validity of the
     // input UTF-8 carries over; the check keeps this safe by construction.
@@ -1190,6 +1194,9 @@ mod tests {
 
     #[path = "go_parity_b053_source.rs"]
     mod go_parity_b053_source;
+
+    #[path = "go_parity_b056_source.rs"]
+    mod go_parity_b056_source;
 
     /// Renders a SQL string to its space-joined token labels for compact
     /// assertions (the terminal `Eof` is dropped).
