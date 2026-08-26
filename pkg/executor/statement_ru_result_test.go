@@ -130,7 +130,7 @@ func observeStatementRUCalibrationForTest(
 	testfailpoint.EnableCall(t, statementRUCalibrationFailpointForTest, func(
 		_ uint64,
 		stateName string,
-		cpuWork, scanBytes, netBytes, frontendCompileBytes float64,
+		cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows float64,
 	) {
 		state := statementRUCalibrationUnknown
 		switch stateName {
@@ -148,6 +148,8 @@ func observeStatementRUCalibrationForTest(
 				ScanBytes:            scanBytes,
 				NetBytes:             netBytes,
 				FrontendCompileBytes: frontendCompileBytes,
+				HashStateRows:        hashStateRows,
+				JoinOutputRows:       joinOutputRows,
 			},
 		})
 	})
@@ -354,17 +356,39 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 				ScanBytes:            10,
 				NetBytes:             20,
 				FrontendCompileBytes: 15,
+				HashStateRows:        7,
+				JoinOutputRows:       8,
 			},
 		}
 		finalized, ok := calculator.finalize()
 		require.True(t, ok)
-		require.Equal(t, statementRUResultOnly{TotalRU: 50}, finalized.result)
+		require.Equal(t, statementRUResultOnly{TotalRU: 65}, finalized.result)
 		require.Equal(t, statementRUCalibrationIncomplete, finalized.calibrationState)
 	})
 
 	t.Run("placeholder formula stays pinned", func(t *testing.T) {
-		units := statementRURawUnits{CPUWork: 5, ScanBytes: 10, NetBytes: 20, FrontendCompileBytes: 15}
-		require.Equal(t, statementRUResultOnly{TotalRU: 50}, calculateStatementRUResultOnly(units))
+		units := statementRURawUnits{
+			CPUWork: 5, ScanBytes: 10, NetBytes: 20, FrontendCompileBytes: 15,
+			HashStateRows: 7, JoinOutputRows: 8,
+		}
+		require.Equal(t, statementRUResultOnly{TotalRU: 65}, calculateStatementRUResultOnly(units))
+	})
+
+	t.Run("operator unit arithmetic preserves Join and Agg units", func(t *testing.T) {
+		baseUnits := statementRURawUnits{
+			CPUWork: 1, ScanBytes: 2, NetBytes: 3, FrontendCompileBytes: 4,
+			HashStateRows: 5, JoinOutputRows: 6,
+		}
+		delta := statementRURawUnits{
+			CPUWork: 7, ScanBytes: 8, NetBytes: 9, FrontendCompileBytes: 10,
+			HashStateRows: 11, JoinOutputRows: 12,
+		}
+		combined := addStatementRURawUnits(baseUnits, delta)
+		require.Equal(t, statementRURawUnits{
+			CPUWork: 8, ScanBytes: 10, NetBytes: 12, FrontendCompileBytes: 14,
+			HashStateRows: 16, JoinOutputRows: 18,
+		}, combined)
+		require.Equal(t, delta, subtractStatementRURawUnits(combined, baseUnits))
 	})
 
 	t.Run("engine projection preserves the lower layer boundary", func(t *testing.T) {
@@ -457,7 +481,9 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 			"units",
 		}, statementRUFieldNames(calculatorType))
 		unitsType := reflect.TypeOf(statementRURawUnits{})
-		require.Equal(t, []string{"CPUWork", "ScanBytes", "NetBytes", "FrontendCompileBytes"}, statementRUFieldNames(unitsType))
+		require.Equal(t, []string{
+			"CPUWork", "ScanBytes", "NetBytes", "FrontendCompileBytes", "HashStateRows", "JoinOutputRows",
+		}, statementRUFieldNames(unitsType))
 		resultType := reflect.TypeOf(statementRUResultOnly{})
 		require.Equal(t, []string{"TotalRU"}, statementRUFieldNames(resultType))
 		snapshotType := reflect.TypeOf(statementRUCalibrationSnapshot{})
