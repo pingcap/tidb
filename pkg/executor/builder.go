@@ -509,7 +509,7 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
 	canUseFastCheck := true
 	for _, idx := range v.IndexInfos {
-		if idx.MVIndex || idx.VectorInfo != nil {
+		if idx.MVIndex || idx.IsNonKVIndex() {
 			canUseFastCheck = false
 			break
 		}
@@ -690,6 +690,10 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 	}
 	if index.Meta().VectorInfo != nil {
 		b.err = errors.Errorf("vector index `%v` is not supported for cleanup index", v.IndexName)
+		return nil
+	}
+	if index.Meta().FullTextInfo != nil {
+		b.err = errors.Errorf("fulltext index `%v` is not supported for cleanup index", v.IndexName)
 		return nil
 	}
 	e := &CleanupIndexExec{

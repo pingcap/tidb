@@ -440,6 +440,73 @@ func BuildIndexInfo(
 	return idxInfo, nil
 }
 
+func buildFullTextIndexInfo(
+	tblInfo *model.TableInfo,
+	indexName pmodel.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	indexOption *ast.IndexOption,
+	state model.SchemaState,
+) (*model.IndexInfo, error) {
+	if err := checkTooLongIndex(indexName); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(indexPartSpecifications) != 1 || indexPartSpecifications[0].Column == nil {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FULLTEXT index only supports one column")
+	}
+
+	idxPart := indexPartSpecifications[0]
+	if idxPart.Length != types.UnspecifiedLength {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FULLTEXT index does not support prefix length")
+	}
+	if idxPart.Desc {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FULLTEXT index does not support DESC order")
+	}
+	colInfo := findColumnByName(idxPart.Column.Name.L, tblInfo)
+	if colInfo == nil {
+		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(idxPart.Column.Name.L, tblInfo.Name)
+	}
+	if !types.IsString(colInfo.FieldType.GetType()) {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FULLTEXT index only supports string columns")
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.FullTextInfo != nil && idx.FindColumnByName(colInfo.Name.L) != nil {
+			return nil, dbterror.ErrDupKeyName.GenWithStack(
+				fmt.Sprintf("fulltext index '%s' already exists on column %s", idx.Name, colInfo.Name))
+		}
+	}
+
+	parserType := model.FullTextParserTypeStandardV1
+	if indexOption != nil && indexOption.ParserName.L != "" {
+		parserType = model.GetFullTextParserTypeBySQLName(indexOption.ParserName.L)
+	}
+	if parserType != model.FullTextParserTypeStandardV1 && parserType != model.FullTextParserTypeNgramV1 {
+		parserName := parserType.SQLName()
+		if indexOption != nil && indexOption.ParserName.O != "" {
+			parserName = indexOption.ParserName.O
+		}
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("FULLTEXT parser '%s' is not supported", parserName))
+	}
+	if indexOption != nil && indexOption.Visibility == ast.IndexVisibilityInvisible {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FULLTEXT index does not support INVISIBLE")
+	}
+
+	idxInfo := &model.IndexInfo{
+		Name:  indexName,
+		State: state,
+		Tp:    pmodel.IndexTypeFulltext,
+		Columns: []*model.IndexColumn{{
+			Name:   colInfo.Name,
+			Offset: colInfo.Offset,
+			Length: types.UnspecifiedLength,
+		}},
+		FullTextInfo: &model.FullTextIndexInfo{ParserType: parserType},
+	}
+	if indexOption != nil {
+		idxInfo.Comment = indexOption.Comment
+	}
+	return idxInfo, nil
+}
+
 func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification,
 	tblInfo *model.TableInfo) (*model.VectorIndexInfo, string, error) {
 	if len(indexPartSpecifications) != 1 {
@@ -598,6 +665,9 @@ func validateAlterIndexVisibility(ctx sessionctx.Context, indexName pmodel.CIStr
 	}
 	if idx.VectorInfo != nil {
 		return false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
+	}
+	if idx.FullTextInfo != nil {
+		return false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set fulltext index invisible")
 	}
 	return false, nil
 }
@@ -2003,7 +2073,9 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 				return ver, errors.Trace(err)
 			}
 			dropArgs.IndexArgs[0].IndexID = indexIDs[0]
-			dropArgs.IndexArgs[0].IsVector = allIndexInfos[0].VectorInfo != nil
+			// IsVector is the legacy V1 marker used to suppress delete-range
+			// generation for metadata-only indexes.
+			dropArgs.IndexArgs[0].IsVector = allIndexInfos[0].IsNonKVIndex()
 			if !allIndexInfos[0].Global {
 				dropArgs.PartitionIDs = getPartitionIDs(tblInfo)
 			}
@@ -3470,7 +3542,7 @@ func newCleanUpIndexWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 	indexes := make([]table.Index, 0, len(t.Indices()))
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	for _, index := range t.Indices() {
-		if index.Meta().IsTiFlashLocalIndex() {
+		if index.Meta().IsNonKVIndex() {
 			continue
 		}
 		if index.Meta().Global {
