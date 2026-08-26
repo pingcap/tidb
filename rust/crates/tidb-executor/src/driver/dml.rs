@@ -1761,13 +1761,18 @@ pub fn run_fast_prepared_update(
     let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else { return Ok(None) };
     let (database, name) = single_table_name(table_ref, current_db)?;
     let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else { return Ok(None) };
-    let handles = kv.common_handle_offsets().to_vec();
-    // Secondary indexes are maintained by `update_row_with_old` itself (old
-    // entries deleted, new written, rolled back on failure), so an indexed
-    // table no longer refuses the fast arm -- Go's cached point-update plan
-    // keeps every index of the table up to date too. A COMPOSITE clustered
-    // key works the same way: every key column is pinned by the WHERE below,
-    // so nothing about the row moves.
+    // Two clustered shapes reach this arm, and Go's cached point-update plan
+    // (`tryUpdatePointPlan`, pkg/planner/core/point_get_plan.go) admits both:
+    // go-ycsb's COMPOSITE COMMON handle and sbtest's INT `PKIsHandle`. The
+    // key columns are whichever offsets pin the record handle; secondary
+    // indexes are maintained by `update_row_with_old` itself (old entries
+    // deleted, new written, rolled back on failure), matching Go's cached
+    // point-update keeping every index of the table up to date.
+    let int_pk_offset = kv.pk_handle_offset();
+    let mut handles = kv.common_handle_offsets().to_vec();
+    if let Some(offset) = int_pk_offset {
+        handles = vec![offset];
+    }
     if handles.is_empty()
         || kv.visible_columns().iter().any(|column| column.generated.is_some())
     {
@@ -1823,14 +1828,32 @@ pub fn run_fast_prepared_update(
         let Some(key_value) = prepared_or_literal(key_expr, params)? else { return Ok(None) };
         key_values.push(key_value);
     }
-    let encoded = tidb_codec::encode_key_in_timezone(&ctx.session_zone(), &key_values)
-        .map_err(|error| DriverError::unsupported(format!("cannot encode common handle: {error:?}")))?;
-    let handle = tidb_txnkv::CommonHandle::new(encoded)
-        .map_err(|error| DriverError::unsupported(format!("cannot encode common handle: {error:?}")))?;
+    let handle = match int_pk_offset {
+        // An INT `PKIsHandle`: the pinned value IS the record handle -- the
+        // same identity Go's PointGetPlan carries as an IntHandle.
+        Some(_) => {
+            let value = match &key_values[0] {
+                Datum::Int(value) => *value,
+                Datum::UInt(value) => *value as i64,
+                _ => return Ok(None),
+            };
+            TableHandle::Int(value)
+        }
+        None => {
+            let encoded = tidb_codec::encode_key_in_timezone(&ctx.session_zone(), &key_values)
+                .map_err(|error| DriverError::unsupported(
+                    format!("cannot encode common handle: {error:?}"),
+                ))?;
+            let handle = tidb_txnkv::CommonHandle::new(encoded)
+                .map_err(|error| DriverError::unsupported(
+                    format!("cannot encode common handle: {error:?}"),
+                ))?;
+            TableHandle::Common(handle.encoded().to_vec())
+        }
+    };
     if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("upd")) {
         eprintln!("[upd] admitted+encoded {}us", __fast_t0.elapsed().as_micros());
     }
-    let handle = TableHandle::Common(handle.encoded().to_vec());
     let __upd_t0 = std::time::Instant::now();
     let old_row = match kv.get_row_by_handle(&handle, &ctx.session_zone()).map_err(kv_write_error)? {
         Some(row) => row, None => return Ok(Some(0)),
