@@ -428,7 +428,11 @@ func buildLocal(
 	}
 	if mv.MaterializedView.MViewMaintenanceVersion < model.MViewMaintenanceVersionBase ||
 		mv.MaterializedView.MViewMaintenanceVersion > model.MViewMaintenanceVersionAVG {
-		return nil, errors.Errorf("materialized view %s uses unsupported maintenance version %d", mv.Name.O, mv.MaterializedView.MViewMaintenanceVersion)
+		return nil, errors.Errorf(
+			"materialized view %s uses unsupported maintenance version %d",
+			mv.Name.O,
+			mv.MaterializedView.MViewMaintenanceVersion,
+		)
 	}
 	if mv.MaterializedView.MViewMaintenanceVersion > model.MViewMaintenanceVersionBase &&
 		(mv.MaterializedView.DefinitionDivPrecisionIncrement < 0 ||
@@ -762,7 +766,8 @@ func buildFromLocal(
 		GroupKeyBaseCols:               groupKeyBaseCols,
 		CountStarMVOffset:              local.countStarMVOffset,
 		DefinitionDivPrecisionIncrement: func() int {
-			if local.mv.MaterializedView == nil || local.mv.MaterializedView.MViewMaintenanceVersion <= model.MViewMaintenanceVersionBase {
+			if local.mv.MaterializedView == nil ||
+				local.mv.MaterializedView.MViewMaintenanceVersion <= model.MViewMaintenanceVersionBase {
 				return local.sctx.GetSessionVars().GetDivPrecisionIncrement()
 			}
 			return local.mv.MaterializedView.DefinitionDivPrecisionIncrement
@@ -1149,10 +1154,18 @@ func mapAvgDependencies(aggCols []aggColInfo) (map[int][3]int, map[int]bool, err
 			}
 		}
 		if sumIdx < 0 {
-			return nil, nil, errors.Errorf("AVG expression %s at mv offset %d requires matching SUM(expr)", restoreExpr(ac.argExpr), ac.info.MVOffset)
+			return nil, nil, errors.Errorf(
+				"AVG expression %s at mv offset %d requires matching SUM(expr)",
+				restoreExpr(ac.argExpr),
+				ac.info.MVOffset,
+			)
 		}
 		if countIdx < 0 {
-			return nil, nil, errors.Errorf("AVG expression %s at mv offset %d requires matching COUNT(expr)", restoreExpr(ac.argExpr), ac.info.MVOffset)
+			return nil, nil, errors.Errorf(
+				"AVG expression %s at mv offset %d requires matching COUNT(expr)",
+				restoreExpr(ac.argExpr),
+				ac.info.MVOffset,
+			)
 		}
 		avgDeps[i] = [3]int{sumIdx, countIdx, countStarIdx}
 		requiredExactSum[sumIdx] = true
@@ -1253,7 +1266,11 @@ func validateAggDependencies(
 			}
 		case AggAvg:
 			if len(ai.Dependencies) != 3 {
-				return errors.Errorf("AVG at mv offset %d expects dependencies [matching_sum_mv, matching_count_expr_mv, count_all_rows_mv], got %v", ai.MVOffset, ai.Dependencies)
+				return errors.Errorf(
+					"AVG at mv offset %d expects dependencies [matching_sum_mv, matching_count_expr_mv, count_all_rows_mv], got %v",
+					ai.MVOffset,
+					ai.Dependencies,
+				)
 			}
 			for depPos, dep := range ai.Dependencies {
 				if dep < mvColumnOffsetBase || dep >= mvColumnEnd {
