@@ -35,10 +35,12 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	_ "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -380,6 +382,165 @@ func TestMeta(t *testing.T) {
 			return nil
 		})
 		require.NoError(t, err)
+	}
+	{
+		var continued []*model.TableInfo
+		err := m.IterTablesFrom(1, tbInfo.ID, func(info *model.TableInfo) error {
+			continued = append(continued, info)
+			return nil
+		})
+		require.NoError(t, err)
+		require.Equal(t, []*model.TableInfo{tbInfo2}, continued)
+	}
+	{
+		iter, err := m.NewTableInfoIterator(1, tbInfo.ID)
+		require.NoError(t, err)
+		tableInfo, err := iter.Next(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, tbInfo2, tableInfo)
+		tableInfo, err = iter.Next(context.Background())
+		require.NoError(t, err)
+		require.Nil(t, tableInfo)
+		iter.Close()
+	}
+	{
+		richTable := &model.TableInfo{
+			ID:              3,
+			Name:            ast.NewCIStr("rich"),
+			Charset:         "utf8mb4",
+			Collate:         "utf8mb4_bin",
+			State:           model.StatePublic,
+			DBID:            dbInfo.ID,
+			AutoIncIDExtra:  99,
+			EngineAttribute: "rich-engine-attribute",
+			Affinity:        &model.TableAffinityInfo{Level: "table"},
+			View:            &model.ViewInfo{SelectStmt: "select 1"},
+			Columns: []*model.ColumnInfo{{
+				ID:                    31,
+				Name:                  ast.NewCIStr("rich_col"),
+				OriginDefaultValue:    "old-origin-default",
+				OriginDefaultValueBit: []byte{1, 2, 3},
+				DefaultValue:          "old-default",
+				DefaultValueBit:       []byte{4, 5, 6},
+				Dependences:           map[string]struct{}{"old_dependency": {}},
+				ChangingFieldType:     types.NewFieldType(mysql.TypeVarchar),
+				ChangeStateInfo:       &model.ChangeStateInfo{DependencyColumnOffset: 7},
+			}},
+			Indices: []*model.IndexInfo{{
+				ID:           32,
+				Name:         ast.NewCIStr("rich_idx"),
+				Columns:      []*model.IndexColumn{{Name: ast.NewCIStr("rich_col"), UseChangingType: true}},
+				AffectColumn: []*model.IndexColumn{{Name: ast.NewCIStr("old_affect_col")}},
+			}},
+			Constraints: []*model.ConstraintInfo{{
+				ID:             33,
+				Name:           ast.NewCIStr("rich_constraint"),
+				ConstraintCols: []ast.CIStr{ast.NewCIStr("rich_col")},
+			}},
+			ForeignKeys: []*model.FKInfo{{
+				ID:      34,
+				Name:    ast.NewCIStr("rich_fk"),
+				RefCols: []ast.CIStr{ast.NewCIStr("old_ref_col")},
+				Cols:    []ast.CIStr{ast.NewCIStr("rich_col")},
+			}},
+		}
+		sparseTable := &model.TableInfo{
+			ID:    4,
+			Name:  ast.NewCIStr("sparse"),
+			State: model.StatePublic,
+			DBID:  dbInfo.ID,
+			Columns: []*model.ColumnInfo{{
+				ID:   41,
+				Name: ast.NewCIStr("sparse_col"),
+			}},
+			Indices: []*model.IndexInfo{{
+				ID:      42,
+				Name:    ast.NewCIStr("sparse_idx"),
+				Columns: []*model.IndexColumn{{Name: ast.NewCIStr("sparse_col")}},
+			}},
+			Constraints: []*model.ConstraintInfo{{
+				ID:   43,
+				Name: ast.NewCIStr("sparse_constraint"),
+			}},
+			ForeignKeys: []*model.FKInfo{{
+				ID:   44,
+				Name: ast.NewCIStr("sparse_fk"),
+			}},
+		}
+		require.NoError(t, m.CreateTableOrView(1, richTable))
+		require.NoError(t, m.CreateTableOrView(1, sparseTable))
+
+		iter, err := m.NewTableInfoIterator(1, tbInfo2.ID)
+		require.NoError(t, err)
+		destination := &model.TableInfo{}
+		decoded, err := iter.NextInto(context.Background(), destination)
+		require.NoError(t, err)
+		require.Same(t, destination, decoded)
+		require.Equal(t, richTable, decoded)
+		columnPointer := decoded.Columns[0]
+		indexPointer := decoded.Indices[0]
+		indexColumnPointer := decoded.Indices[0].Columns[0]
+		constraintPointer := decoded.Constraints[0]
+		foreignKeyPointer := decoded.ForeignKeys[0]
+
+		decoded, err = iter.NextInto(context.Background(), destination)
+		require.NoError(t, err)
+		require.Same(t, destination, decoded)
+		require.Same(t, columnPointer, decoded.Columns[0])
+		require.Same(t, indexPointer, decoded.Indices[0])
+		require.Same(t, indexColumnPointer, decoded.Indices[0].Columns[0])
+		require.Same(t, constraintPointer, decoded.Constraints[0])
+		require.Same(t, foreignKeyPointer, decoded.ForeignKeys[0])
+		require.Equal(t, sparseTable, decoded)
+
+		decoded, err = iter.NextInto(context.Background(), destination)
+		require.NoError(t, err)
+		require.Nil(t, decoded)
+		iter.Close()
+
+		stats := &kv.InfoSchemaScanAllocationStats{}
+		columnsIter, err := m.NewTableInfoIteratorWithDecodeMode(
+			1,
+			tbInfo2.ID,
+			meta.TableInfoDecodeColumns,
+			stats,
+		)
+		require.NoError(t, err)
+		columnsDestination := &model.TableInfo{}
+		decoded, err = columnsIter.NextInto(context.Background(), columnsDestination)
+		require.NoError(t, err)
+		require.Same(t, columnsDestination, decoded)
+		require.Equal(t, richTable.ID, decoded.ID)
+		require.Equal(t, richTable.Name, decoded.Name)
+		require.Equal(t, richTable.Charset, decoded.Charset)
+		require.Equal(t, richTable.Collate, decoded.Collate)
+		require.Equal(t, richTable.State, decoded.State)
+		require.Equal(t, richTable.Columns, decoded.Columns)
+		require.Equal(t, richTable.View, decoded.View)
+		require.Empty(t, decoded.Indices)
+		require.Empty(t, decoded.Constraints)
+		require.Empty(t, decoded.ForeignKeys)
+		columnPointer = decoded.Columns[0]
+
+		decoded, err = columnsIter.NextInto(context.Background(), columnsDestination)
+		require.NoError(t, err)
+		require.Same(t, columnsDestination, decoded)
+		require.Same(t, columnPointer, decoded.Columns[0])
+		require.Equal(t, sparseTable.Columns, decoded.Columns)
+		require.Nil(t, decoded.View)
+		require.Empty(t, decoded.Indices)
+		require.Empty(t, decoded.Constraints)
+		require.Empty(t, decoded.ForeignKeys)
+		columnsIter.Close()
+		require.Equal(t, uint64(2), stats.TableInfoCount)
+		require.Equal(t, uint64(len(richTable.Columns)+len(sparseTable.Columns)), stats.ColumnInfoCount)
+		require.Equal(t, stats.TableInfoCount, stats.FastTableInfoDecodeCount+stats.FallbackTableInfoDecodeCount)
+		require.Positive(t, stats.TableInfoJSONBytes)
+		require.Positive(t, stats.HashDecodeAllocatedBytes)
+		require.Positive(t, stats.ColumnStringCloneAllocatedBytes)
+
+		require.NoError(t, m.DropTableOrView(1, richTable.ID))
+		require.NoError(t, m.DropTableOrView(1, sparseTable.ID))
 	}
 	// Generate an auto id.
 	n, err = m.GetAutoIDAccessors(1, 2).RowID().Inc(10)
@@ -747,6 +908,14 @@ func TestIterDatabases(t *testing.T) {
 	require.Len(t, names, 3)
 	sort.Strings(names)
 	require.Equal(t, []string{"db1", "db2", "db3"}, names)
+
+	var continued []string
+	err = m.IterDatabasesFrom(db1.ID, func(info *model.DBInfo) error {
+		continued = append(continued, info.Name.O)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"db2", "db3"}, continued)
 
 	// Verify early stop behavior by returning a sentinel error from the callback
 	count := 0

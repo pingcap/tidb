@@ -80,6 +80,10 @@ var (
 	MemoryLimit                     prometheus.Gauge
 	InternalSessions                prometheus.Gauge
 	ActiveUser                      prometheus.Gauge
+	DiagnosticAPIRequestCounter     *prometheus.CounterVec
+	DiagnosticAPIRequestDuration    *prometheus.HistogramVec
+	DiagnosticAPIResponseBytes      *prometheus.HistogramVec
+	DiagnosticAPIActiveRequests     prometheus.Gauge
 
 	// TLS
 	TLSVersion *prometheus.CounterVec
@@ -462,6 +466,37 @@ func InitServerMetrics() {
 			Subsystem: "server",
 			Name:      "active_users",
 			Help:      "The total count of active user.",
+		})
+
+	DiagnosticAPIRequestCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "diagnostic_api_requests_total",
+			Help:      "Counter of bounded diagnostic API requests.",
+		}, []string{"dataset", LblResult})
+	DiagnosticAPIRequestDuration = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "diagnostic_api_request_duration_seconds",
+			Help:      "Duration of one diagnostic API page request.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 17), // 1ms ~ 65s
+		}, []string{"dataset"})
+	DiagnosticAPIResponseBytes = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "diagnostic_api_response_bytes",
+			Help:      "Encoded response size of successful diagnostic API pages.",
+			Buckets:   prometheus.ExponentialBuckets(1024, 2, 17), // 1KiB ~ 64MiB
+		}, []string{"dataset"})
+	DiagnosticAPIActiveRequests = metricscommon.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "diagnostic_api_active_requests",
+			Help:      "Number of diagnostic API page requests currently using a source-side slot.",
 		})
 	TLSVersion = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{

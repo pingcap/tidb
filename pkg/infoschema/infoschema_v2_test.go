@@ -16,6 +16,7 @@ package infoschema
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"testing"
 
@@ -158,6 +159,76 @@ func TestV2Basic(t *testing.T) {
 			require.Equal(t, tt.wantSchema, gotItem.DBName)
 		})
 	}
+
+	for i := 2; i <= metadataScanBatchSize+2; i++ {
+		name := ast.NewCIStr(fmt.Sprintf("test%d", i))
+		additionalTable := internal.MockTableInfo(t, r.Store(), name.O)
+		additionalTable.DBID = dbInfo.ID
+		is.Data.add(tableItem{schemaName, dbInfo.ID, name, additionalTable.ID, 2, false}, internal.MockTable(t, r.Store(), additionalTable))
+		internal.AddTable(t, r.Store(), dbInfo.ID, additionalTable)
+	}
+	ver, err = r.Store().CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	is.ts = ver.Ver
+
+	var iteratedIDs []int64
+	lastTableID, exhausted, err := is.IterateTableInfosFrom(context.Background(), schemaName, 0, func(table *model.TableInfo) bool {
+		iteratedIDs = append(iteratedIDs, table.ID)
+		return len(iteratedIDs) < 2
+	})
+	require.NoError(t, err)
+	require.False(t, exhausted)
+	lastTableID, exhausted, err = is.IterateTableInfosFrom(context.Background(), schemaName, lastTableID, func(table *model.TableInfo) bool {
+		iteratedIDs = append(iteratedIDs, table.ID)
+		return true
+	})
+	require.NoError(t, err)
+	require.True(t, exhausted)
+	require.NotZero(t, lastTableID)
+	allTableInfos, err := is.SchemaTableInfos(context.Background(), schemaName)
+	require.NoError(t, err)
+	expectedIDs := make([]int64, 0, len(allTableInfos))
+	for _, table := range allTableInfos {
+		expectedIDs = append(expectedIDs, table.ID)
+	}
+	require.Greater(t, len(expectedIDs), metadataScanBatchSize)
+	require.Equal(t, expectedIDs, iteratedIDs)
+
+	persistentIter, err := is.NewTableInfoIterator(context.Background(), schemaName, 0)
+	require.NoError(t, err)
+	var persistentIDs []int64
+	destination := &model.TableInfo{}
+	for {
+		tableInfo, err := persistentIter.NextInto(context.Background(), destination)
+		require.NoError(t, err)
+		if tableInfo == nil {
+			break
+		}
+		require.Same(t, destination, tableInfo)
+		persistentIDs = append(persistentIDs, tableInfo.ID)
+	}
+	persistentIter.Close()
+	require.Equal(t, expectedIDs, persistentIDs)
+
+	var iteratedNames []string
+	lastItem, hasLast, exhaustedItems := is.IterateAllTableItemsFrom(nil, func(item TableItem) bool {
+		iteratedNames = append(iteratedNames, item.TableName.L)
+		return len(iteratedNames) < 2
+	})
+	require.True(t, hasLast)
+	require.False(t, exhaustedItems)
+	lastItem, hasLast, exhaustedItems = is.IterateAllTableItemsFrom(&lastItem, func(item TableItem) bool {
+		iteratedNames = append(iteratedNames, item.TableName.L)
+		return true
+	})
+	require.True(t, hasLast)
+	require.True(t, exhaustedItems)
+	var expectedNames []string
+	is.IterateAllTableItems(func(item TableItem) bool {
+		expectedNames = append(expectedNames, item.TableName.L)
+		return true
+	})
+	require.Equal(t, expectedNames, iteratedNames)
 
 	// TODO: support FindTableByPartitionID.
 }

@@ -76,6 +76,13 @@ import (
 const defaultStatusPort = 10080
 
 func (s *Server) startStatusHTTP() error {
+	if s.cfg.DiagnosticAPI.Enabled {
+		diagnosticAPI, err := newDiagnosticAPIHandler(s.dom, s.cfg.DiagnosticAPI)
+		if err != nil {
+			return errors.Annotate(err, "initialize diagnostic API")
+		}
+		s.diagnosticAPI = diagnosticAPI
+	}
 	err := s.initHTTPListener()
 	if err != nil {
 		return err
@@ -238,6 +245,14 @@ func (s *Server) startHTTPServer() {
 	router.HandleFunc("/status", s.handleStatus).Name("Status")
 	// HTTP path for prometheus.
 	router.Handle("/metrics", promhttp.Handler()).Name("Metrics")
+	if s.diagnosticAPI != nil {
+		router.HandleFunc("/internal/diagnostics/v1/capabilities", s.diagnosticAPI.serveCapabilities).
+			Methods(http.MethodGet).
+			Name("DiagnosticCapabilities")
+		router.HandleFunc("/internal/diagnostics/v1/datasets/{dataset}", s.diagnosticAPI.serveDataset).
+			Methods(http.MethodGet).
+			Name("DiagnosticDataset")
+	}
 
 	// HTTP path for dump statistics.
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).

@@ -106,9 +106,20 @@ type InfoSchemaBaseExtractor struct {
 	extractableColumns extractableCols
 }
 
-// GetBase is only used for test.
+// GetBase returns the common Information Schema predicate extractor.
 func (e *InfoSchemaBaseExtractor) GetBase() *InfoSchemaBaseExtractor {
 	return e
+}
+
+// HasExactTablePredicates reports whether the extracted predicates can use a
+// table-name or table-ID point lookup instead of scanning a schema.
+func (e *InfoSchemaBaseExtractor) HasExactTablePredicates() bool {
+	for _, colName := range []string{e.extractableColumns.table, e.extractableColumns.tableID} {
+		if colName != "" && len(e.getSchemaObjectNames(colName)) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // ListSchemas lists all schemas from predicate. If no schema is specified, it lists
@@ -123,6 +134,15 @@ func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []ast.CI
 		return filterSchemaObjectByRegexp(e, e.extractableColumns.schema, ret, extractStrCIStr)
 	}
 	return extractedSchemas
+}
+
+// HasTableName returns whether a table name matches the predicates extracted
+// for the table-name column of this Information Schema table.
+func (e *InfoSchemaBaseExtractor) HasTableName(name string) bool {
+	if e.extractableColumns.table == "" {
+		return true
+	}
+	return !e.filter(e.extractableColumns.table, name)
 }
 
 // listPredicateSchemas lists all schemas specified in predicates.
@@ -344,6 +364,11 @@ func (e *InfoSchemaTablesExtractor) HasTableName(name string) bool {
 // HasTableSchema returns true if table schema is specified in predicates.
 func (e *InfoSchemaTablesExtractor) HasTableSchema(name string) bool {
 	return !e.filter(TableSchema, name)
+}
+
+// HasTableID returns whether a table ID matches the extracted predicates.
+func (e *InfoSchemaTablesExtractor) HasTableID(id int64) bool {
+	return !e.filter(TidbTableID, strconv.FormatInt(id, 10))
 }
 
 // InfoSchemaDDLExtractor is the predicate extractor for information_schema.ddl_jobs.
@@ -931,6 +956,27 @@ func (e *InfoSchemaColumnsExtractor) ListTables(
 func (e *InfoSchemaColumnsExtractor) ListColumns(
 	tbl *model.TableInfo,
 ) ([]*model.ColumnInfo, []int) {
+	columns := make([]*model.ColumnInfo, 0, len(e.predColNames))
+	ordinalPos := make([]int, 0, len(e.predColNames))
+	ord := 0
+	for _, column := range tbl.Columns {
+		if column.Hidden {
+			continue
+		}
+		ord++
+		if !e.ColumnMatches(column.Name) {
+			continue
+		}
+		columns = append(columns, column)
+		ordinalPos = append(ordinalPos, ord)
+	}
+
+	return columns, ordinalPos
+}
+
+// ColumnMatches reports whether a visible column name passes the extracted
+// equality and regular-expression predicates.
+func (e *InfoSchemaColumnsExtractor) ColumnMatches(name ast.CIStr) bool {
 	ec := e.extractableColumns
 	if !e.predColNamesInited {
 		e.predColNames = set.NewStringSet()
@@ -942,29 +988,15 @@ func (e *InfoSchemaColumnsExtractor) ListColumns(
 	}
 	predCol := e.predColNames
 	regexp := e.GetBase().colsRegexp[ec.columnName]
-
-	columns := make([]*model.ColumnInfo, 0, len(predCol))
-	ordinalPos := make([]int, 0, len(predCol))
-	ord := 0
-ForLoop:
-	for _, column := range tbl.Columns {
-		if column.Hidden {
-			continue
-		}
-		ord++
-		if len(predCol) > 0 && !predCol.Exist(column.Name.L) {
-			continue
-		}
-		for _, re := range regexp {
-			if !re.MatchString(column.Name.L) {
-				continue ForLoop
-			}
-		}
-		columns = append(columns, column)
-		ordinalPos = append(ordinalPos, ord)
+	if len(predCol) > 0 && !predCol.Exist(name.L) {
+		return false
 	}
-
-	return columns, ordinalPos
+	for _, re := range regexp {
+		if !re.MatchString(name.L) {
+			return false
+		}
+	}
+	return true
 }
 
 // InfoSchemaTiDBIndexUsageExtractor is the predicate extractor for information_schema.tidb_index_usage.

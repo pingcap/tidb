@@ -739,6 +739,220 @@ timezone.*
      curl http://{TiDBIP}:10080/txn-gc-states
      ```
 
+## Internal diagnostic dataset API
+
+The internal diagnostic API exposes bounded, field-whitelisted metadata pages for a cluster-local collector. It does not accept SQL or arbitrary system table names.
+
+The API is not registered unless `[diagnostic-api].enabled` is `true`. It is served on the TiDB status port. The default configuration also requires mutual TLS. When `require-mtls` is enabled, configure `security.cluster-ssl-ca`, `security.cluster-ssl-cert`, `security.cluster-ssl-key`, and `security.cluster-verify-cn`; TiDB verifies the client certificate and its common name during the TLS handshake.
+
+Example TiDB configuration:
+
+```toml
+[security]
+cluster-ssl-ca = "/path/to/ca.pem"
+cluster-ssl-cert = "/path/to/tidb.pem"
+cluster-ssl-key = "/path/to/tidb-key.pem"
+cluster-verify-cn = ["diagnostic-agent"]
+
+[diagnostic-api]
+enabled = true
+require-mtls = true
+datasets = ["schema.tables", "schema.columns", "schema.indexes", "schema.partitions", "binding.summary", "stats.health"]
+redaction-profile = "strict-v1"
+redaction-key-file = "/var/run/secrets/tidb-diagnostics/name-hmac-key"
+redaction-key-id = "diag-name-2026-08"
+max-concurrent-requests = 2
+default-page-size = 256
+max-page-size = 1000
+request-timeout = "10s"
+cursor-ttl = "5m"
+max-response-bytes = 4194304
+```
+
+Production deployments should also restrict status-port network access to the cluster-local collector. Setting `require-mtls = false` should only be used when an equivalent trusted network boundary exists.
+
+Diagnostic redaction is independent from `tidb_redact_log`. The production-default `strict-v1` profile requires `redaction-key-file` and `redaction-key-id`. The key file must contain 32 to 4096 bytes after surrounding whitespace is removed. Mount the same cluster-scoped secret on every TiDB replica so identifier aliases remain stable across replicas and restarts. `redaction-key-id` is a non-secret rotation identifier returned to the collector; the key itself is never returned or logged.
+
+`strict-v1` replaces schema, table, column, index, and partition names with deterministic HMAC-SHA256 aliases before JSON encoding. SQL and plan text remain excluded, while existing digests are returned where the dataset defines them. `metadata-readable-v1` preserves metadata names and is intended only for explicitly authorized environments; it must not configure a redaction key. `MARKER` is not a supported diagnostic profile because marker mode retains the original source value.
+
+### Get capabilities
+
+Method and path:
+
+```text
+GET /internal/diagnostics/v1/capabilities
+```
+
+Example request:
+
+```shell
+curl --cacert /path/to/ca.pem \
+  --cert /path/to/agent.pem \
+  --key /path/to/agent-key.pem \
+  https://{TiDBIP}:10080/internal/diagnostics/v1/capabilities
+```
+
+The response lists the protocol version, source-side limits, enabled datasets, and the exact fields exported by each dataset:
+
+```json
+{
+  "protocol_version": "1.0",
+  "requires_mtls": true,
+  "snapshot_model": "fixed-mvcc-per-dataset; restart on HTTP 409",
+  "redaction": {
+    "profile": "strict-v1",
+    "version": 1,
+    "key_id": "diag-name-2026-08"
+  },
+  "limits": {
+    "max_concurrent_requests": 2,
+    "default_page_size": 256,
+    "max_page_size": 1000,
+    "request_timeout": "10s",
+    "cursor_ttl": "5m",
+    "max_response_bytes": 4194304
+  },
+  "datasets": [
+    {
+      "name": "schema.tables",
+      "sensitivity_level": "L2",
+      "redaction_profile": "strict-v1",
+      "redaction_version": 1,
+      "fields": [
+        "schema_id", "schema_name", "table_id", "table_name", "table_kind",
+        "state", "charset", "collation", "pk_is_handle", "is_common_handle",
+        "shard_row_id_bits", "auto_random_bits", "partitioned", "update_ts"
+      ],
+      "field_policies": [
+        {"name": "schema_id", "class": "metadata", "transform": "pass"},
+        {"name": "schema_name", "class": "identifier", "transform": "pseudonymize"},
+        {"name": "table_id", "class": "metadata", "transform": "pass"},
+        {"name": "table_name", "class": "identifier", "transform": "pseudonymize"},
+        {"name": "table_kind", "class": "metadata", "transform": "pass"},
+        {"name": "state", "class": "metadata", "transform": "pass"},
+        {"name": "charset", "class": "metadata", "transform": "pass"},
+        {"name": "collation", "class": "metadata", "transform": "pass"},
+        {"name": "pk_is_handle", "class": "metadata", "transform": "pass"},
+        {"name": "is_common_handle", "class": "metadata", "transform": "pass"},
+        {"name": "shard_row_id_bits", "class": "metadata", "transform": "pass"},
+        {"name": "auto_random_bits", "class": "metadata", "transform": "pass"},
+        {"name": "partitioned", "class": "metadata", "transform": "pass"},
+        {"name": "update_ts", "class": "metadata", "transform": "pass"},
+        {"name": "comment", "class": "user_content", "transform": "omit"},
+        {"name": "view_select", "class": "user_content", "transform": "omit"},
+        {"name": "ttl_expression", "class": "user_content", "transform": "omit"}
+      ]
+    }
+  ]
+}
+```
+
+`fields` is the exact top-level record schema. `field_policies` also declares selected high-risk source fields with `transform: "omit"`; omitted fields are not read into the response record and must not appear in `fields` or a dataset page. Structured fields use paths such as `columns[].column_name` so a collector can validate nested objects recursively.
+
+### Get one dataset page
+
+Method and path:
+
+```text
+GET /internal/diagnostics/v1/datasets/{dataset}
+```
+
+Supported datasets are:
+
+- `schema.tables`
+- `schema.columns`
+- `schema.indexes`
+- `schema.partitions`
+- `binding.summary`
+- `stats.health`
+
+Query parameters:
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `page_size` | No | Positive record limit for this page. The configured default is used when omitted. It must not exceed `max-page-size`. |
+| `cursor` | No | Opaque continuation cursor returned by the preceding page. Do not decode, modify, or reuse it for another dataset. |
+
+Example first page:
+
+```shell
+curl --cacert /path/to/ca.pem \
+  --cert /path/to/agent.pem \
+  --key /path/to/agent-key.pem \
+  "https://{TiDBIP}:10080/internal/diagnostics/v1/datasets/schema.tables?page_size=256"
+```
+
+Example response:
+
+```json
+{
+  "protocol_version": "1.0",
+  "dataset": "schema.tables",
+  "snapshot_id": "2n9c",
+  "snapshot_ts": 465858185812345678,
+  "schema_version": 12345,
+  "snapshot_started_at": "2026-08-19T04:00:00Z",
+  "captured_at": "2026-08-19T04:00:00.123456Z",
+  "sensitivity_level": "L2",
+  "redaction_profile": "strict-v1",
+  "redaction_version": 1,
+  "redaction_key_id": "diag-name-2026-08",
+  "record_count": 1,
+  "records": [
+    {
+      "schema_id": 101,
+      "schema_name": "schema_abcdefghijklmnopqrstuvwxyz",
+      "table_id": 102,
+      "table_name": "table_zabcdefghijklmnopqrstuvwxy",
+      "table_kind": "base",
+      "state": "public",
+      "charset": "utf8mb4",
+      "collation": "utf8mb4_bin",
+      "pk_is_handle": true,
+      "is_common_handle": false,
+      "shard_row_id_bits": 0,
+      "auto_random_bits": 0,
+      "partitioned": false,
+      "update_ts": 465858100000000000
+    }
+  ],
+  "next_cursor": "opaque-token",
+  "complete": false
+}
+```
+
+Use `next_cursor` for the next request until `complete` is `true`. All pages in one run use the same MVCC timestamp. The cursor is signed with a TiDB-process-local key, has a configured TTL, and becomes invalid after that TiDB process restarts. A collector must keep a run on one TiDB endpoint. On HTTP 409, discard every partial page from that run and start again without a cursor.
+
+Schema datasets read TiDB metadata directly at the snapshot timestamp. `binding.summary` and `stats.health` use internal snapshot reads. The API intentionally excludes SQL text, default values, comments, generated expressions, partition boundary values, histogram buckets, and TopN values.
+
+The alias input is domain-separated and length-delimited and includes the object type, stable object/parent IDs, and original identifier. Only the first 128 bits of the HMAC-SHA256 result are encoded into the alias. HMAC state and its input buffer are reused from a bounded pool, and table/schema aliases are computed once per visited table in multi-record collectors; redaction does not add TiKV or PD requests. On an Apple M4 development machine, five runs of `BenchmarkDiagnosticIdentifierRedaction` measured 144.2-146.1 ns/op, 48 B/op, and one allocation per alias after buffer reuse. Treat this as a microbenchmark, not a production scale result. Rotating the key changes aliases, so switch keys only between complete snapshots and keep the old `redaction-key-id` interpretable for the required retention period.
+
+### Error responses
+
+Errors use a stable JSON envelope:
+
+```json
+{
+  "code": "snapshot_restart_required",
+  "message": "the diagnostic cursor has expired",
+  "retryable": true,
+  "restart_snapshot": true
+}
+```
+
+| HTTP status | Meaning | Client action |
+| --- | --- | --- |
+| `400` | Invalid `page_size` or request parameters. | Fix the request; do not retry unchanged. |
+| `401` | A verified client certificate is required. | Fix TLS identity or authorization. |
+| `404` | The dataset is not enabled or supported. | Refresh capabilities or policy. |
+| `409` | Cursor expired, was modified, belongs to another dataset/process, or the snapshot was garbage-collected. | Delete partial output and restart at the first page. |
+| `413` | The encoded response would exceed `max-response-bytes`. | Retry the same cursor with `suggested_page_size` or a smaller value. |
+| `429` | All diagnostic request slots are in use. | Honor `Retry-After` and retry with backoff. |
+| `500` | The page could not be generated. | Retry with a bounded backoff. |
+| `504` | The page exceeded `request-timeout`. | Retry with a bounded backoff or reduce `page_size`. |
+
+Responses set `Cache-Control: no-store`. Successful pages also return `X-Diagnostic-Snapshot-ID` and `X-Diagnostic-Record-Count` headers.
+
 ## Test-only APIs (enableTestAPI failpoint)
 
 These APIs are only registered when the `enableTestAPI` failpoint is enabled.

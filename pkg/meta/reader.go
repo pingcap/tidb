@@ -30,7 +30,9 @@ type Reader interface {
 	ListTables(ctx context.Context, dbID int64) ([]*model.TableInfo, error)
 	ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error)
 	IterDatabases(func(info *model.DBInfo) error) error
+	IterDatabasesFrom(exclusiveStartDBID int64, fn func(info *model.DBInfo) error) error
 	IterTables(dbID int64, fn func(info *model.TableInfo) error) error
+	IterTablesFrom(dbID, exclusiveStartTableID int64, fn func(info *model.TableInfo) error) error
 	GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors
 	GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[string]int64, []*model.TableInfo, error)
 
@@ -71,4 +73,30 @@ func NewReader(snapshot kv.Snapshot) Reader {
 	snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
 	t := structure.NewStructure(snapshot, nil, mMetaPrefix)
 	return &Mutator{txn: t}
+}
+
+// NewTableInfoIteratorFromSnapshot creates a persistent table metadata
+// iterator and applies the same internal request options as NewReader.
+func NewTableInfoIteratorFromSnapshot(
+	snapshot kv.Snapshot,
+	dbID, exclusiveStartTableID int64,
+) (*TableInfoIterator, error) {
+	return NewTableInfoIteratorFromSnapshotWithDecodeMode(
+		snapshot,
+		dbID,
+		exclusiveStartTableID,
+		TableInfoDecodeAll,
+	)
+}
+
+// NewTableInfoIteratorFromSnapshotWithDecodeMode creates a persistent table
+// metadata iterator with projection-aware JSON decoding.
+func NewTableInfoIteratorFromSnapshotWithDecodeMode(
+	snapshot kv.Snapshot,
+	dbID, exclusiveStartTableID int64,
+	decodeMode TableInfoDecodeMode,
+	stats ...*kv.InfoSchemaScanAllocationStats,
+) (*TableInfoIterator, error) {
+	reader := NewReader(snapshot)
+	return reader.(*Mutator).NewTableInfoIteratorWithDecodeMode(dbID, exclusiveStartTableID, decodeMode, stats...)
 }

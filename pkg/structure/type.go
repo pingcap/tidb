@@ -100,6 +100,13 @@ func (t *TxStructure) EncodeHashDataKey(key []byte, field []byte) kv.Key {
 }
 
 func (t *TxStructure) decodeHashDataKey(ek kv.Key) (key, field []byte, err error) {
+	return t.decodeHashDataKeyWithStats(ek, nil)
+}
+
+func (t *TxStructure) decodeHashDataKeyWithStats(
+	ek kv.Key,
+	stats *kv.InfoSchemaScanAllocationStats,
+) (key, field []byte, err error) {
 	var tp uint64
 
 	if !bytes.HasPrefix(ek, t.prefix) {
@@ -108,6 +115,9 @@ func (t *TxStructure) decodeHashDataKey(ek kv.Key) (key, field []byte, err error
 
 	ek = ek[len(t.prefix):]
 
+	if stats != nil {
+		stats.HashDecodeAllocatedBytes += uint64(len(ek))
+	}
 	ek, key, err = codec.DecodeBytes(ek, nil)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -120,6 +130,9 @@ func (t *TxStructure) decodeHashDataKey(ek kv.Key) (key, field []byte, err error
 		return nil, nil, ErrInvalidHashKeyFlag.GenWithStack("invalid encoded hash data key flag %c", byte(tp))
 	}
 
+	if stats != nil {
+		stats.HashDecodeAllocatedBytes += uint64(len(ek))
+	}
 	_, field, err = codec.DecodeBytes(ek, nil)
 	return key, field, errors.Trace(err)
 }

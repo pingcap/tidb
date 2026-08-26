@@ -921,12 +921,34 @@ type TableItem struct {
 // Used by executor/infoschema_reader.go to handle reading from INFORMATION_SCHEMA.TABLES.
 // If visit return false, stop the iterate process.
 func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
-	maxv, ok := is.byName.Load().Max()
-	if !ok {
-		return
+	is.IterateAllTableItemsFrom(nil, visit)
+}
+
+// IterateAllTableItemsFrom resumes IterateAllTableItems strictly after the
+// previously returned table item. The third return value reports whether the
+// B-tree was exhausted.
+func (is *infoschemaV2) IterateAllTableItemsFrom(
+	exclusiveStart *TableItem,
+	visit func(TableItem) bool,
+) (last TableItem, hasLast bool, exhausted bool) {
+	var start *tableItem
+	if exclusiveStart == nil {
+		maxv, ok := is.byName.Load().Max()
+		if !ok {
+			return TableItem{}, false, true
+		}
+		start = maxv
+	} else {
+		start = &tableItem{
+			dbName:        exclusiveStart.DBName,
+			tableName:     exclusiveStart.TableName,
+			schemaVersion: math.MinInt64,
+		}
 	}
+
 	var pivot *tableItem
-	is.byName.Load().DescendLessOrEqual(maxv, func(item *tableItem) bool {
+	stopped := false
+	is.byName.Load().DescendLessOrEqual(start, func(item *tableItem) bool {
 		if item.schemaVersion > is.schemaMetaVersion {
 			// skip MVCC version, those items are not visible to the queried schema version
 			return true
@@ -936,11 +958,17 @@ func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
 			return true
 		}
 		pivot = item
+		last = TableItem{DBName: item.dbName, TableName: item.tableName}
+		hasLast = true
 		if !item.tomb {
-			return visit(TableItem{DBName: item.dbName, TableName: item.tableName})
+			if !visit(last) {
+				stopped = true
+				return false
+			}
 		}
 		return true
 	})
+	return last, hasLast, !stopped
 }
 
 // TableIsCached checks whether the table is cached.
@@ -1130,6 +1158,200 @@ retry:
 		return nil, errors.Trace(err)
 	}
 	return tblInfos, nil
+}
+
+// TableInfoIterator keeps one MetaKV scanner alive while table metadata is
+// consumed in multiple executor output batches.
+type TableInfoIterator interface {
+	Next(context.Context) (*model.TableInfo, error)
+	NextInto(context.Context, *model.TableInfo) (*model.TableInfo, error)
+	Close()
+}
+
+type infoschemaV2TableInfoIterator struct {
+	store       kv.Storage
+	ts          uint64
+	dbID        int64
+	lastTableID int64
+	decodeMode  meta.TableInfoDecodeMode
+	stats       *kv.InfoSchemaScanAllocationStats
+	iter        *meta.TableInfoIterator
+	exhausted   bool
+}
+
+const (
+	metadataScanBatchSize            = 32
+	metadataScanResponseRetainedSize = int64(16 << 20)
+)
+
+// NewTableInfoIterator creates a persistent MetaKV iterator positioned
+// strictly after exclusiveStartTableID.
+func (is *infoschemaV2) NewTableInfoIterator(
+	ctx context.Context,
+	schema ast.CIStr,
+	exclusiveStartTableID int64,
+) (TableInfoIterator, error) {
+	return is.newTableInfoIterator(ctx, schema, exclusiveStartTableID, meta.TableInfoDecodeAll)
+}
+
+// NewColumnsTableInfoIterator creates a persistent iterator that decodes only
+// metadata needed by INFORMATION_SCHEMA.COLUMNS.
+func (is *infoschemaV2) NewColumnsTableInfoIterator(
+	ctx context.Context,
+	schema ast.CIStr,
+	exclusiveStartTableID int64,
+) (TableInfoIterator, error) {
+	return is.newTableInfoIterator(ctx, schema, exclusiveStartTableID, meta.TableInfoDecodeColumns)
+}
+
+func (is *infoschemaV2) newTableInfoIterator(
+	ctx context.Context,
+	schema ast.CIStr,
+	exclusiveStartTableID int64,
+	decodeMode meta.TableInfoDecodeMode,
+) (TableInfoIterator, error) {
+	if IsSpecialDB(schema.L) {
+		return nil, errors.Errorf("cannot iterate special schema %s from MetaKV", schema.O)
+	}
+
+	is.keepAlive()
+	dbInfo, ok := is.SchemaByName(schema)
+	iterator := &infoschemaV2TableInfoIterator{
+		store:       is.r.Store(),
+		ts:          is.ts,
+		lastTableID: exclusiveStartTableID,
+		decodeMode:  decodeMode,
+		stats:       kv.InfoSchemaScanStatsFromContext(ctx),
+		exhausted:   !ok,
+	}
+	if !ok {
+		return iterator, nil
+	}
+	iterator.dbID = dbInfo.ID
+	if err := iterator.reopen(ctx); err != nil {
+		return nil, err
+	}
+	return iterator, nil
+}
+
+func (i *infoschemaV2TableInfoIterator) reopen(ctx context.Context) error {
+	for !i.exhausted {
+		snapshot := i.store.GetSnapshot(kv.NewVersion(i.ts))
+		// Keep this consistent with SchemaTableInfos so a long metadata scan has
+		// the same bounded TiKV request timeout as the existing list API.
+		snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
+		snapshot.SetOption(kv.ScanBatchSize, metadataScanBatchSize)
+		snapshot.SetOption(kv.ScanResponseRetainedSize, metadataScanResponseRetainedSize)
+		if i.stats != nil {
+			snapshot.SetOption(kv.InfoSchemaScanStats, i.stats)
+		}
+		iter, err := meta.NewTableInfoIteratorFromSnapshotWithDecodeMode(
+			snapshot,
+			i.dbID,
+			i.lastTableID,
+			i.decodeMode,
+			i.stats,
+		)
+		if err == nil {
+			i.iter = iter
+			return nil
+		}
+		if meta.ErrDBNotExists.Equal(err) {
+			i.exhausted = true
+			return nil
+		}
+		if !strings.Contains(err.Error(), "in flashback progress") {
+			return errors.Trace(err)
+		}
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+func (i *infoschemaV2TableInfoIterator) Next(ctx context.Context) (*model.TableInfo, error) {
+	return i.NextInto(ctx, &model.TableInfo{})
+}
+
+func (i *infoschemaV2TableInfoIterator) NextInto(ctx context.Context, destination *model.TableInfo) (*model.TableInfo, error) {
+	for !i.exhausted {
+		tableInfo, err := i.iter.NextInto(ctx, destination)
+		if err == nil {
+			if tableInfo == nil {
+				i.Close()
+				return nil, nil
+			}
+			i.lastTableID = tableInfo.ID
+			return tableInfo, nil
+		}
+
+		i.iter.Close()
+		i.iter = nil
+		if meta.ErrDBNotExists.Equal(err) {
+			i.exhausted = true
+			return nil, nil
+		}
+		if !strings.Contains(err.Error(), "in flashback progress") {
+			return nil, errors.Trace(err)
+		}
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		if err := i.reopen(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return nil, nil
+}
+
+func (i *infoschemaV2TableInfoIterator) Close() {
+	if i.iter != nil {
+		i.iter.Close()
+		i.iter = nil
+	}
+	i.exhausted = true
+}
+
+func (i *infoschemaV2TableInfoIterator) RetainedMemory() int64 {
+	if i.iter == nil {
+		return 0
+	}
+	return i.iter.RetainedMemory()
+}
+
+// IterateTableInfosFrom visits persistent table metadata in MetaKV strictly
+// after exclusiveStartTableID. It returns exhausted=false when visit stops.
+func (is *infoschemaV2) IterateTableInfosFrom(
+	ctx context.Context,
+	schema ast.CIStr,
+	exclusiveStartTableID int64,
+	visit func(*model.TableInfo) bool,
+) (lastTableID int64, exhausted bool, err error) {
+	iter, err := is.NewTableInfoIterator(ctx, schema, exclusiveStartTableID)
+	if err != nil {
+		return exclusiveStartTableID, false, err
+	}
+	defer iter.Close()
+
+	lastTableID = exclusiveStartTableID
+	for {
+		tableInfo, err := iter.Next(ctx)
+		if err != nil {
+			return lastTableID, false, err
+		}
+		if tableInfo == nil {
+			return lastTableID, true, nil
+		}
+		lastTableID = tableInfo.ID
+		if !visit(tableInfo) {
+			return lastTableID, false, nil
+		}
+	}
 }
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.

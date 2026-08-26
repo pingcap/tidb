@@ -1356,6 +1356,109 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 	}
 }
 
+func TestDiagnosticAPIConfigValid(t *testing.T) {
+	conf := NewConfig()
+	require.False(t, conf.DiagnosticAPI.Enabled)
+	require.True(t, conf.DiagnosticAPI.RequireMTLS)
+	require.Equal(t, DiagnosticRedactionProfileStrict, conf.DiagnosticAPI.RedactionProfile)
+	require.Equal(t, uint(DefDiagnosticAPIDefaultPageSize), conf.DiagnosticAPI.DefaultPageSize)
+	require.NoError(t, conf.Valid())
+
+	conf.DiagnosticAPI.Enabled = true
+	require.ErrorContains(t, conf.Valid(), "strict-v1 requires redaction-key-file")
+	conf.DiagnosticAPI.RedactionProfile = DiagnosticRedactionProfileMetadataReadable
+	require.ErrorContains(t, conf.Valid(), "require-mtls needs")
+	conf.DiagnosticAPI.RequireMTLS = false
+	require.NoError(t, conf.Valid())
+
+	tests := []struct {
+		name   string
+		mutate func(*DiagnosticAPI)
+		err    string
+	}{
+		{
+			name: "unknown redaction profile",
+			mutate: func(c *DiagnosticAPI) {
+				c.RedactionProfile = "marker"
+			},
+			err: "unsupported redaction-profile",
+		},
+		{
+			name: "strict key pair",
+			mutate: func(c *DiagnosticAPI) {
+				c.RedactionKeyFile = "/path/to/key"
+			},
+			err: "requires redaction-key-file and redaction-key-id together",
+		},
+		{
+			name: "invalid key id",
+			mutate: func(c *DiagnosticAPI) {
+				c.RedactionKeyFile = "/path/to/key"
+				c.RedactionKeyID = "invalid key id"
+			},
+			err: "redaction-key-id",
+		},
+		{
+			name: "readable profile rejects key",
+			mutate: func(c *DiagnosticAPI) {
+				c.RedactionProfile = DiagnosticRedactionProfileMetadataReadable
+				c.RedactionKeyFile = "/path/to/key"
+				c.RedactionKeyID = "key-1"
+			},
+			err: "must not configure a redaction key",
+		},
+		{
+			name: "zero concurrency",
+			mutate: func(c *DiagnosticAPI) {
+				c.MaxConcurrentRequests = 0
+			},
+			err: "max-concurrent-requests",
+		},
+		{
+			name: "page relationship",
+			mutate: func(c *DiagnosticAPI) {
+				c.DefaultPageSize = c.MaxPageSize + 1
+			},
+			err: "default-page-size",
+		},
+		{
+			name: "duration",
+			mutate: func(c *DiagnosticAPI) {
+				c.CursorTTL = "0s"
+			},
+			err: "cursor-ttl",
+		},
+		{
+			name: "unknown dataset",
+			mutate: func(c *DiagnosticAPI) {
+				c.Datasets = append(c.Datasets, "mysql.arbitrary")
+			},
+			err: "unsupported dataset",
+		},
+		{
+			name: "duplicate dataset",
+			mutate: func(c *DiagnosticAPI) {
+				c.Datasets = append(c.Datasets, c.Datasets[0])
+			},
+			err: "duplicate dataset",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := NewConfig()
+			tt.mutate(&conf.DiagnosticAPI)
+			require.ErrorContains(t, conf.Valid(), tt.err)
+		})
+	}
+
+	strict := NewConfig()
+	strict.DiagnosticAPI.Enabled = true
+	strict.DiagnosticAPI.RequireMTLS = false
+	strict.DiagnosticAPI.RedactionKeyFile = "/path/to/key"
+	strict.DiagnosticAPI.RedactionKeyID = "diag-name-2026-08"
+	require.NoError(t, strict.Valid())
+}
+
 func TestDeployModeConfig(t *testing.T) {
 	conf := NewConfig()
 	require.Equal(t, deploymode.Premium, conf.DeployMode)

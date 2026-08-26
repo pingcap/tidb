@@ -237,6 +237,54 @@ func TestHash(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	var continued []structure.HashPair
+	err = tx.HGetIterFrom(key, []byte("1"), func(pair structure.HashPair) error {
+		continued = append(continued, pair)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, []structure.HashPair{{Field: []byte("2"), Value: []byte("2")}}, continued)
+
+	continued = continued[:0]
+	err = tx.HGetIterFrom(key, nil, func(pair structure.HashPair) error {
+		continued = append(continued, pair)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, res, continued)
+
+	prefixKey := []byte("prefix-key")
+	for _, field := range []string{"a", "aa", "ab", "b"} {
+		require.NoError(t, tx.HSet(prefixKey, []byte(field), []byte(field)))
+	}
+	continued = continued[:0]
+	err = tx.HGetIterFrom(prefixKey, []byte("a"), func(pair structure.HashPair) error {
+		continued = append(continued, pair)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, []structure.HashPair{
+		{Field: []byte("aa"), Value: []byte("aa")},
+		{Field: []byte("ab"), Value: []byte("ab")},
+		{Field: []byte("b"), Value: []byte("b")},
+	}, continued)
+
+	hashIter, err := structure.NewHashIterator(tx, prefixKey, []byte("a"))
+	require.NoError(t, err)
+	require.True(t, hashIter.Valid())
+	require.Equal(t, []byte("aa"), hashIter.Field())
+	require.Equal(t, []byte("aa"), hashIter.Value())
+	require.NoError(t, hashIter.Next())
+	require.True(t, hashIter.Valid())
+	require.Equal(t, []byte("ab"), hashIter.Field())
+	require.NoError(t, hashIter.Next())
+	require.True(t, hashIter.Valid())
+	require.Equal(t, []byte("b"), hashIter.Field())
+	require.NoError(t, hashIter.Next())
+	require.False(t, hashIter.Valid())
+	hashIter.Close()
+	require.False(t, hashIter.Valid())
+
 	res, err = tx.HGetLastN(key, 1)
 	require.NoError(t, err)
 	require.Equal(t, []structure.HashPair{
