@@ -841,6 +841,85 @@ impl PlanTrace {
         self.stack.insert(first_term, distinct);
     }
 
+    /// Folds direct `INTERSECT DISTINCT` or `EXCEPT DISTINCT` terms into the
+    /// left-deep semi-join tree built by Go
+    /// `pkg/planner/core/logical_plan_builder.go::buildIntersect`,
+    /// `buildExcept` and `buildSemiJoinForSetOperator`.
+    pub(crate) fn set_operator_semi_join_chain(
+        &mut self,
+        terms: usize,
+        columns: usize,
+        anti: bool,
+        left_already_distinct: bool,
+        distinct_left_rows: u64,
+        output_rows: &[u64],
+    ) {
+        if terms < 2 || columns == 0 || output_rows.len() + 1 != terms || self.stack.len() < terms {
+            self.refuse("EXPLAIN recorded an incomplete INTERSECT/EXCEPT plan");
+            return;
+        }
+        let first_term = self.stack.len() - terms;
+        let mut children = self.stack.split_off(first_term).into_iter();
+        let Some(mut left) = children.next() else {
+            self.refuse("EXPLAIN recorded an empty INTERSECT/EXCEPT plan");
+            return;
+        };
+
+        // `buildSemiJoinForSetOperator` makes the preserved input distinct
+        // before the first join. A SELECT DISTINCT has already recorded that
+        // HashAgg, and Go's aggregate eliminator does not retain a second one.
+        if !left_already_distinct {
+            let groups = std::iter::repeat_n("Column", columns)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let first_rows = std::iter::repeat_n("firstrow(Column)->Column", columns)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut distinct = PlanNode::new(
+                "HashAgg",
+                left.est_rows.map(|rows| rows * DISTINCT_FACTOR),
+                String::new(),
+                format!("group by:{groups}, funcs:{first_rows}"),
+            );
+            if self.counting {
+                distinct.act_rows = Some(Rc::new(Cell::new(distinct_left_rows)));
+            }
+            distinct.children.push(left);
+            left = distinct;
+        }
+
+        let equal = std::iter::repeat_n("nulleq(Column, Column)", columns)
+            .collect::<Vec<_>>()
+            .join(" ");
+        for (mut right, output_rows) in children.zip(output_rows) {
+            right.label = "(Build)";
+            left.label = "(Probe)";
+            let estimate = left.est_rows.map(|rows| rows * SELECTIVITY_FACTOR);
+            let mut join = PlanNode::new(
+                "HashJoin",
+                estimate,
+                String::new(),
+                if anti {
+                    "anti semi join".to_owned()
+                } else {
+                    "semi join".to_owned()
+                },
+            );
+            join.info_tail = ", equal:[".to_owned();
+            join.info_tail.push_str(&equal);
+            join.info_tail.push(']');
+            // Children print build first. The preserved logical LEFT input is
+            // therefore child 1, exactly what Go's explainJoinLeftSide names.
+            join.left_side_child = Some(1);
+            join.children = vec![right, left];
+            if self.counting {
+                join.act_rows = Some(Rc::new(Cell::new(*output_rows)));
+            }
+            left = join;
+        }
+        self.stack.push(left);
+    }
+
     fn wrap(&mut self, name: &'static str, est: Est, info: String) {
         let est_rows = est.apply(self.top_est());
         let child = self.stack.pop();

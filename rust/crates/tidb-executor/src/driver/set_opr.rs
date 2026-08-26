@@ -267,11 +267,11 @@ pub(crate) fn plan_set_opr_meta_stmt(
     Ok(columns)
 }
 
-/// The direct `UNION` forms this trace can describe exactly. Go's
+/// The direct set-operation forms this trace can describe exactly. Go's
 /// `buildUnion` splits the direct operand list into a DISTINCT prefix and an
 /// optional ALL suffix; the prefix becomes `HashAgg(Union(...))`, then a
-/// second `Union` appends the suffix. `INTERSECT` and `EXCEPT` need their own
-/// semi-join-like physical plans and remain refused.
+/// second `Union` appends the suffix. Pure DISTINCT `INTERSECT` and `EXCEPT`
+/// chains become semi and anti-semi joins respectively.
 pub(crate) fn is_unordered_union_all(stmt: &tidb_ast::SetOprStmt) -> bool {
     stmt.with.is_none()
         && stmt.order_by.is_empty()
@@ -283,7 +283,7 @@ pub(crate) fn is_unordered_union_all(stmt: &tidb_ast::SetOprStmt) -> bool {
         })
 }
 
-fn direct_unordered_union(stmt: &tidb_ast::SetOprStmt) -> bool {
+fn direct_unordered_set_operation(stmt: &tidb_ast::SetOprStmt) -> bool {
     stmt.with.is_none()
         && stmt.order_by.is_empty()
         && stmt.limit.is_none()
@@ -292,6 +292,10 @@ fn direct_unordered_union(stmt: &tidb_ast::SetOprStmt) -> bool {
             .terms
             .iter()
             .all(|term| matches!(term.body, tidb_ast::SetOprTermBody::Select(_)))
+}
+
+fn direct_unordered_union(stmt: &tidb_ast::SetOprStmt) -> bool {
+    direct_unordered_set_operation(stmt)
         && stmt
             .terms
             .iter()
@@ -308,34 +312,60 @@ enum TracedSetOpr {
     UnionWithDistinctPrefix {
         distinct_terms: usize,
     },
+    IntersectDistinct,
+    ExceptDistinct,
 }
 
 fn traced_set_opr(stmt: &tidb_ast::SetOprStmt) -> Option<TracedSetOpr> {
-    if !direct_unordered_union(stmt) {
-        return None;
-    }
-    if is_unordered_union_all(stmt) {
-        return Some(TracedSetOpr::UnionAll);
+    if direct_unordered_union(stmt) {
+        if is_unordered_union_all(stmt) {
+            return Some(TracedSetOpr::UnionAll);
+        }
+
+        // Exact `divideUnionSelectPlans` loop from Go's buildUnion: a DISTINCT
+        // operator makes every operand to its LEFT part of the distinct group;
+        // a later ALL suffix is appended after that group is deduplicated.
+        let mut first_union_all = 0;
+        for index in (1..stmt.terms.len()).rev() {
+            if first_union_all == 0
+                && !matches!(
+                    stmt.terms[index].op,
+                    Some(tidb_ast::SetOp::Union { all: true })
+                )
+            {
+                first_union_all = index + 1;
+            }
+        }
+        debug_assert!(first_union_all > 0);
+        return Some(TracedSetOpr::UnionWithDistinctPrefix {
+            distinct_terms: first_union_all,
+        });
     }
 
-    // Exact `divideUnionSelectPlans` loop from Go's buildUnion: a DISTINCT
-    // operator makes every operand to its LEFT part of the distinct group;
-    // a later ALL suffix is appended after that group is deduplicated.
-    let mut first_union_all = 0;
-    for index in (1..stmt.terms.len()).rev() {
-        if first_union_all == 0
-            && !matches!(
-                stmt.terms[index].op,
-                Some(tidb_ast::SetOp::Union { all: true })
-            )
-        {
-            first_union_all = index + 1;
-        }
+    if !direct_unordered_set_operation(stmt) {
+        return None;
     }
-    debug_assert!(first_union_all > 0);
-    Some(TracedSetOpr::UnionWithDistinctPrefix {
-        distinct_terms: first_union_all,
-    })
+    // Go alignment: pkg/planner/core/logical_plan_builder.go::buildIntersect,
+    // buildExcept and buildSemiJoinForSetOperator lower these pure DISTINCT
+    // chains to left-deep semi/anti-semi joins. Mixed-precedence and nested
+    // forms stay refused until their grouping can be traced just as exactly.
+    if stmt
+        .terms
+        .iter()
+        .skip(1)
+        .all(|term| matches!(term.op, Some(tidb_ast::SetOp::Intersect { all: false })))
+    {
+        return Some(TracedSetOpr::IntersectDistinct);
+    }
+    if stmt
+        .terms
+        .iter()
+        .skip(1)
+        .all(|term| matches!(term.op, Some(tidb_ast::SetOp::Except { all: false })))
+    {
+        return Some(TracedSetOpr::ExceptDistinct);
+    }
+    None
 }
 
 /// [`run_set_opr_stmt`] while retaining every direct sequence of `UNION ALL`
@@ -473,8 +503,19 @@ pub(crate) fn run_set_opr_traced_with_deferred(
     // commit to a type before the later terms had been seen.
     let distinct_terms = match union_shape {
         Some(TracedSetOpr::UnionWithDistinctPrefix { distinct_terms }) => Some(distinct_terms),
-        Some(TracedSetOpr::UnionAll) | None => None,
+        Some(
+            TracedSetOpr::UnionAll | TracedSetOpr::IntersectDistinct | TracedSetOpr::ExceptDistinct,
+        )
+        | None => None,
     };
+    let set_membership_is_duplicate_agnostic = matches!(
+        union_shape,
+        Some(TracedSetOpr::IntersectDistinct | TracedSetOpr::ExceptDistinct)
+    );
+    let left_already_distinct = stmt.terms.first().is_some_and(|term| match &term.body {
+        tidb_ast::SetOprTermBody::Select(select) => select.distinct,
+        tidb_ast::SetOprTermBody::Nested(_) => false,
+    });
     let mut terms: Vec<SelectMeta> = Vec::with_capacity(stmt.terms.len());
     for (index, term) in stmt.terms.iter().enumerate() {
         let term_meta = run_set_opr_term(
@@ -483,7 +524,8 @@ pub(crate) fn run_set_opr_traced_with_deferred(
             current_db,
             ctx,
             trace.as_deref_mut(),
-            distinct_terms.is_some_and(|count| index < count),
+            set_membership_is_duplicate_agnostic
+                || distinct_terms.is_some_and(|count| index < count),
         )?;
         // Go raises ErrWrongNumberOfColumnsInSelect for a term whose width
         // differs.
@@ -517,8 +559,21 @@ pub(crate) fn run_set_opr_traced_with_deferred(
 
     let mut term_iter = terms.into_iter();
     let mut accumulated = term_iter.next().map(|(_, rows)| rows).unwrap_or_default();
+    let set_membership_shape = matches!(
+        union_shape,
+        Some(TracedSetOpr::IntersectDistinct | TracedSetOpr::ExceptDistinct)
+    );
+    // Go `buildSemiJoinForSetOperator` puts `buildDistinct` on the preserved
+    // left input before the first semi join. Doing the same row fold here is
+    // equivalent to the final dedup in `combine_set_opr`, and exposes the
+    // exact counter needed by EXPLAIN ANALYZE's HashAgg row.
+    if set_membership_shape {
+        accumulated = dedup_rows(accumulated)?;
+    }
+    let distinct_left_rows = accumulated.len() as u64;
     let distinct_input_rows = distinct_terms.map(|count| term_row_counts[..count].iter().sum());
     let mut distinct_output_rows = None;
+    let mut set_membership_output_rows = Vec::new();
     for (index, (term, (_, term_rows))) in stmt.terms.iter().skip(1).zip(term_iter).enumerate() {
         let Some(op) = term.op else {
             return Err(DriverError::unsupported(
@@ -528,6 +583,9 @@ pub(crate) fn run_set_opr_traced_with_deferred(
         accumulated = combine_set_opr(op, accumulated, term_rows)?;
         if distinct_terms == Some(index + 2) {
             distinct_output_rows = Some(accumulated.len() as u64);
+        }
+        if set_membership_shape {
+            set_membership_output_rows.push(accumulated.len() as u64);
         }
     }
 
@@ -558,6 +616,16 @@ pub(crate) fn run_set_opr_traced_with_deferred(
                 if all_terms > 0 {
                     trace.union_all(all_terms + 1, accumulated.len() as u64);
                 }
+            }
+            TracedSetOpr::IntersectDistinct | TracedSetOpr::ExceptDistinct => {
+                trace.set_operator_semi_join_chain(
+                    stmt.terms.len(),
+                    columns.len(),
+                    matches!(union_shape, Some(TracedSetOpr::ExceptDistinct)),
+                    left_already_distinct,
+                    distinct_left_rows,
+                    &set_membership_output_rows,
+                );
             }
         }
     }

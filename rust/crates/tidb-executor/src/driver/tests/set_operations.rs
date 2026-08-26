@@ -314,6 +314,86 @@ fn set_operations() {
     ));
 }
 
+/// Go `pkg/planner/core/logical_plan_builder.go::buildIntersect`/`buildExcept`
+/// lower DISTINCT set membership through `buildSemiJoinForSetOperator`: the
+/// first input is deduplicated, then every right input becomes the build side
+/// of a left-deep semi/anti-semi join. EXPLAIN ANALYZE reports the output of
+/// each fold, not the independently materialized term counts.
+#[test]
+fn intersect_and_except_explain_as_go_semi_join_chains() {
+    use crate::explain::{explain_analyze_set_opr_stmt, explain_set_opr_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    for table in ["sx1", "sx2", "sx3"] {
+        crate::run_create_table_on(&format!("CREATE TABLE {table} (a BIGINT)"), &mut catalog)
+            .unwrap();
+    }
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on("INSERT INTO sx1 VALUES (1),(2),(2),(3)", &mut catalog, &ctx).unwrap();
+    run_insert_on("INSERT INTO sx2 VALUES (2),(3),(4)", &mut catalog, &ctx).unwrap();
+    run_insert_on("INSERT INTO sx3 VALUES (3),(4),(5)", &mut catalog, &ctx).unwrap();
+
+    let parse_set_opr = |sql: &str| {
+        let Stmt::Query(query) = tidb_parser::parse(sql).unwrap() else {
+            panic!("not a query")
+        };
+        let QueryStmt::SetOpr(set_opr) = &*query else {
+            panic!("not a set operation")
+        };
+        set_opr.clone()
+    };
+    let intersect =
+        parse_set_opr("SELECT a FROM sx1 INTERSECT SELECT a FROM sx2 INTERSECT SELECT a FROM sx3");
+    let (_, plan) =
+        explain_set_opr_stmt(&intersect, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let joins = plan
+        .iter()
+        .filter(|row| datum_text_for_test(&row[0]).contains("HashJoin"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        joins.len(),
+        2,
+        "three INTERSECT terms fold left-to-right: {plan:#?}"
+    );
+    assert!(
+        datum_text_for_test(&joins[0][4]).starts_with("semi join, left side:HashJoin"),
+        "the outer fold preserves the prior semi join: {plan:#?}"
+    );
+    assert!(
+        datum_text_for_test(&joins[1][4]).starts_with("semi join, left side:HashAgg"),
+        "the first fold preserves Go's distinct left input: {plan:#?}"
+    );
+    assert!(
+        joins
+            .iter()
+            .all(|row| datum_text_for_test(&row[4]).contains("equal:[nulleq(")),
+        "set membership compares every output column with NULL-safe equality: {plan:#?}"
+    );
+
+    let (_, analyzed) =
+        explain_analyze_set_opr_stmt(&intersect, &catalog, "test", &ctx, ExplainFormat::Brief)
+            .unwrap();
+    let join_act_rows = analyzed
+        .iter()
+        .filter(|row| datum_text_for_test(&row[0]).contains("HashJoin"))
+        .map(|row| datum_text_for_test(&row[2]))
+        .collect::<Vec<_>>();
+    assert_eq!(join_act_rows, ["1", "2"]);
+
+    let except =
+        parse_set_opr("SELECT a FROM sx1 EXCEPT SELECT a FROM sx2 EXCEPT SELECT a FROM sx3");
+    let (_, plan) =
+        explain_set_opr_stmt(&except, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let joins = plan
+        .iter()
+        .filter(|row| datum_text_for_test(&row[0]).contains("HashJoin"))
+        .collect::<Vec<_>>();
+    assert_eq!(joins.len(), 2);
+    assert!(joins
+        .iter()
+        .all(|row| { datum_text_for_test(&row[4]).starts_with("anti semi join, left side:") }));
+}
+
 /// Go's outer-join eliminator receives the duplicate-agnostic columns from a
 /// UNION DISTINCT's HashAgg, so an unread non-unique inner side disappears
 /// from that operand. UNION ALL must retain it because its duplicate rows are
