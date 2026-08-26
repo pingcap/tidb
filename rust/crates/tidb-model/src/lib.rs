@@ -50,6 +50,10 @@ pub mod table;
 pub mod table_info;
 pub mod table_mode;
 
+#[cfg(test)]
+#[path = "tests_pkg_meta_model_part2.rs"]
+mod tests_pkg_meta_model_part2;
+
 pub use action_type::{ActionType, ACTION_MAP};
 pub use bdr::{
     ts_convert_2_time, ActionBDRMap, BDRActionMap, DDLBDRType, ACTION_BDR_MAP, BDR_ACTION_MAP,
