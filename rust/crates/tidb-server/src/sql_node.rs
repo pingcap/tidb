@@ -814,6 +814,17 @@ impl ResultSetSource for BoxedResultSetSource<'_> {
         self.inner.next_batch(max_rows)
     }
 
+    fn supports_text_batch(&self) -> bool {
+        self.inner.supports_text_batch()
+    }
+
+    fn next_text_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Option<Box<dyn tidb_exec::distsql_recordset::TextResultBatch>>, String> {
+        self.inner.next_text_batch(max_rows)
+    }
+
     fn columns(&mut self) -> Result<Vec<tidb_protocol::ColumnInfo>, String> {
         self.inner.columns()
     }

@@ -15,13 +15,30 @@
 //! Server-facing result-set source contracts.
 
 use tidb_datatype::Datum;
-use tidb_exec::distsql_recordset::DistSqlRecordSet;
+use tidb_exec::distsql_recordset::{DistSqlRecordSet, TextResultBatch};
 use tidb_protocol::ColumnInfo;
 
 /// Lazy source consumed by the connection result-set writer.
 pub trait ResultSetSource {
     /// Pulls a bounded row batch.
     fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<Datum>>, String>;
+
+    /// Whether this source can retain a typed chunk while the text writer
+    /// formats rows directly from borrowed cells. Row-oriented sources keep
+    /// the default `false` and use [`Self::next_batch`].
+    fn supports_text_batch(&self) -> bool {
+        false
+    }
+
+    /// Pulls one typed chunk for the Go-shaped text writer. `None` means the
+    /// source is exhausted; unsupported sources must leave this method at its
+    /// default and report `supports_text_batch() == false`.
+    fn next_text_batch(
+        &mut self,
+        _max_rows: usize,
+    ) -> Result<Option<Box<dyn TextResultBatch>>, String> {
+        Ok(None)
+    }
 
     /// Returns metadata after the first pull has established dynamic schema.
     fn columns(&mut self) -> Result<Vec<ColumnInfo>, String>;
@@ -36,6 +53,17 @@ pub trait ResultSetSource {
 impl ResultSetSource for DistSqlRecordSet {
     fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
         DistSqlRecordSet::next_batch(self, max_rows).map_err(|error| error.to_string())
+    }
+
+    fn supports_text_batch(&self) -> bool {
+        true
+    }
+
+    fn next_text_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Option<Box<dyn TextResultBatch>>, String> {
+        DistSqlRecordSet::next_text_batch(self, max_rows).map_err(|error| error.to_string())
     }
 
     fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {

@@ -1197,3 +1197,39 @@ is recorded in
 `/private/tmp/hbx-1g-20260825/compare-go-lock-fix-commit-20260826.json`.
 Ready-profile `make lint` remains unavailable because this checkout has no
 `go` executable.
+
+Revision note, 2026-08-27 (latest client-rust response writer iteration):
+fetched `origin/hparser-integration` at `296483eff9`; local `cffc5cb898`
+contains that upstream tip and the intervening Go-reference receipts. The
+Rust result path now keeps the complete Go text-row type matrix at the typed
+chunk boundary: `pkg/server/internal/column/column.go:171-203` and
+`pkg/format/textrow/textrow.go:55-94` are mirrored by a borrowed
+`TextRowWriter`, strict response-column fallback, direct raw-byte framing,
+allocation-free `AppendInt`/`AppendUint`-equivalent integer formatting, and a
+raw `MyDecimal` validator. Decimal output follows Go code
+`pkg/types/mydecimal.go:277` by cloning/rounding to `resultFrac` and appending
+the `ToString` representation directly into the packet. Regression tests cover
+all affected protocol, DistSQL, server-writer, and decimal paths; the focused
+suites pass (16 MyDecimal, 7 protocol, 5 DistSQL recordset, 12 server writer,
+and 14 response-channel tests). The release binary was rebuilt from this
+source and restarted on `127.0.0.1:14019` (PID 75903).
+
+On the deterministic 1 GiB `hbx_web3_1g` fixture (1,048,576 rows × 1,024-byte
+payload), the latest comparison receipt
+`/private/tmp/hbx-1g-20260825/compare-go-decimal-final4-cffc-20260827.json`
+shows normalized plans and result hashes matching for q1, q2, flex, and swap;
+each query returns 100 rows with hashes
+`0c4882950464...`, `45f8be119987...`, `45f8be119987...`, and
+`bf2ce5996ce3...`, respectively. The 100-row batch INSERT receipt
+`/private/tmp/hbx-1g-20260825/bench-go-decimal-final4-cffc-20260827.json`
+reports 100 rows and sum `5050.000000000000000000` for every Go/Rust pair.
+
+The latest alternating 20-pair one-client medians are Go/Rust q1
+`9.367/9.915 ms` (`1.058x`), q2 `7.766/9.241 ms` (`1.190x`), flex
+`7.810/9.514 ms` (`1.218x`), swap `12.964/16.575 ms` (`1.279x`), and batch
+`5.672/6.243 ms` (`1.101x`). Correctness and Go-behavior gates are green, but
+the strict one-concurrency no-regression gate remains open because Rust is
+slower in every median. This remains WIP: the checkout has no `go` executable,
+so Ready-profile `make lint` is unavailable; full 22-query TPC-H rerun and the
+complete hbx-web3 catalog were not repeated in this iteration. The pending
+source commit must include a literal `Go code:` line in its commit message.

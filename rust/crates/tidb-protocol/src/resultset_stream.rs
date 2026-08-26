@@ -18,10 +18,13 @@
 //! rows. Metadata, each row, and the terminal EOF are emitted independently so
 //! a server can preserve `clientConn.writeChunks`' lazy pull/write ordering.
 
+use crate::result_encoder::is_string_column_type;
+use crate::textrow::{append_datum_text_owned, OwnedDatumText, TextColumn, TextFormatError};
 use crate::{
     append_length_encoded_bytes, append_length_encoded_int, encode_eof_packet, encode_text_row,
-    ColumnInfo, EofPacket, ResultSetOptions,
+    ColumnInfo, EofPacket, ResultSetOptions, NULL_MARKER,
 };
+use tidb_datatype::{Datum, MyDecimal};
 
 /// Lifecycle of an incremental result-set payload stream.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,6 +56,15 @@ pub enum ResultSetStreamError {
         /// Actual value count.
         actual: usize,
     },
+    /// A datum could not be rendered according to its result column type.
+    TextFormat {
+        /// Zero-based row index in this stream.
+        row: usize,
+        /// Zero-based column index in the row.
+        column: usize,
+        /// Source-shaped text formatting failure.
+        error: TextFormatError,
+    },
 }
 
 impl std::fmt::Display for ResultSetStreamError {
@@ -72,6 +84,16 @@ impl std::fmt::Display for ResultSetStreamError {
                 formatter,
                 "result row {row} has {actual} values, expected {expected}"
             ),
+            Self::TextFormat { error, .. } => match error {
+                TextFormatError::UnsupportedType(type_code) => {
+                    write!(formatter, "invalid type {type_code}")
+                }
+                // Keep the server-visible error text identical to the prior
+                // Datum formatter. Row/column remain structured fields for
+                // diagnostics, but Go's source error itself carries no
+                // positional prefix.
+                _ => write!(formatter, "{error}"),
+            },
         }
     }
 }
@@ -87,6 +109,20 @@ pub struct ResultSetStream {
     rows: usize,
 }
 
+/// Incremental text-row encoder used by chunk-backed result sources.
+///
+/// Go's `DumpTextRow` receives a `chunk.Row` and writes each cell into the
+/// connection buffer while the row is still borrowed.  This builder exposes
+/// the same ownership boundary to callers that can keep a decoded chunk alive:
+/// byte cells are copied directly into the final packet and only a configured
+/// result-charset conversion allocates an intermediate value.
+pub struct TextRowWriter<'a> {
+    stream: &'a mut ResultSetStream,
+    payload: Vec<u8>,
+    next_column: usize,
+    row_index: usize,
+}
+
 impl ResultSetStream {
     /// Creates a stream whose metadata has not yet been emitted.
     #[must_use]
@@ -97,6 +133,34 @@ impl ResultSetStream {
             state: ResultSetStreamState::Initial,
             rows: 0,
         }
+    }
+
+    /// Starts one borrowed text row. The returned writer must be finished
+    /// before the next source batch is pulled so all `TextScalar` byte views
+    /// remain valid for the duration of each append.
+    pub fn text_row(&mut self) -> Result<TextRowWriter<'_>, ResultSetStreamError> {
+        self.text_row_with_capacity(self.columns.len() * 16)
+    }
+
+    /// Starts one borrowed text row with a caller-provided payload capacity.
+    /// Chunk-backed callers can use the source row's raw cell lengths to avoid
+    /// repeated growth when a row contains a wide VARBINARY/BLOB value.
+    pub fn text_row_with_capacity(
+        &mut self,
+        capacity: usize,
+    ) -> Result<TextRowWriter<'_>, ResultSetStreamError> {
+        if self.state != ResultSetStreamState::Rows {
+            return Err(ResultSetStreamError::InvalidState {
+                state: self.state,
+                operation: "emit row for",
+            });
+        }
+        Ok(TextRowWriter {
+            payload: Vec::with_capacity(capacity),
+            next_column: 0,
+            row_index: self.rows,
+            stream: self,
+        })
     }
 
     /// Returns the current lifecycle state.
@@ -189,8 +253,83 @@ impl ResultSetStream {
                 actual: row.len(),
             });
         }
-        let mut payload = Vec::new();
+        // The owned cells already know their final byte lengths. Reserve the
+        // complete row payload up front so appending 51-column wide rows does
+        // not repeatedly grow and copy the packet buffer.
+        let capacity = row
+            .iter()
+            .map(|value| match value {
+                None => 1,
+                Some(value) => value.len() + length_encoded_int_size(value.len()),
+            })
+            .sum();
+        let mut payload = Vec::with_capacity(capacity);
         self.append_row_data_owned(&mut payload, row);
+        self.rows += 1;
+        Ok(payload)
+    }
+
+    /// Encodes one row directly from owned TiDB datums.
+    ///
+    /// Go's `DumpTextRow` writes numeric and temporal text into the connection
+    /// buffer and transfers string/blob bytes through `ResultEncoder`. Keeping
+    /// that ownership boundary here avoids a temporary `Vec` for every scalar
+    /// cell while preserving the checked `format_datum_text` type matrix.
+    pub fn row_packet_datums_owned(
+        &mut self,
+        row: Vec<Datum>,
+    ) -> Result<Vec<u8>, ResultSetStreamError> {
+        if self.state != ResultSetStreamState::Rows {
+            return Err(ResultSetStreamError::InvalidState {
+                state: self.state,
+                operation: "emit row for",
+            });
+        }
+        if row.len() != self.columns.len() {
+            return Err(ResultSetStreamError::RowColumnCount {
+                row: self.rows,
+                expected: self.columns.len(),
+                actual: row.len(),
+            });
+        }
+
+        let mut payload = Vec::with_capacity(self.columns.len() * 16);
+        for (column_index, (column, datum)) in self.columns.iter().zip(row).enumerate() {
+            let text_column = TextColumn {
+                type_code: column.type_code,
+                flag: column.flag,
+                decimal: column.decimal,
+                table_is_empty: column.table.is_empty(),
+            };
+            let prefix_start = payload.len();
+            // Reserve the largest length-encoded prefix. Scalar formatting can
+            // then append straight into the final packet; `finish_cell_prefix`
+            // compacts the value when its actual prefix is shorter.
+            payload.resize(prefix_start + 9, 0);
+            let value_start = payload.len();
+            let formatted =
+                append_datum_text_owned(&mut payload, text_column, datum).map_err(|error| {
+                    ResultSetStreamError::TextFormat {
+                        row: self.rows,
+                        column: column_index,
+                        error,
+                    }
+                })?;
+            match formatted {
+                OwnedDatumText::Null => {
+                    payload.truncate(prefix_start);
+                    payload.push(NULL_MARKER);
+                }
+                OwnedDatumText::Plain => {
+                    finish_cell_prefix(&mut payload, prefix_start, value_start);
+                }
+                OwnedDatumText::Bytes(value) => {
+                    payload.truncate(prefix_start);
+                    let value = encode_owned_cell(column, value, self.options.result_encoder);
+                    append_length_encoded_bytes(&mut payload, Some(&value));
+                }
+            }
+        }
         self.rows += 1;
         Ok(payload)
     }
@@ -297,5 +436,185 @@ impl ResultSetStream {
             protocol_41: self.options.protocol_41,
             info: Vec::new(),
         }
+    }
+}
+
+const fn length_encoded_int_size(value: usize) -> usize {
+    match value {
+        0..=250 => 1,
+        251..=0xffff => 3,
+        0x1_0000..=0xff_ffff => 4,
+        _ => 9,
+    }
+}
+
+fn encode_owned_cell(
+    column: &ColumnInfo,
+    value: Vec<u8>,
+    mut encoder: crate::ResultEncoder,
+) -> Vec<u8> {
+    if encoder.result_charset().is_none() || !is_string_column_type(column.type_code) {
+        return value;
+    }
+    // Go treats JSON and VECTOR as utf8mb4 regardless of their binary column
+    // collation; all other string columns use their declared charset.
+    let collation = match column.type_code {
+        crate::TYPE_JSON | crate::TYPE_TIDB_VECTOR_FLOAT32 => crate::UTF8MB4_DEFAULT_COLLATION_ID,
+        _ => column.charset,
+    };
+    if encoder.update_data_encoding(collation).is_err() {
+        return value;
+    }
+    let fallback = value.clone();
+    encoder.encode_data_owned(value).unwrap_or(fallback)
+}
+
+fn finish_cell_prefix(payload: &mut Vec<u8>, prefix_start: usize, value_start: usize) {
+    let value_len = payload.len() - value_start;
+    let prefix = length_encoded_prefix(value_len);
+    payload.copy_within(value_start.., prefix_start + prefix.len);
+    payload.truncate(payload.len() - (9 - prefix.len));
+    payload[prefix_start..prefix_start + prefix.len].copy_from_slice(&prefix.bytes[..prefix.len]);
+}
+
+struct LengthEncodedPrefix {
+    bytes: [u8; 9],
+    len: usize,
+}
+
+fn length_encoded_prefix(value: usize) -> LengthEncodedPrefix {
+    let value = value as u64;
+    let mut prefix = LengthEncodedPrefix {
+        bytes: [0; 9],
+        len: 0,
+    };
+    match value {
+        0..=250 => {
+            prefix.bytes[0] = value as u8;
+            prefix.len = 1;
+        }
+        251..=0xffff => {
+            prefix.bytes[0] = 0xfc;
+            prefix.bytes[1..3].copy_from_slice(&(value as u16).to_le_bytes());
+            prefix.len = 3;
+        }
+        0x1_0000..=0xff_ffff => {
+            prefix.bytes[0] = 0xfd;
+            prefix.bytes[1] = value as u8;
+            prefix.bytes[2] = (value >> 8) as u8;
+            prefix.bytes[3] = (value >> 16) as u8;
+            prefix.len = 4;
+        }
+        _ => {
+            prefix.bytes[0] = 0xfe;
+            prefix.bytes[1..9].copy_from_slice(&value.to_le_bytes());
+            prefix.len = 9;
+        }
+    }
+    prefix
+}
+
+impl TextRowWriter<'_> {
+    /// Appends one Go `MyDecimal.String()` value without allocating a
+    /// temporary rendered cell. The caller keeps the source chunk borrowed
+    /// until [`Self::finish`] just as `DumpTextRow` does.
+    pub fn append_my_decimal(&mut self, value: &MyDecimal) -> Result<(), ResultSetStreamError> {
+        let Some(column) = self.stream.columns.get(self.next_column) else {
+            return Err(ResultSetStreamError::RowColumnCount {
+                row: self.row_index,
+                expected: self.stream.columns.len(),
+                actual: self.next_column + 1,
+            });
+        };
+        if column.type_code != crate::TYPE_NEW_DECIMAL {
+            return Err(ResultSetStreamError::TextFormat {
+                row: self.row_index,
+                column: self.next_column,
+                error: TextFormatError::ScalarTypeMismatch(column.type_code),
+            });
+        }
+        let prefix_start = self.payload.len();
+        self.payload.resize(prefix_start + 9, 0);
+        let value_start = self.payload.len();
+        value.append_result_string_bytes(&mut self.payload);
+        finish_cell_prefix(&mut self.payload, prefix_start, value_start);
+        self.next_column += 1;
+        Ok(())
+    }
+
+    /// Appends one source-shaped scalar in the advertised column order.
+    pub fn append(&mut self, value: crate::TextScalar<'_>) -> Result<(), ResultSetStreamError> {
+        let Some(column) = self.stream.columns.get(self.next_column) else {
+            return Err(ResultSetStreamError::RowColumnCount {
+                row: self.row_index,
+                expected: self.stream.columns.len(),
+                actual: self.next_column + 1,
+            });
+        };
+        let text_column = TextColumn {
+            type_code: column.type_code,
+            flag: column.flag,
+            decimal: column.decimal,
+            table_is_empty: column.table.is_empty(),
+        };
+
+        // A result-charset conversion needs ownership of the source bytes.
+        // When no conversion is configured, append the known-length bytes
+        // directly with their final prefix; this is Go's
+        // `DumpTextRow`/`LengthEncodedString` fast path.
+        if let crate::TextScalar::Bytes(bytes) = value {
+            // Go's `FormatValueText` enters this branch only for its complete
+            // string-like type family. Keep unsupported/typed columns on the
+            // checked scalar matrix so a raw byte cannot hide `invalid type`.
+            if is_string_column_type(column.type_code) {
+                if self
+                    .stream
+                    .options
+                    .result_encoder
+                    .result_charset()
+                    .is_none()
+                {
+                    append_length_encoded_bytes(&mut self.payload, Some(bytes));
+                    self.next_column += 1;
+                    return Ok(());
+                }
+                let encoded =
+                    encode_owned_cell(column, bytes.to_vec(), self.stream.options.result_encoder);
+                append_length_encoded_bytes(&mut self.payload, Some(&encoded));
+                self.next_column += 1;
+                return Ok(());
+            }
+        }
+
+        let prefix_start = self.payload.len();
+        self.payload.resize(prefix_start + 9, 0);
+        let value_start = self.payload.len();
+        let rendered = crate::textrow::append_text_value(&mut self.payload, text_column, value)
+            .map_err(|error| ResultSetStreamError::TextFormat {
+                row: self.row_index,
+                column: self.next_column,
+                error,
+            })?;
+        if rendered {
+            finish_cell_prefix(&mut self.payload, prefix_start, value_start);
+        } else {
+            self.payload.truncate(prefix_start);
+            self.payload.push(NULL_MARKER);
+        }
+        self.next_column += 1;
+        Ok(())
+    }
+
+    /// Finishes the row and advances the stream's row counter.
+    pub fn finish(self) -> Result<Vec<u8>, ResultSetStreamError> {
+        if self.next_column != self.stream.columns.len() {
+            return Err(ResultSetStreamError::RowColumnCount {
+                row: self.row_index,
+                expected: self.stream.columns.len(),
+                actual: self.next_column,
+            });
+        }
+        self.stream.rows += 1;
+        Ok(self.payload)
     }
 }

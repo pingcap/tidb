@@ -21,6 +21,7 @@
 //! charset policy exactly once.
 
 use std::fmt;
+use std::fmt::Write as _;
 
 use crate::column::{
     TYPE_BIT, TYPE_BLOB, TYPE_ENUM, TYPE_JSON, TYPE_LONG_BLOB, TYPE_MEDIUM_BLOB, TYPE_SET,
@@ -225,46 +226,98 @@ pub fn append_format_float(buffer: &mut Vec<u8>, value: f64, precision: i32, bit
     append_normalized_float(buffer, &text);
 }
 
-/// Formats one source-shaped scalar without claiming charset or Datum
-/// semantics. The result is suitable for [`crate::encode_text_row`].
-pub fn format_text_value(
+/// Result of formatting a datum when the caller owns the final row buffer.
+///
+/// Numeric and temporal values are appended directly to that buffer. Byte
+/// values remain owned so the result-charset encoder can consume them without
+/// a second clone. This is the allocation shape of Go's `DumpTextRow`, which
+/// appends formatted scalars to its packet buffer and passes string bytes to
+/// `ResultEncoder.EncodeData` only when the column requires it.
+#[derive(Debug)]
+pub(crate) enum OwnedDatumText {
+    /// SQL NULL; no value bytes were appended.
+    Null,
+    /// The value bytes were appended directly to the caller's buffer.
+    Plain,
+    /// String/blob-like bytes that still need result-charset handling.
+    Bytes(Vec<u8>),
+}
+
+struct VecFormatWriter<'a>(&'a mut Vec<u8>);
+
+impl std::fmt::Write for VecFormatWriter<'_> {
+    fn write_str(&mut self, value: &str) -> std::fmt::Result {
+        self.0.extend_from_slice(value.as_bytes());
+        Ok(())
+    }
+}
+
+/// Appends a base-10 unsigned integer without constructing a temporary
+/// string. This is the allocation-free counterpart of Go's
+/// `strconv.AppendUint` used by `FormatValueText`.
+fn append_unsigned(buffer: &mut Vec<u8>, mut value: u64) {
+    let mut digits = [0u8; 20];
+    let mut cursor = digits.len();
+    if value == 0 {
+        buffer.push(b'0');
+        return;
+    }
+    while value != 0 {
+        cursor -= 1;
+        digits[cursor] = b'0' + (value % 10) as u8;
+        value /= 10;
+    }
+    buffer.extend_from_slice(&digits[cursor..]);
+}
+
+/// Appends a base-10 signed integer without constructing a temporary string.
+/// `unsigned_abs` handles `i64::MIN` without an overflowing negation.
+fn append_signed(buffer: &mut Vec<u8>, value: i64) {
+    if value < 0 {
+        buffer.push(b'-');
+    }
+    append_unsigned(buffer, value.unsigned_abs());
+}
+
+/// Appends one source-shaped scalar directly to `buffer`.
+///
+/// This is the non-allocating counterpart of [`format_text_value`]. It keeps
+/// the same type validation and error partition, while allowing the server
+/// result writer to length-frame the value in its final row packet.
+pub(crate) fn append_text_value(
+    buffer: &mut Vec<u8>,
     column: TextColumn,
     value: TextScalar<'_>,
-) -> Result<Option<Vec<u8>>, TextFormatError> {
+) -> Result<bool, TextFormatError> {
     if matches!(value, TextScalar::Null) {
-        return Ok(None);
+        return Ok(false);
     }
 
-    let mut formatted = Vec::new();
     match column.type_code {
         TYPE_TINY | TYPE_SHORT | TYPE_INT24 | TYPE_LONG => match value {
-            TextScalar::Signed(value) => formatted.extend_from_slice(value.to_string().as_bytes()),
+            TextScalar::Signed(value) => append_signed(buffer, value),
             _ => return Err(TextFormatError::ScalarTypeMismatch(column.type_code)),
         },
         TYPE_LONGLONG => {
             if column.flag & UNSIGNED_FLAG != 0 {
                 match value {
-                    TextScalar::Unsigned(value) => {
-                        formatted.extend_from_slice(value.to_string().as_bytes())
-                    }
+                    TextScalar::Unsigned(value) => append_unsigned(buffer, value),
                     _ => return Err(TextFormatError::ScalarTypeMismatch(column.type_code)),
                 }
             } else {
                 match value {
-                    TextScalar::Signed(value) => {
-                        formatted.extend_from_slice(value.to_string().as_bytes())
-                    }
+                    TextScalar::Signed(value) => append_signed(buffer, value),
                     _ => return Err(TextFormatError::ScalarTypeMismatch(column.type_code)),
                 }
             }
         }
         TYPE_NEW_DECIMAL => match value {
-            TextScalar::Decimal(value) => formatted.extend_from_slice(value),
+            TextScalar::Decimal(value) => buffer.extend_from_slice(value),
             _ => return Err(TextFormatError::ScalarTypeMismatch(column.type_code)),
         },
         TYPE_YEAR => match value {
-            TextScalar::Signed(0) => formatted.extend_from_slice(b"0000"),
-            TextScalar::Signed(value) => formatted.extend_from_slice(value.to_string().as_bytes()),
+            TextScalar::Signed(0) => buffer.extend_from_slice(b"0000"),
+            TextScalar::Signed(value) => append_signed(buffer, value),
             _ => return Err(TextFormatError::ScalarTypeMismatch(column.type_code)),
         },
         TYPE_FLOAT | TYPE_DOUBLE => match value {
@@ -276,29 +329,147 @@ pub fn format_text_value(
                         64
                     } =>
             {
-                append_format_float(&mut formatted, value, float_precision(column), bit_size);
+                append_format_float(buffer, value, float_precision(column), bit_size);
             }
             _ => return Err(TextFormatError::ScalarTypeMismatch(column.type_code)),
         },
         TYPE_STRING | TYPE_VAR_STRING | TYPE_VARCHAR | TYPE_BIT | TYPE_TINY_BLOB
         | TYPE_MEDIUM_BLOB | TYPE_LONG_BLOB | TYPE_BLOB => match value {
-            TextScalar::Bytes(value) => formatted.extend_from_slice(value),
+            TextScalar::Bytes(value) => buffer.extend_from_slice(value),
             _ => return Err(TextFormatError::ScalarTypeMismatch(column.type_code)),
         },
         TYPE_DATE | TYPE_DATETIME | TYPE_TIMESTAMP | TYPE_DURATION => match value {
-            TextScalar::Temporal(value) => formatted.extend_from_slice(value),
+            TextScalar::Temporal(value) => buffer.extend_from_slice(value),
             _ => return Err(TextFormatError::ScalarTypeMismatch(column.type_code)),
         },
-        // Charset conversion is applied by `ResultSetStream`, which owns the
-        // column charset and the session result encoder. Enum and set use the
-        // column charset there; JSON and VECTOR force utf8mb4.
         TYPE_ENUM | TYPE_SET | TYPE_JSON | TYPE_TIDB_VECTOR_FLOAT32 => match value {
-            TextScalar::Bytes(value) => formatted.extend_from_slice(value),
+            TextScalar::Bytes(value) => buffer.extend_from_slice(value),
             _ => return Err(TextFormatError::ScalarTypeMismatch(column.type_code)),
         },
         type_code => return Err(TextFormatError::UnsupportedType(type_code)),
     }
-    Ok(Some(formatted))
+    Ok(true)
+}
+
+/// Formats an owned datum while retaining byte ownership for the result
+/// encoder and appending scalar text directly to `buffer`.
+pub(crate) fn append_datum_text_owned(
+    buffer: &mut Vec<u8>,
+    column: TextColumn,
+    datum: tidb_datatype::Datum,
+) -> Result<OwnedDatumText, TextFormatError> {
+    use tidb_datatype::Datum;
+
+    match datum {
+        Datum::Null => Ok(OwnedDatumText::Null),
+        Datum::MinNotNull => Err(TextFormatError::NotARowValue("MinNotNull")),
+        Datum::MaxValue => Err(TextFormatError::NotARowValue("MaxValue")),
+        Datum::Raw(_) => Err(TextFormatError::NotARowValue("Raw")),
+        Datum::Int(value) => {
+            append_text_value(buffer, column, TextScalar::Signed(value))?;
+            Ok(OwnedDatumText::Plain)
+        }
+        Datum::UInt(value)
+            if column.type_code == TYPE_LONGLONG && column.flag & UNSIGNED_FLAG != 0 =>
+        {
+            append_text_value(buffer, column, TextScalar::Unsigned(value))?;
+            Ok(OwnedDatumText::Plain)
+        }
+        Datum::UInt(value) => {
+            append_text_value(buffer, column, TextScalar::Signed(value as i64))?;
+            Ok(OwnedDatumText::Plain)
+        }
+        Datum::Decimal(value) => {
+            // Validate the column branch without manufacturing a temporary
+            // decimal string, then stream Display directly into the packet.
+            append_text_value(buffer, column, TextScalar::Decimal(&[]))?;
+            write!(VecFormatWriter(buffer), "{value}").unwrap();
+            Ok(OwnedDatumText::Plain)
+        }
+        Datum::Real(value) => {
+            append_text_value(
+                buffer,
+                column,
+                TextScalar::Float {
+                    value,
+                    bit_size: if column.type_code == TYPE_FLOAT {
+                        32
+                    } else {
+                        64
+                    },
+                },
+            )?;
+            Ok(OwnedDatumText::Plain)
+        }
+        Datum::Float32(value) => {
+            append_text_value(
+                buffer,
+                column,
+                TextScalar::Float {
+                    value,
+                    bit_size: 32,
+                },
+            )?;
+            Ok(OwnedDatumText::Plain)
+        }
+        Datum::String(value) => {
+            append_text_value(buffer, column, TextScalar::Bytes(&[]))?;
+            Ok(OwnedDatumText::Bytes(value.into_bytes()))
+        }
+        Datum::Bytes(value) => {
+            append_text_value(buffer, column, TextScalar::Bytes(&[]))?;
+            Ok(OwnedDatumText::Bytes(value))
+        }
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => {
+            append_text_value(buffer, column, TextScalar::Bytes(&[]))?;
+            Ok(OwnedDatumText::Bytes(value.into_bytes()))
+        }
+        Datum::Duration(value) => {
+            let value = tidb_datatype::MySqlDuration::from_nanoseconds(
+                value.nanoseconds(),
+                i64::from(column.decimal),
+            )
+            .map_err(|_| TextFormatError::ScalarTypeMismatch(column.type_code))?;
+            append_text_value(buffer, column, TextScalar::Temporal(&[]))?;
+            write!(VecFormatWriter(buffer), "{value}").unwrap();
+            Ok(OwnedDatumText::Plain)
+        }
+        Datum::Enum(value, _) => {
+            append_text_value(buffer, column, TextScalar::Bytes(&[]))?;
+            Ok(OwnedDatumText::Bytes(value.name_bytes().to_vec()))
+        }
+        Datum::Set(value, _) => {
+            append_text_value(buffer, column, TextScalar::Bytes(&[]))?;
+            Ok(OwnedDatumText::Bytes(value.name_bytes().to_vec()))
+        }
+        Datum::Time(value) => {
+            append_text_value(buffer, column, TextScalar::Temporal(&[]))?;
+            write!(VecFormatWriter(buffer), "{value}").unwrap();
+            Ok(OwnedDatumText::Plain)
+        }
+        Datum::Json(value) => {
+            append_text_value(buffer, column, TextScalar::Bytes(&[]))?;
+            Ok(OwnedDatumText::Bytes(value.to_string().into_bytes()))
+        }
+        Datum::VectorFloat32(value) => {
+            append_text_value(buffer, column, TextScalar::Bytes(&[]))?;
+            Ok(OwnedDatumText::Bytes(value.to_string().into_bytes()))
+        }
+    }
+}
+
+/// Formats one source-shaped scalar without claiming charset or Datum
+/// semantics. The result is suitable for [`crate::encode_text_row`].
+pub fn format_text_value(
+    column: TextColumn,
+    value: TextScalar<'_>,
+) -> Result<Option<Vec<u8>>, TextFormatError> {
+    let mut formatted = Vec::new();
+    if append_text_value(&mut formatted, column, value)? {
+        Ok(Some(formatted))
+    } else {
+        Ok(None)
+    }
 }
 
 impl TextColumn {

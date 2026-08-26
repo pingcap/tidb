@@ -413,6 +413,18 @@ impl<O: ConnectionPacketOutput + ?Sized> ResultSetSink for TcpResultSetSink<'_, 
         Ok(())
     }
 
+    fn write_payload_owned(&mut self, payload: Vec<u8>) -> Result<(), SinkWriteError> {
+        self.packets += 1;
+        self.pending_bytes += payload.len();
+        // The result-set writer has already built this payload for the wire;
+        // transfer it into the coalescing queue instead of cloning it again.
+        self.pending.push(payload);
+        if self.pending_bytes >= SINK_COALESCE_FLUSH_BYTES {
+            self.flush_pending()?;
+        }
+        Ok(())
+    }
+
     fn packets_written(&self) -> usize {
         self.packets
     }

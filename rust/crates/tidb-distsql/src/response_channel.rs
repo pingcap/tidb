@@ -805,6 +805,26 @@ impl SelectResponseIter {
         self.next_row_with_required_rows(1)
     }
 
+    /// Borrows the field types that decoded a response channel. Chunk-backed
+    /// consumers use this to preserve the source column-aware datum contract
+    /// while formatting directly from a retained chunk row.
+    #[must_use]
+    pub fn field_types_for_channel(&self, channel_index: usize) -> Option<&[FieldType]> {
+        self.channels
+            .iter()
+            .find(|channel| channel.channel_index == channel_index)
+            .map(|channel| channel.field_types.as_slice())
+            .or_else(|| {
+                if channel_index == self.intermediate_output_types.len() {
+                    Some(self.final_field_types.as_slice())
+                } else {
+                    self.intermediate_output_types
+                        .get(channel_index)
+                        .map(Vec::as_slice)
+                }
+            })
+    }
+
     /// Returns the next decoded row while forwarding the caller's remaining
     /// row budget to the raw response owner when another response must be
     /// pulled. A zero budget consumes nothing.

@@ -17,7 +17,8 @@
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_distsql::{ResponseChannel, WarningCollector};
 use tidb_exec::distsql_recordset::{DistSqlRecordSet, DistSqlRecordSetError};
-use tidb_protocol::{ColumnInfo, TYPE_LONG};
+use tidb_protocol::resultset_stream::ResultSetStream;
+use tidb_protocol::{ColumnInfo, ResultSetOptions, TYPE_LONG};
 
 fn column() -> ColumnInfo {
     ColumnInfo {
@@ -74,6 +75,28 @@ fn select_response_rows_are_pulled_in_bounded_batches() {
     );
     assert!(recordset.next_batch(2).unwrap().is_empty());
     assert!(recordset.lifecycle().has_advanced());
+}
+
+#[test]
+fn select_response_chunk_writes_go_text_rows_before_advancing() {
+    let mut recordset = recordset(&[1, 2, 3]);
+    let batch = recordset.next_text_batch(2).unwrap().unwrap();
+    let mut stream = ResultSetStream::new(vec![column()], ResultSetOptions::default());
+    stream.metadata_packets().unwrap();
+
+    // Go code: pkg/server/internal/column.DumpTextRow formats borrowed
+    // chunk.Row values into length-encoded text while the chunk is retained.
+    assert_eq!(
+        batch.write_rows(&mut stream).unwrap(),
+        vec![b"\x011".to_vec(), b"\x012".to_vec()]
+    );
+    let batch = recordset.next_text_batch(2).unwrap().unwrap();
+    assert_eq!(
+        batch.write_rows(&mut stream).unwrap(),
+        vec![b"\x013".to_vec()]
+    );
+    assert!(recordset.next_text_batch(2).unwrap().is_none());
+    assert_eq!(stream.row_count(), 3);
 }
 
 #[test]

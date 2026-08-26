@@ -1362,6 +1362,17 @@ impl MyDecimal {
     /// line-for-line port including the zero and fill-digit handling.
     #[must_use]
     pub fn to_string_bytes(&self) -> Vec<u8> {
+        let mut output = Vec::new();
+        self.append_to_string_bytes(&mut output);
+        output
+    }
+
+    /// Appends Go `ToString` output directly to an existing buffer.
+    ///
+    /// The server's Go `DumpTextRow` writes the decimal into its reusable
+    /// packet buffer. Keeping the same append boundary avoids allocating a
+    /// temporary `Vec<u8>` for every DECIMAL cell in a typed response chunk.
+    pub fn append_to_string_bytes(&self, output: &mut Vec<u8>) {
         let digits_frac_total = i32::from(self.digits_frac);
         let mut digits_frac = digits_frac_total;
         let (word_start_idx, mut digits_int) = self.remove_leading_zeros();
@@ -1379,7 +1390,9 @@ impl MyDecimal {
         if digits_frac > 0 {
             length += 1;
         }
-        let mut str = vec![0u8; length as usize];
+        let start = output.len();
+        output.resize(start + length as usize, 0);
+        let str = &mut output[start..];
         let mut str_idx = 0usize;
         if self.negative {
             str[str_idx] = b'-';
@@ -1440,7 +1453,28 @@ impl MyDecimal {
         } else {
             str[str_idx] = b'0';
         }
-        str
+    }
+
+    /// Go code: `pkg/types/mydecimal.go::MyDecimal.String` clones the value,
+    /// rounds it to `resultFrac` with `ModeHalfUp`, then calls `ToString`.
+    /// Keep that source boundary available to chunk-backed text writers so
+    /// they do not reconstruct a value-layer `Decimal` just to render a row.
+    #[must_use]
+    pub fn to_result_string_bytes(&self) -> Vec<u8> {
+        let mut output = Vec::new();
+        self.append_result_string_bytes(&mut output);
+        output
+    }
+
+    /// Appends Go `MyDecimal.String` output directly to an existing buffer.
+    ///
+    /// Go clones the value, rounds to `resultFrac`, and then calls `ToString`.
+    /// Preserve that exact sequence while reusing the caller's final packet
+    /// allocation.
+    pub fn append_result_string_bytes(&self, output: &mut Vec<u8>) {
+        let mut rounded = *self;
+        let _ = rounded.round_in_place(i32::from(self.result_frac), RoundMode::HalfUp);
+        rounded.append_to_string_bytes(output);
     }
 
     /// Returns the value-layer pieces without first rendering a temporary
@@ -1934,6 +1968,14 @@ mod tests {
             assert_eq!(error, None, "FromString({input})");
             assert_eq!(decimal.to_string_bytes(), expected.as_bytes(), "{input}");
         }
+    }
+
+    #[test]
+    fn result_string_rounds_to_go_result_fraction() {
+        let (mut decimal, error) = MyDecimal::from_string(b"1.235");
+        assert_eq!(error, None);
+        decimal.set_result_frac(2);
+        assert_eq!(decimal.to_result_string_bytes(), b"1.24");
     }
 
     #[test]

@@ -14,10 +14,13 @@
 
 #![allow(missing_docs)]
 
+use tidb_datatype::{Datum, Decimal};
 use tidb_protocol::resultset_stream::{
     ResultSetStream, ResultSetStreamError, ResultSetStreamState,
 };
-use tidb_protocol::{ColumnInfo, ResultSetOptions, TYPE_VAR_STRING};
+use tidb_protocol::{
+    ColumnInfo, ResultSetOptions, TextScalar, TYPE_LONG, TYPE_NEW_DECIMAL, TYPE_VAR_STRING,
+};
 
 fn column() -> ColumnInfo {
     ColumnInfo {
@@ -76,6 +79,87 @@ fn owned_text_row_matches_borrowed_go_framing_and_encoding() {
         owned.row_packet_owned(row).unwrap()
     );
     assert_eq!(borrowed.row_count(), owned.row_count());
+}
+
+#[test]
+fn owned_datum_row_matches_go_text_framing_without_cell_allocations() {
+    let mut int = column();
+    int.type_code = TYPE_LONG;
+    let mut decimal = column();
+    decimal.type_code = TYPE_NEW_DECIMAL;
+    let mut stream = ResultSetStream::new(
+        vec![int, column(), decimal, column()],
+        ResultSetOptions::default(),
+    );
+    stream.metadata_packets().unwrap();
+
+    let row = vec![
+        Datum::new_int(-10),
+        Datum::new_string("go"),
+        Datum::new_decimal(Decimal::from_literal("1.25")),
+        Datum::Null,
+    ];
+    assert_eq!(
+        stream.row_packet_datums_owned(row).unwrap(),
+        b"\x03-10\x02go\x041.25\xfb".to_vec()
+    );
+}
+
+#[test]
+fn owned_datum_row_preserves_source_type_errors() {
+    let mut stream = ResultSetStream::new(vec![column()], ResultSetOptions::default());
+    stream.metadata_packets().unwrap();
+    assert!(matches!(
+        stream.row_packet_datums_owned(vec![Datum::new_int(1)]),
+        Err(ResultSetStreamError::TextFormat { column: 0, .. })
+    ));
+}
+
+#[test]
+fn borrowed_text_row_rejects_raw_bytes_for_unknown_column_type() {
+    let mut unknown = column();
+    unknown.type_code = 0xff;
+    let mut stream = ResultSetStream::new(vec![unknown], ResultSetOptions::default());
+    stream.metadata_packets().unwrap();
+    let mut row = stream.text_row().unwrap();
+    assert!(matches!(
+        row.append(TextScalar::Bytes(b"not-a-valid-column")),
+        Err(ResultSetStreamError::TextFormat { column: 0, .. })
+    ));
+}
+
+#[test]
+fn borrowed_chunk_row_matches_go_dump_text_row_framing() {
+    let mut int = column();
+    int.type_code = TYPE_LONG;
+    let mut decimal = column();
+    decimal.type_code = TYPE_NEW_DECIMAL;
+    let columns = vec![int, column(), decimal, column()];
+    let mut stream = ResultSetStream::new(columns.clone(), ResultSetOptions::default());
+    let mut datum_stream = ResultSetStream::new(columns, ResultSetOptions::default());
+    stream.metadata_packets().unwrap();
+    datum_stream.metadata_packets().unwrap();
+
+    // Go code: pkg/server/internal/column.DumpTextRow appends each borrowed
+    // chunk cell to one packet before advancing the source chunk.
+    let mut row = stream.text_row_with_capacity(32).unwrap();
+    row.append(TextScalar::Signed(-10)).unwrap();
+    row.append(TextScalar::Bytes(b"go")).unwrap();
+    row.append(TextScalar::Decimal(b"1.25")).unwrap();
+    row.append(TextScalar::Null).unwrap();
+    let borrowed = row.finish().unwrap();
+    let owned = datum_stream
+        .row_packet_datums_owned(vec![
+            Datum::new_int(-10),
+            Datum::new_string("go"),
+            Datum::new_decimal(Decimal::from_literal("1.25")),
+            Datum::Null,
+        ])
+        .unwrap();
+
+    assert_eq!(borrowed, owned);
+    assert_eq!(borrowed, b"\x03-10\x02go\x041.25\xfb".to_vec());
+    assert_eq!(stream.row_count(), 1);
 }
 
 #[test]

@@ -225,6 +225,19 @@ impl ResultSetSource for ObservedResultSet {
             .map_err(|error| error.to_string())
     }
 
+    fn supports_text_batch(&self) -> bool {
+        self.inner.supports_text_batch()
+    }
+
+    fn next_text_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Option<Box<dyn tidb_exec::distsql_recordset::TextResultBatch>>, String> {
+        self.inner
+            .next_text_batch(max_rows)
+            .map_err(|error| error.to_string())
+    }
+
     fn columns(&mut self) -> Result<Vec<tidb_protocol::ColumnInfo>, String> {
         Ok(self.inner.columns().to_vec())
     }

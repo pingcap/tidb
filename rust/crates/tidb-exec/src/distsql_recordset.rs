@@ -18,9 +18,11 @@
 //! not construct requests or invent a TiKV transport. Raw datum rows are
 //! exposed only as they are pulled, preserving the source's bounded lifecycle.
 
-use tidb_datatype::Datum;
+use tidb_chunk::{chunk::Chunk, row::Row};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode, MyDecimal, MYDECIMAL_STRUCT_SIZE};
 use tidb_distsql::{ResponseChannelError, SelectResponseIter, SelectResultRuntimeStats};
-use tidb_protocol::ColumnInfo;
+use tidb_protocol::resultset_stream::{ResultSetStream, ResultSetStreamError, TextRowWriter};
+use tidb_protocol::{ColumnInfo, TextScalar};
 
 use crate::recordset_lifecycle::RecordSetLifecycle;
 
@@ -29,6 +31,48 @@ use crate::recordset_lifecycle::RecordSetLifecycle;
 pub enum DistSqlRecordSetError {
     /// The checked DistSQL response iterator failed.
     Source(String),
+}
+
+/// A typed response chunk retained for direct Go-shaped text serialization.
+pub trait TextResultBatch {
+    /// Returns whether this batch has no rows.
+    fn is_empty(&self) -> bool;
+
+    /// Formats all rows into the supplied result stream while the chunk is
+    /// still borrowed. Implementations validate untrusted cells before using
+    /// the infallible Go `chunk.Row` getters.
+    fn write_rows(&self, stream: &mut ResultSetStream) -> Result<Vec<Vec<u8>>, String>;
+}
+
+struct DistSqlTextBatch {
+    chunk: Chunk,
+    field_types: Vec<FieldType>,
+}
+
+impl TextResultBatch for DistSqlTextBatch {
+    fn is_empty(&self) -> bool {
+        self.chunk.num_rows() == 0
+    }
+
+    fn write_rows(&self, stream: &mut ResultSetStream) -> Result<Vec<Vec<u8>>, String> {
+        let mut payloads = Vec::with_capacity(self.chunk.num_rows());
+        for row_index in 0..self.chunk.num_rows() {
+            let row = self.chunk.get_row(row_index);
+            validate_chunk_row(row, &self.field_types)?;
+            let row_capacity = (0..row.len())
+                .map(|column| row.get_raw_len(column).saturating_add(9))
+                .sum();
+            let mut writer = stream
+                .text_row_with_capacity(row_capacity)
+                .map_err(|error| error.to_string())?;
+            for (column, field_type) in self.field_types.iter().enumerate() {
+                append_chunk_cell(&mut writer, row, column, field_type)
+                    .map_err(|error| error.to_string())?;
+            }
+            payloads.push(writer.finish().map_err(|error| error.to_string())?);
+        }
+        Ok(payloads)
+    }
 }
 
 impl std::fmt::Display for DistSqlRecordSetError {
@@ -88,6 +132,38 @@ impl DistSqlRecordSet {
         Ok(rows)
     }
 
+    /// Pulls one response chunk for the server's direct text writer. `None`
+    /// means the response source is exhausted; unlike `next_batch`, this path
+    /// keeps variable-length cells borrowed from the decoded chunk until the
+    /// row packet has been built.
+    pub fn next_text_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Option<Box<dyn TextResultBatch>>, DistSqlRecordSetError> {
+        self.lifecycle.mark_advanced();
+        let Some(result) = self
+            .iter
+            .next_chunk_with_required_rows(max_rows)
+            .map_err(map_source_error)?
+        else {
+            return Ok(None);
+        };
+        let field_types = self
+            .iter
+            .field_types_for_channel(result.channel_index)
+            .ok_or_else(|| {
+                DistSqlRecordSetError::Source(format!(
+                    "missing field types for response channel {}",
+                    result.channel_index
+                ))
+            })?
+            .to_vec();
+        Ok(Some(Box::new(DistSqlTextBatch {
+            chunk: result.row,
+            field_types,
+        })))
+    }
+
     /// Runs statement finish once. Resource close remains a separate phase.
     pub fn finish(&mut self) -> Result<(), DistSqlRecordSetError> {
         self.lifecycle.begin_finish();
@@ -116,4 +192,168 @@ impl DistSqlRecordSet {
 
 fn map_source_error(error: ResponseChannelError) -> DistSqlRecordSetError {
     DistSqlRecordSetError::Source(error.to_string())
+}
+
+fn validate_chunk_row(row: Row<'_>, field_types: &[FieldType]) -> Result<(), String> {
+    if field_types.len() != row.len() {
+        return Err(format!(
+            "chunk row has {} columns but {} field types were supplied",
+            row.len(),
+            field_types.len()
+        ));
+    }
+    for (column, field_type) in field_types.iter().enumerate().take(row.len()) {
+        // The columnar decoder has already checked variable-column offsets
+        // and lengths.  Go's text formatter consumes those byte slices
+        // directly, so avoid materializing a throwaway `Datum::String` here;
+        // retaining this check for fixed/structured values still rejects the
+        // malformed payloads covered by the source response tests.
+        let is_raw_bytes = matches!(
+            field_type.code(),
+            FieldTypeCode::Varchar
+                | FieldTypeCode::VarString
+                | FieldTypeCode::String
+                | FieldTypeCode::Blob
+                | FieldTypeCode::TinyBlob
+                | FieldTypeCode::MediumBlob
+                | FieldTypeCode::LongBlob
+                | FieldTypeCode::Bit
+        );
+        if !is_raw_bytes {
+            if field_type.code() == FieldTypeCode::NewDecimal {
+                let raw = row.get_raw(column);
+                let raw: [u8; MYDECIMAL_STRUCT_SIZE] = raw.as_ref().try_into().map_err(|_| {
+                    format!(
+                        "chunk row column {column} ({:?}) has an invalid payload: expected {MYDECIMAL_STRUCT_SIZE} bytes",
+                        field_type.code()
+                    )
+                })?;
+                MyDecimal::from_raw_bytes(raw).map_err(|error| {
+                    format!(
+                        "chunk row column {column} ({:?}) has an invalid payload: {error}",
+                        field_type.code()
+                    )
+                })?;
+            } else {
+                let mut datum = Datum::Null;
+                row.try_datum_with_buffer(column, field_type, &mut datum)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn append_chunk_cell(
+    writer: &mut TextRowWriter<'_>,
+    row: Row<'_>,
+    column: usize,
+    field_type: &FieldType,
+) -> Result<(), ResultSetStreamError> {
+    if row.is_null(column) {
+        return writer.append(TextScalar::Null);
+    }
+    let value = match field_type.code() {
+        FieldTypeCode::Tiny | FieldTypeCode::Short | FieldTypeCode::Int24 | FieldTypeCode::Long => {
+            TextScalar::Signed(row.get_int64(column))
+        }
+        FieldTypeCode::LongLong => {
+            if field_type.is_unsigned() {
+                TextScalar::Unsigned(row.get_uint64(column))
+            } else {
+                TextScalar::Signed(row.get_int64(column))
+            }
+        }
+        FieldTypeCode::Year => TextScalar::Signed(row.get_int64(column)),
+        FieldTypeCode::Float => TextScalar::Float {
+            value: f64::from(row.get_float32(column)),
+            bit_size: 32,
+        },
+        FieldTypeCode::Double => TextScalar::Float {
+            value: row.get_float64(column),
+            bit_size: 64,
+        },
+        FieldTypeCode::NewDecimal => {
+            // Go `DumpTextRow` calls `MyDecimal.String()`, which rounds to the
+            // value's result fraction before writing.  Keep the raw MyDecimal
+            // layout and use its source-shaped clone/round/ToString boundary;
+            // reconstructing a value-layer Decimal here would allocate a
+            // second digit representation for every decimal cell.
+            return writer.append_my_decimal(&row.get_my_decimal(column));
+        }
+        FieldTypeCode::Varchar
+        | FieldTypeCode::VarString
+        | FieldTypeCode::String
+        | FieldTypeCode::Blob
+        | FieldTypeCode::TinyBlob
+        | FieldTypeCode::MediumBlob
+        | FieldTypeCode::LongBlob
+        | FieldTypeCode::Bit => {
+            let bytes = row.get_bytes(column);
+            return writer.append(TextScalar::Bytes(bytes.as_ref()));
+        }
+        FieldTypeCode::Json => {
+            return append_owned_chunk_text(
+                writer,
+                row.get_json(column).to_string(),
+                OwnedTextKind::Bytes,
+            )
+        }
+        FieldTypeCode::Enum => {
+            return append_owned_chunk_text(
+                writer,
+                row.get_enum(column).name_bytes().to_vec(),
+                OwnedTextKind::Bytes,
+            )
+        }
+        FieldTypeCode::Set => {
+            return append_owned_chunk_text(
+                writer,
+                row.get_set(column).name_bytes().to_vec(),
+                OwnedTextKind::Bytes,
+            )
+        }
+        FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
+            return append_owned_chunk_text(
+                writer,
+                row.get_time(column).to_string(),
+                OwnedTextKind::Temporal,
+            )
+        }
+        FieldTypeCode::Duration => {
+            return append_owned_chunk_text(
+                writer,
+                row.get_duration(column, field_type.decimal()).to_string(),
+                OwnedTextKind::Temporal,
+            )
+        }
+        FieldTypeCode::VectorFloat32 => {
+            return append_owned_chunk_text(
+                writer,
+                row.get_vector_float32(column).to_string(),
+                OwnedTextKind::Bytes,
+            )
+        }
+        _ => TextScalar::Bytes(&[]),
+    };
+    writer.append(value)
+}
+
+#[derive(Clone, Copy)]
+enum OwnedTextKind {
+    Bytes,
+    Temporal,
+}
+
+fn append_owned_chunk_text(
+    writer: &mut TextRowWriter<'_>,
+    value: impl Into<Vec<u8>>,
+    kind: OwnedTextKind,
+) -> Result<(), ResultSetStreamError> {
+    let value = value.into();
+    let scalar = match kind {
+        OwnedTextKind::Bytes => TextScalar::Bytes(&value),
+        OwnedTextKind::Temporal => TextScalar::Temporal(&value),
+    };
+    writer.append(scalar)
 }
