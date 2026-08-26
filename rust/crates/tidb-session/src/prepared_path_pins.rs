@@ -101,6 +101,20 @@ impl Session {
             Some(entry) if entry.key == key => Some(Arc::new(entry.pins.clone())),
             _ => None,
         };
+        if std::env::var("TIKV_PIN_TRACE").as_deref() == Ok("1") {
+            let verdict = match (&apply, store.get(sql)) {
+                (Some(_), _) => "HIT".to_owned(),
+                (_, Some(e)) => format!(
+                    "MISS(key-moved: had sv={} now sv={})",
+                    e.key.schema_version, key.schema_version
+                ),
+                (_, None) => "MISS(no-entry)".to_owned(),
+            };
+            eprintln!(
+                "[PINTRACE] begin {verdict} sql={}",
+                &sql[..sql.len().min(40)]
+            );
+        }
         if apply.is_some() {
             return Some(ActivePreparedPinState {
                 apply,

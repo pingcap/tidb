@@ -94,8 +94,14 @@ pub(crate) struct PreparedPlanKey {
 impl Session {
     /// The facts the CURRENT statement would be planned against.
     pub(crate) fn prepared_plan_key(&mut self) -> PreparedPlanKey {
+        // Go keys on the INFOSCHEMA version, which DDL moves and DML never
+        // does. This catalog's plain `version()` also advances on every write
+        // path (`get_mut_in`, the transaction conflict-check approximation),
+        // so keying on it would invalidate a cached plan on every UPDATE --
+        // nothing like Go. `metadata_version()` is this catalog's DDL-only
+        // counter and the faithful stand-in.
         let schema_version = self
-            .with_catalog_mut(|catalog| Ok(catalog.version()))
+            .with_catalog_mut(|catalog| Ok(catalog.metadata_version()))
             .unwrap_or(0);
         PreparedPlanKey {
             schema_version,

@@ -259,6 +259,7 @@ pub(crate) fn leaf_index_path(
     // costs, never what it answers. An empty narrowed set (the pinned index
     // left the catalog, or the order filter already refused it) falls back
     // to the free race -- Go's miss-and-replan.
+    let pin_trace = std::env::var("TIKV_PIN_TRACE").as_deref() == Ok("1");
     let paths = match ctx.prepared_path_pin_for(visible) {
         Some(pin) => {
             let (pinned, rest): (Vec<_>, Vec<_>) = paths
@@ -268,13 +269,24 @@ pub(crate) fn leaf_index_path(
                     (PinnedLeafAccess::TableScan, None) => true,
                     _ => false,
                 });
+            if pin_trace {
+                eprintln!("[PINTRACE] leaf {visible} pin={pin:?} candidates={} narrowed={}", rest.len(), pinned.len());
+            }
             if pinned.is_empty() {
+                if pin_trace {
+                    eprintln!("[PINTRACE] leaf {visible} FALLBACK free race ({} candidates)", rest.len());
+                }
                 rest
             } else {
                 pinned
             }
         }
-        None => paths,
+        None => {
+            if pin_trace {
+                eprintln!("[PINTRACE] leaf {visible} no-pin (free race)");
+            }
+            paths
+        }
     };
     let best = crate::access_cost::choose_access_path(paths, stats, false, false)?;
     // Capture what just won, when this execution stores pins: the session
