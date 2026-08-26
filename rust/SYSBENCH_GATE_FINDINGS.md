@@ -279,3 +279,31 @@ Latest paired spot-checks: rust 518-550 vs go 1035-1080 (machine noisy;
 loop median-of-N governs). Ratio improved 0.40 -> ~0.50, still the largest
 gap. Next-session plan: cache derived_collation() parse per ScalarFunction,
 cut Datum clones on eval path, investigate count(k) StreamAgg round trips.
+
+## MILESTONE (2026-08-26): update_non_index reaches Go parity
+The fast prepared update now admits INT PKIsHandle tables (commit
+9e6878065): sbtest's \`id INT PRIMARY KEY CLUSTERED\` previously refused
+the arm and replanned through the full planner per EXECUTE. Paired
+alternating runs: rust 1484-1519 vs go 1596-1607 TPS -- ratio 0.93-1.01,
+AT PARITY.
+
+Full sweep on latest HEAD (15s/side alternating, machine warm):
+| workload             | rust    | go      | ratio |
+|----------------------|---------|---------|-------|
+| oltp_point_select    | 6833    | 5331    | 1.28  |
+| oltp_read_only       | 217     | 243     | 0.89  |
+| oltp_write_only      | 569     | 485     | 1.17  |
+| oltp_read_write      | 167     | 163     | 1.02  |
+| oltp_insert          | 1288    | 1294    | 0.995 |
+| oltp_update_index    | 1474    | 1210    | 1.22  |
+| oltp_update_non_index| ~1500   | ~1599   | 0.93-1.01 |
+| select_random_points | 743     | 907     | 0.82  |
+| select_random_ranges | 758     | 1438    | 0.53  |
+
+FOUR workloads at or above Go parity; every write workload >= 0.87.
+Remaining gaps, priority order:
+1. select_random_ranges (0.53): flat-profile campaign -- per-request CPU
+   and scheduling on the unary transport (see UPDATE #6 accounting).
+2. select_random_points (0.82) / read_only (0.89): moderate.
+3. The 7 failing driver::tests::aggregates tests are collaborator-introduced
+   (their own commit message names the compact-key regression); not ours.
