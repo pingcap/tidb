@@ -2356,3 +2356,41 @@ mod tests {
             assert_eq!(row.get_my_decimal(2), expected);
         }
     }
+
+    /// Go `TestToString` (`pkg/util/chunk/chunk_test.go:711`): `Chunk.ToString`
+    /// renders one comma-space-separated line per row with a trailing newline,
+    /// formatting each cell through its field type (float, double, string,
+    /// zero DATE and zero DATETIME, int).
+    #[test]
+    fn go_test_to_string() {
+        use tidb_datatype::{CoreTime, TimeType};
+
+        let field_types = vec![
+            FieldType::new(FieldTypeCode::Float),
+            FieldType::new(FieldTypeCode::Double),
+            FieldType::new(FieldTypeCode::VarString),
+            FieldType::new(FieldTypeCode::Date),
+            FieldType::new(FieldTypeCode::LongLong),
+        ];
+
+        let mut chk = Chunk::new_with_capacity(&field_types, 2);
+        let zero_date = Time::new(CoreTime::default(), TimeType::Date, 0).unwrap();
+        let zero_datetime = Time::new(CoreTime::default(), TimeType::DateTime, 0).unwrap();
+
+        chk.append_float32(0, 1.0);
+        chk.append_float64(1, 1.0);
+        chk.append_string(2, "1");
+        chk.append_time(3, zero_date);
+        chk.append_int64(4, 1);
+
+        chk.append_float32(0, 2.0);
+        chk.append_float64(1, 2.0);
+        chk.append_string(2, "2");
+        chk.append_time(3, zero_datetime);
+        chk.append_int64(4, 2);
+
+        assert_eq!(
+            chk.to_string(&field_types).as_bytes(),
+            &b"1, 1, 1, 0000-00-00, 1\n2, 2, 2, 0000-00-00 00:00:00, 2\n"[..]
+        );
+    }
