@@ -69,6 +69,8 @@ The source of truth for a behavioral fix is the complete owning Go package and i
 - [x] (2026-08-26) Rebuilt pushed code head `3c7f838a26a26e3bab0403f9621f5bcaf368fa69` and reran the four normalized plans/results plus 20 alternating one-client pairs and 20 100-row batch INSERT pairs. The bounded `tidb-executor` index-lookup window now fetches requests of at most 128 handles inline, avoiding the persistent worker handoff while retaining the Go-shaped pool for larger scans. Plans, result hashes, row counts, and batch sums remain equal. The latest medians are Rust/Go q1 `1.052x`, q2 `1.133x`, flex `1.180x`, swap `1.487x`, and batch INSERT `1.211x`; the strict performance gate remains open. Receipt: `/private/tmp/hbx-1g-20260825/bench-inline-128-final-20pairs-20260826.json`.
 - [x] (2026-08-26) Integrated the latest remote `hparser-integration` executor commits through merge head `4e8b2faff509bafb98643fccc9a73576c43be331`, aligned the new handle-only cursor API and duplicate test fixture, rebuilt Rust, and reran the same 1G correctness and 20-pair benchmark. All four plans/results and the 100-row batch checks remain equal. Latest median Rust/Go times are q1 `10.871/10.303 ms` (`1.055x`), q2 `10.687/9.021 ms` (`1.185x`), flex `10.904/8.949 ms` (`1.219x`), swap `22.189/11.796 ms` (`1.881x`), and batch `7.639/6.161 ms` (`1.240x`); the strict performance gate remains open. Receipt: `/private/tmp/hbx-1g-20260825/bench-latest-20pairs-20260826.json`.
 - [x] (2026-08-26) Rebuilt remote head `372c955e7ad47952d26f774a1df730acc94a7100` after the general crossbeam transaction-channel optimization and reran 20 alternating pairs. Plans, result hashes, row counts, and batch sums remain equal. Median Rust/Go times are q1 `11.296/10.732 ms` (`1.053x`), q2 `10.863/9.598 ms` (`1.132x`), flex `10.780/9.161 ms` (`1.177x`), swap `22.776/13.113 ms` (`1.737x`), and batch `7.783/6.444 ms` (`1.208x`); this improves the prior result but the strict performance gate remains open. Receipt: `/private/tmp/hbx-1g-20260825/bench-372c955-20pairs-20260826.json`.
+- [x] (2026-08-26) Fast-forwarded the latest remote empty-window/handle-only executor change `367fa87981` and pushed the one-line API arity correction as `03640ea3a8`. The clean release binary still produces the same four normalized plans and result hashes, with 100 rows per query and batch sum `5050.000000000000000000`. A clean five-pair refresh is q1 `0.985x`, q2 `1.134x`, flex `1.206x`, swap `1.841x`, and batch `1.296x`; the more stable 20-pair receipt at this head is `/private/tmp/hbx-1g-20260825/bench-03640-20pairs-20260826.json`, and the strict performance gate remains open.
+- [x] (2026-08-26) Tested lookup concurrency `8` and bounded residual read-ahead/handle-only projection as controlled A/B experiments. Neither produced a stable all-shape improvement; the former was runtime-only, and both experiments were reverted. The pushed source remains the default Go-shaped concurrency `5` with the demand gate intact.
 - [x] (2026-08-18) Aligned q2's executable clustered-prefix lookup with Go's `pkg/distsql` record-range contract: DDL common-handle tables do not materialize a PRIMARY secondary index, so runtime range encoding now keys off `common_handle_offsets`; the new no-PRIMARY regression and the full q2 catalog fixture pass.
 - [x] (2026-08-18) Made q9 executable after plan parity by projecting a rebuilt composite index-lookup subtree back to the original pruned child schema by qualified column path. The live q9 result has 175 rows and matches Go's hash.
 - [x] (2026-08-18) Classified the TPC-H mismatches by owning Go package and added fail-before/pass-after regressions for each behavior cluster through q22. The current release source contains no query-specific plan substitution.
@@ -422,13 +424,14 @@ against the TiUP nightly playground at 127.0.0.1:14000/14019 and the same
 identical SHA-256 result digests, and their normalized `EXPLAIN FORMAT='brief'`
 rows are byte-equal after only database-name normalization. The flex identity
 Projection and swap Limit estimate differences were fixed through general
-`tidb-executor` contracts with focused regressions. The remote-integrated code
-head `372c955e7ad47952d26f774a1df730acc94a7100` plus the rebuilt server gives
-20 alternating pairs with median Go/Rust times q1 `10.732/11.296 ms`, q2
-`9.598/10.863 ms`, flex `9.161/10.780 ms`, swap `13.113/22.776 ms`; the
-100-row batch INSERT is `6.444/7.783 ms`. Correctness and plan parity pass;
+`tidb-executor` contracts with focused regressions. The pushed code head
+`03640ea3a82175e50bfc9974eebf3499f7a7091c` plus the rebuilt server gives
+20 alternating pairs with median Go/Rust times q1 `10.705/11.477 ms`, q2
+`9.543/10.684 ms`, flex `9.280/11.034 ms`, swap `12.808/22.890 ms`; the
+100-row batch INSERT is `5.820/7.207 ms` (Rust/Go ratios
+`1.072x/1.120x/1.189x/1.787x/1.238x`). Correctness and plan parity pass;
 the explicit performance criterion does not. Receipt:
-`/private/tmp/hbx-1g-20260825/bench-372c955-20pairs-20260826.json`; the source payload hash is
+`/private/tmp/hbx-1g-20260825/bench-03640-20pairs-20260826.json`; the source payload hash is
 `941e5ae53815a9b69c30bc63522e5b0fbb38d983ac9859c1b4c8983b5e3ae30b`.
 
 TPC-H SF1 setup and all 22 query executions are complete. Go and Rust return identical row counts and SHA-256 result digests for q1-q22, including q9, q12, q19, and q21. The physical plan topology, predicates, join conditions, operator names, access paths, and task placement align; fresh sequential receipts currently reach 19/22 then 20/22 because q7/q8/q10 can differ only in small statistics estimates while cache residency changes, and an earlier converged receipt is 22/22. The old executor-level common-handle split is removed because it failed q21 semantics, and ordered MergeJoin scans now preserve Go's remote `keep_order` contract. The latest post-fix one-client result cycle is Rust 66.673379898 seconds versus Go 22.6943865 seconds, a substantial improvement over the old Rust 249.109404375-second cycle but still a failed Go performance gate. The implementation fixes are scoped to the Rust `tidb-executor` planner/trace package and its focused regressions, with the corresponding Go contracts in `pkg/planner/core` and `pkg/planner/cardinality` used as source of truth. Ready validation and package-coherent push remain pending; the performance gate must not be reported as passed.
@@ -658,3 +661,12 @@ transaction reply channels with a general crossbeam rendezvous, and reran the
 same 1G correctness and 20-pair benchmark. All plan/result and batch checks
 remain equal; ratios are `1.053x/1.132x/1.177x/1.737x/1.208x` for
 q1/q2/flex/swap/batch, still above the no-regression threshold.
+
+Revision note, 2026-08-26 (final 03640 refresh): fast-forwarded the remote
+empty-window/handle-only lookup fix `367fa87981` and pushed the API arity
+correction as `03640ea3a8`. A clean release rebuild and fresh comparison keep
+all four plans/results and the 100-row batch checksum equal. The 20-pair
+receipt at this head remains slower than Go for every shape; lookup concurrency
+8 and bounded residual read-ahead/handle-only projection A/B experiments were
+reverted after no stable all-shape gain. `make lint` remains unavailable because
+the environment has no `go` executable.
