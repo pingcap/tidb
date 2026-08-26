@@ -317,6 +317,14 @@ pub enum IndexPart {
 }
 
 impl IndexPart {
+    /// Restores this key part, matching Go's public
+    /// `ast.IndexPartSpecification.Restore`.
+    pub fn restore(&self) -> String {
+        let mut out = String::new();
+        self.restore_into(&mut out);
+        out
+    }
+
     pub(crate) fn restore_into(&self, out: &mut String) {
         match self {
             Self::Column {
@@ -734,7 +742,22 @@ impl AlterTableAction {
         )
     }
 
-    fn restore_into(&self, out: &mut String) {
+    /// Restores this single alteration specification (without any `ALTER
+    /// TABLE` prefix), matching Go's public `ast.AlterTableSpec.Restore`.
+    pub fn restore(&self) -> String {
+        let mut out = String::new();
+        self.restore_into(&mut out);
+        out
+    }
+
+    /// Restores this specification with an explicit formatting context.
+    pub fn restore_with_context(&self, context: &RestoreContext) -> String {
+        let mut out = String::new();
+        self.restore_into_with_context(&mut out, context);
+        out
+    }
+
+    pub(crate) fn restore_into(&self, out: &mut String) {
         match self {
             AlterTableAction::AddIndexConstraint(constraint) => {
                 out.push_str("ADD ");
@@ -748,7 +771,7 @@ impl AlterTableAction {
         }
     }
 
-    fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
+    pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         match self {
             AlterTableAction::Partition(action) => {
                 partition::restore_alter_action(out, action, context)
@@ -1405,9 +1428,22 @@ pub enum ColumnPosition {
     After(String),
 }
 
+impl ColumnPosition {
+    /// Restores this position suffix (`FIRST`, ` AFTER \`col\``, or empty),
+    /// matching Go's public `ast.ColumnPosition.Restore` (no leading
+    /// separator — the enclosing specification writes it).
+    pub fn restore(&self) -> String {
+        let mut out = String::new();
+        push_column_position(&mut out, self);
+        // Statement rendering embeds one leading space; the Go node API does
+        // not, so the boundary facade strips it.
+        out.strip_prefix(' ').unwrap_or(&out).to_string()
+    }
+}
+
 /// Restores an `ALTER TABLE` column position suffix: nothing for `Default`,
 /// ` FIRST`, or ` AFTER \`col\``.
-fn push_column_position(out: &mut String, position: &ColumnPosition) {
+pub(crate) fn push_column_position(out: &mut String, position: &ColumnPosition) {
     match position {
         ColumnPosition::Default => {}
         ColumnPosition::First => out.push_str(" FIRST"),
@@ -1438,6 +1474,36 @@ pub enum TableConstraint {
     /// Full Go `FOREIGN KEY` constraint payload, including the asymmetric
     /// leading `CONSTRAINT` keyword even when unnamed.
     ForeignKey(ForeignKeyConstraintDefinition),
+}
+
+impl TableConstraint {
+    /// Restores this table-level constraint, matching Go's public
+    /// `ast.Constraint.Restore` (index/check/foreign-key payloads render
+    /// without any enclosing prefix).
+    pub fn restore(&self) -> String {
+        match self {
+            Self::Index(constraint) => constraint.restore(),
+            Self::Check(constraint) => {
+                let mut out = String::new();
+                constraint.restore_into(&mut out);
+                out
+            }
+            Self::ForeignKey(constraint) => constraint.restore(),
+        }
+    }
+
+    /// Restores this constraint with an explicit formatting context.
+    pub fn restore_with_context(&self, context: &RestoreContext) -> String {
+        match self {
+            Self::Index(constraint) => constraint.restore_with_context(context),
+            Self::Check(constraint) => {
+                let mut out = String::new();
+                constraint.restore_into_with_context(&mut out, context);
+                out
+            }
+            Self::ForeignKey(constraint) => constraint.restore_with_context(context),
+        }
+    }
 }
 
 // BEGIN GENERATED AST VISITOR IMPLEMENTATIONS

@@ -564,6 +564,14 @@ pub struct OrderItem {
 }
 
 impl OrderItem {
+    /// Restores this item (`expr` with an optional ` DESC`), matching Go's
+    /// public `ast.ByItem.Restore`.
+    pub fn restore(&self) -> String {
+        let mut out = String::new();
+        self.restore_into(&mut out);
+        out
+    }
+
     pub(crate) fn restore_into(&self, out: &mut String) {
         restore_by_item_expr(&self.expr, out);
         if self.desc {
@@ -582,11 +590,15 @@ impl OrderItem {
 /// though position `0` is itself a runtime error (see
 /// `tidb_exec::order::positional`). Every other expression restores
 /// normally.
-fn restore_by_item_expr(expr: &Expr, out: &mut String) {
+pub(crate) fn restore_by_item_expr(expr: &Expr, out: &mut String) {
     restore_by_item_expr_with_context(expr, out, &RestoreContext::default());
 }
 
-fn restore_by_item_expr_with_context(expr: &Expr, out: &mut String, context: &RestoreContext) {
+pub(crate) fn restore_by_item_expr_with_context(
+    expr: &Expr,
+    out: &mut String,
+    context: &RestoreContext,
+) {
     match expr {
         Expr::Bool(b) => out.push_str(if *b { "1" } else { "0" }),
         _ => expr.restore_into_with_context(out, context),
@@ -641,6 +653,16 @@ pub struct Limit {
 }
 
 impl Limit {
+    /// Restores this clause at node boundary — `LIMIT 10[, 20]`, no leading
+    /// statement separator — matching Go's public `ast.Limit.Restore`.
+    pub fn restore(&self) -> String {
+        let mut out = String::new();
+        self.restore_into(&mut out);
+        // Statement rendering embeds one leading space; the Go node API does
+        // not, so the boundary facade strips it.
+        out.strip_prefix(' ').unwrap_or(&out).to_string()
+    }
+
     pub(crate) fn restore_into(&self, out: &mut String) {
         out.push_str(" LIMIT ");
         if let Some(off) = &self.offset {

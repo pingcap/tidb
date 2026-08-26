@@ -119,7 +119,7 @@ impl AdminStmt {
 
 /// Back-quotes an identifier, doubling any embedded back-quote
 /// (`RestoreNameBackQuotes`).
-pub(crate) fn back_quote(name: &str) -> String {
+pub fn back_quote(name: &str) -> String {
     format!("`{}`", name.replace('`', "``"))
 }
 
@@ -281,7 +281,7 @@ pub(crate) fn format_go_float(f: f64) -> String {
 }
 
 /// Restores a dotted, back-quoted name path (`db`.`t`).
-pub(crate) fn push_name_path(out: &mut String, path: &[String]) {
+pub fn push_name_path(out: &mut String, path: &[String]) {
     for (i, part) in path.iter().enumerate() {
         if i > 0 {
             out.push('.');

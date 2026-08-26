@@ -139,6 +139,10 @@ impl PlacementOption {
 }
 
 impl CreatePlacementPolicyStmt {
+    pub(crate) fn restore_into_with_mode(&self, out: &mut String, mode: PlacementRestoreMode) {
+        self.restore_mode_into(out, mode);
+    }
+
     pub(crate) fn restore_into(&self, out: &mut String) {
         self.restore_mode_into(out, PlacementRestoreMode::Default);
     }
@@ -174,8 +178,8 @@ impl CreatePlacementPolicyStmt {
 }
 
 impl AlterPlacementPolicyStmt {
-    pub(crate) fn restore_into(&self, out: &mut String) {
-        self.restore_mode_into(out, PlacementRestoreMode::Default);
+    pub(crate) fn restore_into_with_mode(&self, out: &mut String, mode: PlacementRestoreMode) {
+        self.restore_mode_into(out, mode);
     }
 
     /// Restores with the placement-specific Go flag behavior.
@@ -208,6 +212,10 @@ impl AlterPlacementPolicyStmt {
 }
 
 impl DropPlacementPolicyStmt {
+    pub(crate) fn restore_into_with_mode(&self, out: &mut String, mode: PlacementRestoreMode) {
+        self.restore_mode_into(out, mode);
+    }
+
     pub(crate) fn restore_into(&self, out: &mut String) {
         self.restore_mode_into(out, PlacementRestoreMode::Default);
     }

@@ -52,6 +52,23 @@ impl ColumnDef {
         self.restore_into_with_name_path(out, &self.qualifier, context);
     }
 
+    /// Restores this column definition (`\`name\` TYPE ... [OPTION ...]`),
+    /// matching Go's public `ast.ColumnDef.Restore`.
+    pub fn restore(&self) -> String {
+        let mut out = String::new();
+        self.restore_into(&mut out);
+        out
+    }
+
+    /// Restores this column definition with an explicit formatting context
+    /// (Go's `RestoreWithoutSchemaName`/`RestoreWithoutTableName` flags strip
+    /// generated-expression qualifiers here).
+    pub fn restore_with_context(&self, context: &RestoreContext) -> String {
+        let mut out = String::new();
+        self.restore_into_with_context(&mut out, context);
+        out
+    }
+
     /// Restores a column definition whose source name had a qualifier path,
     /// as accepted by Go's qualified CREATE/ALTER column productions.
     pub(crate) fn restore_into_with_name_path(
@@ -335,6 +352,21 @@ impl ColumnOption {
     /// `GLOBAL` modifier.
     pub fn is_inline_unique_key(&self) -> bool {
         matches!(self, Self::InlineKey(key) if key.is_unique())
+    }
+
+    /// Restores this column option, matching Go's public
+    /// `ast.ColumnOption.Restore`.
+    pub fn restore(&self) -> String {
+        let mut out = String::new();
+        self.restore_into(&mut out);
+        out
+    }
+
+    /// Restores this column option with an explicit formatting context.
+    pub fn restore_with_context(&self, context: &RestoreContext) -> String {
+        let mut out = String::new();
+        self.restore_into_with_context(&mut out, context);
+        out
     }
 
     fn restore_into(&self, out: &mut String) {

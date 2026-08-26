@@ -80,6 +80,34 @@ pub enum WindowOver {
     Def(WindowDef),
 }
 
+impl WindowOver {
+    /// Restores the `OVER` payload: a bare window name, or a parenthesized
+    /// definition body, matching Go's public `ast.WindowSpec.Restore`.
+    pub fn restore(&self) -> String {
+        match self {
+            Self::Name(name) => back_quote(name),
+            Self::Def(def) => {
+                let mut out = String::new();
+                out.push('(');
+                restore_window_def(def, &mut out);
+                out.push(')');
+                out
+            }
+        }
+    }
+}
+
+impl WindowDef {
+    /// Restores this definition's body (base name plus clauses, without the
+    /// enclosing parentheses), the text Go's named-window entry and
+    /// parenthesized OVER payload both write.
+    pub fn restore_body(&self) -> String {
+        let mut out = String::new();
+        restore_window_def(self, &mut out);
+        out
+    }
+}
+
 /// Restores a window definition's own BODY (no enclosing parentheses,
 /// added by the caller — shared by a top-level `WINDOW name AS (...)`
 /// entry and a parenthesized `OVER (...)` reference alike): an optional
@@ -150,7 +178,15 @@ pub struct WindowFrame {
 }
 
 impl WindowFrame {
-    fn restore_into(&self, out: &mut String) {
+    /// Restores this frame (`ROWS|RANGE BETWEEN <start> AND <end>`),
+    /// matching Go's public `ast.FrameClause.Restore` payload.
+    pub fn restore(&self) -> String {
+        let mut out = String::new();
+        self.restore_into(&mut out);
+        out
+    }
+
+    pub(crate) fn restore_into(&self, out: &mut String) {
         out.push_str(match self.kind {
             FrameKind::Rows => "ROWS BETWEEN ",
             FrameKind::Range => "RANGE BETWEEN ",
@@ -209,7 +245,15 @@ pub enum FrameBound {
 }
 
 impl FrameBound {
-    fn restore_into(&self, out: &mut String) {
+    /// Restores this single frame bound, matching Go's public
+    /// `ast.FrameBound.Restore`.
+    pub fn restore(&self) -> String {
+        let mut out = String::new();
+        self.restore_into(&mut out);
+        out
+    }
+
+    pub(crate) fn restore_into(&self, out: &mut String) {
         match self {
             FrameBound::UnboundedPreceding => out.push_str("UNBOUNDED PRECEDING"),
             FrameBound::Preceding(n) => {

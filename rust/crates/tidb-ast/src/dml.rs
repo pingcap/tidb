@@ -656,6 +656,13 @@ pub struct Assignment {
 }
 
 impl Assignment {
+    /// Restores `col = value`, matching Go's public `ast.Assignment.Restore`.
+    pub fn restore(&self) -> String {
+        let mut out = String::new();
+        self.restore_into(&mut out);
+        out
+    }
+
     pub(crate) fn restore_into(&self, out: &mut String) {
         push_name_path(out, &self.col);
         out.push('=');

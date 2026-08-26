@@ -3187,6 +3187,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-lexer",
  "tidb-mysql",
+ "tidb-parser",
 ]
 
 [[package]]
