@@ -260,6 +260,9 @@ fn decimal_mul_minus_const_column(
     else {
         return Ok(false);
     };
+    if std::env::var("TIDB_DEBUG_FP").is_ok() {
+        eprintln!("[fp] shape matched a={a_index} b={b_index}");
+    }
 
     // Read both columns as i128 coefficients with their scales. A NULL or an
     // out-of-i128 value on either side falls back to the generic path.
@@ -268,6 +271,14 @@ fn decimal_mul_minus_const_column(
     let mut scale: Option<u32> = None;
     for row_index in 0..rows {
         let row = input.get_row(row_index);
+        // A child chunk whose columns hold fewer rows than the chunk reports
+        // (virtual or constant columns materialized lazily) cannot serve the
+        // typed read; fall back to the generic evaluator.
+        let a_col = input.column(a_index);
+        let b_col = input.column(b_index);
+        if a_col.rows() <= row_index || b_col.rows() <= row_index {
+            return Ok(false);
+        }
         if row.is_null(a_index) || row.is_null(b_index) {
             return Ok(false);
         }
@@ -305,6 +316,9 @@ fn decimal_mul_minus_const_column(
     let Some(result_scale) = scale else {
         return Ok(false);
     };
+    if std::env::var("TIDB_DEBUG_FP").is_ok() {
+        eprintln!("[fp] collecting done, rows={} scale={}", coefficients.len(), result_scale);
+    }
     for coefficient in coefficients {
         // The result type's scale may differ from the natural one; building
         // the Decimal at the natural scale lets the projection's cast (if
@@ -316,6 +330,9 @@ fn decimal_mul_minus_const_column(
             // generic path's error-to-NULL handling for out-of-range results.
             Err(_) => output.append_datum(output_index, &tidb_datatype::Datum::Null),
         }
+    }
+    if std::env::var("TIDB_DEBUG_FP").is_ok() {
+        eprintln!("[fp] appended all cells");
     }
     Ok(true)
 }
