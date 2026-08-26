@@ -314,6 +314,116 @@ fn test_to_hash_key() {
     }
 }
 
+/// Source `pkg/types/mydecimal_test.go::TestToHashKey` (second half,
+/// `binTests`): the hash key of a number (with its trailing digit-count byte
+/// stripped) equals the ToBin encoding — at each variant's own precision/frac —
+/// of every canonical rewrite in the paired group.
+#[test]
+fn test_to_hash_key_bin_tests() {
+    let groups: &[(&[&str], &[&str])] = &[
+        (
+            &["1.1", "1.1000", "1.10000000000", "01.1", "0001.1", "001.1000000"],
+            &["1.1", "0001.1", "01.1"],
+        ),
+        (
+            &[
+                "-1.1",
+                "-1.1000",
+                "-1.10000000000",
+                "-01.1",
+                "-0001.1",
+                "-001.1000000",
+            ],
+            &["-1.1", "-0001.1", "-01.1"],
+        ),
+        (
+            &[".1", "0.1", "000000.1", ".10000", "0000.10000", "000000000000000000.1"],
+            &[".1", "0.1", "000000.1", "00.1"],
+        ),
+        (
+            &[
+                "0",
+                "0000",
+                ".0",
+                ".00000",
+                "00000.00000",
+                "-0",
+                "-0000",
+                "-.0",
+                "-.00000",
+                "-00000.00000",
+            ],
+            &["0", "0000", "00", "-0", "-00", "-000000"],
+        ),
+        (
+            &[
+                ".123456789123456789",
+                ".1234567891234567890",
+                ".12345678912345678900",
+                ".123456789123456789000",
+                ".1234567891234567890000",
+                "0.123456789123456789",
+                ".1234567891234567890000000000",
+                "0000000.123456789123456789000",
+            ],
+            &[
+                ".123456789123456789",
+                "0.123456789123456789",
+                "0000.123456789123456789",
+                "0000000.123456789123456789",
+            ],
+        ),
+        (
+            &[
+                "12345",
+                "012345",
+                "0012345",
+                "0000012345",
+                "0000000012345",
+                "00000000000012345",
+                "12345.",
+                "12345.00",
+                "12345.000000000",
+                "000012345.0000",
+            ],
+            &["12345", "012345", "000012345", "000000000000012345"],
+        ),
+        (
+            &["123E5", "12300000", "00123E5", "000000123E5", "12300000.00000000"],
+            &["12300000", "123E5", "00123E5", "0000000000123E5"],
+        ),
+        (
+            &[
+                "123E-2",
+                "1.23",
+                "00000001.23",
+                "1.2300000000000000",
+                "000000001.23000000000000",
+            ],
+            &["123E-2", "1.23", "000001.23", "0000000000001.23"],
+        ),
+    ];
+    for (hash_numbers, bin_numbers) in groups {
+        let mut keys: Vec<Vec<u8>> = Vec::new();
+        for num in *hash_numbers {
+            let expanded = crate::convert_scientific_notation(num).unwrap();
+            let decimal = Decimal::from_signed_literal(&expanded);
+            let (key, _) = decimal.to_hash_key().unwrap();
+            // Remove digit len: drop the trailing byte ToHashKey appends.
+            keys.push(key[..key.len() - 1].to_vec());
+        }
+        for num in *bin_numbers {
+            let expanded = crate::convert_scientific_notation(num).unwrap();
+            let decimal = Decimal::from_signed_literal(&expanded);
+            // remove leading zeros but trailing zeros remain
+            let (prec, frac) = decimal.precision_and_frac();
+            let (key, _) = decimal.to_bin(prec, frac).unwrap();
+            keys.push(key);
+        }
+        assert!(keys.iter().all(|key| key == &keys[0]), "{hash_numbers:?}");
+    }
+}
+
 /// Vectors selected from TiDB's `pkg/types/mydecimal_test.go`: preserve
 /// literal scale, canonicalize zero, and compare values independent of
 /// their rendered scale.
