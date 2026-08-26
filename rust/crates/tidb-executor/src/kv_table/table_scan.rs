@@ -1594,6 +1594,19 @@ impl KvTable {
         } else {
             None
         };
+        // Common handles are encoded from the handle columns in the same
+        // dense order that the handle-only request puts on the wire. Keep
+        // their field types beside the cursor so a columnar response can be
+        // drained in one Go-shaped chunk without falling back to one row at a
+        // time (`getHandle` still needs the original datum types).
+        let handle_field_types = if self.common_handle_offsets.is_empty() {
+            Vec::new()
+        } else {
+            handle_indices
+                .iter()
+                .filter_map(|index| columns.get(*index).map(|column| column.field_type.clone()))
+                .collect()
+        };
         // Go's covering `PhysicalIndexReader` returns the requested table
         // columns directly from the index executor; it never constructs a
         // table-handle lookup task. Keep the complete wire schema for the
@@ -1681,6 +1694,7 @@ impl KvTable {
             use_new_collation: self.use_new_collation,
             noted_rows: 0,
             handle_is_unsigned,
+            handle_field_types,
             pending_chunk: None,
             pending_chunk_row: 0,
         }))
@@ -2624,9 +2638,13 @@ pub struct RemoteIndexHandleCursor {
     use_new_collation: bool,
     noted_rows: u64,
     /// A clean integer-handle response can be consumed directly from the
-    /// decoded chunk. None keeps the row path for common handles, where all
-    /// key columns must still be encoded together.
+    /// decoded chunk. Common handles use the same chunk, encoding all key
+    /// columns together with [`Self::handle_field_types`].
     handle_is_unsigned: Option<bool>,
+    /// Field types for the dense common-handle columns in a handle-only
+    /// response. Empty for integer handles, whose first datum has a fixed
+    /// numeric representation.
+    handle_field_types: Vec<FieldType>,
     pending_chunk: Option<Chunk>,
     pending_chunk_row: usize,
 }
@@ -2639,6 +2657,46 @@ impl RemoteIndexHandleCursor {
         if fresh > 0 {
             crate::storage::note_storage_op(|ops| ops.cop_rows += fresh);
         }
+    }
+
+    /// Extracts one handle from a decoded index response row. Go's
+    /// `indexWorker.getHandle` reads the dense handle columns before building
+    /// a lookup task; keeping this conversion here lets both integer and
+    /// common handles share the same `readFromChunk` boundary.
+    fn handle_from_chunk_row(
+        &self,
+        batch: &Chunk,
+        row_index: usize,
+    ) -> Result<TableHandle, KvTableError> {
+        let row = batch.get_row(row_index);
+        if self.common_handle {
+            if self.handle_field_types.len() != self.handle_indices.len() {
+                return Err(KvTableError::Decode(
+                    "common-handle response omitted field types".to_owned(),
+                ));
+            }
+            let values = self
+                .handle_field_types
+                .iter()
+                .enumerate()
+                .map(|(index, field_type)| row.get_datum(index, field_type))
+                .collect::<Vec<_>>();
+            let encoded = Encoder::new(self.use_new_collation)
+                .encode_key_in_timezone(&self.zone, &values)
+                .map_err(|error| KvTableError::Encode(format!("{error:?}")))?;
+            return Ok(TableHandle::Common(encoded));
+        }
+        if batch.num_cols() == 0 {
+            return Err(KvTableError::Decode(
+                "index response omitted its integer handle column".to_owned(),
+            ));
+        }
+        let handle = if self.handle_is_unsigned == Some(true) {
+            row.get_uint64(0) as i64
+        } else {
+            row.get_int64(0)
+        };
+        Ok(TableHandle::Int(handle))
     }
 
     /// Returns one covering index row in the source's pruned table-column
@@ -2674,32 +2732,22 @@ impl RemoteIndexHandleCursor {
         self.inner.predicates_applied()
     }
 
-    /// Reads one integer handle directly from the remote response chunk.
-    /// Go's indexWorker iterates the SelectResult chunk and extracts only the
-    /// handle column; materializing a one-column Vec<Datum> for every index
+    /// Reads one handle directly from the remote response chunk. Go's
+    /// indexWorker iterates the SelectResult chunk and extracts only the
+    /// handle columns; materializing a one-column Vec<Datum> for every index
     /// entry is unnecessary and especially costly for wide ranges.
-    fn next_integer_handle_from_chunk(&mut self) -> Result<Option<TableHandle>, KvTableError> {
+    fn next_handle_from_chunk(&mut self) -> Result<Option<TableHandle>, KvTableError> {
         loop {
             if let Some(batch) = self.pending_chunk.as_ref() {
                 if self.pending_chunk_row < batch.num_rows() {
-                    if batch.num_cols() == 0 {
-                        return Err(KvTableError::Decode(
-                            "index response omitted its integer handle column".to_owned(),
-                        ));
-                    }
-                    let row = batch.get_row(self.pending_chunk_row);
-                    let handle = if self.handle_is_unsigned == Some(true) {
-                        row.get_uint64(0) as i64
-                    } else {
-                        row.get_int64(0)
-                    };
+                    let handle = self.handle_from_chunk_row(batch, self.pending_chunk_row)?;
                     let last = self.pending_chunk_row + 1 == batch.num_rows();
                     self.pending_chunk_row += 1;
                     if last {
                         self.pending_chunk = None;
                         self.pending_chunk_row = 0;
                     }
-                    return Ok(Some(TableHandle::Int(handle)));
+                    return Ok(Some(handle));
                 }
                 self.pending_chunk = None;
                 self.pending_chunk_row = 0;
@@ -2734,7 +2782,7 @@ impl RemoteIndexHandleCursor {
         if required_rows == 0 {
             return Ok(Some(Vec::new()));
         }
-        if self.handle_is_unsigned.is_none() || !self.inner.supports_chunks() {
+        if !self.inner.supports_chunks() {
             let mut handles = Vec::with_capacity(required_rows);
             while handles.len() < required_rows {
                 let Some(handle) = self.next_handle()? else {
@@ -2789,18 +2837,8 @@ impl RemoteIndexHandleCursor {
                 .as_ref()
                 .expect("a non-empty pending chunk was just checked");
             for row_index in start..end {
-                let row = chunk.get_row(row_index);
-                if chunk.num_cols() == 0 {
-                    return Err(KvTableError::Decode(
-                        "index response omitted its integer handle column".to_owned(),
-                    ));
-                }
-                let handle = if self.handle_is_unsigned == Some(true) {
-                    row.get_uint64(0) as i64
-                } else {
-                    row.get_int64(0)
-                };
-                handles.push(TableHandle::Int(handle));
+                let handle = self.handle_from_chunk_row(chunk, row_index)?;
+                handles.push(handle);
             }
             self.pending_chunk_row = end;
             if self.pending_chunk_row == chunk.num_rows() {
@@ -2816,8 +2854,10 @@ impl RemoteIndexHandleCursor {
 
     /// Returns the next row handle in the remote index order.
     pub fn next_handle(&mut self) -> Result<Option<TableHandle>, KvTableError> {
-        if self.handle_is_unsigned.is_some() && self.inner.supports_chunks() {
-            return self.next_integer_handle_from_chunk();
+        if (self.handle_is_unsigned.is_some() || self.common_handle)
+            && self.inner.supports_chunks()
+        {
+            return self.next_handle_from_chunk();
         }
         let Some(row) = self
             .inner
@@ -4534,6 +4574,7 @@ mod remote_cursor_tests {
             use_new_collation: false,
             noted_rows: 0,
             handle_is_unsigned: None,
+            handle_field_types: Vec::new(),
             pending_chunk: None,
             pending_chunk_row: 0,
         };
@@ -4593,6 +4634,7 @@ mod remote_cursor_tests {
             use_new_collation: false,
             noted_rows: 0,
             handle_is_unsigned: Some(false),
+            handle_field_types: Vec::new(),
             pending_chunk: None,
             pending_chunk_row: 0,
         };
@@ -4626,6 +4668,7 @@ mod remote_cursor_tests {
             use_new_collation: false,
             noted_rows: 0,
             handle_is_unsigned: Some(false),
+            handle_field_types: Vec::new(),
             pending_chunk: None,
             pending_chunk_row: 0,
         };
@@ -4635,6 +4678,57 @@ mod remote_cursor_tests {
         assert_eq!(
             cursor.next_handle_batch(1).unwrap(),
             Some(vec![TableHandle::Int(7), TableHandle::Int(8)])
+        );
+        assert!(cursor.next_handle_batch(1).unwrap().is_none());
+    }
+
+    #[test]
+    fn common_handle_cursor_reuses_large_chunk_for_required_rows() {
+        let field_types = vec![
+            FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        ];
+        let mut batch = Chunk::new_with_capacity(&field_types, 2);
+        batch.append_string(0, "alpha");
+        batch.append_int64(1, 7);
+        batch.append_string(0, "beta");
+        batch.append_int64(1, 8);
+        let mut cursor = RemoteIndexHandleCursor {
+            inner: Box::new(ChunkStream {
+                chunks: std::collections::VecDeque::from([batch]),
+                returned: 0,
+            }),
+            handle_indices: vec![0, 1],
+            projected_indices: None,
+            common_handle: true,
+            zone: tidb_datatype::SessionTimeZone::utc(),
+            use_new_collation: false,
+            noted_rows: 0,
+            handle_is_unsigned: None,
+            handle_field_types: field_types,
+            pending_chunk: None,
+            pending_chunk_row: 0,
+        };
+        let expected = |text: &str, value| {
+            Encoder::new(false)
+                .encode_key_in_timezone(
+                    &tidb_datatype::SessionTimeZone::utc(),
+                    &[
+                        Datum::String(tidb_datatype::StringDatum::new(
+                            text.as_bytes().to_vec(),
+                            tidb_datatype::Collation::Binary,
+                        )),
+                        Datum::Int(value),
+                    ],
+                )
+                .unwrap()
+        };
+        assert_eq!(
+            cursor.next_handle_batch(1).unwrap(),
+            Some(vec![
+                TableHandle::Common(expected("alpha", 7)),
+                TableHandle::Common(expected("beta", 8)),
+            ])
         );
         assert!(cursor.next_handle_batch(1).unwrap().is_none());
     }
