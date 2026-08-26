@@ -32,6 +32,7 @@ pub use self::plan::ProcessResponse;
 pub use self::plan::ResolveLock;
 pub use self::plan::ResponseWithShard;
 pub use self::plan::RetryableMultiRegion;
+pub use self::plan::RpcCancellable;
 pub(crate) use self::plan_builder::NoTarget;
 pub use self::plan_builder::PlanBuilder;
 pub use self::plan_builder::SingleKey;

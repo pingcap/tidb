@@ -30,6 +30,7 @@ use crate::proto::kvrpcpb;
 use crate::proto::pdpb::Timestamp;
 use crate::region::StoreId;
 use crate::region::{RegionVerId, RegionWithLeader};
+use crate::region_request::RpcCanceller;
 use crate::region_request::{region_error_access_message, region_error_label};
 use crate::request::shard::HasNextBatch;
 use crate::request::NextBatch;
@@ -78,6 +79,29 @@ pub trait Plan: Sized + Clone + Sync + Send + 'static {
     /// physical read. Plans that do not end in a TiKV context request retain
     /// the no-op default.
     fn set_read_lock_context(&mut self, _resolved_locks: Vec<u64>, _committed_locks: Vec<u64>) {}
+}
+
+/// A request plan attached to a source-compatible [`RpcCanceller`].
+#[derive(Clone)]
+pub struct RpcCancellable<P> {
+    pub inner: P,
+    pub canceller: RpcCanceller,
+}
+
+#[async_trait]
+impl<P: Plan> Plan for RpcCancellable<P> {
+    type Result = P::Result;
+
+    async fn execute(&self) -> Result<Self::Result> {
+        let cancellation = self.canceller.cancellation();
+        tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => {
+                Err(Error::StringError("context canceled".to_owned()))
+            }
+            result = self.inner.execute() => result,
+        }
+    }
 }
 
 /// The simplest plan which just dispatches a request to a specific kv server.
@@ -1271,6 +1295,29 @@ where
                         Err(error) => return (Err(error), backoff),
                     }
                 }
+                RegionErrorRetry::BackoffPreservingRegionError(config) => {
+                    match backoff
+                        .backoff(config, format!("region error: {e:?}"))
+                        .await
+                    {
+                        Ok(true) => {
+                            plan.mark_retry_request();
+                            return Self::single_shard_handler(
+                                pd_client,
+                                plan,
+                                region_store.region_with_leader,
+                                backoff,
+                                permits,
+                                preserve_region_results,
+                                one_region,
+                            )
+                            .await;
+                        }
+                        Ok(false) | Err(_) => {
+                            return (Err(Error::RegionError(Box::new(e))), backoff);
+                        }
+                    }
+                }
                 RegionErrorRetry::TerminalAfterBackoff(config) => {
                     match backoff
                         .backoff(config, format!("region error: {e:?}"))
@@ -1330,6 +1377,10 @@ where
         // or charging a transport backoff.
         if is_request_cancelled_error(&e, backoff.is_cancelled()) {
             return (Err(e), backoff);
+        }
+        if let Some(error) = source_shutting_down_error(crate::region_request::load_shutting_down())
+        {
+            return (Err(error), backoff);
         }
         let invalidate_region = pd_client.clone().on_send_failure(route.as_ref()).await;
         let transport_backoff = source_transport_backoff_config(route.as_ref());
@@ -1455,6 +1506,10 @@ fn is_request_cancelled_error(error: &Error, request_context_cancelled: bool) ->
     }
 }
 
+fn source_shutting_down_error(shutting_down: u32) -> Option<Error> {
+    (shutting_down > 0).then(|| crate::error::StaticError::TiDbShuttingDown.into())
+}
+
 /// Source `onSendFail` uses TiFlash's distinct terminal timeout/backoff class
 /// for both TiFlash and TiFlash-compute physical endpoints.
 fn source_transport_backoff_config(route: Option<&RegionStore>) -> RetryConfig {
@@ -1543,6 +1598,9 @@ pub(crate) enum RegionErrorRetry {
     Immediate,
     /// The attempt must consume this client-go retry class before retrying.
     Backoff(RetryConfig),
+    /// Disk-full is source-special: exhaustion returns the original region
+    /// error and suppresses the backoff failure.
+    BackoffPreservingRegionError(RetryConfig),
     /// Source consumes this retry class for accounting/throttling, but ends
     /// the current send loop afterward and returns the region error.
     TerminalAfterBackoff(RetryConfig),
@@ -1593,7 +1651,9 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
             Ok(RegionErrorRetry::Backoff(BO_REGION_SCHEDULING))
         }
     } else if e.disk_full.is_some() {
-        Ok(RegionErrorRetry::Backoff(BO_TIKV_DISK_FULL))
+        Ok(RegionErrorRetry::BackoffPreservingRegionError(
+            BO_TIKV_DISK_FULL,
+        ))
     } else if e.recovery_in_progress.is_some() {
         pd_client.invalidate_region_cache(ver_id).await;
         Ok(RegionErrorRetry::TerminalAfterBackoff(
@@ -1728,17 +1788,11 @@ pub(crate) async fn on_region_epoch_not_match<PdC: PdClient>(
 
     for r in &error.current_regions {
         if r.id == region_store.region_with_leader.id() {
-            let region_epoch = r.region_epoch.as_ref().unwrap();
-            let returned_conf_ver = region_epoch.conf_ver;
-            let returned_version = region_epoch.version;
-            let current_region_epoch = region_store
-                .region_with_leader
-                .region
-                .region_epoch
-                .clone()
-                .unwrap();
-            let current_conf_ver = current_region_epoch.conf_ver;
-            let current_version = current_region_epoch.version;
+            let returned_conf_ver = r.region_epoch.as_ref().map_or(0, |epoch| epoch.conf_ver);
+            let returned_version = r.region_epoch.as_ref().map_or(0, |epoch| epoch.version);
+            let current_region_epoch = region_store.region_with_leader.region.region_epoch.as_ref();
+            let current_conf_ver = current_region_epoch.map_or(0, |epoch| epoch.conf_ver);
+            let current_version = current_region_epoch.map_or(0, |epoch| epoch.version);
 
             // Find whether the current region is ahead of TiKV's. If so, backoff.
             if returned_conf_ver < current_conf_ver || returned_version < current_version {
@@ -1751,6 +1805,8 @@ pub(crate) async fn on_region_epoch_not_match<PdC: PdClient>(
     // its working leader from the responding store. A following route lookup
     // can therefore use split/merged metadata without an avoidable PD round
     // trip. The old entry remains only when TiKV returned that exact version.
+    let response_is_tiflash =
+        region_store.physical_endpoint_type == crate::store::EndpointType::TiFlash;
     let responding_store_id = region_store
         .target_peer
         .as_ref()
@@ -1773,7 +1829,21 @@ pub(crate) async fn on_region_epoch_not_match<PdC: PdClient>(
         .current_regions
         .into_iter()
         .map(|region| {
-            let leader = responding_store_id.and_then(|store_id| {
+            let initial_leader_store_id = if response_is_tiflash {
+                region
+                    .peers
+                    .iter()
+                    .find(|peer| {
+                        !matches!(
+                            crate::proto::metapb::PeerRole::try_from(peer.role),
+                            Ok(crate::proto::metapb::PeerRole::Learner)
+                        )
+                    })
+                    .map(|peer| peer.store_id)
+            } else {
+                responding_store_id
+            };
+            let leader = initial_leader_store_id.and_then(|store_id| {
                 region
                     .peers
                     .iter()
@@ -3297,6 +3367,21 @@ mod test {
         .unwrap();
         assert_eq!(stale, RegionErrorRetry::Backoff(BO_STALE_CMD));
 
+        let disk_full = handle_region_error(
+            pd_client.clone(),
+            errorpb::Error {
+                disk_full: Some(Default::default()),
+                ..Default::default()
+            },
+            region_store(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            disk_full,
+            RegionErrorRetry::BackoffPreservingRegionError(BO_TIKV_DISK_FULL)
+        );
+
         let flashback = handle_region_error(
             pd_client.clone(),
             errorpb::Error {
@@ -3621,6 +3706,15 @@ mod test {
     }
 
     #[test]
+    fn source_transport_failure_is_terminal_while_tidb_is_shutting_down() {
+        assert!(source_shutting_down_error(0).is_none());
+        assert!(matches!(
+            source_shutting_down_error(1),
+            Some(Error::Static(crate::error::StaticError::TiDbShuttingDown))
+        ));
+    }
+
+    #[test]
     fn source_transport_failure_uses_tiflash_retry_class_only_for_tiflash_endpoints() {
         let region = region_store();
         assert_eq!(source_transport_backoff_config(None), BO_TIKV_RPC);
@@ -3705,6 +3799,49 @@ mod test {
     }
 
     #[tokio::test]
+    async fn source_epoch_not_match_from_tiflash_seeds_an_electable_peer() {
+        let pd_client = Arc::new(MockPdClient::default());
+        let tiflash = crate::proto::metapb::Peer {
+            id: 7,
+            store_id: 41,
+            role: crate::proto::metapb::PeerRole::Learner as i32,
+            ..Default::default()
+        };
+        let voter = crate::proto::metapb::Peer {
+            id: 8,
+            store_id: 42,
+            role: crate::proto::metapb::PeerRole::Voter as i32,
+            ..Default::default()
+        };
+        let mut replacement = MockPdClient::region2().region;
+        replacement.peers = vec![tiflash.clone(), voter.clone()];
+        let store = region_store()
+            .with_target_peer(tiflash)
+            .with_physical_store(41, crate::store::EndpointType::TiFlash);
+
+        assert_eq!(
+            on_region_epoch_not_match(
+                pd_client.clone(),
+                store,
+                EpochNotMatch {
+                    current_regions: vec![replacement],
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap(),
+            EpochNotMatchOutcome::Stop
+        );
+        assert_eq!(
+            pd_client.epoch_not_match_regions()[0]
+                .leader
+                .as_ref()
+                .map(|peer| peer.store_id),
+            Some(voter.store_id)
+        );
+    }
+
+    #[tokio::test]
     async fn source_epoch_not_match_keeps_an_exact_cached_version() {
         let pd_client = Arc::new(MockPdClient::default());
         let mut replacement = MockPdClient::region1().region;
@@ -3773,6 +3910,30 @@ mod test {
     }
 
     #[tokio::test]
+    async fn source_epoch_not_match_uses_zero_values_for_missing_epochs() {
+        let pd_client = Arc::new(MockPdClient::default());
+        let mut store = region_store();
+        store.region_with_leader.region.region_epoch = None;
+        let mut replacement = store.region_with_leader.region.clone();
+        replacement.region_epoch = None;
+
+        assert_eq!(
+            on_region_epoch_not_match(
+                pd_client.clone(),
+                store,
+                EpochNotMatch {
+                    current_regions: vec![replacement],
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap(),
+            EpochNotMatchOutcome::Stop
+        );
+        assert_eq!(pd_client.epoch_not_match_regions()[0].ver_id().ver, 0);
+    }
+
+    #[tokio::test]
     async fn source_bucket_version_mismatch_refreshes_the_cache_and_propagates() {
         let pd_client = Arc::new(MockPdClient::default());
         let store = region_store();
@@ -3801,6 +3962,47 @@ mod test {
 
     #[derive(Clone)]
     struct ErrPlan;
+
+    #[derive(Clone)]
+    struct PendingRpcPlan;
+
+    #[async_trait]
+    impl Plan for PendingRpcPlan {
+        type Result = ();
+
+        async fn execute(&self) -> Result<Self::Result> {
+            futures::future::pending().await
+        }
+    }
+
+    #[tokio::test]
+    async fn source_rpc_canceller_stops_current_and_future_request_trees() {
+        let canceller = RpcCanceller::new();
+        let plan = RpcCancellable {
+            inner: PendingRpcPlan,
+            canceller: canceller.clone(),
+        };
+        let running = tokio::spawn(async move { plan.execute().await });
+        tokio::task::yield_now().await;
+        canceller.cancel_all();
+
+        let error = tokio::time::timeout(Duration::from_secs(1), running)
+            .await
+            .expect("cancellation must stop the running request")
+            .expect("request task must not panic")
+            .unwrap_err();
+        assert_eq!(error.to_string(), "context canceled");
+        assert!(canceller.is_cancelled());
+
+        let error = RpcCancellable {
+            inner: PendingRpcPlan,
+            canceller,
+        }
+        .execute()
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "context canceled");
+    }
 
     #[derive(Clone)]
     struct RecordingRetryState {

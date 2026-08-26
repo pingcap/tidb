@@ -22,7 +22,7 @@ use crate::async_util::Cancellation;
 use crate::common::Error;
 use crate::kv::ReplicaReadType;
 use crate::locate::{
-    HealthStatusDetail, MixedReplicaSelection, ReplicaCandidate, ReplicaFlowsType,
+    HealthStatusDetail, MixedReplicaSelection, ReplicaCandidate, ReplicaFlowsType, ReplicaLiveness,
     ReplicaSelectorState, StoreHealthStatus,
 };
 use crate::pd::Cluster;
@@ -124,14 +124,112 @@ impl CachedRegion {
     }
 }
 
-/// The cache-local outcome of client-go's `GetTiFlashRPCContext` peer walk.
-/// Transport connection/address failures remain owned by `PdRpcClient`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TiFlashSelectionError {
+/// Why client-go's `GetTiFlashRPCContext` could not return a route.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TiFlashRpcContextUnavailableReason {
+    #[default]
+    Available,
+    Error,
     CachedRegionMissing,
-    CacheExpired,
-    NoTiFlashPeer,
+    NeedReloadOnAccess,
+    TtlExpired,
+    NoTiFlashAccessStore,
+    StoreAddressEmpty,
     AllStoresFiltered,
+    AllStoresEpochStale,
+    NoAvailableStore,
+}
+
+impl TiFlashRpcContextUnavailableReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Available => "",
+            Self::Error => "error",
+            Self::CachedRegionMissing => "cached_region_missing",
+            Self::NeedReloadOnAccess => "need_reload_on_access",
+            Self::TtlExpired => "ttl_expired",
+            Self::NoTiFlashAccessStore => "no_tiflash_access_store",
+            Self::StoreAddressEmpty => "store_addr_empty",
+            Self::AllStoresFiltered => "all_tiflash_stores_filtered_by_label",
+            Self::AllStoresEpochStale => "all_tiflash_stores_epoch_mismatch",
+            Self::NoAvailableStore => "no_available_tiflash_store",
+        }
+    }
+}
+
+impl std::fmt::Display for TiFlashRpcContextUnavailableReason {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Source-compatible diagnostic detail for an unavailable TiFlash route.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TiFlashRpcContextUnavailableDetail {
+    pub reason: TiFlashRpcContextUnavailableReason,
+    pub store_ids: Vec<StoreId>,
+    pub peer_ids: Vec<u64>,
+}
+
+impl std::fmt::Display for TiFlashRpcContextUnavailableDetail {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.reason.fmt(formatter)
+    }
+}
+
+/// The cache-local outcome of client-go's `GetTiFlashRPCContext` peer walk.
+/// A resolution error carries both the source diagnostic and the typed cause.
+#[derive(Debug)]
+pub struct TiFlashSelectionError {
+    pub(crate) detail: TiFlashRpcContextUnavailableDetail,
+    pub(crate) source: Option<Error>,
+}
+
+impl PartialEq for TiFlashSelectionError {
+    fn eq(&self, other: &Self) -> bool {
+        self.detail == other.detail
+    }
+}
+
+impl Eq for TiFlashSelectionError {}
+
+impl std::fmt::Display for TiFlashSelectionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.detail.fmt(formatter)
+    }
+}
+
+impl std::error::Error for TiFlashSelectionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source
+            .as_ref()
+            .map(|error| error as &(dyn std::error::Error + 'static))
+    }
+}
+
+impl TiFlashSelectionError {
+    fn unavailable(
+        reason: TiFlashRpcContextUnavailableReason,
+        store_ids: Vec<StoreId>,
+        peer_ids: Vec<u64>,
+    ) -> Self {
+        Self {
+            detail: TiFlashRpcContextUnavailableDetail {
+                reason,
+                store_ids,
+                peer_ids,
+            },
+            source: None,
+        }
+    }
+
+    pub fn detail(&self) -> &TiFlashRpcContextUnavailableDetail {
+        &self.detail
+    }
+
+    pub fn source_error(&self) -> Option<&Error> {
+        self.source.as_ref()
+    }
 }
 
 /// Source-compatible named filters accepted by TiFlash store discovery.
@@ -341,6 +439,16 @@ async fn pd_region_meta_call<T>(call: impl Future<Output = Result<T>>) -> Result
         .is_some_and(is_pd_region_meta_overload);
     PdRegionMetaCircuitBreaker::on_result(&state, overloaded);
     result
+}
+
+fn require_region_peer(region: RegionWithLeader) -> Result<RegionWithLeader> {
+    if region.region.peers.is_empty() {
+        Err(Error::StringError(
+            "receive Region with no available peer".to_owned(),
+        ))
+    } else {
+        Ok(region)
+    }
 }
 
 fn is_pd_region_meta_overload(error: &Error) -> bool {
@@ -638,6 +746,17 @@ struct StoreMetricsCleanupState {
     next_store: Option<StoreId>,
 }
 
+struct BucketRefreshGuard {
+    refreshes: Arc<StdMutex<HashSet<RegionId>>>,
+    region_id: RegionId,
+}
+
+impl Drop for BucketRefreshGuard {
+    fn drop(&mut self) {
+        self.refreshes.lock().unwrap().remove(&self.region_id);
+    }
+}
+
 impl Default for TiFlashComputeStoreCache {
     fn default() -> Self {
         Self {
@@ -795,7 +914,7 @@ pub struct RegionCache<Client = RetryClient<Cluster>> {
     store_check_notify: Notify,
     store_metrics_cleanup: StdMutex<StoreMetricsCleanupState>,
     health_feedback_callback: StdRwLock<Option<HealthFeedbackCallback>>,
-    bucket_refreshes: StdMutex<HashSet<RegionId>>,
+    bucket_refreshes: Arc<StdMutex<HashSet<RegionId>>>,
     gc_cursor: StdMutex<Option<Key>>,
     background_cancellation: Cancellation,
     background_tasks: StdMutex<Vec<JoinHandle<()>>>,
@@ -814,7 +933,7 @@ impl<Client> RegionCache<Client> {
             store_check_notify: Notify::new(),
             store_metrics_cleanup: StdMutex::new(StoreMetricsCleanupState::default()),
             health_feedback_callback: StdRwLock::new(None),
-            bucket_refreshes: StdMutex::new(HashSet::new()),
+            bucket_refreshes: Arc::new(StdMutex::new(HashSet::new())),
             gc_cursor: StdMutex::new(None),
             background_cancellation: Cancellation::default(),
             background_tasks: StdMutex::new(Vec::new()),
@@ -822,6 +941,11 @@ impl<Client> RegionCache<Client> {
             store_background_started: AtomicBool::new(false),
             inner_client,
         }
+    }
+
+    /// Returns the PD client view that owns this cache's region-key codec.
+    pub fn pd_client(&self) -> Arc<Client> {
+        self.inner_client.clone()
     }
 }
 
@@ -862,6 +986,21 @@ impl<C: Send + Sync> RegionCache<C> {
         for task in tasks {
             let _ = task.await;
         }
+    }
+
+    pub(crate) fn spawn_background_task<F, Fut>(&self, build: F) -> bool
+    where
+        F: FnOnce(Cancellation) -> Fut,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let cancellation = self.background_cancellation.child();
+        let mut tasks = self.background_tasks.lock().unwrap();
+        if cancellation.is_cancelled() {
+            return false;
+        }
+        tasks.retain(|task| !task.is_finished());
+        tasks.push(tokio::spawn(build(cancellation)));
+        true
     }
 
     /// One bounded source `gcRoundFunc` pass. The cursor retains the first
@@ -942,6 +1081,58 @@ impl<C: Send + Sync> RegionCache<C> {
 }
 
 impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
+    /// Builds the source cache representation of a PD region. Store
+    /// resolution is eager: down peers, tombstone/dropped stores, and
+    /// non-leader witnesses are removed before the region can enter any
+    /// index. The original down/pending lists remain available separately.
+    pub(crate) async fn prepare_region_from_pd(
+        &self,
+        region: RegionWithLeader,
+    ) -> Result<RegionWithLeader> {
+        let mut region = require_region_peer(region)?;
+        let original_meta = region.region.clone();
+        let peers = std::mem::take(&mut region.region.peers);
+        let mut available = Vec::with_capacity(peers.len());
+        let mut first_tikv_peer = None;
+        for peer in peers {
+            let Some(store) = self.read_through_store_by_id(peer.store_id).await? else {
+                continue;
+            };
+            if is_down_peer(&region, &peer)
+                || (peer.is_witness
+                    && region
+                        .leader
+                        .as_ref()
+                        .is_none_or(|leader| leader.id != peer.id))
+            {
+                continue;
+            }
+            if first_tikv_peer.is_none() && EndpointType::from_store(&store) == EndpointType::TiKv {
+                first_tikv_peer = Some(peer.clone());
+            }
+            available.push(peer);
+        }
+        if available.is_empty() {
+            return Err(Error::StringError(format!(
+                "no available peers, region: {{{original_meta:?}}}"
+            )));
+        }
+        if region
+            .leader
+            .as_ref()
+            .is_none_or(|leader| !available.iter().any(|peer| peer.id == leader.id))
+        {
+            // `newRegion` leaves `workTiKVIdx` at zero when PD's reported
+            // leader was filtered, making the first remaining TiKV peer the
+            // effective cached leader. If no TiKV peer survived, there is no
+            // usable leader; retaining the filtered PD leader would route to
+            // a peer that no longer exists in the cached metadata.
+            region.leader = first_tikv_peer;
+        }
+        region.region.peers = available;
+        Ok(region)
+    }
+
     /// Split at logical region keys through the codec-aware PD client.
     pub(crate) async fn split_regions(
         &self,
@@ -1176,6 +1367,10 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 crate::stats::remove_store_metrics(store_id);
                 Some(store_id)
             }
+            Err(error) if is_store_not_found_error(&error) => {
+                crate::stats::remove_store_metrics(store_id);
+                Some(store_id)
+            }
             Err(error) => {
                 debug!("cannot confirm stale store {store_id}: {error}");
                 None
@@ -1197,7 +1392,11 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         store_id: StoreId,
         advance_epoch_for_tombstone: bool,
     ) -> Result<Option<Store>> {
-        let store = self.inner_client.clone().get_store(store_id).await?;
+        let store = match self.inner_client.clone().get_store(store_id).await {
+            Ok(store) => store,
+            Err(error) if is_store_not_found_error(&error) => None,
+            Err(error) => return Err(error),
+        };
         let mut cache = self.store_cache.write().unwrap();
         let cached = cache
             .entry(store_id)
@@ -1259,11 +1458,17 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         };
         drop(region_cache_guard);
         if let Some((ver_id, old_region)) = reload {
-            return match pd_region_meta_call(
-                self.inner_client.clone().get_region(key.clone().into()),
+            let loaded = pd_region_meta_call(
+                self.inner_client
+                    .clone()
+                    .get_region_with_buckets(key.clone().into()),
             )
-            .await
-            {
+            .await;
+            let loaded = match loaded {
+                Ok(region) => self.prepare_region_from_pd(region).await,
+                Err(error) => Err(error),
+            };
+            return match loaded {
                 Ok(region) => {
                     self.add_region(region.clone()).await;
                     Ok(region)
@@ -1345,6 +1550,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 .get_region_with_buckets(key.clone().into()),
         )
         .await?;
+        let region = self.prepare_region_from_pd(region).await?;
         self.add_region(region.clone()).await;
         Ok(region)
     }
@@ -1384,13 +1590,17 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         };
         drop(region_cache_guard);
         if let Some((ver_id, old_region)) = reload {
-            return match pd_region_meta_call(
+            let loaded = pd_region_meta_call(
                 self.inner_client
                     .clone()
-                    .get_prev_region(key.clone().into()),
+                    .get_prev_region_with_buckets(key.clone().into()),
             )
-            .await
-            {
+            .await;
+            let loaded = match loaded {
+                Ok(region) => self.prepare_region_from_pd(region).await,
+                Err(error) => Err(error),
+            };
+            return match loaded {
                 Ok(region) => {
                     self.add_region(region.clone()).await;
                     Ok(region)
@@ -1435,9 +1645,15 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     }
                     let old_region = region.region.clone();
                     drop(region_cache_guard);
-                    return match pd_region_meta_call(self.inner_client.clone().get_region_by_id(id))
-                        .await
-                    {
+                    let loaded = pd_region_meta_call(
+                        self.inner_client.clone().get_region_by_id_with_buckets(id),
+                    )
+                    .await;
+                    let loaded = match loaded {
+                        Ok(region) => self.prepare_region_from_pd(region).await,
+                        Err(error) => Err(error),
+                    };
+                    return match loaded {
                         Ok(region) => {
                             self.add_region(region.clone()).await;
                             Ok(region)
@@ -1483,6 +1699,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         let region =
             pd_region_meta_call(self.inner_client.clone().get_region_by_id_with_buckets(id))
                 .await?;
+        let region = self.prepare_region_from_pd(region).await?;
         self.add_region(region.clone()).await;
         Ok(region)
     }
@@ -1516,12 +1733,23 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
     /// trait has no router/follower option, but preserves the acceptance and
     /// retry boundary.
     async fn load_region_by_key_with_stale_retry(&self, key: Key) -> Result<RegionWithLeader> {
-        let region =
-            pd_region_meta_call(self.inner_client.clone().get_region(key.clone().into())).await?;
+        let region = pd_region_meta_call(
+            self.inner_client
+                .clone()
+                .get_region_with_buckets(key.clone().into()),
+        )
+        .await?;
+        let region = self.prepare_region_from_pd(region).await?;
         if self.add_region(region.clone()).await {
             return Ok(region);
         }
-        let region = pd_region_meta_call(self.inner_client.clone().get_region(key.into())).await?;
+        let region = pd_region_meta_call(
+            self.inner_client
+                .clone()
+                .get_region_with_buckets(key.into()),
+        )
+        .await?;
+        let region = self.prepare_region_from_pd(region).await?;
         self.add_region(region.clone()).await;
         Ok(region)
     }
@@ -1530,14 +1758,20 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         let region = pd_region_meta_call(
             self.inner_client
                 .clone()
-                .get_prev_region(key.clone().into()),
+                .get_prev_region_with_buckets(key.clone().into()),
         )
         .await?;
+        let region = self.prepare_region_from_pd(region).await?;
         if self.add_region(region.clone()).await {
             return Ok(region);
         }
-        let region =
-            pd_region_meta_call(self.inner_client.clone().get_prev_region(key.into())).await?;
+        let region = pd_region_meta_call(
+            self.inner_client
+                .clone()
+                .get_prev_region_with_buckets(key.into()),
+        )
+        .await?;
+        let region = self.prepare_region_from_pd(region).await?;
         self.add_region(region.clone()).await;
         Ok(region)
     }
@@ -1639,7 +1873,10 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
     /// Source `LocateRegionByIDFromPD`: bypass the cache for diagnostics and
     /// deliberately leave the returned metadata uncached.
     pub async fn load_region_by_id_from_pd(&self, id: RegionId) -> Result<RegionWithLeader> {
-        pd_region_meta_call(self.inner_client.clone().get_region_by_id(id)).await
+        let region =
+            pd_region_meta_call(self.inner_client.clone().get_region_by_id_with_buckets(id))
+                .await?;
+        self.prepare_region_from_pd(region).await
     }
 
     async fn scan_regions(
@@ -1703,10 +1940,13 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     .map_err(|error| Error::StringError(error.to_string()))?;
                 continue;
             }
-            for region in &valid_regions {
+            let mut prepared_regions = Vec::with_capacity(valid_regions.len());
+            for region in valid_regions {
+                let region = self.prepare_region_from_pd(region).await?;
                 self.add_region(region.clone()).await;
+                prepared_regions.push(region);
             }
-            return Ok(valid_regions);
+            return Ok(prepared_regions);
         }
     }
 
@@ -1843,10 +2083,13 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     .map_err(|error| Error::StringError(error.to_string()))?;
                 continue;
             }
-            for region in &valid_regions {
+            let mut prepared_regions = Vec::with_capacity(valid_regions.len());
+            for region in valid_regions {
+                let region = self.prepare_region_from_pd(region).await?;
                 self.add_region(region.clone()).await;
+                prepared_regions.push(region);
             }
-            return Ok(valid_regions);
+            return Ok(prepared_regions);
         }
     }
 
@@ -2110,7 +2353,12 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             region_cache_guard.on_my_way_id.insert(id, notify.clone());
         }
 
-        let result = pd_region_meta_call(self.inner_client.clone().get_region_by_id(id)).await;
+        let loaded =
+            pd_region_meta_call(self.inner_client.clone().get_region_by_id_with_buckets(id)).await;
+        let result = match loaded {
+            Ok(region) => self.prepare_region_from_pd(region).await,
+            Err(error) => Err(error),
+        };
         if let Ok(region) = &result {
             self.add_region(region.clone()).await;
         }
@@ -2168,7 +2416,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
     /// This mirrors `internal/locate.regionIndexMu.insertRegionToCache`: a
     /// delayed PD response must not replace a newer version, and a region whose
     /// end key is empty intersects every following key.
-    pub async fn add_region(&self, region: RegionWithLeader) -> bool {
+    pub async fn add_region(&self, mut region: RegionWithLeader) -> bool {
         let store_epochs = {
             let stores = self.store_cache.read().unwrap();
             region
@@ -2188,6 +2436,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         let mut cache = self.region_cache.write().await;
         let new_ver_id = region.ver_id();
 
+        let start_key = region.start_key();
         let end_key = region.end_key();
         let mut to_be_removed: HashSet<RegionVerId> = HashSet::new();
 
@@ -2211,7 +2460,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             if end_key.is_empty() {
                 cache.key_to_ver_id.range::<Key, _>(..)
             } else {
-                cache.key_to_ver_id.range::<Key, _>(..end_key)
+                cache.key_to_ver_id.range::<Key, _>(..end_key.clone())
             }
         };
         while let Some((_, ver_id_in_cache)) = search_range.next_back() {
@@ -2224,8 +2473,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     .region
                     .region_epoch
                     .as_ref()
-                    .unwrap()
-                    .version
+                    .map_or(0, |epoch| epoch.version)
                     > new_ver_id.ver
                 {
                     return false;
@@ -2233,6 +2481,37 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 to_be_removed.insert(ver_id_in_cache.clone());
             } else {
                 break;
+            }
+        }
+
+        // Source inherits this runtime state from the first intersected
+        // region in start-key order. Bucket metadata can change independently
+        // from the region epoch, so a bucket-less or older PD response must
+        // not discard the newer cached partitioning information.
+        // `removeIntersecting` returns its removals in sorted start-key order,
+        // including a predecessor that contains the new start key. Find the
+        // first member of the already-computed removal set in that same order;
+        // a range beginning at `start_key` would skip that containing region.
+        let first_intersected = cache
+            .key_to_ver_id
+            .iter()
+            .find_map(|(_, ver_id)| to_be_removed.contains(ver_id).then(|| ver_id.clone()));
+        let inherited_state = first_intersected
+            .and_then(|ver_id| cache.ver_id_to_region.get(&ver_id))
+            .map(|cached| {
+                (
+                    cached.tiflash_cursor.load(Ordering::Relaxed),
+                    cached.region.buckets.clone(),
+                )
+            });
+        let inherited_tiflash_cursor = inherited_state.as_ref().map(|state| state.0);
+        if let Some(inherited_buckets) = inherited_state.and_then(|state| state.1) {
+            if region
+                .buckets
+                .as_ref()
+                .is_none_or(|buckets| buckets.version < inherited_buckets.version)
+            {
+                region.buckets = Some(inherited_buckets);
             }
         }
 
@@ -2245,14 +2524,15 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 cache.id_to_ver_id.remove(&cached_region.region.id());
             }
         }
-        cache
-            .key_to_ver_id
-            .insert(region.start_key(), new_ver_id.clone());
+        cache.key_to_ver_id.insert(start_key, new_ver_id.clone());
         cache.id_to_ver_id.insert(region.id(), new_ver_id.clone());
-        cache.ver_id_to_region.insert(
-            new_ver_id,
-            CachedRegion::new(region, store_epochs, now_epoch_secs()),
-        );
+        let cached_region = CachedRegion::new(region, store_epochs, now_epoch_secs());
+        if let Some(cursor) = inherited_tiflash_cursor {
+            cached_region
+                .tiflash_cursor
+                .store(cursor, Ordering::Relaxed);
+        }
+        cache.ver_id_to_region.insert(new_ver_id, cached_region);
         true
     }
 
@@ -2334,7 +2614,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
 
     /// Source `UpdateBucketsIfNeeded`: coalesce background PD reloads when a
     /// response advertises a newer bucket version than the cached region.
-    pub(crate) fn update_buckets_if_needed(
+    pub fn update_buckets_if_needed(
         self: &Arc<Self>,
         ver_id: RegionVerId,
         request_version: u64,
@@ -2342,8 +2622,22 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
     ) where
         C: 'static,
     {
+        let cancellation = self.background_cancellation.child();
+        if cancellation.is_cancelled() || !self.bucket_refreshes.lock().unwrap().insert(ver_id.id) {
+            return;
+        }
+        let refresh_guard = BucketRefreshGuard {
+            refreshes: self.bucket_refreshes.clone(),
+            region_id: ver_id.id,
+        };
         let cache = self.clone();
-        tokio::spawn(async move {
+        let mut tasks = self.background_tasks.lock().unwrap();
+        if cancellation.is_cancelled() {
+            return;
+        }
+        tasks.retain(|task| !task.is_finished());
+        tasks.push(tokio::spawn(async move {
+            let _refresh_guard = refresh_guard;
             let needs_refresh = {
                 let regions = cache.region_cache.read().await;
                 let Some(region) = regions.ver_id_to_region.get(&ver_id) else {
@@ -2353,12 +2647,18 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 !(request_version != 0 && request_version < cached_version)
                     && cached_version < latest_version
             };
-            if !needs_refresh || !cache.bucket_refreshes.lock().unwrap().insert(ver_id.id) {
+            if !needs_refresh {
                 return;
             }
-            let _ = cache.get_region_by_id_with_buckets(ver_id.id).await;
-            cache.bucket_refreshes.lock().unwrap().remove(&ver_id.id);
-        });
+            tokio::select! {
+                _ = cancellation.cancelled() => {}
+                loaded = cache.load_region_by_id_from_pd(ver_id.id) => {
+                    if let Ok(region) = loaded {
+                        cache.add_region(region).await;
+                    }
+                }
+            }
+        }));
     }
 
     pub async fn invalidate_region_cache(&self, ver_id: crate::region::RegionVerId) {
@@ -2628,6 +2928,29 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             .map(|store| StoreLiveness::from_encoded(store.liveness.load(Ordering::Acquire)))
     }
 
+    /// Number of replicas captured by client-go's `buildTiKVReplicas` for
+    /// this region. TiFlash, tombstone, down, and non-leader witness peers do
+    /// not make a forwarding retry possible.
+    pub(crate) fn tikv_replica_count(&self, region: &RegionWithLeader) -> usize {
+        let stores = self.store_cache.read().unwrap();
+        region
+            .region
+            .peers
+            .iter()
+            .filter(|peer| {
+                if is_unroutable_peer(region, peer) {
+                    return false;
+                }
+                stores.get(&peer.store_id).is_some_and(|store| {
+                    matches!(
+                        store.resolve_state(),
+                        StoreResolveState::Resolved | StoreResolveState::NeedCheck
+                    ) && EndpointType::from_store(&store.meta) == EndpointType::TiKv
+                })
+            })
+            .count()
+    }
+
     pub(crate) fn set_store_liveness(&self, store_id: StoreId, liveness: StoreLiveness) -> bool {
         let store = self
             .store_cache
@@ -2878,7 +3201,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 let is_leader = leader_peer_id == Some(peer.id);
                 let reachable = StoreLiveness::from_encoded(store.liveness.load(Ordering::Acquire))
                     == StoreLiveness::Reachable;
-                is_leader || reachable
+                is_leader || (reachable && store.resolve_state() == StoreResolveState::Resolved)
             });
             let candidates = region
                 .region
@@ -2922,9 +3245,13 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                             .is_ok_and(|role| role == metapb::PeerRole::Learner),
                         label_matches,
                         is_slow: store.health_status.is_slow(),
-                        reachable: StoreLiveness::from_encoded(
+                        liveness: match StoreLiveness::from_encoded(
                             store.liveness.load(Ordering::Acquire),
-                        ) == StoreLiveness::Reachable,
+                        ) {
+                            StoreLiveness::Reachable => ReplicaLiveness::Reachable,
+                            StoreLiveness::Unreachable => ReplicaLiveness::Unreachable,
+                            StoreLiveness::Unknown => ReplicaLiveness::Unknown,
+                        },
                         attempts: selector_state.attempts(peer.id),
                         data_is_not_ready: selector_state.data_is_not_ready(peer.id),
                     })
@@ -2941,105 +3268,271 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
     /// Selects a TiFlash peer from a still-live cached region. This is kept
     /// separate from `replica_candidates`: client-go's `tiFlashOnly` access
     /// mode never participates in TiKV follower-read selection.
-    pub(crate) async fn select_tiflash_peer(
+    pub async fn select_tiflash_peer(
         &self,
         region: &RegionWithLeader,
         load_balance: bool,
         labels: &[metapb::StoreLabel],
     ) -> std::result::Result<metapb::Peer, TiFlashSelectionError> {
-        let cursor = {
+        self.select_tiflash_peer_with_store(region, load_balance, labels)
+            .await
+            .map(|(peer, _)| peer)
+    }
+
+    pub(crate) async fn select_tiflash_peer_with_store(
+        &self,
+        region: &RegionWithLeader,
+        load_balance: bool,
+        labels: &[metapb::StoreLabel],
+    ) -> std::result::Result<(metapb::Peer, metapb::Store), TiFlashSelectionError> {
+        let (cached_region, cursor, store_epochs) = {
             let mut regions = self.region_cache.write().await;
             let Some(cached) = regions.ver_id_to_region.get_mut(&region.ver_id()) else {
-                return Err(TiFlashSelectionError::CachedRegionMissing);
+                return Err(TiFlashSelectionError::unavailable(
+                    TiFlashRpcContextUnavailableReason::CachedRegionMissing,
+                    Vec::new(),
+                    Vec::new(),
+                ));
             };
-            if !cached.check_ttl(now_epoch_secs()) {
-                return Err(TiFlashSelectionError::CacheExpired);
+            if cached.has_sync_flags(NEED_RELOAD_ON_ACCESS) {
+                return Err(TiFlashSelectionError::unavailable(
+                    TiFlashRpcContextUnavailableReason::NeedReloadOnAccess,
+                    Vec::new(),
+                    Vec::new(),
+                ));
             }
-            cached.tiflash_cursor.clone()
+            if !cached.check_ttl(now_epoch_secs()) {
+                return Err(TiFlashSelectionError::unavailable(
+                    TiFlashRpcContextUnavailableReason::TtlExpired,
+                    Vec::new(),
+                    Vec::new(),
+                ));
+            }
+            (
+                cached.region.clone(),
+                cached.tiflash_cursor.clone(),
+                cached.store_epochs.clone(),
+            )
         };
 
-        for peer in &region.region.peers {
-            if self.get_store_by_id(peer.store_id).await.is_err()
-                && self.store_resolve_state(peer.store_id) != Some(StoreResolveState::Tombstone)
-            {
-                return Err(TiFlashSelectionError::NoTiFlashPeer);
-            }
-        }
-        let stores = self.store_cache.read().unwrap();
-        let peers = region
-            .region
-            .peers
-            .iter()
-            .filter(|peer| {
-                if is_unroutable_peer(region, peer) {
-                    return false;
-                }
-                stores.get(&peer.store_id).is_some_and(|store| {
-                    matches!(
-                        store.resolve_state(),
-                        StoreResolveState::Resolved | StoreResolveState::NeedCheck
-                    ) && EndpointType::from_store(&store.meta) == EndpointType::TiFlash
+        let peers = {
+            let stores = self.store_cache.read().unwrap();
+            cached_region
+                .region
+                .peers
+                .iter()
+                .filter_map(|peer| {
+                    if is_unroutable_peer(&cached_region, peer) {
+                        return None;
+                    }
+                    let store = stores.get(&peer.store_id)?;
+                    (store.resolve_state() != StoreResolveState::Unresolved
+                        && EndpointType::from_store(&store.meta) == EndpointType::TiFlash)
+                        .then(|| {
+                            (
+                                peer.clone(),
+                                store.meta.clone(),
+                                store.resolve_state(),
+                                store.epoch.load(Ordering::Acquire),
+                                store_epochs.get(&peer.store_id).copied().unwrap_or(0),
+                            )
+                        })
                 })
-            })
-            .collect::<Vec<_>>();
+                .collect::<Vec<_>>()
+        };
         if peers.is_empty() {
-            return Err(TiFlashSelectionError::NoTiFlashPeer);
+            self.mark_region_reload_on_access(&cached_region.ver_id())
+                .await;
+            return Err(TiFlashSelectionError::unavailable(
+                TiFlashRpcContextUnavailableReason::NoTiFlashAccessStore,
+                Vec::new(),
+                Vec::new(),
+            ));
         }
         let start = if load_balance {
             cursor.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
         } else {
             cursor.load(Ordering::Relaxed)
         };
+        let mut label_filtered_count = 0;
+        let mut epoch_mismatch_count = 0;
+        let mut store_ids = Vec::with_capacity(peers.len());
+        let mut peer_ids = Vec::with_capacity(peers.len());
         for offset in 0..peers.len() {
-            let peer = peers[(start + offset) % peers.len()];
-            let store = stores.get(&peer.store_id).unwrap();
+            let (peer, store, resolve_state, store_epoch, cached_epoch) =
+                &peers[(start + offset) % peers.len()];
+            store_ids.push(peer.store_id);
+            peer_ids.push(peer.id);
             if labels.iter().all(|wanted| {
                 store
-                    .meta
                     .labels
                     .iter()
                     .any(|actual| actual.key == wanted.key && actual.value == wanted.value)
             }) {
+                if *resolve_state == StoreResolveState::Tombstone || store.address.is_empty() {
+                    self.mark_region_reload_on_access(&cached_region.ver_id())
+                        .await;
+                    return Err(TiFlashSelectionError::unavailable(
+                        TiFlashRpcContextUnavailableReason::StoreAddressEmpty,
+                        vec![peer.store_id],
+                        vec![peer.id],
+                    ));
+                }
+                let selected_address = store.address.clone();
+                let mut selected_store = store.clone();
+                let mut current_store_epoch = *store_epoch;
+                if *resolve_state == StoreResolveState::NeedCheck {
+                    // Source captures the old address for this RPC, then
+                    // synchronously re-resolves metadata for later requests.
+                    // Re-resolution errors are diagnostic-only here.
+                    if let Ok(Some(refreshed_store)) = self.refresh_store_by_id(peer.store_id).await
+                    {
+                        selected_store = refreshed_store;
+                    }
+                    current_store_epoch = self
+                        .store_cache
+                        .read()
+                        .unwrap()
+                        .get(&peer.store_id)
+                        .map_or(current_store_epoch, |store| {
+                            store.epoch.load(Ordering::Acquire)
+                        });
+                }
+                selected_store.address = selected_address;
                 cursor.store((start + offset) % peers.len(), Ordering::Relaxed);
-                return Ok(peer.clone());
+                if current_store_epoch != *cached_epoch {
+                    epoch_mismatch_count += 1;
+                    // Source invalidates the cached region immediately but
+                    // continues this peer walk so the current request can use
+                    // another TiFlash replica. The next request must reload.
+                    self.mark_region_reload_on_access(&cached_region.ver_id())
+                        .await;
+                    continue;
+                }
+                return Ok((peer.clone(), selected_store));
             }
+            label_filtered_count += 1;
         }
-        Err(TiFlashSelectionError::AllStoresFiltered)
+        self.mark_region_reload_on_access(&cached_region.ver_id())
+            .await;
+        let reason = if label_filtered_count == peers.len() {
+            TiFlashRpcContextUnavailableReason::AllStoresFiltered
+        } else if epoch_mismatch_count == peers.len() {
+            TiFlashRpcContextUnavailableReason::AllStoresEpochStale
+        } else {
+            TiFlashRpcContextUnavailableReason::NoAvailableStore
+        };
+        Err(TiFlashSelectionError::unavailable(
+            reason, store_ids, peer_ids,
+        ))
+    }
+
+    /// Source `OnSendFailForTiFlash`: retain the cached region when the
+    /// caller's metadata still has the same peer count, advance the failed
+    /// store epoch for transport errors, rotate to the next TiFlash peer, and
+    /// optionally force a reload after the caller exhausts known replicas.
+    pub async fn on_send_fail_for_tiflash(
+        &self,
+        ver_id: &RegionVerId,
+        failed_store_id: StoreId,
+        previous_peer_count: usize,
+        schedule_reload: bool,
+        has_error: bool,
+    ) -> bool {
+        let (cursor, peers) = {
+            let regions = self.region_cache.read().await;
+            let Some(cached) = regions.ver_id_to_region.get(ver_id) else {
+                return false;
+            };
+            if cached.region.region.peers.len() != previous_peer_count {
+                return false;
+            }
+            (cached.tiflash_cursor.clone(), cached.region.clone())
+        };
+        let tiflash_store_ids = {
+            let stores = self.store_cache.read().unwrap();
+            peers
+                .region
+                .peers
+                .iter()
+                .filter(|peer| {
+                    stores.get(&peer.store_id).is_some_and(|store| {
+                        EndpointType::from_store(&store.meta) == EndpointType::TiFlash
+                    })
+                })
+                .map(|peer| peer.store_id)
+                .collect::<Vec<_>>()
+        };
+        let Some(failed_index) = tiflash_store_ids
+            .iter()
+            .position(|store_id| *store_id == failed_store_id)
+        else {
+            return false;
+        };
+        if has_error {
+            self.invalidate_store_epoch_for_region(ver_id, failed_store_id)
+                .await;
+        }
+        cursor.store(
+            (failed_index + 1) % tiflash_store_ids.len(),
+            Ordering::Relaxed,
+        );
+        if schedule_reload {
+            self.mark_region_reload_on_access(ver_id).await;
+        }
+        true
     }
 
     /// Returns client-go's `GetAllValidTiFlashStores` result: `all` begins
     /// with the current store and `non_pending` excludes PD pending peers so
     /// batch work can prefer replicas that have caught up with TiKV.
-    pub(crate) async fn valid_tiflash_store_ids(
+    pub async fn valid_tiflash_store_ids(
         &self,
         region: &RegionWithLeader,
         current_store_id: StoreId,
         labels: &[metapb::StoreLabel],
     ) -> (Vec<StoreId>, Vec<StoreId>) {
         let mut all = vec![current_store_id];
-        let cached_live = {
+        let cached_region = {
             let mut regions = self.region_cache.write().await;
             regions
                 .ver_id_to_region
                 .get_mut(&region.ver_id())
-                .is_some_and(|cached| cached.check_ttl(now_epoch_secs()))
+                .and_then(|cached| {
+                    cached
+                        .check_ttl(now_epoch_secs())
+                        .then(|| (cached.region.clone(), cached.store_epochs.clone()))
+                })
         };
-        if !cached_live {
+        let Some((cached_region, store_epochs)) = cached_region else {
             return (all, vec![]);
-        }
+        };
         let stores = self.store_cache.read().unwrap();
-        for peer in &region.region.peers {
-            if is_unroutable_peer(region, peer) {
-                continue;
-            }
-            let Some(store) = stores.get(&peer.store_id) else {
-                continue;
-            };
-            if matches!(
-                store.resolve_state(),
-                StoreResolveState::Resolved | StoreResolveState::NeedCheck
-            ) && peer.store_id != current_store_id
-                && EndpointType::from_store(&store.meta) == EndpointType::TiFlash
+        let tiflash_peers = cached_region
+            .region
+            .peers
+            .iter()
+            .filter(|peer| {
+                !is_unroutable_peer(&cached_region, peer)
+                    && stores.get(&peer.store_id).is_some_and(|store| {
+                        EndpointType::from_store(&store.meta) == EndpointType::TiFlash
+                    })
+            })
+            .collect::<Vec<_>>();
+        let Some(current_index) = tiflash_peers
+            .iter()
+            .position(|peer| peer.store_id == current_store_id)
+        else {
+            return (all, vec![]);
+        };
+        for offset in 1..tiflash_peers.len() {
+            let peer = tiflash_peers[(current_index + offset) % tiflash_peers.len()];
+            let store = stores
+                .get(&peer.store_id)
+                .expect("TiFlash peer list only contains cached stores");
+            if store.resolve_state() != StoreResolveState::NeedCheck
+                && store.epoch.load(Ordering::Acquire)
+                    == store_epochs.get(&peer.store_id).copied().unwrap_or(0)
                 && labels.iter().all(|wanted| {
                     store
                         .meta
@@ -3054,7 +3547,12 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         let non_pending = all
             .iter()
             .copied()
-            .filter(|id| !region.pending_peers.iter().any(|peer| peer.store_id == *id))
+            .filter(|id| {
+                !cached_region
+                    .pending_peers
+                    .iter()
+                    .any(|peer| peer.store_id == *id)
+            })
             .collect();
         (all, non_pending)
     }
@@ -3113,7 +3611,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     return false;
                 };
                 !candidate.is_leader
-                    && candidate.reachable
+                    && candidate.liveness != ReplicaLiveness::Unreachable
                     && candidate.attempts == 0
                     && !selector_state.is_server_busy(candidate.peer_id)
                     && cached_stores
@@ -3140,7 +3638,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
 
     /// Returns a source-compatible forwarding proxy whenever the leader is
     /// not known reachable. The returned peer is always a non-leader whose
-    /// cached store is reachable; callers retain the leader as the logical
+    /// cached store is positively reachable; callers retain the leader as the logical
     /// request peer. A prior hintless NotLeader bypasses forwarding so mixed
     /// selection can probe another logical peer directly.
     pub(crate) async fn proxy_for_unavailable_leader(
@@ -3170,7 +3668,9 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         let is_proxy_candidate = |peer: &&metapb::Peer| {
             peer.id != leader.id
                 && candidates.iter().any(|candidate| {
-                    candidate.peer_id == peer.id && candidate.reachable && candidate.attempts == 0
+                    candidate.peer_id == peer.id
+                        && candidate.liveness == ReplicaLiveness::Reachable
+                        && candidate.attempts == 0
                 })
         };
         let proxy = cached_proxy_store_id
@@ -3236,6 +3736,11 @@ fn store_tombstone_error(store_id: StoreId) -> Error {
     Error::StringError(format!("store {store_id} is a tombstone or was removed"))
 }
 
+fn is_store_not_found_error(error: &Error) -> bool {
+    let message = error.to_string();
+    message.contains("invalid store ID") && message.contains("not found")
+}
+
 fn store_labels_match(current: &[metapb::StoreLabel], requested: &[metapb::StoreLabel]) -> bool {
     requested.iter().all(|wanted| {
         current
@@ -3274,10 +3779,11 @@ mod test {
         is_pd_region_meta_overload, next_region_cache_ttl, now_epoch_secs, ranges_after_key,
         regions_have_gap_in_ranges, set_region_cache_ttl_secs, set_region_cache_ttl_with_jitter,
         BatchLocateRegionMerger, CachedStore, MixedReplicaSelection, PdRegionMetaCircuitBreaker,
-        PdRegionMetaCircuitBreakerSettings, RegionCache, ReplicaCandidate, ReplicaSelectorState,
-        StoreLiveness, StoreResolveState, TiFlashLabelFilter, CLEAN_STORE_METRICS_INTERVAL,
-        NEED_DELAYED_RELOAD_READY, NEED_EXPIRE_AFTER_TTL, NEED_RELOAD_ON_ACCESS,
-        REGION_CACHE_TTL_JITTER_SECS, REGION_CACHE_TTL_SECS,
+        PdRegionMetaCircuitBreakerSettings, RegionCache, ReplicaCandidate, ReplicaLiveness,
+        ReplicaSelectorState, StoreLiveness, StoreResolveState, TiFlashLabelFilter,
+        CLEAN_STORE_METRICS_INTERVAL, NEED_DELAYED_RELOAD_PENDING, NEED_DELAYED_RELOAD_READY,
+        NEED_EXPIRE_AFTER_TTL, NEED_RELOAD_ON_ACCESS, REGION_CACHE_TTL_JITTER_SECS,
+        REGION_CACHE_TTL_SECS,
     };
     use crate::async_util::Cancellation;
     use crate::common::Error;
@@ -3374,6 +3880,24 @@ mod test {
                 .ok_or_else(|| Error::StringError("MockRetryClient: region not found".to_owned()))
         }
 
+        async fn get_prev_region_with_buckets(
+            self: Arc<Self>,
+            key: Vec<u8>,
+        ) -> Result<crate::region::RegionWithLeader> {
+            self.get_region_with_buckets_count.fetch_add(1, SeqCst);
+            let mut region = self.get_prev_region(key).await?;
+            region.buckets = Some(metapb::Buckets {
+                region_id: region.id(),
+                version: 9,
+                keys: vec![
+                    region.region.start_key.clone(),
+                    region.region.end_key.clone(),
+                ],
+                ..Default::default()
+            });
+            Ok(region)
+        }
+
         async fn get_region_by_id(
             self: Arc<Self>,
             region_id: crate::region::RegionId,
@@ -3450,13 +3974,15 @@ mod test {
             if let Some(response) = self.get_store_responses.lock().await.pop_front() {
                 return response;
             }
-            Ok(self
-                .stores
-                .lock()
-                .await
-                .iter()
-                .find(|store| store.id == id)
-                .cloned())
+            let stores = self.stores.lock().await;
+            if stores.is_empty() {
+                return Ok(Some(metapb::Store {
+                    id,
+                    address: format!("store-{id}"),
+                    ..Default::default()
+                }));
+            }
+            Ok(stores.iter().find(|store| store.id == id).cloned())
         }
 
         async fn get_all_stores(self: Arc<Self>) -> Result<Vec<crate::proto::metapb::Store>> {
@@ -3492,9 +4018,15 @@ mod test {
                         conf_ver: 0,
                         version: 0,
                     }),
+                    peers: vec![metapb::Peer {
+                        id: 1,
+                        store_id: 1,
+                        ..Default::default()
+                    }],
                     ..Default::default()
                 },
                 leader: Some(metapb::Peer {
+                    id: 1,
                     store_id: 1,
                     ..Default::default()
                 }),
@@ -3630,15 +4162,191 @@ mod test {
     }
 
     #[tokio::test]
+    async fn source_by_id_pd_load_requests_bucket_metadata() -> Result<()> {
+        let client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(client.clone());
+        client
+            .regions
+            .lock()
+            .await
+            .insert(1, region(1, vec![], vec![]));
+
+        let loaded = cache.get_region_by_id(1).await?;
+        assert_eq!(loaded.buckets_version(), 9);
+        assert_eq!(client.get_region_with_buckets_count.load(SeqCst), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_point_pd_loads_request_bucket_metadata() -> Result<()> {
+        let key_client = Arc::new(MockRetryClient::default());
+        key_client
+            .regions
+            .lock()
+            .await
+            .insert(1, region_with_leader(1, b"", b"m"));
+        let key_cache = RegionCache::new(key_client.clone());
+        assert_eq!(
+            key_cache
+                .get_region_by_key(&Key::from(b"a".to_vec()))
+                .await?
+                .buckets_version(),
+            9
+        );
+        assert_eq!(key_client.get_region_with_buckets_count.load(SeqCst), 1);
+
+        let end_client = Arc::new(MockRetryClient::default());
+        end_client
+            .regions
+            .lock()
+            .await
+            .insert(1, region_with_leader(1, b"", b"m"));
+        let end_cache = RegionCache::new(end_client.clone());
+        assert_eq!(
+            end_cache
+                .get_region_by_end_key(&Key::from(b"m".to_vec()))
+                .await?
+                .buckets_version(),
+            9
+        );
+        assert_eq!(end_client.get_region_with_buckets_count.load(SeqCst), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_pd_load_rejects_regions_without_available_peers() {
+        let client = Arc::new(MockRetryClient::default());
+        let mut peerless = region_with_leader(1, b"", b"");
+        peerless.region.peers.clear();
+        client.regions.lock().await.insert(1, peerless);
+        let cache = RegionCache::new(client);
+
+        let error = cache
+            .get_region_by_key(&Key::from(b"a".to_vec()))
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "receive Region with no available peer");
+        assert!(cache.region_cache.read().await.ver_id_to_region.is_empty());
+
+        let error = cache.get_region_by_id(1).await.unwrap_err();
+        assert_eq!(error.to_string(), "receive Region with no available peer");
+        assert!(cache.region_cache.read().await.ver_id_to_region.is_empty());
+
+        let client = Arc::new(MockRetryClient::default());
+        client.stores.lock().await.extend([
+            metapb::Store {
+                id: 1,
+                address: "tombstone".to_owned(),
+                state: metapb::StoreState::Tombstone.into(),
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 2,
+                address: "available".to_owned(),
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 3,
+                address: "witness".to_owned(),
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 4,
+                address: "down".to_owned(),
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 5,
+                address: "tiflash".to_owned(),
+                labels: vec![metapb::StoreLabel {
+                    key: "engine".to_owned(),
+                    value: "tiflash".to_owned(),
+                }],
+                ..Default::default()
+            },
+        ]);
+        let tombstone_leader = metapb::Peer {
+            id: 11,
+            store_id: 1,
+            ..Default::default()
+        };
+        let available = metapb::Peer {
+            id: 12,
+            store_id: 2,
+            ..Default::default()
+        };
+        let witness = metapb::Peer {
+            id: 13,
+            store_id: 3,
+            is_witness: true,
+            ..Default::default()
+        };
+        let down = metapb::Peer {
+            id: 14,
+            store_id: 4,
+            ..Default::default()
+        };
+        let mut filtered = region_with_leader(2, b"a", b"z");
+        filtered.region.peers = vec![
+            tombstone_leader.clone(),
+            available.clone(),
+            witness,
+            down.clone(),
+        ];
+        filtered.leader = Some(tombstone_leader.clone());
+        filtered.down_peers = vec![pdpb::PeerStats {
+            peer: Some(down),
+            ..Default::default()
+        }];
+        client.regions.lock().await.insert(2, filtered);
+        let cache = RegionCache::new(client.clone());
+        let loaded = cache.get_region_by_id(2).await.unwrap();
+        assert_eq!(loaded.region.peers, [available.clone()]);
+        assert_eq!(loaded.leader, Some(available));
+
+        let tiflash = metapb::Peer {
+            id: 15,
+            store_id: 5,
+            ..Default::default()
+        };
+        let mut no_tikv_leader = region_with_leader(4, b"x", b"y");
+        no_tikv_leader.region.peers = vec![tombstone_leader.clone(), tiflash.clone()];
+        no_tikv_leader.leader = Some(tombstone_leader.clone());
+        client.regions.lock().await.insert(4, no_tikv_leader);
+        let loaded = cache.get_region_by_id(4).await.unwrap();
+        assert_eq!(loaded.region.peers, [tiflash]);
+        assert_eq!(loaded.leader, None);
+
+        let mut unavailable = region_with_leader(3, b"z", b"");
+        unavailable.region.peers = vec![tombstone_leader.clone()];
+        unavailable.leader = Some(tombstone_leader);
+        client.regions.lock().await.insert(3, unavailable);
+        let error = cache.get_region_by_id(3).await.unwrap_err();
+        assert!(error.to_string().contains("no available peers, region:"));
+        assert!(!cache
+            .region_cache
+            .read()
+            .await
+            .id_to_ver_id
+            .contains_key(&3));
+    }
+
+    #[tokio::test]
     async fn source_background_bucket_refresh_is_deduplicated() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         let cache = Arc::new(RegionCache::new(client.clone()));
-        let region = region(1, vec![], vec![]);
+        let mut region = region(1, vec![], vec![]);
+        region.buckets = Some(metapb::Buckets {
+            region_id: 1,
+            version: 1,
+            keys: vec![vec![], vec![]],
+            ..Default::default()
+        });
         client.regions.lock().await.insert(1, region.clone());
         cache.add_region(region.clone()).await;
         let ver_id = region.ver_id();
-        cache.update_buckets_if_needed(ver_id.clone(), 0, 9);
-        cache.update_buckets_if_needed(ver_id, 0, 9);
+        cache.update_buckets_if_needed(ver_id.clone(), 1, 9);
+        cache.update_buckets_if_needed(ver_id.clone(), 1, 9);
         for _ in 0..20 {
             if cache.get_region_by_id(1).await?.buckets_version() == 9 {
                 break;
@@ -3647,6 +4355,16 @@ mod test {
         }
         assert_eq!(cache.get_region_by_id(1).await?.buckets_version(), 9);
         assert_eq!(client.get_region_with_buckets_count.load(SeqCst), 1);
+        assert_eq!(cache.background_tasks.lock().unwrap().len(), 1);
+
+        cache.close_background_task().await;
+        assert!(cache.background_tasks.lock().unwrap().is_empty());
+        assert!(cache.bucket_refreshes.lock().unwrap().is_empty());
+
+        cache.update_buckets_if_needed(ver_id, 9, 10);
+        tokio::task::yield_now().await;
+        assert_eq!(client.get_region_with_buckets_count.load(SeqCst), 1);
+        assert!(cache.background_tasks.lock().unwrap().is_empty());
         Ok(())
     }
 
@@ -3704,6 +4422,76 @@ mod test {
         let current = cache.get_region_by_id(1).await.unwrap();
         assert_eq!(current.buckets_version(), 3);
         assert_eq!(current.buckets.unwrap().region_id, 1);
+    }
+
+    #[tokio::test]
+    async fn source_region_replacement_inherits_tiflash_cursor_and_newest_buckets() {
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        let mut original = region(1, vec![], vec![10]);
+        original.buckets = Some(metapb::Buckets {
+            region_id: 1,
+            version: 2,
+            keys: vec![vec![], vec![5], vec![10]],
+            ..Default::default()
+        });
+        let ver_id = original.ver_id();
+        assert!(cache.add_region(original.clone()).await);
+        cache.region_cache.write().await.ver_id_to_region[&ver_id]
+            .tiflash_cursor
+            .store(7, SeqCst);
+
+        let mut missing_buckets = original.clone();
+        missing_buckets.buckets = None;
+        assert!(cache.add_region(missing_buckets).await);
+        {
+            let regions = cache.region_cache.read().await;
+            let cached = &regions.ver_id_to_region[&ver_id];
+            assert_eq!(cached.region.buckets_version(), 2);
+            assert_eq!(cached.tiflash_cursor.load(SeqCst), 7);
+        }
+
+        let mut stale_buckets = original.clone();
+        stale_buckets.buckets.as_mut().unwrap().version = 1;
+        assert!(cache.add_region(stale_buckets).await);
+        assert_eq!(
+            cache.region_cache.read().await.ver_id_to_region[&ver_id]
+                .region
+                .buckets_version(),
+            2
+        );
+
+        let mut fresh_buckets = original;
+        fresh_buckets.buckets.as_mut().unwrap().version = 3;
+        assert!(cache.add_region(fresh_buckets).await);
+        {
+            let regions = cache.region_cache.read().await;
+            let cached = &regions.ver_id_to_region[&ver_id];
+            assert_eq!(cached.region.buckets_version(), 3);
+            assert_eq!(cached.tiflash_cursor.load(SeqCst), 7);
+        }
+
+        // The first intersected source region can be a predecessor whose
+        // range contains the replacement's start key.
+        let mut containing = region(2, vec![20], vec![40]);
+        containing.buckets = Some(metapb::Buckets {
+            region_id: 2,
+            version: 4,
+            keys: vec![vec![20], vec![30], vec![40]],
+            ..Default::default()
+        });
+        let containing_ver_id = containing.ver_id();
+        assert!(cache.add_region(containing).await);
+        cache.region_cache.write().await.ver_id_to_region[&containing_ver_id]
+            .tiflash_cursor
+            .store(9, SeqCst);
+
+        let replacement = region(3, vec![25], vec![30]);
+        let replacement_ver_id = replacement.ver_id();
+        assert!(cache.add_region(replacement).await);
+        let regions = cache.region_cache.read().await;
+        let cached = &regions.ver_id_to_region[&replacement_ver_id];
+        assert_eq!(cached.region.buckets_version(), 4);
+        assert_eq!(cached.tiflash_cursor.load(SeqCst), 9);
     }
 
     #[tokio::test]
@@ -3885,7 +4673,18 @@ mod test {
                 .unwrap()
                 .ttl = now_epoch_secs() - 1;
         }
-        assert_eq!(cache.get_region_by_key(&vec![1].into()).await?, cached);
+        let mut reloaded = cached.clone();
+        reloaded.leader = reloaded.region.peers.first().cloned();
+        reloaded.buckets = Some(metapb::Buckets {
+            region_id: reloaded.id(),
+            version: 9,
+            keys: vec![
+                reloaded.region.start_key.clone(),
+                reloaded.region.end_key.clone(),
+            ],
+            ..Default::default()
+        });
+        assert_eq!(cache.get_region_by_key(&vec![1].into()).await?, reloaded);
         assert_eq!(retry_client.get_region_count.load(SeqCst), 1);
         Ok(())
     }
@@ -3919,10 +4718,21 @@ mod test {
         let mut refreshed = old.clone();
         refreshed.region.region_epoch.as_mut().unwrap().version = 1;
         client.regions.lock().await.insert(1, refreshed.clone());
-        assert_eq!(cache.get_region_by_id(1).await.unwrap(), refreshed);
+        let mut expected = refreshed;
+        expected.leader = expected.region.peers.first().cloned();
+        expected.buckets = Some(metapb::Buckets {
+            region_id: expected.id(),
+            version: 9,
+            keys: vec![
+                expected.region.start_key.clone(),
+                expected.region.end_key.clone(),
+            ],
+            ..Default::default()
+        });
+        assert_eq!(cache.get_region_by_id(1).await.unwrap(), expected);
         assert_eq!(client.get_region_count.load(SeqCst), 2);
         assert!(
-            cache.region_cache.read().await.ver_id_to_region[&refreshed.ver_id()].sync_flags == 0
+            cache.region_cache.read().await.ver_id_to_region[&expected.ver_id()].sync_flags == 0
         );
     }
 
@@ -4356,6 +5166,33 @@ mod test {
     }
 
     #[tokio::test]
+    async fn source_invalid_store_id_error_marks_store_tombstone() {
+        let client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(client.clone());
+        cache.store_cache.write().unwrap().insert(
+            7,
+            CachedStore::new(metapb::Store {
+                id: 7,
+                address: "store-7".to_owned(),
+                ..Default::default()
+            }),
+        );
+        let old_epoch = cache.store_cache.read().unwrap()[&7].epoch.load(SeqCst);
+        client
+            .get_store_responses
+            .lock()
+            .await
+            .push_back(Err(Error::StringError(
+                "invalid store ID 7, not found".to_owned(),
+            )));
+
+        assert_eq!(cache.refresh_store_by_id(7).await.unwrap(), None);
+        let stores = cache.store_cache.read().unwrap();
+        assert_eq!(stores[&7].resolve_state(), StoreResolveState::Tombstone);
+        assert_eq!(stores[&7].epoch.load(SeqCst), old_epoch + 1);
+    }
+
+    #[tokio::test]
     async fn source_store_background_trigger_and_periodic_refresh_share_one_lifecycle() -> Result<()>
     {
         let client = Arc::new(MockRetryClient::default());
@@ -4554,7 +5391,7 @@ mod test {
             .expect("the liveness collector should expose a stale store label");
         assert!(!current_stores
             .iter()
-            .any(|store| store.id == cleanup_candidate));
+            .any(|store| { store.id == cleanup_candidate && !super::is_tombstone_store(store) }));
         assert_eq!(
             cache
                 .clean_up_stale_store_metrics(
@@ -4671,7 +5508,7 @@ mod test {
                     is_learner: false,
                     label_matches: true,
                     is_slow: false,
-                    reachable: true,
+                    liveness: ReplicaLiveness::Reachable,
                     attempts: 0,
                     data_is_not_ready: false,
                 },
@@ -4681,12 +5518,13 @@ mod test {
                     is_learner: true,
                     label_matches: false,
                     is_slow: false,
-                    reachable: false,
+                    liveness: ReplicaLiveness::Unreachable,
                     attempts: 1,
                     data_is_not_ready: false,
                 },
             ]
         );
+        assert_eq!(cache.tikv_replica_count(&region), 2);
 
         assert!(cache.set_store_liveness(2, StoreLiveness::Reachable));
         let selected = cache
@@ -4718,6 +5556,20 @@ mod test {
             .await
             .unwrap();
         assert_eq!(idle, Some(follower.clone()));
+
+        assert!(cache.set_store_liveness(2, StoreLiveness::Unknown));
+        let unknown_idle = cache
+            .select_idle_replica(
+                &region,
+                &[],
+                &[],
+                &ReplicaSelectorState::default(),
+                std::time::Duration::from_millis(500),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unknown_idle, Some(follower.clone()));
+        assert!(cache.set_store_liveness(2, StoreLiveness::Reachable));
 
         let mut busy_follower = ReplicaSelectorState::default();
         busy_follower.record_server_busy(follower.id);
@@ -4794,12 +5646,13 @@ mod test {
         cache.add_region(region.clone()).await;
 
         assert!(cache.set_store_liveness(1, StoreLiveness::Unknown));
+        assert!(cache.set_store_liveness(2, StoreLiveness::Unknown));
         assert_eq!(
             cache
                 .proxy_for_unavailable_leader(&region, &ReplicaSelectorState::default())
                 .await
                 .unwrap(),
-            Some(first_proxy.clone())
+            Some(cached_proxy.clone())
         );
         let mut hintless_not_leader = ReplicaSelectorState::default();
         hintless_not_leader.mark_no_leader(11);
@@ -4812,6 +5665,7 @@ mod test {
         );
 
         assert!(cache.set_store_liveness(1, StoreLiveness::Unreachable));
+        assert!(cache.set_store_liveness(2, StoreLiveness::Reachable));
 
         assert_eq!(
             cache
@@ -4941,6 +5795,7 @@ mod test {
                 id,
                 CachedStore::new(metapb::Store {
                     id,
+                    address: format!("store-{id}"),
                     labels: vec![
                         metapb::StoreLabel {
                             key: "engine".into(),
@@ -4986,14 +5841,22 @@ mod test {
                         value: "missing".into()
                     }]
                 )
-                .await,
-            Err(super::TiFlashSelectionError::AllStoresFiltered)
+                .await
+                .unwrap_err()
+                .detail,
+            super::TiFlashRpcContextUnavailableDetail {
+                reason: super::TiFlashRpcContextUnavailableReason::AllStoresFiltered,
+                store_ids: vec![3, 2],
+                peer_ids: vec![13, 12],
+            }
         );
+        cache.add_region(region.clone()).await;
         assert_eq!(
             cache.valid_tiflash_store_ids(&region, 2, &[]).await,
             (vec![2, 3], vec![2])
         );
         region.region.peers[2].is_witness = true;
+        cache.add_region(region.clone()).await;
         assert_eq!(
             cache.select_tiflash_peer(&region, false, &[]).await,
             Ok(flash_one.clone())
@@ -5007,6 +5870,7 @@ mod test {
             peer: Some(flash_two),
             ..Default::default()
         }];
+        cache.add_region(region.clone()).await;
         assert_eq!(
             cache.select_tiflash_peer(&region, false, &[]).await,
             Ok(flash_one)
@@ -5014,6 +5878,237 @@ mod test {
         assert_eq!(
             cache.valid_tiflash_store_ids(&region, 2, &[]).await,
             (vec![2], vec![2])
+        );
+    }
+
+    #[tokio::test]
+    async fn source_tiflash_need_check_uses_current_address_and_refreshes_next_route() {
+        let client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(client.clone());
+        let flash = metapb::Peer {
+            id: 12,
+            store_id: 2,
+            ..Default::default()
+        };
+        let mut region = region(1, vec![], vec![]);
+        region.region.peers = vec![flash.clone()];
+        region.leader = None;
+        let old_store = metapb::Store {
+            id: 2,
+            address: "old-address".into(),
+            labels: vec![
+                metapb::StoreLabel {
+                    key: "engine".into(),
+                    value: "tiflash".into(),
+                },
+                metapb::StoreLabel {
+                    key: "zone".into(),
+                    value: "old".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        let cached_store = CachedStore::new(old_store);
+        cached_store.set_resolve_state(StoreResolveState::NeedCheck);
+        cache.store_cache.write().unwrap().insert(2, cached_store);
+        cache.add_region(region.clone()).await;
+        client
+            .get_store_responses
+            .lock()
+            .await
+            .push_back(Ok(Some(metapb::Store {
+                id: 2,
+                address: "new-address".into(),
+                labels: vec![
+                    metapb::StoreLabel {
+                        key: "engine".into(),
+                        value: "tiflash".into(),
+                    },
+                    metapb::StoreLabel {
+                        key: "zone".into(),
+                        value: "new".into(),
+                    },
+                ],
+                ..Default::default()
+            })));
+
+        let (selected_peer, selected_store) = cache
+            .select_tiflash_peer_with_store(&region, false, &[])
+            .await
+            .unwrap();
+        assert_eq!(selected_peer, flash);
+        assert_eq!(selected_store.address, "old-address");
+        assert!(selected_store
+            .labels
+            .iter()
+            .any(|label| label.key == "zone" && label.value == "new"));
+        assert_eq!(
+            cache.get_store_by_id(2).await.unwrap().address,
+            "new-address"
+        );
+
+        assert!(cache.mark_store_need_check(2));
+        client.get_store_responses.lock().await.push_back(Ok(None));
+        let failure = cache
+            .select_tiflash_peer_with_store(&region, false, &[])
+            .await
+            .unwrap_err();
+        assert_eq!(
+            failure.detail.reason,
+            super::TiFlashRpcContextUnavailableReason::AllStoresEpochStale
+        );
+        assert_eq!(
+            cache.store_resolve_state(2),
+            Some(StoreResolveState::Tombstone)
+        );
+    }
+
+    #[tokio::test]
+    async fn source_tiflash_store_epochs_failover_and_send_failure_rotation() {
+        let client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(client.clone());
+        let tikv = metapb::Peer {
+            id: 11,
+            store_id: 1,
+            ..Default::default()
+        };
+        let flash_one = metapb::Peer {
+            id: 12,
+            store_id: 2,
+            ..Default::default()
+        };
+        let flash_two = metapb::Peer {
+            id: 13,
+            store_id: 3,
+            ..Default::default()
+        };
+        let mut region = region(1, vec![], vec![]);
+        region.region.peers = vec![tikv.clone(), flash_one.clone(), flash_two.clone()];
+        region.leader = Some(tikv);
+        for (id, engine) in [(1, "tikv"), (2, "tiflash"), (3, "tiflash")] {
+            let store = metapb::Store {
+                id,
+                address: format!("store-{id}"),
+                labels: vec![metapb::StoreLabel {
+                    key: "engine".into(),
+                    value: engine.into(),
+                }],
+                ..Default::default()
+            };
+            client.stores.lock().await.push(store.clone());
+            cache
+                .store_cache
+                .write()
+                .unwrap()
+                .insert(id, CachedStore::new(store));
+        }
+        cache.add_region(region.clone()).await;
+
+        let flash_three = metapb::Peer {
+            id: 14,
+            store_id: 4,
+            ..Default::default()
+        };
+        cache.store_cache.write().unwrap().insert(
+            4,
+            CachedStore::new(metapb::Store {
+                id: 4,
+                address: "store-4".into(),
+                labels: vec![metapb::StoreLabel {
+                    key: "engine".into(),
+                    value: "tiflash".into(),
+                }],
+                ..Default::default()
+            }),
+        );
+        let mut ordered_region = region.clone();
+        ordered_region.region.peers.push(flash_three);
+        cache.add_region(ordered_region.clone()).await;
+        assert_eq!(
+            cache.valid_tiflash_store_ids(&ordered_region, 3, &[]).await,
+            (vec![3, 4, 2], vec![3, 4, 2])
+        );
+        cache.add_region(region.clone()).await;
+
+        assert!(
+            cache
+                .on_send_fail_for_tiflash(&region.ver_id(), 2, 3, false, false)
+                .await
+        );
+        assert_eq!(
+            cache
+                .select_tiflash_peer(&region, false, &[])
+                .await
+                .unwrap(),
+            flash_two
+        );
+
+        assert!(
+            cache
+                .invalidate_store_epoch_for_region(&region.ver_id(), 3)
+                .await
+        );
+        assert_eq!(
+            cache
+                .select_tiflash_peer(&region, false, &[])
+                .await
+                .unwrap(),
+            flash_one
+        );
+        assert_eq!(
+            cache
+                .select_tiflash_peer(&region, false, &[])
+                .await
+                .unwrap_err()
+                .detail
+                .reason,
+            super::TiFlashRpcContextUnavailableReason::NeedReloadOnAccess
+        );
+        cache.add_region(region.clone()).await;
+        assert!(
+            cache
+                .invalidate_store_epoch_for_region(&region.ver_id(), 3)
+                .await
+        );
+        assert!(
+            cache
+                .invalidate_store_epoch_for_region(&region.ver_id(), 2)
+                .await
+        );
+        let failure = cache
+            .select_tiflash_peer(&region, false, &[])
+            .await
+            .unwrap_err();
+        assert_eq!(
+            failure.detail,
+            super::TiFlashRpcContextUnavailableDetail {
+                reason: super::TiFlashRpcContextUnavailableReason::AllStoresEpochStale,
+                store_ids: vec![2, 3],
+                peer_ids: vec![12, 13],
+            }
+        );
+
+        cache.add_region(region.clone()).await;
+        assert_eq!(
+            cache
+                .select_tiflash_peer(&region, false, &[])
+                .await
+                .unwrap(),
+            flash_two
+        );
+        assert!(
+            cache
+                .on_send_fail_for_tiflash(&region.ver_id(), 2, 3, true, false)
+                .await
+        );
+        assert_eq!(
+            cache
+                .select_tiflash_peer(&region, false, &[])
+                .await
+                .unwrap_err()
+                .detail
+                .reason,
+            super::TiFlashRpcContextUnavailableReason::NeedReloadOnAccess
         );
     }
 
@@ -5054,6 +6149,60 @@ mod test {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn source_stale_need_check_follower_does_not_schedule_delayed_reload() {
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        for id in [1, 2] {
+            cache.store_cache.write().unwrap().insert(
+                id,
+                CachedStore::new(metapb::Store {
+                    id,
+                    address: format!("store-{id}"),
+                    ..Default::default()
+                }),
+            );
+        }
+        let leader = metapb::Peer {
+            id: 11,
+            store_id: 1,
+            ..Default::default()
+        };
+        let follower = metapb::Peer {
+            id: 12,
+            store_id: 2,
+            ..Default::default()
+        };
+        let mut region = region(1, vec![], vec![]);
+        region.region.peers = vec![leader.clone(), follower];
+        region.leader = Some(leader);
+        assert!(cache.add_region(region.clone()).await);
+
+        {
+            let stores = cache.store_cache.read().unwrap();
+            let follower = &stores[&2];
+            follower.set_resolve_state(StoreResolveState::NeedCheck);
+            follower.epoch.fetch_add(1, SeqCst);
+        }
+        cache
+            .replica_candidates(&region, &[], &[], &ReplicaSelectorState::default())
+            .await
+            .unwrap();
+        assert!(
+            !cache.region_cache.read().await.ver_id_to_region[&region.ver_id()]
+                .has_sync_flags(NEED_DELAYED_RELOAD_PENDING)
+        );
+
+        cache.store_cache.read().unwrap()[&2].set_resolve_state(StoreResolveState::Resolved);
+        cache
+            .replica_candidates(&region, &[], &[], &ReplicaSelectorState::default())
+            .await
+            .unwrap();
+        assert!(
+            cache.region_cache.read().await.ver_id_to_region[&region.ver_id()]
+                .has_sync_flags(NEED_DELAYED_RELOAD_PENDING)
+        );
     }
 
     #[tokio::test]
@@ -5281,7 +6430,11 @@ mod test {
             conf_ver: 0,
             version: 0,
         });
-        // We don't care about other fields here
+        region.region.peers.push(metapb::Peer {
+            id: id + 100,
+            store_id: id + 200,
+            ..Default::default()
+        });
 
         region
     }
@@ -5295,11 +6448,7 @@ mod test {
 
     fn region_with_leader(id: RegionId, start_key: &[u8], end_key: &[u8]) -> RegionWithLeader {
         let mut region = region(id, start_key.to_vec(), end_key.to_vec());
-        region.leader = Some(metapb::Peer {
-            id: id + 100,
-            store_id: id + 200,
-            ..Default::default()
-        });
+        region.leader = region.region.peers.first().cloned();
         region
     }
 

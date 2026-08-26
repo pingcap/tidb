@@ -1,7 +1,7 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
@@ -484,7 +484,6 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     enable_forwarding: bool,
     zone_label: String,
     security_mgr: Arc<SecurityManager>,
-    store_liveness_timeout: Duration,
     region_cache: Arc<RegionCache<CodecPdClient<RetryClient<Cl>>>>,
 }
 
@@ -504,9 +503,25 @@ const HEALTH_SERVING: i32 = 1;
 const HEALTH_UNKNOWN: i32 = 0;
 const HEALTH_SERVICE_UNKNOWN: i32 = 3;
 const STORE_RE_RESOLVE_INTERVAL: Duration = Duration::from_secs(30);
+static STORE_LIVENESS_TIMEOUT_NANOS: AtomicU64 = AtomicU64::new(1_000_000_000);
 static STORE_LIVENESS_FLIGHTS: LazyLock<
     Mutex<HashMap<String, watch::Receiver<Option<StoreLiveness>>>>,
 > = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Sets the process-wide timeout for probing a TiKV store after a send
+/// failure. Existing clients observe the new value on their next probe,
+/// matching client-go's `SetStoreLivenessTimeout` contract.
+pub fn set_store_liveness_timeout(timeout: Duration) {
+    STORE_LIVENESS_TIMEOUT_NANOS.store(
+        timeout.as_nanos().min(u128::from(u64::MAX)) as u64,
+        Ordering::Release,
+    );
+}
+
+/// Returns the current process-wide TiKV store-liveness probe timeout.
+pub fn get_store_liveness_timeout() -> Duration {
+    Duration::from_nanos(STORE_LIVENESS_TIMEOUT_NANOS.load(Ordering::Acquire))
+}
 
 fn source_health_status_liveness(status: i32) -> StoreLiveness {
     match status {
@@ -619,6 +634,13 @@ where
     KvC: KvConnect + Send + Sync + 'static,
     RetryClient<Cl>: RetryClientTrait + Send + Sync + 'static,
 {
+    /// Returns the live region cache shared by this client's request plans.
+    /// Existing and future requests observe mutations through the returned
+    /// `Arc`, matching client-go's `KVStore.GetRegionCache` ownership.
+    pub fn region_cache(&self) -> Arc<RegionCache<CodecPdClient<RetryClient<Cl>>>> {
+        self.region_cache.clone()
+    }
+
     fn store_token_count(&self, store_id: StoreId) -> Arc<AtomicI64> {
         self.store_token_counts
             .lock()
@@ -644,6 +666,17 @@ where
             .region_cache
             .get_store_by_id(target_peer.store_id)
             .await?;
+        self.map_region_to_route_with_target_store(region, target_peer, target_store, proxy_peer)
+            .await
+    }
+
+    async fn map_region_to_route_with_target_store(
+        self: Arc<Self>,
+        region: RegionWithLeader,
+        target_peer: metapb::Peer,
+        target_store: metapb::Store,
+        proxy_peer: Option<metapb::Peer>,
+    ) -> Result<RegionStore> {
         let forwarded = proxy_peer.is_some();
         let physical_store = match proxy_peer {
             Some(proxy_peer) => {
@@ -704,7 +737,9 @@ where
         ) {
             return Err(selector_exhausted_error());
         }
-        self.map_region_to_route(region, leader, proxy).await
+        self.map_region_to_route(region, leader, proxy)
+            .await
+            .map(RegionStore::with_source_leader_read)
     }
 
     async fn request_store_liveness(&self, route: &RegionStore) -> StoreLiveness {
@@ -721,13 +756,13 @@ where
         {
             return StoreLiveness::Unknown;
         }
-        if self.store_liveness_timeout.is_zero() {
+        let timeout = get_store_liveness_timeout();
+        if timeout.is_zero() {
             return StoreLiveness::Unreachable;
         }
         let target = route.target.clone();
         let probe_target = target.clone();
         let security_mgr = self.security_mgr.clone();
-        let timeout = self.store_liveness_timeout;
         request_store_liveness_singleflight(target, move || {
             probe_store_liveness(security_mgr, probe_target, timeout)
         })
@@ -736,11 +771,20 @@ where
 
     fn start_store_health_check_loop(self: Arc<Self>, store_id: StoreId, route: RegionStore) {
         let client = Arc::downgrade(&self);
-        tokio::spawn(async move {
+        let cache = self.region_cache.clone();
+        let spawned = cache.spawn_background_task(move |cancellation| async move {
             let mut route = route;
             let mut last_resolve = std::time::Instant::now();
             loop {
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                tokio::select! {
+                    _ = cancellation.cancelled() => {
+                        if let Some(client) = client.upgrade() {
+                            client.region_cache.finish_store_health_check(store_id);
+                        }
+                        return;
+                    }
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                }
                 let Some(client) = client.upgrade() else {
                     return;
                 };
@@ -775,6 +819,9 @@ where
                 }
             }
         });
+        if !spawned {
+            self.region_cache.finish_store_health_check(store_id);
+        }
     }
 }
 
@@ -806,9 +853,29 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         let Some(store_id) = route.physical_store_id else {
             return true;
         };
+        if route.physical_endpoint_type == crate::store::EndpointType::TiFlash {
+            self.region_cache
+                .on_send_fail_for_tiflash(
+                    &route.region_with_leader.ver_id(),
+                    store_id,
+                    route.region_with_leader.region.peers.len(),
+                    false,
+                    true,
+                )
+                .await;
+            return false;
+        }
         let liveness = self.request_store_liveness(route).await;
         self.region_cache.set_store_liveness(store_id, liveness);
-        if liveness != StoreLiveness::Reachable {
+        let tikv_replica_count = self
+            .region_cache
+            .tikv_replica_count(&route.region_with_leader);
+        if source_should_invalidate_store_after_send_failure(
+            self.enable_forwarding,
+            liveness,
+            route,
+            tikv_replica_count,
+        ) {
             self.region_cache
                 .invalidate_store_epoch_for_region(&route.region_with_leader.ver_id(), store_id)
                 .await;
@@ -833,14 +900,20 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         load_balance: bool,
         labels: &[metapb::StoreLabel],
     ) -> Result<RegionStore> {
-        let peer = self
+        let (peer, selected_store) = self
             .region_cache
-            .select_tiflash_peer(&region, load_balance, labels)
+            .select_tiflash_peer_with_store(&region, load_balance, labels)
             .await
-            .map_err(|reason| {
-                crate::Error::StringError(format!("TiFlash route unavailable: {reason:?}"))
+            .map_err(|failure| {
+                failure.source.unwrap_or_else(|| {
+                    crate::Error::StringError(format!(
+                        "TiFlash route unavailable: {}",
+                        failure.detail
+                    ))
+                })
             })?;
-        self.map_region_to_route(region, peer, None).await
+        self.map_region_to_route_with_target_store(region, peer, selected_store, None)
+            .await
     }
 
     async fn map_region_to_store_with_replica(
@@ -1243,6 +1316,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 
     async fn update_region_cache(&self, regions: Vec<RegionWithLeader>) -> Result<()> {
         for region in regions {
+            let region = self.region_cache.prepare_region_from_pd(region).await?;
             self.region_cache.add_region(region).await;
         }
         Ok(())
@@ -1507,6 +1581,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
                     config.tikv_client.store_liveness_timeout
                 ))
             })?;
+        set_store_liveness_timeout(store_liveness_timeout);
 
         let pd = Arc::new(pd(security_mgr.clone()).await?);
         let (region_codec, keyspace_meta) = resolve_codec(pd.clone()).await?;
@@ -1530,7 +1605,6 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             enable_forwarding: config.enable_forwarding,
             zone_label: config.zone_label,
             security_mgr,
-            store_liveness_timeout,
             region_cache,
         };
         Ok(client)
@@ -1649,6 +1723,33 @@ fn source_forwarding_exhausted(
         && leader_liveness != Some(StoreLiveness::Reachable)
         && !selector_state.has_no_leader(leader_peer_id)
         && !has_proxy
+}
+
+fn source_should_invalidate_store_after_send_failure(
+    forwarding_enabled: bool,
+    liveness: StoreLiveness,
+    route: &RegionStore,
+    tikv_replica_count: usize,
+) -> bool {
+    if liveness == StoreLiveness::Reachable {
+        return false;
+    }
+    let direct_cached_leader = route.source_leader_read
+        && route.forwarded_host.is_empty()
+        && route
+            .target_peer
+            .as_ref()
+            .zip(route.region_with_leader.leader.as_ref())
+            .is_some_and(|(target, leader)| {
+                target.id == leader.id
+                    && route.physical_store_id == Some(target.store_id)
+                    && route.physical_endpoint_type == crate::store::EndpointType::TiKv
+            });
+    let can_retry_with_proxy = forwarding_enabled
+        && liveness == StoreLiveness::Unreachable
+        && direct_cached_leader
+        && tikv_replica_count > 1;
+    !can_retry_with_proxy
 }
 
 fn source_leader_fallback_uses_replica_read(
@@ -1828,6 +1929,56 @@ pub mod test {
     }
 
     #[test]
+    fn source_direct_unreachable_leader_preserves_store_epoch_for_forwarding() {
+        let leader = metapb::Peer {
+            id: 11,
+            store_id: 1,
+            ..Default::default()
+        };
+        let follower = metapb::Peer {
+            id: 12,
+            store_id: 2,
+            ..Default::default()
+        };
+        let mut region = RegionWithLeader::default();
+        region.region.id = 1;
+        region.region.peers = vec![leader.clone(), follower.clone()];
+        region.leader = Some(leader.clone());
+        let direct_leader = RegionStore::new(region, Arc::new(MockKvClient::default()))
+            .with_target_peer(leader.clone())
+            .with_physical_store(leader.store_id, crate::store::EndpointType::TiKv)
+            .with_source_leader_read();
+
+        assert!(!source_should_invalidate_store_after_send_failure(
+            true,
+            StoreLiveness::Unreachable,
+            &direct_leader,
+            2,
+        ));
+        for (forwarding, liveness, route, replicas) in [
+            (false, StoreLiveness::Unreachable, direct_leader.clone(), 2),
+            (true, StoreLiveness::Unknown, direct_leader.clone(), 2),
+            (true, StoreLiveness::Unreachable, direct_leader.clone(), 1),
+            (
+                true,
+                StoreLiveness::Unreachable,
+                direct_leader.clone().with_forwarded_host("leader-address"),
+                2,
+            ),
+            (
+                true,
+                StoreLiveness::Unreachable,
+                direct_leader.clone().with_target_peer(follower),
+                2,
+            ),
+        ] {
+            assert!(source_should_invalidate_store_after_send_failure(
+                forwarding, liveness, &route, replicas,
+            ));
+        }
+    }
+
+    #[test]
     fn source_health_check_status_and_duration_mapping() {
         assert_eq!(
             source_health_status_liveness(HEALTH_SERVING),
@@ -1852,6 +2003,16 @@ pub mod test {
         );
         assert_eq!(parse_source_duration("0s"), Some(Duration::ZERO));
         assert_eq!(parse_source_duration("bad"), None);
+    }
+
+    #[test]
+    fn source_store_liveness_timeout_is_process_wide_and_dynamic() {
+        let original = get_store_liveness_timeout();
+        set_store_liveness_timeout(Duration::from_millis(275));
+        assert_eq!(get_store_liveness_timeout(), Duration::from_millis(275));
+        set_store_liveness_timeout(Duration::ZERO);
+        assert_eq!(get_store_liveness_timeout(), Duration::ZERO);
+        set_store_liveness_timeout(original);
     }
 
     #[tokio::test]

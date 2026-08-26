@@ -25,6 +25,7 @@ use crate::request::Process;
 use crate::request::ProcessResponse;
 use crate::request::ResolveLock;
 use crate::request::RetryableMultiRegion;
+use crate::request::RpcCancellable;
 use crate::request::Shardable;
 use crate::request::{DefaultProcessor, StoreRequest};
 use crate::resource_control::ResourceGroupControllerHandle;
@@ -332,6 +333,28 @@ impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted> {
 }
 
 impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
+    /// Attaches this request tree to a shared source-compatible RPC
+    /// canceller. `cancel_all` aborts current physical shards and makes later
+    /// plans attached to the same owner fail immediately.
+    pub fn with_rpc_canceller(
+        self,
+        canceller: crate::RpcCanceller,
+    ) -> PlanBuilder<PdC, RpcCancellable<P>, Ph> {
+        PlanBuilder {
+            pd_client: self.pd_client,
+            plan: RpcCancellable {
+                inner: self.plan,
+                canceller,
+            },
+            keyspace_name: self.keyspace_name,
+            rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
+            phantom: PhantomData,
+        }
+    }
+
     /// If there is a lock error, then resolve the lock and retry the request.
     pub fn resolve_lock(
         self,

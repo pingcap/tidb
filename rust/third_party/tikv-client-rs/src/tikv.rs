@@ -39,11 +39,13 @@ pub use crate::interceptor::{RpcInterceptor, RpcInterceptorChain, RpcInterceptor
 pub use crate::kv::Getter;
 pub use crate::logutil::with_logger as with_log_context;
 pub use crate::pd::PdClient as PlacementDriverClient;
+pub use crate::pd::{get_store_liveness_timeout, set_store_liveness_timeout};
 pub use crate::region::{RegionId, RegionVerId, RegionWithLeader, StoreId};
 pub use crate::region_cache::{
     change_pd_region_meta_circuit_breaker_settings, set_region_cache_ttl_secs,
     set_region_cache_ttl_with_jitter, PdRegionMetaCircuitBreakerSettings, RegionCache,
-    TiFlashLabelFilter,
+    TiFlashLabelFilter, TiFlashRpcContextUnavailableDetail, TiFlashRpcContextUnavailableReason,
+    TiFlashSelectionError,
 };
 pub use crate::request::{
     api_v1_excluded_prefixes as codec_v1_exclude_prefixes, api_v2_prefixes as codec_v2_prefixes,
@@ -1139,6 +1141,19 @@ impl KvStore {
 
     pub fn cluster_id(&self) -> u64 {
         self.runtime.cluster_id()
+    }
+
+    /// Returns the production PD/routing client owned by this store.
+    pub fn pd_client(&self) -> Arc<PdRpcClient> {
+        self.inner.pd_client()
+    }
+
+    /// Returns the authoritative live region cache used by this store's
+    /// request plans, matching client-go's `KVStore.GetRegionCache` surface.
+    pub fn region_cache(
+        &self,
+    ) -> Arc<RegionCache<crate::CodecPdClient<crate::RetryClient<crate::Cluster>>>> {
+        self.inner.pd_client().region_cache()
     }
 
     pub fn is_closed(&self) -> bool {

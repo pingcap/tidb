@@ -641,7 +641,10 @@ impl Client {
         transaction
     }
 
-    pub(crate) fn pd_client(&self) -> Arc<PdRpcClient> {
+    /// Returns the injected or production PD/routing client shared by this
+    /// transaction client. This remains available in ordinary builds so an
+    /// embedded TiDB/UniStore owner can reuse the authoritative region cache.
+    pub fn pd_client(&self) -> Arc<PdRpcClient> {
         self.pd.clone()
     }
 

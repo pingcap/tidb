@@ -1260,6 +1260,18 @@ impl<PdC: PdClient> Client<PdC> {
                         let config = match action {
                             plan::RegionErrorRetry::Immediate => continue,
                             plan::RegionErrorRetry::Backoff(config) => config,
+                            plan::RegionErrorRetry::BackoffPreservingRegionError(config) => {
+                                match scan_args
+                                    .backoff
+                                    .backoff(config, format!("region error: {err:?}"))
+                                    .await
+                                {
+                                    Ok(()) => continue,
+                                    Err(_) => {
+                                        return Err(Error::RegionError(Box::new(err)));
+                                    }
+                                }
+                            }
                             plan::RegionErrorRetry::TerminalAfterBackoff(config) => {
                                 if let Err(error) = scan_args
                                     .backoff

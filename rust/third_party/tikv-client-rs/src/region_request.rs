@@ -10,15 +10,59 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
+use crate::async_util::Cancellation;
 use crate::proto::errorpb;
 use crate::store::CommandType;
 use crate::util::format_duration;
 
 const MAX_ERROR_TYPES: usize = 16;
 const MAX_REPLICA_ACCESS_INFOS: usize = 5;
+static SHUTTING_DOWN: AtomicU32 = AtomicU32::new(0);
+
+/// Stores whether the embedding TiDB process is shutting down.
+///
+/// A nonzero value makes a transport failure terminal before region/store
+/// cache side effects, matching client-go's `StoreShuttingDown` contract.
+pub fn store_shutting_down(value: u32) {
+    SHUTTING_DOWN.store(value, Ordering::Release);
+}
+
+/// Loads the process-wide TiDB shutdown marker.
+pub fn load_shutting_down() -> u32 {
+    SHUTTING_DOWN.load(Ordering::Acquire)
+}
+
+/// Cancels every current and future request plan attached to this owner.
+///
+/// Rust futures do not need client-go's integer-keyed cancel-function map: a
+/// shared cancellation root propagates to each attached plan, and dropping a
+/// cancelled plan aborts its owned physical shard tasks.
+#[derive(Clone, Default)]
+pub struct RpcCanceller {
+    cancellation: Cancellation,
+}
+
+impl RpcCanceller {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel_all(&self) {
+        self.cancellation.cancel();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+    }
+
+    pub(crate) fn cancellation(&self) -> Cancellation {
+        self.cancellation.child()
+    }
+}
 
 /// Runtime totals for one TiKV command kind.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -497,6 +541,12 @@ pub(crate) fn region_error_access_message(error: &errorpb::Error, label: &str) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_shutdown_marker_defaults_to_running() {
+        store_shutting_down(0);
+        assert_eq!(load_shutting_down(), 0);
+    }
     use crate::proto::errorpb;
     use crate::proto::metapb;
 

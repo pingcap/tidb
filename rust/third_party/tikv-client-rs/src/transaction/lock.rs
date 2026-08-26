@@ -1430,9 +1430,11 @@ async fn resolve_lock_with_retry_inner(
                         Some(duration) => {
                             let region_error_action =
                                 handle_region_error(pd_client.clone(), *e, store.clone()).await?;
-                            if let crate::request::plan::RegionErrorRetry::Backoff(_) =
-                                region_error_action
-                            {
+                            if matches!(
+                                region_error_action,
+                                crate::request::plan::RegionErrorRetry::Backoff(_)
+                                    | crate::request::plan::RegionErrorRetry::BackoffPreservingRegionError(_)
+                            ) {
                                 sleep(duration).await;
                             }
                             continue;

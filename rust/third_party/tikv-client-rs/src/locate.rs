@@ -1,7 +1,8 @@
 //! Dependency-free state from client-go's `internal/locate` package.
 //!
-//! These types intentionally remain crate-private seeds until the complete
-//! region/store cache and replica-selection package owns their consumers.
+//! The public source-shaped cache and sender façades live in `region_cache`,
+//! `region_request`, and `tikv`; this module owns their private selector,
+//! health, flow-accounting, and slow-score state.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -378,13 +379,20 @@ const SCORE_NOT_SLOW: u8 = 1 << 4;
 /// resolution supplies these facts; keeping it value-based lets selection stay
 /// deterministic and independent from cache locks.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReplicaLiveness {
+    Reachable,
+    Unreachable,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ReplicaCandidate {
     pub(crate) peer_id: u64,
     pub(crate) is_leader: bool,
     pub(crate) is_learner: bool,
     pub(crate) label_matches: bool,
     pub(crate) is_slow: bool,
-    pub(crate) reachable: bool,
+    pub(crate) liveness: ReplicaLiveness,
     pub(crate) attempts: u8,
     pub(crate) data_is_not_ready: bool,
 }
@@ -700,7 +708,7 @@ impl MixedReplicaSelection {
         } else {
             1
         };
-        if !replica.reachable
+        if replica.liveness == ReplicaLiveness::Unreachable
             || replica.attempts >= max_attempts
             || (self.leader_only && !replica.is_leader)
         {
@@ -716,8 +724,12 @@ impl MixedReplicaSelection {
             score |= SCORE_LABEL_MATCHES;
         }
         if replica.is_leader {
-            if self.prefer_leader && !replica.is_slow {
-                score |= SCORE_PREFER_LEADER;
+            if self.prefer_leader {
+                if replica.is_slow {
+                    score |= SCORE_NORMAL_PEER;
+                } else {
+                    score |= SCORE_PREFER_LEADER;
+                }
             } else if matches!(
                 self.read_type,
                 ReplicaReadType::Mixed | ReplicaReadType::PreferLeader
@@ -838,7 +850,7 @@ mod tests {
                 is_learner: false,
                 label_matches: false,
                 is_slow: false,
-                reachable: true,
+                liveness: ReplicaLiveness::Reachable,
                 attempts: 0,
                 data_is_not_ready: false,
             },
@@ -848,7 +860,7 @@ mod tests {
                 is_learner: false,
                 label_matches: true,
                 is_slow: false,
-                reachable: true,
+                liveness: ReplicaLiveness::Reachable,
                 attempts: 0,
                 data_is_not_ready: false,
             },
@@ -877,7 +889,7 @@ mod tests {
                 is_learner: false,
                 label_matches: false,
                 is_slow: true,
-                reachable: true,
+                liveness: ReplicaLiveness::Reachable,
                 attempts: 0,
                 data_is_not_ready: false,
             },
@@ -887,7 +899,7 @@ mod tests {
                 is_learner: false,
                 label_matches: true,
                 is_slow: false,
-                reachable: true,
+                liveness: ReplicaLiveness::Reachable,
                 attempts: 0,
                 data_is_not_ready: false,
             },
@@ -897,7 +909,7 @@ mod tests {
                 is_learner: true,
                 label_matches: false,
                 is_slow: false,
-                reachable: true,
+                liveness: ReplicaLiveness::Reachable,
                 attempts: 0,
                 data_is_not_ready: false,
             },
@@ -911,6 +923,21 @@ mod tests {
         .highest_scored(&replicas);
         assert_eq!(selected, [&replicas[1]]);
 
+        let mut matching_slow_leader = replicas[0];
+        matching_slow_leader.label_matches = true;
+        let (score, selected) = MixedReplicaSelection {
+            read_type: ReplicaReadType::PreferLeader,
+            leader_only: false,
+            prefer_leader: true,
+            labels_requested: true,
+        }
+        .highest_scored(std::slice::from_ref(&matching_slow_leader));
+        assert_eq!(selected, [&matching_slow_leader]);
+        assert_eq!(
+            score,
+            SCORE_LABEL_MATCHES | SCORE_NORMAL_PEER | SCORE_NOT_ATTEMPTED
+        );
+
         let learner_replicas = [
             ReplicaCandidate {
                 peer_id: 1,
@@ -918,7 +945,7 @@ mod tests {
                 is_learner: false,
                 label_matches: false,
                 is_slow: false,
-                reachable: true,
+                liveness: ReplicaLiveness::Reachable,
                 attempts: 0,
                 data_is_not_ready: false,
             },
@@ -928,7 +955,7 @@ mod tests {
                 is_learner: false,
                 label_matches: false,
                 is_slow: false,
-                reachable: true,
+                liveness: ReplicaLiveness::Reachable,
                 attempts: 0,
                 data_is_not_ready: false,
             },
@@ -938,7 +965,7 @@ mod tests {
                 is_learner: true,
                 label_matches: false,
                 is_slow: false,
-                reachable: true,
+                liveness: ReplicaLiveness::Reachable,
                 attempts: 0,
                 data_is_not_ready: false,
             },
@@ -951,6 +978,36 @@ mod tests {
         }
         .highest_scored(&learner_replicas);
         assert_eq!(selected, [&learner_replicas[2]]);
+    }
+
+    #[test]
+    fn source_mixed_selection_allows_unknown_but_not_unreachable_liveness() {
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::Follower,
+            leader_only: false,
+            prefer_leader: false,
+            labels_requested: false,
+        };
+        let unknown = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: false,
+            is_learner: false,
+            label_matches: true,
+            is_slow: false,
+            liveness: ReplicaLiveness::Unknown,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        assert_eq!(
+            selection.choose(std::slice::from_ref(&unknown)),
+            Some(unknown)
+        );
+
+        let unreachable = ReplicaCandidate {
+            liveness: ReplicaLiveness::Unreachable,
+            ..unknown
+        };
+        assert_eq!(selection.choose(&[unreachable]), None);
     }
 
     #[test]
@@ -972,7 +1029,7 @@ mod tests {
             is_learner: false,
             label_matches: false,
             is_slow: false,
-            reachable: true,
+            liveness: ReplicaLiveness::Reachable,
             attempts: state.attempts(2),
             data_is_not_ready: state.data_is_not_ready(2),
         };

@@ -97,11 +97,11 @@ impl RegionWithLeader {
 
     pub fn ver_id(&self) -> RegionVerId {
         let region = &self.region;
-        let epoch = region.region_epoch.as_ref().unwrap();
+        let epoch = region.region_epoch.as_ref();
         RegionVerId {
             id: region.id,
-            conf_ver: epoch.conf_ver,
-            ver: epoch.version,
+            conf_ver: epoch.map_or(0, |epoch| epoch.conf_ver),
+            ver: epoch.map_or(0, |epoch| epoch.version),
         }
     }
 
@@ -209,6 +209,26 @@ impl RegionWithLeader {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn source_missing_region_epoch_uses_protobuf_zero_values() {
+        let region = RegionWithLeader {
+            region: metapb::Region {
+                id: 42,
+                region_epoch: None,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            region.ver_id(),
+            RegionVerId {
+                id: 42,
+                conf_ver: 0,
+                ver: 0,
+            }
+        );
+    }
 
     fn region_with_buckets(
         start_key: &[u8],

@@ -197,7 +197,9 @@ pub use proto::kvrpcpb::RequestOrigin;
 #[doc(inline)]
 pub use region_cache::{
     change_pd_region_meta_circuit_breaker_settings, set_region_cache_ttl_secs,
-    set_region_cache_ttl_with_jitter, PdRegionMetaCircuitBreakerSettings, TiFlashLabelFilter,
+    set_region_cache_ttl_with_jitter, PdRegionMetaCircuitBreakerSettings, RegionCache,
+    TiFlashLabelFilter, TiFlashRpcContextUnavailableDetail, TiFlashRpcContextUnavailableReason,
+    TiFlashSelectionError,
 };
 #[doc(inline)]
 pub use store::{get_default_request_origin, set_default_request_origin};
@@ -255,6 +257,10 @@ pub use crate::kv::{
 #[doc(inline)]
 pub use crate::pd::PdClient;
 #[doc(inline)]
+pub use crate::pd::{get_store_liveness_timeout, set_store_liveness_timeout};
+#[doc(inline)]
+pub use crate::pd::{Cluster, CodecPdClient, PdRegionCodec, PdRpcClient, RetryClient};
+#[doc(inline)]
 pub use crate::raw::lowering as raw_lowering;
 #[doc(inline)]
 pub use crate::raw::Client as RawClient;
@@ -264,9 +270,11 @@ pub use crate::raw::ColumnFamily;
 pub use crate::raw::RawChecksum;
 pub use crate::raw::MAX_RAW_KV_SCAN_LIMIT;
 #[doc(inline)]
+pub use crate::region::{RegionId, RegionVerId, RegionWithLeader, StoreId};
+#[doc(inline)]
 pub use crate::region_request::{
-    RegionRequestRuntimeStats, ReplicaAccessInfo, ReplicaAccessStats, RequestErrorStats,
-    RequestReadType, RpcRuntimeStats,
+    load_shutting_down, store_shutting_down, RegionRequestRuntimeStats, ReplicaAccessInfo,
+    ReplicaAccessStats, RequestErrorStats, RequestReadType, RpcCanceller, RpcRuntimeStats,
 };
 #[doc(inline)]
 pub use crate::request::RetryOptions;

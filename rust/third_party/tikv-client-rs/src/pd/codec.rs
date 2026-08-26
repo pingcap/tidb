@@ -19,17 +19,17 @@ use crate::request::{ApiV1Codec, ApiV2Codec, KeyMode};
 use crate::{Result, Timestamp};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PdRegionCodec {
+pub enum PdRegionCodec {
     V1(ApiV1Codec),
     V2(ApiV2Codec),
 }
 
 impl PdRegionCodec {
-    pub(crate) const fn v1(mode: KeyMode) -> Self {
+    pub const fn v1(mode: KeyMode) -> Self {
         Self::V1(ApiV1Codec::new(mode))
     }
 
-    pub(crate) fn v2(mode: KeyMode, keyspace_id: u32) -> Result<Self> {
+    pub fn v2(mode: KeyMode, keyspace_id: u32) -> Result<Self> {
         Ok(Self::V2(ApiV2Codec::new(mode, keyspace_id)?))
     }
 
@@ -73,17 +73,18 @@ impl PdRegionCodec {
 
 /// A PD client view that owns region-key encoding while delegating all
 /// keyless PD operations unchanged.
-pub(crate) struct CodecPdClient<C> {
+#[derive(Clone)]
+pub struct CodecPdClient<C> {
     inner: Arc<C>,
     codec: PdRegionCodec,
 }
 
 impl<C> CodecPdClient<C> {
-    pub(crate) const fn new(inner: Arc<C>, codec: PdRegionCodec) -> Self {
+    pub const fn new(inner: Arc<C>, codec: PdRegionCodec) -> Self {
         Self { inner, codec }
     }
 
-    pub(crate) const fn codec(&self) -> PdRegionCodec {
+    pub const fn codec(&self) -> PdRegionCodec {
         self.codec
     }
 }
