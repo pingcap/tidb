@@ -178,6 +178,27 @@ impl CopReadTaskResponse {
             .then(|| self.response.region_error.as_ref())
             .flatten()
     }
+
+    /// Returns the lock carried by the already-decoded response.
+    ///
+    /// Go's `pkg/store/copr/coprocessor.go:1863-1881` creates one response and
+    /// passes it to `handleCopResponse`; its lock branch at `:2162-2167`
+    /// inspects that same object. Exposing a borrow keeps the Rust transport
+    /// from decoding the protobuf a second time merely to inspect this field.
+    #[must_use]
+    pub fn locked_ref(&self) -> Option<&tidb_proto::KvrpcLockInfo> {
+        self.response.locked.as_ref()
+    }
+
+    /// Returns process time from the already-decoded response envelope.
+    ///
+    /// This preserves the source `coprocessor_response_process_time_nanos`
+    /// precedence (Go `pkg/store/copr/coprocessor.go:2667-2682`) while allowing
+    /// the transport to reuse one protobuf decode.
+    #[must_use]
+    pub fn process_time_nanos(&self) -> Option<i64> {
+        super::coprocessor_response_process_time_nanos(&self.response)
+    }
 }
 
 impl From<CoprocessorResponse> for CopReadTaskResponse {

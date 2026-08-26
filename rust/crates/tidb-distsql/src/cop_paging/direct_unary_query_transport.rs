@@ -36,7 +36,6 @@ use crate::{
     CancelHandle, CoprCache, CoprCacheConfig, ResponseChannelEvent, TransportRequest,
     TransportRequestError,
 };
-use prost::Message;
 use tidb_txnkv::region::{
     KeyRange as RegionKeyRange, LeaderRequest, ReadPolicy, RegionBackoffBudget, RegionBackoffKind,
     RegionCache, RegionErrorDisposition, RegionLoader, RegionLocation, RegionQueryLoader,
@@ -57,8 +56,8 @@ pub use tidb_txnkv::{
 };
 
 use super::{
-    build_tikv_unary_request_for_dispatch, classify_transport_failure,
-    coprocessor_response_process_time_nanos, decode_tikv_unary_response, CopPagingState,
+    build_tikv_unary_request_for_dispatch, classify_transport_failure, decode_tikv_unary_response,
+    CopPagingState,
     CopReadTaskError, CopReadTaskRuntime, ReadEngineGeneration, TransportFailureAction,
 };
 use crate::{RegionTaskEpoch, RegionTaskTopology, ReplicaReadType};
@@ -1681,13 +1680,10 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             selected.stale_read,
             traffic_location,
         );
-        let decoded =
-            tidb_proto::CoprocessorResponse::decode(raw_response.encoded_response.as_slice())
-                .map_err(|error| DirectUnaryTransportError::Decode(error.to_string()))?;
-        let locked = decoded.locked.clone();
-        let process_time_nanos = coprocessor_response_process_time_nanos(&decoded);
         let response = decode_tikv_unary_response(&raw_response.encoded_response)
             .map_err(|error| DirectUnaryTransportError::Decode(error.to_string()))?;
+        let locked = response.locked_ref().cloned();
+        let process_time_nanos = response.process_time_nanos();
         if let Some(region_error) = response.region_error_ref().cloned() {
             if selected.stale_read && region_error.data_is_not_ready.is_some() {
                 self.network_metrics.on_stale_read_result(false);

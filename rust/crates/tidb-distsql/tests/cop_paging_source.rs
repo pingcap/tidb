@@ -16,6 +16,8 @@
 
 use std::time::Duration;
 
+use prost::Message;
+use tidb_distsql::cop_paging::decode_tikv_unary_response;
 use tidb_distsql::{
     calculate_paging_remain, calculate_paging_retry, coprocessor_response_process_time_nanos,
     paging_response_read_bytes, BatchBucketVersionUpdate, CopPagingError, CopPagingState,
@@ -24,7 +26,7 @@ use tidb_distsql::{
 };
 use tidb_proto::{
     CoprocessorExecDetails, CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorResponse,
-    CoprocessorScanDetailV2, CoprocessorTimeDetail, CoprocessorTimeDetailV2,
+    CoprocessorScanDetailV2, CoprocessorTimeDetail, CoprocessorTimeDetailV2, KvrpcLockInfo,
 };
 use tidb_txnkv::{Key, KeyRange, KeyRanges};
 
@@ -209,6 +211,32 @@ fn response_process_time_prefers_nanoseconds_and_falls_back_to_milliseconds() {
         ..Default::default()
     };
     assert_eq!(coprocessor_response_process_time_nanos(&mixed), None);
+}
+
+#[test]
+fn decoded_response_reuses_go_lock_and_process_time_fields() {
+    // Go `pkg/store/copr/coprocessor.go:1863-1881` decodes one response, then
+    // reuses that object for lock handling at `:2162-2167` and coprocessor
+    // runtime/cache process time at `:2667-2682`.
+    // The Rust transport must expose those borrows from its one decoded
+    // `CopReadTaskResponse` instead of parsing the protobuf a second time.
+    let response = CoprocessorResponse {
+        locked: Some(KvrpcLockInfo {
+            key: b"lock-key".to_vec(),
+            ..Default::default()
+        }),
+        exec_details_v2: Some(CoprocessorExecDetailsV2 {
+            time_detail_v2: Some(CoprocessorTimeDetailV2 {
+                process_wall_time_ns: 123_456,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let decoded = decode_tikv_unary_response(&response.encode_to_vec()).unwrap();
+    assert_eq!(decoded.locked_ref().unwrap().key, b"lock-key");
+    assert_eq!(decoded.process_time_nanos(), Some(123_456));
 }
 
 #[test]

@@ -746,3 +746,18 @@ references. The new request metadata regression and affected crate tests pass;
 the release runtime still has plan/result parity but remains slower than Go in
 the one-client benchmark. The WIP state is retained because `make lint` cannot
 run without a Go executable and no performance pass or push is claimed.
+
+Revision note, 2026-08-26 (Go response reuse continuation): changed the
+direct unary coprocessor transport to decode each TiKV `CoprocessorResponse`
+once and reuse the decoded lock and process-time fields. This follows Go
+`pkg/store/copr/coprocessor.go:1863-1881` (one response handed to the handler),
+`:2162-2167` (lock inspection), and `:2667-2682` (runtime process-time
+collection), avoiding a second protobuf parse without changing error
+precedence or cache/paging state transitions. The focused `tidb-distsql`
+cop-paging source suite passes 9/9, and the 1G hbx-web3 receipt remains
+plan/result equal for q1, q2, flex, and swap. The fresh 20-pair alternating
+receipt is `/private/tmp/hbx-1g-20260825/bench-client-rust-71cc-single-decode-20pairs-rerun-20260826.json`:
+Rust/Go median ratios are q1 `1.084x`, q2 `1.144x`, flex `1.184x`, swap
+`1.455x`, and batch `1.227x`. Rust remains slower in every shape, so the
+one-concurrency performance gate is still open. Correctness receipt:
+`/private/tmp/hbx-1g-20260825/compare-client-rust-71cc-single-decode-20260826.json`.
