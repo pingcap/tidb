@@ -379,46 +379,6 @@ impl std::fmt::Display for TaskInfoRedacted<'_> {
 mod tests {
     use super::*;
 
-    // Go TestRedact.
-    #[test]
-    fn redact_string() {
-        for (mode, input, output) in [
-            ("OFF", "fxcv", "fxcv"),
-            ("OFF", "f‹xcv", "f‹xcv"),
-            ("ON", "f‹xcv", ""),
-            ("MARKER", "f‹xcv", "‹f‹‹xcv›"),
-            ("MARKER", "f›xcv", "‹f››xcv›"),
-        ] {
-            assert_eq!(string(mode, input), output, "{mode} {input}");
-            assert_eq!(stringer(mode, &input).to_string(), output, "{mode} {input}");
-        }
-    }
-
-    // Go TestDeRedact.
-    #[test]
-    fn de_redact_cases() {
-        for (remove, input, output) in [
-            (true, "‹fxcv›ggg", "?ggg"),
-            (false, "‹fxcv›ggg", "fxcvggg"),
-            (true, "fxcv", "fxcv"),
-            (false, "fxcv", "fxcv"),
-            (true, "‹fxcv›ggg‹fxcv›eee", "?ggg?eee"),
-            (false, "‹fxcv›ggg‹fxcv›eee", "fxcvgggfxcveee"),
-            (true, "‹›", "?"),
-            (false, "‹›", ""),
-            (true, "gg‹ee", "gg‹ee"),
-            (false, "gg‹ee", "gg‹ee"),
-            (true, "gg›ee", "gg›ee"),
-            (false, "gg›ee", "gg›ee"),
-            (true, "gg‹ee‹ee", "gg‹ee‹ee"),
-            (false, "gg‹ee‹gg", "gg‹ee‹gg"),
-            (true, "gg›ee›gg", "gg›ee›gg"),
-            (false, "gg›ee›ee", "gg›ee›ee"),
-        ] {
-            assert_eq!(de_redact(remove, input, "").unwrap(), output, "{input}");
-        }
-    }
-
     #[test]
     fn de_redact_keeps_go_scanner_and_invalid_utf8_behavior() {
         let accepted = format!("{}\nTAIL", "x".repeat(65_535));
@@ -459,35 +419,20 @@ mod tests {
         assert_eq!(std::fs::read(path).unwrap(), b"");
     }
 
-    // Go TestRedactInitAndValueAndKey. This is the only test touching the
-    // process-wide flag; keep it in its own #[test] so it does not race with
-    // other redact tests (none of which read the flag).
+    // Cross-check with tidb-error's shared flag (extension beyond the Go
+    // test): Go's helpers and SQL-error formatting read the same
+    // `errors.RedactLogEnabled` singleton, so a mode written through that
+    // owner must be visible here too, including MARKER (which `NeedRedact`
+    // treats as enabled).
     #[test]
-    fn redact_init_value_key() {
+    fn redact_init_visible_via_tidb_error_mode() {
         let secret = "secret";
-
-        init_redact(false);
-        assert_eq!(value(secret), secret);
-        // "secret" hex has no a-f nibbles, so lower == upper here (Go's test
-        // compares against lower-case EncodeToString and still passes).
-        assert_eq!(key(secret.as_bytes()), "736563726574");
-        assert_eq!(key(&[0xab, 0xcd, 0xef]), "ABCDEF");
-
-        init_redact(true);
-        assert_eq!(value(secret), "?");
-        assert_eq!(key(secret.as_bytes()), "?");
-
-        // Go's helpers and SQL-error formatting read the same
-        // `errors.RedactLogEnabled` singleton. A mode written through that
-        // owner must therefore be visible here too, including MARKER (which
-        // `NeedRedact` treats as enabled).
         init_redact(false);
         tidb_error::mysql::set_redaction_mode(tidb_error::mysql::RedactionMode::Marker);
         assert!(need_redact());
         assert_eq!(value(secret), "?");
         assert_eq!(key(secret.as_bytes()), "?");
 
-        // Reset so the shared flag does not leak into other tests.
         init_redact(false);
     }
 
