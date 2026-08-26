@@ -99,6 +99,29 @@ fn test_sql_mode() {
     );
 }
 
+// Go code: pkg/parser/mysql/error_test.go::TestSQLError
+// NewErrf and NewErr must always produce a rendered, non-empty message,
+// both for known codes and unknown codes with custom messages.
+#[test]
+fn test_sql_error() {
+    use tidb_error::mysql::{errcode::ErrNoDB, FormatArg, SqlError};
+
+    let e = SqlError::new_f(ErrNoDB, "no db error", &[], &[]);
+    assert!(!e.to_string().is_empty());
+
+    let e = SqlError::new_f(0, "customized error", &[], &[]);
+    assert!(!e.to_string().is_empty());
+
+    let e = SqlError::new(ErrNoDB, &[]);
+    assert!(!e.to_string().is_empty());
+
+    let e = SqlError::new(
+        0,
+        &[FormatArg::new("customized error", "\"customized error\"", "string"), FormatArg::nil()],
+    );
+    assert!(!e.to_string().is_empty());
+}
+
 mod types_const_tests {
     use super::*;
 
