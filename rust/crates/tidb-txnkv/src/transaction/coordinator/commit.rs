@@ -32,8 +32,8 @@ use crate::region::RegionRecoveryLoader;
 use crate::rpc::UnaryCallContext;
 
 use super::super::command_client::{
-    PublishedCommand, TransactionCommandClient, TransactionCommitRequest,
-    TransactionPrewriteRequest,
+    OwnedTransactionCommitRequest, PublishedCommand, TransactionCommandClient,
+    TransactionCommitRequest, TransactionPrewriteRequest,
 };
 use super::super::mutation::{validate_and_sort, MutationSetError, OptimisticMutation};
 use super::super::state::{
