@@ -2718,6 +2718,102 @@ impl RemoteIndexHandleCursor {
         }
     }
 
+    /// Returns one Go `SelectResult.readFromChunk`-shaped handle batch.
+    ///
+    /// A typed TiKV response chunk is normally much larger than the
+    /// caller's first `RequiredRows` window. Go reuses that whole chunk when
+    /// the output is empty and more than 80% of the requested rows remain;
+    /// truncating it to the requested window creates extra IndexLookUp table
+    /// tasks and changes cancellation cost without changing rows. When a
+    /// small chunk was already appended, Go leaves a following large chunk
+    /// pending for the next `Next` call; keep that boundary here as well.
+    pub fn next_handle_batch(
+        &mut self,
+        required_rows: usize,
+    ) -> Result<Option<Vec<TableHandle>>, KvTableError> {
+        if required_rows == 0 {
+            return Ok(Some(Vec::new()));
+        }
+        if self.handle_is_unsigned.is_none() || !self.inner.supports_chunks() {
+            let mut handles = Vec::with_capacity(required_rows);
+            while handles.len() < required_rows {
+                let Some(handle) = self.next_handle()? else {
+                    break;
+                };
+                handles.push(handle);
+            }
+            return Ok((!handles.is_empty()).then_some(handles));
+        }
+
+        let mut handles = Vec::with_capacity(required_rows);
+        let reuse_threshold = required_rows.saturating_mul(4) / 5;
+        loop {
+            let loaded_new_chunk = self.pending_chunk.is_none();
+            if loaded_new_chunk {
+                let Some(chunk) = self
+                    .inner
+                    .next_chunk()
+                    .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
+                else {
+                    self.note_rows();
+                    break;
+                };
+                self.note_rows();
+                self.pending_chunk = Some(chunk);
+                self.pending_chunk_row = 0;
+            }
+
+            let remaining = self.pending_chunk.as_ref().map_or(0, |chunk| {
+                chunk.num_rows().saturating_sub(self.pending_chunk_row)
+            });
+            if remaining == 0 {
+                self.pending_chunk = None;
+                self.pending_chunk_row = 0;
+                continue;
+            }
+            // `readFromChunk` returns the already appended output when a new
+            // large response arrives. Leave that response pending for the
+            // next task, exactly as Go's decoder does.
+            if loaded_new_chunk && !handles.is_empty() && remaining > reuse_threshold {
+                break;
+            }
+            let take = if handles.is_empty() && remaining > reuse_threshold {
+                remaining
+            } else {
+                remaining.min(required_rows.saturating_sub(handles.len()))
+            };
+            let start = self.pending_chunk_row;
+            let end = start + take;
+            let chunk = self
+                .pending_chunk
+                .as_ref()
+                .expect("a non-empty pending chunk was just checked");
+            for row_index in start..end {
+                let row = chunk.get_row(row_index);
+                if chunk.num_cols() == 0 {
+                    return Err(KvTableError::Decode(
+                        "index response omitted its integer handle column".to_owned(),
+                    ));
+                }
+                let handle = if self.handle_is_unsigned == Some(true) {
+                    row.get_uint64(0) as i64
+                } else {
+                    row.get_int64(0)
+                };
+                handles.push(TableHandle::Int(handle));
+            }
+            self.pending_chunk_row = end;
+            if self.pending_chunk_row == chunk.num_rows() {
+                self.pending_chunk = None;
+                self.pending_chunk_row = 0;
+            }
+            if handles.len() >= required_rows {
+                break;
+            }
+        }
+        Ok((!handles.is_empty()).then_some(handles))
+    }
+
     /// Returns the next row handle in the remote index order.
     pub fn next_handle(&mut self) -> Result<Option<TableHandle>, KvTableError> {
         if self.handle_is_unsigned.is_some() && self.inner.supports_chunks() {
@@ -4510,6 +4606,37 @@ mod remote_cursor_tests {
             Some(TableHandle::Int(8))
         );
         assert_eq!(cursor.next_handle().unwrap(), None);
+    }
+
+    #[test]
+    fn integer_handle_cursor_reuses_large_chunk_for_required_rows() {
+        let field_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
+        let mut batch = Chunk::new_with_capacity(&field_types, 2);
+        batch.append_int64(0, 7);
+        batch.append_int64(0, 8);
+        let mut cursor = RemoteIndexHandleCursor {
+            inner: Box::new(ChunkStream {
+                chunks: std::collections::VecDeque::from([batch]),
+                returned: 0,
+            }),
+            handle_indices: vec![0],
+            projected_indices: None,
+            common_handle: false,
+            zone: tidb_datatype::SessionTimeZone::utc(),
+            use_new_collation: false,
+            noted_rows: 0,
+            handle_is_unsigned: Some(false),
+            pending_chunk: None,
+            pending_chunk_row: 0,
+        };
+
+        // Go's readFromChunk keeps a whole typed response chunk when it is
+        // larger than the first RequiredRows request (the 80% reuse rule).
+        assert_eq!(
+            cursor.next_handle_batch(1).unwrap(),
+            Some(vec![TableHandle::Int(7), TableHandle::Int(8)])
+        );
+        assert!(cursor.next_handle_batch(1).unwrap().is_none());
     }
 
     #[test]

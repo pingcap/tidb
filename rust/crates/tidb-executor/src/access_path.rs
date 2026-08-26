@@ -1587,35 +1587,58 @@ impl IndexRangeSourceExec {
                 );
             }
         }
-        while self.batch.len() < want {
-            let entry = if pushdown {
-                // The arrival-order offset skip after the sort replaces the
-                // index-order skip `next_window_handle` does for the plain
-                // flavour.
-                self.next_handle()?
-            } else {
-                self.next_window_handle()?
-            };
-            let Some((handle, partition)) = entry else {
-                break;
-            };
-            pulled = true;
-            if self.batch.is_empty() {
-                self.batch_partition = partition;
-            } else if partition != self.batch_partition {
-                // The first handle of the NEXT partition. It belongs to the
-                // next task -- Go never lets one task span two partitions --
-                // and the storage cursor cannot be peeked without consuming,
-                // so it is held over.
-                self.pending_handle = Some((handle, partition));
-                break;
+        // Go's `SelectResult.readFromChunk` hands a large typed response
+        // chunk to one `extractTaskHandles` call even when RequiredRows is
+        // smaller. Keep that boundary for table-side residual lookups: the
+        // first 100-row demand commonly arrives as one 1,024-row TiKV chunk,
+        // and splitting it into six synthetic windows adds avoidable RPC and
+        // cancellation work. Pushed-limit/index-side reads retain the
+        // per-window cap below because Go truncates those handles while
+        // charging `PushedLimit`.
+        let chunked_table_filter =
+            self.remote_index.is_some() && self.filter.is_some() && !self.index_filter && !pushdown;
+        if chunked_table_filter {
+            if let Some(remote) = self.remote_index.as_mut() {
+                if let Some(handles) = remote.next_handle_batch(want).map_err(|error| {
+                    ExecError::unsupported(format!("index row failed to decode: {error:?}"))
+                })? {
+                    pulled = true;
+                    let extracted = handles.len() as u64;
+                    self.batch.extend(handles);
+                    self.limit_scanned_keys += extracted;
+                }
             }
-            self.batch.push(handle);
-            // Extracted into a batch: Go's `w.scannedKeys++`. The stashed
-            // boundary handle above is deliberately NOT counted until the
-            // fill that actually takes it -- Go never reads ahead across
-            // per-partition results.
-            self.limit_scanned_keys += 1;
+        } else {
+            while self.batch.len() < want {
+                let entry = if pushdown {
+                    // The arrival-order offset skip after the sort replaces the
+                    // index-order skip `next_window_handle` does for the plain
+                    // flavour.
+                    self.next_handle()?
+                } else {
+                    self.next_window_handle()?
+                };
+                let Some((handle, partition)) = entry else {
+                    break;
+                };
+                pulled = true;
+                if self.batch.is_empty() {
+                    self.batch_partition = partition;
+                } else if partition != self.batch_partition {
+                    // The first handle of the NEXT partition. It belongs to
+                    // the next task -- Go never lets one task span two
+                    // partitions -- and the storage cursor cannot be peeked
+                    // without consuming, so it is held over.
+                    self.pending_handle = Some((handle, partition));
+                    break;
+                }
+                self.batch.push(handle);
+                // Extracted into a batch: Go's `w.scannedKeys++`. The stashed
+                // boundary handle above is deliberately NOT counted until
+                // the fill that actually takes it -- Go never reads ahead
+                // across per-partition results.
+                self.limit_scanned_keys += 1;
+            }
         }
         self.batch_size = (self.batch_size * 2).min(MAX_HANDLE_BATCH);
         if self.can_reorder_handles {

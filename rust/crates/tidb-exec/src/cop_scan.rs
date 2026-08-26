@@ -137,9 +137,11 @@ const MYSQL_TYPE_TINY: i32 = 1;
 /// source has above the seam survives the thread hop below it.
 // Keep the response-channel boundary above TiKV's small type chunks so a
 // reader can amortize cross-thread wakeups while the consumer drains a full
-// scan. The table-scan seam still transfers a source chunk directly when it
-// reaches its own executor cap.
+// scan. Index scans use Go's MaxChunkSize below: IndexLookUp's
+// `readFromChunk`/`extractTaskHandles` relies on those response boundaries to
+// grow table tasks without splitting a typed chunk.
 const BATCH_ROWS: usize = 32768;
+const INDEX_BATCH_ROWS: usize = 1024;
 const MAX_BATCHES_AHEAD: usize = 64;
 /// Full scans have no early-stop consumer. A deeper bounded queue lets TiKV
 /// response decoding overlap local join/aggregate work; scans with LIMIT keep
@@ -738,6 +740,7 @@ where
             allow_unordered: request.allow_unordered_response,
             desc: request.desc,
             field_types: field_types.clone(),
+            is_index_scan: request.index.is_some(),
             time_zone: request.statement.time_zone.clone(),
             warnings: request.statement.warnings.clone(),
         };
@@ -894,6 +897,9 @@ struct RemoteScanPlan {
     /// separately carries the direction for rows inside each region.
     desc: bool,
     field_types: Vec<FieldType>,
+    /// IndexLookUp's Go decoder receives the normal MaxChunkSize (1024)
+    /// boundary; full table scans retain the larger streaming batches above.
+    is_index_scan: bool,
     time_zone: tidb_datatype::SessionTimeZone,
     /// The statement's warning sink, carried onto the scan thread. It is an
     /// `Arc` handler, so a warning appended here lands in the buffer
@@ -978,9 +984,14 @@ where
         )
         .map_err(|error| error.to_string())?;
     let mut iter = result.into_select_iter(Vec::new());
+    let batch_rows = if plan.is_index_scan {
+        INDEX_BATCH_ROWS
+    } else {
+        BATCH_ROWS
+    };
     loop {
         let batch = iter
-            .next_chunk_with_required_rows(BATCH_ROWS)
+            .next_chunk_with_required_rows(batch_rows)
             .map_err(|error| error.to_string())?;
         let Some(batch) = batch else {
             break;
