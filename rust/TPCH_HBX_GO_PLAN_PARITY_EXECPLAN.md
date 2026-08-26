@@ -135,6 +135,17 @@ The source of truth for a behavioral fix is the complete owning Go package and i
   flex `14.748/16.335 ms`, swap `20.127/32.303 ms`, and batch
   `14.729/17.554 ms` (Rust/Go ratios `1.148x/1.148x/1.108x/1.605x/1.192x`),
   so the one-concurrency performance gate remains open.
+- [x] (2026-08-26) Continued the same Go-reference fix as `75be9c2223`:
+  the index-side residual lookup branch now charges each raw handle against
+  the extracted-key counter used by Go's `extractTaskHandles`, rather than
+  the number of rows already emitted. The 24-test `access_path` suite passes,
+  and the rebuilt Rust release again matches all four normalized HBX plans,
+  result hashes, row counts, and 100-row batch sums on the 1G fixture. Receipt:
+  `/private/tmp/hbx-1g-20260825/compare-75be9c2223-20260826.json`; the fresh
+  20-pair medians are Go/Rust q1 `9.610/10.569 ms`, q2 `7.951/9.906 ms`,
+  flex `8.572/10.208 ms`, swap `13.663/21.999 ms`, and batch
+  `6.080/7.284 ms` (Rust/Go ratios `1.100x/1.246x/1.191x/1.610x/1.198x`),
+  so the explicit one-concurrency performance gate remains open.
 - [x] (2026-08-18) Aligned q2's executable clustered-prefix lookup with Go's `pkg/distsql` record-range contract: DDL common-handle tables do not materialize a PRIMARY secondary index, so runtime range encoding now keys off `common_handle_offsets`; the new no-PRIMARY regression and the full q2 catalog fixture pass.
 - [x] (2026-08-18) Made q9 executable after plan parity by projecting a rebuilt composite index-lookup subtree back to the original pruned child schema by qualified column path. The live q9 result has 175 rows and matches Go's hash.
 - [x] (2026-08-18) Classified the TPC-H mismatches by owning Go package and added fail-before/pass-after regressions for each behavior cluster through q22. The current release source contains no query-specific plan substitution.
@@ -535,6 +546,13 @@ uses the same index/table task boundary as `pkg/executor/distsql.go` and all
 24 focused access-path tests pass. The fresh release receipt remains fully
 correct but slower than Go in all five measured shapes; this is a behavior
 fix, not a performance acceptance pass.
+
+The `75be9c2223` continuation applies that same `scannedKeys` contract to the
+index-side residual branch in `fill_handle_batch`, so no lookup path derives
+the pushed LIMIT from emitted rows. The 1G HBX receipt remains plan/result
+equal, while the fresh 20-pair medians are Rust/Go q1 `1.100x`, q2 `1.246x`,
+flex `1.191x`, swap `1.610x`, and batch INSERT `1.198x`; the strict
+one-concurrency performance gate therefore remains open.
 
 ## Context and Orientation
 
