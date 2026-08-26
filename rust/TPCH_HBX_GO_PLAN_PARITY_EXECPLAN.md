@@ -963,3 +963,16 @@ and batch `1.230x`; the single-concurrency no-regression gate remains open.
 This is still WIP: `make lint`/Ready cannot run because this environment has
 no `go` executable. The continuation was committed as `cca7e29b11` with the
 required `Go code:` references and pushed to `origin/hparser-integration`.
+
+Revision note, 2026-08-26 (final post-rebase runtime receipt): rebuilt the
+release binary from pushed tip `fb33e327259` (which includes upstream's
+prepared point-get update), restarted Rust on `127.0.0.1:14019`, and reran the
+same 1G comparison. All four normalized plans and result hashes remain equal;
+the 20-pair batch checks remain 100 rows with sum
+`5050.000000000000000000`. Final receipts are
+`/private/tmp/hbx-1g-20260825/compare-final-fb33-20260826.json` and
+`/private/tmp/hbx-1g-20260825/bench-final-fb33-20260826.json`. Medians are
+Rust/Go q1 `1.087x`, q2 `1.227x`, flex `1.167x`, swap `1.685x`, and batch
+`1.171x`; correctness is green but the single-concurrency performance gate
+is still open. The TiUP playground and both endpoints remain running for the
+next iteration.
