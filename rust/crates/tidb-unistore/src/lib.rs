@@ -116,6 +116,8 @@ pub mod mvcc_store;
 pub mod region_loader;
 #[cfg(test)]
 mod testutil;
+#[cfg(test)]
+mod tests_tikv_util_go_parity;
 pub mod tso;
 
 pub use arena::{Arena, ArenaAddr, NULL_ARENA_ADDR, REUSE_SAFE_DURATION};
