@@ -3010,7 +3010,7 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 func (b *PlanBuilder) extractAggFuncsInExprs(exprs []ast.ExprNode) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
 	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
 	for _, expr := range exprs {
-		expr.Accept(extractor)
+		ast.Walk(expr, extractor)
 	}
 	aggList := extractor.AggFuncs
 	totalAggMapper := make(map[*ast.AggregateFuncExpr]int, len(aggList))
@@ -3024,8 +3024,7 @@ func (b *PlanBuilder) extractAggFuncsInExprs(exprs []ast.ExprNode) ([]*ast.Aggre
 func (b *PlanBuilder) extractAggFuncsInSelectFields(fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
 	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
 	for _, f := range fields {
-		n, _ := f.Expr.Accept(extractor)
-		f.Expr = n.(ast.ExprNode)
+		ast.Walk(f.Expr, extractor)
 	}
 	aggList := extractor.AggFuncs
 	totalAggMapper := make(map[*ast.AggregateFuncExpr]int, len(aggList))
@@ -3039,8 +3038,7 @@ func (b *PlanBuilder) extractAggFuncsInSelectFields(fields []*ast.SelectField) (
 func (b *PlanBuilder) extractAggFuncsInByItems(byItems []*ast.ByItem) []*ast.AggregateFuncExpr {
 	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
 	for _, f := range byItems {
-		n, _ := f.Expr.Accept(extractor)
-		f.Expr = n.(ast.ExprNode)
+		ast.Walk(f.Expr, extractor)
 	}
 	return extractor.AggFuncs
 }
@@ -3306,7 +3304,7 @@ func (r *correlatedAggregateResolver) collectFromWhere(p base.LogicalPlan, where
 		return nil
 	}
 	extractor := &AggregateFuncExtractor{skipAggMap: r.b.correlatedAggMapper}
-	_, _ = where.Accept(extractor)
+	ast.Walk(where, extractor)
 	r.b.curClause = whereClause
 	outerAggFuncs, err := r.b.extractCorrelatedAggFuncs(r.ctx, p, extractor.AggFuncs)
 	if err != nil {
@@ -3443,7 +3441,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			}
 			if index != -1 {
 				ret := g.fields[index].Expr
-				ret.Accept(extractor)
+				ast.Walk(ret, extractor)
 				if len(extractor.AggFuncs) != 0 {
 					err = plannererrors.ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to group function")
 				} else if ast.HasWindowFlag(ret) {
@@ -3471,7 +3469,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 		ret := g.fields[pos-1].Expr
-		ret.Accept(extractor)
+		ast.Walk(ret, extractor)
 		if len(extractor.AggFuncs) != 0 || ast.HasWindowFlag(ret) {
 			fieldName := g.fields[pos-1].AsName.String()
 			if fieldName == "" {
@@ -7251,8 +7249,7 @@ func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *a
 func extractWindowFuncs(fields []*ast.SelectField) []*ast.WindowFuncExpr {
 	extractor := &WindowFuncExtractor{}
 	for _, f := range fields {
-		n, _ := f.Expr.Accept(extractor)
-		f.Expr = n.(ast.ExprNode)
+		ast.Walk(f.Expr, extractor)
 	}
 	return extractor.windowFuncs
 }

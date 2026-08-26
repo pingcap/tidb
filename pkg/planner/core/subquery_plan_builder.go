@@ -30,31 +30,31 @@ type subqueryExprExtractor struct {
 	exprs []ast.ExprNode
 }
 
-// Enter implements Visitor interface.
-func (e *subqueryExprExtractor) Enter(n ast.Node) (ast.Node, bool) {
+// Enter implements InPlaceVisitor interface.
+func (e *subqueryExprExtractor) Enter(n ast.Node) bool {
 	switch subq := n.(type) {
 	case *ast.SubqueryExpr:
 		e.exprs = append(e.exprs, subq)
-		return n, true
+		return true
 	case *ast.ExistsSubqueryExpr:
 		e.exprs = append(e.exprs, subq)
-		return n, true
+		return true
 	case *ast.CompareSubqueryExpr:
 		e.exprs = append(e.exprs, subq)
-		return n, true
+		return true
 	case *ast.PatternInExpr:
 		if subq.Sel == nil {
-			return n, false
+			return false
 		}
 		e.exprs = append(e.exprs, subq)
-		return n, true
+		return true
 	}
-	return n, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (*subqueryExprExtractor) Leave(n ast.Node) (ast.Node, bool) {
-	return n, true
+// Leave implements InPlaceVisitor interface.
+func (*subqueryExprExtractor) Leave(ast.Node) bool {
+	return true
 }
 
 func findColumnNameByUniqueID(p base.LogicalPlan, uniqueID int64) *ast.ColumnName {
@@ -107,7 +107,7 @@ func (b *PlanBuilder) appendAuxiliaryFieldsForSubqueries(ctx context.Context, p 
 			continue
 		}
 		extractor := &subqueryExprExtractor{}
-		node.Accept(extractor)
+		ast.Walk(node, extractor)
 		for _, expr := range extractor.exprs {
 			// Correlated aggregates are handled separately; here we only need the outer columns
 			// so subqueries inside deferred window expressions can still resolve against this query block.

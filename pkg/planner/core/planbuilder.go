@@ -4386,7 +4386,7 @@ type colNameInOnDupExtractor struct {
 	colNameMap map[types.FieldName]*ast.ColumnNameExpr
 }
 
-func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
+func (c *colNameInOnDupExtractor) Enter(node ast.Node) bool {
 	switch x := node.(type) {
 	case *ast.ColumnNameExpr:
 		fieldName := types.FieldName{
@@ -4395,17 +4395,17 @@ func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
 			ColName: x.Name.Name,
 		}
 		c.colNameMap[fieldName] = x
-		return node, true
+		return true
 	// We don't extract the column names from the sub select.
 	case *ast.SelectStmt, *ast.SetOprStmt:
-		return node, true
+		return true
 	default:
-		return node, false
+		return false
 	}
 }
 
-func (*colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
-	return node, true
+func (*colNameInOnDupExtractor) Leave(ast.Node) bool {
+	return true
 }
 
 func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *physicalop.Insert) error {
@@ -4435,7 +4435,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 			if !hasWildCard {
 				colExtractor := &colNameInOnDupExtractor{colNameMap: make(map[types.FieldName]*ast.ColumnNameExpr)}
 				for _, assign := range insert.OnDuplicate {
-					assign.Expr.Accept(colExtractor)
+					ast.Walk(assign.Expr, colExtractor)
 				}
 				actualColLen = len(sel.Fields.Fields)
 				for _, colName := range colExtractor.colNameMap {
@@ -4636,7 +4636,7 @@ var (
 		mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp}
 )
 
-// importIntoCollAssignmentChecker implements ast.Visitor interface.
+// importIntoCollAssignmentChecker implements ast.InPlaceVisitor interface.
 // It is used to check the column assignment expressions in IMPORT INTO statement.
 // Currently, the import into column assignment only supports some simple expressions.
 type importIntoCollAssignmentChecker struct {
@@ -4654,7 +4654,7 @@ func checkImportIntoColAssignments(assignments []*ast.Assignment) (map[string]in
 	checker := newImportIntoCollAssignmentChecker()
 	for i, assign := range assignments {
 		checker.idx = i
-		assign.Expr.Accept(checker)
+		ast.Walk(assign.Expr, checker)
 		if checker.err != nil {
 			break
 		}
@@ -4662,65 +4662,65 @@ func checkImportIntoColAssignments(assignments []*ast.Assignment) (map[string]in
 	return checker.neededVars, checker.err
 }
 
-// Enter implements ast.Visitor interface.
-func (*importIntoCollAssignmentChecker) Enter(node ast.Node) (ast.Node, bool) {
-	return node, false
+// Enter implements ast.InPlaceVisitor interface.
+func (*importIntoCollAssignmentChecker) Enter(ast.Node) bool {
+	return false
 }
 
-// Leave implements ast.Visitor interface.
-func (v *importIntoCollAssignmentChecker) Leave(node ast.Node) (ast.Node, bool) {
+// Leave implements ast.InPlaceVisitor interface.
+func (v *importIntoCollAssignmentChecker) Leave(node ast.Node) bool {
 	switch n := node.(type) {
 	case *ast.ColumnNameExpr:
 		v.err = errors.Errorf("COLUMN reference is not supported in IMPORT INTO column assignment, index %d", v.idx)
-		return n, false
+		return false
 	case *ast.SubqueryExpr:
 		v.err = errors.Errorf("subquery is not supported in IMPORT INTO column assignment, index %d", v.idx)
-		return n, false
+		return false
 	case *ast.VariableExpr:
 		if n.IsSystem {
 			v.err = errors.Errorf("system variable is not supported in IMPORT INTO column assignment, index %d", v.idx)
-			return n, false
+			return false
 		}
 		if n.Value != nil {
 			v.err = errors.Errorf("setting a variable in IMPORT INTO column assignment is not supported, index %d", v.idx)
-			return n, false
+			return false
 		}
 		v.neededVars[strings.ToLower(n.Name)] = v.idx
 	case *ast.DefaultExpr:
 		v.err = errors.Errorf("FUNCTION default is not supported in IMPORT INTO column assignment, index %d", v.idx)
-		return n, false
+		return false
 	case *ast.WindowFuncExpr:
 		v.err = errors.Errorf("window FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", n.Name, v.idx)
-		return n, false
+		return false
 	case *ast.AggregateFuncExpr:
 		v.err = errors.Errorf("aggregate FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", n.F, v.idx)
-		return n, false
+		return false
 	case *ast.FuncCallExpr:
 		fnName := n.FnName.L
 		switch fnName {
 		case ast.Grouping:
 			v.err = errors.Errorf("FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", n.FnName.O, v.idx)
-			return n, false
+			return false
 		case ast.GetVar:
 			if len(n.Args) > 0 {
 				val, ok := n.Args[0].(*driver.ValueExpr)
 				if !ok || val.Kind() != types.KindString {
 					v.err = errors.Errorf("the argument of getvar should be a constant string in IMPORT INTO column assignment, index %d", v.idx)
-					return n, false
+					return false
 				}
 				v.neededVars[strings.ToLower(val.GetString())] = v.idx
 			}
 		default:
 			if !expression.IsFunctionSupported(fnName) {
 				v.err = errors.Errorf("FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", n.FnName.O, v.idx)
-				return n, false
+				return false
 			}
 		}
 	case *ast.ValuesExpr:
 		v.err = errors.Errorf("VALUES is not supported in IMPORT INTO column assignment, index %d", v.idx)
-		return n, false
+		return false
 	}
-	return node, v.err == nil
+	return v.err == nil
 }
 
 func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStmt) (base.Plan, error) {
@@ -5278,22 +5278,22 @@ type userVariableChecker struct {
 	hasUserVariables bool
 }
 
-func (e *userVariableChecker) Enter(in ast.Node) (ast.Node, bool) {
+func (e *userVariableChecker) Enter(in ast.Node) bool {
 	if _, ok := in.(*ast.VariableExpr); ok {
 		e.hasUserVariables = true
-		return in, true
+		return true
 	}
-	return in, false
+	return false
 }
 
-func (*userVariableChecker) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
+func (*userVariableChecker) Leave(ast.Node) bool {
+	return true
 }
 
 // Check for UserVariables
 func checkForUserVariables(in ast.Node) error {
 	v := &userVariableChecker{hasUserVariables: false}
-	_, ok := in.Accept(v)
+	ok := ast.Walk(in, v)
 	if !ok || v.hasUserVariables {
 		return dbterror.ErrViewSelectVariable
 	}

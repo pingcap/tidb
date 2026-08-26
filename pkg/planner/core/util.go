@@ -57,17 +57,17 @@ type AggregateFuncExtractor struct {
 	AggFuncs []*ast.AggregateFuncExpr
 }
 
-// Enter implements Visitor interface.
-func (*AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
+// Enter implements InPlaceVisitor interface.
+func (*AggregateFuncExtractor) Enter(n ast.Node) bool {
 	switch n.(type) {
 	case *ast.SelectStmt, *ast.SetOprStmt:
-		return n, true
+		return true
 	}
-	return n, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
+// Leave implements InPlaceVisitor interface.
+func (a *AggregateFuncExtractor) Leave(n ast.Node) bool {
 	//nolint: revive
 	switch v := n.(type) {
 	case *ast.AggregateFuncExpr:
@@ -75,33 +75,33 @@ func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 			a.AggFuncs = append(a.AggFuncs, v)
 		}
 	}
-	return n, true
+	return true
 }
 
 // WindowFuncExtractor visits Expr tree.
-// It converts ColumnNameExpr to WindowFuncExpr and collects WindowFuncExpr.
+// It collects WindowFuncExpr from AST Node.
 type WindowFuncExtractor struct {
 	// WindowFuncs is the collected WindowFuncExprs.
 	windowFuncs []*ast.WindowFuncExpr
 }
 
-// Enter implements Visitor interface.
-func (*WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
+// Enter implements InPlaceVisitor interface.
+func (*WindowFuncExtractor) Enter(n ast.Node) bool {
 	switch n.(type) {
 	case *ast.SelectStmt, *ast.SetOprStmt:
-		return n, true
+		return true
 	}
-	return n, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
+// Leave implements InPlaceVisitor interface.
+func (a *WindowFuncExtractor) Leave(n ast.Node) bool {
 	//nolint: revive
 	switch v := n.(type) {
 	case *ast.WindowFuncExpr:
 		a.windowFuncs = append(a.windowFuncs, v)
 	}
-	return n, true
+	return true
 }
 
 // extractStringFromStringSet helps extract string info from set.StringSet.
