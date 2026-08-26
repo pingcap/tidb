@@ -63,9 +63,9 @@ The source of truth for a behavioral fix is the complete owning Go package and i
 - [x] (2026-08-26) Reused the persistent `tidb-executor` worker pool for index-lookup fetch windows instead of creating a native thread per window; focused `access_path` tests pass and a bounded scan-pool experiment was rejected after it regressed all five HBX shapes.
 - [x] (2026-08-26) Matched Go's unstable ranger sort contract for `IN` points and replaced the handle-order restoration's quadratic position search with one ordered handle-position map. The final 1G receipt remains plan/result equal: q1/q2/flex/swap hashes are `0c488295...`, `45f8be11...`, `45f8be11...`, and `bf2ce599...`; batch sum is `5050.000000000000000000`.
 - [x] (2026-08-26) Rebuilt the final `f6d1ae917e` release binary and reran five alternating one-client pairs. Current median Rust/Go ratios are q1 `1.128x`, q2 `1.190x`, flex `1.256x`, swap `1.743x`, and 100-row batch INSERT `1.262x`; the performance acceptance gate remains open. Raw evidence: `/private/tmp/hbx-1g-20260825/bench-final-f6d1ae-20260826.json` and `/private/tmp/hbx-1g-20260825/compare-final-f6d1ae-20260826.json`.
-- [x] (2026-08-26) Added package-coherent Rust executor optimizations: `tidb-exec::CopScanSource` caches an exact column/predicate Selection shape across repeated region windows; `tidb-executor` decodes Row V2 metadata once per cursor, preserves dense handle-only output offsets, skips redundant sorted-handle restoration, and keeps the Go-shaped lookup worker pool. Correctness receipts remain unchanged. Commits: `a66a25408a` and `15bebc96e8`.
-- [x] (2026-08-26) Rebuilt exact code head `15bebc96e8` and reran the four normalized plans/results plus 20 alternating one-client pairs and 20 100-row batch INSERT pairs. Plans and hashes match: q1 `0c488295...`, q2/flex `45f8be11...`, swap `bf2ce599...`; batch rows/sum are `100 / 5050.000000000000000000` on both endpoints. Receipt: `/private/tmp/hbx-1g-20260825/final-exact-20pairs-20260826.json`.
-- [x] (2026-08-26) The strict performance gate is still open on the exact code head: Rust/Go median ratios are q1 `1.066x`, q2 `1.163x`, flex `1.200x`, swap `1.466x`, and batch INSERT `1.262x`. The result is a measured improvement over the prior five-pair receipt, but not a no-regression pass; no query-specific workaround was retained.
+- [x] (2026-08-26) Added package-coherent Rust executor optimizations: `tidb-exec::CopScanSource` caches an exact column/predicate Selection shape across repeated region windows; `tidb-executor` decodes Row V2 metadata once per cursor, preserves dense handle-only output offsets, skips redundant sorted-handle restoration, and keeps the Go-shaped lookup worker pool. Correctness receipts remain unchanged. Rebased/pushed commits: `4aebc2d73b` and `d7b75bc252`.
+- [x] (2026-08-26) Rebuilt pushed code head `107e62c578f689cc46746381de40d27f410db0ec` (including the two remote `hparser-integration` fixes) and reran the four normalized plans/results plus 20 alternating one-client pairs and 20 100-row batch INSERT pairs. Plans and hashes match: q1 `0c488295...`, q2/flex `45f8be11...`, swap `bf2ce599...`; batch rows/sum are `100 / 5050.000000000000000000` on both endpoints. Receipt: `/private/tmp/hbx-1g-20260825/bench-post-rebase-20pairs-20260826.json`.
+- [x] (2026-08-26) The strict performance gate is still open on the pushed code head: Rust/Go median ratios are q1 `1.105x`, q2 `1.214x`, flex `1.242x`, swap `1.709x`, and batch INSERT `1.253x`. Correctness and plan parity pass, but one-concurrency Rust is slower for every measured shape; no query-specific workaround was retained.
 - [x] (2026-08-18) Aligned q2's executable clustered-prefix lookup with Go's `pkg/distsql` record-range contract: DDL common-handle tables do not materialize a PRIMARY secondary index, so runtime range encoding now keys off `common_handle_offsets`; the new no-PRIMARY regression and the full q2 catalog fixture pass.
 - [x] (2026-08-18) Made q9 executable after plan parity by projecting a rebuilt composite index-lookup subtree back to the original pruned child schema by qualified column path. The live q9 result has 175 rows and matches Go's hash.
 - [x] (2026-08-18) Classified the TPC-H mismatches by owning Go package and added fail-before/pass-after regressions for each behavior cluster through q22. The current release source contains no query-specific plan substitution.
@@ -306,7 +306,8 @@ The source of truth for a behavioral fix is the complete owning Go package and i
   Rationale: the user explicitly requires one-concurrency performance not to
   fall behind baseline. The plan/result gate is green, but median Rust is
   slower for q1/q2/flex/swap and the 100-row batch INSERT (the latest ratios
-  are 1.066x/1.163x/1.200x/1.466x/1.262x after the package-level fixes).
+  are 1.105x/1.214x/1.242x/1.709x/1.253x on the pushed code head after the
+  package-level fixes).
   Hiding the unfavorable cases behind a total would violate the acceptance
   contract.
   Date/Author: 2026-08-26, Codex.
@@ -415,13 +416,15 @@ against the TiUP nightly playground at 127.0.0.1:14000/14019 and the same
 identical SHA-256 result digests, and their normalized `EXPLAIN FORMAT='brief'`
 rows are byte-equal after only database-name normalization. The flex identity
 Projection and swap Limit estimate differences were fixed through general
-`tidb-executor` contracts with focused regressions. The exact code head
-`15bebc96e8` plus the rebuilt server gives 20 alternating pairs with median
-Go/Rust times q1 `10.529/11.225 ms`, q2 `9.277/10.787 ms`, flex
-`9.122/10.943 ms`, swap `15.647/22.941 ms`; the 100-row batch INSERT is
-`5.923/7.476 ms`. Correctness and plan parity pass; the explicit performance
-criterion does not. Receipt: `/private/tmp/hbx-1g-20260825/final-exact-20pairs-20260826.json`;
-the source payload hash is `941e5ae53815a9b69c30bc63522e5b0fbb38d983ac9859c1b4c8983b5e3ae30b`.
+`tidb-executor` contracts with focused regressions. The pushed code head
+`107e62c578f689cc46746381de40d27f410db0ec` plus the rebuilt server gives 20
+alternating pairs with median Go/Rust times q1 `9.854/10.887 ms`, q2
+`8.676/10.530 ms`, flex `8.505/10.566 ms`, swap `12.733/21.762 ms`; the
+100-row batch INSERT is `6.030/7.557 ms`. Correctness and plan parity pass;
+the explicit performance criterion does not. Receipt:
+`/private/tmp/hbx-1g-20260825/bench-post-rebase-20pairs-20260826.json`; the
+source payload hash is
+`941e5ae53815a9b69c30bc63522e5b0fbb38d983ac9859c1b4c8983b5e3ae30b`.
 
 TPC-H SF1 setup and all 22 query executions are complete. Go and Rust return identical row counts and SHA-256 result digests for q1-q22, including q9, q12, q19, and q21. The physical plan topology, predicates, join conditions, operator names, access paths, and task placement align; fresh sequential receipts currently reach 19/22 then 20/22 because q7/q8/q10 can differ only in small statistics estimates while cache residency changes, and an earlier converged receipt is 22/22. The old executor-level common-handle split is removed because it failed q21 semantics, and ordered MergeJoin scans now preserve Go's remote `keep_order` contract. The latest post-fix one-client result cycle is Rust 66.673379898 seconds versus Go 22.6943865 seconds, a substantial improvement over the old Rust 249.109404375-second cycle but still a failed Go performance gate. The implementation fixes are scoped to the Rust `tidb-executor` planner/trace package and its focused regressions, with the corresponding Go contracts in `pkg/planner/core` and `pkg/planner/cardinality` used as source of truth. Ready validation and package-coherent push remain pending; the performance gate must not be reported as passed.
 
@@ -623,7 +626,8 @@ blocked because this environment has no `go` executable; no performance pass
 or final goal completion is claimed.
 
 Revision note, 2026-08-26 (final runtime refresh): rebuilt release Rust at
-commit `e1bd552c60`, restarted the task-owned endpoint on `127.0.0.1:14019`,
-and reran the official five-pair benchmark against Go `14000`. All four
-plans/results remain matched; the medians recorded above are from this final
-receipt.
+the pushed branch tip `107e62c578f689cc46746381de40d27f410db0ec`, restarted
+the endpoint on `127.0.0.1:14019`, and reran the four plans/results plus 20
+alternating query and 100-row batch pairs against Go `14000`. All plans,
+result hashes, row counts, and batch sums remain matched; the medians recorded
+above are from this post-rebase receipt. The performance gate remains open.
