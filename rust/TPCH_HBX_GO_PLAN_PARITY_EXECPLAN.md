@@ -1199,8 +1199,11 @@ Ready-profile `make lint` remains unavailable because this checkout has no
 `go` executable.
 
 Revision note, 2026-08-27 (latest client-rust response writer iteration):
-fetched `origin/hparser-integration` at `296483eff9`; local `cffc5cb898`
-contains that upstream tip and the intervening Go-reference receipts. The
+fetched `origin/hparser-integration` at `296483eff9`, then rebased again as
+the remote advanced through `bc69d6e9c5` and the latest
+`0ec51d8ba85` nested-AND predicate fix; local `8c3f6b9cfd` contains that
+upstream tip, the `f946d16eb8` client-rust sync, and the intervening
+Go-reference receipts. The
 Rust result path now keeps the complete Go text-row type matrix at the typed
 chunk boundary: `pkg/server/internal/column/column.go:171-203` and
 `pkg/format/textrow/textrow.go:55-94` are mirrored by a borrowed
