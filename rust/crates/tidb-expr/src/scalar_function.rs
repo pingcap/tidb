@@ -35,7 +35,7 @@ use crate::expression::{ConstLevel, Expression, SCALAR_FUNCTION_FLAG};
 use tidb_ast::{BinaryOp, CiString, UnaryOp};
 use tidb_chunk::row::Row;
 use tidb_codec::encode_compact_bytes;
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Datum, EvalType, FieldType};
 
 const MAX_ADVISORY_LOCK_TIMEOUT_SECS: i64 = 1_073_741_824;
 
@@ -494,8 +494,76 @@ impl ScalarFunction {
     /// type -- see [`Self::coerce_to_ret_type`] for why that is the whole
     /// point of Go's `Eval` and not an afterthought.
     pub fn eval(&self, ctx: &impl Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+        if let Some(value) = self.eval_fast_integer_binary(ctx, row)? {
+            return self.coerce_to_ret_type(value);
+        }
         let value = self.eval_by_signature(ctx, row)?;
         self.coerce_to_ret_type(value)
+    }
+
+    /// The typed fast path for an integer arithmetic/comparison operator.
+    ///
+    /// Go's `getFunction` compiles a scalar function whose arguments are all
+    /// `types.ETInt` to one integer signature BEFORE any row arrives; the
+    /// per-row cost is one typed call. The generic ladder this port otherwise
+    /// runs ([`Self::eval_by_signature`] plus `ops::eval_binary_full`)
+    /// re-derives that compile-time knowledge on every row of every hot loop.
+    /// When the operator name and both arguments' static field types already
+    /// pin the ETInt family, route straight to the same typed tail the ladder
+    /// ends at (`ops::integer_binary_typed`) -- identical semantics (NULL
+    /// propagation, unsigned reinterpretation from argument field types,
+    /// binary-literal operand casting, overflow errors,
+    /// NO_UNSIGNED_SUBTRACTION), none of the re-derivation.
+    ///
+    /// Returns `Ok(None)` for every shape the gate does not cover, including
+    /// runtime values no ETInt signature can produce; those keep the ordinary
+    /// ladder as their behavior contract.
+    fn eval_fast_integer_binary(
+        &self,
+        ctx: &impl Columns,
+        row: Row<'_>,
+    ) -> Result<Option<Datum>, EvalError> {
+        if self.args.len() != 2 {
+            return Ok(None);
+        }
+        let op = match binary_op_for_name(self.func_name.lowercase()) {
+            Some(
+                op @ (BinaryOp::Plus
+                | BinaryOp::Minus
+                | BinaryOp::Mul
+                | BinaryOp::Eq
+                | BinaryOp::Ne
+                | BinaryOp::Lt
+                | BinaryOp::Le
+                | BinaryOp::Gt
+                | BinaryOp::Ge),
+            ) => op,
+            _ => return Ok(None),
+        };
+        // Go `mysql.HasUnsignedFlag(args[i].GetType(ctx).GetFlag())`: the
+        // unsigned fact lives on the ARGUMENT'S FIELD TYPE, and the ETInt
+        // families are exactly where both argument types are Int.
+        let signed = [0, 1].map(|index| {
+            self.args[index]
+                .static_type()
+                .filter(|field_type| field_type.eval_type() == EvalType::Int)
+                .map(|field_type| !field_type.is_unsigned())
+        });
+        let [Some(lhs_signed), Some(rhs_signed)] = signed else {
+            return Ok(None);
+        };
+        let lhs = self.args[0].eval(ctx, row)?;
+        let rhs = self.args[1].eval(ctx, row)?;
+        crate::ops::integer_binary_typed(op, lhs, rhs, [lhs_signed, rhs_signed], ctx).map_err(
+            |error| match error {
+                // Go's arithmetic signatures raise
+                // `types.ErrOverflow.GenWithStackByArgs("BIGINT[ UNSIGNED]",
+                // "(arg OP arg)")` -- MySQL 1690 carries the OPERANDS, same as
+                // the generic entry below.
+                EvalError::IntOverflow => arithmetic_overflow_error(self, op),
+                other => other,
+            },
+        )
     }
 
     /// The per-signature evaluation itself.
@@ -2378,5 +2446,204 @@ mod tests {
             function.eval(&crate::NoColumns, chunk.get_row(0)).unwrap(),
             Datum::Int(1)
         );
+    }
+    /// The stock-level shape: `ge(ol_o_id, minus(d_next_o_id, 20))` over a
+    /// joined chunk row -- the exact residual predicate class jTPCC's
+    /// stock-level statement evaluates once per hash-join candidate, mixing
+    /// PROBE-side and BUILD-side columns. Pins that the typed fast path
+    /// answers the composed tree.
+    #[test]
+    fn fast_integer_path_answers_the_join_residual_shape() {
+        use crate::context::NoColumns;
+        use tidb_chunk::chunk::Chunk;
+
+        let probe_col = || {
+            let mut col = Column::new(1, ft());
+            col.index = 0;
+            Expression::Column(col)
+        };
+        let build_col = || {
+            let mut col = Column::new(2, ft());
+            col.index = 1;
+            Expression::Column(col)
+        };
+        let konst = |d: Datum| Expression::Constant(Constant::new(d, ft()));
+
+        // Joined row: ol_o_id = 100, d_next_o_id = 105 -> minus(...) = 85 ->
+        // 100 >= 85 is true. One below the join boundary: ol_o_id = 84 ->
+        // 84 >= 85 is false.
+        let inner =
+            ScalarFunction::new(CiString::new("minus"), ft(), vec![build_col(), konst(Datum::Int(20))]);
+        let ge = ScalarFunction::new(
+            CiString::new("ge"),
+            ft(),
+            vec![probe_col(), Expression::ScalarFunction(inner)],
+        );
+
+        let mut above = Chunk::new_with_capacity(&[ft(), ft()], 1);
+        above.append_int64(0, 100);
+        above.append_int64(1, 105);
+        assert_eq!(ge.eval(&NoColumns, above.get_row(0)).unwrap(), Datum::Int(1));
+
+        let mut below = Chunk::new_with_capacity(&[ft(), ft()], 1);
+        below.append_int64(0, 84);
+        below.append_int64(1, 105);
+        assert_eq!(
+            ge.eval(&NoColumns, below.get_row(0)).unwrap(),
+            Datum::Int(0)
+        );
+    }
+
+    /// NULL propagation on the fast path matches the ladder's answer for
+    /// every covered operator family: arithmetic stays NULL, comparisons
+    /// stay NULL (never false).
+    #[test]
+    fn fast_integer_path_propagates_null_like_the_ladder() {
+        use crate::context::NoColumns;
+        use tidb_chunk::chunk::Chunk;
+
+        let chk = Chunk::new_with_capacity(std::slice::from_ref(&ft()), 1);
+        let mut chk = chk;
+        chk.append_int64(0, 7);
+        let row = chk.get_row(0);
+        let konst = |d: Datum, t: &FieldType| Expression::Constant(Constant::new(d, t.clone()));
+
+        for name in ["plus", "minus", "mul", "eq", "ne", "lt", "le", "gt", "ge"] {
+            let function = ScalarFunction::new(
+                CiString::new(name),
+                ft(),
+                vec![konst(Datum::Null, &ft()), konst(Datum::Int(3), &ft())],
+            );
+            assert_eq!(
+                function.eval(&NoColumns, row).unwrap(),
+                Datum::Null,
+                "{name} NULL lhs"
+            );
+            let function = ScalarFunction::new(
+                CiString::new(name),
+                ft(),
+                vec![konst(Datum::Int(3), &ft()), konst(Datum::Null, &ft())],
+            );
+            assert_eq!(
+                function.eval(&NoColumns, row).unwrap(),
+                Datum::Null,
+                "{name} NULL rhs"
+            );
+        }
+    }
+
+    /// A mixed signed/unsigned comparison orders by VALUE, not by bit
+    /// pattern: `-1 < 1u` because Go's compare treats the signed side as
+    /// negative against an unsigned partner. The fast path reinterprets each
+    /// operand through its own argument field type before comparing.
+    #[test]
+    fn fast_integer_path_orders_mixed_signedness_by_value() {
+        use crate::context::NoColumns;
+        use tidb_chunk::chunk::Chunk;
+
+        let signed_type = ft();
+        let unsigned_type = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
+        assert!(unsigned_type.is_unsigned());
+
+        let mut signed_chk = Chunk::new_with_capacity(std::slice::from_ref(&signed_type), 1);
+        signed_chk.append_int64(0, -1);
+        let signed_row = signed_chk.get_row(0);
+
+        let unsigned_chk = Chunk::new_with_capacity(std::slice::from_ref(&unsigned_type), 1);
+        let mut unsigned_chk = unsigned_chk;
+        unsigned_chk.append_uint64(0, 1);
+        let unsigned_row = unsigned_chk.get_row(0);
+
+        let signed_col = {
+            let mut col = Column::new(1, signed_type.clone());
+            col.index = 0;
+            move || Expression::Column(col.clone())
+        };
+        let unsigned_col = {
+            let mut col = Column::new(2, unsigned_type.clone());
+            col.index = 0;
+            move || Expression::Column(col.clone())
+        };
+
+        // The joined rows are assembled left-then-right in one scratch chunk:
+        // column 0 reads the SIGNED value, column 1 the UNSIGNED one. Build
+        // that exact two-column row and compare across it.
+        let mut joined = Chunk::new_with_capacity(&[signed_type, unsigned_type], 1);
+        joined.append_int64(0, -1);
+        joined.append_uint64(1, 1);
+        let joined_row = joined.get_row(0);
+        let _ = (signed_row, unsigned_row);
+
+        for (name, op_name, want) in [
+            ("lt", "lt", 1u8),
+            ("le", "le", 1),
+            ("gt", "gt", 0),
+            ("ge", "ge", 0),
+            ("eq", "eq", 0),
+            ("ne", "ne", 1),
+        ] {
+            let function = ScalarFunction::new(
+                CiString::new(op_name),
+                ft(),
+                vec![signed_col(), unsigned_col()],
+            );
+            assert_eq!(
+                function.eval(&NoColumns, joined_row).unwrap(),
+                Datum::Int(want as i64),
+                "{name}(-1, 1u)"
+            );
+        }
+    }
+
+    /// Unsigned subtraction past zero is `ErrOverflow` with Go's BIGINT
+    /// UNSIGNED wording (1690), not a wrapped value: `1u - 2` overflows.
+    #[test]
+    fn fast_integer_path_reports_unsigned_subtraction_overflow() {
+        use crate::context::NoColumns;
+        use tidb_chunk::chunk::Chunk;
+
+        let unsigned_type = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
+
+        let mut chk = Chunk::new_with_capacity(std::slice::from_ref(&unsigned_type), 1);
+        chk.append_uint64(0, 1);
+        let row = chk.get_row(0);
+        let mut col = Column::new(1, unsigned_type.clone());
+        col.index = 0;
+        let konst = |d: Datum, t: &FieldType| Expression::Constant(Constant::new(d, t.clone()));
+
+        let function = ScalarFunction::new(
+            CiString::new("minus"),
+            unsigned_type.clone(),
+            vec![Expression::Column(col), konst(Datum::Int(2), &unsigned_type)],
+        );
+        let error = function
+            .eval(&NoColumns, row)
+            .expect_err("1u - 2 must overflow");
+        assert!(
+            matches!(error, EvalError::IntOverflow),
+            "unexpected error: {error:?}"
+        );
+    }
+
+    /// A non-ETInt argument keeps the generic ladder: string comparison
+    /// semantics are untouched by the gate.
+    #[test]
+    fn fast_integer_gate_leaves_string_operands_on_the_ladder() {
+        use crate::context::NoColumns;
+        use tidb_chunk::chunk::Chunk;
+
+        let string_type = text_ft();
+        let chk = Chunk::new_with_capacity(std::slice::from_ref(&string_type), 1);
+        let mut chk = chk;
+        chk.append_string(0, b"a".as_slice());
+        let row = chk.get_row(0);
+        let konst = |d: Datum| Expression::Constant(Constant::new(d, string_type.clone()));
+
+        let function = ScalarFunction::new(
+            CiString::new("ge"),
+            ft(),
+            vec![konst(Datum::new_string("a")), konst(Datum::new_string("b"))],
+        );
+        assert_eq!(function.eval(&NoColumns, row).unwrap(), Datum::Int(0));
     }
 }

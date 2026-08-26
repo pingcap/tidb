@@ -786,6 +786,69 @@ pub(crate) fn eval_binary_full(
     integer_binary(op, a, b, ctx)
 }
 
+/// The typed fast path [`crate::scalar_function::ScalarFunction::eval`] takes
+/// for a binary operator whose arguments Go's class dispatch fixed at
+/// `types.ETInt`.
+///
+/// Go compiles each scalar function to one signature struct at PLAN time
+/// (`getFunction`), so its per-row work is a virtual call into typed integer
+/// code. The generic ladder this port runs instead --
+/// [`eval_binary_full`] -- re-derives that static knowledge on every row:
+/// string promotion tables, Float-over-Decimal hierarchy, vector dispatch,
+/// JSON intercepts, before landing on [`integer_binary`] at the tail. For a
+/// call site where the operator name and both arguments' static field types
+/// already say ETInt, every one of those branches is statically dead, so this
+/// entry runs the exact tail directly: binary-literal operand casting, NULL
+/// propagation, unsigned reinterpretation off the ARGUMENT field types (Go's
+/// `HasUnsignedFlag(args[i].GetType(ctx).GetFlag())`), then
+/// [`integer_binary`] with its overflow rules and NO_UNSIGNED_SUBTRACTION.
+///
+/// `Ok(None)` means the runtime values are outside what an ETInt signature
+/// can produce (a sentinel or an exotic integral kind); the caller falls back
+/// to the ordinary ladder, which answers those shapes today.
+pub(crate) fn integer_binary_typed(
+    op: BinaryOp,
+    l: Datum,
+    r: Datum,
+    signed_operands: [bool; 2],
+    ctx: &dyn crate::context::Columns,
+) -> Result<Option<Datum>, EvalError> {
+    debug_assert!(matches!(
+        op,
+        BinaryOp::Plus
+            | BinaryOp::Minus
+            | BinaryOp::Mul
+            | BinaryOp::Eq
+            | BinaryOp::Ne
+            | BinaryOp::Lt
+            | BinaryOp::Le
+            | BinaryOp::Gt
+            | BinaryOp::Ge
+    ));
+    // Go's operator dispatch reads `args[i].GetType(ctx)` and the
+    // `args[i].(*Constant)` type switch to pick a signature, and a `Datum`
+    // records neither -- see `ops::operand`. A CONSTANT binary literal
+    // (`0x1234`, `b'11'`) carries its signedness in its own `FieldType`, so
+    // the same conversion the generic entry applies runs here first.
+    let (l, r) =
+        crate::binary_literal::cast_signed_literal_operands(op, l, r, signed_operands);
+    if l == Datum::Null || r == Datum::Null {
+        return Ok(Some(Datum::Null));
+    }
+    let reinterpret = |value: Datum, operand_signed: bool| match value {
+        Datum::Int(bits) if !operand_signed => Datum::UInt(bits as u64),
+        other => other,
+    };
+    let l = reinterpret(l, signed_operands[0]);
+    let r = reinterpret(r, signed_operands[1]);
+    let (a, b) = match (integer_of(&l), integer_of(&r)) {
+        (Ok(Some(a)), Ok(Some(b))) => (a, b),
+        (Err(error), _) | (_, Err(error)) => return Err(error),
+        _ => return Ok(None),
+    };
+    integer_binary(op, a, b, ctx).map(Some)
+}
+
 /// Evaluates a context-free binary operation with TiDB's default
 /// `div_precision_increment` of 4.
 pub(crate) fn eval_binary(op: BinaryOp, l: Datum, r: Datum) -> Result<Datum, EvalError> {
