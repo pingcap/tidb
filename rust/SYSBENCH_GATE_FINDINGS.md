@@ -265,3 +265,17 @@ point_select .954 | read_write .812 | write_only .922 | update_index .795 |
 update_non_index .713 | insert .807 | read_only .767 | random_points .779 |
 random_ranges .515. Day-over-day identical within noise => no hidden code
 regression; residual gap is concentrated in range-scan workloads.
+
+## UPDATE #7 (2026-08-25): random_ranges deep-dive + aligned HEAD re-measure
+Perf profile of select_random_ranges on conn threads (2254 samples):
+EXPR EVAL ~15%, ALLOC/MEMCPY ~10%, COMPARE/COLLATION ~8%, plans identical to
+Go (cop[tikv] IndexRangeScan+StreamAgg). RPC counts CORRECTED again via TiKV
+status counters: rust ~2.5/query vs go ~1.9 -- NOT the gap; residual cost is
+per-request CPU/scheduling, flat profile.
+Collaborator commits (472e3e46a DNF range retention, d7b75bc25 index lookup
+decode overhead, 4aebc2d73 cop selection caching, 3c7f838a2 bounded lookup
+windows) improved random_ranges from ~630 to ~785 TPS standalone.
+Latest paired spot-checks: rust 518-550 vs go 1035-1080 (machine noisy;
+loop median-of-N governs). Ratio improved 0.40 -> ~0.50, still the largest
+gap. Next-session plan: cache derived_collation() parse per ScalarFunction,
+cut Datum clones on eval path, investigate count(k) StreamAgg round trips.
