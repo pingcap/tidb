@@ -38,6 +38,7 @@ type Node interface {
 	// later elements depends on former elements. Finally, return visitor.Leave.
 	Accept(v Visitor) (node Node, proceed bool)
 	// AcceptInPlace accepts InPlaceVisitor to visit itself without replacing nodes.
+	// proceed returns false to stop visiting.
 	// It is separate from Accept to avoid the runtime replacement checks and child
 	// writebacks that would otherwise make in-place traversal significantly slower.
 	// Implementations must use the same traversal order and control flow as Accept,
