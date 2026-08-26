@@ -1238,3 +1238,40 @@ complete hbx-web3 catalog were not repeated in this iteration. The final
 rebase-after-upstream focused test log is recorded at
 `/private/tmp/hbx-1g-20260825/test-final-2edf465d51.log`. Both source and
 receipt commits include a literal `Go code:` line in their commit messages.
+
+Revision note, 2026-08-27 (covering-index Selection/Limit and latest upstream):
+the latest upstream fetch advanced `origin/hparser-integration` through
+`8feed881a5c` (index-join cost), `141b8c87c37` (UNION ALL costing), and
+`9d005bf695c` (Go parser unit-test port). The production deltas were rebased
+cleanly, and the covering-reader fix was pushed as `93aab30eee7` with both
+`Go code:` and `go 代码:` references in the commit message. Following Go
+`pkg/planner/core/task.go` (`attach2Task4PhysicalLimit`,
+`sinkIntoIndexLookUp`, and `attach2Task4PhysicalTopN`), a covering
+`PhysicalIndexReader` now accepts an index-covered Selection before its pushed
+Limit/TopN. This prevents raw index entries rejected by `tag_whale > 0` from
+consuming the SQL LIMIT before filtering. The same iteration restores the Go
+intermediate table-order Projection for non-covering `PhysicalIndexLookUp`, and
+keeps typed chunk validation/text formatting aligned with
+`pkg/distsql/select_result.go`, `pkg/server/internal/column/column.go`, and
+`pkg/format/textrow/textrow.go`.
+
+Focused regressions pass after the rebase: the covering-index filter test
+(1/1), covering Limit/TopN plan-trace tests (2/2), and the DistSQL recordset
+source suite (7/7). The latest live binary was built from the same production
+source at pre-rebase `02f016cfc3a` (the intervening `9d005bf695c` commit only
+adds parser tests), restarted on `127.0.0.1:14019`, and compared against the
+Go nightly on the deterministic 1 GiB `hbx_web3_1g` fixture. Default and
+`projection=keys` q1/q2/flex/swap plans and result hashes all match; every
+query returns 100 rows. The keys receipt is
+`/private/tmp/hbx-1g-20260825/compare-keys-results-go-covering-filter-commit02f-20260827.json`.
+The 20-pair batch receipt is
+`/private/tmp/hbx-1g-20260825/bench-go-covering-filter-commit02f-20260827.json`;
+all batch pairs return 100 rows with sum `5050.000000000000000000`.
+Medians (Go/Rust) are q1 `9.551/9.861 ms` (`1.032x`), q2
+`7.906/9.178 ms` (`1.161x`), flex `8.105/9.620 ms` (`1.187x`), swap
+`13.617/16.678 ms` (`1.225x`), and batch `5.855/6.211 ms` (`1.061x`).
+Correctness and Go-behavior gates are green; the strict one-concurrency
+no-regression gate remains open because Rust is still slower in each median.
+This remains WIP: this checkout has no `go` executable, so Ready-profile
+`make lint` cannot run, and the full 22-query/complete hbx-web3 catalog was
+not repeated.
