@@ -65,10 +65,11 @@ use tidb_expr::truthy_of;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 
 /// Lookups over at most this many handles are fetched inline by the calling
-/// worker instead of a dedicated `idx-lookup` thread: a point select's one
-/// handle costs less to fetch than the thread spawn did (jemalloc tcache init
-/// plus first stack touch), and the answer is byte-identical.
-const INDEX_LOOKUP_INLINE_HANDLES: usize = 4;
+/// worker instead of crossing the persistent `idx-lookup` pool channel. A
+/// capped IndexLookUp normally asks for one client chunk (100 handles here),
+/// so keeping that bounded request inline avoids a worker handoff while still
+/// leaving uncapped scans on the Go-shaped pool. The answer is byte-identical.
+const INDEX_LOOKUP_INLINE_HANDLES: usize = 128;
 use crate::kv_table::{
     IndexRange, IndexRangeCursor, KvTable, RemoteRowCursor, RowCursor, TableHandle,
 };
