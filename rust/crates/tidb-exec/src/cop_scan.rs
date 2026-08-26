@@ -60,10 +60,11 @@
 //! [`PushdownScannerError::Unsupported`], which the storage turns into "use
 //! `iter`", so a refused shape is slower and never wrong.
 
+use std::collections::VecDeque;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
 
 use tidb_chunk::chunk::Chunk;
@@ -144,6 +145,86 @@ const MAX_BATCHES_AHEAD: usize = 64;
 /// response decoding overlap local join/aggregate work; scans with LIMIT keep
 /// the caller's smaller read-ahead so cancellation remains tight.
 const FULL_SCAN_MIN_BATCHES_AHEAD: usize = 16;
+
+/// A process-local pool for bounded table-lookup scans.
+///
+/// Go's `IndexLookUpExecutor` submits each table task to its persistent
+/// worker pool (`pkg/executor/distsql.go:743-745, 1432-1434`).  Rust still
+/// needs a second thread for a remote scan because the transport is
+/// intentionally thread-local, but creating a native thread for every
+/// lookup window needlessly pays pthread setup on the same hot path.  Keep
+/// this pool separate from the executor pool: an executor worker waits for
+/// the scan result, so running the scan on that same pool could convoy the
+/// producer and consumer.  Full scans retain their existing unbounded
+/// dedicated-thread policy below.
+type ScanTask = Box<dyn FnOnce() + Send + 'static>;
+
+struct ScanPool {
+    queue: Mutex<VecDeque<ScanTask>>,
+    signal: Condvar,
+}
+
+fn scan_pool() -> &'static Arc<ScanPool> {
+    static POOL: OnceLock<Arc<ScanPool>> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let pool = Arc::new(ScanPool {
+            queue: Mutex::new(VecDeque::new()),
+            signal: Condvar::new(),
+        });
+        // Lookup windows are bounded and the caller limits their number to
+        // the Go table-worker width (five by default). Keep enough producers
+        // for several concurrent sessions without allowing a full scan to
+        // starve a lookup indefinitely.
+        let workers = std::thread::available_parallelism()
+            .map(|parallelism| parallelism.get().saturating_mul(2))
+            .unwrap_or(16)
+            .max(16);
+        for _ in 0..workers {
+            let shared = Arc::clone(&pool);
+            thread::Builder::new()
+                .name("cop-scan-pool".to_owned())
+                .spawn(move || scan_pool_worker(shared))
+                .expect("spawn persistent cop-scan pool worker");
+        }
+        pool
+    })
+}
+
+fn scan_pool_worker(pool: Arc<ScanPool>) {
+    loop {
+        let task = {
+            let mut queue = pool
+                .queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            loop {
+                if let Some(task) = queue.pop_front() {
+                    break task;
+                }
+                queue = pool
+                    .signal
+                    .wait(queue)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+            }
+        };
+        task();
+    }
+}
+
+fn enqueue_scan<F>(task: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    let pool = scan_pool();
+    {
+        let mut queue = pool
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        queue.push_back(Box::new(task));
+    }
+    pool.signal.notify_one();
+}
 
 /// One coprocessor scan capability for a node's sessions.
 ///
@@ -675,6 +756,14 @@ where
         // full scans, where response decoding must overlap executor work.
         if request.limit == Some(1) {
             serve_scan(&factory, plan, &rows, &node_rows);
+        } else if !request.range_hints.is_empty() {
+            // Handle-grouped requests are the Go table-worker shape: their
+            // ranges carry one `SetTableHandles` cardinality hint per group.
+            // Keep the transport on a persistent producer instead of
+            // creating one native thread for every lookup window.  The
+            // channel remains bounded, so cancellation and back-pressure are
+            // unchanged from the dedicated-thread path.
+            enqueue_scan(move || serve_scan(&factory, plan, &rows, &node_rows));
         } else {
             // A dedicated thread per scan is deliberate: each serve_scan
             // streams its WHOLE region for the query's lifetime (tens to
@@ -1343,4 +1432,20 @@ pub fn requests_extra_handle(request: &PushdownScanRequest) -> bool {
         .handle_index
         .and_then(|index| request.columns.get(index))
         .is_some_and(|column| column.id == EXTRA_HANDLE_COLUMN_ID)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc::sync_channel;
+
+    use super::enqueue_scan;
+
+    #[test]
+    fn bounded_lookup_scan_pool_runs_submitted_work() {
+        let (done, received) = sync_channel(1);
+        enqueue_scan(move || done.send(()).expect("lookup producer should run"));
+        received
+            .recv()
+            .expect("persistent lookup producer should complete");
+    }
 }
