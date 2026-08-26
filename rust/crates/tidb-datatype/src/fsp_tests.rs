@@ -56,6 +56,41 @@ fn test_parse_frac() {
     assert_eq!(parse_frac(b"999", 2), Ok((0, true)));
 }
 
+/// Exact source table from `pkg/types/time_test.go::TestParseFrac` (the
+/// `fsp_test.go` table above only pins a subset of these rows).
+#[test]
+fn test_parse_frac_time_test_table() {
+    // (input, fsp, expected value, overflow)
+    let rows = [
+        // Round when fsp < string length.
+        ("1234567", 0, 0, false),
+        ("1234567", 1, 100_000, false),
+        ("0000567", 5, 60, false),
+        ("1234567", 5, 123_460, false),
+        ("1234567", 6, 123_457, false),
+        // Fill 0 when fsp > string length.
+        ("123", 4, 123_000, false),
+        ("123", 5, 123_000, false),
+        ("123", 6, 123_000, false),
+        ("11", 6, 110_000, false),
+        ("01", 3, 10_000, false),
+        ("012", 4, 12_000, false),
+        ("0123", 5, 12_300, false),
+        // Overflow
+        ("9999999", 6, 0, true),
+        ("999999", 5, 0, true),
+        ("999", 2, 0, true),
+        ("999", 3, 999_000, false),
+    ];
+    for (input, fsp, expected, overflow) in rows {
+        assert_eq!(
+            parse_frac(input.as_bytes(), fsp),
+            Ok((expected, overflow)),
+            "{input}/{fsp}"
+        );
+    }
+}
+
 #[test]
 fn parse_frac_keeps_go_byte_slicing_and_empty_input_ordering() {
     assert_eq!(parse_frac(b"", i64::MIN), Ok((0, false)));
