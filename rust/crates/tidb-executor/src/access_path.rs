@@ -1547,15 +1547,17 @@ impl IndexRangeSourceExec {
                 );
             } else {
                 // An index-side Selection has already reduced the handle
-                // stream to qualifying rows, so the remaining output count
-                // is a sound budget. A TABLE-side residual is learned only
-                // after lookup; `lookup_batch_target` leaves its raw handle
-                // task at the normal growing size, matching Go's absence of
-                // an index-worker PushedLimit for that shape.
+                // stream to qualifying rows, but Go still charges every
+                // extracted key to `scannedKeys` before the table lookup. A
+                // missing table row must not reopen the pushed LIMIT. A
+                // TABLE-side residual is learned only after lookup;
+                // `lookup_batch_target` leaves its raw handle task at the
+                // normal growing size, matching Go's absence of an
+                // index-worker PushedLimit for that shape.
                 want = lookup_batch_target(
                     self.batch_size,
                     Some(limit),
-                    self.produced.get(),
+                    self.limit_scanned_keys,
                     0,
                     !self.index_filter,
                 );
