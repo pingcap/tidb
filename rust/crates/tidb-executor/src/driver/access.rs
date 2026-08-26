@@ -52,6 +52,33 @@ use crate::access_path::{IndexMergeKind, IndexMergeSourceExec};
 use crate::predicate_pushdown::ScanColumnComparison;
 use std::sync::Arc;
 
+/// Diagnosis-only tracing for the prepared point-get cache admission. Enabled
+/// by setting `TIDB_RS_TRACE` to a value containing `decline`; every call is a
+/// relaxed atomic load after the first, and the formal gates run with the
+/// variable unset so the cost is one branch per statement.
+pub(crate) fn trace_decline(reason: &str) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static ENABLED: AtomicBool = AtomicBool::new(false);
+    static CHECKED: AtomicBool = AtomicBool::new(false);
+    if !CHECKED.load(Ordering::Relaxed) {
+        ENABLED.store(
+            std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("decline")),
+            Ordering::Relaxed,
+        );
+        CHECKED.store(true, Ordering::Relaxed);
+    }
+    if ENABLED.load(Ordering::Relaxed) {
+        eprintln!("[pg-decline] {reason}");
+    }
+}
+
+/// The success twin of [`trace_decline`]: one line per accepted template.
+pub(crate) fn trace_accept(detail: &str) {
+    if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("decline")) {
+        eprintln!("[pg-accept] {detail}");
+    }
+}
+
 /// What the single-table access-path decision committed.
 #[derive(Default)]
 pub(crate) struct AccessPathCommit {
@@ -153,8 +180,50 @@ pub struct PreparedPointGetPlan {
     /// [`FastPointOutput::offsets`] the residual column decodes to), paired
     /// with the bound to compare against.
     residuals: Vec<(usize, PointResidualBound)>,
+    /// A WHERE conjunct that SCHEMA contradicts (`NOT NULL` column `IS NULL`)
+    /// makes every row unmatched before any key is read. The plan then binds
+    /// to an always-empty execution, exactly like a NULL pin, and no storage
+    /// read ever runs -- the cached shape of Go's `TableDual`.
+    contradiction: bool,
     output: FastPointOutput,
     row_decoder: crate::kv_table::PreparedPointGetRowDecoder,
+}
+
+/// Builds the always-empty plan for a schema-contradicted WHERE: nothing is
+/// pinned and nothing is residual, because no row can survive the predicate.
+fn contradiction_plan(
+    schema_version: u64,
+    current_database: &str,
+    database: &str,
+    table_name: &str,
+    table_id: i64,
+    common_handle_offsets: Vec<usize>,
+    handle_offset: Option<usize>,
+    table: &crate::KvTable,
+    output: FastPointOutput,
+) -> Option<PreparedPointGetPlan> {
+    Some(PreparedPointGetPlan {
+        schema_version,
+        current_database: current_database.to_owned(),
+        database: database.to_owned(),
+        table: table_name.to_owned(),
+        table_id,
+        parameter_orders: Vec::new(),
+        pin_types: Vec::new(),
+        target: PreparedPointTarget::RowHandle,
+        handle_literals: Vec::new(),
+        common_handle_offsets,
+        residuals: Vec::new(),
+        contradiction: true,
+        row_decoder: crate::kv_table::PreparedPointGetRowDecoder::new_with_handles(
+            table.visible_columns(),
+            handle_offset,
+            &[],
+            &output.offsets,
+        )
+        .ok()?,
+        output,
+    })
 }
 
 impl PreparedPointGetPlan {
@@ -188,6 +257,16 @@ impl PreparedPointGetPlan {
         values: &[Datum],
         zone: &tidb_datatype::SessionTimeZone,
     ) -> Option<PreparedPointGetExecution> {
+        if self.contradiction {
+            // `NOT NULL col IS NULL` matched no rows at PLAN time; parameters
+            // cannot change a schema fact.
+            return Some(PreparedPointGetExecution {
+                plan: Arc::clone(self),
+                handle: None,
+                range_values: None,
+                residuals: Vec::new(),
+            });
+        }
         let mut key_values = Vec::with_capacity(self.parameter_orders.len());
         for (index, handle_type) in self.pin_types.iter().enumerate() {
             let value = match (&self.parameter_orders[index], &self.handle_literals[index]) {
@@ -338,10 +417,10 @@ pub fn build_prepared_point_get_plan(
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<PreparedPointGetPlan> {
     let tidb_ast::Stmt::Query(query) = stmt else {
-        return None;
+        trace_decline("not_query"); return None;
     };
     let tidb_ast::QueryStmt::Select(select) = &**query else {
-        return None;
+        trace_decline("not_select"); return None;
     };
     if !crate::access_path::select_is_bare_point_read(select)
         || !select.hints.is_empty()
@@ -352,7 +431,7 @@ pub fn build_prepared_point_get_plan(
         || select.sql_no_cache
         || select.straight_join
     {
-        return None;
+        trace_decline("bare_or_flags"); return None;
     }
     let table_ref = single_table_ref(&select.from)?;
     if !table_ref.partitions.is_empty()
@@ -360,14 +439,17 @@ pub fn build_prepared_point_get_plan(
         || !prepared_primary_index_hint(table_ref)
         || table_ref.sample.is_some()
     {
-        return None;
+        trace_decline("no_single_table_ref"); return None;
     }
-    let (database, table_name) = split_table_path(&table_ref.name, current_database).ok()?;
-    let entry @ TableEntry::Kv(table) = catalog.get_in(database, table_name)? else {
+    let Ok((database, table_name)) = split_table_path(&table_ref.name, current_database) else {
+        trace_decline("split_table_path");
         return None;
     };
+    let entry @ TableEntry::Kv(table) = catalog.get_in(database, table_name)? else {
+        trace_decline("table_opts"); return None;
+    };
     if table.partition().is_some() {
-        return None;
+        trace_decline("split_table_path"); return None;
     }
     let (handle_offset, common_handle_offsets) = if let Some(offset) = table.pk_handle_offset() {
         (Some(offset), Vec::new())
@@ -376,7 +458,7 @@ pub fn build_prepared_point_get_plan(
         // A composite common handle encodes its prefix columns in order; the
         // walker below pins each of them exactly once, so any width works.
         if offsets.is_empty() {
-            return None;
+            trace_decline("entry_not_kv"); return None;
         }
         (None, offsets.to_vec())
     };
@@ -387,7 +469,13 @@ pub fn build_prepared_point_get_plan(
         table_ref.alias.is_none().then(|| database.to_owned()),
         columns.clone(),
     );
-    let output = fast_point_output(select, &scope)?;
+    let output = match fast_point_output(select, &scope) {
+        Some(output) => output,
+        None => {
+            trace_decline("output_none");
+            return None;
+        }
+    };
     // A generated output can evaluate expressions while its stored row is
     // decoded. Keep those plans on the full statement context; the cached
     // point path below needs only SELECT's temporal/default conversion state.
@@ -397,33 +485,71 @@ pub fn build_prepared_point_get_plan(
             .get(*offset)
             .is_none_or(|column| column.generated.is_some())
     }) {
-        return None;
+        trace_decline("partitioned"); return None;
     }
     // One walk flattens the WHERE conjunction into resolved equalities; the
     // handle pins exactly one per handle column and everything else filters
     // the decoded row.
-    let conjuncts = prepared_point_eq_conjuncts(select.where_clause.as_ref()?, &scope, zone)?;
+    let conjuncts = match prepared_point_eq_conjuncts(select.where_clause.as_ref()?, &scope, zone)
+    {
+        Some(conjuncts) => conjuncts,
+        None => {
+            trace_decline("conjuncts_none");
+            return None;
+        }
+    };
     let mut resolver = ScopeResolver { scope: &scope };
     let mut resolved = Vec::with_capacity(conjuncts.len());
     for conjunct in conjuncts {
         match conjunct {
             PreparedPointConjunct::Eq { path, order, literal } => {
-                let (offset, _, _) = resolver.resolve(&path)?;
+                let Some((offset, _, _)) = resolver.resolve(&path) else {
+                    trace_decline("resolve_eq");
+                    return None;
+                };
                 resolved.push((offset, PreparedPointPredicate::Eq(order, literal)));
             }
             PreparedPointConjunct::IsNull { path } => {
-                let (offset, _, _) = resolver.resolve(&path)?;
+                let Some((offset, _, _)) = resolver.resolve(&path) else {
+                    trace_decline("resolve_isnull");
+                    return None;
+                };
                 resolved.push((offset, PreparedPointPredicate::IsNull));
             }
         }
     }
     drop(resolver);
+    // A schema contradiction ends the search before any key is named: a NOT
+    // NULL column can never satisfy `IS NULL`, so the answer is always empty
+    // (Go constant-folds this into a `TableDual` and its plan cache keeps it).
+    if resolved.iter().any(|(offset, kind)| {
+        matches!(kind, PreparedPointPredicate::IsNull)
+            && columns[*offset]
+                .1
+                .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+    }) {
+        trace_accept(&format!(
+            "{}.{} target=Contradiction (NOT NULL IS NULL)",
+            database, table_name
+        ));
+        return contradiction_plan(
+            catalog.metadata_version(),
+            current_database,
+            database,
+            table_name,
+            table.table_id,
+            common_handle_offsets.clone(),
+            handle_offset,
+            table,
+            output,
+        );
+    }
     let handle_offsets: Vec<usize> = match handle_offset {
         Some(offset) => vec![offset],
         None => common_handle_offsets.to_vec(),
     };
     if handle_offsets.is_empty() {
-        return None;
+        trace_decline("output_none"); return None;
     }
     // Which key do the pins name? A FULL handle keeps today's single-row
     // read; anything less looks for a narrower key whose LEADING columns the
@@ -444,16 +570,22 @@ pub fn build_prepared_point_get_plan(
             .iter()
             .filter(|(pinned, kind)| *pinned == *offset && kind.eq_parts().is_some());
         let Some((_, predicate)) = hits.next() else {
-            return None;
+            trace_decline("generated_col"); return None;
         };
-        let (marker_order, literal) = predicate.eq_parts()?;
+        let (marker_order, literal) = match predicate.eq_parts() {
+            Some(parts) => parts,
+            None => {
+                trace_decline("pin_not_equality");
+                return None;
+            }
+        };
         if hits.next().is_some() {
-            return None;
+            trace_decline("conjuncts_none"); return None;
         }
         // The pin value is encoded into a KEY, so its domain has to order
         // like its bytes; otherwise the cache declines to the planner.
         if !point_byte_safe(&columns[*offset].1) {
-            return None;
+            trace_decline("resolve_eq"); return None;
         }
         parameter_orders.push(marker_order);
         handle_literals.push(literal);
@@ -467,7 +599,13 @@ pub fn build_prepared_point_get_plan(
         if pin_offsets.contains(offset) {
             continue;
         }
-        let position = output.offsets.iter().position(|o| o == offset)?;
+        let position = match output.offsets.iter().position(|o| o == offset) {
+            Some(position) => position,
+            None => {
+                trace_decline("residual_not_in_output");
+                return None;
+            }
+        };
         match kind {
             PreparedPointPredicate::IsNull => {
                 residuals.push((position, PointResidualBound::IsNull));
@@ -475,7 +613,7 @@ pub fn build_prepared_point_get_plan(
             PreparedPointPredicate::Eq(marker_order, literal) => {
                 let column_type = &output.columns[position].1;
                 if !point_byte_safe(column_type) {
-                    return None;
+                    trace_decline("residual_not_bytesafe"); return None;
                 }
                 let bound = match marker_order {
                     Some(order) => PointResidualBound::Param(*order),
@@ -486,7 +624,7 @@ pub fn build_prepared_point_get_plan(
                             // semantics; leave such statements to the ordinary
                             // planner rather than caching an always-empty
                             // answer.
-                            return None;
+                            trace_decline("handle_empty"); return None;
                         }
                         PointResidualBound::Literal(value.clone())
                     }
@@ -506,9 +644,18 @@ pub fn build_prepared_point_get_plan(
         }))
         .max();
     if max_order.is_some_and(|order| order >= parameter_count) {
-        return None;
+        trace_decline("pin_missing"); return None;
     }
 
+    trace_accept(&format!(
+        "{}.{} target={:?} pins={} residuals={} params={:?}",
+        database,
+        table_name,
+        target,
+        pin_offsets.len(),
+        residuals.len(),
+        parameter_orders
+    ));
     Some(PreparedPointGetPlan {
         schema_version: catalog.metadata_version(),
         current_database: current_database.to_owned(),
@@ -531,6 +678,7 @@ pub fn build_prepared_point_get_plan(
         .ok()?,
         common_handle_offsets,
         residuals,
+        contradiction: false,
         output,
     })
 }
