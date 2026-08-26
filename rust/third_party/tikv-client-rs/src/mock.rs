@@ -170,6 +170,11 @@ impl MockPdClient {
         client
     }
 
+    #[cfg(test)]
+    pub(crate) fn replace_regions(&self, regions: Vec<RegionWithLeader>) {
+        *self.regions.lock().unwrap() = Some(regions);
+    }
+
     pub fn region1() -> RegionWithLeader {
         let mut region = RegionWithLeader::default();
         region.region.id = 1;

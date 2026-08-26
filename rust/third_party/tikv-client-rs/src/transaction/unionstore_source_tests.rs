@@ -373,7 +373,7 @@ fn decimal_key(number: usize) -> Vec<u8> {
 }
 
 #[test]
-fn source_test_get_set() {
+fn source_go_internal_unionstore_memdb_test_TestGetSet() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         fill(buffer, 10_000);
         for number in 0..10_000 {
@@ -384,7 +384,7 @@ fn source_test_get_set() {
 }
 
 #[test]
-fn source_test_iterator() {
+fn source_go_internal_unionstore_memdb_test_TestIterator() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         fill(buffer, 10_000);
         let forward = collect_iterator(buffer.iter_values(None, None));
@@ -426,7 +426,7 @@ impl IteratorCount for Box<dyn KvIterator> {
 }
 
 #[test]
-fn source_test_discard() {
+fn source_go_internal_unionstore_memdb_test_TestDiscard() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let base = derive_and_fill(buffer, 0, 10_000, 0);
         let size = buffer.size_value();
@@ -452,7 +452,7 @@ fn source_test_discard() {
 }
 
 #[test]
-fn source_test_flush_overwrite() {
+fn source_go_internal_unionstore_memdb_test_TestFlushOverwrite() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let base = derive_and_fill(buffer, 0, 10_000, 0);
         buffer.release_handle(base);
@@ -478,7 +478,7 @@ fn source_test_flush_overwrite() {
 }
 
 #[test]
-fn source_test_complex_update() {
+fn source_go_internal_unionstore_memdb_test_TestComplexUpdate() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let base = derive_and_fill(buffer, 0, 6_000, 0);
         buffer.release_handle(base);
@@ -494,7 +494,7 @@ fn source_test_complex_update() {
 }
 
 #[test]
-fn source_test_nested_sandbox() {
+fn source_go_internal_unionstore_memdb_test_TestNestedSandbox() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let h0 = derive_and_fill(buffer, 0, 200, 0);
         let h1 = derive_and_fill(buffer, 0, 100, 1);
@@ -520,7 +520,7 @@ fn source_test_nested_sandbox() {
 }
 
 #[test]
-fn source_test_overwrite() {
+fn source_go_internal_unionstore_memdb_test_TestOverwrite() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         fill(buffer, 10_000);
         let size = buffer.size_value();
@@ -540,7 +540,7 @@ fn source_test_overwrite() {
 }
 
 #[test]
-fn source_test_reset() {
+fn source_go_internal_unionstore_memdb_test_TestReset() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         fill(buffer, 1_000);
         buffer.reset_value();
@@ -552,7 +552,7 @@ fn source_test_reset() {
 }
 
 #[test]
-fn source_test_inspect_stage() {
+fn source_go_internal_unionstore_memdb_test_TestInspectStage() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let h1 = derive_and_fill(buffer, 0, 1_000, 0);
         let h2 = derive_and_fill(buffer, 500, 1_000, 1);
@@ -600,7 +600,7 @@ fn source_test_inspect_stage() {
 }
 
 #[test]
-fn source_test_dirty() {
+fn source_go_internal_unionstore_memdb_test_TestDirty() {
     fn check<B: SourceBuffer + Default>() {
         let mut buffer = B::default();
         buffer.set_value(&[1], &[1]).unwrap();
@@ -637,7 +637,7 @@ fn source_test_dirty() {
 }
 
 #[test]
-fn source_test_flags() {
+fn source_go_internal_unionstore_memdb_test_TestFlags() {
     fn check<B: SourceBuffer + Default>(reverse: bool) {
         let mut buffer = B::default();
         let stage = buffer.staging_handle();
@@ -690,7 +690,7 @@ fn source_test_flags() {
 }
 
 #[test]
-fn source_test_kv_get_set() {
+fn source_go_internal_unionstore_memdb_test_TestKVGetSet() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         for number in [0usize, 2] {
             let key = decimal_key(number);
@@ -705,7 +705,7 @@ fn source_test_kv_get_set() {
 }
 
 #[test]
-fn source_test_new_iterator() {
+fn source_go_internal_unionstore_memdb_test_TestNewIterator() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         assert!(!buffer.iter_values(None, None).valid());
         for number in [0usize, 2] {
@@ -731,7 +731,7 @@ fn source_test_new_iterator() {
 }
 
 #[test]
-fn source_test_iter_next_until() {
+fn source_go_internal_unionstore_memdb_test_TestIterNextUntil() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         for number in [0usize, 2] {
             let key = decimal_key(number);
@@ -747,7 +747,7 @@ fn source_test_iter_next_until() {
 }
 
 #[test]
-fn source_test_basic_new_iterator() {
+fn source_go_internal_unionstore_memdb_test_TestBasicNewIterator() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         assert!(!buffer.iter_values(Some(b"2"), None).valid());
     }
@@ -755,7 +755,7 @@ fn source_test_basic_new_iterator() {
 }
 
 #[test]
-fn source_test_new_iterator_min() {
+fn source_go_internal_unionstore_memdb_test_TestNewIteratorMin() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let entries = [
             ("DATA_test_main_db_tbl_tbl_test_record__00000000000000000001", "lock-version"),
@@ -783,7 +783,7 @@ fn source_test_new_iterator_min() {
 }
 
 #[test]
-fn source_test_memdb_staging() {
+fn source_go_internal_unionstore_memdb_test_TestMemDBStaging() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         buffer.set_value(b"x", &[0; 2]).unwrap();
         let h1 = buffer.staging_handle();
@@ -800,7 +800,7 @@ fn source_test_memdb_staging() {
 }
 
 #[test]
-fn source_test_memdb_multi_level_staging() {
+fn source_go_internal_unionstore_memdb_test_TestMemDBMultiLevelStaging() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         for depth in 0..100usize {
             assert_eq!(buffer.staging_handle(), depth + 1);
@@ -821,7 +821,7 @@ fn source_test_memdb_multi_level_staging() {
 }
 
 #[test]
-fn source_test_invalid_staging_handle() {
+fn source_go_internal_unionstore_memdb_test_TestInvalidStagingHandle() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let h1 = buffer.staging_handle();
         let h2 = buffer.staging_handle();
@@ -847,7 +847,7 @@ fn source_test_invalid_staging_handle() {
 }
 
 #[test]
-fn source_test_memdb_checkpoint() {
+fn source_go_internal_unionstore_memdb_test_TestMemDBCheckpoint() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let cp1 = buffer.checkpoint_value();
         buffer.set_value(b"x", b"x").unwrap();
@@ -870,7 +870,7 @@ fn source_test_memdb_checkpoint() {
 }
 
 #[test]
-fn source_test_buffer_limit() {
+fn source_go_internal_unionstore_memdb_test_TestBufferLimit() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         buffer.set_limits(500, 1_000);
         assert!(buffer.set_value(b"x", &vec![0; 500]).is_err());
@@ -883,7 +883,7 @@ fn source_test_buffer_limit() {
 }
 
 #[test]
-fn source_test_unset_temporary_flag() {
+fn source_go_internal_unionstore_memdb_test_TestUnsetTemporaryFlag() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         buffer
             .set_value_with_flags(&[1], &[2], &[FlagsOp::SetNeedConstraintCheckInPrewrite])
@@ -898,7 +898,7 @@ fn source_test_unset_temporary_flag() {
 }
 
 #[test]
-fn source_test_snapshot_get_iter() {
+fn source_go_internal_unionstore_memdb_test_TestSnapshotGetIter() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let mut getters = Vec::new();
         let mut iterators = Vec::new();
@@ -969,7 +969,7 @@ fn source_test_snapshot_get_iter() {
 }
 
 #[test]
-fn source_test_cleanup_keep_persistent_flag() {
+fn source_go_internal_unionstore_memdb_test_TestCleanupKeepPersistentFlag() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let stage = buffer.staging_handle();
         buffer
@@ -999,7 +999,7 @@ fn source_test_cleanup_keep_persistent_flag() {
 }
 
 #[test]
-fn source_test_iter_no_result() {
+fn source_go_internal_unionstore_memdb_test_TestIterNoResult() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         buffer.set_value(&[1, 1], &[1, 1]).unwrap();
         for (lower, upper) in [
@@ -1017,7 +1017,7 @@ fn source_test_iter_no_result() {
 }
 
 #[test]
-fn source_test_mem_buffer_cache() {
+fn source_go_internal_unionstore_memdb_test_TestMemBufferCache() {
     fn check_delta<B: SourceBuffer>(buffer: &mut B, hit: bool, operation: impl FnOnce(&mut B)) {
         let before = (buffer.cache_hits(), buffer.cache_misses());
         operation(buffer);
@@ -1052,7 +1052,7 @@ fn source_test_mem_buffer_cache() {
 }
 
 #[test]
-fn source_test_memdb_leaf_fragmentation() {
+fn source_go_internal_unionstore_memdb_test_TestMemDBLeafFragmentation() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let mut stage = buffer.staging_handle();
         let mut previous = buffer.memory_value();
@@ -1075,13 +1075,13 @@ fn source_test_memdb_leaf_fragmentation() {
 }
 
 #[test]
-fn source_test_read_only_zero_mem() {
+fn source_go_internal_unionstore_memdb_test_TestReadOnlyZeroMem() {
     assert_eq!(RbtMemDb::new().memory_footprint(), 0);
     assert_eq!(MemDb::new().memory_footprint(), 0);
 }
 
 #[test]
-fn source_test_key_value_oversize() {
+fn source_go_internal_unionstore_memdb_test_TestKeyValueOversize() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let key = vec![0; u16::MAX as usize];
         let oversized = vec![0; u16::MAX as usize + 1];
@@ -1096,7 +1096,7 @@ fn source_test_key_value_oversize() {
 }
 
 #[test]
-fn source_test_set_memory_footprint_change_hook() {
+fn source_go_internal_unionstore_memdb_test_TestSetMemoryFootprintChangeHook() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         assert!(!buffer.memory_hook_set());
         let observed = Arc::new(AtomicU64::new(0));
@@ -1113,7 +1113,7 @@ fn source_test_set_memory_footprint_change_hook() {
 }
 
 #[test]
-fn source_test_select_value_history() {
+fn source_go_internal_unionstore_memdb_test_TestSelectValueHistory() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         buffer.set_value(&[1], &[1]).unwrap();
         let stage = buffer.staging_handle();
@@ -1158,7 +1158,7 @@ fn source_test_select_value_history() {
 }
 
 #[test]
-fn source_test_snapshot_reader_with_write() {
+fn source_go_internal_unionstore_memdb_test_TestSnapshotReaderWithWrite() {
     fn check<B: SourceBuffer>(buffer: &mut B, count: u8) {
         for value in 0..count {
             buffer.set_value(&[0, value], &[0, value]).unwrap();
@@ -1195,7 +1195,7 @@ fn collect_batched(mut iterator: BatchedSnapshotIterator) -> Vec<Vec<u8>> {
 }
 
 #[test]
-fn source_test_batched_snapshot_iter() {
+fn source_go_internal_unionstore_memdb_test_TestBatchedSnapshotIter() {
     for count in [3u8, 17, 64] {
         for reverse in [false, true] {
             let mut db = MemDb::new();
@@ -1234,7 +1234,7 @@ fn source_test_batched_snapshot_iter() {
 }
 
 #[test]
-fn source_test_batched_snapshot_iter_edge_cases() {
+fn source_go_internal_unionstore_memdb_test_TestBatchedSnapshotIterEdgeCase_EdgeCases() {
     let mut db = MemDb::new();
     let stage = db.staging();
     let snapshot = db.snapshot();
@@ -1262,7 +1262,7 @@ fn source_test_batched_snapshot_iter_edge_cases() {
 }
 
 #[test]
-fn source_test_batched_snapshot_iter_boundary_tests() {
+fn source_go_internal_unionstore_memdb_test_TestBatchedSnapshotIterEdgeCase_BoundaryTests() {
     let mut db = MemDb::new();
     for key in [[1, 0], [1, 2], [1, 4], [1, 6], [1, 8]] {
         db.set(&key, &key).unwrap();
@@ -1284,7 +1284,7 @@ fn source_test_batched_snapshot_iter_boundary_tests() {
 }
 
 #[test]
-fn source_test_batched_snapshot_iter_alphabetical_order() {
+fn source_go_internal_unionstore_memdb_test_TestBatchedSnapshotIterEdgeCase_AlphabeticalOrder() {
     let keys = [vec![2], vec![2, 1], vec![2, 1, 1], vec![2, 1, 1, 1]];
     let mut db = MemDb::new();
     for key in &keys {
@@ -1305,7 +1305,7 @@ fn source_test_batched_snapshot_iter_alphabetical_order() {
 }
 
 #[test]
-fn source_test_batched_snapshot_iter_batch_size_growth() {
+fn source_go_internal_unionstore_memdb_test_TestBatchedSnapshotIterEdgeCase_BatchSizeGrowth() {
     let mut db = MemDb::new();
     for value in 0..100u8 {
         db.set(&[3, value], &[3, value]).unwrap();
@@ -1319,7 +1319,7 @@ fn source_test_batched_snapshot_iter_batch_size_growth() {
 }
 
 #[test]
-fn source_test_batched_snapshot_iter_snapshot_change() {
+fn source_go_internal_unionstore_memdb_test_TestBatchedSnapshotIterEdgeCase_SnapshotChange() {
     let mut db = MemDb::new();
     db.set(&[0], &[0]).unwrap();
     let stage = db.staging();
@@ -1344,7 +1344,7 @@ fn collect_union(mut iterator: UnionIterator) -> Vec<(Vec<u8>, Vec<u8>)> {
 }
 
 #[test]
-fn source_test_union_store_get_set() {
+fn source_go_internal_unionstore_union_store_test_TestUnionStoreGetSet() {
     let mut snapshot = MapSnapshot::default();
     snapshot.insert(b"1", b"1");
     let mut store = UnionStore::new(MemDb::new(), snapshot);
@@ -1369,7 +1369,7 @@ fn source_test_union_store_get_set() {
 }
 
 #[test]
-fn source_test_union_store_delete() {
+fn source_go_internal_unionstore_union_store_test_TestUnionStoreDelete() {
     let mut snapshot = MapSnapshot::default();
     snapshot.insert(b"1", b"1");
     let mut store = UnionStore::new(MemDb::new(), snapshot);
@@ -1380,7 +1380,7 @@ fn source_test_union_store_delete() {
 }
 
 #[test]
-fn source_test_union_store_seek() {
+fn source_go_internal_unionstore_union_store_test_TestUnionStoreSeek() {
     let mut snapshot = MapSnapshot::default();
     for key in [b"1", b"2", b"3"] {
         snapshot.insert(key.as_slice(), key.as_slice());
@@ -1421,7 +1421,7 @@ fn source_test_union_store_seek() {
 }
 
 #[test]
-fn source_test_union_store_iter_reverse() {
+fn source_go_internal_unionstore_union_store_test_TestUnionStoreIterReverse() {
     let mut snapshot = MapSnapshot::default();
     for key in [b"1", b"2", b"3"] {
         snapshot.insert(key.as_slice(), key.as_slice());
@@ -1493,7 +1493,7 @@ fn blocking_flush() -> (
 }
 
 #[test]
-fn source_test_pipelined_flush_trigger() {
+fn source_go_internal_unionstore_pipelined_memdb_test_TestPipelinedFlushTrigger() {
     const MIN_KEYS: usize = 4;
     const MIN_MEMORY: u64 = 40;
     const FORCE_MEMORY: u64 = 200;
@@ -1546,7 +1546,7 @@ fn source_test_pipelined_flush_trigger() {
 }
 
 #[test]
-fn source_test_pipelined_flush_skip() {
+fn source_go_internal_unionstore_pipelined_memdb_test_TestPipelinedFlushSkip() {
     let (flush, started, release) = blocking_flush();
     let mut db = PipelinedMemDb::new(empty_remote_batch_getter(), flush);
     db.set_flush_thresholds(2, 1, 1_000);
@@ -1573,7 +1573,7 @@ fn source_test_pipelined_flush_skip() {
 }
 
 #[test]
-fn source_test_pipelined_flush_block() {
+fn source_go_internal_unionstore_pipelined_memdb_test_TestPipelinedFlushBlock() {
     let (flush, started, release) = blocking_flush();
     let mut db = PipelinedMemDb::new(empty_remote_batch_getter(), flush);
     db.set_flush_thresholds(2, 1, 40);
@@ -1607,7 +1607,7 @@ fn source_test_pipelined_flush_block() {
 }
 
 #[test]
-fn source_test_pipelined_flush_get() {
+fn source_go_internal_unionstore_pipelined_memdb_test_TestPipelinedFlushGet() {
     let (flush, started, release) = blocking_flush();
     let mut db = PipelinedMemDb::new(empty_remote_batch_getter(), flush);
     db.set_flush_thresholds(2, 1, 1_000);
@@ -1633,7 +1633,7 @@ fn source_test_pipelined_flush_get() {
 }
 
 #[test]
-fn source_test_pipelined_flush_size() {
+fn source_go_internal_unionstore_pipelined_memdb_test_TestPipelinedFlushSize() {
     let flush: FlushFunction = Arc::new(|_, _| Ok(()));
     let mut db = PipelinedMemDb::new(empty_remote_batch_getter(), flush);
     db.set_flush_thresholds(4, 1, 1_000);
@@ -1669,7 +1669,7 @@ fn source_test_pipelined_flush_size() {
 }
 
 #[test]
-fn source_test_pipelined_flush_generation() {
+fn source_go_internal_unionstore_pipelined_memdb_test_TestPipelinedFlushGeneration() {
     let (generation_sender, generation_receiver) = mpsc::sync_channel(1);
     let flush = Arc::new(move |generation, _: Arc<MemDb>| {
         generation_sender.send(generation).unwrap();
@@ -1690,7 +1690,7 @@ fn source_test_pipelined_flush_generation() {
 }
 
 #[test]
-fn source_test_error_iterator() {
+fn source_go_internal_unionstore_pipelined_memdb_test_TestErrorIterator() {
     fn returns_error(mut iterator: Box<dyn KvIterator>) -> bool {
         loop {
             if iterator.next().is_err() {
@@ -1708,7 +1708,7 @@ fn source_test_error_iterator() {
 }
 
 #[test]
-fn source_test_pipelined_adjust_flush_condition() {
+fn source_go_internal_unionstore_pipelined_memdb_test_TestPipelinedAdjustFlushCondition() {
     let flush: FlushFunction = Arc::new(|_, _| Ok(()));
     let mut db = PipelinedMemDb::new(empty_remote_batch_getter(), flush.clone());
     db.set(b"key", b"value").unwrap();
@@ -1734,7 +1734,7 @@ fn source_test_pipelined_adjust_flush_condition() {
 }
 
 #[test]
-fn source_test_mem_buffer_batch_get_cache() {
+fn source_go_internal_unionstore_pipelined_memdb_test_TestMemBufferBatchGetCache() {
     let remote = Arc::new(std::sync::Mutex::new(BTreeMap::<Vec<u8>, Vec<u8>>::new()));
     let remote_get = {
         let remote = remote.clone();
@@ -1828,6 +1828,53 @@ fn source_test_mem_buffer_batch_get_cache() {
     db.flush_wait().unwrap();
 }
 
+#[test]
+fn source_pipelined_batch_get_refreshes_remote_cache() {
+    let remote = Arc::new(std::sync::Mutex::new(BTreeMap::from([(
+        b"key".to_vec(),
+        b"one".to_vec(),
+    )])));
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut db = MemDb::new();
+    db.configure_managed_pipelined_flush(|_, _, _| ManagedPipelinedFlushOutcome {
+        metadata: ManagedPipelinedFlushMetadata::default(),
+        result: Ok(()),
+        flush_duration: Duration::ZERO,
+    });
+    db.configure_managed_remote_batch_get({
+        let remote = remote.clone();
+        let calls = calls.clone();
+        move |keys| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            let remote = remote.lock().unwrap();
+            Ok(keys
+                .iter()
+                .filter_map(|key| remote.get(key).map(|value| (key.clone(), value.clone())))
+                .collect())
+        }
+    });
+
+    assert_eq!(
+        db.batch_get(&[b"key".to_vec()]).unwrap(),
+        BTreeMap::from([(b"key".to_vec(), b"one".to_vec())])
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(db.get(b"key").unwrap(), b"one");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    remote
+        .lock()
+        .unwrap()
+        .insert(b"key".to_vec(), b"two".to_vec());
+    assert_eq!(
+        db.batch_get(&[b"key".to_vec()]).unwrap(),
+        BTreeMap::from([(b"key".to_vec(), b"two".to_vec())])
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(db.get(b"key").unwrap(), b"two");
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
 fn check_set_get_contract<B: SourceBuffer>(buffer: &mut B, entries: &[(Vec<u8>, Vec<u8>)]) {
     for (key, value) in entries {
         buffer.set_value(key, value).unwrap();
@@ -1838,7 +1885,7 @@ fn check_set_get_contract<B: SourceBuffer>(buffer: &mut B, entries: &[(Vec<u8>, 
 }
 
 #[test]
-fn source_benchmark_large_index_contract() {
+fn source_go_internal_unionstore_memdb_bench_test_BenchmarkLargeIndex() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let entries: Vec<_> = (0..256u32)
             .map(|number| {
@@ -1853,7 +1900,7 @@ fn source_benchmark_large_index_contract() {
 }
 
 #[test]
-fn source_benchmark_put_contract() {
+fn source_go_internal_unionstore_memdb_bench_test_BenchmarkPut() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let entries: Vec<_> = (0..256u32)
             .map(|number| {
@@ -1868,7 +1915,7 @@ fn source_benchmark_put_contract() {
 }
 
 #[test]
-fn source_benchmark_put_random_contract() {
+fn source_go_internal_unionstore_memdb_bench_test_BenchmarkPutRandom() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let mut state = 0xd92f_3b71_4420_78ad;
         let entries: Vec<_> = (0..256)
@@ -1884,7 +1931,7 @@ fn source_benchmark_put_random_contract() {
 }
 
 #[test]
-fn source_benchmark_get_contract() {
+fn source_go_internal_unionstore_memdb_bench_test_BenchmarkGet() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let entries: Vec<_> = (0..512u32)
             .map(|number| {
@@ -1904,7 +1951,7 @@ fn source_benchmark_get_contract() {
 }
 
 #[test]
-fn source_benchmark_get_random_contract() {
+fn source_go_internal_unionstore_memdb_bench_test_BenchmarkGetRandom() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let mut state = 0x4dd1_937a_b840_3c2f;
         let entries: Vec<_> = (0..512)
@@ -1923,7 +1970,7 @@ fn source_benchmark_get_random_contract() {
 }
 
 #[test]
-fn source_benchmark_memdb_buffer_sequential_contract() {
+fn source_go_internal_unionstore_memdb_bench_test_BenchmarkMemDbBufferSequential() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let entries: Vec<_> = (0..2_048u64)
             .map(|number| {
@@ -1937,7 +1984,7 @@ fn source_benchmark_memdb_buffer_sequential_contract() {
 }
 
 #[test]
-fn source_benchmark_memdb_buffer_random_contract() {
+fn source_go_internal_unionstore_memdb_bench_test_BenchmarkMemDbBufferRandom() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let mut state = 0x87a5_19c3_0e46_2db1;
         let entries: Vec<_> = (0..2_048)
@@ -1952,7 +1999,7 @@ fn source_benchmark_memdb_buffer_random_contract() {
 }
 
 #[test]
-fn source_benchmark_memdb_iter_contract() {
+fn source_go_internal_unionstore_memdb_bench_test_BenchmarkMemDbIter() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let entries: Vec<_> = (0..2_048u64)
             .map(|number| {
@@ -1967,7 +2014,7 @@ fn source_benchmark_memdb_iter_contract() {
 }
 
 #[test]
-fn source_benchmark_snapshot_iter_contract() {
+fn source_go_internal_unionstore_memdb_bench_test_BenchmarkSnapshotIter() {
     let entries: Vec<_> = (0..1_024u64)
         .map(|number| {
             let key = number.to_be_bytes().to_vec();
@@ -2011,7 +2058,7 @@ fn source_benchmark_snapshot_iter_contract() {
 }
 
 #[test]
-fn source_benchmark_memdb_creation_contract() {
+fn source_go_internal_unionstore_memdb_bench_test_BenchmarkMemDbCreation() {
     for _ in 0..1_000 {
         assert!(MemDb::new().is_empty());
         assert!(RbtMemDb::new().is_empty());
@@ -2019,7 +2066,7 @@ fn source_benchmark_memdb_creation_contract() {
 }
 
 #[test]
-fn source_benchmark_mem_buffer_cache_contract() {
+fn source_go_internal_unionstore_memdb_bench_test_BenchmarkMemBufferCache() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         for number in 0..512u64 {
             let key = number.to_le_bytes();
@@ -2035,7 +2082,7 @@ fn source_benchmark_mem_buffer_cache_contract() {
 }
 
 #[test]
-fn source_benchmark_mem_buffer_set_get_long_key_contract() {
+fn source_go_internal_unionstore_memdb_bench_test_BenchmarkMemBufferSetGetLongKey() {
     fn check<B: SourceBuffer>(buffer: &mut B) {
         let entries: Vec<_> = (0..128u64)
             .map(|number| {
@@ -2048,4 +2095,181 @@ fn source_benchmark_mem_buffer_set_get_long_key_contract() {
         check_set_get_contract(buffer, &entries);
     }
     check_both_buffers!(check);
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedAndFlush() {
+    const MIN_KEYS: usize = 4;
+    let remote = Arc::new(std::sync::Mutex::new(BTreeMap::<Vec<u8>, Vec<u8>>::new()));
+    let remote_get = {
+        let remote = remote.clone();
+        Arc::new(move |keys: &[Vec<u8>]| {
+            let remote = remote.lock().unwrap();
+            Ok(keys
+                .iter()
+                .filter_map(|key| remote.get(key).map(|value| (key.clone(), value.clone())))
+                .collect())
+        })
+    };
+    let flush = {
+        let remote = remote.clone();
+        Arc::new(move |_, mem: Arc<MemDb>| {
+            let mut iterator = mem.iter(None, None);
+            let mut remote = remote.lock().unwrap();
+            while iterator.valid() {
+                remote.insert(iterator.key().to_vec(), iterator.value().to_vec());
+                iterator.next().unwrap();
+            }
+            Ok(())
+        })
+    };
+    let mut db = PipelinedMemDb::new(remote_get, flush);
+    db.set_flush_thresholds(MIN_KEYS, 40, 1_000);
+    for index in 0..MIN_KEYS {
+        let key = index.to_string().into_bytes();
+        let value = vec![index as u8; 20];
+        db.set(&key, &value).unwrap();
+        assert_eq!(db.flush(false).unwrap(), index == MIN_KEYS - 1);
+        assert_eq!(db.get(&key).unwrap(), value);
+    }
+    db.flush_wait().unwrap();
+    assert_eq!(
+        db.batch_get(&(0..MIN_KEYS).map(|index| index.to_string().into_bytes()).collect::<Vec<_>>())
+            .unwrap()
+            .len(),
+        MIN_KEYS
+    );
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedMemDBBufferGet() {
+    let remote = Arc::new(std::sync::Mutex::new(BTreeMap::<Vec<u8>, Vec<u8>>::new()));
+    let remote_get = {
+        let remote = remote.clone();
+        Arc::new(move |keys: &[Vec<u8>]| {
+            let remote = remote.lock().unwrap();
+            Ok(keys
+                .iter()
+                .filter_map(|key| remote.get(key).map(|value| (key.clone(), value.clone())))
+                .collect())
+        })
+    };
+    let flush = {
+        let remote = remote.clone();
+        Arc::new(move |_, mem: Arc<MemDb>| {
+            let mut iterator = mem.iter(None, None);
+            let mut remote = remote.lock().unwrap();
+            while iterator.valid() {
+                remote.insert(iterator.key().to_vec(), iterator.value().to_vec());
+                iterator.next().unwrap();
+            }
+            Ok(())
+        })
+    };
+    let mut db = PipelinedMemDb::new(remote_get, flush);
+    for index in 0..100 {
+        let key = index.to_string().into_bytes();
+        db.set(&key, &key).unwrap();
+        assert!(db.flush(true).unwrap());
+    }
+    db.flush_wait().unwrap();
+    for index in 0..100 {
+        let key = index.to_string().into_bytes();
+        assert_eq!(db.get(&key).unwrap(), key);
+    }
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedFlushBlock() {
+    let (flush, started, release) = blocking_flush();
+    let mut db = PipelinedMemDb::new(empty_remote_batch_getter(), flush);
+    db.set(b"key1", b"value1").unwrap();
+    assert!(db.flush(true).unwrap());
+    assert_eq!(started.recv_timeout(Duration::from_secs(5)).unwrap(), 1);
+    db.set(b"key2", b"value2").unwrap();
+
+    let (returned_sender, returned_receiver) = mpsc::sync_channel(1);
+    std::thread::scope(|scope| {
+        let handle = scope.spawn(|| returned_sender.send(db.flush(true)).unwrap());
+        assert!(returned_receiver
+            .recv_timeout(Duration::from_millis(100))
+            .is_err());
+        release.send(()).unwrap();
+        assert_eq!(started.recv_timeout(Duration::from_secs(5)).unwrap(), 2);
+        assert!(returned_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap());
+        handle.join().unwrap();
+    });
+    release.send(()).unwrap();
+    db.flush_wait().unwrap();
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedSkipFlushedLock() {
+    let (flush, started, release) = blocking_flush();
+    let mut db = PipelinedMemDb::new(empty_remote_batch_getter(), flush);
+    db.set(b"key1", b"value1").unwrap();
+    assert!(db.flush(true).unwrap());
+    assert_eq!(started.recv_timeout(Duration::from_secs(5)).unwrap(), 1);
+    assert_eq!(db.mem.get(b"key1"), Err(StaticError::NotExist));
+    assert_eq!(db.get_local(b"key1").unwrap(), b"value1");
+    assert_eq!(db.get(b"key1").unwrap(), b"value1");
+    release.send(()).unwrap();
+    db.flush_wait().unwrap();
+    assert_eq!(db.get(b"key1"), Err("key not found".to_owned()));
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedPrefetch() {
+    let remote = Arc::new(std::sync::Mutex::new(BTreeMap::from([(
+        b"k1".to_vec(),
+        b"v1".to_vec(),
+    )])));
+    let remote_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let remote_get = {
+        let remote = remote.clone();
+        let remote_calls = remote_calls.clone();
+        Arc::new(move |keys: &[Vec<u8>]| {
+            remote_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let remote = remote.lock().unwrap();
+            Ok(keys
+                .iter()
+                .filter_map(|key| remote.get(key).map(|value| (key.clone(), value.clone())))
+                .collect())
+        })
+    };
+    let flush = {
+        let remote = remote.clone();
+        Arc::new(move |_, mem: Arc<MemDb>| {
+            let mut iterator = mem.iter(None, None);
+            let mut remote = remote.lock().unwrap();
+            while iterator.valid() {
+                remote.insert(iterator.key().to_vec(), iterator.value().to_vec());
+                iterator.next().unwrap();
+            }
+            Ok(())
+        })
+    };
+    let mut db = PipelinedMemDb::new(remote_get, flush);
+    assert_eq!(
+        db.batch_get(&[b"k1".to_vec(), b"missing".to_vec()])
+            .unwrap(),
+        BTreeMap::from([(b"k1".to_vec(), b"v1".to_vec())])
+    );
+    assert_eq!(remote_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(db.get(b"k1").unwrap(), b"v1");
+    assert_eq!(remote_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    db.set(b"k2", b"v2").unwrap();
+    assert!(db.flush(true).unwrap());
+    db.flush_wait().unwrap();
+    assert_eq!(db.get(b"k1").unwrap(), b"v1");
+    assert!(remote_calls.load(std::sync::atomic::Ordering::SeqCst) >= 2);
 }

@@ -556,7 +556,7 @@ fn redact_debug_info(debug_info: &mut kvrpcpb::DebugInfo) {
     }
 }
 
-fn protobuf_text<M>(message: &M) -> String
+pub(crate) fn protobuf_text<M>(message: &M) -> String
 where
     M: Message + Name,
 {

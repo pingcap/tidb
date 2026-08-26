@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
+use futures::FutureExt;
 use log::info;
 use tokio::sync::{mpsc, watch, Mutex as AsyncMutex};
 use tokio::task::JoinSet;
@@ -171,25 +172,26 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
 
         let started_at = Instant::now();
         let mut progress_ticker = tokio::time::interval(self.stat_log_interval);
+        progress_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         // Tokio's first interval tick is immediate, unlike Go's `NewTicker`.
         progress_ticker.tick().await;
         let mut stop_producer = stop.subscribe();
         let mut next_key = start_key;
         let producer_result = loop {
+            if progress_ticker.tick().now_or_never().is_some() {
+                info!(
+                    "range task in progress; name={}, elapsed_ms={}, completed_regions={}",
+                    self.identifier,
+                    started_at.elapsed().as_millis(),
+                    self.completed_regions()
+                );
+            }
             let load_key = next_key.clone().into();
             let mut backoffer = new_locate_region_backoffer(cancellation.clone());
-            let loaded_regions = tokio::select! {
-                loaded = self.pd_client.batch_load_regions_from_key(&load_key, self.regions_per_task, &mut backoffer) => loaded,
-                _ = progress_ticker.tick() => {
-                    info!(
-                        "range task in progress; name={}, elapsed_ms={}, completed_regions={}",
-                        self.identifier,
-                        started_at.elapsed().as_millis(),
-                        self.completed_regions()
-                    );
-                    continue;
-                }
-            };
+            let loaded_regions = self
+                .pd_client
+                .batch_load_regions_from_key(&load_key, self.regions_per_task, &mut backoffer)
+                .await;
             let regions = match loaded_regions {
                 Ok(regions) => regions,
                 Err(error) => break Err(error),
@@ -407,6 +409,91 @@ mod tests {
     struct ConcurrentHandler {
         active: Arc<AtomicUsize>,
         peak_active: Arc<AtomicUsize>,
+    }
+
+    #[derive(Clone)]
+    struct DelayedBatchPdClient {
+        inner: Arc<MockPdClient>,
+        delay: Duration,
+        batch_load_calls: Arc<AtomicUsize>,
+    }
+
+    impl DelayedBatchPdClient {
+        fn new(delay: Duration) -> Self {
+            Self {
+                inner: Arc::new(MockPdClient::default()),
+                delay,
+                batch_load_calls: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl PdClient for DelayedBatchPdClient {
+        type KvClient = crate::mock::MockKvClient;
+
+        async fn map_region_to_store(
+            self: Arc<Self>,
+            region: RegionWithLeader,
+        ) -> Result<crate::store::RegionStore> {
+            self.inner.clone().map_region_to_store(region).await
+        }
+
+        async fn region_for_key(&self, key: &crate::Key) -> Result<RegionWithLeader> {
+            self.inner.region_for_key(key).await
+        }
+
+        async fn region_for_id(&self, id: crate::region::RegionId) -> Result<RegionWithLeader> {
+            self.inner.region_for_id(id).await
+        }
+
+        async fn batch_load_regions_from_key(
+            &self,
+            key: &crate::Key,
+            count: usize,
+            backoffer: &mut RetryBackoffer,
+        ) -> Result<Vec<RegionWithLeader>> {
+            self.batch_load_calls.fetch_add(1, Ordering::AcqRel);
+            tokio::time::sleep(self.delay).await;
+            self.inner
+                .batch_load_regions_from_key(key, count, backoffer)
+                .await
+        }
+
+        async fn get_timestamp(self: Arc<Self>) -> Result<crate::Timestamp> {
+            self.inner.clone().get_timestamp().await
+        }
+
+        async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
+            self.inner.clone().update_safepoint(safepoint).await
+        }
+
+        async fn load_keyspace(
+            &self,
+            keyspace: &str,
+        ) -> Result<crate::proto::keyspacepb::KeyspaceMeta> {
+            self.inner.load_keyspace(keyspace).await
+        }
+
+        async fn all_stores(&self) -> Result<Vec<crate::store::Store>> {
+            self.inner.all_stores().await
+        }
+
+        async fn update_leader(
+            &self,
+            ver_id: crate::region::RegionVerId,
+            leader: metapb::Peer,
+        ) -> Result<()> {
+            self.inner.update_leader(ver_id, leader).await
+        }
+
+        async fn invalidate_region_cache(&self, ver_id: crate::region::RegionVerId) {
+            self.inner.invalidate_region_cache(ver_id).await;
+        }
+
+        async fn invalidate_store_cache(&self, store_id: crate::region::StoreId) {
+            self.inner.invalidate_store_cache(store_id).await;
+        }
     }
 
     #[async_trait]
@@ -665,6 +752,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn source_progress_ticks_do_not_cancel_an_inflight_region_load() {
+        let pd_client = Arc::new(DelayedBatchPdClient::new(Duration::from_millis(30)));
+        let calls = pd_client.batch_load_calls.clone();
+        let mut runner = Runner::new(
+            "range-task-progress",
+            pd_client,
+            1,
+            RecordingHandler::default(),
+        );
+        runner.set_regions_per_task(1);
+        runner.set_stat_log_interval(Duration::from_millis(5));
+
+        tokio::time::timeout(
+            Duration::from_millis(250),
+            runner.run_on_range(vec![], vec![10]),
+        )
+        .await
+        .expect("progress logging must not starve region discovery")
+        .unwrap();
+
+        assert_eq!(calls.load(Ordering::Acquire), 1);
+        assert_eq!(runner.completed_regions(), 1);
+    }
+
+    #[tokio::test]
     async fn source_runner_bounds_concurrent_task_handlers() {
         let handler = ConcurrentHandler::default();
         let peak_active = handler.peak_active.clone();
@@ -686,7 +798,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn original_integration_range_and_batch_matrix() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_rangetask_range_task_test_TestRangeTask() {
         let (inputs, expected) = source_range_table();
         for concurrency in 1..5 {
             let handler = RecordingHandler::default();
@@ -716,7 +829,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn original_integration_error_matrix() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_rangetask_range_task_test_TestRangeTaskError() {
         let (inputs, expected) = source_range_table();
         for concurrency in 1..5 {
             for (input, subranges) in inputs.iter().zip(&expected) {

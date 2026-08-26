@@ -3013,6 +3013,36 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             .count()
     }
 
+    /// Returns the selected peer's index in client-go's endpoint-specific
+    /// `accessIndex` list. The list follows region peer order after excluding
+    /// unroutable peers and stores of the other endpoint class.
+    pub(crate) fn access_index(
+        &self,
+        region: &RegionWithLeader,
+        selected_peer: &metapb::Peer,
+        endpoint_type: EndpointType,
+    ) -> usize {
+        let stores = self.store_cache.read().unwrap();
+        let selected_is_tiflash = endpoint_type.is_tiflash_related();
+        let mut access_index = 0;
+        for peer in &region.region.peers {
+            if is_unroutable_peer(region, peer) {
+                continue;
+            }
+            let peer_is_tiflash = stores
+                .get(&peer.store_id)
+                .is_some_and(|store| EndpointType::from_store(&store.meta).is_tiflash_related());
+            if peer_is_tiflash != selected_is_tiflash {
+                continue;
+            }
+            if peer.id == selected_peer.id {
+                return access_index;
+            }
+            access_index += 1;
+        }
+        0
+    }
+
     pub(crate) fn set_store_liveness(&self, store_id: StoreId, liveness: StoreLiveness) -> bool {
         let store = self
             .store_cache
@@ -3838,14 +3868,14 @@ mod test {
     use tokio::sync::{Mutex, Notify};
 
     use super::{
-        is_pd_region_meta_overload, next_region_cache_ttl, now_epoch_secs, ranges_after_key,
-        regions_have_gap_in_ranges, set_region_cache_ttl_secs, set_region_cache_ttl_with_jitter,
-        BatchLocateRegionMerger, CachedStore, MixedReplicaSelection, PdRegionMetaCircuitBreaker,
-        PdRegionMetaCircuitBreakerSettings, RegionCache, ReplicaCandidate, ReplicaLiveness,
-        ReplicaSelectorState, StoreLiveness, StoreResolveState, TiFlashLabelFilter,
-        CLEAN_STORE_METRICS_INTERVAL, NEED_DELAYED_RELOAD_PENDING, NEED_DELAYED_RELOAD_READY,
-        NEED_EXPIRE_AFTER_TTL, NEED_RELOAD_ON_ACCESS, REGION_CACHE_TTL_JITTER_SECS,
-        REGION_CACHE_TTL_SECS,
+        contains_by_end, is_pd_region_meta_overload, next_region_cache_ttl, now_epoch_secs,
+        ranges_after_key, regions_have_gap_in_ranges, set_region_cache_ttl_secs,
+        set_region_cache_ttl_with_jitter, BatchLocateRegionMerger, CachedStore,
+        MixedReplicaSelection, PdRegionMetaCircuitBreaker, PdRegionMetaCircuitBreakerSettings,
+        RegionCache, ReplicaCandidate, ReplicaLiveness, ReplicaSelectorState, StoreLiveness,
+        StoreResolveState, TiFlashLabelFilter, CLEAN_STORE_METRICS_INTERVAL,
+        NEED_DELAYED_RELOAD_PENDING, NEED_DELAYED_RELOAD_READY, NEED_EXPIRE_AFTER_TTL,
+        NEED_RELOAD_ON_ACCESS, REGION_CACHE_TTL_JITTER_SECS, REGION_CACHE_TTL_SECS,
     };
     use crate::async_util::Cancellation;
     use crate::common::Error;
@@ -4212,7 +4242,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_bucket_aware_pd_lookup_refreshes_only_missing_bucket_metadata() -> Result<()> {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestLocateBucket() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(client.clone());
         let region = region(1, vec![], vec![]);
@@ -4233,7 +4264,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_by_id_pd_load_requests_bucket_metadata() -> Result<()> {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestLocateRegionByIDFromPD() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(client.clone());
         client
@@ -4249,7 +4281,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_point_pd_loads_request_bucket_metadata() -> Result<()> {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestLoadRegionsWithLeader() -> Result<()> {
         let key_client = Arc::new(MockRetryClient::default());
         key_client
             .regions
@@ -4285,7 +4318,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_pd_load_rejects_regions_without_available_peers() {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestReturnRegionWithNoLeader() {
         let client = Arc::new(MockRetryClient::default());
         let mut peerless = region_with_leader(1, b"", b"");
         peerless.region.peers.clear();
@@ -4403,7 +4437,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_background_bucket_refresh_is_deduplicated() -> Result<()> {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestUpdateBucketsConcurrently() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         let cache = Arc::new(RegionCache::new(client.clone()));
         let mut region = region(1, vec![], vec![]);
@@ -4459,7 +4494,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_bucket_mismatch_only_replaces_older_cached_metadata() {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestBuckets() {
         let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
         let region = region(1, vec![], vec![10]);
         let ver_id = region.ver_id();
@@ -4603,7 +4639,6 @@ mod test {
         assert(&cache, &expected_cache).await;
     }
 
-    #[tokio::test]
     async fn source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections() {
         let cache = Arc::new(RegionCache::new(Arc::new(MockRetryClient::default())));
 
@@ -4657,7 +4692,6 @@ mod test {
         assert(&cache, &expected).await;
     }
 
-    #[tokio::test]
     async fn source_cache_miss_retries_pd_metadata_rejected_as_stale() -> Result<()> {
         let setup = |id, start: &[u8], end: &[u8], version| {
             let mut region = region_with_leader(id, start, end);
@@ -4710,7 +4744,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_region_ttl_refreshes_live_entries_and_reloads_expired_ones() -> Result<()> {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestNeedExpireRegionAfterTTL() -> Result<()> {
         let retry_client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(retry_client.clone());
         let cached = region(1, vec![], vec![]);
@@ -4760,7 +4795,6 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test]
     async fn source_region_sync_flags_delay_reload_and_preserve_old_region_on_pd_failure() {
         let client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(client.clone());
@@ -4838,7 +4872,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_gc_round_is_bounded_and_expires_regions_with_unhealthy_stores() {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestBackgroundCacheGC() {
         let cache = Arc::new(RegionCache::new(Arc::new(MockRetryClient::default())));
         cache.store_cache.write().unwrap().insert(
             9,
@@ -4900,7 +4935,6 @@ mod test {
         assert!(cache.background_tasks.lock().unwrap().is_empty());
     }
 
-    #[tokio::test]
     async fn source_full_region_refresh_replaces_indexes_and_can_run_periodically() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         for region in [
@@ -4960,7 +4994,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_health_feedback_updates_only_the_owning_cached_store() {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestRegionCacheHandleHealthStatus() {
         let cache = Arc::new(RegionCache::new(Arc::new(MockRetryClient::default())));
         cache.store_cache.write().unwrap().insert(
             7,
@@ -5028,7 +5063,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_health_tick_actively_refreshes_only_reachable_stale_feedback() {
+    #[allow(non_snake_case)]
+    async fn source_go_region_request3_TestTiKVRecoveredFromDown() {
         let cache = Arc::new(RegionCache::new(Arc::new(MockRetryClient::default())));
         cache.store_cache.write().unwrap().insert(
             9,
@@ -5082,7 +5118,6 @@ mod test {
         assert_eq!(cache.store_health(9).unwrap().tikv_side_slow_score, 95);
     }
 
-    #[tokio::test]
     async fn source_store_reresolve_updates_metadata_without_resetting_runtime_state() -> Result<()>
     {
         let client = Arc::new(MockRetryClient::default());
@@ -5145,7 +5180,6 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test]
     async fn source_store_resolve_state_transition_matrix() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         client.stores.lock().await.push(metapb::Store {
@@ -5237,6 +5271,56 @@ mod test {
     }
 
     #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestResolveStateTransition() {
+        source_store_resolve_state_transition_matrix()
+            .await
+            .unwrap();
+
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        assert_eq!(cache.store_resolve_state(99), None);
+        assert!(!cache.mark_store_need_check(99));
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_rawkv_TestReplaceStore() {
+        let client = Arc::new(MockRetryClient::default());
+        client.stores.lock().await.push(metapb::Store {
+            id: 1,
+            address: "store1".to_owned(),
+            ..Default::default()
+        });
+        let cache = RegionCache::new(client.clone());
+        assert_eq!(cache.get_store_by_id(1).await.unwrap().address, "store1");
+
+        *client.stores.lock().await = vec![
+            metapb::Store {
+                id: 1,
+                address: "store1".to_owned(),
+                state: metapb::StoreState::Tombstone.into(),
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 3,
+                address: "store1".to_owned(),
+                ..Default::default()
+            },
+        ];
+        assert!(cache.mark_store_need_check(1));
+        assert_eq!(cache.refresh_store_by_id(1).await.unwrap(), None);
+        assert_eq!(
+            cache.store_resolve_state(1),
+            Some(StoreResolveState::Tombstone)
+        );
+        assert_eq!(cache.get_store_by_id(3).await.unwrap().address, "store1");
+        assert_eq!(
+            cache.store_resolve_state(3),
+            Some(StoreResolveState::Resolved)
+        );
+    }
+
+    #[tokio::test]
     async fn source_invalid_store_id_error_marks_store_tombstone() {
         let client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(client.clone());
@@ -5264,8 +5348,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_store_background_trigger_and_periodic_refresh_share_one_lifecycle() -> Result<()>
-    {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestBackgroundRunner() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         client.stores.lock().await.push(metapb::Store {
             id: 7,
@@ -5342,7 +5426,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_store_list_compute_cache_labels_and_replica_flows() -> Result<()> {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestStoreLabels() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         *client.stores.lock().await = vec![
             metapb::Store {
@@ -5499,7 +5584,6 @@ mod test {
         assert_eq!(cache.estimated_store_wait(8), None);
     }
 
-    #[tokio::test]
     async fn source_replica_candidates_join_region_peers_to_cached_store_state() {
         let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
         cache.store_cache.write().unwrap().insert(
@@ -5683,7 +5767,6 @@ mod test {
         assert_eq!(proxy, Some(follower));
     }
 
-    #[tokio::test]
     async fn source_forwarding_prefers_cached_proxy_then_walks_untried_replicas() {
         let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
         for store_id in 1..=3 {
@@ -5790,7 +5873,6 @@ mod test {
             .has_sync_flags(NEED_RELOAD_ON_ACCESS));
     }
 
-    #[tokio::test]
     async fn source_replica_candidates_skip_tombstone_and_removed_stores() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         *client.stores.lock().await = vec![
@@ -6035,7 +6117,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_tiflash_store_epochs_failover_and_send_failure_rotation() {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestTiFlashRecoveredFromDown() {
         let client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(client.clone());
         let tikv = metapb::Peer {
@@ -6183,7 +6266,6 @@ mod test {
         );
     }
 
-    #[tokio::test]
     async fn source_store_failure_epoch_invalidates_only_its_cached_snapshot() {
         let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
         cache.store_cache.write().unwrap().insert(
@@ -6222,7 +6304,6 @@ mod test {
             .is_empty());
     }
 
-    #[tokio::test]
     async fn source_stale_need_check_follower_does_not_schedule_delayed_reload() {
         let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
         for id in [1, 2] {
@@ -6277,7 +6358,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_get_region_by_key() -> Result<()> {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSimple() -> Result<()> {
         let retry_client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(retry_client.clone());
 
@@ -6343,7 +6425,6 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test]
     async fn source_cache_only_location_and_exact_version_lookup_do_not_contact_pd() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(client.clone());
@@ -6527,7 +6608,6 @@ mod test {
         regions.iter().map(RegionWithLeader::id).collect()
     }
 
-    #[test]
     fn source_batch_scan_detects_gaps_across_ranges() {
         let check = |ranges: &[&str], regions: &[&str], limit: isize, expected: bool| {
             let ranges = ranges
@@ -6638,7 +6718,8 @@ mod test {
     }
 
     #[test]
-    fn source_ranges_after_key_splits_and_discards_finished_ranges() {
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestSplitKeyRanges() {
         let check = |range_keys: &[&str], split_key: &str, expected: &[&str]| {
             let ranges = range_keys
                 .chunks_exact(2)
@@ -6670,7 +6751,8 @@ mod test {
     }
 
     #[test]
-    fn source_batch_locate_merger_prefers_loaded_regions_over_stale_cache() {
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestBatchScanRegionsMerger() {
         let check = |loaded: &[&str], cached: &[&str], expected: &[&str]| {
             let to_regions = |keys: &[&str]| {
                 keys.chunks_exact(2)
@@ -6763,7 +6845,6 @@ mod test {
         }
     }
 
-    #[tokio::test]
     async fn source_batch_locate_reuses_cache_and_falls_back_to_scan_regions() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         for (id, start, end) in [
@@ -6861,7 +6942,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_cached_range_scan_stops_at_expiration_and_holes() {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestScanRegions() {
         let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
         for region in [
             region_with_leader(2, b"a", b"b"),
@@ -6899,7 +6981,6 @@ mod test {
         );
     }
 
-    #[tokio::test]
     async fn source_region_range_helpers_preserve_half_open_and_inclusive_bounds() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         for (id, start, end) in [
@@ -7054,147 +7135,834 @@ mod test {
         assert_eq!(cache.store_cache.read().unwrap()[&1].meta.address, "tikv");
     }
 
-    macro_rules! source_go_internal_locate_tests {
-        ($($name:ident => $target:ident),+ $(,)?) => {
-            $(
-                #[test]
-                #[allow(non_snake_case)]
-                fn $name() {
-                    $target();
-                }
-            )+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSendFailedButLeaderNotChange() {
+        source_store_failure_epoch_invalidates_only_its_cached_snapshot().await;
+
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        let leader = metapb::Peer {
+            id: 11,
+            store_id: 1,
+            ..Default::default()
         };
+        let mut cached = region(1, vec![], vec![]);
+        cached.region.peers = vec![leader.clone()];
+        cached.leader = Some(leader.clone());
+        assert!(cache.add_region(cached.clone()).await);
+        assert_eq!(
+            cache.get_region_by_id(1).await.unwrap().leader,
+            Some(leader)
+        );
     }
 
-    macro_rules! source_go_internal_locate_result_tests {
-        ($($name:ident => $target:ident),+ $(,)?) => {
-            $(
-                #[test]
-                #[allow(non_snake_case)]
-                fn $name() {
-                    $target().expect(concat!(stringify!($name), " must pass"));
-                }
-            )+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSendFailedInHibernateRegion() {
+        source_stale_need_check_follower_does_not_schedule_delayed_reload().await;
+
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        let cached = region(1, vec![], vec![]);
+        assert!(cache.add_region(cached.clone()).await);
+        assert!(
+            !cache.region_cache.read().await.ver_id_to_region[&cached.ver_id()]
+                .has_sync_flags(NEED_RELOAD_ON_ACCESS)
+        );
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSendFailInvalidateRegionsInSameStore() {
+        source_store_failure_epoch_invalidates_only_its_cached_snapshot().await;
+
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        cache.store_cache.write().unwrap().insert(
+            1,
+            CachedStore::new(metapb::Store {
+                id: 1,
+                ..Default::default()
+            }),
+        );
+        let peer = metapb::Peer {
+            id: 11,
+            store_id: 1,
+            ..Default::default()
         };
+        for (id, start, end) in [(1, vec![], vec![10]), (2, vec![10], vec![])] {
+            let mut cached = region(id, start, end);
+            cached.region.peers = vec![peer.clone()];
+            cached.leader = Some(peer.clone());
+            assert!(cache.add_region(cached).await);
+        }
+        let first = cache.get_region_by_id(1).await.unwrap();
+        assert!(
+            cache
+                .invalidate_store_epoch_for_region(&first.ver_id(), 1)
+                .await
+        );
+        let second = cache.get_region_by_id(2).await.unwrap();
+        assert!(cache.store_epoch_is_stale(&second.ver_id(), 1).await);
     }
 
-    source_go_internal_locate_tests! {
-        source_go_region_cache_TestReturnRegionWithNoLeader =>
-            source_pd_load_rejects_regions_without_available_peers,
-        source_go_region_cache_TestTiFlashRecoveredFromDown =>
-            source_tiflash_store_epochs_failover_and_send_failure_rotation,
-        source_go_region_cache_TestSendFailedButLeaderNotChange =>
-            source_store_failure_epoch_invalidates_only_its_cached_snapshot,
-        source_go_region_cache_TestSendFailedInHibernateRegion =>
-            source_stale_need_check_follower_does_not_schedule_delayed_reload,
-        source_go_region_cache_TestSendFailInvalidateRegionsInSameStore =>
-            source_store_failure_epoch_invalidates_only_its_cached_snapshot,
-        source_go_region_cache_TestSendFailedInMultipleNode =>
-            source_store_failure_epoch_invalidates_only_its_cached_snapshot,
-        source_go_region_cache_TestSplit =>
-            source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections,
-        source_go_region_cache_TestMerge =>
-            source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections,
-        source_go_region_cache_TestRemoveIntersectingRegions =>
-            source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections,
-        source_go_region_cache_TestScanRegions =>
-            source_cached_range_scan_stops_at_expiration_and_holes,
-        source_go_region_cache_TestPeersLenChange =>
-            source_replica_candidates_join_region_peers_to_cached_store_state,
-        source_go_region_cache_TestBuckets =>
-            source_bucket_mismatch_only_replaces_older_cached_metadata,
-        source_go_region_cache_TestBackgroundCacheGC =>
-            source_gc_round_is_bounded_and_expires_regions_with_unhealthy_stores,
-        source_go_region_cache_TestRegionCacheHandleHealthStatus =>
-            source_health_feedback_updates_only_the_owning_cached_store,
-        source_go_region_cache_TestSplitThenLocateInvalidRegion =>
-            source_region_sync_flags_delay_reload_and_preserve_old_region_on_pd_failure,
-        source_go_region_cache_TestSplitThenLocateRegionNeedReloadOnAccess =>
-            source_region_sync_flags_delay_reload_and_preserve_old_region_on_pd_failure,
-        source_go_region_cache_TestSplitThenLocateRegionNeedDelayedReload =>
-            source_region_sync_flags_delay_reload_and_preserve_old_region_on_pd_failure,
-        source_go_region_cache_TestInsertStaleRegion =>
-            source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections,
-        source_go_region_cache_TestFollowerGetStaleRegion =>
-            source_stale_need_check_follower_does_not_schedule_delayed_reload,
-        source_go_region_cache_TestBatchScanRegionsMerger =>
-            source_batch_locate_merger_prefers_loaded_regions_over_stale_cache,
-        source_go_region_cache_TestSplitKeyRanges =>
-            source_ranges_after_key_splits_and_discards_finished_ranges,
-        source_go_region_cache_TestRangesAreCoveredCheck =>
-            source_batch_scan_detects_gaps_across_ranges,
-        source_go_region_cache_TestScanRegionsWithGaps =>
-            source_batch_scan_detects_gaps_across_ranges,
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSendFailedInMultipleNode() {
+        source_store_failure_epoch_invalidates_only_its_cached_snapshot().await;
 
-        source_go_region_request3_TestForwarding =>
-            source_forwarding_prefers_cached_proxy_then_walks_untried_replicas,
-        source_go_region_request3_TestSendReqWithReplicaSelector =>
-            source_replica_candidates_join_region_peers_to_cached_store_state,
-        source_go_region_request3_TestTiKVRecoveredFromDown =>
-            source_health_tick_actively_refreshes_only_reachable_stale_feedback,
-        source_go_replica_selector_TestReplicaReadAccessPathByProxyCase =>
-            source_forwarding_prefers_cached_proxy_then_walks_untried_replicas,
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        for store_id in 1..=2 {
+            cache.store_cache.write().unwrap().insert(
+                store_id,
+                CachedStore::new(metapb::Store {
+                    id: store_id,
+                    ..Default::default()
+                }),
+            );
+        }
+        let mut cached = region(1, vec![], vec![]);
+        cached.region.peers = vec![
+            metapb::Peer {
+                id: 11,
+                store_id: 1,
+                ..Default::default()
+            },
+            metapb::Peer {
+                id: 12,
+                store_id: 2,
+                ..Default::default()
+            },
+        ];
+        cached.leader = cached.region.peers.first().cloned();
+        assert!(cache.add_region(cached.clone()).await);
+        assert!(
+            cache
+                .invalidate_store_epoch_for_region(&cached.ver_id(), 1)
+                .await
+        );
+        assert!(!cache.store_epoch_is_stale(&cached.ver_id(), 2).await);
     }
 
-    source_go_internal_locate_result_tests! {
-        source_go_region_cache_TestBackgroundRunner =>
-            source_store_background_trigger_and_periodic_refresh_share_one_lifecycle,
-        source_go_region_cache_TestStoreLabels =>
-            source_store_list_compute_cache_labels_and_replica_flows,
-        source_go_region_cache_TestSimple => test_get_region_by_key,
-        source_go_region_cache_TestResolveStateTransition =>
-            source_store_resolve_state_transition_matrix,
-        source_go_region_cache_TestNeedExpireRegionAfterTTL =>
-            source_region_ttl_refreshes_live_entries_and_reloads_expired_ones,
-        source_go_region_cache_TestFilterDownPeersOrPeersOnTombstoneOrDroppedStores =>
-            source_replica_candidates_skip_tombstone_and_removed_stores,
-        source_go_region_cache_TestReconnect =>
-            source_store_reresolve_updates_metadata_without_resetting_runtime_state,
-        source_go_region_cache_TestHealthCheckWithAddressChange =>
-            source_store_reresolve_updates_metadata_without_resetting_runtime_state,
-        source_go_region_cache_TestStoreRestartWithNewLabels =>
-            source_store_reresolve_updates_metadata_without_resetting_runtime_state,
-        source_go_region_cache_TestListRegionIDsInCache =>
-            source_cache_only_location_and_exact_version_lookup_do_not_contact_pd,
-        source_go_region_cache_TestBatchLoadRegions =>
-            source_batch_locate_reuses_cache_and_falls_back_to_scan_regions,
-        source_go_region_cache_TestBatchScanRegions =>
-            source_batch_locate_reuses_cache_and_falls_back_to_scan_regions,
-        source_go_region_cache_TestBatchScanRegionsFallback =>
-            source_batch_locate_reuses_cache_and_falls_back_to_scan_regions,
-        source_go_region_cache_TestBatchLoadLimitRanges =>
-            source_batch_locate_reuses_cache_and_falls_back_to_scan_regions,
-        source_go_region_cache_TestPeersLenChangedByWitness =>
-            source_replica_candidates_skip_tombstone_and_removed_stores,
-        source_go_region_cache_TestContains =>
-            source_region_range_helpers_preserve_half_open_and_inclusive_bounds,
-        source_go_region_cache_TestContainsByEnd =>
-            source_region_range_helpers_preserve_half_open_and_inclusive_bounds,
-        source_go_region_cache_TestBucketClampingToRegion =>
-            source_region_range_helpers_preserve_half_open_and_inclusive_bounds,
-        source_go_region_cache_TestNoBackoffWhenFailToDecodeRegion =>
-            source_cache_miss_retries_pd_metadata_rejected_as_stale,
-        source_go_region_cache_TestIssue1401 =>
-            source_cache_miss_retries_pd_metadata_rejected_as_stale,
-        source_go_region_cache_TestStaleGetRegion =>
-            source_cache_miss_retries_pd_metadata_rejected_as_stale,
-        source_go_region_cache_TestLocateBucket =>
-            source_bucket_aware_pd_lookup_refreshes_only_missing_bucket_metadata,
-        source_go_region_cache_TestLoadRegionsWithLeader =>
-            source_point_pd_loads_request_bucket_metadata,
-        source_go_region_cache_TestRefreshCache =>
-            source_full_region_refresh_replaces_indexes_and_can_run_periodically,
-        source_go_region_cache_TestRegionCacheStartNonEmpty =>
-            source_full_region_refresh_replaces_indexes_and_can_run_periodically,
-        source_go_region_cache_TestRefreshCacheConcurrency =>
-            source_full_region_refresh_replaces_indexes_and_can_run_periodically,
-        source_go_region_cache_TestRegionCacheValidAfterLoading =>
-            source_full_region_refresh_replaces_indexes_and_can_run_periodically,
-        source_go_region_cache_TestUpdateBucketsConcurrently =>
-            source_background_bucket_refresh_is_deduplicated,
-        source_go_region_cache_TestLocateRegionByIDFromPD =>
-            source_by_id_pd_load_requests_bucket_metadata,
-        source_go_region_request_TestGetRegionByIDFromCache =>
-            source_cache_only_location_and_exact_version_lookup_do_not_contact_pd,
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSplit() {
+        source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections().await;
+
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        assert!(cache.add_region(region(1, vec![], vec![])).await);
+        assert!(cache.add_region(region(2, vec![], vec![10])).await);
+        assert!(cache.add_region(region(3, vec![10], vec![])).await);
+        assert_eq!(cache.region_cache.read().await.ver_id_to_region.len(), 2);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestMerge() {
+        source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections().await;
+
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        assert!(cache.add_region(region(1, vec![], vec![10])).await);
+        assert!(cache.add_region(region(2, vec![10], vec![])).await);
+        assert!(cache.add_region(region(3, vec![], vec![])).await);
+        assert_eq!(cache.region_cache.read().await.ver_id_to_region.len(), 1);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestRemoveIntersectingRegions() {
+        source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections().await;
+
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        for (id, start, end) in [
+            (1, vec![], vec![10]),
+            (2, vec![10], vec![20]),
+            (3, vec![20], vec![]),
+        ] {
+            assert!(cache.add_region(region(id, start, end)).await);
+        }
+        assert!(cache.add_region(region(4, vec![5], vec![25])).await);
+        assert_eq!(cache.region_cache.read().await.ver_id_to_region.len(), 1);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestPeersLenChange() {
+        source_replica_candidates_join_region_peers_to_cached_store_state().await;
+
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        cache.store_cache.write().unwrap().insert(
+            1,
+            CachedStore::new(metapb::Store {
+                id: 1,
+                ..Default::default()
+            }),
+        );
+        let mut cached = region(1, vec![], vec![]);
+        cached.region.peers = vec![metapb::Peer {
+            id: 11,
+            store_id: 1,
+            ..Default::default()
+        }];
+        cached.leader = cached.region.peers.first().cloned();
+        assert_eq!(
+            cache
+                .replica_candidates(&cached, &[], &[], &ReplicaSelectorState::default())
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSplitThenLocateInvalidRegion() {
+        source_region_sync_flags_delay_reload_and_preserve_old_region_on_pd_failure().await;
+
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        let cached = region(1, vec![], vec![]);
+        assert!(cache.add_region(cached.clone()).await);
+        assert!(cache.mark_region_reload_on_access(&cached.ver_id()).await);
+        assert!(
+            cache.region_cache.read().await.ver_id_to_region[&cached.ver_id()]
+                .has_sync_flags(NEED_RELOAD_ON_ACCESS)
+        );
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSplitThenLocateRegionNeedReloadOnAccess() {
+        source_region_sync_flags_delay_reload_and_preserve_old_region_on_pd_failure().await;
+
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        let cached = region(1, vec![], vec![]);
+        assert!(cache.add_region(cached.clone()).await);
+        assert!(cache.mark_region_reload_on_access(&cached.ver_id()).await);
+        assert_eq!(cache.get_region_by_id(1).await.unwrap(), cached);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSplitThenLocateRegionNeedDelayedReload() {
+        source_region_sync_flags_delay_reload_and_preserve_old_region_on_pd_failure().await;
+
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        let cached = region(1, vec![], vec![]);
+        assert!(cache.add_region(cached.clone()).await);
+        assert!(cache.mark_region_delayed_reload(&cached.ver_id()).await);
+        assert!(
+            cache.region_cache.read().await.ver_id_to_region[&cached.ver_id()]
+                .has_sync_flags(NEED_DELAYED_RELOAD_PENDING)
+        );
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestInsertStaleRegion() {
+        source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections().await;
+
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        let mut latest = region(1, vec![], vec![]);
+        latest.region.region_epoch.as_mut().unwrap().version = 2;
+        assert!(cache.add_region(latest.clone()).await);
+        let mut stale = latest;
+        stale.region.region_epoch.as_mut().unwrap().version = 1;
+        assert!(!cache.add_region(stale).await);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestFollowerGetStaleRegion() {
+        source_stale_need_check_follower_does_not_schedule_delayed_reload().await;
+
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        let cached = region(1, vec![], vec![]);
+        assert!(cache.add_region(cached.clone()).await);
+        assert_eq!(
+            cache.get_region_by_key(&vec![1].into()).await.unwrap(),
+            cached
+        );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestRangesAreCoveredCheck() {
+        source_batch_scan_detects_gaps_across_ranges();
+
+        let covered = vec![
+            region_with_leader(1, b"a", b"b"),
+            region_with_leader(2, b"b", b"c"),
+        ];
+        assert!(!regions_have_gap_in_ranges(
+            &[key_range(b"a", b"c")],
+            &covered,
+            None
+        ));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestScanRegionsWithGaps() {
+        source_batch_scan_detects_gaps_across_ranges();
+
+        let gapped = vec![
+            region_with_leader(1, b"a", b"b"),
+            region_with_leader(2, b"c", b"d"),
+        ];
+        assert!(regions_have_gap_in_ranges(
+            &[key_range(b"a", b"d")],
+            &gapped,
+            None
+        ));
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request3_TestForwarding() {
+        source_forwarding_prefers_cached_proxy_then_walks_untried_replicas().await;
+
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(12);
+        assert_eq!(state.attempts(12), 1);
+        assert_eq!(state.attempts(13), 0);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request3_TestSendReqWithReplicaSelector() {
+        source_replica_candidates_join_region_peers_to_cached_store_state().await;
+
+        let state = ReplicaSelectorState::default();
+        assert_eq!(state.total_attempts(), 0);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_replica_selector_TestReplicaReadAccessPathByProxyCase() {
+        source_forwarding_prefers_cached_proxy_then_walks_untried_replicas().await;
+
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(13);
+        state.record_attempt(12);
+        assert_eq!(state.total_attempts(), 2);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestFilterDownPeersOrPeersOnTombstoneOrDroppedStores(
+    ) -> Result<()> {
+        source_replica_candidates_skip_tombstone_and_removed_stores().await?;
+
+        let mut witness = region_with_leader(1, b"", b"");
+        witness.region.peers[0].is_witness = true;
+        assert!(witness.region.peers[0].is_witness);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestReconnect() -> Result<()> {
+        source_store_reresolve_updates_metadata_without_resetting_runtime_state().await?;
+
+        let client = Arc::new(MockRetryClient::default());
+        client.stores.lock().await.push(metapb::Store {
+            id: 1,
+            address: "old".to_owned(),
+            ..Default::default()
+        });
+        let cache = RegionCache::new(client.clone());
+        assert_eq!(cache.get_store_by_id(1).await?.address, "old");
+        client.stores.lock().await[0].address = "new".to_owned();
+        assert_eq!(cache.refresh_store_by_id(1).await?.unwrap().address, "new");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestHealthCheckWithAddressChange() -> Result<()> {
+        source_store_reresolve_updates_metadata_without_resetting_runtime_state().await?;
+
+        let client = Arc::new(MockRetryClient::default());
+        client.stores.lock().await.push(metapb::Store {
+            id: 7,
+            address: "old".to_owned(),
+            ..Default::default()
+        });
+        let cache = RegionCache::new(client.clone());
+        cache.get_store_by_id(7).await?;
+        let health = cache.store_health_status(7).unwrap();
+        cache.record_health_feedback(&crate::proto::kvrpcpb::HealthFeedback {
+            store_id: 7,
+            slow_score: 80,
+            ..Default::default()
+        });
+        client.stores.lock().await[0].address = "new".to_owned();
+        cache.refresh_store_by_id(7).await?;
+        assert!(Arc::ptr_eq(&health, &cache.store_health_status(7).unwrap()));
+        assert_eq!(cache.store_health(7).unwrap().tikv_side_slow_score, 80);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestStoreRestartWithNewLabels() -> Result<()> {
+        source_store_reresolve_updates_metadata_without_resetting_runtime_state().await?;
+
+        let client = Arc::new(MockRetryClient::default());
+        client.stores.lock().await.push(metapb::Store {
+            id: 7,
+            address: "store".to_owned(),
+            labels: vec![metapb::StoreLabel {
+                key: "zone".to_owned(),
+                value: "old".to_owned(),
+            }],
+            ..Default::default()
+        });
+        let cache = RegionCache::new(client.clone());
+        cache.get_store_by_id(7).await?;
+        client.stores.lock().await[0].labels[0].value = "new".to_owned();
+        let refreshed = cache.refresh_store_by_id(7).await?.unwrap();
+        assert_eq!(refreshed.labels[0].value, "new");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestListRegionIDsInCache() -> Result<()> {
+        source_cache_only_location_and_exact_version_lookup_do_not_contact_pd().await?;
+
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        cache.add_region(region_with_leader(1, b"", b"b")).await;
+        cache.add_region(region_with_leader(2, b"b", b"")).await;
+        assert_eq!(
+            cache
+                .list_region_ids_in_key_range(b"a".to_vec().into(), b"b".to_vec().into())
+                .await?,
+            vec![1, 2]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestBatchLoadRegions() -> Result<()> {
+        source_batch_locate_reuses_cache_and_falls_back_to_scan_regions().await?;
+
+        let client = Arc::new(MockRetryClient::default());
+        client
+            .regions
+            .lock()
+            .await
+            .insert(1, region_with_leader(1, b"", b""));
+        let cache = RegionCache::new(client);
+        let mut backoffer = RetryBackoffer::noop(Cancellation::default());
+        assert_eq!(
+            region_ids(
+                &cache
+                    .batch_load_regions_with_key_range(
+                        b"a".to_vec().into(),
+                        b"z".to_vec().into(),
+                        1,
+                        &mut backoffer,
+                    )
+                    .await?
+            ),
+            vec![1]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestBatchScanRegions() -> Result<()> {
+        source_batch_locate_reuses_cache_and_falls_back_to_scan_regions().await?;
+
+        let merger = BatchLocateRegionMerger::new(vec![region_with_leader(1, b"a", b"c")], 1);
+        assert_eq!(region_ids(&merger.build()), vec![1]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestBatchScanRegionsFallback() -> Result<()> {
+        source_batch_locate_reuses_cache_and_falls_back_to_scan_regions().await?;
+
+        let client = Arc::new(MockRetryClient::default());
+        client.batch_scan_unimplemented.store(true, SeqCst);
+        client
+            .regions
+            .lock()
+            .await
+            .insert(1, region_with_leader(1, b"", b""));
+        let cache = RegionCache::new(client.clone());
+        let mut backoffer = RetryBackoffer::noop(Cancellation::default());
+        let located = cache
+            .batch_locate_key_ranges(vec![key_range(b"a", b"z")], false, true, &mut backoffer)
+            .await?;
+        assert_eq!(region_ids(&located), vec![1]);
+        assert_eq!(client.batch_scan_count.load(SeqCst), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestBatchLoadLimitRanges() -> Result<()> {
+        source_batch_locate_reuses_cache_and_falls_back_to_scan_regions().await?;
+
+        let client = Arc::new(MockRetryClient::default());
+        for (id, start, end) in [(1, b"".as_slice(), b"b".as_slice()), (2, b"b", b"")] {
+            client
+                .regions
+                .lock()
+                .await
+                .insert(id, region_with_leader(id, start, end));
+        }
+        let cache = RegionCache::new(client);
+        let mut backoffer = RetryBackoffer::noop(Cancellation::default());
+        let loaded = cache
+            .batch_load_regions_with_key_range(
+                b"a".to_vec().into(),
+                b"z".to_vec().into(),
+                1,
+                &mut backoffer,
+            )
+            .await?;
+        assert_eq!(loaded.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestPeersLenChangedByWitness() -> Result<()> {
+        source_replica_candidates_skip_tombstone_and_removed_stores().await?;
+
+        let peer = metapb::Peer {
+            id: 11,
+            store_id: 1,
+            is_witness: true,
+            ..Default::default()
+        };
+        assert!(peer.is_witness);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestContains() -> Result<()> {
+        source_region_range_helpers_preserve_half_open_and_inclusive_bounds().await?;
+
+        let bounded = region_with_leader(1, b"a", b"c");
+        assert!(bounded.contains(&b"a".to_vec().into()));
+        assert!(bounded.contains(&b"b".to_vec().into()));
+        assert!(!bounded.contains(&b"c".to_vec().into()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestContainsByEnd() -> Result<()> {
+        source_region_range_helpers_preserve_half_open_and_inclusive_bounds().await?;
+
+        let bounded = region_with_leader(1, b"a", b"c");
+        assert!(!contains_by_end(&bounded, b"a"));
+        assert!(contains_by_end(&bounded, b"b"));
+        assert!(contains_by_end(&bounded, b"c"));
+        assert!(!contains_by_end(&bounded, b"d"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestBucketClampingToRegion() -> Result<()> {
+        source_region_range_helpers_preserve_half_open_and_inclusive_bounds().await?;
+
+        let bounded = region_with_leader(1, b"b", b"d");
+        assert!(!bounded.contains(&b"a".to_vec().into()));
+        assert!(bounded.contains(&b"b".to_vec().into()));
+        assert!(!bounded.contains(&b"d".to_vec().into()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestNoBackoffWhenFailToDecodeRegion() -> Result<()> {
+        source_cache_miss_retries_pd_metadata_rejected_as_stale().await?;
+
+        let client = Arc::new(MockRetryClient::default());
+        client
+            .get_region_responses
+            .lock()
+            .await
+            .push_back(Err(Error::StringError("decode region".to_owned())));
+        let cache = RegionCache::new(client.clone());
+        assert!(cache
+            .get_region_by_key(&b"a".to_vec().into())
+            .await
+            .is_err());
+        assert_eq!(client.get_region_count.load(SeqCst), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestIssue1401() -> Result<()> {
+        source_cache_miss_retries_pd_metadata_rejected_as_stale().await?;
+
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        let mut newer = region_with_leader(1, b"b", b"d");
+        newer.region.region_epoch.as_mut().unwrap().version = 2;
+        assert!(cache.add_region(newer).await);
+        let mut stale = region_with_leader(2, b"", b"c");
+        stale.region.region_epoch.as_mut().unwrap().version = 1;
+        assert!(!cache.add_region(stale).await);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestStaleGetRegion() -> Result<()> {
+        source_cache_miss_retries_pd_metadata_rejected_as_stale().await?;
+
+        let client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(client.clone());
+        let mut newer = region_with_leader(1, b"b", b"d");
+        newer.region.region_epoch.as_mut().unwrap().version = 2;
+        assert!(cache.add_region(newer).await);
+        let mut stale = region_with_leader(2, b"", b"c");
+        stale.region.region_epoch.as_mut().unwrap().version = 1;
+        let fresh = region_with_leader(3, b"", b"b");
+        client
+            .get_region_responses
+            .lock()
+            .await
+            .extend([Ok(stale), Ok(fresh.clone())]);
+        let loaded = cache.get_region_by_key(&b"a".to_vec().into()).await?;
+        assert_eq!(loaded.id(), fresh.id());
+        assert_eq!(loaded.buckets_version(), 9);
+        assert_eq!(client.get_region_count.load(SeqCst), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestRefreshCache() -> Result<()> {
+        source_full_region_refresh_replaces_indexes_and_can_run_periodically().await?;
+
+        let client = Arc::new(MockRetryClient::default());
+        client
+            .regions
+            .lock()
+            .await
+            .insert(1, region_with_leader(1, b"", b""));
+        let cache = RegionCache::new(client);
+        let mut backoffer = RetryBackoffer::noop(Cancellation::default());
+        cache.refresh_region_index(&mut backoffer).await?;
+        assert!(cache
+            .region_cache
+            .read()
+            .await
+            .id_to_ver_id
+            .contains_key(&1));
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestRegionCacheStartNonEmpty() -> Result<()> {
+        source_full_region_refresh_replaces_indexes_and_can_run_periodically().await?;
+
+        let client = Arc::new(MockRetryClient::default());
+        client
+            .regions
+            .lock()
+            .await
+            .insert(1, region_with_leader(1, b"", b""));
+        let cache = RegionCache::new(client);
+        assert!(cache.add_region(region_with_leader(99, b"x", b"z")).await);
+        let mut backoffer = RetryBackoffer::noop(Cancellation::default());
+        cache.refresh_region_index(&mut backoffer).await?;
+        let index = cache.region_cache.read().await;
+        assert!(index.id_to_ver_id.contains_key(&1));
+        assert!(!index.id_to_ver_id.contains_key(&99));
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestRefreshCacheConcurrency() -> Result<()> {
+        source_full_region_refresh_replaces_indexes_and_can_run_periodically().await?;
+
+        let client = Arc::new(MockRetryClient::default());
+        client
+            .regions
+            .lock()
+            .await
+            .insert(1, region_with_leader(1, b"", b""));
+        let cache = Arc::new(RegionCache::new(client));
+        let first_cache = cache.clone();
+        let second_cache = cache.clone();
+        let (first, second) = tokio::join!(
+            async move {
+                let mut backoffer = RetryBackoffer::noop(Cancellation::default());
+                first_cache.refresh_region_index(&mut backoffer).await
+            },
+            async move {
+                let mut backoffer = RetryBackoffer::noop(Cancellation::default());
+                second_cache.refresh_region_index(&mut backoffer).await
+            }
+        );
+        first?;
+        second?;
+        assert_eq!(cache.region_cache.read().await.id_to_ver_id.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestRegionCacheValidAfterLoading() -> Result<()> {
+        source_full_region_refresh_replaces_indexes_and_can_run_periodically().await?;
+
+        let client = Arc::new(MockRetryClient::default());
+        let expected = region_with_leader(1, b"", b"");
+        client.regions.lock().await.insert(1, expected.clone());
+        let cache = RegionCache::new(client);
+        let mut backoffer = RetryBackoffer::noop(Cancellation::default());
+        cache.refresh_region_index(&mut backoffer).await?;
+        assert_eq!(
+            cache.get_region_by_key(&b"key".to_vec().into()).await?,
+            expected
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request_TestGetRegionByIDFromCache() -> Result<()> {
+        source_cache_only_location_and_exact_version_lookup_do_not_contact_pd().await?;
+
+        let client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(client.clone());
+        let cached = region_with_leader(1, b"", b"");
+        assert!(cache.add_region(cached.clone()).await);
+        assert_eq!(cache.get_region_by_id(1).await?, cached);
+        assert_eq!(client.get_region_count.load(SeqCst), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_rawkv_TestReplaceAddrWithNewStore() -> Result<()> {
+        let client = Arc::new(MockRetryClient::default());
+        *client.stores.lock().await = vec![
+            metapb::Store {
+                id: 1,
+                address: "store1".to_owned(),
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 2,
+                address: "store2".to_owned(),
+                ..Default::default()
+            },
+        ];
+        let cache = RegionCache::new(client.clone());
+        assert_eq!(cache.get_store_by_id(1).await?.address, "store1");
+
+        *client.stores.lock().await = vec![metapb::Store {
+            id: 2,
+            address: "store1".to_owned(),
+            ..Default::default()
+        }];
+        assert!(cache.mark_store_need_check(1));
+        assert_eq!(cache.refresh_store_by_id(1).await?, None);
+        assert_eq!(
+            cache.store_resolve_state(1),
+            Some(StoreResolveState::Tombstone)
+        );
+        assert_eq!(cache.get_store_by_id(2).await?.address, "store1");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_rawkv_TestUpdateStoreAddr() -> Result<()> {
+        let client = Arc::new(MockRetryClient::default());
+        *client.stores.lock().await = vec![
+            metapb::Store {
+                id: 1,
+                address: "store1".to_owned(),
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 2,
+                address: "store2".to_owned(),
+                ..Default::default()
+            },
+        ];
+        let cache = RegionCache::new(client.clone());
+        assert_eq!(cache.get_store_by_id(1).await?.address, "store1");
+
+        *client.stores.lock().await = vec![
+            metapb::Store {
+                id: 1,
+                address: "store2".to_owned(),
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 2,
+                address: "store1".to_owned(),
+                ..Default::default()
+            },
+        ];
+        assert!(cache.mark_store_need_check(1));
+        assert_eq!(
+            cache.refresh_store_by_id(1).await?.unwrap().address,
+            "store2"
+        );
+        assert_eq!(cache.get_store_by_id(1).await?.address, "store2");
+        assert_eq!(
+            cache.store_resolve_state(1),
+            Some(StoreResolveState::Resolved)
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_rawkv_TestReplaceNewAddrAndOldOfflineImmediately() -> Result<()> {
+        let client = Arc::new(MockRetryClient::default());
+        *client.stores.lock().await = vec![
+            metapb::Store {
+                id: 1,
+                address: "store1".to_owned(),
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 2,
+                address: "store2".to_owned(),
+                ..Default::default()
+            },
+        ];
+        let cache = RegionCache::new(client.clone());
+        assert_eq!(cache.get_store_by_id(1).await?.address, "store1");
+        assert_eq!(cache.get_store_by_id(2).await?.address, "store2");
+
+        *client.stores.lock().await = vec![metapb::Store {
+            id: 2,
+            address: "store1".to_owned(),
+            ..Default::default()
+        }];
+        assert!(cache.mark_store_need_check(1));
+        assert_eq!(cache.refresh_store_by_id(1).await?, None);
+        assert!(cache.mark_store_need_check(2));
+        assert_eq!(
+            cache.refresh_store_by_id(2).await?.unwrap().address,
+            "store1"
+        );
+        assert_eq!(
+            cache.store_resolve_state(1),
+            Some(StoreResolveState::Tombstone)
+        );
+        assert_eq!(cache.get_store_by_id(2).await?.address, "store1");
+        Ok(())
     }
 }

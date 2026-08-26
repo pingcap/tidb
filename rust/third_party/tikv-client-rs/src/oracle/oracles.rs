@@ -303,10 +303,10 @@ impl PdOracle {
     }
 
     async fn current_timestamp_for_validation(&self, option: OracleOption) -> OracleResult<u64> {
-        let scope = Self::scope(&option).to_owned();
+        let flight_key = option.txn_scope.clone();
         let (flight, sender) = {
             let mut flights = self.state.validation_flights.lock().await;
-            if let Some(flight) = flights.get(&scope) {
+            if let Some(flight) = flights.get(&flight_key) {
                 (flight.clone(), None)
             } else {
                 let id = self
@@ -322,14 +322,14 @@ impl PdOracle {
                 .boxed()
                 .shared();
                 let flight = ValidationFlight { id, result };
-                flights.insert(scope.clone(), flight.clone());
+                flights.insert(flight_key.clone(), flight.clone());
                 (flight, Some(sender))
             }
         };
         if let Some(sender) = sender {
             let oracle = self.clone();
             let source_option = option.clone();
-            let scope = scope.clone();
+            let flight_key = flight_key.clone();
             let flight_id = flight.id;
             tokio::spawn(async move {
                 crate::stats::increment_validate_read_ts_from_pd();
@@ -340,10 +340,10 @@ impl PdOracle {
                 let _ = fail::eval("getCurrentTSForValidationBeforeReturn", |_| ());
                 let mut flights = oracle.state.validation_flights.lock().await;
                 if flights
-                    .get(&scope)
+                    .get(&flight_key)
                     .is_some_and(|current| current.id == flight_id)
                 {
-                    flights.remove(&scope);
+                    flights.remove(&flight_key);
                 }
                 drop(flights);
                 let _ = sender.send(result);
@@ -525,11 +525,14 @@ impl PdOracle {
                     .min(i64::MAX as u128) as i64,
             )
         {
-            self.state
-                .adaptive_state
-                .lock()
-                .unwrap()
-                .last_short_staleness_read = Some(now);
+            let now = floor_to_unix_millisecond(now);
+            let mut state = self.state.adaptive_state.lock().unwrap();
+            if state
+                .last_short_staleness_read
+                .is_none_or(|last| last < now)
+            {
+                state.last_short_staleness_read = Some(now);
+            }
         }
         if required_millis <= current_millis && current > MIN_ADAPTIVE_UPDATE_INTERVAL {
             let required = Duration::from_millis(required_millis.max(1) as u64);
@@ -1130,6 +1133,23 @@ fn subtract_wrapping_seconds(time: SystemTime, seconds: u64) -> SystemTime {
     add_wrapping_nanoseconds(time, (seconds as i64).wrapping_mul(-1_000_000_000))
 }
 
+fn floor_to_unix_millisecond(time: SystemTime) -> SystemTime {
+    match time.duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => {
+            let milliseconds = u64::try_from(duration.as_millis())
+                .expect("system time exceeds Unix millisecond range");
+            std::time::UNIX_EPOCH + Duration::from_millis(milliseconds)
+        }
+        Err(error) => {
+            let milliseconds = u64::try_from(error.duration().as_nanos().div_ceil(1_000_000))
+                .expect("system time exceeds Unix millisecond range");
+            std::time::UNIX_EPOCH
+                .checked_sub(Duration::from_millis(milliseconds))
+                .expect("system time exceeds platform range")
+        }
+    }
+}
+
 fn signed_duration_between(later: SystemTime, earlier: SystemTime) -> i64 {
     signed_duration_nanoseconds(later, earlier) / 1_000_000
 }
@@ -1264,7 +1284,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_test_local_oracle() {
+    #[allow(non_snake_case)]
+    async fn source_go_oracle_oracles_local_test_TestLocalOracle() {
         let oracle = LocalOracle::new();
         let fixed = UNIX_EPOCH + Duration::from_millis(1_700_000_000_123);
         oracle.set_current_time(fixed);
@@ -1305,7 +1326,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_is_expired() {
+    #[allow(non_snake_case)]
+    fn source_go_oracle_oracles_local_test_TestIsExpired() {
         let oracle = LocalOracle::new();
         let now = UNIX_EPOCH + Duration::from_millis(10_000);
         oracle.set_current_time(now);
@@ -1316,7 +1338,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_local_oracle_until_expired() {
+    #[allow(non_snake_case)]
+    fn source_go_oracle_oracles_local_test_TestLocalOracle_UntilExpired() {
         let oracle = LocalOracle::new();
         let start = UNIX_EPOCH + Duration::from_millis(10_000);
         oracle.set_current_time(start);
@@ -1399,7 +1422,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_test_pd_oracle_until_expired() {
+    #[allow(non_snake_case)]
+    async fn source_go_oracle_oracles_pd_test_TestPDOracle_UntilExpired() {
         let oracle = PdOracle::new(
             Arc::new(TestPdSource::new(1_700_000_000_000)),
             PdOracleOptions {
@@ -1427,7 +1451,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_test_pd_oracle_get_stale_timestamp() {
+    #[allow(non_snake_case)]
+    async fn source_go_oracle_oracles_pd_test_TestPdOracle_GetStaleTimestamp() {
         let oracle = PdOracle::new(
             Arc::new(TestPdSource::new(1_700_000_000_000)),
             PdOracleOptions {
@@ -1463,7 +1488,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_test_pd_oracle_set_low_resolution_timestamp_update_interval() {
+    #[allow(non_snake_case)]
+    async fn source_go_oracle_oracles_pd_test_TestPdOracle_SetLowResolutionTimestampUpdateInterval()
+    {
         let oracle = PdOracle::new(
             Arc::new(TestPdSource::new(1_700_000_000_000)),
             PdOracleOptions {
@@ -1519,7 +1546,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_test_non_future_stale_tso() {
+    #[allow(non_snake_case)]
+    async fn source_go_oracle_oracles_pd_test_TestNonFutureStaleTSO() {
         let oracle = PdOracle::new(
             Arc::new(TestPdSource::new(1_700_000_000_000)),
             PdOracleOptions {
@@ -1625,7 +1653,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_test_adaptive_update_ts_interval() {
+    #[allow(non_snake_case)]
+    async fn source_go_oracle_oracles_pd_test_TestAdaptiveUpdateTSInterval() {
         let oracle = PdOracle::new(
             Arc::new(TestPdSource::new(1_700_000_000_000)),
             PdOracleOptions {
@@ -1981,8 +2010,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn source_adaptive_short_read_time_is_monotonic_unix_milliseconds() {
+        let oracle = PdOracle::new(
+            Arc::new(TestPdSource::new(1_700_000_000_000)),
+            PdOracleOptions {
+                update_interval: Duration::from_secs(2),
+                no_update_timestamp: true,
+            },
+        )
+        .await
+        .unwrap();
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000) + Duration::from_micros(1_234);
+        let current = super::super::compose_timestamp(get_physical(now), 1);
+        let read = super::super::compose_timestamp(get_physical(now - Duration::from_secs(1)), 1);
+
+        oracle.adjust_update_interval_for_staleness(read, current, now);
+        let expected = UNIX_EPOCH + Duration::from_secs(1_700_000_000) + Duration::from_millis(1);
+        assert_eq!(
+            oracle
+                .state
+                .adaptive_state
+                .lock()
+                .unwrap()
+                .last_short_staleness_read,
+            Some(expected)
+        );
+
+        oracle.adjust_update_interval_for_staleness(read, current, now - Duration::from_secs(1));
+        assert_eq!(
+            oracle
+                .state
+                .adaptive_state
+                .lock()
+                .unwrap()
+                .last_short_staleness_read,
+            Some(expected)
+        );
+        oracle.close();
+    }
+
+    #[tokio::test]
     #[serial]
-    async fn source_test_validate_read_ts() {
+    #[allow(non_snake_case)]
+    async fn source_go_oracle_oracles_pd_test_TestValidateReadTS() {
         ENABLE_TS_VALIDATION.store(true, Ordering::Release);
         let source = Arc::new(TestPdSource::new(1_700_000_000_000));
         let oracle = PdOracle::new(
@@ -2037,7 +2107,9 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn source_test_validate_read_ts_for_normal_read_do_not_affect_update_interval() {
+    #[allow(non_snake_case)]
+    async fn source_go_oracle_oracles_pd_test_TestValidateReadTSForNormalReadDoNotAffectUpdateInterval(
+    ) {
         ENABLE_TS_VALIDATION.store(true, Ordering::Release);
         let oracle = PdOracle::new(
             Arc::new(TestPdSource::new(1_700_000_000_000)),
@@ -2079,7 +2151,8 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn source_test_set_last_ts_always_push_ts() {
+    #[allow(non_snake_case)]
+    async fn source_go_oracle_oracles_pd_test_TestSetLastTSAlwaysPushTS() {
         let oracle = PdOracle::new(
             Arc::new(TestPdSource::new(1_700_000_000_000)),
             PdOracleOptions {
@@ -2185,7 +2258,8 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn source_test_validate_read_ts_for_stale_read_reusing_get_ts_result() {
+    #[allow(non_snake_case)]
+    async fn source_go_oracle_oracles_pd_test_TestValidateReadTSForStaleReadReusingGetTSResult() {
         let _scenario = fail::FailScenario::setup();
         fail::cfg("validateReadTSRetryGetTS", "return(skip)").unwrap();
         ENABLE_TS_VALIDATION.store(true, Ordering::Release);
@@ -2321,6 +2395,73 @@ mod tests {
 
     #[tokio::test]
     #[serial]
+    async fn source_validation_singleflight_keeps_empty_and_global_scope_keys_distinct() {
+        ENABLE_TS_VALIDATION.store(true, Ordering::Release);
+        let source = Arc::new(GatePdSource::new());
+        let oracle = PdOracle::new(
+            source.clone(),
+            PdOracleOptions {
+                update_interval: Duration::from_secs(2),
+                no_update_timestamp: true,
+            },
+        )
+        .await
+        .unwrap();
+        source.block.store(true, Ordering::Release);
+        let read_timestamp = oracle
+            .get_low_resolution_timestamp(&OracleOption::default())
+            .await
+            .unwrap()
+            + 1;
+
+        let empty_scope = {
+            let oracle = oracle.clone();
+            tokio::spawn(async move {
+                oracle
+                    .validate_read_timestamp(read_timestamp, false, &OracleOption::default())
+                    .await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while source.calls.load(Ordering::Acquire) != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let global_scope = {
+            let oracle = oracle.clone();
+            tokio::spawn(async move {
+                oracle
+                    .validate_read_timestamp(
+                        read_timestamp,
+                        false,
+                        &OracleOption {
+                            txn_scope: super::super::GLOBAL_TXN_SCOPE.to_owned(),
+                        },
+                    )
+                    .await
+            })
+        };
+        tokio::time::timeout(Duration::from_millis(250), async {
+            while source.calls.load(Ordering::Acquire) != 3 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("empty and explicit global scopes must own distinct source singleflights");
+
+        source.block.store(false, Ordering::Release);
+        source.release.notify_waiters();
+        assert!(empty_scope.await.unwrap().is_ok());
+        assert!(global_scope.await.unwrap().is_ok());
+        oracle.close();
+        ENABLE_TS_VALIDATION.store(false, Ordering::Release);
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn cancelling_one_validation_waiter_does_not_cancel_the_shared_request() {
         ENABLE_TS_VALIDATION.store(true, Ordering::Release);
         let source = Arc::new(GatePdSource::new());
@@ -2367,7 +2508,8 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn source_test_validate_read_ts_from_different_source() {
+    #[allow(non_snake_case)]
+    async fn source_go_oracle_oracles_pd_test_TestValidateReadTSFromDifferentSource() {
         ENABLE_TS_VALIDATION.store(true, Ordering::Release);
         let source = Arc::new(GatePdSource::new());
         let oracle = PdOracle::new(
@@ -2614,11 +2756,5 @@ mod tests {
         );
         oracle.close();
         ENABLE_TS_VALIDATION.store(false, Ordering::Release);
-    }
-
-    #[test]
-    #[allow(non_snake_case)]
-    fn source_go_region_request_TestRegionRequestValidateReadTS() {
-        source_test_validate_read_ts();
     }
 }

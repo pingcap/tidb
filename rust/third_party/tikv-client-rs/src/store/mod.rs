@@ -65,6 +65,10 @@ pub struct RegionStore {
     /// `target_peer.store_id` when a logical leader request is forwarded by a
     /// healthy proxy store.
     pub(crate) physical_store_id: Option<StoreId>,
+    /// Index of the logical peer in client-go's endpoint-specific access list.
+    /// It is diagnostic as well as cache-selection state: retry reasons expose
+    /// it through `RPCContext.ToBackoffReasonString`.
+    pub(crate) access_index: usize,
     /// Endpoint classification of the physical destination. Source liveness
     /// checks deliberately apply only to ordinary TiKV stores.
     pub(crate) physical_endpoint_type: EndpointType,
@@ -114,6 +118,7 @@ impl RegionStore {
             client,
             target: String::new(),
             physical_store_id: None,
+            access_index: 0,
             physical_endpoint_type: EndpointType::TiKv,
             forwarded_host: String::new(),
             stale_read: false,
@@ -148,7 +153,19 @@ impl RegionStore {
     /// Selects the logical peer whose identity must be placed in the TiKV
     /// request context. It does not change the physical RPC destination.
     pub fn with_target_peer(mut self, peer: metapb::Peer) -> Self {
+        self.access_index = self
+            .region_with_leader
+            .region
+            .peers
+            .iter()
+            .position(|candidate| candidate.id == peer.id)
+            .unwrap_or_default();
         self.target_peer = Some(peer);
+        self
+    }
+
+    pub(crate) fn with_access_index(mut self, access_index: usize) -> Self {
+        self.access_index = access_index;
         self
     }
 
@@ -558,7 +575,8 @@ mod tests {
     }
 
     #[test]
-    fn source_store_token_limit_rejects_and_releases() {
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestStoreTokenLimit() {
         let count = Arc::new(AtomicI64::new(0));
         let address = "store-42:20160";
         let metric_before = crate::stats::store_limit_error_count(address, 42);
@@ -575,11 +593,5 @@ mod tests {
 
         drop(token);
         assert_eq!(count.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    #[allow(non_snake_case)]
-    fn source_go_region_request3_TestStoreTokenLimit() {
-        source_store_token_limit_rejects_and_releases();
     }
 }

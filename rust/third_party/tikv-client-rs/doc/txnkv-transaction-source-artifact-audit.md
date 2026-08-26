@@ -1,6 +1,6 @@
 # `txnkv/transaction` source-artifact audit
 
-This is the atomic completion receipt for client-go package `txnkv/transaction`, pinned at commit `52c1e76cec993571493c81de442bcbef90cdc106`. Runtime downstream testing previously reopened the claim because Rust's transaction did not use or expose the completed staged `MemDb` as its committing buffer. That gap is closed: the Rust implementation in `tikv-client` now uses one authoritative `MemDb`, exposes it through `Transaction::get_mem_buffer` and `SyncTransaction::get_mem_buffer`, and is validated with `nightly-2026-08-22`. The injected-client constructor is an ordinary-build public API so embedded and in-process stores do not depend on a test feature; an external no-feature crate gate implements both required client traits and constructs the generic transaction.
+This is the atomic completion receipt for client-go package `txnkv/transaction`, pinned at commit `52c1e76cec993571493c81de442bcbef90cdc106`. Runtime downstream testing previously reopened the claim because Rust's transaction did not use or expose the completed staged `MemDb` as its committing buffer. That gap is closed: the Rust implementation in `tikv-client` now uses one authoritative `MemDb`, exposes it through `Transaction::get_mem_buffer` and `SyncTransaction::get_mem_buffer`, and is validated with `nightly-2026-08-22`. A later whole-body test scan corrected five exact identities that still only invoked aggregate helpers. Strengthening the two transaction-file action identities exposed and fixed a production ordering gap: the resource-group name is now attached before a dynamic tagger runs, as in client-go, for ordinary commit, pipelined commit, split, and transaction-file prewrite/commit/rollback requests. The injected-client constructor is an ordinary-build public API so embedded and in-process stores do not depend on a test feature; an external no-feature crate gate implements both required client traits and constructs the generic transaction.
 
 ## Complete source inventory
 
@@ -51,43 +51,43 @@ The completed unionstore dependency remains reusable and includes a `unistore`-b
 
 ## Original unit-test mapping
 
-Mechanical source enumeration finds exactly 33 `func Test...` declarations. Every declaration, named subtest, table row, randomized round, and source assertion is executable below. Combined Rust tests share setup only when several Go declarations exercise the same private state machine; the third column records the retained case boundary explicitly.
+Mechanical source enumeration finds exactly 33 `func Test...` declarations. Every declaration now has one independently discoverable Rust test body named `source_go_txnkv_transaction_<GoName>`; there are no generated or handwritten forwarding wrappers, registered test-to-test calls, or exact identities consisting only of a helper call. Shared helpers provide setup only, while each exact identity drives its source action and assertions. Every named subtest, table row, randomized round, and source assertion remains executable; the third column records the retained case boundary explicitly.
 
 | Source declaration | Rust evidence | Source cases retained |
 | --- | --- | --- |
-| `TestMinCommitTsManager` | `source_min_commit_ts_manager_access_and_concurrency` | All five named subtests: initial state, TTL monotonicity, access elevation, post-elevation writes, and two-thread/2,000-update concurrency. |
-| `TestMutationsHasDataInRange` | `source_mutations_has_data_in_range_matrix` | All 13 half-open/unbounded range rows and both first-key/first-data-key outputs. |
-| `TestBufferBatchGetter` | `source_buffer_batch_getter_local_precedence_delete_and_commit_ts` | Both return-commit-TS modes, five requested keys, local override, tombstone suppression, snapshot fallback, and miss omission. |
-| `TestLockKeys` | `source_lock_keys_modes_wait_timeout_and_force_lock_results` | All seven named subtests: optimistic exclusive/shared, pessimistic exclusive/shared, aggressive rejection with mode retained and cancellation, pipelined rejection, and shared-to-exclusive rejection followed by an unlocked MemDB write. |
-| `TestSharedLockCommitterIncompatibilities` | `source_shared_lock_committer_incompatibilities` | All three named subtests: primary rejection, async/1PC disablement, and pipelined-flush rejection. |
-| `TestTxnFileCleanupContextUsesStoreContext` | `source_txn_file_cleanup_is_detached_and_retains_the_transaction_start_ts` | Caller cancellation is detached while transaction start TS `42` remains available to cleanup. |
-| `TestTxnFileMaxChunksInParallel` | `source_txn_file_parallel_budget_boundaries` | All four rows: default, exact budget boundary, over-budget, and zero. |
-| `TestCloseTxnFileIdleConnections` | `source_close_idle_connections_closes_the_shared_idle_socket`, `source_close_idle_connections_replaces_the_shared_pool` | A real loopback keep-alive socket reaches idle then closes, and the shared client generation is replaced. |
-| `TestCloseTxnFileIdleConnectionsBeforeInitialization` | `source_close_idle_connections_before_initialization_is_safe` | Repeated close before initialization is panic-free. |
-| `TestTxnFileHTTPClientHasIdleConnectionTimeout` | `source_txn_file_http_client_idle_connection_timeout_is_90_seconds` | The exact 90-second pool-idle value used by the client builder. |
-| `TestPrepareTxnFileCommitTS` | `source_prepare_txn_file_commit_timestamp_waits_and_checks_schema_first` | All four named subtests: wait-until success and lag details, schema failure, lifetime expiry, and upper-bound rejection, including callback ordering/call counts. |
-| `TestTxnFileCommitTSExpiredRetryUsesPreparedTimestamp` | `source_txn_file_commit_ambiguity_and_expired_retry` | All three scenarios: valid primary retry uses newly prepared TS/tag once, secondary rejection, and mismatched-primary-key rejection without preparing a timestamp. |
-| `TestTxnFilePrewriteUsesPrimaryKey` | `source_txn_file_primary_prewrite_cleanup_and_batch_selection` | Configured primary is present in the physical txn-file prewrite request. |
-| `TestTxnFilePrewriteExpandsSharedLockHolders` | `source_txn_file_prewrite_expands_shared_lock_holders` | Both nested shared holders are surfaced to lock resolution with their original lock types. |
-| `TestTxnFilePrimaryBatchIndexFindsPrimaryRegion` | `source_txn_file_primary_prewrite_cleanup_and_batch_selection` | Half-open region boundary selects the second batch for the primary. |
-| `TestTxnFilePrimaryRollbackPropagatesKeyError` | `source_txn_file_primary_prewrite_cleanup_and_batch_selection` | Primary rollback abort remains a session-scoped txn-file cleanup error. |
-| `TestTxnFileActionsApplyResourceGroupTagger` | `source_txn_file_actions_apply_dynamic_or_static_resource_group_tag` | Prewrite, commit, and rollback rows; tagger sees source sample mutations/context, runs once per action, and temporary prewrite mutations are restored before dispatch. |
-| `TestTxnFileActionsPreserveStaticResourceGroupTag` | `source_txn_file_actions_apply_dynamic_or_static_resource_group_tag` | All three actions retain the static tag and skip the dynamic tagger. |
-| `TestTxnFilePrewriteTaggerUsesFirstKeyWithoutSampleDataKeys` | `source_txn_file_tagger_uses_first_key_and_static_tag_wins` | The first key is temporarily supplied to the tagger and omitted from the sent file request. |
-| `TestTxnFilePrewriteTaggerAppliesWithoutFirstKey` | `source_txn_file_tagger_uses_first_key_and_static_tag_wins` | The tagger still executes with an empty mutation list and its tag reaches dispatch. |
-| `TestTxnFileCommitPrimaryRPCErrorMarksResultUndetermined` | `source_txn_file_commit_ambiguity_and_expired_retry` | Primary transport loss records ambiguity and normalizes to result-undetermined. |
-| `TestTxnFileCommitSecondaryRPCErrorIsNotResultUndetermined` | `source_txn_file_commit_ambiguity_and_expired_retry` | The same secondary transport loss remains an ordinary error. |
-| `TestTxnFileCommitClearsUndeterminedErrOnDefinitivePrimaryResponse` | `source_txn_file_commit_ambiguity_and_expired_retry` | Both named rows—success and key error—clear stale ambiguity. |
-| `TestTxnFileCommitPrimaryUndeterminedRegionError` | `source_txn_file_commit_ambiguity_and_expired_retry` | Undetermined region response is terminal, recorded, and not retried. |
-| `TestTxnFileCommitPrimaryRPCErrorIsNormalized` | `source_txn_file_primary_rpc_error_is_normalized_without_rollback` | Full upload/prewrite/primary-commit flow returns result-undetermined and sends no rollback. |
-| `TestTxnFileCommitPreservesCommitOnResourceControlResponseError` | `source_txn_file_commit_survives_resource_accounting_response_error` | Full public commit preserves uploaded wire bytes and committed state when post-response accounting fails; rollback count stays zero. |
-| `TestChunkSliceSortAndDedup` | `source_chunk_slice_sort_and_dedup_preserves_ranges` | All 100 deterministic randomized rounds, ID deduplication, and range/entry alignment assertions. |
-| `TestIsRequestSourceUseTxnFile` | `source_request_source_whitelist` | All five external/internal whitelist rows. |
-| `TestUseTxnFileExcludesPipelinedTxn` | `source_txn_file_admission_exclusions` | Enabled pipelined mode rejects the file protocol. |
-| `TestUseTxnFileExcludesSharedLockTxn` | `source_txn_file_admission_exclusions` | Any shared-lock mutation rejects the file protocol. |
-| `TestUseTxnFileExcludesMutationAssertions` | `source_txn_file_admission_exclusions` | All four rows: strict exists, strict not-exists, strict/no assertion, and assertion-off/flagged. |
-| `TestPreSplitTxnFileRegionsUsesDedicatedSplitPath` | `source_pre_split_txn_file_regions_uses_dedicated_split_path` | Five chunks produce the dedicated fourth-chunk split key and never use the generic split path. |
-| `TestBuildTxnFilesEntryCounting` | `source_build_txn_files_counts_entries_and_matches_wire_format` | All nine mutations spanning Put/Del/Insert/Lock/CheckNotExists, exact binary+CRC wire decoding, three chunks, three entries per chunk, and total-entry equality. |
+| `TestMinCommitTsManager` | `source_go_txnkv_transaction_TestMinCommitTsManager` | All five named subtests: initial state, TTL monotonicity, access elevation, post-elevation writes, and two-thread/2,000-update concurrency. |
+| `TestMutationsHasDataInRange` | `source_go_txnkv_transaction_TestMutationsHasDataInRange` | All 13 half-open/unbounded range rows and both first-key/first-data-key outputs. |
+| `TestBufferBatchGetter` | `source_go_txnkv_transaction_TestBufferBatchGetter` | Both return-commit-TS modes, five requested keys, local override, tombstone suppression, snapshot fallback, and miss omission. |
+| `TestLockKeys` | `source_go_txnkv_transaction_TestLockKeys` | All seven named subtests: optimistic exclusive/shared, pessimistic exclusive/shared, aggressive rejection with mode retained and cancellation, pipelined rejection, and shared-to-exclusive rejection followed by an unlocked MemDB write. |
+| `TestSharedLockCommitterIncompatibilities` | `source_go_txnkv_transaction_TestSharedLockCommitterIncompatibilities` | All three named subtests: primary rejection, async/1PC disablement, and pipelined-flush rejection. |
+| `TestTxnFileCleanupContextUsesStoreContext` | `source_go_txnkv_transaction_TestTxnFileCleanupContextUsesStoreContext` | Caller cancellation is detached while transaction start TS `42` remains available to cleanup. |
+| `TestTxnFileMaxChunksInParallel` | `source_go_txnkv_transaction_TestTxnFileMaxChunksInParallel` | All four rows: default, exact budget boundary, over-budget, and zero. |
+| `TestCloseTxnFileIdleConnections` | `source_go_txnkv_transaction_TestCloseTxnFileIdleConnections` | A real loopback keep-alive socket reaches idle then closes; a separate native gate verifies shared-client generation replacement. |
+| `TestCloseTxnFileIdleConnectionsBeforeInitialization` | `source_go_txnkv_transaction_TestCloseTxnFileIdleConnectionsBeforeInitialization` | Repeated close before initialization is panic-free. |
+| `TestTxnFileHTTPClientHasIdleConnectionTimeout` | `source_go_txnkv_transaction_TestTxnFileHTTPClientHasIdleConnectionTimeout` | The exact 90-second pool-idle value used by the client builder. |
+| `TestPrepareTxnFileCommitTS` | `source_go_txnkv_transaction_TestPrepareTxnFileCommitTS` | All four named subtests: wait-until success and lag details, schema failure, lifetime expiry, and upper-bound rejection, including callback ordering/call counts. |
+| `TestTxnFileCommitTSExpiredRetryUsesPreparedTimestamp` | `source_go_txnkv_transaction_TestTxnFileCommitTSExpiredRetryUsesPreparedTimestamp` | All three scenarios: valid primary retry uses newly prepared TS/tag once, secondary rejection, and mismatched-primary-key rejection without preparing a timestamp. |
+| `TestTxnFilePrewriteUsesPrimaryKey` | `source_go_txnkv_transaction_TestTxnFilePrewriteUsesPrimaryKey` | Configured primary is present in the physical txn-file prewrite request. |
+| `TestTxnFilePrewriteExpandsSharedLockHolders` | `source_go_txnkv_transaction_TestTxnFilePrewriteExpandsSharedLockHolders` | Both nested shared holders are surfaced to lock resolution with their original lock types. |
+| `TestTxnFilePrimaryBatchIndexFindsPrimaryRegion` | `source_go_txnkv_transaction_TestTxnFilePrimaryBatchIndexFindsPrimaryRegion` | Half-open region boundary selects the second batch for the primary. |
+| `TestTxnFilePrimaryRollbackPropagatesKeyError` | `source_go_txnkv_transaction_TestTxnFilePrimaryRollbackPropagatesKeyError` | Primary rollback abort remains a session-scoped txn-file cleanup error. |
+| `TestTxnFileActionsApplyResourceGroupTagger` | `source_go_txnkv_transaction_TestTxnFileActionsApplyResourceGroupTagger` | Fresh prewrite, commit, and rollback rows; tagger sees source sample mutations and the `txn-file-test` resource-group context, runs once per action, and temporary prewrite mutations are restored before dispatch. |
+| `TestTxnFileActionsPreserveStaticResourceGroupTag` | `source_go_txnkv_transaction_TestTxnFileActionsPreserveStaticResourceGroupTag` | Fresh instances for all three actions retain the static tag and skip the dynamic tagger. |
+| `TestTxnFilePrewriteTaggerUsesFirstKeyWithoutSampleDataKeys` | `source_go_txnkv_transaction_TestTxnFilePrewriteTaggerUsesFirstKeyWithoutSampleDataKeys` | The first key is temporarily supplied to the tagger and omitted from the sent file request. |
+| `TestTxnFilePrewriteTaggerAppliesWithoutFirstKey` | `source_go_txnkv_transaction_TestTxnFilePrewriteTaggerAppliesWithoutFirstKey` | The tagger still executes with an empty mutation list and its tag reaches dispatch. |
+| `TestTxnFileCommitPrimaryRPCErrorMarksResultUndetermined` | `source_go_txnkv_transaction_TestTxnFileCommitPrimaryRPCErrorMarksResultUndetermined` | Primary transport loss records ambiguity and normalizes to result-undetermined. |
+| `TestTxnFileCommitSecondaryRPCErrorIsNotResultUndetermined` | `source_go_txnkv_transaction_TestTxnFileCommitSecondaryRPCErrorIsNotResultUndetermined` | The same secondary transport loss remains an ordinary error. |
+| `TestTxnFileCommitClearsUndeterminedErrOnDefinitivePrimaryResponse` | `source_go_txnkv_transaction_TestTxnFileCommitClearsUndeterminedErrOnDefinitivePrimaryResponse` | Both named rows—success and key error—clear stale ambiguity. |
+| `TestTxnFileCommitPrimaryUndeterminedRegionError` | `source_go_txnkv_transaction_TestTxnFileCommitPrimaryUndeterminedRegionError` | Undetermined region response is terminal, recorded, and not retried. |
+| `TestTxnFileCommitPrimaryRPCErrorIsNormalized` | `source_go_txnkv_transaction_TestTxnFileCommitPrimaryRPCErrorIsNormalized` | Full upload/prewrite/primary-commit flow returns result-undetermined and sends no rollback. |
+| `TestTxnFileCommitPreservesCommitOnResourceControlResponseError` | `source_go_txnkv_transaction_TestTxnFileCommitPreservesCommitOnResourceControlResponseError` | Full public commit preserves uploaded wire bytes and committed state when post-response accounting fails; rollback count stays zero. |
+| `TestChunkSliceSortAndDedup` | `source_go_txnkv_transaction_TestChunkSliceSortAndDedup` | All 100 deterministic randomized rounds, ID deduplication, and range/entry alignment assertions. |
+| `TestIsRequestSourceUseTxnFile` | `source_go_txnkv_transaction_TestIsRequestSourceUseTxnFile` | All five external/internal whitelist rows. |
+| `TestUseTxnFileExcludesPipelinedTxn` | `source_go_txnkv_transaction_TestUseTxnFileExcludesPipelinedTxn` | Enabled pipelined mode rejects the file protocol. |
+| `TestUseTxnFileExcludesSharedLockTxn` | `source_go_txnkv_transaction_TestUseTxnFileExcludesSharedLockTxn` | Any shared-lock mutation rejects the file protocol. |
+| `TestUseTxnFileExcludesMutationAssertions` | `source_go_txnkv_transaction_TestUseTxnFileExcludesMutationAssertions` | All four rows: strict exists, strict not-exists, strict/no assertion, and assertion-off/flagged. |
+| `TestPreSplitTxnFileRegionsUsesDedicatedSplitPath` | `source_go_txnkv_transaction_TestPreSplitTxnFileRegionsUsesDedicatedSplitPath` | Five chunks produce the dedicated fourth-chunk split key and never use the generic split path. |
+| `TestBuildTxnFilesEntryCounting` | `source_go_txnkv_transaction_TestBuildTxnFilesEntryCounting` | All nine mutations spanning Put/Del/Insert/Lock/CheckNotExists, exact binary+CRC wire decoding, three chunks, three entries per chunk, and total-entry equality. |
 
 Additional source-derived tests cover transaction validity after the first commit/rollback attempt, commit-wait retry/classification, all-check transactions, mutation assertion/constraint actions, `NoResolvePolicy`, normal and failed cleanup, large-2PC splitting, binlog lifecycle, schema/filter/callback/memory contracts, async/1PC fallback, pipelined generations, request context propagation, and keyspace/API coding. The integration failpoint test proves failed commit closes the public transaction while detached cleanup removes its lock.
 
@@ -104,18 +104,21 @@ The complete `internal/locate`, `internal/client`, `internal/apicodec`, `tikvrpc
 
 ## Validation boundary
 
-Final re-closure validation on `nightly-2026-08-22` used the exact batch code:
+Final independent-test validation on `nightly-2026-08-22` used the exact batch code:
 
 - `make check`: clean protocol generation; workspace all-target/all-feature check; rustfmt; strict workspace Clippy with warnings denied.
-- `cargo nextest run --config-file config/nextest.toml --all --no-default-features`: 852 tests passed and one was intentionally skipped. This matrix includes the external mocktikv, public-protocol, ordinary-build injected-client, shared-UniStore, and package unit-test targets.
-- `cargo nextest run --config-file config/nextest.toml --all --all-features --lib`: 840 tests passed and one was intentionally skipped.
-- `cargo +nightly-2026-08-22 test --lib source_` and its `--all-features` variant: 484 source-derived tests passed in each configuration. The transaction subset includes every case represented by the 33 original declarations, plus production-branch regressions discovered during the audit.
-- `cargo +nightly-2026-08-22 test --no-default-features --test public_injected_client_tests`: 2 tests passed, including ordinary-build access to the injected constructor and transaction configuration/pre-split controls.
+- `cargo nextest run --config-file config/nextest.toml --all --no-default-features`: 1,274 tests passed and two were intentionally skipped. This matrix includes the external mocktikv, public-protocol, ordinary-build injected-client, shared-UniStore, and package unit-test targets.
+- `cargo nextest run --config-file config/nextest.toml --all --all-features --lib`: 1,249 tests passed and six were intentionally skipped.
+- `cargo test --no-default-features --lib source_go_txnkv_transaction_ -- --nocapture` and the `--all-features` variant: all 33 independently named transaction-package tests passed in each configuration.
 - `make doc`: strict private-item workspace rustdoc passed; all 51 doctests passed.
 - `git diff --check`: passed.
-- Mechanical declaration comparison: 33 pinned source tests and 33 documented tests, with no missing or extra name.
+- Mechanical declaration comparison: 33 pinned source tests and 33 direct Rust test bodies, with no missing, extra, duplicate, forwarding, registered test-to-test, or one-call-only helper identity.
+- `/private/tmp/go1.25.12-full/bin/go test ./txnkv/transaction -count=1`: passed in 0.026 seconds.
+- `/private/tmp/go1.25.12-full/bin/go test -race ./txnkv/transaction -count=1`: passed in 1.077 seconds; the linker emitted only its known malformed `LC_DYSYMTAB` warning.
 
-Package-owned behavior is covered through deterministic request-level mocks and source-derived state-machine tests. This host has no Go executable, so the pinned Go tests were not rerun in this re-closure; their declarations, subtests, table rows, randomized rounds, and assertions are mapped above and execute in Rust. Earlier repository-level receipts retain their separately recorded Go and real-cluster evidence.
+The strengthened `TestTxnFileActionsApplyResourceGroupTagger` failed before the production fix because `Request::resource_group_name()` returned `None` inside the tagger. It now passes all three source action rows with `Some("txn-file-test")`, and dispatched protobuf contexts retain the same name. Static tags still suppress the dynamic tagger. This red/green result corrects the earlier receipt's claim that the action metadata port was already direct and complete.
+
+Package-owned behavior is covered through deterministic request-level mocks and source-derived state-machine tests. The pinned Go normal and race baselines and both Rust feature configurations execute the declarations, subtests, table rows, randomized rounds, and assertions mapped above. Earlier repository-level receipts retain their separately recorded real-cluster evidence.
 
 A live TiKV/PD cluster is not required by any of the four package-local source test files. End-to-end cross-client differential runs for transaction, snapshot, lock resolver, safe point, and root-store orchestration remain a repository completion gate owned by their high-level packages; they are not an omitted artifact of this atomic package receipt.
 

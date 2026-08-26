@@ -80,10 +80,7 @@ pub struct ChannelzCollector {
     descriptors: BTreeMap<Family, Desc>,
     descriptor_order: Vec<Family>,
     worker: RpcWorker,
-    get_top_channels_errors_total: AtomicU64,
-    get_channel_errors_total: AtomicU64,
-    get_subchannel_errors_total: AtomicU64,
-    get_socket_errors_total: AtomicU64,
+    fetch_errors: Arc<FetchErrorCounters>,
 }
 
 impl ChannelzCollector {
@@ -136,10 +133,7 @@ impl ChannelzCollector {
             descriptors,
             descriptor_order,
             worker: RpcWorker::new(channel),
-            get_top_channels_errors_total: AtomicU64::new(0),
-            get_channel_errors_total: AtomicU64::new(0),
-            get_subchannel_errors_total: AtomicU64::new(0),
-            get_socket_errors_total: AtomicU64::new(0),
+            fetch_errors: Arc::new(FetchErrorCounters::default()),
         })
     }
 
@@ -153,25 +147,12 @@ impl ChannelzCollector {
                     include_channel_trace: self.options.include_channel_trace,
                     include_channel_state: self.options.include_channel_state,
                 },
+                Arc::clone(&self.fetch_errors),
             )
-            .unwrap_or_else(|| WalkResult {
-                fetch_errors: FetchErrors {
-                    get_top_channels: 1,
-                    ..Default::default()
-                },
-                ..Default::default()
+            .unwrap_or_else(|| {
+                self.fetch_errors.record_get_top_channels_error();
+                WalkResult::default()
             })
-    }
-
-    fn add_fetch_errors(&self, errors: FetchErrors) {
-        self.get_top_channels_errors_total
-            .fetch_add(errors.get_top_channels, Ordering::Relaxed);
-        self.get_channel_errors_total
-            .fetch_add(errors.get_channel, Ordering::Relaxed);
-        self.get_subchannel_errors_total
-            .fetch_add(errors.get_subchannel, Ordering::Relaxed);
-        self.get_socket_errors_total
-            .fetch_add(errors.get_socket, Ordering::Relaxed);
     }
 
     fn fetch_error_samples(&self) -> [Sample; 4] {
@@ -179,22 +160,22 @@ impl ChannelzCollector {
             Sample::new(
                 Family::FetchErrors,
                 [("rpc", "GetTopChannels")],
-                self.get_top_channels_errors_total.load(Ordering::Relaxed) as f64,
+                self.fetch_errors.get_top_channels.load(Ordering::SeqCst) as f64,
             ),
             Sample::new(
                 Family::FetchErrors,
                 [("rpc", "GetChannel")],
-                self.get_channel_errors_total.load(Ordering::Relaxed) as f64,
+                self.fetch_errors.get_channel.load(Ordering::SeqCst) as f64,
             ),
             Sample::new(
                 Family::FetchErrors,
                 [("rpc", "GetSubchannel")],
-                self.get_subchannel_errors_total.load(Ordering::Relaxed) as f64,
+                self.fetch_errors.get_subchannel.load(Ordering::SeqCst) as f64,
             ),
             Sample::new(
                 Family::FetchErrors,
                 [("rpc", "GetSocket")],
-                self.get_socket_errors_total.load(Ordering::Relaxed) as f64,
+                self.fetch_errors.get_socket.load(Ordering::SeqCst) as f64,
             ),
         ]
     }
@@ -210,7 +191,6 @@ impl Collector for ChannelzCollector {
 
     fn collect(&self) -> Vec<MetricFamily> {
         let mut result = self.collect_walk();
-        self.add_fetch_errors(result.fetch_errors);
         result.samples.extend(self.fetch_error_samples());
         build_metric_families(
             result.samples,
@@ -423,24 +403,42 @@ fn build_metric_families(
     families.into_values().collect()
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-struct FetchErrors {
-    get_top_channels: u64,
-    get_channel: u64,
-    get_subchannel: u64,
-    get_socket: u64,
+#[derive(Debug, Default)]
+struct FetchErrorCounters {
+    get_top_channels: AtomicU64,
+    get_channel: AtomicU64,
+    get_subchannel: AtomicU64,
+    get_socket: AtomicU64,
+}
+
+impl FetchErrorCounters {
+    fn record_get_top_channels_error(&self) {
+        self.get_top_channels.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn record_get_channel_error(&self) {
+        self.get_channel.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn record_get_subchannel_error(&self) {
+        self.get_subchannel.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn record_get_socket_error(&self) {
+        self.get_socket.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 #[derive(Debug, Default)]
 struct WalkResult {
     samples: Vec<Sample>,
-    fetch_errors: FetchErrors,
 }
 
 enum WorkerCommand {
     Collect {
         filter: Option<ChannelzFilter>,
         settings: WalkSettings,
+        fetch_errors: Arc<FetchErrorCounters>,
         reply: mpsc::Sender<WalkResult>,
     },
     Shutdown,
@@ -468,12 +466,14 @@ impl RpcWorker {
                             WorkerCommand::Collect {
                                 filter,
                                 settings,
+                                fetch_errors,
                                 reply,
                             } => {
                                 let mut client = client.clone();
                                 tokio::spawn(async move {
-                                    let result =
-                                        Walker::new(filter, settings).walk(&mut client).await;
+                                    let result = Walker::new(filter, settings, fetch_errors)
+                                        .walk(&mut client)
+                                        .await;
                                     let _ = reply.send(result);
                                 });
                             }
@@ -493,12 +493,14 @@ impl RpcWorker {
         &self,
         filter: Option<ChannelzFilter>,
         settings: WalkSettings,
+        fetch_errors: Arc<FetchErrorCounters>,
     ) -> Option<WalkResult> {
         let (reply, response) = mpsc::channel();
         self.commands
             .send(WorkerCommand::Collect {
                 filter,
                 settings,
+                fetch_errors,
                 reply,
             })
             .ok()?;
@@ -518,6 +520,7 @@ impl Drop for RpcWorker {
 struct Walker {
     filter: Option<ChannelzFilter>,
     settings: WalkSettings,
+    fetch_errors: Arc<FetchErrorCounters>,
     seen_channels: HashSet<i64>,
     seen_subchannels: HashSet<i64>,
     seen_sockets: HashSet<i64>,
@@ -525,10 +528,15 @@ struct Walker {
 }
 
 impl Walker {
-    fn new(filter: Option<ChannelzFilter>, settings: WalkSettings) -> Self {
+    fn new(
+        filter: Option<ChannelzFilter>,
+        settings: WalkSettings,
+        fetch_errors: Arc<FetchErrorCounters>,
+    ) -> Self {
         Self {
             filter,
             settings,
+            fetch_errors,
             seen_channels: HashSet::new(),
             seen_subchannels: HashSet::new(),
             seen_sockets: HashSet::new(),
@@ -548,7 +556,7 @@ impl Walker {
             let response = match response {
                 Ok(response) => response.into_inner(),
                 Err(_) => {
-                    self.result.fetch_errors.get_top_channels += 1;
+                    self.fetch_errors.record_get_top_channels_error();
                     break;
                 }
             };
@@ -593,7 +601,7 @@ impl Walker {
                         self.walk_channel(client, child).await;
                     }
                 }
-                Err(_) => self.result.fetch_errors.get_channel += 1,
+                Err(_) => self.fetch_errors.record_get_channel_error(),
             }
         }
         for child in channel.subchannel_ref {
@@ -608,7 +616,7 @@ impl Walker {
                         self.walk_subchannel(client, child).await;
                     }
                 }
-                Err(_) => self.result.fetch_errors.get_subchannel += 1,
+                Err(_) => self.fetch_errors.record_get_subchannel_error(),
             }
         }
         for child in channel.socket_ref {
@@ -647,7 +655,7 @@ impl Walker {
                         self.walk_channel(client, child).await;
                     }
                 }
-                Err(_) => self.result.fetch_errors.get_channel += 1,
+                Err(_) => self.fetch_errors.record_get_channel_error(),
             }
         }
         for child in subchannel.subchannel_ref {
@@ -662,7 +670,7 @@ impl Walker {
                         self.walk_subchannel(client, child).await;
                     }
                 }
-                Err(_) => self.result.fetch_errors.get_subchannel += 1,
+                Err(_) => self.fetch_errors.record_get_subchannel_error(),
             }
         }
         for child in subchannel.socket_ref {
@@ -683,7 +691,7 @@ impl Walker {
                     self.walk_socket(socket);
                 }
             }
-            Err(_) => self.result.fetch_errors.get_socket += 1,
+            Err(_) => self.fetch_errors.record_get_socket_error(),
         }
     }
 
@@ -990,6 +998,8 @@ fn format_address(address: Option<&proto::Address>) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(non_snake_case)]
+
     use super::*;
     use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -1001,7 +1011,7 @@ mod tests {
     use proto::{GetServersResponse, GetSocketRequest, GetSocketResponse};
     use proto::{GetSubchannelRequest, GetSubchannelResponse, GetTopChannelsRequest};
     use proto::{GetTopChannelsResponse, SocketData, SocketRef, SubchannelRef};
-    use tokio::sync::oneshot;
+    use tokio::sync::{oneshot, Notify};
     use tokio_stream::wrappers::TcpListenerStream;
     use tonic::{Request, Response, Status};
 
@@ -1015,6 +1025,15 @@ mod tests {
         subchannel_errors: HashSet<i64>,
         sockets: HashMap<i64, Socket>,
         socket_errors: HashSet<i64>,
+        blocked_socket: Option<BlockedSocket>,
+    }
+
+    #[derive(Clone)]
+    struct BlockedSocket {
+        id: i64,
+        calls: Arc<AtomicU64>,
+        entered: Arc<Notify>,
+        release: Arc<Notify>,
     }
 
     #[tonic::async_trait]
@@ -1102,6 +1121,12 @@ mod tests {
             request: Request<GetSocketRequest>,
         ) -> Result<Response<GetSocketResponse>, Status> {
             let id = request.into_inner().socket_id;
+            if let Some(blocked) = &self.blocked_socket {
+                if id == blocked.id && blocked.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    blocked.entered.notify_one();
+                    blocked.release.notified().await;
+                }
+            }
             if self.socket_errors.contains(&id) {
                 return Err(Status::unavailable("socket unavailable"));
             }
@@ -1275,7 +1300,7 @@ mod tests {
     }
 
     #[test]
-    fn address_format_matches_go_for_mapped_and_invalid_ips() {
+    fn source_uncovered_address_format_matches_go_for_mapped_and_invalid_ips() {
         let mapped = tcp_address(
             vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1],
             80,
@@ -1288,7 +1313,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn channelz_collector_collects_and_deduplicates_the_source_graph() {
+    async fn source_go_util_collectors_channelz_test_TestChannelzCollectorCollect() {
         let base = 1_700_000_000;
         let mut root = channel(1, "cluster-a");
         root.subchannel_ref.push(SubchannelRef {
@@ -1330,6 +1355,9 @@ mod tests {
             ..Default::default()
         });
         let mut sub = subchannel(2, "backend-a");
+        sub.data.as_mut().unwrap().state = Some(ChannelConnectivityState {
+            state: channel_connectivity_state::State::Connecting as i32,
+        });
         sub.data.as_mut().unwrap().calls_started = 3;
         sub.data.as_mut().unwrap().calls_succeeded = 2;
         sub.data.as_mut().unwrap().calls_failed = 1;
@@ -1344,7 +1372,10 @@ mod tests {
             },
         ];
         let mut socket10 = socket(10, 5);
-        socket10.local = Some(tcp_address(vec![127, 0, 0, 1], 8080));
+        socket10.local = Some(tcp_address(
+            vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1],
+            8080,
+        ));
         socket10.remote = Some(tcp_address(
             vec![0x20, 1, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
             443,
@@ -1384,10 +1415,16 @@ mod tests {
                 end: false,
             },
         );
+        let mut page_two = channel(3, "cluster-b");
+        page_two.data.as_mut().unwrap().state = Some(ChannelConnectivityState {
+            state: channel_connectivity_state::State::Idle as i32,
+        });
+        page_two.data.as_mut().unwrap().calls_started = 2;
+        page_two.data.as_mut().unwrap().calls_succeeded = 2;
         server.top_channels.insert(
             2,
             GetTopChannelsResponse {
-                channel: vec![channel(3, "cluster-b")],
+                channel: vec![page_two],
                 end: true,
             },
         );
@@ -1477,11 +1514,12 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn channel_options_emit_one_hot_state_and_trace_statistics() {
+    async fn source_go_util_collectors_channelz_test_TestChannelzCollectorChannelOptions() {
         let mut root = channel(1, "cluster-a");
         root.data = Some(ChannelData {
             target: "cluster-a".to_owned(),
             calls_started: 1,
+            last_call_started_timestamp: Some(timestamp(1_699_999_980)),
             state: Some(ChannelConnectivityState {
                 state: channel_connectivity_state::State::Ready as i32,
             }),
@@ -1544,7 +1582,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn filter_controls_collection_and_child_walks() {
+    async fn source_go_util_collectors_channelz_test_TestChannelzCollectorFilter() {
         let mut root = channel(1, "root");
         root.channel_ref.push(ChannelRef {
             channel_id: 5,
@@ -1623,15 +1661,21 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn socket_label_toggles_remove_local_and_remote_dimensions() {
+    async fn source_go_util_collectors_channelz_test_TestChannelzCollectorSocketLabelToggles() {
         let mut root = channel(1, "root");
         root.socket_ref.push(SocketRef {
             socket_id: 10,
             name: String::new(),
         });
         let mut tracked = socket(10, 1);
-        tracked.local = Some(tcp_address(vec![127, 0, 0, 1], 1000));
-        tracked.remote = Some(tcp_address(vec![127, 0, 0, 2], 2000));
+        tracked.local = Some(tcp_address(
+            vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1],
+            1000,
+        ));
+        tracked.remote = Some(tcp_address(
+            vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 2],
+            2000,
+        ));
         let mut server = FakeChannelzServer::default();
         server.top_channels.insert(
             0,
@@ -1667,7 +1711,8 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn zero_stream_timestamp_is_skipped() {
+    async fn source_go_util_collectors_channelz_test_TestChannelzCollectorSkipsZeroStreamTimestamp()
+    {
         let mut root = channel(1, "root");
         root.socket_ref.push(SocketRef {
             socket_id: 10,
@@ -1703,7 +1748,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn fetch_errors_are_counted_without_discarding_successful_metrics() {
+    async fn source_go_util_collectors_channelz_test_TestChannelzCollectorFetchErrors() {
         let mut root = channel(1, "root");
         root.data.as_mut().unwrap().calls_started = 1;
         root.channel_ref.push(ChannelRef {
@@ -1749,5 +1794,84 @@ mod tests {
                 expected,
             );
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn source_concurrent_fetch_errors_are_visible_before_the_failing_walk_finishes() {
+        let mut root = channel(1, "root");
+        root.channel_ref.push(ChannelRef {
+            channel_id: 2,
+            name: String::new(),
+        });
+        root.socket_ref.push(SocketRef {
+            socket_id: 10,
+            name: String::new(),
+        });
+
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let mut server = FakeChannelzServer::default();
+        server.top_channels.insert(
+            0,
+            GetTopChannelsResponse {
+                channel: vec![root],
+                end: true,
+            },
+        );
+        server.channel_errors.insert(2);
+        server.sockets.insert(10, socket(10, 1));
+        server.blocked_socket = Some(BlockedSocket {
+            id: 10,
+            calls: Arc::new(AtomicU64::new(0)),
+            entered: Arc::clone(&entered),
+            release: Arc::clone(&release),
+        });
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (shutdown, shutdown_rx) = oneshot::channel();
+        let server_task = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(ChannelzServer::new(server))
+                .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .unwrap();
+        });
+        let channel = tonic::transport::Endpoint::from_shared(format!("http://{address}"))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let collector = Arc::new(new_channelz_collector(
+            channel,
+            ChannelzCollectorOptions::default(),
+        ));
+
+        let first_collector = Arc::clone(&collector);
+        let first = tokio::task::spawn_blocking(move || first_collector.collect());
+        entered.notified().await;
+
+        let second_collector = Arc::clone(&collector);
+        let second = tokio::task::spawn_blocking(move || second_collector.collect())
+            .await
+            .unwrap();
+        let second = second
+            .into_iter()
+            .map(|family| (family.get_name().to_owned(), family))
+            .collect::<BTreeMap<_, _>>();
+        let observed = metric_value(
+            &second["grpc_channelz_fetch_errors_total"],
+            &[("rpc", "GetChannel")],
+        )
+        .unwrap();
+
+        release.notify_one();
+        first.await.unwrap();
+        drop(collector);
+        let _ = shutdown.send(());
+        server_task.await.unwrap();
+        assert_eq!(observed, 2.0);
     }
 }

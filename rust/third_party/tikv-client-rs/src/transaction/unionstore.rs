@@ -452,22 +452,15 @@ impl MemDb {
                     if self.managed_pipelined.is_none() {
                         continue;
                     }
-                    match self
-                        .managed_pipelined
-                        .as_ref()
-                        .and_then(|state| state.batch_get_cache.get(key))
-                    {
-                        Some(Some(value)) => {
-                            result.insert(key.clone(), value.clone());
-                        }
-                        Some(None) => {}
-                        None => remote_keys.push(key.clone()),
-                    }
+                    // Source PipelinedMemDB.BatchGet never consumes its point-read
+                    // cache. Every non-local key is fetched again and refreshes
+                    // that cache for subsequent Get calls.
+                    remote_keys.push(key.clone());
                 }
                 Err(error) => return Err(error),
             }
         }
-        if !remote_keys.is_empty() {
+        if self.managed_pipelined.is_some() {
             let remote_batch_get = self
                 .managed_pipelined
                 .as_ref()
@@ -2593,7 +2586,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_random_derive() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_unionstore_memdb_norace_test_TestRandomDerive() {
         let mut db = MemDb::new();
         let mut oracle = BTreeMap::new();
         deeply_nested_staging_oracle(&mut db, &mut oracle, 0);
@@ -2601,7 +2595,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_random() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_unionstore_memdb_norace_test_TestRandom() {
         const COUNT: usize = 50_000;
         let mut state = 0x477d_4f41_1a19_7ad3;
         let mut rbt = RbtMemDb::new();
@@ -2635,7 +2630,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_random_ab() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_unionstore_memdb_norace_test_TestRandomAB() {
         const COUNT: usize = 50_000;
         let mut state = 0x477d_4f41_1a19_7ad3;
         let mut art = MemDb::new();
@@ -3265,6 +3261,7 @@ mod tests {
         assert_eq!(db.get(b"key"), Err("key not found".to_owned()));
     }
 
+    #[allow(non_snake_case)]
     mod source_tests {
         include!("unionstore_source_tests.rs");
     }

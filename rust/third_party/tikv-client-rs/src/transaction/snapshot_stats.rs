@@ -1080,8 +1080,7 @@ fn snapshot_rpc_command(request: &dyn Request) -> Option<SnapshotRpcCommand> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn clone_and_merge_preserve_independent_rpc_totals() {
+    fn assert_clone_and_merge_preserve_independent_rpc_totals() {
         let stats = SnapshotRuntimeStats::new();
         stats.record_rpc(SnapshotRpcCommand::Get, Duration::from_millis(3));
         stats.record_exec_detail(&kvrpcpb::ExecDetailsV2 {
@@ -1139,8 +1138,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn display_matches_client_go_runtime_stat_format() {
+    fn assert_display_matches_client_go_runtime_stat_format() {
         let stats = SnapshotRuntimeStats::new();
         stats.record_rpc(SnapshotRpcCommand::Get, Duration::from_nanos(9_412_345));
         stats.region_request_stats.record_error("region_not_found");
@@ -1175,8 +1173,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn read_pool_details_merge_clone_and_format_like_client_go() {
+    fn assert_read_pool_details_merge_clone_and_format_like_client_go() {
         let stats = SnapshotRuntimeStats::new();
         stats.record_exec_detail(&kvrpcpb::ExecDetailsV2 {
             read_pool_task_details: Some(kvrpcpb::PoolTaskDetails {
@@ -1214,8 +1211,7 @@ mod tests {
         assert_eq!(merged.max_poll_count, 4);
     }
 
-    #[test]
-    fn duration_formatting_matches_client_go_precision_rules() {
+    fn assert_duration_formatting_matches_client_go_precision_rules() {
         for (duration, expected) in [
             (Duration::from_nanos(999), "999ns"),
             (Duration::from_nanos(1_000), "1µs"),
@@ -1226,5 +1222,14 @@ mod tests {
         ] {
             assert_eq!(format_duration(duration), expected);
         }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_txnsnapshot_snapshot_test_TestSnapshotRuntimeStats() {
+        assert_clone_and_merge_preserve_independent_rpc_totals();
+        assert_display_matches_client_go_runtime_stat_format();
+        assert_read_pool_details_merge_clone_and_format_like_client_go();
+        assert_duration_formatting_matches_client_go_precision_rules();
     }
 }

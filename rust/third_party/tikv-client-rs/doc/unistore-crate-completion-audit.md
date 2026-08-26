@@ -13,14 +13,14 @@ TiDB's separately maintained `pkg/store/mockstore/unistore` server.
 
 ## Complete crate inventory
 
-The standalone crate contains exactly six owned artifacts and 3,203 lines:
+The standalone crate contains exactly six owned artifacts and 3,893 lines:
 
 | Crate artifact | Lines | SHA-256 | Ownership |
 | --- | ---: | --- | --- |
 | `unistore/Cargo.toml` | 16 | `92ecf5beecbb04ca320b8dfe29fa77de419cb9335f446f3ad1b737abd69d6ee0` | independent package metadata and four direct dependencies |
 | `unistore/src/lib.rs` | 21 | `90a2bc4864b40dc3369f693bb266db431bdc17ff8f8d66d3bc883cbf13b62b4c` | crate contract, source boundaries, and complete public re-exports |
 | `unistore/src/deadlock.rs` | 241 | `c9b79ee5285b5fe0cd29d774ec4df18b7bfcf8fa5acdf4392009344d850aa1da` | single reusable client-go wait-for graph and four unit tests |
-| `unistore/src/mock.rs` | 2,610 | `1b364535af8bc9536eff1526d877f640cd018e95ec2de17b4ced2320c74afaec` | source-mapped optimistic/pessimistic MVCC, raw KV, debug, persistence, records, errors, and 26 tests |
+| `unistore/src/mock.rs` | 3,300 | `870be11706476d9a9e3c99d89e1cb9f1d53c9cd4e250b7f849b99bd0b55a1e38` | source-mapped optimistic/pessimistic MVCC, raw KV, debug, persistence, records, errors, and 37 direct/native tests |
 | `unistore/src/mvcc.rs` | 243 | `421cd7eee898b36fdfb0376b69c1caf96d220a46c20c004dc13f3a77bac86065` | native committed-version convenience facade and two tests |
 | `unistore/tests/reuse.rs` | 72 | `d62d5f471856bef71e1e9f867a6af2a8742786d97a40632fbb5f4c4d0513fa7b` | three external-consumer tests proving engine, facade, and detector independence from `tikv-client` |
 
@@ -43,7 +43,7 @@ Protocol/key encoding, kvproto conversion, cluster/PD/session behavior, and RPC 
 
 ## Tests and consumers
 
-The crate has 35 tests: four detector unit tests, 26 source-derived
+The crate has 46 tests: four detector unit tests, 37 source-derived/native
 `MockEngine` tests, two native committed-version tests, and three integration
 tests compiled as an external crate consumer. The source-derived matrix covers
 record formats, Go CRC64, optimistic and pessimistic paths, SI/RC visibility,
@@ -66,7 +66,7 @@ TiDB's `pkg/store/mockstore/unistore` is a separate SQL/server-side implementati
 ## Validation contract
 
 Completion requires the exact six-artifact inventory and hashes; all public
-exports assigned; all 35 internal/external tests; independent crate
+exports assigned; all 46 internal/external tests; independent crate
 compilation; both complete `tikv-client` library configurations;
 workspace/all-target/all-feature compilation and Clippy; rustdoc and doctests;
 rustfmt; whitespace checks; source identity; and both completed source receipts
@@ -74,13 +74,12 @@ on `nightly-2026-08-22-aarch64-apple-darwin`. Real TiKV/PD does not apply to
 this deterministic state crate; live protocol interoperability remains on the
 final differential milestone.
 
-The final gate passes all 32 unit tests and three external-consumer tests, with
+The final gate passes all 43 unit tests and three external-consumer tests, with
 zero crate doctests; crate-only all-target Clippy passes with warnings denied.
 The complete source packages pass ordinary and race tests under Go 1.25.12,
-and all eight downstream mocktikv adapter tests pass. The no-default workspace
-matrix passes 1,001 `tikv-client` library tests plus every workspace/external
-test with one intentional library ignore; the all-feature library matrix passes
-998 tests plus that ignore. Workspace/all-target/all-feature check and strict
+and all direct downstream mocktikv adapter tests pass. The no-default workspace
+matrix passes 1,302 tests with two configured skips; the all-feature library
+matrix passes 1,276 tests with six configured skips. Workspace/all-target/all-feature check and strict
 Clippy, private-item rustdoc, all 51 doctests, rustfmt, and whitespace checks
 pass. The client-go checkout remains clean at
 `52c1e76cec993571493c81de442bcbef90cdc106`.

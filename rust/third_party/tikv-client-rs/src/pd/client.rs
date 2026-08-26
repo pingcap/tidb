@@ -693,10 +693,15 @@ where
         let store_token_count = self.store_token_count(target_peer.store_id);
         let physical_store_id = physical_store.id;
         let physical_endpoint_type = crate::store::EndpointType::from_store(&physical_store);
+        let logical_endpoint_type = crate::store::EndpointType::from_store(&target_store);
+        let access_index =
+            self.region_cache
+                .access_index(&region, &target_peer, logical_endpoint_type);
         let mut route = RegionStore::new(region, Arc::new(kv_client))
             .with_target(physical_store.address)
             .with_physical_store(physical_store_id, physical_endpoint_type)
             .with_target_peer(target_peer)
+            .with_access_index(access_index)
             .with_resource_control_access_location(&self.zone_label, &target_store)
             .with_store_token_count(store_token_count);
         if let Some(health_status) = health_status {
@@ -2049,7 +2054,8 @@ pub mod test {
     }
 
     #[tokio::test]
-    async fn source_get_keyspace_id_loads_canonical_name_and_rejects_v3_identity() {
+    #[allow(non_snake_case)]
+    async fn source_go_pd_codec_TestGetKeyspaceIDRejectsV3Identity() {
         let client = MockPdClient::default();
         client.set_keyspace_meta(keyspacepb::KeyspaceMeta {
             state: keyspacepb::KeyspaceState::Enabled as i32,
@@ -2542,11 +2548,5 @@ pub mod test {
     #[test]
     fn source_test_concurrent_close_conn_panic() {
         source_client_close_retires_every_pool_once_and_prevents_reconnect();
-    }
-
-    #[test]
-    #[allow(non_snake_case)]
-    fn source_go_pd_codec_TestGetKeyspaceIDRejectsV3Identity() {
-        source_get_keyspace_id_loads_canonical_name_and_rejects_v3_identity();
     }
 }

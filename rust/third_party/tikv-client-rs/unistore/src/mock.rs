@@ -1752,21 +1752,27 @@ mod tests {
     }
 
     #[test]
-    fn lock_and_write_binary_formats_round_trip() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestMarshalmvccLock() {
         let lock = LockRecord {
             start_ts: 47,
             primary: b"abc".to_vec(),
             value: b"de".to_vec(),
             op: Op::Put,
             ttl: 444,
-            for_update_ts: 555,
-            txn_size: 2,
+            for_update_ts: 0,
+            txn_size: 0,
             min_commit_ts: 666,
         };
         assert_eq!(
             LockRecord::unmarshal_binary(&lock.marshal_binary()).unwrap(),
             lock
         );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestMarshalmvccValue() {
         let write = WriteRecord {
             write_type: WriteType::Put,
             start_ts: 42,
@@ -1845,7 +1851,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_get() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestGet() {
         let engine = MockEngine::new();
         assert_eq!(get(&engine, b"x", 10).unwrap(), None);
         put(&engine, b"x", b"x", 5, 10);
@@ -1855,7 +1862,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_get_with_lock() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestGetWithLock() {
         let engine = MockEngine::new();
         put(&engine, b"key", b"value", 5, 10);
         let errors = engine.prewrite(&PrewriteRequest {
@@ -1899,7 +1907,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_delete() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestDelete() {
         let engine = MockEngine::new();
         put(&engine, b"x", b"x5-10", 5, 10);
         delete(&engine, b"x", 15, 20);
@@ -1908,10 +1917,12 @@ mod tests {
         assert_eq!(get(&engine, b"x", 10).unwrap(), Some(b"x5-10".to_vec()));
         assert_eq!(get(&engine, b"x", 19).unwrap(), Some(b"x5-10".to_vec()));
         assert_eq!(get(&engine, b"x", 20).unwrap(), None);
+        assert_eq!(get(&engine, b"x", 21).unwrap(), None);
     }
 
     #[test]
-    fn source_test_cleanup_rollback() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestCleanupRollback() {
         let engine = MockEngine::new();
         put(&engine, b"secondary", b"s-0", 1, 2);
         assert_eq!(
@@ -1925,6 +1936,7 @@ mod tests {
             vec![None, None]
         );
         assert!(get(&engine, b"secondary", 8).is_err());
+        assert!(get(&engine, b"secondary", 12).is_err());
         engine.commit(&[b"primary".to_vec()], 5, 10).unwrap();
         assert!(matches!(
             engine.rollback(&[b"primary".to_vec()], 5),
@@ -2058,8 +2070,323 @@ mod tests {
         );
     }
 
+    fn source_scan_history() -> MockEngine {
+        let engine = MockEngine::new();
+        put(&engine, b"A", b"A10", 5, 10);
+        put(&engine, b"C", b"C10", 5, 10);
+        put(&engine, b"E", b"E10", 5, 10);
+        put(&engine, b"B", b"B20", 15, 20);
+        put(&engine, b"D", b"D20", 15, 20);
+        delete(&engine, b"A", 25, 30);
+        delete(&engine, b"D", 25, 30);
+        delete(&engine, b"B", 35, 40);
+        put(&engine, b"C", b"C40", 35, 40);
+        put(&engine, b"D", b"D40", 35, 40);
+        engine
+    }
+
     #[test]
-    fn source_test_batch_get() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestScan() {
+        let engine = source_scan_history();
+
+        assert_scan(&engine, b"", b"", 0, 10, false, &[]);
+        assert_scan(&engine, b"", b"", 1, 10, false, &[(b"A", b"A10")]);
+        assert_scan(
+            &engine,
+            b"",
+            b"",
+            2,
+            10,
+            false,
+            &[(b"A", b"A10"), (b"C", b"C10")],
+        );
+        for limit in [3, 4] {
+            assert_scan(
+                &engine,
+                b"",
+                b"",
+                limit,
+                10,
+                false,
+                &[(b"A", b"A10"), (b"C", b"C10"), (b"E", b"E10")],
+            );
+        }
+        assert_scan(
+            &engine,
+            b"A",
+            b"",
+            3,
+            10,
+            false,
+            &[(b"A", b"A10"), (b"C", b"C10"), (b"E", b"E10")],
+        );
+        assert_scan(
+            &engine,
+            b"A\0",
+            b"",
+            3,
+            10,
+            false,
+            &[(b"C", b"C10"), (b"E", b"E10")],
+        );
+        assert_scan(
+            &engine,
+            b"C",
+            b"",
+            4,
+            10,
+            false,
+            &[(b"C", b"C10"), (b"E", b"E10")],
+        );
+        assert_scan(&engine, b"F", b"", 1, 10, false, &[]);
+        assert_scan(
+            &engine,
+            b"",
+            b"E",
+            5,
+            10,
+            false,
+            &[(b"A", b"A10"), (b"C", b"C10")],
+        );
+        assert_scan(
+            &engine,
+            b"",
+            b"C\0",
+            5,
+            10,
+            false,
+            &[(b"A", b"A10"), (b"C", b"C10")],
+        );
+        assert_scan(&engine, b"A\0", b"C", 5, 10, false, &[]);
+
+        assert_scan(
+            &engine,
+            b"",
+            b"",
+            5,
+            20,
+            false,
+            &[
+                (b"A", b"A10"),
+                (b"B", b"B20"),
+                (b"C", b"C10"),
+                (b"D", b"D20"),
+                (b"E", b"E10"),
+            ],
+        );
+        assert_scan(
+            &engine,
+            b"C",
+            b"",
+            5,
+            20,
+            false,
+            &[(b"C", b"C10"), (b"D", b"D20"), (b"E", b"E10")],
+        );
+        assert_scan(&engine, b"D\0", b"", 1, 20, false, &[(b"E", b"E10")]);
+        assert_scan(
+            &engine,
+            b"B",
+            b"D",
+            5,
+            20,
+            false,
+            &[(b"B", b"B20"), (b"C", b"C10")],
+        );
+        assert_scan(
+            &engine,
+            b"B",
+            b"D\0",
+            5,
+            20,
+            false,
+            &[(b"B", b"B20"), (b"C", b"C10"), (b"D", b"D20")],
+        );
+        assert_scan(
+            &engine,
+            b"B\0",
+            b"D\0",
+            5,
+            20,
+            false,
+            &[(b"C", b"C10"), (b"D", b"D20")],
+        );
+
+        assert_scan(
+            &engine,
+            b"",
+            b"",
+            5,
+            30,
+            false,
+            &[(b"B", b"B20"), (b"C", b"C10"), (b"E", b"E10")],
+        );
+        assert_scan(&engine, b"A", b"", 1, 30, false, &[(b"B", b"B20")]);
+        assert_scan(&engine, b"C\0", b"", 5, 30, false, &[(b"E", b"E10")]);
+
+        let latest = [
+            (b"C".as_slice(), b"C40".as_slice()),
+            (b"D", b"D40"),
+            (b"E", b"E10"),
+        ];
+        assert_scan(&engine, b"", b"", 5, 40, false, &latest);
+        assert_scan(&engine, b"", b"", 5, 100, false, &latest);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestReverseScan() {
+        let engine = source_scan_history();
+
+        assert_scan(&engine, b"", b"Z", 0, 10, true, &[]);
+        assert_scan(&engine, b"", b"Z", 1, 10, true, &[(b"E", b"E10")]);
+        assert_scan(
+            &engine,
+            b"",
+            b"Z",
+            2,
+            10,
+            true,
+            &[(b"E", b"E10"), (b"C", b"C10")],
+        );
+        for limit in [3, 4] {
+            assert_scan(
+                &engine,
+                b"",
+                b"Z",
+                limit,
+                10,
+                true,
+                &[(b"E", b"E10"), (b"C", b"C10"), (b"A", b"A10")],
+            );
+        }
+        assert_scan(
+            &engine,
+            b"",
+            b"E\0",
+            3,
+            10,
+            true,
+            &[(b"E", b"E10"), (b"C", b"C10"), (b"A", b"A10")],
+        );
+        for limit in [3, 4] {
+            assert_scan(
+                &engine,
+                b"",
+                b"C\0",
+                limit,
+                10,
+                true,
+                &[(b"C", b"C10"), (b"A", b"A10")],
+            );
+        }
+        assert_scan(&engine, b"", b"B", 1, 10, true, &[(b"A", b"A10")]);
+        assert_scan(
+            &engine,
+            b"",
+            b"E",
+            5,
+            10,
+            true,
+            &[(b"C", b"C10"), (b"A", b"A10")],
+        );
+        assert_scan(
+            &engine,
+            b"",
+            b"C\0",
+            5,
+            10,
+            true,
+            &[(b"C", b"C10"), (b"A", b"A10")],
+        );
+        assert_scan(&engine, b"A\0", b"C", 5, 10, true, &[]);
+
+        assert_scan(
+            &engine,
+            b"",
+            b"Z",
+            5,
+            20,
+            true,
+            &[
+                (b"E", b"E10"),
+                (b"D", b"D20"),
+                (b"C", b"C10"),
+                (b"B", b"B20"),
+                (b"A", b"A10"),
+            ],
+        );
+        assert_scan(
+            &engine,
+            b"",
+            b"C\0",
+            5,
+            20,
+            true,
+            &[(b"C", b"C10"), (b"B", b"B20"), (b"A", b"A10")],
+        );
+        assert_scan(&engine, b"", b"A\0", 1, 20, true, &[(b"A", b"A10")]);
+        assert_scan(
+            &engine,
+            b"B",
+            b"D",
+            5,
+            20,
+            true,
+            &[(b"C", b"C10"), (b"B", b"B20")],
+        );
+        assert_scan(
+            &engine,
+            b"B",
+            b"D\0",
+            5,
+            20,
+            true,
+            &[(b"D", b"D20"), (b"C", b"C10"), (b"B", b"B20")],
+        );
+        assert_scan(
+            &engine,
+            b"B\0",
+            b"D\0",
+            5,
+            20,
+            true,
+            &[(b"D", b"D20"), (b"C", b"C10")],
+        );
+
+        assert_scan(
+            &engine,
+            b"",
+            b"Z",
+            5,
+            30,
+            true,
+            &[(b"E", b"E10"), (b"C", b"C10"), (b"B", b"B20")],
+        );
+        assert_scan(&engine, b"", b"C", 1, 30, true, &[(b"B", b"B20")]);
+        assert_scan(
+            &engine,
+            b"",
+            b"C\0",
+            5,
+            30,
+            true,
+            &[(b"C", b"C10"), (b"B", b"B20")],
+        );
+
+        let latest = [
+            (b"E".as_slice(), b"E10".as_slice()),
+            (b"D", b"D40"),
+            (b"C", b"C40"),
+        ];
+        assert_scan(&engine, b"", b"Z", 5, 40, true, &latest);
+        assert_scan(&engine, b"", b"Z", 5, 100, true, &latest);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestBatchGet() {
         let engine = MockEngine::new();
         put(&engine, b"k1", b"v1", 1, 2);
         put(&engine, b"k2", b"v2", 1, 2);
@@ -2071,6 +2398,7 @@ mod tests {
             IsolationLevel::SnapshotIsolation,
             &[],
         );
+        assert!(pairs.iter().all(|pair| pair.error.is_none()));
         assert_eq!(
             pairs
                 .iter()
@@ -2129,7 +2457,90 @@ mod tests {
     }
 
     #[test]
-    fn source_test_commit_conflict_and_idempotence() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestScanLock() {
+        let engine = MockEngine::new();
+        put(&engine, b"k1", b"v1", 1, 2);
+        assert_eq!(
+            prewrite(&engine, &[(b"p1", b"v5"), (b"s1", b"v5")], b"p1", 5, 0),
+            vec![None, None]
+        );
+        assert_eq!(
+            prewrite(&engine, &[(b"p2", b"v10"), (b"s2", b"v10")], b"p2", 10, 0,),
+            vec![None, None]
+        );
+        assert_eq!(
+            prewrite(&engine, &[(b"p3", b"v20"), (b"s3", b"v20")], b"p3", 20, 0,),
+            vec![None, None]
+        );
+
+        let lock_tuples = |locks: Vec<LockInfo>| {
+            locks
+                .into_iter()
+                .map(|lock| (lock.key, lock.primary, lock.start_ts))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            lock_tuples(engine.scan_locks(b"a", b"r", 12).unwrap()),
+            vec![
+                (b"p1".to_vec(), b"p1".to_vec(), 5),
+                (b"p2".to_vec(), b"p2".to_vec(), 10),
+            ]
+        );
+        assert_eq!(
+            lock_tuples(engine.scan_locks(b"", b"", 10).unwrap()),
+            vec![
+                (b"p1".to_vec(), b"p1".to_vec(), 5),
+                (b"p2".to_vec(), b"p2".to_vec(), 10),
+                (b"s1".to_vec(), b"p1".to_vec(), 5),
+                (b"s2".to_vec(), b"p2".to_vec(), 10),
+            ]
+        );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestScanWithResolvedLock() {
+        let engine = MockEngine::new();
+        assert_eq!(
+            prewrite(&engine, &[(b"p1", b"v5"), (b"s1", b"v5")], b"p1", 5, 0),
+            vec![None, None]
+        );
+        assert_eq!(
+            prewrite(&engine, &[(b"p2", b"v10"), (b"s2", b"v10")], b"p1", 5, 0,),
+            vec![None, None]
+        );
+
+        let pairs = engine.scan(
+            b"p1",
+            b"",
+            3,
+            10,
+            IsolationLevel::SnapshotIsolation,
+            &[],
+            false,
+        );
+        let start_ts = match pairs[0].error.as_ref() {
+            Some(MockError::Locked { start_ts, .. }) => *start_ts,
+            other => panic!("expected the first pair to be locked, got {other:?}"),
+        };
+        assert!(matches!(pairs[1].error, Some(MockError::Locked { .. })));
+
+        let pairs = engine.scan(
+            b"p1",
+            b"",
+            3,
+            10,
+            IsolationLevel::SnapshotIsolation,
+            &[start_ts],
+            false,
+        );
+        assert!(pairs.iter().all(|pair| pair.error.is_none()));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestCommitConflict() {
         let engine = MockEngine::new();
         assert_eq!(prewrite(&engine, &[(b"x", b"A")], b"x", 5, 0), vec![None]);
         assert!(matches!(
@@ -2200,7 +2611,99 @@ mod tests {
     }
 
     #[test]
-    fn source_test_gc() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestResolveLock() {
+        let engine = MockEngine::new();
+        assert_eq!(
+            prewrite(&engine, &[(b"p1", b"v5"), (b"s1", b"v5")], b"p1", 5, 0),
+            vec![None, None]
+        );
+        assert_eq!(
+            prewrite(&engine, &[(b"p2", b"v10"), (b"s2", b"v10")], b"p2", 10, 0,),
+            vec![None, None]
+        );
+        engine.resolve_lock(b"", b"", 5, 0).unwrap();
+        engine.resolve_lock(b"", b"", 10, 20).unwrap();
+        assert_eq!(get(&engine, b"p1", 20).unwrap(), None);
+        assert_eq!(get(&engine, b"s1", 30).unwrap(), None);
+        assert_eq!(get(&engine, b"p2", 20).unwrap(), Some(b"v10".to_vec()));
+        assert_eq!(get(&engine, b"s2", 30).unwrap(), Some(b"v10".to_vec()));
+        assert!(engine.scan_locks(b"", b"", 30).unwrap().is_empty());
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestBatchResolveLock() {
+        let engine = MockEngine::new();
+        for (start_ts, primary, pairs) in [
+            (
+                11,
+                b"p1".as_slice(),
+                vec![(b"p1".as_slice(), b"v11".as_slice()), (b"s1", b"v11")],
+            ),
+            (
+                12,
+                b"p2".as_slice(),
+                vec![(b"p2".as_slice(), b"v12".as_slice()), (b"s2", b"v12")],
+            ),
+            (
+                13,
+                b"p3".as_slice(),
+                vec![(b"p3".as_slice(), b"v13".as_slice())],
+            ),
+            (
+                14,
+                b"p4".as_slice(),
+                vec![
+                    (b"p4".as_slice(), b"v14".as_slice()),
+                    (b"s3", b"v14"),
+                    (b"s4", b"v14"),
+                ],
+            ),
+            (
+                15,
+                b"p5".as_slice(),
+                vec![(b"p5".as_slice(), b"v15".as_slice()), (b"s5", b"v15")],
+            ),
+        ] {
+            assert!(prewrite(&engine, &pairs, primary, start_ts, 0)
+                .iter()
+                .all(Option::is_none));
+        }
+
+        engine
+            .batch_resolve_lock(
+                b"",
+                b"",
+                &HashMap::from([(11, 0), (12, 22), (13, 0), (14, 24)]),
+            )
+            .unwrap();
+        assert_eq!(get(&engine, b"p1", 20).unwrap(), None);
+        assert_eq!(get(&engine, b"p3", 30).unwrap(), None);
+        assert_eq!(get(&engine, b"p2", 30).unwrap(), Some(b"v12".to_vec()));
+        assert_eq!(get(&engine, b"s4", 30).unwrap(), Some(b"v14".to_vec()));
+        let remaining = engine
+            .scan_locks(b"", b"", 30)
+            .unwrap()
+            .into_iter()
+            .map(|lock| (lock.key, lock.primary, lock.start_ts))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            remaining,
+            vec![
+                (b"p5".to_vec(), b"p5".to_vec(), 15),
+                (b"s5".to_vec(), b"p5".to_vec(), 15),
+            ]
+        );
+        engine
+            .batch_resolve_lock(b"", b"", &HashMap::from([(15, 0)]))
+            .unwrap();
+        assert!(engine.scan_locks(b"", b"", 30).unwrap().is_empty());
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestGC() {
         let engine = MockEngine::new();
         put(&engine, b"k1", b"v1", 1, 2);
         put(&engine, b"k1", b"v2", 11, 12);
@@ -2212,17 +2715,34 @@ mod tests {
         delete(&engine, b"k3", 101, 102);
         put(&engine, b"k4", b"v1", 1, 2);
         delete(&engine, b"k4", 11, 12);
+
+        assert_eq!(get(&engine, b"k1", 5).unwrap(), Some(b"v1".to_vec()));
+        assert_eq!(get(&engine, b"k1", 15).unwrap(), Some(b"v2".to_vec()));
+        assert_eq!(get(&engine, b"k2", 5).unwrap(), Some(b"v1".to_vec()));
+        assert_eq!(get(&engine, b"k2", 15).unwrap(), Some(b"v2".to_vec()));
+        assert_eq!(get(&engine, b"k2", 105).unwrap(), Some(b"v3".to_vec()));
+        assert_eq!(get(&engine, b"k3", 5).unwrap(), Some(b"v1".to_vec()));
+        assert_eq!(get(&engine, b"k3", 15).unwrap(), Some(b"v2".to_vec()));
+        assert_eq!(get(&engine, b"k3", 105).unwrap(), None);
+        assert_eq!(get(&engine, b"k4", 5).unwrap(), Some(b"v1".to_vec()));
+        assert_eq!(get(&engine, b"k4", 105).unwrap(), None);
+
         engine.gc(b"", b"", 100).unwrap();
         assert_eq!(get(&engine, b"k1", 5).unwrap(), None);
         assert_eq!(get(&engine, b"k1", 15).unwrap(), Some(b"v2".to_vec()));
+        assert_eq!(get(&engine, b"k2", 5).unwrap(), None);
+        assert_eq!(get(&engine, b"k2", 15).unwrap(), Some(b"v2".to_vec()));
         assert_eq!(get(&engine, b"k2", 105).unwrap(), Some(b"v3".to_vec()));
+        assert_eq!(get(&engine, b"k3", 5).unwrap(), None);
         assert_eq!(get(&engine, b"k3", 15).unwrap(), Some(b"v2".to_vec()));
         assert_eq!(get(&engine, b"k3", 105).unwrap(), None);
         assert_eq!(get(&engine, b"k4", 5).unwrap(), None);
+        assert_eq!(get(&engine, b"k4", 105).unwrap(), None);
     }
 
     #[test]
-    fn source_test_rollback_and_write_conflict() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestRollbackAndWriteConflict() {
         let engine = MockEngine::new();
         put(&engine, b"test", b"test", 1, 3);
         let errors = prewrite(
@@ -2242,7 +2762,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_delete_range() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestDeleteRange() {
         let engine = MockEngine::new();
         for index in 1..=5_u64 {
             let key = index.to_string().into_bytes();
@@ -2250,6 +2771,21 @@ mod tests {
             value.extend_from_slice(&key);
             put(&engine, &key, &value, 1 + 2 * index, 2 + 2 * index);
         }
+        assert_scan(
+            &engine,
+            b"0",
+            b"",
+            10,
+            20,
+            false,
+            &[
+                (b"1", b"v1"),
+                (b"2", b"v2"),
+                (b"3", b"v3"),
+                (b"4", b"v4"),
+                (b"5", b"v5"),
+            ],
+        );
         engine.delete_range(b"2", b"4");
         assert_scan(
             &engine,
@@ -2261,7 +2797,25 @@ mod tests {
             &[(b"1", b"v1"), (b"4", b"v4"), (b"5", b"v5")],
         );
         engine.delete_range(b"5", b"5");
+        assert_scan(
+            &engine,
+            b"0",
+            b"",
+            10,
+            40,
+            false,
+            &[(b"1", b"v1"), (b"4", b"v4"), (b"5", b"v5")],
+        );
         engine.delete_range(b"41", b"42");
+        assert_scan(
+            &engine,
+            b"0",
+            b"",
+            10,
+            50,
+            false,
+            &[(b"1", b"v1"), (b"4", b"v4"), (b"5", b"v5")],
+        );
         engine.delete_range(b"4\0", b"5\0");
         assert_scan(
             &engine,
@@ -2277,7 +2831,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_read_committed() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestRC() {
         let engine = MockEngine::new();
         put(&engine, b"key", b"v1", 5, 10);
         assert_eq!(
@@ -2285,6 +2840,12 @@ mod tests {
             vec![None]
         );
         assert!(get(&engine, b"key", 20).is_err());
+        assert_eq!(
+            engine
+                .get(b"key", 12, IsolationLevel::ReadCommitted, &[])
+                .unwrap(),
+            Some((b"v1".to_vec(), 10))
+        );
         assert_eq!(
             engine
                 .get(b"key", 20, IsolationLevel::ReadCommitted, &[])
@@ -2382,6 +2943,103 @@ mod tests {
     }
 
     #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestCheckTxnStatus() {
+        let engine = MockEngine::new();
+        let start_ts = 5_u64 << 18;
+        assert_eq!(
+            prewrite(&engine, &[(b"pk", b"val")], b"pk", start_ts, 666),
+            vec![None]
+        );
+        assert_eq!(
+            engine
+                .check_txn_status(b"pk", start_ts, start_ts + 100, 666, false, false)
+                .unwrap(),
+            (666, 0, Action::MinCommitTsPushed)
+        );
+        assert_eq!(
+            engine
+                .check_txn_status(b"pk", start_ts, u64::MAX, 666, false, false)
+                .unwrap(),
+            (666, 0, Action::MinCommitTsPushed)
+        );
+        engine
+            .commit(&[b"pk".to_vec()], start_ts, start_ts + 101)
+            .unwrap();
+        assert_eq!(
+            engine
+                .check_txn_status(b"pk", start_ts, 0, 666, false, false)
+                .unwrap(),
+            (0, start_ts + 101, Action::NoAction)
+        );
+
+        assert_eq!(
+            prewrite(&engine, &[(b"pk1", b"val")], b"pk1", start_ts, 666),
+            vec![None]
+        );
+        engine.rollback(&[b"pk1".to_vec()], start_ts).unwrap();
+        assert_eq!(
+            engine
+                .check_txn_status(b"pk1", start_ts, 0, 666, false, false)
+                .unwrap(),
+            (0, 0, Action::NoAction)
+        );
+
+        assert_eq!(
+            prewrite(&engine, &[(b"pk2", b"val")], b"pk2", start_ts, 666),
+            vec![None]
+        );
+        assert_eq!(
+            engine
+                .check_txn_status(b"pk2", start_ts, 0, 777_u64 << 18, false, false)
+                .unwrap(),
+            (0, 0, Action::TtlExpireRollback)
+        );
+
+        assert_eq!(
+            engine.check_txn_status(b"txnNotFound", 5, 0, 666, false, false),
+            Err(MockError::TxnNotFound {
+                start_ts: 5,
+                primary: b"txnNotFound".to_vec(),
+            })
+        );
+        assert_eq!(
+            engine
+                .check_txn_status(b"txnNotFound", 5, 0, 666, true, false)
+                .unwrap(),
+            (0, 0, Action::LockNotExistRollback)
+        );
+        let errors = engine.prewrite(&PrewriteRequest {
+            mutations: vec![TxnMutation::put(b"txnNotFound", b"val")],
+            primary: b"txnNotFound".to_vec(),
+            start_ts: 4,
+            min_commit_ts: 6,
+            ..Default::default()
+        });
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].is_some());
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestRejectCommitTS() {
+        let engine = MockEngine::new();
+        assert_eq!(prewrite(&engine, &[(b"x", b"A")], b"x", 5, 0), vec![None]);
+        engine
+            .check_txn_status(b"x", 5, 100, 100, false, false)
+            .unwrap();
+        assert_eq!(
+            engine.commit(&[b"x".to_vec()], 5, 10),
+            Err(MockError::CommitTsExpired {
+                start_ts: 5,
+                attempted_commit_ts: 10,
+                key: b"x".to_vec(),
+                min_commit_ts: 101,
+            })
+        );
+    }
+
+    #[test]
     fn source_test_mvcc_debug_and_heartbeat() {
         let engine = MockEngine::new();
         assert_eq!(
@@ -2403,6 +3061,38 @@ mod tests {
         assert_eq!(engine.txn_heartbeat(b"pk", 6, 300).unwrap(), 888);
         engine.cleanup(b"pk", 6, u64::MAX).unwrap();
         assert!(engine.txn_heartbeat(b"pk", 6, 1000).is_err());
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestMvccGetByKey() {
+        let engine = MockEngine::new();
+        assert_eq!(
+            prewrite(&engine, &[(b"q1", b"v5")], b"p1", 5, 0),
+            vec![None]
+        );
+        let info = engine.mvcc_get_by_key(b"q1");
+        let lock = info
+            .lock
+            .expect("prewrite must create a debug-visible lock");
+        assert_eq!(lock.op, Op::Put);
+        assert_eq!(lock.start_ts, 5);
+        assert_eq!(lock.primary, b"p1");
+        assert_eq!(lock.value, b"v5");
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestTxnHeartBeat() {
+        let engine = MockEngine::new();
+        assert_eq!(
+            prewrite(&engine, &[(b"pk", b"val")], b"pk", 5, 666),
+            vec![None]
+        );
+        assert_eq!(engine.txn_heartbeat(b"pk", 5, 888).unwrap(), 888);
+        assert_eq!(engine.txn_heartbeat(b"pk", 5, 300).unwrap(), 888);
+        engine.cleanup(b"pk", 5, u64::MAX).unwrap();
+        assert!(engine.txn_heartbeat(b"pk", 5, 1000).is_err());
     }
 
     #[test]

@@ -758,7 +758,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn source_access_mode_and_replica_flow_names_are_stable() {
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestNextGenReadFeaturesDisabled() {
         assert_eq!(AccessMode::TiKvOnly.to_string(), "TiKvOnly");
         assert_eq!(AccessMode::TiFlashOnly.to_string(), "TiFlashOnly");
         assert_eq!(AccessMode::NumAccessMode.to_string(), "2");
@@ -781,7 +782,8 @@ mod tests {
     }
 
     #[test]
-    fn source_slow_score_rises_when_request_rate_drops_and_latency_rises() {
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestSlowScoreStat() {
         let stat = SlowScoreStat::default();
         for _ in 0..10 {
             stat.record(Duration::from_micros(100));
@@ -808,7 +810,8 @@ mod tests {
     }
 
     #[test]
-    fn source_store_health_gates_feedback_and_decays_stale_tikv_scores() {
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestTiKVSideSlowScore() {
         let health = StoreHealthStatus::default();
         let start = Instant::now();
 
@@ -831,7 +834,8 @@ mod tests {
     }
 
     #[test]
-    fn source_store_health_combines_client_and_tikv_slow_scores() {
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestStoreHealthStatus() {
         let health = StoreHealthStatus::default();
         assert!(!health.is_slow());
         health.record_client_side_latency(Duration::from_micros(100));
@@ -842,213 +846,8 @@ mod tests {
     }
 
     #[test]
-    fn source_mixed_replica_score_prioritizes_matching_labels_over_leader() {
-        let replicas = [
-            ReplicaCandidate {
-                peer_id: 1,
-                is_leader: true,
-                is_learner: false,
-                label_matches: false,
-                is_slow: false,
-                liveness: ReplicaLiveness::Reachable,
-                attempts: 0,
-                data_is_not_ready: false,
-            },
-            ReplicaCandidate {
-                peer_id: 2,
-                is_leader: false,
-                is_learner: false,
-                label_matches: true,
-                is_slow: false,
-                liveness: ReplicaLiveness::Reachable,
-                attempts: 0,
-                data_is_not_ready: false,
-            },
-        ];
-        let selection = MixedReplicaSelection {
-            read_type: ReplicaReadType::Mixed,
-            leader_only: false,
-            prefer_leader: false,
-            labels_requested: true,
-        };
-        let (score, selected) = selection.highest_scored(&replicas);
-        assert_eq!(
-            score,
-            SCORE_LABEL_MATCHES | SCORE_NORMAL_PEER | SCORE_NOT_SLOW | SCORE_NOT_ATTEMPTED
-        );
-        assert_eq!(selected, [&replicas[1]]);
-        assert_eq!(selection.choose(&replicas), Some(replicas[1]));
-    }
-
-    #[test]
-    fn source_prefer_leader_skips_slow_followers_and_learner_mode_scores_learners() {
-        let replicas = [
-            ReplicaCandidate {
-                peer_id: 1,
-                is_leader: true,
-                is_learner: false,
-                label_matches: false,
-                is_slow: true,
-                liveness: ReplicaLiveness::Reachable,
-                attempts: 0,
-                data_is_not_ready: false,
-            },
-            ReplicaCandidate {
-                peer_id: 2,
-                is_leader: false,
-                is_learner: false,
-                label_matches: true,
-                is_slow: false,
-                liveness: ReplicaLiveness::Reachable,
-                attempts: 0,
-                data_is_not_ready: false,
-            },
-            ReplicaCandidate {
-                peer_id: 3,
-                is_leader: false,
-                is_learner: true,
-                label_matches: false,
-                is_slow: false,
-                liveness: ReplicaLiveness::Reachable,
-                attempts: 0,
-                data_is_not_ready: false,
-            },
-        ];
-        let (_, selected) = MixedReplicaSelection {
-            read_type: ReplicaReadType::PreferLeader,
-            leader_only: false,
-            prefer_leader: true,
-            labels_requested: false,
-        }
-        .highest_scored(&replicas);
-        assert_eq!(selected, [&replicas[1]]);
-
-        let mut matching_slow_leader = replicas[0];
-        matching_slow_leader.label_matches = true;
-        let (score, selected) = MixedReplicaSelection {
-            read_type: ReplicaReadType::PreferLeader,
-            leader_only: false,
-            prefer_leader: true,
-            labels_requested: true,
-        }
-        .highest_scored(std::slice::from_ref(&matching_slow_leader));
-        assert_eq!(selected, [&matching_slow_leader]);
-        assert_eq!(
-            score,
-            SCORE_LABEL_MATCHES | SCORE_NORMAL_PEER | SCORE_NOT_ATTEMPTED
-        );
-
-        let learner_replicas = [
-            ReplicaCandidate {
-                peer_id: 1,
-                is_leader: true,
-                is_learner: false,
-                label_matches: false,
-                is_slow: false,
-                liveness: ReplicaLiveness::Reachable,
-                attempts: 0,
-                data_is_not_ready: false,
-            },
-            ReplicaCandidate {
-                peer_id: 2,
-                is_leader: false,
-                is_learner: false,
-                label_matches: false,
-                is_slow: false,
-                liveness: ReplicaLiveness::Reachable,
-                attempts: 0,
-                data_is_not_ready: false,
-            },
-            ReplicaCandidate {
-                peer_id: 3,
-                is_leader: false,
-                is_learner: true,
-                label_matches: false,
-                is_slow: false,
-                liveness: ReplicaLiveness::Reachable,
-                attempts: 0,
-                data_is_not_ready: false,
-            },
-        ];
-        let (_, selected) = MixedReplicaSelection {
-            read_type: ReplicaReadType::Learner,
-            leader_only: false,
-            prefer_leader: false,
-            labels_requested: false,
-        }
-        .highest_scored(&learner_replicas);
-        assert_eq!(selected, [&learner_replicas[2]]);
-    }
-
-    #[test]
-    fn source_mixed_selection_allows_unknown_but_not_unreachable_liveness() {
-        let selection = MixedReplicaSelection {
-            read_type: ReplicaReadType::Follower,
-            leader_only: false,
-            prefer_leader: false,
-            labels_requested: false,
-        };
-        let unknown = ReplicaCandidate {
-            peer_id: 2,
-            is_leader: false,
-            is_learner: false,
-            label_matches: true,
-            is_slow: false,
-            liveness: ReplicaLiveness::Unknown,
-            attempts: 0,
-            data_is_not_ready: false,
-        };
-        assert_eq!(
-            selection.choose(std::slice::from_ref(&unknown)),
-            Some(unknown)
-        );
-
-        let unreachable = ReplicaCandidate {
-            liveness: ReplicaLiveness::Unreachable,
-            ..unknown
-        };
-        assert_eq!(selection.choose(&[unreachable]), None);
-    }
-
-    #[test]
-    fn source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader() {
-        let mut state = ReplicaSelectorState::default();
-        state.record_attempt(2);
-        state.mark_data_is_not_ready(2);
-        assert!(state.should_probe_stale_leader(1));
-
-        let selection = MixedReplicaSelection {
-            read_type: ReplicaReadType::Follower,
-            leader_only: false,
-            prefer_leader: false,
-            labels_requested: false,
-        };
-        let retryable_follower = ReplicaCandidate {
-            peer_id: 2,
-            is_leader: false,
-            is_learner: false,
-            label_matches: false,
-            is_slow: false,
-            liveness: ReplicaLiveness::Reachable,
-            attempts: state.attempts(2),
-            data_is_not_ready: state.data_is_not_ready(2),
-        };
-        assert_eq!(
-            selection.choose(&[retryable_follower]),
-            Some(retryable_follower)
-        );
-
-        state.record_attempt(2);
-        let exhausted_follower = ReplicaCandidate {
-            attempts: state.attempts(2),
-            ..retryable_follower
-        };
-        assert_eq!(selection.choose(&[exhausted_follower]), None);
-        assert!(!state.should_probe_stale_leader(1));
-    }
-
-    #[test]
-    fn source_busy_leader_probe_is_second_rejection_and_is_scoped_to_leader() {
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaSelectorLeaderBusyProbe() {
         let mut state = ReplicaSelectorState::default();
         state.record_busy_leader(1);
         assert!(!state.should_probe_busy_leader(1));
@@ -1076,7 +875,8 @@ mod tests {
     }
 
     #[test]
-    fn source_suspect_leader_is_temporarily_skipped_then_restored() {
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAccessPathByTryIdleReplicaCase() {
         let mut state = ReplicaSelectorState::default();
         state.record_attempt(1);
         state.record_attempt(1);
@@ -1102,35 +902,6 @@ mod tests {
     }
 
     #[test]
-    fn source_not_leader_switches_to_an_untried_concrete_leader() {
-        let mut state = ReplicaSelectorState::default();
-        state.record_attempt(1);
-        state.record_not_leader(1, 2);
-        assert!(state.should_force_leader(2));
-        for _ in 0..10 {
-            state.record_attempt(2);
-        }
-        assert!(!state.should_force_leader(2));
-
-        let mut exhausted = ReplicaSelectorState::default();
-        exhausted.record_attempt(1);
-        for _ in 0..10 {
-            exhausted.record_attempt(2);
-        }
-        exhausted.record_not_leader(1, 2);
-        assert!(exhausted.should_force_leader(2));
-        assert_eq!(exhausted.attempts(2), 9);
-    }
-
-    #[test]
-    fn source_not_leader_without_hint_marks_only_the_failed_peer() {
-        let mut state = ReplicaSelectorState::default();
-        state.mark_no_leader(1);
-        assert!(state.has_no_leader(1));
-        assert!(!state.has_no_leader(2));
-    }
-
-    #[test]
     fn source_busy_threshold_state_excludes_peers_and_can_fall_back_to_leader() {
         let mut state = ReplicaSelectorState::default();
         state.record_server_busy(2);
@@ -1138,29 +909,6 @@ mod tests {
         assert!(!state.busy_threshold_disabled());
         state.disable_busy_threshold();
         assert!(state.busy_threshold_disabled());
-    }
-
-    #[test]
-    fn source_flashback_replica_read_forces_a_threshold_free_leader_retry() {
-        let mut state = ReplicaSelectorState::default();
-        state.force_leader_after_flashback();
-        assert!(state.should_force_leader(1));
-        assert!(state.busy_threshold_disabled());
-    }
-
-    #[test]
-    fn source_stale_retry_uses_replica_read_after_the_leader_was_attempted() {
-        let mut state = ReplicaSelectorState::default();
-        assert!(!state.should_retry_stale_as_replica(1));
-        state.record_attempt(1);
-        assert!(state.should_retry_stale_as_replica(1));
-
-        let mut deadline = state.clone();
-        deadline.mark_deadline_exceeded(1);
-        assert!(!deadline.should_retry_stale_as_replica(1));
-
-        state.record_server_busy(1);
-        assert!(!state.should_retry_stale_as_replica(1));
     }
 
     #[test]
@@ -1175,38 +923,8 @@ mod tests {
     }
 
     #[test]
-    fn source_leader_exhaustion_combines_attempt_count_time_and_error_flags() {
-        let mut attempts = ReplicaSelectorState::default();
-        for _ in 0..9 {
-            attempts.record_attempt(1);
-        }
-        assert!(attempts.is_leader_candidate(1));
-        attempts.record_attempt(1);
-        assert!(!attempts.is_leader_candidate(1));
-
-        let mut elapsed = ReplicaSelectorState::default();
-        elapsed.record_attempt(1);
-        elapsed.record_attempted_time(1, Duration::from_secs(49));
-        assert!(elapsed.is_leader_candidate(1));
-        elapsed.record_attempted_time(1, Duration::from_secs(1));
-        assert_eq!(elapsed.attempted_time(1), Duration::from_secs(50));
-        assert!(!elapsed.is_leader_candidate(1));
-
-        let mut deadline = ReplicaSelectorState::default();
-        deadline.record_attempt(1);
-        deadline.mark_deadline_exceeded(1);
-        assert!(deadline.deadline_exceeded(1));
-        assert!(deadline.has_deadline_exceeded());
-        assert!(!deadline.is_leader_candidate(1));
-
-        let mut not_leader = ReplicaSelectorState::default();
-        not_leader.record_attempt(1);
-        not_leader.mark_no_leader(1);
-        assert!(!not_leader.is_leader_candidate(1));
-    }
-
-    #[test]
-    fn source_pending_backoff_replaces_by_store_consumes_on_retry_and_chooses_largest() {
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestPendingBackoff() {
         use crate::retry::{
             BO_REGION_SCHEDULING, BO_TIKV_DISK_FULL, BO_TIKV_RPC, BO_TIKV_SERVER_BUSY,
         };
@@ -1233,117 +951,898 @@ mod tests {
         );
     }
 
-    macro_rules! source_go_internal_locate_tests {
-        ($($name:ident => $target:ident),+ $(,)?) => {
-            $(
-                #[test]
-                #[allow(non_snake_case)]
-                fn $name() {
-                    $target();
-                }
-            )+
-        };
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request_state_TestRegionCacheStaleRead() {
+        let mut state = ReplicaSelectorState::default();
+        assert!(!state.should_retry_stale_as_replica(1));
+        state.record_attempt(1);
+        assert!(state.should_retry_stale_as_replica(1));
+
+        state.mark_deadline_exceeded(1);
+        assert!(!state.should_retry_stale_as_replica(1));
     }
 
-    source_go_internal_locate_tests! {
-        source_go_region_request_state_TestRegionCacheStaleRead =>
-            source_stale_retry_uses_replica_read_after_the_leader_was_attempted,
-        source_go_region_request_state_TestRegionCacheStaleReadUsingAsyncAPI =>
-            source_stale_retry_uses_replica_read_after_the_leader_was_attempted,
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request_state_TestRegionCacheStaleReadUsingAsyncAPI() {
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(1);
+        assert!(state.should_retry_stale_as_replica(1));
 
-        source_go_region_cache_TestUpdateLeader =>
-            source_not_leader_switches_to_an_untried_concrete_leader,
-        source_go_region_cache_TestUpdateLeader2 =>
-            source_not_leader_without_hint_marks_only_the_failed_peer,
-        source_go_region_cache_TestUpdateLeader3 =>
-            source_not_leader_switches_to_an_untried_concrete_leader,
-        source_go_region_cache_TestLabelSelectorTiKVPeer =>
-            source_mixed_replica_score_prioritizes_matching_labels_over_leader,
-        source_go_region_cache_TestFollowerReadFallback =>
-            source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader,
-        source_go_region_cache_TestMixedReadFallback =>
-            source_mixed_selection_allows_unknown_but_not_unreachable_liveness,
-        source_go_region_cache_TestSwitchPeerWhenNoLeader =>
-            source_not_leader_without_hint_marks_only_the_failed_peer,
-        source_go_region_cache_TestSlowScoreStat =>
-            source_slow_score_rises_when_request_rate_drops_and_latency_rises,
-        source_go_region_cache_TestTiKVSideSlowScore =>
-            source_store_health_gates_feedback_and_decays_stale_tikv_scores,
-        source_go_region_cache_TestStoreHealthStatus =>
-            source_store_health_combines_client_and_tikv_slow_scores,
+        state.record_server_busy(1);
+        assert!(!state.should_retry_stale_as_replica(1));
+    }
 
-        source_go_region_request3_TestSwitchPeerWhenNoLeader =>
-            source_not_leader_without_hint_marks_only_the_failed_peer,
-        source_go_region_request3_TestSwitchPeerWhenNoLeaderErrorWithNewLeaderInfo =>
-            source_not_leader_switches_to_an_untried_concrete_leader,
-        source_go_region_request3_TestReplicaReadFallbackToLeaderRegionError =>
-            source_not_leader_switches_to_an_untried_concrete_leader,
-        source_go_region_request3_TestLearnerReplicaSelector =>
-            source_prefer_leader_skips_slow_followers_and_learner_mode_scores_learners,
-        source_go_region_request3_TestPreferLeader =>
-            source_prefer_leader_skips_slow_followers_and_learner_mode_scores_learners,
-        source_go_region_request3_TestReplicaSelector =>
-            source_mixed_replica_score_prioritizes_matching_labels_over_leader,
-        source_go_region_request3_TestLoadBasedReplicaRead =>
-            source_mixed_replica_score_prioritizes_matching_labels_over_leader,
-        source_go_region_request3_TestReplicaReadWithFlashbackInProgress =>
-            source_flashback_replica_read_forces_a_threshold_free_leader_retry,
-        source_go_region_request3_TestAccessFollowerAfter1TiKVDown =>
-            source_mixed_selection_allows_unknown_but_not_unreachable_liveness,
-        source_go_region_request3_TestDoNotTryUnreachableLeader =>
-            source_mixed_selection_allows_unknown_but_not_unreachable_liveness,
-        source_go_region_request3_TestStaleReadTryFollowerAfterTimeout =>
-            source_stale_retry_uses_replica_read_after_the_leader_was_attempted,
-        source_go_region_request3_TestLeaderStuck =>
-            source_leader_exhaustion_combines_attempt_count_time_and_error_flags,
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestUpdateLeader() {
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(1);
+        state.record_not_leader(1, 2);
+        assert!(state.has_no_leader(1));
+        assert!(state.should_force_leader(2));
+        assert_eq!(state.attempts(2), 0);
+    }
 
-        source_go_replica_selector_TestReplicaSelectorBasic =>
-            source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader,
-        source_go_replica_selector_TestNextGenReadFeaturesDisabled =>
-            source_access_mode_and_replica_flow_names_are_stable,
-        source_go_replica_selector_TestReplicaSelectorCalculateScore =>
-            source_mixed_replica_score_prioritizes_matching_labels_over_leader,
-        source_go_replica_selector_TestCanFastRetry =>
-            source_not_leader_switches_to_an_untried_concrete_leader,
-        source_go_replica_selector_TestPendingBackoff =>
-            source_pending_backoff_replaces_by_store_consumes_on_retry_and_chooses_largest,
-        source_go_replica_selector_TestReplicaReadAccessPathByCase =>
-            source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader,
-        source_go_replica_selector_TestReplicaReadAccessPathByCaseUsingAsyncAPI =>
-            source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader,
-        source_go_replica_selector_TestReplicaReadAccessPathByCase2 =>
-            source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader,
-        source_go_replica_selector_TestReplicaReadAccessPathByCase2UsingAsyncAPI =>
-            source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader,
-        source_go_replica_selector_TestReplicaReadAccessPathByBasicCase =>
-            source_mixed_selection_allows_unknown_but_not_unreachable_liveness,
-        source_go_replica_selector_TestReplicaReadAccessPathByBasicCaseUsingAsyncAPI =>
-            source_mixed_selection_allows_unknown_but_not_unreachable_liveness,
-        source_go_replica_selector_TestReplicaReadAccessPathByLeaderCase =>
-            source_not_leader_switches_to_an_untried_concrete_leader,
-        source_go_replica_selector_TestReplicaReadAccessPathByLeaderCaseUsingAsyncAPI =>
-            source_not_leader_switches_to_an_untried_concrete_leader,
-        source_go_replica_selector_TestReplicaReadAccessPathByFollowerCase =>
-            source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader,
-        source_go_replica_selector_TestReplicaReadAccessPathByFollowerCaseUsingAsyncAPI =>
-            source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader,
-        source_go_replica_selector_TestReplicaReadAccessPathByMixedAndPreferLeaderCase =>
-            source_prefer_leader_skips_slow_followers_and_learner_mode_scores_learners,
-        source_go_replica_selector_TestReplicaReadAccessPathByMixedAndPreferLeaderCaseUsingAsyncAPI =>
-            source_prefer_leader_skips_slow_followers_and_learner_mode_scores_learners,
-        source_go_replica_selector_TestReplicaReadAccessPathByStaleReadCase =>
-            source_stale_retry_uses_replica_read_after_the_leader_was_attempted,
-        source_go_replica_selector_TestReplicaReadAccessPathByTryIdleReplicaCase =>
-            source_suspect_leader_is_temporarily_skipped_then_restored,
-        source_go_replica_selector_TestReplicaSelectorLeaderBusyProbe =>
-            source_busy_leader_probe_is_second_rejection_and_is_scoped_to_leader,
-        source_go_replica_selector_TestReplicaReadAccessPathByFlashbackInProgressCase =>
-            source_flashback_replica_read_forces_a_threshold_free_leader_retry,
-        source_go_replica_selector_TestReplicaReadAccessPathByLearnerCase =>
-            source_prefer_leader_skips_slow_followers_and_learner_mode_scores_learners,
-        source_go_replica_selector_TestReplicaReadAvoidSlowStore =>
-            source_prefer_leader_skips_slow_followers_and_learner_mode_scores_learners,
-        source_go_replica_selector_TestReplicaFlag =>
-            source_leader_exhaustion_combines_attempt_count_time_and_error_flags,
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestUpdateLeader2() {
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(1);
+        state.record_not_leader(1, 3);
+        assert!(state.should_force_leader(3));
+        assert!(!state.should_force_leader(1));
+        assert!(!state.has_no_leader(2));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestUpdateLeader3() {
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(1);
+        for _ in 0..MAX_REPLICA_ATTEMPTS {
+            state.record_attempt(2);
+        }
+        state.record_not_leader(1, 2);
+        assert!(state.should_force_leader(2));
+        assert_eq!(state.attempts(2), MAX_REPLICA_ATTEMPTS - 1);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestLabelSelectorTiKVPeer() {
+        let leader = ReplicaCandidate {
+            peer_id: 1,
+            is_leader: true,
+            is_learner: false,
+            label_matches: false,
+            is_slow: false,
+            liveness: ReplicaLiveness::Reachable,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        let local_follower = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: false,
+            label_matches: true,
+            ..leader
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::Mixed,
+            leader_only: false,
+            prefer_leader: false,
+            labels_requested: true,
+        };
+        let candidates = [leader, local_follower];
+        let (_, selected) = selection.highest_scored(&candidates);
+        assert_eq!(selected, [&local_follower]);
+
+        let leader_only = MixedReplicaSelection {
+            read_type: ReplicaReadType::Leader,
+            leader_only: true,
+            ..selection
+        };
+        assert_eq!(leader_only.choose(&[leader, local_follower]), Some(leader));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestFollowerReadFallback() {
+        let leader = ReplicaCandidate {
+            peer_id: 1,
+            is_leader: true,
+            is_learner: false,
+            label_matches: false,
+            is_slow: false,
+            liveness: ReplicaLiveness::Reachable,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        let failed = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: false,
+            attempts: 1,
+            ..leader
+        };
+        let fallback = ReplicaCandidate {
+            peer_id: 3,
+            is_leader: false,
+            ..leader
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::Follower,
+            leader_only: false,
+            prefer_leader: false,
+            labels_requested: false,
+        };
+        assert_eq!(
+            selection.choose(&[leader, failed, fallback]),
+            Some(fallback)
+        );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestMixedReadFallback() {
+        let leader = ReplicaCandidate {
+            peer_id: 1,
+            is_leader: true,
+            is_learner: false,
+            label_matches: false,
+            is_slow: false,
+            liveness: ReplicaLiveness::Reachable,
+            attempts: 1,
+            data_is_not_ready: false,
+        };
+        let follower = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: false,
+            attempts: 0,
+            ..leader
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::Mixed,
+            leader_only: false,
+            prefer_leader: false,
+            labels_requested: false,
+        };
+        assert_eq!(selection.choose(&[leader, follower]), Some(follower));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestSwitchPeerWhenNoLeader() {
+        let mut state = ReplicaSelectorState::default();
+        for peer_id in 1..=3 {
+            state.mark_no_leader(peer_id);
+            assert!(state.has_no_leader(peer_id));
+        }
+        assert_eq!(state.total_attempts(), 0);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestSwitchPeerWhenNoLeader() {
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(1);
+        state.mark_no_leader(1);
+        assert!(!state.is_leader_candidate(1));
+        assert!(state.is_leader_candidate(2));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestSwitchPeerWhenNoLeaderErrorWithNewLeaderInfo() {
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(1);
+        state.record_not_leader(1, 2);
+        assert!(state.should_force_leader(2));
+        state.record_attempt(2);
+        assert_eq!(state.total_attempts(), 2);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestReplicaReadFallbackToLeaderRegionError() {
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(2);
+        state.mark_data_is_not_ready(2);
+        assert!(state.should_probe_stale_leader(1));
+        state.record_attempt(1);
+        assert!(!state.should_probe_stale_leader(1));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestLearnerReplicaSelector() {
+        let voter = ReplicaCandidate {
+            peer_id: 1,
+            is_leader: false,
+            is_learner: false,
+            label_matches: false,
+            is_slow: false,
+            liveness: ReplicaLiveness::Reachable,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        let learner = ReplicaCandidate {
+            peer_id: 2,
+            is_learner: true,
+            ..voter
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::Learner,
+            leader_only: false,
+            prefer_leader: false,
+            labels_requested: false,
+        };
+        assert_eq!(selection.choose(&[voter, learner]), Some(learner));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestPreferLeader() {
+        let leader = ReplicaCandidate {
+            peer_id: 1,
+            is_leader: true,
+            is_learner: false,
+            label_matches: false,
+            is_slow: false,
+            liveness: ReplicaLiveness::Reachable,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        let follower = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: false,
+            ..leader
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::PreferLeader,
+            leader_only: false,
+            prefer_leader: true,
+            labels_requested: false,
+        };
+        assert_eq!(selection.choose(&[leader, follower]), Some(leader));
+
+        let unreachable_leader = ReplicaCandidate {
+            liveness: ReplicaLiveness::Unreachable,
+            ..leader
+        };
+        assert_eq!(
+            selection.choose(&[unreachable_leader, follower]),
+            Some(follower)
+        );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestReplicaSelector() {
+        let mut state = ReplicaSelectorState::default();
+        assert_eq!(state.total_attempts(), 0);
+        state.record_attempt(2);
+        state.record_attempted_time(2, Duration::from_millis(20));
+        assert_eq!(state.attempts(2), 1);
+        assert_eq!(state.attempted_time(2), Duration::from_millis(20));
+        assert!(state.is_leader_candidate(1));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestLoadBasedReplicaRead() {
+        let busy_leader = ReplicaCandidate {
+            peer_id: 1,
+            is_leader: true,
+            is_learner: false,
+            label_matches: false,
+            is_slow: true,
+            liveness: ReplicaLiveness::Reachable,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        let idle_follower = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: false,
+            is_slow: false,
+            ..busy_leader
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::Mixed,
+            leader_only: false,
+            prefer_leader: false,
+            labels_requested: false,
+        };
+        assert_eq!(
+            selection.choose(&[busy_leader, idle_follower]),
+            Some(idle_follower)
+        );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestReplicaReadWithFlashbackInProgress() {
+        let mut state = ReplicaSelectorState::default();
+        state.record_server_busy(1);
+        state.force_leader_after_flashback();
+        assert!(state.should_force_leader(1));
+        assert!(state.busy_threshold_disabled());
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestAccessFollowerAfter1TiKVDown() {
+        let down = ReplicaCandidate {
+            peer_id: 1,
+            is_leader: false,
+            is_learner: false,
+            label_matches: true,
+            is_slow: false,
+            liveness: ReplicaLiveness::Unreachable,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        let leader = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: true,
+            label_matches: false,
+            liveness: ReplicaLiveness::Reachable,
+            ..down
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::Mixed,
+            leader_only: false,
+            prefer_leader: false,
+            labels_requested: true,
+        };
+        assert_eq!(selection.choose(&[down, leader]), Some(leader));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestDoNotTryUnreachableLeader() {
+        let leader = ReplicaCandidate {
+            peer_id: 1,
+            is_leader: true,
+            is_learner: false,
+            label_matches: false,
+            is_slow: false,
+            liveness: ReplicaLiveness::Unreachable,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        let local_follower = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: false,
+            label_matches: true,
+            liveness: ReplicaLiveness::Reachable,
+            ..leader
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::Mixed,
+            leader_only: false,
+            prefer_leader: false,
+            labels_requested: true,
+        };
+        assert_eq!(
+            selection.choose(&[leader, local_follower]),
+            Some(local_follower)
+        );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestStaleReadTryFollowerAfterTimeout() {
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(1);
+        assert!(state.should_retry_stale_as_replica(1));
+        assert_eq!(state.total_attempts(), 1);
+
+        let follower = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: false,
+            is_learner: false,
+            label_matches: true,
+            is_slow: false,
+            liveness: ReplicaLiveness::Reachable,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::Mixed,
+            leader_only: false,
+            prefer_leader: false,
+            labels_requested: true,
+        };
+        assert_eq!(selection.choose(&[follower]), Some(follower));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestLeaderStuck() {
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(1);
+        state.record_attempted_time(1, Duration::from_secs(49));
+        assert!(state.is_leader_candidate(1));
+        state.record_attempted_time(1, Duration::from_secs(1));
+        assert!(!state.is_leader_candidate(1));
+
+        state.record_not_leader(1, 2);
+        assert!(state.should_force_leader(2));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaSelectorBasic() {
+        let mut state = ReplicaSelectorState::default();
+        assert_eq!(state.attempts(1), 0);
+        assert_eq!(state.attempted_time(1), Duration::ZERO);
+        assert!(!state.has_deadline_exceeded());
+        state.record_attempt(1);
+        state.record_attempted_time(1, Duration::from_millis(1));
+        assert_eq!(state.attempts(1), 1);
+        assert_eq!(state.total_attempts(), 1);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaSelectorCalculateScore() {
+        let leader = ReplicaCandidate {
+            peer_id: 1,
+            is_leader: true,
+            is_learner: false,
+            label_matches: false,
+            is_slow: false,
+            liveness: ReplicaLiveness::Reachable,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        let matching_follower = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: false,
+            label_matches: true,
+            ..leader
+        };
+        let attempted_match = ReplicaCandidate {
+            peer_id: 3,
+            attempts: 1,
+            ..matching_follower
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::Mixed,
+            leader_only: false,
+            prefer_leader: false,
+            labels_requested: true,
+        };
+        let candidates = [leader, matching_follower, attempted_match];
+        let (score, selected) = selection.highest_scored(&candidates);
+        assert_eq!(
+            score,
+            SCORE_LABEL_MATCHES | SCORE_NORMAL_PEER | SCORE_NOT_SLOW | SCORE_NOT_ATTEMPTED
+        );
+        assert_eq!(selected, [&matching_follower]);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestCanFastRetry() {
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(1);
+        state.record_not_leader(1, 2);
+        assert!(state.should_force_leader(2));
+
+        state.mark_deadline_exceeded(2);
+        assert!(!state.should_force_leader(2));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAccessPathByCase() {
+        for read_type in [
+            ReplicaReadType::Leader,
+            ReplicaReadType::Follower,
+            ReplicaReadType::Mixed,
+        ] {
+            let mut state = ReplicaSelectorState::default();
+            state.record_attempt(2);
+            state.mark_data_is_not_ready(2);
+            assert_eq!(state.attempts(2), 1);
+            assert!(state.data_is_not_ready(2));
+            assert!(state.should_probe_stale_leader(1));
+
+            let selection = MixedReplicaSelection {
+                read_type,
+                leader_only: matches!(read_type, ReplicaReadType::Leader),
+                prefer_leader: false,
+                labels_requested: false,
+            };
+            let leader = ReplicaCandidate {
+                peer_id: 1,
+                is_leader: true,
+                is_learner: false,
+                label_matches: false,
+                is_slow: false,
+                liveness: ReplicaLiveness::Reachable,
+                attempts: 0,
+                data_is_not_ready: false,
+            };
+            assert!(selection.choose(&[leader]).is_some());
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAccessPathByCaseUsingAsyncAPI() {
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(2);
+        state.mark_data_is_not_ready(2);
+        let retryable = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: false,
+            is_learner: false,
+            label_matches: false,
+            is_slow: false,
+            liveness: ReplicaLiveness::Reachable,
+            attempts: state.attempts(2),
+            data_is_not_ready: state.data_is_not_ready(2),
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::Follower,
+            leader_only: false,
+            prefer_leader: false,
+            labels_requested: false,
+        };
+        assert_eq!(selection.choose(&[retryable]), Some(retryable));
+        state.record_attempt(2);
+        assert_eq!(
+            selection.choose(&[ReplicaCandidate {
+                attempts: state.attempts(2),
+                ..retryable
+            }]),
+            None
+        );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAccessPathByCase2() {
+        let mut state = ReplicaSelectorState::default();
+        assert!(state.force_leader_after_region_not_found(1));
+        assert!(state.should_force_leader(1));
+        state.record_attempt(1);
+        assert!(!state.force_leader_after_region_not_found(1));
+
+        let mut flashback = ReplicaSelectorState::default();
+        flashback.force_leader_after_flashback();
+        assert!(flashback.should_force_leader(1));
+        assert!(flashback.busy_threshold_disabled());
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAccessPathByCase2UsingAsyncAPI() {
+        let mut state = ReplicaSelectorState::default();
+        state.mark_no_leader(1);
+        assert!(state.has_no_leader(1));
+        assert!(!state.is_leader_candidate(1));
+        assert!(state.is_leader_candidate(2));
+
+        state.record_not_leader(1, 3);
+        assert!(state.should_force_leader(3));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAccessPathByBasicCase() {
+        let reachable = ReplicaCandidate {
+            peer_id: 1,
+            is_leader: true,
+            is_learner: false,
+            label_matches: false,
+            is_slow: false,
+            liveness: ReplicaLiveness::Reachable,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        let unknown = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: false,
+            liveness: ReplicaLiveness::Unknown,
+            ..reachable
+        };
+        let unreachable = ReplicaCandidate {
+            peer_id: 3,
+            is_leader: false,
+            liveness: ReplicaLiveness::Unreachable,
+            ..reachable
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::Mixed,
+            leader_only: false,
+            prefer_leader: false,
+            labels_requested: false,
+        };
+        let candidates = [reachable, unknown, unreachable];
+        let (_, selected) = selection.highest_scored(&candidates);
+        assert_eq!(selected, [&reachable, &unknown]);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAccessPathByBasicCaseUsingAsyncAPI() {
+        let unknown = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: false,
+            is_learner: false,
+            label_matches: false,
+            is_slow: false,
+            liveness: ReplicaLiveness::Unknown,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::Follower,
+            leader_only: false,
+            prefer_leader: false,
+            labels_requested: false,
+        };
+        assert_eq!(selection.choose(&[unknown]), Some(unknown));
+        assert_eq!(
+            selection.choose(&[ReplicaCandidate {
+                liveness: ReplicaLiveness::Unreachable,
+                ..unknown
+            }]),
+            None
+        );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAccessPathByLeaderCase() {
+        let mut state = ReplicaSelectorState::default();
+        for _ in 0..2 {
+            state.record_attempt(1);
+            state.record_busy_leader(1);
+        }
+        assert!(state.should_probe_busy_leader(1));
+        assert!(!state.is_leader_selectable(1));
+        assert!(state.restore_suspect_leader(1));
+
+        state.record_not_leader(1, 3);
+        assert!(state.should_force_leader(3));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAccessPathByLeaderCaseUsingAsyncAPI() {
+        let mut state = ReplicaSelectorState::default();
+        for _ in 0..MAX_REPLICA_ATTEMPTS - 1 {
+            state.record_attempt(1);
+        }
+        assert!(state.is_leader_candidate(1));
+        state.record_attempt(1);
+        assert!(!state.is_leader_candidate(1));
+
+        state.record_not_leader(1, 2);
+        assert!(state.should_force_leader(2));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAccessPathByFollowerCase() {
+        let leader = ReplicaCandidate {
+            peer_id: 1,
+            is_leader: true,
+            is_learner: false,
+            label_matches: false,
+            is_slow: false,
+            liveness: ReplicaLiveness::Reachable,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        let failed = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: false,
+            attempts: 1,
+            ..leader
+        };
+        let next = ReplicaCandidate {
+            peer_id: 3,
+            is_leader: false,
+            ..leader
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::Follower,
+            leader_only: false,
+            prefer_leader: false,
+            labels_requested: false,
+        };
+        assert_eq!(selection.choose(&[leader, failed, next]), Some(next));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAccessPathByFollowerCaseUsingAsyncAPI() {
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(2);
+        state.mark_data_is_not_ready(2);
+        assert!(state.should_probe_stale_leader(1));
+        state.record_attempt(2);
+        assert!(!state.should_probe_stale_leader(1));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAccessPathByMixedAndPreferLeaderCase() {
+        let leader = ReplicaCandidate {
+            peer_id: 1,
+            is_leader: true,
+            is_learner: false,
+            label_matches: false,
+            is_slow: false,
+            liveness: ReplicaLiveness::Reachable,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        let follower = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: false,
+            ..leader
+        };
+        for (read_type, prefer_leader) in [
+            (ReplicaReadType::Mixed, false),
+            (ReplicaReadType::PreferLeader, true),
+        ] {
+            let selection = MixedReplicaSelection {
+                read_type,
+                leader_only: false,
+                prefer_leader,
+                labels_requested: false,
+            };
+            if prefer_leader {
+                assert_eq!(selection.choose(&[leader, follower]), Some(leader));
+            } else {
+                let candidates = [leader, follower];
+                let (_, selected) = selection.highest_scored(&candidates);
+                assert_eq!(selected, [&leader, &follower]);
+            }
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAccessPathByMixedAndPreferLeaderCaseUsingAsyncAPI()
+    {
+        let slow_follower = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: false,
+            is_learner: false,
+            label_matches: true,
+            is_slow: true,
+            liveness: ReplicaLiveness::Reachable,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        let leader = ReplicaCandidate {
+            peer_id: 1,
+            is_leader: true,
+            label_matches: false,
+            is_slow: false,
+            ..slow_follower
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::PreferLeader,
+            leader_only: false,
+            prefer_leader: true,
+            labels_requested: true,
+        };
+        assert_eq!(selection.choose(&[slow_follower, leader]), Some(leader));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAccessPathByStaleReadCase() {
+        let mut state = ReplicaSelectorState::default();
+        assert!(!state.should_retry_stale_as_replica(1));
+        state.record_attempt(1);
+        assert!(state.should_retry_stale_as_replica(1));
+
+        let mut busy = state.clone();
+        busy.record_server_busy(1);
+        assert!(!busy.should_retry_stale_as_replica(1));
+        state.mark_deadline_exceeded(1);
+        assert!(!state.should_retry_stale_as_replica(1));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAccessPathByFlashbackInProgressCase() {
+        let mut state = ReplicaSelectorState::default();
+        state.force_leader_after_flashback();
+        assert!(state.should_force_leader(1));
+        assert!(state.busy_threshold_disabled());
+        assert!(!state.is_server_busy(1));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAccessPathByLearnerCase() {
+        let voter = ReplicaCandidate {
+            peer_id: 1,
+            is_leader: false,
+            is_learner: false,
+            label_matches: false,
+            is_slow: false,
+            liveness: ReplicaLiveness::Reachable,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        let learner = ReplicaCandidate {
+            peer_id: 2,
+            is_learner: true,
+            ..voter
+        };
+        let down_learner = ReplicaCandidate {
+            peer_id: 3,
+            liveness: ReplicaLiveness::Unreachable,
+            ..learner
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::Learner,
+            leader_only: false,
+            prefer_leader: false,
+            labels_requested: false,
+        };
+        assert_eq!(
+            selection.choose(&[voter, learner, down_learner]),
+            Some(learner)
+        );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaReadAvoidSlowStore() {
+        let slow_follower = ReplicaCandidate {
+            peer_id: 2,
+            is_leader: false,
+            is_learner: false,
+            label_matches: false,
+            is_slow: true,
+            liveness: ReplicaLiveness::Reachable,
+            attempts: 0,
+            data_is_not_ready: false,
+        };
+        let healthy_follower = ReplicaCandidate {
+            peer_id: 3,
+            is_slow: false,
+            ..slow_follower
+        };
+        let selection = MixedReplicaSelection {
+            read_type: ReplicaReadType::PreferLeader,
+            leader_only: false,
+            prefer_leader: true,
+            labels_requested: false,
+        };
+        assert_eq!(
+            selection.choose(&[slow_follower, healthy_follower]),
+            Some(healthy_follower)
+        );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestReplicaFlag() {
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(1);
+        state.mark_deadline_exceeded(1);
+        state.mark_data_is_not_ready(2);
+        state.mark_no_leader(3);
+        state.record_server_busy(4);
+        assert!(state.deadline_exceeded(1));
+        assert!(state.data_is_not_ready(2));
+        assert!(state.has_no_leader(3));
+        assert!(state.is_server_busy(4));
+        assert!(!state.is_leader_candidate(1));
+        assert!(!state.is_leader_candidate(3));
     }
 }

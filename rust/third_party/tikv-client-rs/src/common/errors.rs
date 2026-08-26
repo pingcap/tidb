@@ -42,6 +42,13 @@ pub enum Error {
     /// PD state was not refreshed within the source safety window.
     #[error(transparent)]
     PdServerTimeout(#[from] crate::error::PdServerTimeoutError),
+    /// A timestamp oracle rejected a read before the request was dispatched.
+    ///
+    /// The boxed concrete error remains downcastable so callers can
+    /// distinguish future-timestamp and latest-stale-read failures like
+    /// client-go does.
+    #[error(transparent)]
+    Oracle(#[from] crate::oracle::OracleError),
     /// Feature is not implemented.
     #[error("Unimplemented feature")]
     Unimplemented,

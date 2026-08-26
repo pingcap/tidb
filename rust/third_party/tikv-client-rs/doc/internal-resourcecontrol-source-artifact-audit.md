@@ -61,7 +61,7 @@ Final validation on `nightly-2026-08-22` used the exact package code:
 
 - `cargo +nightly-2026-08-22 test -p tikv-client --lib resource_control::test:: --no-default-features --quiet`: 13 passed.
 - `cargo +nightly-2026-08-22 test -p tikv-client --lib resource_control::test:: --all-features --quiet`: 13 passed.
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib source_txn_file_commit_survives_resource_accounting_response_error --no-default-features --quiet`: 1 passed.
+- `cargo +nightly-2026-08-22 test -p tikv-client --lib source_go_txnkv_transaction_TestTxnFileCommitPreservesCommitOnResourceControlResponseError --no-default-features --quiet`: 1 passed.
 - The same consumer regression with `--all-features`: 1 passed.
 - `cargo +nightly-2026-08-22 test -p tikv-client --lib source_ --no-default-features --quiet`: 752 passed.
 - `cargo +nightly-2026-08-22 test -p tikv-client --lib source_ --all-features --quiet`: 749 passed.

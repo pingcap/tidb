@@ -545,7 +545,8 @@ mod tests {
     }
 
     #[test]
-    fn source_mutations_has_data_in_range_matrix() {
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_transaction_TestMutationsHasDataInRange() {
         let mutations = (10..20)
             .step_by(2)
             .map(|index| {
@@ -593,7 +594,8 @@ mod tests {
     }
 
     #[test]
-    fn source_chunk_slice_sort_and_dedup_preserves_ranges() {
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_transaction_TestChunkSliceSortAndDedup() {
         let mut random = StdRng::seed_from_u64(1);
         for _ in 0..100 {
             let len = random.gen_range(0..10);
@@ -632,7 +634,8 @@ mod tests {
     }
 
     #[test]
-    fn source_txn_file_parallel_budget_boundaries() {
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_transaction_TestTxnFileMaxChunksInParallel() {
         assert_eq!(txn_file_max_chunks_in_parallel(128 * 1024 * 1024), 32);
         assert_eq!(
             txn_file_max_chunks_in_parallel(MAX_TXN_CHUNK_SIZE_IN_PARALLEL),
@@ -646,12 +649,14 @@ mod tests {
     }
 
     #[test]
-    fn source_txn_file_http_client_idle_connection_timeout_is_90_seconds() {
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_transaction_TestTxnFileHTTPClientHasIdleConnectionTimeout() {
         assert_eq!(TXN_FILE_HTTP_IDLE_TIMEOUT, Duration::from_secs(90));
     }
 
     #[test]
-    fn source_request_source_whitelist() {
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_transaction_TestIsRequestSourceUseTxnFile() {
         let cases = [
             (RequestSource::default(), Vec::new(), true),
             (
@@ -705,7 +710,8 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn source_close_idle_connections_closes_the_shared_idle_socket() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestCloseTxnFileIdleConnections() {
         close_txn_file_idle_connections();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -748,13 +754,14 @@ mod tests {
     }
 
     #[test]
-    fn source_close_idle_connections_before_initialization_is_safe() {
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_transaction_TestCloseTxnFileIdleConnectionsBeforeInitialization() {
         close_txn_file_idle_connections();
         close_txn_file_idle_connections();
     }
 
     #[test]
-    fn source_close_idle_connections_replaces_the_shared_pool() {
+    fn source_close_idle_connections_replaces_the_shared_pool_native_gate() {
         close_txn_file_idle_connections();
         let first = shared_http_client().unwrap();
         close_txn_file_idle_connections();
@@ -764,7 +771,8 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn source_build_txn_files_counts_entries_and_matches_wire_format() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestBuildTxnFilesEntryCounting() {
         close_txn_file_idle_connections();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();

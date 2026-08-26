@@ -871,11 +871,22 @@ pub fn bootstrap_with_multi_zones(
 mod tests {
     use super::*;
 
+    fn assert_source_test_region_contains() {
+        assert!(region_contains(b"", b"", b""));
+        assert!(region_contains(b"", b"", &[1]));
+        assert!(!region_contains(&[1, 1, 1], b"", &[1, 1, 0]));
+        assert!(region_contains(&[1, 1, 1], b"", &[1, 1, 1]));
+        assert!(region_contains(b"", &[2, 2, 2], &[2, 2, 1]));
+        assert!(!region_contains(b"", &[2, 2, 2], &[2, 2, 2]));
+        assert!(!region_contains(&[1, 1, 1], &[2, 2, 2], &[1, 1, 0]));
+        assert!(region_contains(&[1, 1, 1], &[2, 2, 2], &[1, 1, 1]));
+        assert!(region_contains(&[1, 1, 1], &[2, 2, 2], &[2, 2, 1]));
+        assert!(!region_contains(&[1, 1, 1], &[2, 2, 2], &[2, 2, 2]));
+    }
+
     #[test]
     fn source_region_boundaries_topology_and_bootstrap_helpers() {
-        assert!(region_contains(b"", b"", b""));
-        assert!(region_contains(b"a", b"", b"a"));
-        assert!(!region_contains(b"a", b"b", b"b"));
+        assert_source_test_region_contains();
 
         let cluster = Cluster::new(MockEngine::new());
         let (store, peer, region) = bootstrap_with_single_store(&cluster);
@@ -892,6 +903,21 @@ mod tests {
             peer,
         );
         assert_eq!(right.start_key, b"m");
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestRegionContains() {
+        assert!(region_contains(b"", b"", b""));
+        assert!(region_contains(b"", b"", &[1]));
+        assert!(!region_contains(&[1, 1, 1], b"", &[1, 1, 0]));
+        assert!(region_contains(&[1, 1, 1], b"", &[1, 1, 1]));
+        assert!(region_contains(b"", &[2, 2, 2], &[2, 2, 1]));
+        assert!(!region_contains(b"", &[2, 2, 2], &[2, 2, 2]));
+        assert!(!region_contains(&[1, 1, 1], &[2, 2, 2], &[1, 1, 0]));
+        assert!(region_contains(&[1, 1, 1], &[2, 2, 2], &[1, 1, 1]));
+        assert!(region_contains(&[1, 1, 1], &[2, 2, 2], &[2, 2, 1]));
+        assert!(!region_contains(&[1, 1, 1], &[2, 2, 2], &[2, 2, 2]));
     }
 
     #[test]

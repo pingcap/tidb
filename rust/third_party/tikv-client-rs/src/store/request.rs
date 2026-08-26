@@ -2059,6 +2059,57 @@ mod tests {
         ]
     }
 
+    fn source_tidb_51921_requests() -> Vec<Box<dyn Request>> {
+        vec![
+            Box::new(kvrpcpb::GetRequest::default()),
+            Box::new(kvrpcpb::ScanRequest::default()),
+            Box::new(kvrpcpb::PrewriteRequest::default()),
+            Box::new(kvrpcpb::PessimisticLockRequest::default()),
+            Box::new(kvrpcpb::PessimisticRollbackRequest::default()),
+            Box::new(kvrpcpb::CommitRequest::default()),
+            Box::new(kvrpcpb::CleanupRequest::default()),
+            Box::new(kvrpcpb::BatchGetRequest::default()),
+            Box::new(kvrpcpb::BatchRollbackRequest::default()),
+            Box::new(kvrpcpb::ScanLockRequest::default()),
+            Box::new(kvrpcpb::ResolveLockRequest::default()),
+            Box::new(kvrpcpb::GcRequest::default()),
+            Box::new(kvrpcpb::DeleteRangeRequest::default()),
+            Box::new(kvrpcpb::RawGetRequest::default()),
+            Box::new(kvrpcpb::RawBatchGetRequest::default()),
+            Box::new(kvrpcpb::RawPutRequest::default()),
+            Box::new(kvrpcpb::RawBatchPutRequest::default()),
+            Box::new(kvrpcpb::RawDeleteRequest::default()),
+            Box::new(kvrpcpb::RawBatchDeleteRequest::default()),
+            Box::new(kvrpcpb::RawDeleteRangeRequest::default()),
+            Box::new(kvrpcpb::RawScanRequest::default()),
+            Box::new(kvrpcpb::RawGetKeyTtlRequest::default()),
+            Box::new(kvrpcpb::RawCasRequest::default()),
+            Box::new(kvrpcpb::RawChecksumRequest::default()),
+            Box::new(kvrpcpb::UnsafeDestroyRangeRequest::default()),
+            Box::new(kvrpcpb::RegisterLockObserverRequest::default()),
+            Box::new(kvrpcpb::CheckLockObserverRequest::default()),
+            Box::new(kvrpcpb::RemoveLockObserverRequest::default()),
+            Box::new(kvrpcpb::PhysicalScanLockRequest::default()),
+            Box::new(coprocessor::Request::default()),
+            Box::new(CoprocessorStreamRequest::new(
+                coprocessor::Request::default(),
+            )),
+            Box::new(BatchCoprocessorStreamRequest::new(
+                coprocessor::BatchRequest::default(),
+            )),
+            Box::new(kvrpcpb::MvccGetByKeyRequest::default()),
+            Box::new(kvrpcpb::MvccGetByStartTsRequest::default()),
+            Box::new(kvrpcpb::SplitRegionRequest::default()),
+            Box::new(kvrpcpb::TxnHeartBeatRequest::default()),
+            Box::new(kvrpcpb::CheckTxnStatusRequest::default()),
+            Box::new(kvrpcpb::CheckSecondaryLocksRequest::default()),
+            Box::new(kvrpcpb::FlashbackToVersionRequest::default()),
+            Box::new(kvrpcpb::PrepareFlashbackToVersionRequest::default()),
+            Box::new(kvrpcpb::FlushRequest::default()),
+            Box::new(kvrpcpb::BufferBatchGetRequest::default()),
+        ]
+    }
+
     #[test]
     fn source_generated_attach_context_matrix_is_complete() {
         let mut requests = source_generated_context_requests();
@@ -2110,7 +2161,8 @@ mod tests {
     }
 
     #[test]
-    fn source_default_request_origin_fills_only_unknown_contexts() {
+    #[allow(non_snake_case)]
+    fn source_go_tikvrpc_TestDefaultRequestOrigin() {
         static ORIGIN_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = ORIGIN_TEST.lock().unwrap();
         let previous = get_default_request_origin();
@@ -2123,6 +2175,7 @@ mod tests {
         let _reset = ResetOrigin(previous);
 
         set_default_request_origin(kvrpcpb::RequestOrigin::TiDb);
+        assert_eq!(get_default_request_origin(), kvrpcpb::RequestOrigin::TiDb);
         for mut request in [
             Box::new(kvrpcpb::GetRequest::default()) as Box<dyn Request>,
             Box::new(kvrpcpb::ScanLockRequest::default()),
@@ -2161,7 +2214,8 @@ mod tests {
     }
 
     #[test]
-    fn source_attach_context_replaces_the_owned_request_snapshot() {
+    #[allow(non_snake_case)]
+    fn source_go_tikvrpc_TestAttachContextSetsRequestContext() {
         for mut request in [
             Box::new(kvrpcpb::GetRequest::default()) as Box<dyn Request>,
             Box::new(kvrpcpb::GetLockWaitInfoRequest::default()),
@@ -2169,6 +2223,7 @@ mod tests {
             assert!(request.attach_context(kvrpcpb::Context {
                 region_id: 123,
                 api_version: kvrpcpb::ApiVersion::V2 as i32,
+                keyspace: Some(kvrpcpb::context::Keyspace::KeyspaceId(456)),
                 keyspace_name: "test-keyspace".to_owned(),
                 ..Default::default()
             }));
@@ -2176,12 +2231,23 @@ mod tests {
             assert!(request.attach_context(kvrpcpb::Context {
                 region_id: 789,
                 api_version: kvrpcpb::ApiVersion::V2 as i32,
+                keyspace: Some(kvrpcpb::context::Keyspace::KeyspaceId(101_112)),
                 keyspace_name: "next-test-keyspace".to_owned(),
                 ..Default::default()
             }));
             assert_eq!(old_context.region_id, 123);
+            assert_eq!(old_context.api_version, kvrpcpb::ApiVersion::V2 as i32);
+            assert_eq!(crate::request::context_keyspace_id(&old_context), Some(456));
             assert_eq!(old_context.keyspace_name, "test-keyspace");
             assert_eq!(request.tikv_context().unwrap().region_id, 789);
+            assert_eq!(
+                crate::request::context_keyspace_id(request.tikv_context().unwrap()),
+                Some(101_112)
+            );
+            assert_eq!(
+                request.tikv_context().unwrap().api_version,
+                kvrpcpb::ApiVersion::V2 as i32
+            );
             assert_eq!(
                 request.tikv_context().unwrap().keyspace_name,
                 "next-test-keyspace"
@@ -2190,9 +2256,12 @@ mod tests {
     }
 
     #[test]
-    fn source_tidb_51921_batch_snapshots_encode_after_relocation() {
+    #[allow(non_snake_case)]
+    fn source_go_tikvrpc_TestTiDB51921() {
         let mut handles = Vec::new();
-        for (index, mut request) in source_generated_context_requests().into_iter().enumerate() {
+        let requests = source_tidb_51921_requests();
+        assert_eq!(requests.len(), 42, "source request inventory drifted");
+        for (index, mut request) in requests.into_iter().enumerate() {
             let store_id = index as u64 + 1;
             assert!(request.attach_context(kvrpcpb::Context {
                 region_id: store_id,
@@ -2593,6 +2662,70 @@ mod tests {
         assert!(!bypass_stream.count_read_rpc);
         let bypass_ru = bypass_response.exec_details_v2.unwrap().ru_v2.unwrap();
         assert_eq!(bypass_ru.read_rpc_count, 0);
+        assert_eq!(bypass_ru.storage_processed_keys_get, 2);
+        assert_eq!(bypass_ru.storage_processed_keys_batch_get, 3);
+        assert!(bypass_details.drain_ru_v2().is_none());
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_tikvrpc_TestCopStreamResponseRecvBypass() {
+        fn response() -> coprocessor::Response {
+            coprocessor::Response {
+                exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                    ru_v2: Some(kvrpcpb::Ruv2 {
+                        kv_engine_cache_miss: 1,
+                        storage_processed_keys_get: 2,
+                        storage_processed_keys_batch_get: 3,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }
+        }
+
+        let charged_details = Arc::new(crate::RuDetails::new());
+        let mut charged_stream = CoprocessorStreamResponse {
+            first: None,
+            stream: None,
+            timeout: Duration::from_secs(1),
+            ru_details: Some(charged_details.clone()),
+            count_read_rpc: true,
+            bypass_ru_v2: false,
+        };
+        let mut charged_response = response();
+        charged_stream.update_ru_v2(&mut charged_response);
+        assert!(!charged_stream.count_read_rpc);
+        assert!(charged_details.tikv_ru_v2() > 0.0);
+        let charged_ru = charged_response.exec_details_v2.unwrap().ru_v2.unwrap();
+        assert_eq!(charged_ru.read_rpc_count, 1);
+        assert_eq!(charged_ru.kv_engine_cache_miss, 1);
+        assert_eq!(charged_ru.storage_processed_keys_get, 2);
+        assert_eq!(charged_ru.storage_processed_keys_batch_get, 3);
+        let drained = charged_details.drain_ru_v2().unwrap();
+        assert_eq!(drained.read_rpc_count, 1);
+        assert_eq!(drained.kv_engine_cache_miss, 1);
+        assert_eq!(drained.storage_processed_keys_get, 2);
+        assert_eq!(drained.storage_processed_keys_batch_get, 3);
+        assert!(charged_details.drain_ru_v2().is_none());
+
+        let bypass_details = Arc::new(crate::RuDetails::new());
+        let mut bypass_stream = CoprocessorStreamResponse {
+            first: None,
+            stream: None,
+            timeout: Duration::from_secs(1),
+            ru_details: Some(bypass_details.clone()),
+            count_read_rpc: true,
+            bypass_ru_v2: true,
+        };
+        let mut bypass_response = response();
+        bypass_stream.update_ru_v2(&mut bypass_response);
+        assert!(!bypass_stream.count_read_rpc);
+        assert_eq!(bypass_details.tikv_ru_v2(), 0.0);
+        let bypass_ru = bypass_response.exec_details_v2.unwrap().ru_v2.unwrap();
+        assert_eq!(bypass_ru.read_rpc_count, 0);
+        assert_eq!(bypass_ru.kv_engine_cache_miss, 1);
         assert_eq!(bypass_ru.storage_processed_keys_get, 2);
         assert_eq!(bypass_ru.storage_processed_keys_batch_get, 3);
         assert!(bypass_details.drain_ru_v2().is_none());

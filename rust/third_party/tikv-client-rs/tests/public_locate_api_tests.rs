@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use tikv_client::proto::metapb;
 use tikv_client::{
-    get_store_liveness_timeout, set_store_liveness_timeout, Cluster, CodecPdClient, PdRpcClient,
-    RegionCache, RegionWithLeader, RetryClient, TiFlashRpcContextUnavailableReason,
+    get_store_liveness_timeout, set_store_liveness_timeout, Cluster, CodecPdClient, Error,
+    PdRpcClient, RegionCache, RegionWithLeader, RetryClient, TiFlashRpcContextUnavailableReason,
     TiFlashSelectionError,
 };
 
@@ -52,6 +52,26 @@ fn downstream_can_control_the_process_liveness_timeout() {
     set_store_liveness_timeout(Duration::from_millis(321));
     assert_eq!(get_store_liveness_timeout(), Duration::from_millis(321));
     set_store_liveness_timeout(original);
+}
+
+#[test]
+fn downstream_can_match_a_typed_read_timestamp_error() {
+    let oracle_error: tikv_client::oracle::OracleError =
+        Box::new(tikv_client::oracle::FutureTimestampReadError {
+            read_timestamp: 11,
+            current_timestamp: 10,
+        });
+    let error = Error::from(oracle_error);
+    match error {
+        Error::Oracle(error) => {
+            let error = error
+                .downcast_ref::<tikv_client::oracle::FutureTimestampReadError>()
+                .expect("the public client error preserves the concrete oracle error");
+            assert_eq!(error.read_timestamp, 11);
+            assert_eq!(error.current_timestamp, 10);
+        }
+        error => panic!("expected a public oracle error, got {error:?}"),
+    }
 }
 
 #[allow(dead_code)]

@@ -4,6 +4,8 @@ Source of truth: `tikv/client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
 Rust toolchain: `nightly-2026-08-22`.
 
+Rust baseline before this independent re-audit: `d11a87b74b185c209ba0ebf8e365028113113b11`.
+
 ## Atomic inventory
 
 The pinned parent package contains exactly 15 top-level artifacts and 4,813
@@ -52,7 +54,7 @@ child-package implementations documented by their own atomic receipts.
 | mutable iterators | `KvIterator::value` takes `&mut self` so retained snapshot iterators can refresh their safe owned value cache. This is an explicit Rust API compatibility change on the public `tikv::Iterator` re-export; it models client-go's stateful pointer iterator without unsafe shared-byte mutation. |
 | `Checkpoint`, `RevertToCheckpoint`, stages | ART and RBT append value-log undo records outside staging as well as inside it, making every ordinary checkpoint revertible. Equal-sized in-place updates retain their source optimization and version identity. |
 | `KVUnionStore` reads and merge iteration | `UnionStore`, `UnionIterator`, and `MapSnapshot` preserve local precedence, tombstone hiding, commit timestamps, forward/reverse bounds, and source snapshot fallback. |
-| `PipelinedMemDB` | `PipelinedMemDb` preserves threshold conjunctions, force blocking, one active generation, cumulative length/size, generation numbers, mutable/flushing/remote read precedence, batch cache behavior, error enrichment, metrics, and source panics/errors. Flush closures receive `Arc<MemDb>` and may use the reusable `unistore` crate as a remote backend. |
+| `PipelinedMemDB` | `PipelinedMemDb` and the authoritative managed `MemDb` preserve threshold conjunctions, force blocking, one active generation, cumulative length/size, generation numbers, mutable/flushing/remote read precedence, batch cache behavior, error enrichment, metrics, and source panics/errors. Point `Get` consumes the prefetch cache, while every `BatchGet` bypasses and refreshes it exactly like client-go. Flush closures receive `Arc<MemDb>` and may use the reusable `unistore` crate as a remote backend. |
 | failpoint-adjusted thresholds | Test-only `set_flush_thresholds` injects the same three threshold values directly. This is the native equivalent of source failpoints and executes each branch without a Rust failpoint runtime. |
 | arena memory/RWMutex details | Native ownership, `Arc`, channels, atomics, and locks replace Go arena pointers and goroutines while preserving externally observable behavior and thread lifetime. |
 | `mockSnapshot`, `mockIterator` | `MapSnapshot` and owned vector iterators preserve deterministic point, batch, bounds, order, and requested commit-timestamp behavior. |
@@ -71,19 +73,23 @@ cases retain their parent helper infrastructure in
 
 | Source artifact | Source declarations | Rust accounting |
 | --- | --- | --- |
-| `memdb_test.go` | `TestGetSet`, `TestIterator`, `TestDiscard`, `TestFlushOverwrite`, `TestComplexUpdate`, `TestNestedSandbox`, `TestOverwrite`, `TestReset`, `TestInspectStage`, `TestDirty`, `TestFlags`, `TestKVGetSet`, `TestNewIterator`, `TestIterNextUntil`, `TestBasicNewIterator`, `TestNewIteratorMin`, `TestMemDBStaging`, `TestMemDBMultiLevelStaging`, `TestInvalidStagingHandle`, `TestMemDBCheckpoint`, `TestBufferLimit`, `TestUnsetTemporaryFlag`, `TestSnapshotGetIter`, `TestCleanupKeepPersistentFlag`, `TestIterNoResult`, `TestMemBufferCache`, `TestMemDBLeafFragmentation`, `TestReadOnlyZeroMem`, `TestKeyValueOversize`, `TestSetMemoryFootprintChangeHook`, `TestSelectValueHistory`, `TestSnapshotReaderWithWrite`, `TestBatchedSnapshotIter`, `TestBatchedSnapshotIterEdgeCase` and all five named subtests | 38 independent `source_test_*` cases; every shared case runs against both RBT and ART except source ART-specific batched iteration. Original 10,000-key scales, 100 snapshot handles/iterators, 10,000 flags, 1,000 cache reads, and all child-shape counts are retained. |
-| `union_store_test.go` | `TestUnionStoreGetSet`, `TestUnionStoreDelete`, `TestUnionStoreSeek`, `TestUnionStoreIterReverse` | Four independent `source_test_union_store_*` cases. |
-| `pipelined_memdb_test.go` | `TestPipelinedFlushTrigger`, `TestPipelinedFlushSkip`, `TestPipelinedFlushBlock`, `TestPipelinedFlushGet`, `TestPipelinedFlushSize`, `TestPipelinedFlushGeneration`, `TestErrorIterator`, `TestPipelinedAdjustFlushCondition`, `TestMemBufferBatchGetCache` | Nine independent source-named cases. Threshold magnitudes are reduced for deterministic speed, but all conjunction, skip, force-block, generation, cache, and read-precedence branches are unchanged. Worker starts/releases use bounded channels. |
-| `memdb_norace_test.go` | `TestRandom`, `TestRandomDerive`, `TestRandomAB` | `source_test_random`, `source_test_random_derive`, and `source_test_random_ab`; the 50,000-operation mutation and A/B scales plus 101-level/512-write recursive staging scale are retained with deterministic native PRNG input. |
-| `memdb_bench_test.go` | all twelve `Benchmark*` declarations | Twelve independently named `source_benchmark_*_contract` tests execute both backends and preserve each workload's key shape, value shape, operation ordering, iteration, snapshot, cache, creation, and long-key behavior at deterministic unit-test scale. |
+| `memdb_test.go` | `TestGetSet`, `TestIterator`, `TestDiscard`, `TestFlushOverwrite`, `TestComplexUpdate`, `TestNestedSandbox`, `TestOverwrite`, `TestReset`, `TestInspectStage`, `TestDirty`, `TestFlags`, `TestKVGetSet`, `TestNewIterator`, `TestIterNextUntil`, `TestBasicNewIterator`, `TestNewIteratorMin`, `TestMemDBStaging`, `TestMemDBMultiLevelStaging`, `TestInvalidStagingHandle`, `TestMemDBCheckpoint`, `TestBufferLimit`, `TestUnsetTemporaryFlag`, `TestSnapshotGetIter`, `TestCleanupKeepPersistentFlag`, `TestIterNoResult`, `TestMemBufferCache`, `TestMemDBLeafFragmentation`, `TestReadOnlyZeroMem`, `TestKeyValueOversize`, `TestSetMemoryFootprintChangeHook`, `TestSelectValueHistory`, `TestSnapshotReaderWithWrite`, `TestBatchedSnapshotIter`, `TestBatchedSnapshotIterEdgeCase` and all five named subtests | 38 independent `source_go_internal_unionstore_memdb_test_<GoNameOrSubtestPath>` definitions; every shared case runs against both RBT and ART except source ART-specific batched iteration. Original 10,000-key scales, 100 snapshot handles/iterators, 10,000 flags, 1,000 cache reads, and all child-shape counts are retained. |
+| `union_store_test.go` | `TestUnionStoreGetSet`, `TestUnionStoreDelete`, `TestUnionStoreSeek`, `TestUnionStoreIterReverse` | Four exact `source_go_internal_unionstore_union_store_test_<GoName>` definitions. |
+| `pipelined_memdb_test.go` | `TestPipelinedFlushTrigger`, `TestPipelinedFlushSkip`, `TestPipelinedFlushBlock`, `TestPipelinedFlushGet`, `TestPipelinedFlushSize`, `TestPipelinedFlushGeneration`, `TestErrorIterator`, `TestPipelinedAdjustFlushCondition`, `TestMemBufferBatchGetCache` | Nine exact `source_go_internal_unionstore_pipelined_memdb_test_<GoName>` definitions. Threshold magnitudes are reduced for deterministic speed, but all conjunction, skip, force-block, generation, cache, and read-precedence branches are unchanged. Worker starts/releases use bounded channels. |
+| `memdb_norace_test.go` | `TestRandom`, `TestRandomDerive`, `TestRandomAB` | Three exact `source_go_internal_unionstore_memdb_norace_test_<GoName>` definitions; the 50,000-operation mutation and A/B scales plus 101-level/512-write recursive staging scale are retained with deterministic native PRNG input. |
+| `memdb_bench_test.go` | all twelve `Benchmark*` declarations | Twelve exact `source_go_internal_unionstore_memdb_bench_test_<GoName>` test definitions execute both backends and preserve each workload's key shape, value shape, operation ordering, iteration, snapshot, cache, creation, and long-key behavior at deterministic unit-test scale. |
 | `main_test.go` | `TestMain` with goleak verification | all worker-owning source tests use explicit completion gates and `flush_wait`; complete workspace completion is the process-lifetime gate. |
 
-The focused parent module contains 82 tests: 66 direct source test/benchmark
-contracts plus 16 cross-cutting source-uncovered and integration tests.
+Mechanical declaration reconciliation reports 54/54 independently selectable
+test-case identities and 12/12 independently selectable benchmark-contract
+identities, with zero missing, extra, or duplicate ports. `TestMain` has the
+explicit harness disposition above. The focused parent module now contains 88
+tests: 66 direct source test/benchmark contracts plus 22 cross-cutting,
+source-uncovered, differential, and integration tests.
 
 ## Differential findings and fixes
 
-Two parent-package comparisons produced red-then-green production fixes:
+Three parent-package comparisons produced red-then-green production fixes:
 
 1. ART and RBT recorded undo entries only while staging. client-go checkpoints
    are global value-log positions, so ordinary writes outside a stage must also
@@ -97,6 +103,14 @@ Two parent-package comparisons produced red-then-green production fixes:
    views, propagate only matching in-place writes, and distinguish deprecated
    getters from modern sequence-checked snapshots. The exact retained getter
    and iterator objects from `TestSnapshotGetIter` now pass for both backends.
+3. The authoritative managed `MemDb` and transaction consumer reused the
+   point-read cache during `BatchGet`. client-go's `PipelinedMemDB.BatchGet`
+   always sends every key absent from mutable/flushing memory to its remote
+   buffer getter and then refreshes the cache for later point `Get` calls.
+   `source_pipelined_batch_get_refreshes_remote_cache` was red with value
+   `one` after the remote value changed to `two`; the corrected parent and
+   transaction paths now perform the second remote batch read while point
+   reads remain cached.
 
 An initial shared-stage-zero implementation made every outer-stage release
 clone the complete map, which the 50,000-stage A/B test exposed immediately.
@@ -132,58 +146,52 @@ receipts.
 Pinned source package and race baseline:
 
 ```text
-env GOCACHE=/private/tmp/client-go-art-build-cache \
-    GOMODCACHE=/private/tmp/client-go-art-module-cache \
-    /private/tmp/go1.25.12/bin/go test ./internal/unionstore -count=1
-# ok, 1.956s
+env GOMODCACHE=/private/tmp/client-go-txnlock-module-cache \
+    GOCACHE=/private/tmp/client-go-go-cache \
+    /private/tmp/go1.25.12-full/bin/go test ./internal/unionstore -count=1
+# ok, 2.124s
 
-env GOCACHE=/private/tmp/client-go-art-build-cache \
-    GOMODCACHE=/private/tmp/client-go-art-module-cache \
-    /private/tmp/go1.25.12/bin/go test -race \
+env GOMODCACHE=/private/tmp/client-go-txnlock-module-cache \
+    GOCACHE=/private/tmp/client-go-unionstore-race-cache \
+    /private/tmp/go1.25.12-full/bin/go test -race \
     ./internal/unionstore -count=1
-# ok, 4.418s
+# ok, 4.572s
 ```
 
 Focused Rust parent gates:
 
 ```text
-cargo +nightly-2026-08-22 test -p tikv-client \
-    transaction::unionstore::tests --lib --no-default-features
-cargo +nightly-2026-08-22 test -p tikv-client \
-    transaction::unionstore::tests --lib
-# 82 passed in each configuration
+cargo test --no-default-features --lib source_go_internal_unionstore_ --quiet
+cargo test --all-features --lib source_go_internal_unionstore_ --quiet
+# 66 exact source test/benchmark identities passed in each configuration
+
+cargo test --no-default-features --lib transaction::unionstore::tests --quiet
+cargo test --all-features --lib transaction::unionstore::tests --quiet
+# 88 package tests passed in each configuration
 ```
 
 Complete library matrices:
 
 ```text
-cargo +nightly-2026-08-22 test -p tikv-client --lib \
-    --no-default-features --quiet
-# 1004 passed; 1 unrelated intentional ignore
+cargo nextest run --config-file config/nextest.toml --all \
+    --no-default-features --status-level fail --final-status-level fail
+# 1,410 passed; two configuration-specific tests skipped
 
-cargo +nightly-2026-08-22 test -p tikv-client --lib \
-    --all-features --quiet
-# 1001 passed; 1 unrelated intentional ignore
+cargo nextest run --config-file config/nextest.toml --all \
+    --all-features --lib --status-level fail --final-status-level fail
+# 1,385 passed; six configuration-specific tests skipped
 ```
 
 Workspace and strict completion gates:
 
 ```text
-cargo +nightly-2026-08-22 test --workspace \
-    --no-default-features --quiet
-cargo +nightly-2026-08-22 check --workspace \
-    --all-targets --all-features
-cargo +nightly-2026-08-22 clippy --workspace \
-    --all-targets --all-features -- -D warnings
-env RUSTDOCFLAGS='-Dwarnings --document-private-items' \
-    cargo +nightly-2026-08-22 doc --workspace --all-features --no-deps
-cargo +nightly-2026-08-22 test --workspace --doc \
-    --all-features --quiet
-# all passed; 51 doctests
+make check
+make doc
+# workspace check, Clippy, private rustdoc, and 51 doctests passed
 
-cargo +nightly-2026-08-22 fmt --all -- --check
+cargo fmt --all -- --check
 git diff --check
-# passed
+# passed; exact identity gate reports 54/54 tests and 12/12 benchmarks
 ```
 
 No live TiKV/PD cluster is required. Pipelined persistence is deterministic and

@@ -180,7 +180,8 @@ mod tests {
 
     #[test]
     #[serial]
-    fn source_network_collector_request_and_response_accounting() {
+    #[allow(non_snake_case)]
+    fn source_go_metrics_collector_TestNetworkCollectorOnReq() {
         let details = Arc::new(NetworkTrafficDetails::default());
         let ordinary = kvrpcpb::GetRequest {
             context: Some(kvrpcpb::Context {
@@ -227,7 +228,25 @@ mod tests {
             crate::stats::stale_read_bytes("local", "out") - stale_out_before,
             10
         );
+    }
 
+    #[test]
+    #[serial]
+    #[allow(non_snake_case)]
+    fn source_go_metrics_collector_TestNetworkCollectorOnResp() {
+        let details = Arc::new(NetworkTrafficDetails::default());
+        let ordinary = kvrpcpb::GetRequest {
+            key: b"key".to_vec(),
+            ..Default::default()
+        };
+        let stale = kvrpcpb::GetRequest {
+            context: Some(kvrpcpb::Context {
+                stale_read: true,
+                ..Default::default()
+            }),
+            key: b"key".to_vec(),
+            ..Default::default()
+        };
         let ordinary_response = kvrpcpb::GetResponse {
             value: b"value".to_vec(),
             ..Default::default()
@@ -263,7 +282,8 @@ mod tests {
 
     #[test]
     #[serial]
-    fn source_network_collector_cross_zone_mpp_and_replica_metrics() {
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestStaleReadMetrics() {
         let details = Arc::new(NetworkTrafficDetails::default());
         let mpp_request = mpp::DispatchTaskRequest {
             encoded_plan: vec![1, 2],
@@ -332,27 +352,5 @@ mod tests {
             crate::store::network_response_size(&kvrpcpb::RawGetResponse::default()),
             0
         );
-    }
-
-    macro_rules! source_go_internal_locate_tests {
-        ($($name:ident => $target:ident),+ $(,)?) => {
-            $(
-                #[test]
-                #[serial]
-                #[allow(non_snake_case)]
-                fn $name() {
-                    $target();
-                }
-            )+
-        };
-    }
-
-    source_go_internal_locate_tests! {
-        source_go_metrics_collector_TestNetworkCollectorOnReq =>
-            source_network_collector_request_and_response_accounting,
-        source_go_metrics_collector_TestNetworkCollectorOnResp =>
-            source_network_collector_request_and_response_accounting,
-        source_go_region_request3_TestStaleReadMetrics =>
-            source_network_collector_cross_zone_mpp_and_replica_metrics,
     }
 }

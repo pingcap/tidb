@@ -40,51 +40,51 @@ Rust's additional batch-scan and raw-coprocessor APIs remain compatible extensio
 
 ## Original test and support matrix
 
-The inventory has 31 executable declarations: three top-level test entrypoints, 27 suite methods, and `TestMain`. The tables below map every suite method by source name; aggregate Rust tests deliberately retain complete source tables in one fixture instead of splitting assertions merely to mirror Go's suite syntax.
+The inventory has 31 test declarations: three testify suite runners, 27 assertion-bearing suite methods, and `TestMain`. Every suite method has one independently selectable Rust identity named `source_go_<source-artifact>_<Go-name>`. Each identity owns its source scenario directly; there is no identity-generating macro, test-to-test call, or alias from multiple Go names to one aggregate Rust test. Shared helpers are limited to fixture construction and the two assertion tables that the Go mock suite itself shares. `rawkv.TestRawKV`, `integration_tests/raw.TestRawKV`, and `integration_tests/raw.TestAPI` remain runner dispositions; `integration_tests/raw.TestMain` remains the goleak/lifecycle disposition.
 
 ### Package suite: `rawkv/rawkv_test.go`
 
 | Source method | Rust test evidence |
 | --- | --- |
-| `TestReplaceAddrWithNewStore` | `region_cache::tests::source_store_reresolve_updates_metadata_without_resetting_runtime_state`, `source_store_resolve_state_transition_matrix`, `request::plan::tests::source_store_identity_errors_stop_the_current_send_loop`, and `raw::client::tests::raw_get_retries_a_region_miss_with_its_cumulative_source_budget` |
-| `TestUpdateStoreAddr` | the same re-resolution, store-identity, and RawGet retry tests, including address-version replacement after a store mismatch |
-| `TestReplaceNewAddrAndOldOfflineImmediately` | the re-resolution/state-transition tests plus `region_cache::tests::source_replica_candidates_skip_tombstone_and_removed_stores` |
-| `TestReplaceStore` | the state-transition, tombstone/removal candidate, and metadata-preserving re-resolution tests |
-| `TestColumnFamilyForClient` | `raw::source_tests::source_package_column_family_client_and_option_cases` |
-| `TestColumnFamilyForOptions` | `source_package_column_family_client_and_option_cases` plus clone-scoped CF writes/reads in `source_simple_batch_column_family_cas_and_empty_value_matrix` |
-| `TestBatch` | `source_package_batch_and_compare_and_swap_cases`, including positional values and delete verification |
-| `TestScan` | `source_package_scan_and_reverse_tables_hold_across_region_splits` plus the exact CF/key-only reverse assertion in `source_package_batch_and_compare_and_swap_cases` |
-| `TestDeleteRange` | `source_package_delete_range_table_and_unbounded_multiregion_case` |
-| `TestDeleteRangeEmptyKeysMultiRegion` | `source_package_delete_range_table_and_unbounded_multiregion_case` and `raw::client::tests::unbounded_delete_range_covers_every_mock_region` |
-| `TestCompareAndSwap` | `source_package_batch_and_compare_and_swap_cases` |
-| `TestRawChecksum` | `source_package_checksum_exact_pair_crc_count_and_bytes` |
+| `TestReplaceAddrWithNewStore` | `region_cache::test::source_go_rawkv_TestReplaceAddrWithNewStore` preloads the old store, removes it, installs the new store at the reused address, and checks tombstone/resolution state. |
+| `TestUpdateStoreAddr` | `region_cache::test::source_go_rawkv_TestUpdateStoreAddr` swaps both addresses and proves the original store ID re-resolves to its new address. |
+| `TestReplaceNewAddrAndOldOfflineImmediately` | `region_cache::test::source_go_rawkv_TestReplaceNewAddrAndOldOfflineImmediately` preloads both stores, removes the old one, and proves the surviving store changes address immediately. |
+| `TestReplaceStore` | `region_cache::test::source_go_rawkv_TestReplaceStore` tombstones the old store and resolves a new store ID at the reused address. |
+| `TestColumnFamilyForClient` | `raw::source_tests::source_go_rawkv_TestColumnFamilyForClient` owns the mutating-CF put/get/reset/delete sequence. |
+| `TestColumnFamilyForOptions` | `raw::source_tests::source_go_rawkv_TestColumnFamilyForOptions` owns the clone-scoped per-operation CF sequence. |
+| `TestBatch` | `raw::source_tests::source_go_rawkv_TestBatch` owns BatchPut, positional BatchGet, BatchDelete, and missing verification. |
+| `TestScan` | `raw::source_tests::source_go_rawkv_TestScan` owns the exact CF forward-limit and key-only reverse results. |
+| `TestDeleteRange` | `raw::source_tests::source_go_rawkv_TestDeleteRange` owns both suffix and unbounded deletion assertions. |
+| `TestDeleteRangeEmptyKeysMultiRegion` | `raw::source_tests::source_go_rawkv_TestDeleteRangeEmptyKeysMultiRegion` owns the two-region unbounded deletion scenario. |
+| `TestCompareAndSwap` | `raw::source_tests::source_go_rawkv_TestCompareAndSwap` owns disabled, mismatch, success, previous-value, and final-read assertions. |
+| `TestRawChecksum` | `raw::source_tests::source_go_rawkv_TestRawChecksum` owns the exact six-pair CRC/count/byte calculation. |
 
 ### Mock integration suite: `integration_tests/raw/api_mock_test.go`
 
 | Source method | Rust test evidence |
 | --- | --- |
-| `TestSimple` | `source_simple_batch_column_family_cas_and_empty_value_matrix` |
-| `TestRawBatch` | `source_mock_api_raw_batch_exceeds_four_payload_windows`, plus exact 16-KiB/512-key request tests |
-| `TestSplit` | the zero/one/two-split iterations in `source_package_scan_and_reverse_tables_hold_across_region_splits` |
-| `TestScan` | the complete forward table in `source_package_scan_and_reverse_tables_hold_across_region_splits` |
-| `TestReverseScan` | the complete reverse and bounded-reverse table in the same test |
-| `TestDeleteRange` | the exact five-case mutation table in `source_package_delete_range_table_and_unbounded_multiregion_case` |
+| `TestSimple` | `source_go_integration_raw_api_mock_TestSimple` |
+| `TestRawBatch` | `source_go_integration_raw_api_mock_TestRawBatch`, including source-size generation, split-after-probe, four-plus payload windows, positional reads, and deletion. |
+| `TestSplit` | `source_go_integration_raw_api_mock_TestSplit`, with writes before the source split and reads after it on the same client. |
+| `TestScan` | `source_go_integration_raw_api_mock_TestScan`, with the exact ten-row forward table before either split and after each progressive split. |
+| `TestReverseScan` | `source_go_integration_raw_api_mock_TestReverseScan`, with the exact eleven-row reverse table before either split and after each progressive split. |
+| `TestDeleteRange` | `source_go_integration_raw_api_mock_TestDeleteRange`, with writes before three splits and the exact five-case mutation table. |
 
 ### Optional live suite: `integration_tests/raw/api_test.go`
 
 | Source method | Rust deterministic port |
 | --- | --- |
-| `TestSimple` | `source_simple_batch_column_family_cas_and_empty_value_matrix` |
-| `TestScan` | `source_live_api_scan_and_delete_range_scale_cases` writes all 20,480 pairs and checks the 10,240-result limit/prefix assertions across split regions |
-| `TestReverseScan` | `source_package_scan_and_reverse_tables_hold_across_region_splits` executes the source reverse order, bounds, and limits over all three topologies |
-| `TestBatchOp` | `source_simple_batch_column_family_cas_and_empty_value_matrix` |
-| `TestCAS` | the nil/mismatch/success transitions in `source_simple_batch_column_family_cas_and_empty_value_matrix` |
-| `TestTTL` | `source_live_api_ttl_uses_remaining_seconds_and_expires` uses a deterministic clock for the half-TTL and expiry assertions |
-| `TestDeleteRange` | `source_live_api_scan_and_delete_range_scale_cases` writes and removes all 20,480 pairs across split regions |
-| `TestRawChecksum` | `source_live_api_checksum_scale_counts_v1_and_v2_key_bytes` executes 20,480 pairs in V1 and V2 and checks CRC/count/exact prefix-aware bytes |
-| `TestEmptyValue` | `source_live_api_empty_value_matrix_distinguishes_missing_everywhere` ports every Get/BatchGet/scan/reverse/delete/BatchPut/CAS assertion |
+| `TestSimple` | `source_go_integration_raw_api_TestSimple` |
+| `TestScan` | `source_go_integration_raw_api_TestScan` writes all 20,480 pairs, applies all 20 source split points after the write, and checks the 10,240-result limit/prefix assertions. |
+| `TestReverseScan` | `source_go_integration_raw_api_TestReverseScan` preserves the source's lexical bounds and loop; because those bounds yield no rows, the same identity also carries a non-vacuous five-row reverse-limit check over the data. |
+| `TestBatchOp` | `source_go_integration_raw_api_TestBatchOp` |
+| `TestCAS` | `source_go_integration_raw_api_TestCAS` |
+| `TestTTL` | `source_go_integration_raw_api_TestTTL` uses a deterministic clock for the half-TTL and expiry assertions. |
+| `TestDeleteRange` | `source_go_integration_raw_api_TestDeleteRange` writes all 20,480 pairs, applies the source split after the write, and verifies the three sampled keys disappear. |
+| `TestRawChecksum` | `source_go_integration_raw_api_TestRawChecksum` executes 20,480 pairs in V1 and V2 and checks CRC/count/exact prefix-aware bytes. |
+| `TestEmptyValue` | `source_go_integration_raw_api_TestEmptyValue` owns every Get/BatchGet/scan/reverse/delete/BatchPut/CAS assertion. |
 
-`TestRawKV`/`TestAPI` setup and teardown map to fresh typed fixtures per Rust test. Package failpoint-driven store changes map to the completed deterministic region-cache/sender transition tests. The mock suite's split helper maps to explicitly shaped zero/one/two/three-region fixtures; split is test setup, not a RawKV method. API-version HTTP discovery maps to captured V1/V1TTL/V2 construction and request-context tests. `test_prob.go` maps to `RawClient::new_with_pd_client`, `pd_client`, mock routing/transport owners, `MAX_RAW_KV_SCAN_LIMIT`, and `RAW_BATCH_PUT_SIZE`. `util_test.go`'s flags and `TestMain` goleak harness map to Cargo's opt-in live feature, joined request futures, consuming close/drop tests, and both full library configurations.
+`TestRawKV`/`TestAPI` setup and teardown map to fresh typed fixtures per Rust test. Package failpoint-driven store changes map to four direct store-ID/address/tombstone transitions plus the completed sender retry tests. The mutable stateful mock reshapes one live fixture after writes, preserving source split order instead of substituting pre-split clients. API-version HTTP discovery maps to captured V1/V1TTL/V2 construction and request-context tests. `test_prob.go` maps to `RawClient::new_with_pd_client`, `pd_client`, mock routing/transport owners, `MAX_RAW_KV_SCAN_LIMIT`, and `RAW_BATCH_PUT_SIZE`. `util_test.go`'s flags and `TestMain` goleak harness map to Cargo's opt-in live feature, joined request futures, consuming close/drop tests, and both full library configurations.
 
 Four additional differential regressions preserve behaviors that the source implements but its suite does not isolate: DeleteRange is sequential and stops at the first error; Checksum is sequential and ignores its legacy string error; RawBatchGet/RawScan ignore legacy pair errors; and an overlong RawScan response is returned whole instead of panicking or being truncated.
 
@@ -98,11 +98,12 @@ Exact import matching finds three direct external files: `examples/rawkv/rawkv.g
 
 ## Validation contract
 
-Completion requires exact pinned identity/hashes/line counts; declaration-level reconciliation of all 31 source test declarations and every support hook; the 48-test focused RawKV gate; the external ordinary-build injection test; all `source_` tests in both complete feature configurations; both complete library configurations; generated-code checking, all-target compilation, Clippy, rustdoc/doctests, rustfmt/diff checks, and `nightly-2026-08-22-aarch64-apple-darwin`. The optional live feature remains useful infrastructure smoke coverage but is not stronger evidence for these source assertions than the always-run stateful matrix and is not a default package gate. The host has no Go executable, so pinned Go tests are not rerun locally.
+Completion requires exact pinned identity/hashes/line counts; declaration-level reconciliation of all 31 source test declarations and every support hook; a 27-to-27 executable source/Rust identity bijection; the focused RawKV gate; the external ordinary-build injection test; all `source_` tests in both complete feature configurations; both complete library configurations; generated-code checking, all-target compilation, Clippy, rustdoc/doctests, rustfmt/diff checks, and `nightly-2026-08-22-aarch64-apple-darwin`. The optional live feature remains useful infrastructure smoke coverage but is not stronger evidence for these source assertions than the always-run stateful matrix and is not a default package gate.
 
-Final local evidence on 2026-08-26:
+Independent re-audit evidence on 2026-08-26:
 
-- exact source identity is `52c1e76cec993571493c81de442bcbef90cdc106`; all eight hashes and 2,743 lines match this receipt, and a mechanical check finds 31 executable declarations/27 suite methods with no name missing from the receipt;
-- the focused `raw::` gate passes 48 tests, including 19 deterministic source-matrix tests; the ordinary no-feature external injection gate passes three tests;
-- all `source_` tests pass in both configurations (499 each); the complete no-default workspace run has 831 active library tests, one intentional ignore, and every external/workspace crate test passing; the all-feature library run has the same 831 active tests and one intentional ignore;
-- `make check` completes clean protocol regeneration, workspace all-target/all-feature checking, rustfmt, and strict all-target Clippy; `make doc` completes private-item rustdoc and all 51 doctests; `git diff --check` passes.
+- exact source identity is `52c1e76cec993571493c81de442bcbef90cdc106`; all eight hashes and 2,743 lines match this receipt, and mechanical reconciliation finds 31 declarations, 27 executable suite methods, 27 Rust identities, and no missing, extra, or duplicate identity;
+- Go 1.25.12 package suites pass normal/race in legacy mode (8.776s/9.862s) and NextGen mode (8.803s/9.844s); the separate `integration_tests/raw` module passes normal/race (0.058s/1.327s), with its explicitly optional live suite skipped by source configuration;
+- all 27 direct Rust ports pass in both no-default and all-feature selections; no identity macro, test forwarding call, missing name, extra name, or duplicate name remains;
+- complete source-derived lists contain 1,049/1,040 no-default/all-feature tests; canonical workspace matrices pass 1,313/1,287 tests with two/six configured skips;
+- `make check` completes clean protocol regeneration, workspace all-target/all-feature checking, rustfmt, and strict Clippy; `make doc` completes private-item rustdoc and all 51 doctests. Final rustfmt, source identity, inventory/declaration/importer, and whitespace gates pass on `nightly-2026-08-22-aarch64-apple-darwin`.

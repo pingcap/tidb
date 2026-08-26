@@ -28,8 +28,8 @@ There is no `doc.go`, benchmark, example, fixture, generated source or input, bu
 | mock oracle | Enable/disable, signed-nanosecond offset, same-physical logical monotonicity, minimum TSO, immediate futures, stale/expiration behavior, and external timestamps match. `UntilExpired` now uses Go's saturated `time.Time.Sub(...).Milliseconds()` semantics instead of pre-truncating both instants. |
 | PD construction and TSO | Global cache seeding, optional refresh start, per-scope monotonic caches, async fetch start, minimum/external TSO delegation, exact positive-interval validation, and successful-fetch warnings beyond the source's 30 ms threshold match. The pinned source's `getTimestamp` intentionally calls plain `GetTS(ctx)`; transaction scope partitions the cache but does not alter that RPC at this revision. |
 | low-resolution and stale TSO | Sync/async cache hits and misses, first-miss fetch side effect, nanosecond-precise arrival-time estimation, invalid previous-second handling, and non-future concurrent updates match. Invalid asynchronous scope now retains the exact `get low resolution timestamp async fail` error rather than being rewritten as a read-validation error. |
-| adaptive refresh | Immediate shrink, preserve margin, 500 ms floor, short-read recovery blocking, nanosecond-precise 20 ms/s recovery, five-minute delay, normal/adapting/recovering/unadjustable transitions, manual interval changes, and source ticker cadence/drop behavior match. |
-| read validation singleflight | Validation enablement, invalid/latest/future rules, stale-only adaptation, one retry, scope-keyed coalescing, different-client protection, and cancellation isolation match. The shared fetch now runs in its own task and removes its flight on completion, so canceling the initiating/only waiter cannot cancel or strand the source request. |
+| adaptive refresh | Immediate shrink, preserve margin, 500 ms floor, short-read recovery blocking, nanosecond-precise 20 ms/s recovery, five-minute delay, normal/adapting/recovering/unadjustable transitions, manual interval changes, and source ticker cadence/drop behavior match. The short-read marker now preserves the source's forward-only `UnixMilli` value: sub-millisecond precision is discarded and a backward wall-clock sample cannot reduce the marker. |
+| read validation singleflight | Validation enablement, invalid/latest/future rules, stale-only adaptation, one retry, scope-keyed coalescing, different-client protection, and cancellation isolation match. Flight identity now uses the raw transaction-scope string exactly like `singleflight.Group.Do(opt.TxnScope, ...)`: empty and explicit `global` scopes retain distinct in-flight PD requests even though both share the normalized global timestamp cache. The shared fetch runs in its own task and removes its flight on completion, so canceling the initiating/only waiter cannot cancel or strand the source request. |
 | async future lifecycle | PD timestamp work starts immediately, updates the cache on success, records wait latency, rejects a second wait, and is aborted when the owning Rust future is dropped—the native counterpart of canceling the source context. |
 | leak harness | `close` wakes the sole refresh task and tests await its finished state. Completed validation flights remove themselves even if their only waiter is canceled; an externally blocked source still governs its background singleflight request's completion, matching client-go. |
 
@@ -39,37 +39,39 @@ The source declares exactly 13 ordinary tests plus `TestMain`:
 
 | Source declaration | Rust evidence |
 | --- | --- |
-| `TestLocalOracle` | `source_test_local_oracle` |
-| `TestIsExpired` | `source_test_is_expired` |
-| `TestLocalOracle_UntilExpired` | `source_test_local_oracle_until_expired` |
-| `TestPDOracle_UntilExpired` | `source_test_pd_oracle_until_expired` |
-| `TestPdOracle_GetStaleTimestamp` | `source_test_pd_oracle_get_stale_timestamp` |
-| `TestPdOracle_SetLowResolutionTimestampUpdateInterval` | `source_test_pd_oracle_set_low_resolution_timestamp_update_interval` |
-| `TestNonFutureStaleTSO` | `source_test_non_future_stale_tso` |
-| `TestAdaptiveUpdateTSInterval` | `source_test_adaptive_update_ts_interval` |
-| `TestValidateReadTS` | `source_test_validate_read_ts` |
-| `TestValidateReadTSForStaleReadReusingGetTSResult` | `source_test_validate_read_ts_for_stale_read_reusing_get_ts_result` |
-| `TestValidateReadTSForNormalReadDoNotAffectUpdateInterval` | `source_test_validate_read_ts_for_normal_read_do_not_affect_update_interval` |
-| `TestSetLastTSAlwaysPushTS` | `source_test_set_last_ts_always_push_ts` |
-| `TestValidateReadTSFromDifferentSource` | `source_test_validate_read_ts_from_different_source` |
+| `TestLocalOracle` | `source_go_oracle_oracles_local_test_TestLocalOracle` |
+| `TestIsExpired` | `source_go_oracle_oracles_local_test_TestIsExpired` |
+| `TestLocalOracle_UntilExpired` | `source_go_oracle_oracles_local_test_TestLocalOracle_UntilExpired` |
+| `TestPDOracle_UntilExpired` | `source_go_oracle_oracles_pd_test_TestPDOracle_UntilExpired` |
+| `TestPdOracle_GetStaleTimestamp` | `source_go_oracle_oracles_pd_test_TestPdOracle_GetStaleTimestamp` |
+| `TestPdOracle_SetLowResolutionTimestampUpdateInterval` | `source_go_oracle_oracles_pd_test_TestPdOracle_SetLowResolutionTimestampUpdateInterval` |
+| `TestNonFutureStaleTSO` | `source_go_oracle_oracles_pd_test_TestNonFutureStaleTSO` |
+| `TestAdaptiveUpdateTSInterval` | `source_go_oracle_oracles_pd_test_TestAdaptiveUpdateTSInterval` |
+| `TestValidateReadTS` | `source_go_oracle_oracles_pd_test_TestValidateReadTS` |
+| `TestValidateReadTSForStaleReadReusingGetTSResult` | `source_go_oracle_oracles_pd_test_TestValidateReadTSForStaleReadReusingGetTSResult` |
+| `TestValidateReadTSForNormalReadDoNotAffectUpdateInterval` | `source_go_oracle_oracles_pd_test_TestValidateReadTSForNormalReadDoNotAffectUpdateInterval` |
+| `TestSetLastTSAlwaysPushTS` | `source_go_oracle_oracles_pd_test_TestSetLastTSAlwaysPushTS` |
+| `TestValidateReadTSFromDifferentSource` | `source_go_oracle_oracles_pd_test_TestValidateReadTSFromDifferentSource` |
 
-The ports retain the 100,000-timestamp uniqueness check, exact expiration values, stale error cases, live three-interval scheduler bounds, 100 non-future races, every adaptive transition/configuration assertion, future-read retry sequence, the complete four-case/five-waiter success/cancellation matrix, normal-read no-adjustment checks, 100-way concurrent cache invariant, and older-shared-result retry. Native regressions additionally cover exact async error identity, extreme Go-duration wrapping, dropped-future cancellation, sole-waiter cancellation, independent flight cleanup, external timestamps, signed-nanosecond mock offsets, and task shutdown.
+The 13 Rust identities above are independently selectable definitions rather than comments, aliases, or one grouped test. Mechanical declaration reconciliation reports 13 Go tests, 13 Rust definitions, and zero missing, extra, or duplicate identities. `TestMain` is an explicit harness disposition because Rust tests await package-owned tasks directly instead of invoking Go's process-wide goleak wrapper.
+
+The ports retain the 100,000-timestamp uniqueness check, exact expiration values, stale error cases, live three-interval scheduler bounds, 100 non-future races, every adaptive transition/configuration assertion, future-read retry sequence, the complete four-case/five-waiter success/cancellation matrix, normal-read no-adjustment checks, 100-way concurrent cache invariant, and older-shared-result retry. Native regressions additionally cover exact async error identity, extreme Go-duration wrapping, dropped-future cancellation, sole-waiter cancellation, independent flight cleanup, external timestamps, signed-nanosecond mock offsets, task shutdown, raw-scope validation-flight identity, and forward-only Unix-millisecond adaptive markers.
+
+The two latest differential regressions were red before their production fixes. `source_validation_singleflight_keeps_empty_and_global_scope_keys_distinct` timed out after 250 ms waiting for the third source call because empty and explicit `global` validation requests incorrectly coalesced. `source_adaptive_short_read_time_is_monotonic_unix_milliseconds` observed a 1.234 ms marker where client-go stores 1 ms and also guards against a later backward-clock sample.
 
 ## Validation boundary
 
 Final validation passed on `nightly-2026-08-22-aarch64-apple-darwin` (`rustc 1.100.0-nightly (c656540d6 2026-08-21)`):
 
-- `/private/tmp/go1.25.12/bin/go test ./oracle ./oracle/oracles -count=1`: parent had no tests; all child tests passed.
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib oracle::oracles::tests::source_test_ -- --nocapture`: all 13 original declarations passed.
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib oracle:: -- --nocapture`: 32 passed.
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib source_ --quiet`: 558 passed.
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features source_ --quiet`: 555 passed.
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib --quiet`: 879 passed and one unrelated test remained ignored.
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features --quiet`: 876 passed and one unrelated test remained ignored.
-- `cargo +nightly-2026-08-22 check --all-targets --all-features`: passed.
-- `cargo +nightly-2026-08-22 clippy -p tikv-client --lib --all-features --message-format short -- -D warnings`: passed cleanly.
-- `cargo +nightly-2026-08-22 doc -p tikv-client --no-deps --all-features --document-private-items`: passed.
-- `cargo +nightly-2026-08-22 test -p tikv-client --doc --all-features --quiet`: 51 passed.
-- `cargo +nightly-2026-08-22 fmt --all -- --check` and `git diff --check`: passed.
+- `env GOMODCACHE=/private/tmp/client-go-txnlock-module-cache GOCACHE=/private/tmp/client-go-go-cache /private/tmp/go1.25.12-full/bin/go test ./oracle/oracles -count=1`: passed in 3.412 s.
+- `env GOMODCACHE=/private/tmp/client-go-txnlock-module-cache GOCACHE=/private/tmp/client-go-oracles-race-cache /private/tmp/go1.25.12-full/bin/go test -race ./oracle/oracles -count=1`: passed in 4.535 s.
+- `cargo test --no-default-features --lib source_go_oracle_oracles_ -- --nocapture`: all 13 independently named source tests passed.
+- `cargo test --all-features --lib source_go_oracle_oracles_ -- --nocapture`: all 13 independently named source tests passed.
+- `cargo test --no-default-features --lib oracle::oracles::tests -- --nocapture`: all 29 package tests passed.
+- `cargo test --all-features --lib oracle::oracles::tests -- --nocapture`: all 29 package tests passed.
+- `cargo nextest run --config-file config/nextest.toml --all --no-default-features`: 1,409 tests passed and two configuration-specific tests were skipped.
+- `cargo nextest run --config-file config/nextest.toml --all --all-features --lib --status-level fail --final-status-level fail`: 1,384 tests passed and six configuration-specific tests were skipped.
+- `make check`, `make doc`, `cargo fmt --all -- --check`, and `git diff --check`: passed.
+- Mechanical source declaration/definition reconciliation reports 13/13 exact identities with zero missing, extra, or duplicate ports.
 
-The Rust baseline before this batch is `b6ffad470e8f385fbdc125e4cdc123c032a88f24`; source identity, all eight line counts, and SHA-256 values were recomputed from the pinned checkout. Deterministic injected timestamp sources cover package-owned behavior; no live PD service is required. Concrete PD protobuf transport remains validated by its independent client/transport receipts.
+The Rust baseline before this independent re-audit batch is `44a054d0aff4088c9c8f584eb7313a6733c98dee`; source identity, all eight line counts, and SHA-256 values were recomputed from the pinned checkout. Deterministic injected timestamp sources cover package-owned behavior; no live PD service is required. Concrete PD protobuf transport remains validated by its independent client/transport receipts.

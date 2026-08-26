@@ -3,7 +3,7 @@
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::mock::{MockKvClient, MockPdClient};
 use crate::proto::{kvrpcpb, metapb};
@@ -31,7 +31,7 @@ struct StatefulRawStore {
     now: AtomicU64,
     dispatches: AtomicUsize,
     data: Mutex<BTreeMap<(String, Vec<u8>), Entry>>,
-    regions: Vec<RegionBounds>,
+    regions: RwLock<Vec<RegionBounds>>,
 }
 
 impl StatefulRawStore {
@@ -40,7 +40,7 @@ impl StatefulRawStore {
             now: AtomicU64::new(0),
             dispatches: AtomicUsize::new(0),
             data: Mutex::new(BTreeMap::new()),
-            regions,
+            regions: RwLock::new(regions),
         }
     }
 
@@ -50,6 +50,10 @@ impl StatefulRawStore {
 
     fn dispatches(&self) -> usize {
         self.dispatches.load(Ordering::SeqCst)
+    }
+
+    fn replace_regions(&self, regions: Vec<RegionBounds>) {
+        *self.regions.write().unwrap() = regions;
     }
 
     fn purge_expired(&self, data: &mut BTreeMap<(String, Vec<u8>), Entry>) {
@@ -73,6 +77,8 @@ impl StatefulRawStore {
 
     fn region_contains(&self, region_id: u64, key: &[u8]) -> bool {
         self.regions
+            .read()
+            .unwrap()
             .iter()
             .find(|region| region.id == region_id)
             .is_none_or(|region| {
@@ -83,6 +89,8 @@ impl StatefulRawStore {
 
     fn scan_region_id(&self, request: &kvrpcpb::RawScanRequest) -> u64 {
         self.regions
+            .read()
+            .unwrap()
             .iter()
             .find(|region| {
                 if request.reverse {
@@ -355,34 +363,57 @@ fn regions_with_splits(split_keys: &[&[u8]]) -> Vec<RegionBounds> {
     regions
 }
 
-fn stateful_client_with(
+fn region_metas(regions: &[RegionBounds]) -> Vec<RegionWithLeader> {
+    regions
+        .iter()
+        .enumerate()
+        .map(|(index, bounds)| region(bounds, index as u64 + 41))
+        .collect()
+}
+
+fn stateful_fixture_with(
     regions: Vec<RegionBounds>,
     keyspace: Keyspace,
-) -> (Client<MockPdClient>, Arc<StatefulRawStore>) {
+) -> (
+    Client<MockPdClient>,
+    Arc<StatefulRawStore>,
+    Arc<MockPdClient>,
+) {
     let state = Arc::new(StatefulRawStore::new(regions.clone()));
     let dispatch_state = state.clone();
     let kv_client =
         MockKvClient::with_dispatch_hook(move |request| dispatch_state.dispatch(request));
-    let pd_client = MockPdClient::with_client_and_regions(
+    let pd_client = Arc::new(MockPdClient::with_client_and_regions(
         kv_client,
-        regions
-            .iter()
-            .enumerate()
-            .map(|(index, bounds)| region(bounds, index as u64 + 41))
-            .collect(),
+        region_metas(&regions),
+    ));
+    let client = Client::from_test_rpc(
+        pd_client.clone(),
+        keyspace,
+        matches!(keyspace, Keyspace::Enable { .. }).then(|| "DEFAULT".to_owned()),
     );
-    (
-        Client::from_test_rpc(
-            Arc::new(pd_client),
-            keyspace,
-            matches!(keyspace, Keyspace::Enable { .. }).then(|| "DEFAULT".to_owned()),
-        ),
-        state,
-    )
+    (client, state, pd_client)
+}
+
+fn stateful_client_with(
+    regions: Vec<RegionBounds>,
+    keyspace: Keyspace,
+) -> (Client<MockPdClient>, Arc<StatefulRawStore>) {
+    let (client, state, _) = stateful_fixture_with(regions, keyspace);
+    (client, state)
 }
 
 fn stateful_client() -> (Client<MockPdClient>, Arc<StatefulRawStore>) {
     stateful_client_with(source_regions(), Keyspace::Disable)
+}
+
+fn replace_stateful_regions(
+    state: &StatefulRawStore,
+    pd_client: &MockPdClient,
+    regions: Vec<RegionBounds>,
+) {
+    state.replace_regions(regions.clone());
+    pd_client.replace_regions(region_metas(&regions));
 }
 
 #[tokio::test]
@@ -567,7 +598,7 @@ fn owned_pairs(pairs: &[(&str, &str)]) -> Vec<(Vec<u8>, Vec<u8>)> {
     expected_pairs(pairs)
 }
 
-async fn assert_source_scan_tables(client: &Client<MockPdClient>) -> Result<()> {
+async fn assert_source_forward_scan_table(client: &Client<MockPdClient>) -> Result<()> {
     assert_eq!(
         pairs_bytes(client.scan(Vec::<u8>::new().., 1).await?),
         expected_pairs(&[("k1", "v1")])
@@ -608,7 +639,10 @@ async fn assert_source_scan_tables(client: &Client<MockPdClient>) -> Result<()> 
         .scan(b"k5\0".to_vec()..b"k5\0\0".to_vec(), 10)
         .await?
         .is_empty());
+    Ok(())
+}
 
+async fn assert_source_reverse_scan_table(client: &Client<MockPdClient>) -> Result<()> {
     assert!(client
         .scan_reverse(Vec::<u8>::new().., 10)
         .await?
@@ -697,7 +731,8 @@ async fn assert_source_scan_tables(client: &Client<MockPdClient>) -> Result<()> 
 }
 
 #[tokio::test]
-async fn source_package_column_family_client_and_option_cases() -> Result<()> {
+#[allow(non_snake_case)]
+async fn source_go_rawkv_TestColumnFamilyForClient() -> Result<()> {
     let (mut client, _) = stateful_client();
     client.set_column_family("cf1");
     client
@@ -724,50 +759,169 @@ async fn source_package_column_family_client_and_option_cases() -> Result<()> {
     assert_eq!(client.get(b"test_key_cf1".to_vec()).await?, None);
     assert_eq!(client.get(b"test_key_cf2".to_vec()).await?, None);
 
+    client.set_column_family("cf1");
+    client.delete(b"test_key_cf1".to_vec()).await?;
+    assert_eq!(client.get(b"test_key_cf1".to_vec()).await?, None);
+    client.set_column_family("cf2");
+    client.delete(b"test_key_cf2".to_vec()).await?;
+    assert_eq!(client.get(b"test_key_cf2".to_vec()).await?, None);
+    Ok(())
+}
+
+#[tokio::test]
+#[allow(non_snake_case)]
+async fn source_go_rawkv_TestColumnFamilyForOptions() -> Result<()> {
+    let (client, _) = stateful_client();
     let cf1 = client.with_cf_name("cf1");
     let cf2 = client.with_cf_name("cf2");
-    assert_eq!(
-        cf1.get(b"test_key_cf1".to_vec()).await?,
-        Some(b"test_value_cf1".to_vec())
-    );
-    assert_eq!(cf1.get(b"test_key_cf2".to_vec()).await?, None);
-    assert_eq!(
-        cf2.get(b"test_key_cf2".to_vec()).await?,
-        Some(b"test_value_cf2".to_vec())
-    );
-    assert_eq!(cf2.get(b"test_key_cf1".to_vec()).await?, None);
-    cf1.delete(b"test_key_cf1".to_vec()).await?;
-    cf2.delete(b"test_key_cf2".to_vec()).await?;
-    assert_eq!(cf1.get(b"test_key_cf1".to_vec()).await?, None);
-    assert_eq!(cf2.get(b"test_key_cf2".to_vec()).await?, None);
+    cf1.put(b"db".to_vec(), b"TiDB".to_vec()).await?;
+    cf2.put(b"kv".to_vec(), b"TiKV".to_vec()).await?;
+    assert_eq!(cf1.get(b"db".to_vec()).await?, Some(b"TiDB".to_vec()));
+    assert_eq!(cf1.get(b"kv".to_vec()).await?, None);
+    assert_eq!(cf2.get(b"kv".to_vec()).await?, Some(b"TiKV".to_vec()));
+    assert_eq!(cf2.get(b"db".to_vec()).await?, None);
+    cf1.delete(b"db".to_vec()).await?;
+    cf2.delete(b"kv".to_vec()).await?;
+    assert_eq!(cf1.get(b"db".to_vec()).await?, None);
+    assert_eq!(cf2.get(b"kv".to_vec()).await?, None);
     Ok(())
 }
 
 #[tokio::test]
-async fn source_package_scan_and_reverse_tables_hold_across_region_splits() -> Result<()> {
-    let topologies = [
-        Vec::<Vec<u8>>::new(),
-        vec![b"k2".to_vec()],
-        vec![b"k2".to_vec(), b"k5".to_vec()],
-    ];
-    for split_keys in topologies {
-        let split_refs = split_keys.iter().map(Vec::as_slice).collect::<Vec<_>>();
-        let (client, _) = stateful_client_with(regions_with_splits(&split_refs), Keyspace::Disable);
+#[allow(non_snake_case)]
+async fn source_go_integration_raw_api_mock_TestScan() -> Result<()> {
+    let (client, state, pd_client) =
+        stateful_fixture_with(regions_with_splits(&[]), Keyspace::Disable);
+    client
+        .batch_put(owned_pairs(&[
+            ("k1", "v1"),
+            ("k3", "v3"),
+            ("k5", "v5"),
+            ("k7", "v7"),
+        ]))
+        .await?;
+    assert_source_forward_scan_table(&client).await?;
+    replace_stateful_regions(&state, &pd_client, regions_with_splits(&[b"k2"]));
+    assert_source_forward_scan_table(&client).await?;
+    replace_stateful_regions(&state, &pd_client, regions_with_splits(&[b"k2", b"k5"]));
+    assert_source_forward_scan_table(&client).await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[allow(non_snake_case)]
+async fn source_go_rawkv_TestScan() -> Result<()> {
+    let (client, _) = stateful_client();
+    let cf = client.with_cf_name("test_cf");
+    cf.batch_put(owned_pairs(&[
+        ("db", "TiDB"),
+        ("key2", "value2"),
+        ("key1", "value1"),
+        ("key4", "value4"),
+        ("key3", "value3"),
+        ("kv", "TiKV"),
+    ]))
+    .await?;
+    assert_eq!(
+        pairs_bytes(cf.scan(b"key1".to_vec()..b"keyz".to_vec(), 3).await?),
+        expected_pairs(&[("key1", "value1"), ("key2", "value2"), ("key3", "value3"),])
+    );
+    assert_eq!(
+        cf.scan_keys_reverse(Vec::<u8>::new()..b"key3".to_vec(), 10)
+            .await?,
+        vec![
+            b"key2".to_vec().into(),
+            b"key1".to_vec().into(),
+            b"db".to_vec().into(),
+        ]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[allow(non_snake_case)]
+async fn source_go_integration_raw_api_mock_TestSplit() -> Result<()> {
+    let (client, state, pd_client) =
+        stateful_fixture_with(regions_with_splits(&[]), Keyspace::Disable);
+    client.put(b"k1".to_vec(), b"v1".to_vec()).await?;
+    client.put(b"k3".to_vec(), b"v3".to_vec()).await?;
+    replace_stateful_regions(&state, &pd_client, regions_with_splits(&[b"k2"]));
+    assert_eq!(client.get(b"k1".to_vec()).await?, Some(b"v1".to_vec()));
+    assert_eq!(client.get(b"k3".to_vec()).await?, Some(b"v3".to_vec()));
+    Ok(())
+}
+
+#[tokio::test]
+#[allow(non_snake_case)]
+async fn source_go_integration_raw_api_mock_TestReverseScan() -> Result<()> {
+    let (client, state, pd_client) =
+        stateful_fixture_with(regions_with_splits(&[]), Keyspace::Disable);
+    client
+        .batch_put(owned_pairs(&[
+            ("k1", "v1"),
+            ("k3", "v3"),
+            ("k5", "v5"),
+            ("k7", "v7"),
+        ]))
+        .await?;
+    assert_source_reverse_scan_table(&client).await?;
+    replace_stateful_regions(&state, &pd_client, regions_with_splits(&[b"k2"]));
+    assert_source_reverse_scan_table(&client).await?;
+    replace_stateful_regions(&state, &pd_client, regions_with_splits(&[b"k2", b"k5"]));
+    assert_source_reverse_scan_table(&client).await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[allow(non_snake_case)]
+async fn source_go_integration_raw_api_TestReverseScan() -> Result<()> {
+    let (client, _) = stateful_client();
+    let prefix = b"test_reverse_scan";
+    let pairs = (0..10)
+        .map(|index| {
+            (
+                [prefix.as_slice(), format!("key:{index}").as_bytes()].concat(),
+                format!("value:{index}").into_bytes(),
+            )
+        })
+        .collect::<Vec<_>>();
+    client.batch_put(pairs).await?;
+
+    let source_pairs = pairs_bytes(
         client
-            .batch_put(owned_pairs(&[
-                ("k1", "v1"),
-                ("k3", "v3"),
-                ("k5", "v5"),
-                ("k7", "v7"),
-            ]))
-            .await?;
-        assert_source_scan_tables(&client).await?;
+            .scan_reverse(prefix.to_vec()..[prefix.as_slice(), b"key:"].concat(), 5)
+            .await?,
+    );
+    for (index, (key, value)) in source_pairs.iter().rev().enumerate() {
+        assert_eq!(key, &format!("test_reverse_scankey:{index}").into_bytes());
+        assert_eq!(value, &format!("value:{index}").into_bytes());
     }
+
+    // The pinned source bounds are empty in lexical order, making its loop
+    // vacuous. Keep the exact call above and add the intended non-empty
+    // reverse-limit check over the same data.
+    assert_eq!(
+        pairs_bytes(
+            client
+                .scan_reverse(prefix.to_vec()..[prefix.as_slice(), b"key;"].concat(), 5)
+                .await?
+        ),
+        (5..10)
+            .rev()
+            .map(|index| {
+                (
+                    format!("test_reverse_scankey:{index}").into_bytes(),
+                    format!("value:{index}").into_bytes(),
+                )
+            })
+            .collect::<Vec<_>>()
+    );
     Ok(())
 }
 
 #[tokio::test]
-async fn source_package_batch_and_compare_and_swap_cases() -> Result<()> {
+#[allow(non_snake_case)]
+async fn source_go_rawkv_TestBatch() -> Result<()> {
     let (client, _) = stateful_client();
     let cf = client.with_cf_name("test_cf");
     let pairs = [
@@ -786,19 +940,16 @@ async fn source_package_batch_and_compare_and_swap_cases() -> Result<()> {
             .map(|(_, value)| Some(value.as_bytes().to_vec()))
             .collect::<Vec<_>>()
     );
-    assert_eq!(
-        cf.scan_keys_reverse(Vec::<u8>::new()..b"key3".to_vec(), 10)
-            .await?,
-        vec![
-            b"key2".to_vec().into(),
-            b"key1".to_vec().into(),
-            b"db".to_vec().into(),
-        ]
-    );
     cf.batch_delete(pairs.iter().map(|(key, _)| key.as_bytes().to_vec()))
         .await?;
     assert_eq!(cf.get(b"db".to_vec()).await?, None);
+    Ok(())
+}
 
+#[tokio::test]
+#[allow(non_snake_case)]
+async fn source_go_rawkv_TestCompareAndSwap() -> Result<()> {
+    let (client, _) = stateful_client();
     let mut cas = client.with_cf_name("my_cf");
     cas.put(b"kv".to_vec(), b"TiDB".to_vec()).await?;
     assert_eq!(
@@ -824,9 +975,10 @@ async fn source_package_batch_and_compare_and_swap_cases() -> Result<()> {
 }
 
 #[tokio::test]
-async fn source_package_delete_range_table_and_unbounded_multiregion_case() -> Result<()> {
-    let (client, _) =
-        stateful_client_with(regions_with_splits(&[b"b", b"c", b"d"]), Keyspace::Disable);
+#[allow(non_snake_case)]
+async fn source_go_integration_raw_api_mock_TestDeleteRange() -> Result<()> {
+    let (client, state, pd_client) =
+        stateful_fixture_with(regions_with_splits(&[]), Keyspace::Disable);
     let mut expected = BTreeMap::new();
     for prefix in b'a'..=b'd' {
         for suffix in b'0'..=b'9' {
@@ -842,6 +994,7 @@ async fn source_package_delete_range_table_and_unbounded_multiregion_case() -> R
                 .map(|(key, value)| (key.clone(), value.clone())),
         )
         .await?;
+    replace_stateful_regions(&state, &pd_client, regions_with_splits(&[b"b", b"c", b"d"]));
 
     let cases = [
         (b"b".to_vec(), b"c0".to_vec()),
@@ -862,23 +1015,54 @@ async fn source_package_delete_range_table_and_unbounded_multiregion_case() -> R
         );
     }
 
-    client
-        .batch_put(owned_pairs(&[
-            ("db", "TiDB"),
-            ("key2", "value2"),
-            ("key1", "value1"),
-            ("key4", "value4"),
-            ("kv", "TiKV"),
-        ]))
-        .await?;
-    assert_eq!(client.scan(Vec::<u8>::new().., 10).await?.len(), 5);
-    client.delete_range(Vec::<u8>::new()..).await?;
-    assert!(client.scan(Vec::<u8>::new().., 10).await?.is_empty());
     Ok(())
 }
 
 #[tokio::test]
-async fn source_package_checksum_exact_pair_crc_count_and_bytes() -> Result<()> {
+#[allow(non_snake_case)]
+async fn source_go_rawkv_TestDeleteRange() -> Result<()> {
+    let (client, _) = stateful_client();
+    let cf = client.with_cf_name("test_cf");
+    cf.batch_put(owned_pairs(&[
+        ("db", "TiDB"),
+        ("key2", "value2"),
+        ("key1", "value1"),
+        ("key4", "value4"),
+        ("key3", "value3"),
+        ("kv", "TiKV"),
+    ]))
+    .await?;
+    cf.delete_range(b"key3".to_vec()..).await?;
+    assert!(cf.scan(b"key3".to_vec().., 10).await?.is_empty());
+    assert_eq!(cf.scan(Vec::<u8>::new().., 10).await?.len(), 3);
+    cf.delete_range(Vec::<u8>::new()..).await?;
+    assert!(cf.scan(Vec::<u8>::new().., 10).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+#[allow(non_snake_case)]
+async fn source_go_rawkv_TestDeleteRangeEmptyKeysMultiRegion() -> Result<()> {
+    let (client, _) = stateful_client_with(regions_with_splits(&[b"key3"]), Keyspace::Disable);
+    let cf = client.with_cf_name("test_cf");
+    cf.batch_put(owned_pairs(&[
+        ("db", "TiDB"),
+        ("key2", "value2"),
+        ("key1", "value1"),
+        ("key4", "value4"),
+        ("key3", "value3"),
+        ("kv", "TiKV"),
+    ]))
+    .await?;
+    assert_eq!(cf.scan(Vec::<u8>::new().., 10).await?.len(), 6);
+    cf.delete_range(Vec::<u8>::new()..).await?;
+    assert!(cf.scan(Vec::<u8>::new().., 10).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+#[allow(non_snake_case)]
+async fn source_go_rawkv_TestRawChecksum() -> Result<()> {
     let (client, _) = stateful_client();
     let pairs = [
         ("db", "TiDB"),
@@ -908,8 +1092,10 @@ async fn source_package_checksum_exact_pair_crc_count_and_bytes() -> Result<()> 
 }
 
 #[tokio::test]
-async fn source_mock_api_raw_batch_exceeds_four_payload_windows() -> Result<()> {
-    let (client, state) = stateful_client();
+#[allow(non_snake_case)]
+async fn source_go_integration_raw_api_mock_TestRawBatch() -> Result<()> {
+    let (client, state, pd_client) =
+        stateful_fixture_with(regions_with_splits(&[]), Keyspace::Disable);
     let mut pairs = Vec::new();
     let mut size = 0_usize;
     let mut index = 0_usize;
@@ -921,6 +1107,12 @@ async fn source_mock_api_raw_batch_exceeds_four_payload_windows() -> Result<()> 
         pairs.push((key.into_bytes(), value.into_bytes()));
         index += 1;
     }
+    let split_key = format!("key{}", index.saturating_sub(1) / 2).into_bytes();
+    replace_stateful_regions(
+        &state,
+        &pd_client,
+        regions_with_splits(&[split_key.as_slice()]),
+    );
     let before_put = state.dispatches();
     client.batch_put(pairs.clone()).await?;
     assert!(state.dispatches() - before_put >= 4);
@@ -956,13 +1148,20 @@ fn scale_pairs(count: usize) -> Vec<(Vec<u8>, Vec<u8>)> {
 }
 
 #[tokio::test]
-async fn source_live_api_scan_and_delete_range_scale_cases() -> Result<()> {
+#[allow(non_snake_case)]
+async fn source_go_integration_raw_api_TestScan() -> Result<()> {
     const SOURCE_SCALE: usize = 20_480;
-    let regions = regions_with_splits(&[b"key@2", b"key@5"]);
-
-    let (scan_client, _) = stateful_client_with(regions.clone(), Keyspace::Disable);
+    let (scan_client, state, pd_client) =
+        stateful_fixture_with(regions_with_splits(&[]), Keyspace::Disable);
     let pairs = scale_pairs(SOURCE_SCALE);
     scan_client.batch_put(pairs.clone()).await?;
+    let mut split_keys = (0..SOURCE_SCALE)
+        .step_by(1_024)
+        .map(|index| format!("key@{index}").into_bytes())
+        .collect::<Vec<_>>();
+    split_keys.sort();
+    let split_refs = split_keys.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    replace_stateful_regions(&state, &pd_client, regions_with_splits(&split_refs));
     let scanned = scan_client
         .scan(
             Vec::<u8>::new()..,
@@ -976,17 +1175,27 @@ async fn source_live_api_scan_and_delete_range_scale_cases() -> Result<()> {
         assert!(pair.value().starts_with(b"value@"));
     }
 
-    let (delete_client, _) = stateful_client_with(regions, Keyspace::Disable);
-    delete_client.batch_put(pairs).await?;
-    delete_client.delete_range(Vec::<u8>::new()..).await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[allow(non_snake_case)]
+async fn source_go_integration_raw_api_TestDeleteRange() -> Result<()> {
+    const SOURCE_SCALE: usize = 20_480;
+    let (client, state, pd_client) =
+        stateful_fixture_with(regions_with_splits(&[]), Keyspace::Disable);
+    client.batch_put(scale_pairs(SOURCE_SCALE)).await?;
+    replace_stateful_regions(&state, &pd_client, regions_with_splits(&[b"key@4096"]));
+    client.delete_range(Vec::<u8>::new()..).await?;
     for key in [b"key@0".as_slice(), b"key@1", b"key@2"] {
-        assert_eq!(delete_client.get(key.to_vec()).await?, None);
+        assert_eq!(client.get(key.to_vec()).await?, None);
     }
     Ok(())
 }
 
 #[tokio::test]
-async fn source_live_api_ttl_uses_remaining_seconds_and_expires() -> Result<()> {
+#[allow(non_snake_case)]
+async fn source_go_integration_raw_api_TestTTL() -> Result<()> {
     let (client, state) = stateful_client();
     state.set_now(100);
     client
@@ -1001,7 +1210,8 @@ async fn source_live_api_ttl_uses_remaining_seconds_and_expires() -> Result<()> 
 }
 
 #[tokio::test]
-async fn source_live_api_empty_value_matrix_distinguishes_missing_everywhere() -> Result<()> {
+#[allow(non_snake_case)]
+async fn source_go_integration_raw_api_TestEmptyValue() -> Result<()> {
     let (client, _) = stateful_client();
     let mut atomic = client.clone();
     atomic.set_atomic_for_cas(true);
@@ -1064,7 +1274,8 @@ async fn source_live_api_empty_value_matrix_distinguishes_missing_everywhere() -
 }
 
 #[tokio::test]
-async fn source_live_api_checksum_scale_counts_v1_and_v2_key_bytes() -> Result<()> {
+#[allow(non_snake_case)]
+async fn source_go_integration_raw_api_TestRawChecksum() -> Result<()> {
     const SOURCE_SCALE: usize = 20_480;
     let pairs = scale_pairs(SOURCE_SCALE);
     for keyspace in [Keyspace::Disable, Keyspace::Enable { keyspace_id: 7 }] {
@@ -1095,7 +1306,7 @@ async fn source_live_api_checksum_scale_counts_v1_and_v2_key_bytes() -> Result<(
 }
 
 #[tokio::test]
-async fn source_simple_batch_column_family_cas_and_empty_value_matrix() -> Result<()> {
+async fn source_batch_duplicate_ttl_and_cf_matrix() -> Result<()> {
     let (client, _) = stateful_client();
 
     assert_eq!(client.get(b"missing".to_vec()).await?, None);
@@ -1174,6 +1385,82 @@ async fn source_simple_batch_column_family_cas_and_empty_value_matrix() -> Resul
             .await?,
         (Some(b"value".to_vec()), false)
     );
+    Ok(())
+}
+
+#[tokio::test]
+#[allow(non_snake_case)]
+async fn source_go_integration_raw_api_mock_TestSimple() -> Result<()> {
+    let (client, _) = stateful_client();
+    assert_eq!(client.get(b"key".to_vec()).await?, None);
+    client.put(b"key".to_vec(), b"value".to_vec()).await?;
+    assert_eq!(client.get(b"key".to_vec()).await?, Some(b"value".to_vec()));
+    client.delete(b"key".to_vec()).await?;
+    assert_eq!(client.get(b"key".to_vec()).await?, None);
+    client.put(b"key".to_vec(), Vec::new()).await?;
+    assert_eq!(client.get(b"key".to_vec()).await?, Some(Vec::new()));
+    Ok(())
+}
+
+#[tokio::test]
+#[allow(non_snake_case)]
+async fn source_go_integration_raw_api_TestSimple() -> Result<()> {
+    let (client, _) = stateful_client();
+    assert_eq!(client.get(b"key".to_vec()).await?, None);
+    client.put(b"key".to_vec(), b"value".to_vec()).await?;
+    assert_eq!(client.get(b"key".to_vec()).await?, Some(b"value".to_vec()));
+    client.delete(b"key".to_vec()).await?;
+    assert_eq!(client.get(b"key".to_vec()).await?, None);
+    Ok(())
+}
+
+#[tokio::test]
+#[allow(non_snake_case)]
+async fn source_go_integration_raw_api_TestBatchOp() -> Result<()> {
+    let (client, _) = stateful_client();
+    client
+        .batch_put(owned_pairs(&[("k1", "v1"), ("k2", "v2")]))
+        .await?;
+    assert_eq!(
+        client.batch_get([b"k1".to_vec(), b"k2".to_vec()]).await?,
+        vec![Some(b"v1".to_vec()), Some(b"v2".to_vec())]
+    );
+    client
+        .batch_delete([b"k1".to_vec(), b"k2".to_vec()])
+        .await?;
+    assert_eq!(client.get(b"k1".to_vec()).await?, None);
+    assert_eq!(client.get(b"k2".to_vec()).await?, None);
+    Ok(())
+}
+
+#[tokio::test]
+#[allow(non_snake_case)]
+async fn source_go_integration_raw_api_TestCAS() -> Result<()> {
+    let (mut client, _) = stateful_client();
+    client.set_atomic_for_cas(true);
+    assert_eq!(
+        client
+            .compare_and_swap(b"key".to_vec(), None, b"hello world".to_vec())
+            .await?,
+        (None, true)
+    );
+    assert_eq!(
+        client
+            .compare_and_swap(b"key".to_vec(), Some(b"hello".to_vec()), b"world".to_vec(),)
+            .await?,
+        (Some(b"hello world".to_vec()), false)
+    );
+    assert_eq!(
+        client
+            .compare_and_swap(
+                b"key".to_vec(),
+                Some(b"hello world".to_vec()),
+                b"world".to_vec(),
+            )
+            .await?,
+        (Some(b"hello world".to_vec()), true)
+    );
+    assert_eq!(client.get(b"key".to_vec()).await?, Some(b"world".to_vec()));
     Ok(())
 }
 

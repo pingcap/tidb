@@ -34,7 +34,7 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 - [x] (2026-08-23) Completed `config`: implemented every source section/default/validation path, global snapshot updates, URI parsing, TLS validation/reload, RU-v2 accounting, and both `nextgen` build selections while preserving native Rust builders.
 - [x] (2026-08-23) Completed `oracle/oracles`: added the adaptive PD oracle, concrete PD timestamp adapter/RPCs, validation singleflight/retry/cancellation, refresh-task shutdown coverage, source-derived local/PD tests, and oracle metric update sites.
 - [x] (2026-08-24) Advanced `internal/locate` to active package work with the complete `store_cache.go` lifecycle slice: stable store identities, all resolve states and tombstones, independent maintenance schedules, address-keyed liveness singleflight and health loops, active feedback, load/flow/metric accounting, TiFlash-compute discovery, and source-derived tests. The atomic package remains in progress until its other production and test artifacts close together.
-- [x] (2026-08-24) Completed `txnkv/rangetask` as one atomic batch: mapped both production files and the dedicated external integration test, exposed the reusable runner/backoffer/stateful DeleteRange surface, corrected identifier/failure/error-order reuse semantics, and passed 520 default/all-feature library tests plus the all-target gate.
+- [x] (2026-08-26) Independently re-audited `txnkv/rangetask` as one atomic batch: mapped both production files and the dedicated external integration test, gave both behavioral methods one-to-one Rust identities, retained all 548 matrix executions, and corrected progress logging so it cannot cancel in-flight PD region discovery. Exact Go normal/race, complete Rust matrices, strict checks, and docs pass.
 - [x] (2026-08-24) Completed `internal/resourcecontrol` as one atomic batch: mapped both source artifacts and all five source tests, corrected the narrow request-size and Cop/CopStream/BatchCop boundaries, exposed every request/response controller method, integrated stream settlement, and passed 523 default/all-feature library tests plus all-target/rustdoc gates.
 - [x] (2026-08-24) Completed `config/retry` as one atomic batch: accounted for both production files, all nine original tests and the goleak harness, corrected cancelled-sleep exponential progression and terminal error text, exposed the complete native state/config surface, audited every consumer owner, and passed 530 default/all-feature library tests plus all-target/rustdoc gates.
 - [x] (2026-08-24) Completed `internal/apicodec` as one atomic batch: accounted for all four production and three test files, reconciled every V1/V2 request/response transform, updated the eight directly required pinned protocol inputs and regenerated bindings, restored typed malformed-region-key classification, audited all consumers, and passed 534 default/all-feature library tests plus all-target/rustdoc/identity gates.
@@ -58,10 +58,10 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 - [x] (2026-08-25) Re-closed `internal/mockstore/mocktikv` after runtime differential testing exposed transactional Get miss signaling. The adapter now sets `GetResponse.not_found`; an external crate constructs `Transaction<MockPdClient>` through the `internal-tests` injection surface and proves a missing key returns `None`. Clean generation/check, 742 no-default workspace tests, 736 all-feature library tests, strict rustdoc, and 51 doctests pass. That batch left only authoritative `MemDb` integration on `txnkv/transaction`, which the following batch closes.
 - [x] (2026-08-25) Re-closed `txnkv/transaction` after replacing its disconnected mutation map with one authoritative public `MemDb`. Direct staging now drives reads/scans, tombstones, assertions, constraint and lock flags, cleanup/release, accounting, filters, and 2PC mutation traversal; API-v2 keys remain logical in the MemDB and receive exactly one prefix at dispatch. Final local gates pass 747 no-default workspace tests, 741 all-feature library tests, strict all-target check/Clippy/rustdoc, 51 doctests, 17 focused buffer tests, the focused API-v2 lowering test, and both external mocktikv transaction tests.
 - [x] (2026-08-25) Reconciled authoritative `MemDb` pipelining against pinned `pipelined_flush.go`, `txn.go`, and `internal/unionstore/pipelined_memdb.go`: the transaction now rotates its exact public MemDB into background generations, releases flushed values, reads through BufferBatchGet with flush-invalidated value/miss caching, preserves first-primary/range metadata, transfers typed errors, cancels live retries, and owns source heartbeat/status/minimum-timestamp/maximum-lifetime/resolve-grace behavior. `Transaction::new` is available to ordinary embedded builds. Strict check/Clippy passes; both complete unit matrices pass 755 and 749 tests respectively with one intentional skip in each.
-- [x] (2026-08-26) Completed the package-atomic `txnkv/transaction` re-audit and Rust unit-test port. The 16-artifact/11,766-line receipt maps all 33 Go test declarations at subtest/table/assertion granularity, closes split/scatter/operator-wait and public configuration-probe gaps, and passes 852 no-default tests, 840 all-feature library tests, both 484-test source-derived configurations, strict check/Clippy/rustdoc, and 51 doctests.
+- [x] (2026-08-26) Completed and independently reopened the package-atomic `txnkv/transaction` re-audit and Rust unit-test port. The 16-artifact/11,766-line receipt maps all 33 Go test declarations at subtest/table/assertion granularity; every declaration now owns a direct independently selectable Rust test body with no forwarding identity. Aggregate transaction-file tests were split at their source declaration boundaries and strengthened to dispatch real prewrite/commit/rollback requests. No additional production divergence was found. Exact Go normal/race suites and the 33-test no-default focused gate pass; complete final Rust gates are recorded in the package receipt.
 - [x] (2026-08-26) Completed the package-atomic `rawkv` re-audit and Rust unit-test port. The exact eight-artifact/2,743-line receipt maps all 31 executable declarations and every support hook, ports all package/mock/live suite assertions, adds ordinary-build injection/probe access, and closes sequential range/checksum, ignored legacy-error, exact-error-text, and malformed-scan gaps. Final gates pass 48 focused tests, 499 source-derived tests in each configuration, 831 active library tests plus one intentional ignore in each complete configuration, strict check/Clippy/rustdoc, and 51 doctests.
 - [x] (2026-08-26) Completed the package-atomic `trace` re-audit and Rust unit-test port. The exact four-artifact/424-line receipt maps all eight source tests and five direct importers; task-local context now propagates trace IDs/control flags to every physical request and drives the exact KV, cache, prewrite, commit, and lock event lifecycles. Final gates pass 11 focused trace tests, 542/539 source-derived tests, 866/863 active complete-library tests plus one unrelated ignore, strict check/Clippy/rustdoc, and 51 doctests.
-- [x] (2026-08-26) Completed independent package-atomic re-audits of `oracle` and `oracle/oracles` in one consolidated batch. The parent receipt owns its one artifact/157 lines and no-test boundary; the child owns all eight artifacts/2,063 lines, all 13 ordinary tests plus `TestMain`, and four direct concrete-package importers. Rust now preserves Go-duration overflow, exact async low-resolution errors, cancellable async TSO work, waiter-independent validation-flight completion/cleanup, nanosecond timing, ticker-style refresh cadence with missed-tick dropping, signed-nanosecond mock offsets, and slow-fetch warnings. Final gates pass 32 focused oracle tests, 558/555 source-derived tests, 879/876 active complete-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
+- [x] (2026-08-26) Completed independent package-atomic re-audits of `oracle` and `oracle/oracles` in one consolidated batch. The parent receipt owns its one artifact/157 lines and no-test boundary; the child owns all eight artifacts/2,063 lines, all 13 ordinary tests as exact independently selectable Rust identities plus `TestMain`, and four direct concrete-package importers. Rust now preserves Go-duration overflow, exact async low-resolution errors, cancellable async TSO work, waiter-independent validation-flight completion/cleanup, raw-scope validation-flight identity, nanosecond timing, forward-only Unix-millisecond adaptive markers, ticker-style refresh cadence with missed-tick dropping, signed-nanosecond mock offsets, and slow-fetch warnings. Exact Go normal/race suites, 13 source ports and 29 package tests in both Rust feature configurations, 1,409 no-default workspace tests, 1,384 all-feature library tests, and strict check/documentation/mechanical gates pass.
 - [x] (2026-08-26) Completed the package-atomic `error` re-audit and Rust unit-test port. The exact two-artifact/497-line receipt maps the sole original test and all 58 direct importers. Rust now exposes the PD-timeout constructor, signed Go-`int` size fields, descriptor-driven gogo compact text and fallback, strict failpoint typing, wrapper-aware classifiers, and stack-bearing logs. Final gates pass all 8 focused tests, 563/560 source-derived tests, 883/880 active complete-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
 - [x] (2026-08-26) Completed the package-atomic `internal/latch` re-audit and Rust unit-test port. The exact five-artifact/758-line receipt maps all four ordinary tests plus `TestMain` and all four direct importers. Client close now closes the shared scheduler even when clones retain it; final gates pass 7 focused latch tests, 4 configuration/lifecycle tests, the transaction consumer regression, 568/565 source-derived tests, and 885/882 active complete-library tests plus one unrelated ignore.
 - [x] (2026-08-26) Completed the package-atomic `internal/kvrpc` re-audit. Its sole 82-line production artifact has no Go tests/support and exactly two direct consumers. A red-then-green regression corrected the newer root split-region consumer from ordinary 2,048-key chunks to the source `count > limit` boundary of 2,049 keys; final gates pass 569/566 source-derived and 886/883 active complete-library tests plus one unrelated ignore.
@@ -70,6 +70,7 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 - [x] (2026-08-26) Completed and independently reopened the package-atomic `tikvrpc/interceptor` audit and unit/consumer-test port. The exact three-artifact/335-line receipt maps `TestInterceptor` plus `TestMain`, every production symbol, and all seven direct importers. Rust publishes client-go's `MockInterceptorManager`; external implementations need only the source name/wrap methods and can skip, invoke once, or repeatedly invoke the continuation. Exact Go execution, ordinary downstream gates, 740/737 source-derived tests, 1,009 no-default workspace and 1,006 all-feature active library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests pass. The extracted Go toolchain lacks `runtime/race`, so its race binary cannot link locally.
 - [x] (2026-08-26) Completed the package-atomic `internal/unionstore/rbt` re-audit and Rust unit-test port. The exact five-artifact/1,661-line receipt maps all three original tests at their 10,000-key scale, every production surface, and the sole direct parent importer. Five red-then-green regressions corrected `UpdateFlags` dirty/size/discard guards, explicit-empty reverse bounds, reverse value-log `InspectStage` order, value-log storage release/invalidation, and flags-only history errors. Final gates pass exact Go and race suites, nine targeted Go parent tests, 11 focused Rust tests in both feature configurations, all 17 Rust parent tests, 598/595 source-derived tests, 899/896 active complete-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
 - [x] (2026-08-26) Completed the package-atomic `internal/unionstore/art` re-audit and Rust unit-test port. The exact nine-artifact/3,474-line receipt maps all 35 ordinary tests plus the benchmark contract, every production/representation surface, and the sole direct parent importer. Five red-then-green regressions corrected value-log discard release/invalidation/hook delivery, reverse append-order stage inspection, flags-only total-buffer limits, idempotent completed snapshot iteration, and ignored parent flag-update errors. Final gates pass exact Go and race suites for both ART and its complete parent, 47 focused Rust tests and 18 parent tests in both feature configurations, 643/640 source-derived tests, 940/937 active complete-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
+- [x] (2026-08-26) Independently re-audited the parent `internal/unionstore` package and ported its complete test/benchmark inventory under exact identities. The 15-artifact/4,813-line receipt maps 54 executable test cases, `TestMain`, 12 benchmark contracts, every production surface, and six direct consumers. A red/green regression corrected authoritative pipelined `BatchGet` from stale point-cache reuse to source-exact remote refresh in both `MemDb` and the transaction integration. Exact Go normal/race suites, 66 source identities and all 88 package tests in both Rust configurations, 1,410 no-default workspace tests, 1,385 all-feature library tests, and strict documentation/mechanical gates pass.
 - [x] (2026-08-26) Re-audited five independent foundation packages in one batch: `txnkv/txnutil`, `util/codec`, `util/intest`, `util/israce`, and `util/redact`. The exact eight-artifact/755-line inventory proves all five have no original Go tests/support, while Rust adds focused and downstream tests for every contract. Repairs preserve arbitrary numeric command priorities end to end, restore codec group-byte error detail, make test/redaction globals sequentially consistent, map the complete source redaction mode matrix, and expose the safe zero-copy arbitrary-byte `String` equivalent. Exact Go ordinary/race/tag gates, 20 focused tests, both two-test downstream configurations, 1,003 active no-default workspace library tests, 1,000 active all-feature library tests, strict check/Clippy/private rustdoc, and 51 doctests pass.
 - [x] (2026-08-26) Independently re-audited `txnkv/txnlock` and ported all five ordinary Go tests as one-to-one Rust tests. Red/green gates corrected cached async-primary metadata loss, absent region-wide pessimistic rollback, rollback of live pessimistic locks, and missing explicit-Lite point cleanup; source-public cache/semaphore constants and every option-setting consumer are assigned. Exact Go normal/race tests, 37 focused tests in both Rust configurations, 749/746 source-derived tests, 1,018 no-default and 1,015 all-feature active library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests pass.
 - [x] (2026-08-26) Independently re-audited `internal/resourcecontrol` and ported all five Go tests under one-to-one Rust names. The complete two-artifact/511-line boundary, five direct importers, and both legacy/NextGen modes are assigned. A red/green consumer regression restored the missing txn-file `TxnFileErrorAccounting` metric without changing the committed result. Exact Go normal/race tests pass in both modes; final Rust gates pass 13 focused tests per mode, 752/749 source-derived tests, 1,021/1,018 active complete-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
@@ -863,6 +864,8 @@ Plan revision note (2026-08-24): completed the source range-task logging surface
 
 Plan revision note (2026-08-24): connected range-task discovery to the source PD `ScanRegions` batch-load path. `Cluster`/`RetryClient` now issue and decode the pinned RPC (including both extended `regions` entries and legacy `region_metas`/`leaders); `RegionCache` rejects empty/gapped results, filters leaderless regions (retrying an all-leaderless response), and caches valid contiguous results. Each runner load creates the source cancellation-owned 20,000-ms `BoPDRPC` backoffer, while `PdRpcClient` retains V1/V2 encoded cache keys and decodes returned regions. The runner advances its task cursor from the last valid batch-loaded region end rather than iterating per-region lookups. Focused gap regression (1), ScanRegions regressions (2), scheduler regressions (4), and the full pinned-nightly library suite (377 tests) pass. This remains seed evidence, not a package receipt: the package still needs every source behavior and package-level validation.
 
+Plan revision note (2026-08-26): independently reopened both `txnkv/rangetask` production files and the sole external suite at the pinned source commit. Its top-level `TestRangeTask` is a harness-only disposition; `TestRangeTask` and `TestRangeTaskError` suite methods now have one-to-one Rust identities that execute all 200 success and 348 injected-failure combinations. The stronger source comparison found that Rust raced periodic progress ticks against `batch_load_regions_from_key`, so a tick canceled and restarted an in-flight PD load; a 30-ms delayed load with a 5-ms interval failed red by timing out after 250 ms. Progress is now polled only before discovery, as in Go, and missed ticks are skipped rather than burst. Exact Go normal/race suites, both nine-test focused Rust configurations, 1,407 no-default workspace and 1,382 all-feature library tests, strict check/Clippy/private rustdoc, and 51 doctests pass.
+
 Plan revision note (2026-08-24): added the source ScanRegions metrics to the new batch-load path. Every PD scan attempt records `tikv_client_go_load_region_cache_seconds{type="scan_regions"}` and its paired `tikv_client_go_region_cache_operations_total{type="scan_regions",result="ok|err"}` counter; empty/gapped and all-leaderless responses also increment `tikv_client_go_stale_region_from_pd` before their source backoff. The focused cache/scheduler checks and full pinned-nightly library suite (378 tests) pass. This is metrics-package seed evidence, not a receipt.
 
 Plan revision note (2026-08-23): synchronized the required API-v3 keyspace identity wire input from client-go's pinned kvproto revision. `KeyspaceMeta.id` is now the source oneof's numeric arm, and RawKV/transactional client construction share a conversion that rejects `KeyspaceIdentity` exactly as client-go's V2 codec does instead of silently routing it as ID zero; absent legacy oneofs retain client-go's zero-ID compatibility. The focused regression and full pinned-nightly library suite (374 tests) pass. The remaining new keyspace/namespace service RPC input surface is recorded as a separate generated-protocol artifact and is not claimed complete here.
@@ -1047,7 +1050,7 @@ Plan revision note (2026-08-24): completed `txnkv/txnlock` as one package-atomic
 
 Plan revision note (2026-08-24, superseded by the 2026-08-26 re-audit below): completed the initial `txnkv/txnsnapshot` receipt. Its validation counts and cancellation wording were provisional and are replaced by the current package-atomic evidence.
 
-Plan revision note (2026-08-26): re-audited all five `txnkv/txnsnapshot` artifacts and all 40 external `Test*` declarations at the pinned source commit, then ported the external scanner's exact 1/256/257/768-row matrix with region boundaries at 123/456. The 768-row case failed against the prior Rust implementation with only 691 rows: eager `scan*` fanned one limit-bearing request across every region, over-collected earlier shards, then advanced from the last shard and skipped a short interior-region tail. Eager forward/reverse scans now select one boundary region per request, preserve short batches, and cross empty regions exactly like `Scanner.Next`. The same re-audit corrected snapshot fanout to prevalidate all region lookups, avoid a fork for one shard, fork once/clone siblings for multi-region work, wait for every snapshot shard after errors, select the last failing completion, and reselect the physical replica after lock resolution. It also wires `Config.enable_async_batch_get` into ordinary and pipelined snapshot BatchGet paths so callback counters are emitted only for the enabled multi-shard branch, while both source modes remain concurrent. Executable ports now include the exact 5×30 snapshot thread-safety workload, complete-key response-error retry, existing/missing multi-region values, callback result classes, and the external scan matrix; the receipt explicitly records the two vacuous `rowNums` methods and the unconditionally skipped RC method rather than inventing source cases. Final pinned-nightly gates pass 515 source-derived tests, 847 default-feature library tests plus one ignored, 844 all-feature library tests plus one ignored, 51 doctests, all-target compilation, Clippy, rustdoc, rustfmt, diff checks, and exact source identity.
+Plan revision note (2026-08-26): independently reopened all five `txnkv/txnsnapshot` artifacts and all 40 external `Test*` declarations at the pinned source commit. The six top-level declarations are suite-runner dispositions; all 34 behavioral methods now have one-to-one Rust identities across their transaction, cache, runtime-stat, retry-plan, and pipelined-MemDB owners. Exact zero-row methods, the unconditional RC skip, and four additional NextGen skips are preserved. The earlier production reconciliation remains valid: the external scanner's 1/256/257/768-row matrix and 123/456 region boundaries corrected 691/768 eager-scan row loss; snapshot fanout prevalidates, forks once only for multiple shards, waits for every completion, selects the last failure, and reselects after lock resolution; configured async BatchGet reaches ordinary and buffer-tier paths. The stronger audit found no new production divergence. Exact Go normal/race selections, focused 33-pass/one-skip and 29-pass/five-skip Rust configurations, 1,406 no-default workspace and 1,381 all-feature library tests, strict check/Clippy/private rustdoc, and 51 doctests pass.
 
 Plan revision note (2026-08-26): independently re-audited the top-level `config` package despite its prior complete ledger label. The immutable package boundary is ten files/1,141 lines with seven ordinary tests plus `TestMain` and 68 direct importers; `config/retry` remains separate. Exact Go 1.25.12 execution and differential probes exposed three real runtime/API gaps: malformed query pairs rejected an otherwise valid TiKV path instead of being silently discarded by `net/url.URL.Query`; `?` inside a fragment and opaque `tikv:` URLs were parsed incorrectly; and the Rust keepalive accessor panicked on Go's valid positive-infinity saturation. The re-audit also found `UpdateGlobal` unnecessarily restricted restore to one call and `Config.enable_async_commit`/`enable_1pc` were exposed but dormant. Rust now matches query, authority, IPv6-zone, control, port, fragment, opaque-URL, duration, repeatable-restore, and transaction-default behavior. All eight source test declarations are ported at case/table-row level, with deterministic extra regressions for the discovered boundaries. The exact Go package passes in default and NextGen builds; final Rust gates pass 525 source-derived tests, 854 default-feature library tests plus one ignored, 851 all-feature library tests plus one ignored, 51 doctests, all-target compilation, Clippy, rustdoc, rustfmt, diff checks, and exact source identity.
 
@@ -1057,7 +1060,7 @@ Plan revision note (2026-08-26): re-audited `internal/unionstore/arena` as one t
 
 Plan revision note (2026-08-26): independently re-audited top-level `trace` against the immutable four-file/424-line source boundary. The former facade-only completion claim left all five direct importers unwired: requests carried neither source trace IDs nor control flags, and no KV/cache/2PC/lock events were emitted. Rust now captures immutable operation context before fan-out, reinstalls it for nested resolver RPCs, attaches metadata centrally at each physical send, emits independently enabled KV/result/coprocessor and prewrite/commit result events, snapshots region-cache enablement exactly once, and reports lock finish on success or error. All eight Go tests are source-named Rust ports, while four integration regressions execute the real request/cache/resolver/batch boundaries. Exact Go 1.25.12 tests and final pinned-nightly gates pass 11 focused tests, 542/539 source-derived tests, 866/863 active complete-library tests plus one unrelated ignore, strict all-target check/Clippy/private rustdoc, 51 doctests, rustfmt, source identity, and whitespace checks.
 
-Plan revision note (2026-08-26): independently re-audited both `oracle` package boundaries. Top-level `oracle` is exactly one 157-line production artifact with no source test; `oracle/oracles` is eight artifacts/2,063 lines with 13 ordinary tests, `TestMain`, and test-hook support. The old grouped Rust tests are supplemented by one source-named port per declaration, retaining the 100,000-timestamp uniqueness loop, live 50/150/500 ms refresh bounds, 100 stale races, full adaptive state sequence, 4×5 validation/cancellation matrix, normal-read isolation, 100-way cache invariant, and different-client retry. Differential review fixed eight source gaps: nanosecond-level Go-duration overflow, exact asynchronous low-resolution miss errors, drop-cancellable asynchronous TSO fetches, validation singleflight tasks that complete and clean up even after their initiating/only waiter is canceled, nanosecond-precise stale/adaptive calculations, ticker-style cadence with missed-tick dropping, signed-nanosecond mock offsets, and successful TSO/minimum-TS warnings beyond 30 ms. Exact Go 1.25.12 execution and final pinned-nightly gates pass 32 focused oracle tests, 558/555 source-derived tests, 879/876 active complete-library tests plus one unrelated ignore, strict all-target check/Clippy/private rustdoc, 51 doctests, rustfmt, source identity, and whitespace checks.
+Plan revision note (2026-08-26): independently re-audited both `oracle` package boundaries. Top-level `oracle` is exactly one 157-line production artifact with no source test; `oracle/oracles` is eight artifacts/2,063 lines with 13 ordinary tests, `TestMain`, and test-hook support. Every ordinary Go declaration now has one exact independently selectable Rust identity, retaining the 100,000-timestamp uniqueness loop, live 50/150/500 ms refresh bounds, 100 stale races, full adaptive state sequence, 4×5 validation/cancellation matrix, normal-read isolation, 100-way cache invariant, and different-client retry. Differential review fixed ten source gaps: nanosecond-level Go-duration overflow, exact asynchronous low-resolution miss errors, drop-cancellable asynchronous TSO fetches, validation singleflight tasks that complete and clean up even after their initiating/only waiter is canceled, raw empty-versus-global validation-flight identity, nanosecond-precise stale/adaptive calculations, forward-only Unix-millisecond adaptive markers, ticker-style cadence with missed-tick dropping, signed-nanosecond mock offsets, and successful TSO/minimum-TS warnings beyond 30 ms. The two latest gates failed before their fixes: the scope test timed out waiting for a third source request, and the adaptive test observed a 1.234 ms marker instead of 1 ms. Exact Go 1.25.12 normal/race suites and final pinned-nightly gates pass 13 exact source ports and all 29 package tests in both feature configurations, 1,409 no-default workspace tests, 1,384 all-feature library tests, strict check/documentation gates, rustfmt, exact 13/13 source identity, and whitespace checks.
 
 Plan revision note (2026-08-26): independently re-audited `error` against its immutable two-file/497-line boundary, one original test, and 58 direct importers. The source test is now a source-named Rust port retaining every exact JSON byte and redaction-state transition. Differential execution corrected signed `int` size fields, the missing public PD-timeout constructor and its root-store consumers, gogo compact text's trailing spaces and octal escapes, unexpected-key fallback text, failpoint type assertion behavior, native wrapper classifier identity, and stack-bearing logging. A descriptor-driven formatter covers complete nested/repeated protocol messages, while full-schema JSON gates prevent serializer drift. Exact Go 1.25.12 execution and final pinned-nightly gates pass 8 focused tests, 563/560 source-derived tests, 883/880 active complete-library tests plus one unrelated ignore, strict all-target check/Clippy/private rustdoc, 51 doctests, rustfmt, source identity, and whitespace checks.
 
@@ -1098,6 +1101,8 @@ Plan revision note (2026-08-25): reopened and re-closed the atomic `testutils` p
 Plan revision note (2026-08-25): completed the user-directed shared-protocol boundary as one atomic native-crate batch. The new `tikv-client-kvproto` workspace crate owns all 45 crate artifacts, the complete 56-input generator closure, 41 generated protocol modules, 977 `prost::Name` implementations, and the 1,029-message descriptor set; generated bytes and the stable normalized manifest remain unchanged. `tikv_client::proto` is now only an exact re-export, so direct downstream dependencies and every high-level client signature share one Rust type identity like client-go's public kvproto module. The no-feature external gate assigns a direct crate context to the client re-export without conversion. Crate-only tests/check/strict Clippy/rustdoc, deterministic regeneration, strict workspace check/Clippy/rustdoc, all 51 doctests, and the complete 760/750 unit matrices pass on `nightly-2026-08-22` before the single whole-crate commit.
 
 Plan revision note (2026-08-26): completed the atomic `txnkv/transaction` production and unit-test parity audit against client-go `52c1e76cec993571493c81de442bcbef90cdc106`. The exact 16-artifact/11,766-line receipt now maps all 33 original Go test declarations and preserves every named subtest, table row, randomized round, and assertion in executable Rust. Production reconciliation added source-exact large-transaction split, scatter, operator-wait, and cache-invalidation ordering; public process-wide `AtomicU32` pre-split controls and transaction constants; ordinary-build injected-client/configuration gates; and the remaining request-context, transaction-file, retry, heartbeat, cleanup, async/1PC, pessimistic, resource-control, and authoritative-MemDB branches found by the complete audit. Final pinned-nightly gates pass 852 no-default workspace tests plus one intentional skip, 840 all-feature library tests plus one intentional skip, 484 source-derived tests in each feature configuration, strict generated-code/all-target checking, rustfmt, Clippy with warnings denied, private-item rustdoc, all 51 doctests, and whitespace checks before one consolidated package-sized commit.
+
+Plan revision note (2026-08-26): corrected the `txnkv/transaction` unit-test evidence at the package boundary. Seventeen exact names had forwarded into six aggregate owners; all 33 pinned Go declarations now own direct independently selectable Rust test bodies. Transaction-file admission, tagger dispatch, action metadata, primary selection/rollback, commit ambiguity, and commit-TS-expiration cases execute separately, including the source's request counts and zero validation work for rejected retries. The immutable 16-artifact/11,766-line production inventory and hashes remain exact, and the production symbol/unsupported-branch recheck found no new divergence. Final `nightly-2026-08-22` gates pass exact Go normal/race suites, both 33-test focused Rust configurations, 1,390 no-default workspace tests with two skips, 1,365 all-feature library tests with six skips, strict generation/check/Clippy/private rustdoc, 51 doctests, declaration reconciliation, formatting, and whitespace checks.
 
 Plan revision note (2026-08-26): completed the atomic `rawkv` production and unit-test parity re-audit against client-go `52c1e76cec993571493c81de442bcbef90cdc106`. The exact eight-artifact/2,743-line receipt mechanically maps all 31 executable declarations, 27 suite methods, every support hook, and all production methods. Every package, mock-integration, and optional-live assertion now runs deterministically in Rust, including 20,480-pair scale cases. Differential tests failed before and now prove one-boundary-region sequential DeleteRange/Checksum ownership, first-error stop, ignored RawChecksum string and RawBatchGet/RawScan pair errors, exact public error strings, and non-panicking/non-truncating over-limit scan responses. Ordinary builds can inject a typed RawClient and name the 16-KiB probe. Final pinned-nightly gates pass 48 focused RawKV tests, 499 source-derived tests in each complete configuration, 831 active library tests plus one intentional ignore in each configuration, all external no-feature tests, clean protocol generation, all-target/all-feature check and strict Clippy, private-item rustdoc, all 51 doctests, rustfmt, source identity, declaration reconciliation, and whitespace checks before one consolidated package-sized commit.
 
@@ -1279,15 +1284,240 @@ against its exact 17-artifact/20,132-line boundary, 147 test declarations,
 five colocated benchmarks, every production/native representation surface,
 ten direct pinned protocol inputs, and 28 direct importer files. `TestMain`
 and the four testify suite runners have explicit non-test dispositions; every
-one of the remaining 142 assertion-bearing declarations now has an
-independently selectable, source-named Rust port. Sync/async source pairs keep
-separate identities while executing Rust's one future path. The source-name
-bijection, focused ports, and complete parallel suites pass without a
-production change, confirming the implementation while correcting the older
-grouped evidence. Exact Go normal/race suites pass. Final pinned-nightly gates
-pass all 142 independent ports, 986/983 source-derived tests, 1,233/1,230
-active no-default/all-feature main-library tests, and 1,285/1,264 canonical
-workspace tests plus one unrelated ignore/skip. Strict all-target
-check/Clippy/private rustdoc, all 51 doctests, formatting, exact
-inventory/declaration/importer reconciliation, source identity, and whitespace
-checks pass. This receipt is the package-sized integration boundary.
+one of the remaining 142 assertion-bearing declarations now has an ordinary,
+independently selectable, source-named Rust port. Forwarding macros and
+test-to-test calls are gone; related cases share only plain non-test helpers,
+including source sync/async pairs that execute Rust's one future path. The
+stronger `TestRegionRequestValidateReadTS` port exposed a production gap:
+dispatch converted oracle failures to strings, so downstream code could not
+distinguish client-go's future-timestamp and latest-stale error types. Public
+`Error::Oracle` now retains the boxed concrete error, all eight source rows
+prove rejection happens before transport in both feature modes, and an
+ordinary downstream-crate test proves the type is downcastable. Mechanical
+reconciliation reports 142 expected tests, zero missing, zero duplicates, and
+zero forwarding mappings. Exact Go normal/race suites pass in 68.669s and
+70.101s. Final pinned-nightly matrices pass 1,328 no-default workspace tests
+with two configured skips and 1,302 all-feature library tests with six
+configured skips; source-derived inventories contain 1,016/1,013 tests.
+Strict all-target check/Clippy/private rustdoc, all 51 doctests, formatting,
+exact inventory/declaration/importer reconciliation, source identity, and
+whitespace checks pass. This receipt is the package-sized integration boundary.
+
+Plan revision note (2026-08-26): independently reopened `rawkv` against its
+exact eight-artifact/2,743-line package and external-integration boundary, 31
+test declarations, every support/probe/config hook, all production surfaces,
+and three direct external importers. The three testify suite runners and
+`TestMain` have explicit dispositions; each of the 27 assertion-bearing suite
+methods now has an independently selectable, source-file-qualified Rust port.
+The 27-to-27 identity reconciliation and stronger tests pass without a
+production change, replacing the former aggregate-fixture completion claim.
+Go 1.25.12 package normal/race suites pass in legacy and NextGen modes, and
+the separate integration/raw normal/race suites pass. The source-derived
+lists contain 1,013/1,010 active no-default/all-feature tests; canonical
+workspace matrices pass 1,312/1,291 tests plus one unrelated skip in each
+configuration. Clean generation, all-target checking, strict Clippy, private
+rustdoc, all 51 doctests, formatting, inventory/declaration/importer,
+source-identity, and whitespace gates pass on the pinned nightly.
+
+Plan revision note (2026-08-26): independently reopened
+`internal/mockstore/mocktikv` against its exact 14-artifact/6,689-line
+boundary, 23 ordinary tests, `TestMain`, every production surface, and nine
+direct consumers. Each ordinary Go declaration now has an independently
+selectable Rust port across the reusable `unistore` crate and client adapter.
+The assertion audit restored full forward/reverse scan histories, distinct
+lock timestamps and inventories, resolve/batch-resolve keys, cleanup,
+delete/GC/delete-range/RC/status, marshal, region, debug, and heartbeat checks
+that the former grouped evidence omitted. All stronger tests pass without an
+additional production change; the earlier transactional `not_found` fix
+remains covered. Exact Go normal/race suites pass. Final pinned-nightly gates
+pass all 23 ports, 54 UniStore unit plus three reuse tests, nine adapter tests,
+1,261/1,258 active main-library tests plus one unrelated ignore, and
+1,335/1,314 canonical workspace tests plus one unrelated skip. Clean
+generation, all-target checking, strict Clippy/private rustdoc, all 51
+doctests, formatting, exact inventory/declaration/consumer reconciliation,
+source identity, and whitespace gates pass. This receipt is the package-sized
+integration boundary.
+
+Plan revision note (2026-08-26): independently reopened `tikvrpc` against its
+exact six-artifact/2,624-line boundary, seven direct byte-identical protocol
+inputs, five ordinary tests, `TestMain`, every production surface, and all 74
+consumers. Each ordinary Go test now has an independently selectable Rust
+identity. The assertion audit restored both keyspace IDs/API fields in context
+replacement, replaced the accidental LockWaitInfo substitution with the
+source's CopStream entry in the exact 42-request TiDB #51921 inventory, and
+added the charged cache-miss/BatchGet plus second-drain RU checks. All stronger
+tests pass without a production change. Exact Go normal/race suites pass.
+Final pinned-nightly gates pass 38 focused tests, 1,266/1,263 active
+main-library tests plus one unrelated ignore, and 1,340/1,319 canonical
+workspace tests plus one unrelated skip. Clean generation, all-target
+checking, strict Clippy/private rustdoc, all 51 doctests, formatting, exact
+source/protocol/declaration/consumer reconciliation, and whitespace checks
+pass. This receipt is the package-sized integration boundary.
+
+Plan correction (2026-08-26): a repository-wide wrapper scan found that the
+first `tikvrpc` re-audit's independence claim was false even though its
+assertion coverage was strong. Four source identities were generated by
+`source_go_tikvrpc_tests!`, and the handwritten `TestBatchResponse` identity
+called another registered test. The macro and call are gone. All five pinned
+Go tests now have direct Rust actions and assertions under their exact names;
+the three redundant owner/wrapper pairs were removed while separate known-
+oneof and production-derived coverage remains. Exact identity reconciliation
+finds five unique definitions with zero differences, forwarding mappings, or
+registered test-to-test calls. Go 1.25.12 normal/race suites pass, as do the
+five direct ports and all 35 command/request/endpoint tests in both Rust
+configurations. No production divergence was exposed; this correction changes
+the evidence, not the `tikvrpc` implementation. Canonical final-tree matrices
+pass 1,323 no-default tests with two configured skips and 1,297 all-feature
+library tests with six configured skips.
+
+Plan revision note (2026-08-26): independently reopened the parent
+`internal/unionstore` boundary rather than relying on the former 17-test
+summary. The immutable package is 15 artifacts/4,813 lines with 50 top-level
+tests, five named subtests, `TestMain`, 12 benchmarks, and six direct
+consumers. Splitting the subtest parent yields 54 independently executable Go
+test cases; Rust now has exact source-file-qualified identities for all 54
+cases and all 12 benchmark contracts, with zero missing, extra, or duplicate
+definitions. Assertion and production comparison exposed stale pipelined
+`BatchGet` behavior in the authoritative managed `MemDb` and transaction
+consumer: Rust reused the point cache where client-go always rereads the
+remote buffer and then refreshes that cache. The regression was red with
+value `one` after the remote became `two`; both paths now return `two` while
+subsequent point reads remain cached. Exact Go 1.25.12 normal/race suites pass.
+Final pinned-nightly gates pass 66 exact source identities and all 88 package
+tests in both feature configurations, 1,410 no-default workspace tests, 1,385
+all-feature library tests, strict workspace check/Clippy/private rustdoc, 51
+doctests, rustfmt, exact inventory/declaration/consumer reconciliation, and
+whitespace checks.
+
+Plan revision note (2026-08-26): independently reopened `util/collectors`
+against its exact two-artifact/1,189-line package boundary, six ordinary tests,
+external grpc-go v1.82.1 generated dependency, every production surface, and
+the no-benchmark/example/variant/direct-importer dispositions. Each Go test now
+has an exact source-file-qualified Rust identity, and its complete populated
+fixture is retained rather than only the subset directly sampled by source
+assertions. The production comparison found delayed concurrent publication of
+fetch failures: Rust kept per-walk counts until the entire graph walk returned,
+while client-go increments shared atomics at each failed RPC. An overlapping
+scrape regression was red at one visible `GetChannel` failure instead of two;
+shared immediate counters now make both failures visible before the first walk
+finishes. Exact Go 1.25.12 normal/race suites pass. Final pinned-nightly gates
+pass all eight focused tests in both configurations, 1,411 no-default workspace
+tests, 1,386 all-feature library tests, strict clean-generation/check/Clippy,
+private rustdoc, all 51 doctests, rustfmt, exact inventory/declaration/importer
+reconciliation, source identity, and whitespace checks. This receipt is the
+package-sized integration boundary.
+
+Plan correction (2026-08-26): a repository-wide forwarding-macro scan found
+six `internal/locate` source identities in `src/region_request.rs` that the
+earlier file-scoped closeout scan had missed. The package was reopened before
+starting another batch. The forwarding macro and two aggregate owner tests are
+gone; `TestRegionRequestSenderString`, `TestRegionRequestStats`,
+`TestGetErrMsg`, `TestRPCContextString`, `TestBackoffErrWithRPCContext`, and
+`TestLogging` are now independent direct ports, with the last test exercising
+an actual Get/NotLeader request path. Assertion-level comparison also restored
+the production diagnostic boundary: executable routes carry source access
+indexes, derive logical/proxy RPC context, print complete descriptor-driven
+gogo protobuf text, unwrap transport causes, and attach context plus source
+advice to TiKV/TiFlash backoff reasons. Mechanical reconciliation again finds
+142/142 unique identities, with zero differences, duplicates, forwarding
+mappings, or registered test-to-test calls. The complete source-derived suites
+pass 328 tests plus one source skip without default features and 324 tests plus
+five source skips with all features. Canonical workspace matrices pass 1,326
+no-default tests with two configured skips and 1,300 all-feature library tests
+with six configured skips. This correction supersedes the earlier claim that
+the first closeout scan itself had already proved zero forwarding mappings.
+
+Plan correction (2026-08-26): the complete `internal/locate` unit-test body
+audit found that the preceding correction was still too narrow. Exact source
+names in `src/locate.rs`, `src/region_cache.rs`, and `src/request/plan.rs`
+were selectable but some only forwarded into aggregate assertion helpers.
+Every affected identity now performs source-specific setup, action, and
+assertion directly; shared non-test helpers remain only supplemental fixture
+or matrix support. `TestBatchClientSendLoopPanic` now owns its panic-recovery
+body and the redundant generic panic test is removed. Mechanical
+reconciliation still reports 142 expected and 142 actual identities with zero
+missing, extra, duplicate, forwarding-macro, registered test-to-test, or
+one-call-only-wrapper result. Exact Go normal/race suites pass in
+68.669s/70.101s; the source-derived Rust gates pass 328 tests plus one skip
+and 324 tests plus five skips. Canonical matrices pass 1,274 no-default tests
+with two configured skips and 1,249 all-feature library tests with six
+configured skips. Strict generation/check/Clippy/private rustdoc, all 51
+doctests, rustfmt, and whitespace checks pass. This correction supersedes the
+earlier broad claim that independently selectable names alone proved direct
+unit-test ownership.
+
+Plan correction (2026-08-26): reopened `rawkv` and its owning
+`integration_tests/raw` matrix to replace evidence aliases with direct unit
+tests. All 27 assertion-bearing Go suite methods now have direct, independently
+selectable Rust bodies: the former 23-name forwarding macro, four store-helper
+aliases, and aggregate owner tests are gone. Stateful mock and live ports write
+through one client before applying source-ordered region splits; the live scan
+uses all 20 pinned split points after its 20,480 writes. The pinned live reverse
+scan's lexical bounds are preserved (and documented as vacuous), with a
+non-vacuous reverse-limit companion assertion over the same data. Mechanical
+reconciliation finds 27 unique definitions with zero missing, extra, duplicate,
+forwarding, or registered test-to-test calls. Exact Go 1.25.12 normal/race
+suites pass for `rawkv` in legacy and NextGen modes and for the separate raw
+integration module. The 27 direct Rust ports pass in both feature selections;
+canonical matrices pass 1,313 no-default tests with two configured skips and
+1,287 all-feature library tests with six configured skips. No production
+divergence was exposed; this correction strengthens the package test receipt.
+
+Plan correction (2026-08-26): the repository-wide unit-test integrity scan
+reopened `internal/mockstore/mocktikv` after finding that 22 of its 23 exact
+source identities were still generated by `source_go_mocktikv_tests!` and
+forwarded into helper/duplicate tests. The macro and redundant marshal
+aggregate are gone. The existing assertion bodies themselves now carry the
+exact source names, so all 23 Go tests are direct independently selectable
+Rust tests across the reusable `unistore` crate and client adapter. Mechanical
+reconciliation finds 23 unique definitions with zero missing, extra, duplicate,
+forwarding, or registered test-to-test calls. Exact Go 1.25.12 normal/race
+suites pass in 0.022s/1.073s; both focused Rust feature selections pass all 23
+ports. The canonical matrices pass 1,302 no-default tests with two configured
+skips and 1,276 all-feature library tests with six configured skips; source
+lists contain 1,040/1,035 tests. The UniStore receipt is refreshed to its actual
+six-artifact/3,893-line tree and 43 unit plus three external-consumer tests. No
+production divergence was exposed; this correction removes duplicate evidence
+and makes the package's unit-test parity claim literal.
+
+Plan correction (2026-08-26): the same integrity scan reopened
+`txnkv/txnsnapshot` after finding 16 transaction and five unionstore source
+identities generated as forwarding wrappers, plus nine handwritten evidence
+aliases. Eight called registered tests; one shared another package's scenario
+helper. All 34 behavioral methods across the six
+owning integration files now have direct, independently selectable Rust test
+bodies. The table-shaped commit-TS identity uses four private subcase helpers;
+none is a registered test or shared by another source identity. The source's
+two genuinely zero-case `rowNums` loops, unconditional RC skip, and four
+NextGen skips remain literal. Mechanical reconciliation reports 34 expected
+and 34 actual identities with zero missing, extra, duplicate, forwarding macro,
+or registered test-to-test call. Exact Go 1.25.12 suites pass normally in
+40.674s and under `-race` in 52.880s; focused Rust matrices pass 33 plus one
+skip and 29 plus five skips. Canonical matrices pass 1,275 no-default tests with
+two configured skips and 1,250 all-feature library tests with six configured
+skips. No production divergence was exposed; this correction makes the
+package's unit/integration-test receipt independently executable.
+
+Plan correction (2026-08-26): a whole-repository exact-body scan reopened two
+completed package receipts that still overstated direct unit-test ownership.
+`internal/mockstore/mocktikv::TestRegionContains` was the final one-call helper
+alias left after its 22-name macro correction; it now executes all ten source
+boundary rows directly. Five `txnkv/transaction` identities likewise only
+called aggregate helpers. The three txn-file admission identities now own
+their source configuration, mutation, action, and assertions. The two
+transaction-file resource-tag identities now run fresh prewrite, commit, and
+rollback instances directly. Strengthening those rows exposed a production
+ordering gap: dynamic taggers observed no resource-group name because Rust
+attached it later during plan construction. `Committer` now attaches the name
+before tagger invocation for ordinary and pipelined commits, split requests,
+and transaction-file prewrite/commit/rollback; the later plan attachment is
+idempotent. The new test failed with `None` before the fix and passes with
+`Some("txn-file-test")` afterward. Mechanical reconciliation reports 23/23
+and 33/33 identities with no missing, extra, duplicate, forwarding,
+registered test-to-test, or one-call-only helper result. Exact Go normal/race
+suites pass for both packages; both Rust feature configurations pass all 23
+and all 33 ports. Canonical matrices pass 1,274 no-default tests with two
+configured skips and 1,249 all-feature library tests with six configured
+skips. Strict generation/check/Clippy/private rustdoc, all 51 doctests,
+rustfmt, and whitespace checks pass before one consolidated two-package
+commit.

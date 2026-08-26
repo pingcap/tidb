@@ -15,13 +15,164 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::async_util::Cancellation;
+use crate::locate::AccessMode;
 use crate::proto::errorpb;
+use crate::proto::metapb;
+use crate::region::RegionVerId;
 use crate::store::CommandType;
+use crate::store::EndpointType;
 use crate::util::format_duration;
+use crate::Error;
 
 const MAX_ERROR_TYPES: usize = 16;
 const MAX_REPLICA_ACCESS_INFOS: usize = 5;
 static SHUTTING_DOWN: AtomicU32 = AtomicU32::new(0);
+
+/// Source-shaped diagnostics for one concrete region RPC route.
+///
+/// The executable route remains [`crate::store::RegionStore`]. This compact
+/// view exists because retry owners need stable, source-compatible context in
+/// their error strings without retaining a transport client.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RpcContext {
+    pub(crate) region: RegionVerId,
+    pub(crate) meta: Option<metapb::Region>,
+    pub(crate) peer: Option<metapb::Peer>,
+    pub(crate) access_index: usize,
+    pub(crate) address: String,
+    pub(crate) access_mode: AccessMode,
+    pub(crate) endpoint_type: Option<EndpointType>,
+    pub(crate) proxy_store_id: Option<u64>,
+    pub(crate) proxy_address: Option<String>,
+}
+
+impl RpcContext {
+    pub(crate) fn from_region_store(store: &crate::store::RegionStore) -> Self {
+        let forwarded = !store.forwarded_host.is_empty();
+        let proxy_store_id = if forwarded {
+            store.physical_store_id
+        } else {
+            None
+        };
+        let endpoint_type = if forwarded {
+            EndpointType::TiKv
+        } else {
+            store.physical_endpoint_type
+        };
+        Self {
+            region: store.region_with_leader.ver_id(),
+            meta: Some(store.region_with_leader.region.clone()),
+            peer: store.target_peer.clone(),
+            access_index: store.access_index,
+            address: if forwarded {
+                store.forwarded_host.clone()
+            } else {
+                store.target.clone()
+            },
+            access_mode: if endpoint_type.is_tiflash_related() {
+                AccessMode::TiFlashOnly
+            } else {
+                AccessMode::TiKvOnly
+            },
+            endpoint_type: Some(endpoint_type),
+            proxy_store_id,
+            proxy_address: proxy_store_id.map(|_| store.target.clone()),
+        }
+    }
+
+    pub(crate) fn to_backoff_reason_string(&self) -> String {
+        let peer_id = self.peer.as_ref().map_or(0, |peer| peer.id);
+        let store_id = self.peer.as_ref().map_or(0, |peer| peer.store_id);
+        let mut result = format!(
+            "region: {}, peerID: {peer_id}, storeID: {store_id}, addr: {}, idx: {}, reqStoreType: {}, runStoreType: {}",
+            self.region,
+            self.address,
+            self.access_index,
+            self.access_mode,
+            self.endpoint_type.map_or("", EndpointType::name),
+        );
+        self.append_proxy(&mut result);
+        result
+    }
+
+    fn append_proxy(&self, result: &mut String) {
+        if let Some(store_id) = self.proxy_store_id {
+            result.push_str(&format!(
+                ", proxy store id: {store_id}, proxy addr: {}",
+                self.proxy_address.as_deref().unwrap_or_default()
+            ));
+        }
+    }
+}
+
+impl fmt::Display for RpcContext {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut result = format!(
+            "region ID: {}, meta: {}, peer: {}, addr: {}, idx: {}, reqStoreType: {}, runStoreType: {}",
+            self.region.id,
+            format_region_meta(self.meta.as_ref()),
+            format_peer(self.peer.as_ref()),
+            self.address,
+            self.access_index,
+            self.access_mode,
+            self.endpoint_type.map_or("", EndpointType::name),
+        );
+        self.append_proxy(&mut result);
+        formatter.write_str(&result)
+    }
+}
+
+fn format_region_meta(region: Option<&metapb::Region>) -> String {
+    region.map_or_else(|| "<nil>".to_owned(), crate::error::protobuf_text)
+}
+
+fn format_peer(peer: Option<&metapb::Peer>) -> String {
+    peer.map_or_else(|| "<nil>".to_owned(), crate::error::protobuf_text)
+}
+
+pub(crate) fn rpc_context_backoff_string(context: Option<&RpcContext>) -> String {
+    context.map_or_else(|| "<nil>".to_owned(), RpcContext::to_backoff_reason_string)
+}
+
+pub(crate) fn backoff_error_with_rpc_context(
+    reason: impl fmt::Display,
+    context: Option<&RpcContext>,
+) -> String {
+    format!("{reason}, ctx: {}", rpc_context_backoff_string(context))
+}
+
+pub(crate) fn backoff_error_with_rpc_context_and_advice(
+    reason: impl fmt::Display,
+    context: Option<&RpcContext>,
+    advice: impl fmt::Display,
+) -> String {
+    format!(
+        "{reason}, ctx: {}, {advice}",
+        rpc_context_backoff_string(context)
+    )
+}
+
+/// Returns the deepest transport cause, falling back to the wrapper itself.
+/// `None` is Rust's native counterpart of client-go's nil error input.
+pub(crate) fn request_error_message(error: Option<&Error>) -> String {
+    let Some(error) = error else {
+        return String::new();
+    };
+    let mut cause: &(dyn std::error::Error + 'static) = error;
+    while let Some(source) = cause.source() {
+        cause = source;
+    }
+    cause.to_string()
+}
+
+pub(crate) fn region_request_sender_string(
+    rpc_error: Option<&Error>,
+    replica_selector: Option<&str>,
+) -> String {
+    let rpc_error = rpc_error.map_or_else(|| "<nil>".to_owned(), ToString::to_string);
+    let replica_selector = replica_selector.unwrap_or("<nil>");
+    format!("{{rpcError:{rpc_error}, replicaSelector: {replica_selector}}}")
+}
 
 /// Stores whether the embedding TiDB process is shutting down.
 ///
@@ -540,6 +691,8 @@ pub(crate) fn region_error_access_message(error: &errorpb::Error, label: &str) -
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     #[test]
@@ -549,9 +702,26 @@ mod tests {
     }
     use crate::proto::errorpb;
     use crate::proto::metapb;
+    use crate::region::RegionWithLeader;
+    use crate::store::RegionStore;
 
     #[test]
-    fn source_runtime_stats_clone_merge_and_bound_errors() {
+    #[allow(non_snake_case)]
+    fn source_go_region_request_TestRegionRequestSenderString() {
+        assert_eq!(
+            region_request_sender_string(None, None),
+            "{rpcError:<nil>, replicaSelector: <nil>}"
+        );
+        let error = Error::StringError("send failed".to_owned());
+        assert_eq!(
+            region_request_sender_string(Some(&error), Some("selector")),
+            "{rpcError:send failed, replicaSelector: selector}"
+        );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request_TestRegionRequestStats() {
         let stats = RegionRequestRuntimeStats::new();
         stats.record_rpc(CommandType::Get, Duration::from_secs(1));
         stats.record_rpc(CommandType::Get, Duration::from_millis(1));
@@ -561,9 +731,9 @@ mod tests {
         stats.record_error("context canceled");
         stats.record_error("region_not_found");
 
-        let clone = stats.clone();
+        stats.merge(&RegionRequestRuntimeStats::new());
         let merged = RegionRequestRuntimeStats::new();
-        merged.merge(&clone);
+        merged.merge(&stats.clone());
         assert_eq!(stats.rpc_type_count(), 2);
         assert_eq!(stats.command_rpc_count(CommandType::Get), 2);
         assert_eq!(
@@ -576,39 +746,26 @@ mod tests {
             "Get:{num_rpc:2, total_time:1s},Cop:{num_rpc:2, total_time:2.2s}, rpc_errors:{context canceled:2, region_not_found:1}"
         );
 
-        stats.record_replica_access(false, false, 1, 11, "not_leader");
-        merged.merge(&stats);
-        assert_eq!(
-            merged.replica_access_stats().access_infos(),
-            vec![ReplicaAccessInfo {
-                peer_id: 1,
-                store_id: 11,
-                read_type: RequestReadType::Leader,
-                error: "not_leader".to_owned(),
-            }]
-        );
-
         for index in 0..50 {
             stats.record_error(format!("err_{index}"));
         }
         let errors = stats.error_stats();
         assert_eq!(errors.distinct_error_count(), 16);
         assert_eq!(errors.other_error_count(), 36);
-        stats.record_error("context canceled");
-        assert_eq!(stats.error_stats().other_error_count(), 37);
-    }
+        assert!(stats.to_string().contains("other_error:36"));
 
-    #[test]
-    fn source_replica_access_keeps_five_details_then_counts_by_peer() {
-        let stats = RegionRequestRuntimeStats::new();
-        stats.record_replica_access(true, false, 1, 2, "data_not_ready");
-        stats.record_replica_access(false, false, 3, 4, "not_leader");
-        stats.record_replica_access(false, true, 5, 6, "server_is_Busy");
+        let access = RegionRequestRuntimeStats::new();
+        access.record_replica_access(true, false, 1, 2, "data_not_ready");
+        access.record_replica_access(false, false, 3, 4, "not_leader");
+        access.record_replica_access(false, true, 5, 6, "server_is_Busy");
+        assert_eq!(
+            access.replica_access_stats().to_string(),
+            "{stale_read, peer:1, store:2, err:data_not_ready}, {peer:3, store:4, err:not_leader}, {replica_read, peer:5, store:6, err:server_is_Busy}"
+        );
         for index in 0..20 {
-            stats.record_replica_access(false, false, 5 + index % 2, 6, "server_is_Busy");
+            access.record_replica_access(false, false, 5 + index % 2, 6, "server_is_Busy");
         }
-        let access = stats.replica_access_stats();
-        assert_eq!(access.access_infos().len(), 5);
+        let access = access.replica_access_stats();
         assert_eq!(
             access
                 .overflow_error_stats(5)
@@ -626,6 +783,129 @@ mod tests {
         assert_eq!(
             access.to_string(),
             "{stale_read, peer:1, store:2, err:data_not_ready}, {peer:3, store:4, err:not_leader}, {replica_read, peer:5, store:6, err:server_is_Busy}, {peer:5, store:6, err:server_is_Busy}, {peer:6, store:6, err:server_is_Busy}, overflow_count:{{peer:5, error_stats:{server_is_Busy:9}}, {peer:6, error_stats:{server_is_Busy:9}}}"
+        );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request_TestGetErrMsg() {
+        assert_eq!(request_error_message(None), "");
+        let fallback = Error::StringError("no cause err".to_owned());
+        assert_eq!(request_error_message(Some(&fallback)), "no cause err");
+
+        let wrapped = Error::Connection {
+            source: Box::new(Error::StringError("root cause".to_owned())),
+            address: "tikv-1".to_owned(),
+            version: 7,
+        };
+        assert_eq!(request_error_message(Some(&wrapped)), "root cause");
+    }
+
+    fn source_rpc_context() -> RpcContext {
+        RpcContext {
+            region: RegionVerId {
+                id: 100,
+                conf_ver: 2,
+                ver: 3,
+            },
+            meta: Some(metapb::Region {
+                id: 100,
+                region_epoch: Some(metapb::RegionEpoch {
+                    conf_ver: 2,
+                    version: 3,
+                }),
+                ..Default::default()
+            }),
+            peer: Some(metapb::Peer {
+                id: 101,
+                store_id: 1,
+                ..Default::default()
+            }),
+            access_index: 4,
+            address: "tikv-1".to_owned(),
+            access_mode: AccessMode::TiKvOnly,
+            endpoint_type: Some(EndpointType::TiKv),
+            proxy_store_id: None,
+            proxy_address: None,
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request_TestRPCContextString() {
+        assert_eq!(rpc_context_backoff_string(None), "<nil>");
+
+        let context = source_rpc_context();
+        assert_eq!(
+            context.to_string(),
+            "region ID: 100, meta: id:100 region_epoch:<conf_ver:2 version:3 > , peer: id:101 store_id:1 , addr: tikv-1, idx: 4, reqStoreType: TiKvOnly, runStoreType: tikv"
+        );
+        assert_eq!(
+            context.to_backoff_reason_string(),
+            "region: { region id: 100, ver: 3, confVer: 2 }, peerID: 101, storeID: 1, addr: tikv-1, idx: 4, reqStoreType: TiKvOnly, runStoreType: tikv"
+        );
+
+        let route = RegionStore::new(
+            RegionWithLeader {
+                region: context.meta.clone().unwrap(),
+                leader: context.peer.clone(),
+                ..Default::default()
+            },
+            Arc::new(crate::mock::MockKvClient::default()),
+        )
+        .with_target("tikv-1")
+        .with_physical_store(1, EndpointType::TiKv)
+        .with_target_peer(context.peer.clone().unwrap())
+        .with_access_index(4);
+        assert_eq!(RpcContext::from_region_store(&route), context);
+
+        let with_proxy = RpcContext {
+            region: RegionVerId {
+                id: 200,
+                conf_ver: 5,
+                ver: 8,
+            },
+            meta: None,
+            peer: None,
+            access_index: 0,
+            address: "tikv-1".to_owned(),
+            access_mode: AccessMode::TiKvOnly,
+            endpoint_type: Some(EndpointType::TiKv),
+            proxy_store_id: Some(2),
+            proxy_address: Some("tikv-2".to_owned()),
+        };
+        let suffix = ", proxy store id: 2, proxy addr: tikv-2";
+        assert!(with_proxy.to_string().ends_with(suffix));
+        assert!(with_proxy.to_backoff_reason_string().ends_with(suffix));
+
+        let routed_proxy = RpcContext::from_region_store(
+            &route
+                .with_target("tikv-2")
+                .with_physical_store(2, EndpointType::TiKv)
+                .with_forwarded_host("tikv-1"),
+        );
+        assert_eq!(routed_proxy.address, "tikv-1");
+        assert_eq!(routed_proxy.proxy_store_id, Some(2));
+        assert_eq!(routed_proxy.proxy_address.as_deref(), Some("tikv-2"));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request_TestBackoffErrWithRPCContext() {
+        let mut context = source_rpc_context();
+        context.region = RegionVerId {
+            id: 200,
+            conf_ver: 5,
+            ver: 8,
+        };
+        let context_string = context.to_backoff_reason_string();
+        assert_eq!(
+            backoff_error_with_rpc_context("reason1", Some(&context)),
+            format!("reason1, ctx: {context_string}")
+        );
+        assert_eq!(
+            backoff_error_with_rpc_context_and_advice("reason1", Some(&context), "advice1"),
+            format!("reason1, ctx: {context_string}, advice1")
         );
     }
 
@@ -833,32 +1113,5 @@ mod tests {
             ),
             "not_leader_with_no_leader"
         );
-    }
-
-    macro_rules! source_go_internal_locate_tests {
-        ($($name:ident => $target:ident),+ $(,)?) => {
-            $(
-                #[test]
-                #[allow(non_snake_case)]
-                fn $name() {
-                    $target();
-                }
-            )+
-        };
-    }
-
-    source_go_internal_locate_tests! {
-        source_go_region_request_TestRegionRequestSenderString =>
-            source_runtime_stats_clone_merge_and_bound_errors,
-        source_go_region_request_TestRegionRequestStats =>
-            source_runtime_stats_clone_merge_and_bound_errors,
-        source_go_region_request_TestGetErrMsg =>
-            source_region_error_labels_follow_protobuf_order_and_logging_suffixes,
-        source_go_region_request_TestRPCContextString =>
-            source_runtime_stats_clone_merge_and_bound_errors,
-        source_go_region_request_TestBackoffErrWithRPCContext =>
-            source_runtime_stats_clone_merge_and_bound_errors,
-        source_go_region_request3_TestLogging =>
-            source_region_error_labels_follow_protobuf_order_and_logging_suffixes,
     }
 }
