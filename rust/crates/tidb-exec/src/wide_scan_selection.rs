@@ -90,7 +90,8 @@ use tidb_executor::predicate_pushdown::{
 use tidb_expr::pb_predicate::{
     decimal_comparison_to_pb, int_comparison_to_pb, int_field_type, int_in_to_pb,
     is_int_family_type, is_null_to_pb, is_string_family_type, is_unsigned,
-    logical_not_to_pb, logical_or_to_pb, string_comparison_to_pb, string_in_to_pb,
+    logical_and_to_pb, logical_not_to_pb, logical_or_to_pb, string_comparison_to_pb,
+    string_in_to_pb,
     string_like_to_pb,
     time_comparison_to_pb, DecimalPbOperand, IntPbOperand, PbPredicateError, StringPbOperand,
     TimePbOperand,
@@ -325,8 +326,16 @@ fn predicate_to_pb(
         .ok_or(WideScanSelectionError::UnsupportedBuiltinOperand),
         // Top-level ANDs are expanded into Selection.conditions by
         // `predicate_to_conditions`; an AND nested under OR/NOT is not a
-        // description the driver produces.
-        ScanPredicate::And(_) => Err(WideScanSelectionError::UnsupportedBuiltinOperand),
+        // description the driver produces, but a row comparison expands to
+        // exactly that shape, so encode it as a single TiKV `LogicalAnd`
+        // scalar function nested inside the surrounding condition.
+        ScanPredicate::And(branches) => {
+            let branches = branches
+                .iter()
+                .map(|branch| predicate_to_pb(branch, columns))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(logical_and_to_pb(branches)?)
+        }
         ScanPredicate::Or(branches) => {
             let branches = branches
                 .iter()

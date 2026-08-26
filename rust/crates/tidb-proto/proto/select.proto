@@ -137,6 +137,7 @@ enum ScalarFuncSig {
   NEString = 153;
   // The op group: logical composition, negation, and the evaluation-family
   // specific `IS NULL` signatures selected by Go's `isNullFunctionClass`.
+  LogicalAnd = 3101;
   LogicalOr = 3102;
   UnaryNotInt = 3104;
   DecimalIsNull = 3111;

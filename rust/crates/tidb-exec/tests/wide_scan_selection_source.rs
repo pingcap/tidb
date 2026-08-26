@@ -1012,6 +1012,30 @@ fn the_composed_integer_predicates_lower_to_gos_own_signatures() {
     )]));
     assert_eq!(single.sig, Some(ScalarFuncSig::EqInt as i32));
 
+    // A row comparison can produce `(a = 1 AND b = 2) OR c = 3`.
+    // The nested AND must stay one scalar function; flattening it into
+    // Selection conditions would change the OR's meaning.
+    let nested_conjunction = sig(&ScanPredicate::Or(vec![
+        ScanPredicate::And(vec![
+            pushed(0, ScanComparisonOp::Eq, Datum::Int(1), true),
+            pushed(0, ScanComparisonOp::Eq, Datum::Int(2), true),
+        ]),
+        pushed(0, ScanComparisonOp::Eq, Datum::Int(3), true),
+    ]));
+    assert_eq!(
+        nested_conjunction.sig,
+        Some(ScalarFuncSig::LogicalOr as i32)
+    );
+    assert_eq!(
+        nested_conjunction.children[0].sig,
+        Some(ScalarFuncSig::LogicalAnd as i32)
+    );
+    assert_eq!(nested_conjunction.children[0].children.len(), 2);
+    assert_eq!(
+        nested_conjunction.children[1].sig,
+        Some(ScalarFuncSig::EqInt as i32)
+    );
+
     // One refused branch refuses the whole disjunction: an OR cannot be
     // partially pushed, because dropping a branch narrows the predicate and
     // would lose rows the query selects.

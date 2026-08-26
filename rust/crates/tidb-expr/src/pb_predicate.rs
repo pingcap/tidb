@@ -614,6 +614,23 @@ pub fn logical_or_to_pb(
         .ok_or(PbPredicateError::EmptyOperandList)
 }
 
+/// Composes branches with `AND` (Go `ScalarFuncSig_LogicalAnd`).
+///
+/// A top-level [`tidb_proto::tipb::Selection`] already ANDs its conditions,
+/// but an `AND` nested under an `OR` (for example the expanded DNF of a row
+/// comparison) has to be sent as a single scalar function so the disjunction
+/// keeps the correct shape. TiKV's `LogicalAnd` is binary, so a longer chain
+/// folds left, matching Go's left-associative parse. A single branch is
+/// returned unchanged.
+pub fn logical_and_to_pb(
+    branches: impl IntoIterator<Item = Expr>,
+) -> Result<Expr, PbPredicateError> {
+    branches
+        .into_iter()
+        .reduce(|left, right| boolean_scalar_func(ScalarFuncSig::LogicalAnd, vec![left, right]))
+        .ok_or(PbPredicateError::EmptyOperandList)
+}
+
 /// Negates a boolean-integer predicate (Go `ScalarFuncSig_UnaryNotInt`).
 #[must_use]
 pub fn logical_not_to_pb(child: Expr) -> Expr {
