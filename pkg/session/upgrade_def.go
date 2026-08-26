@@ -540,7 +540,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version284
+var currentBootstrapVersion int64 = version285
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -729,6 +729,7 @@ var (
 		{version: version282, fn: upgradeToVer282},
 		{version: version283, fn: upgradeToVer283},
 		{version: version284, fn: upgradeToVer284},
+		{version: version285, fn: upgradeToVer285},
 	}
 )
 
