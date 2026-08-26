@@ -102,6 +102,12 @@ fn encoded_body_remains_owned_after_repeated_and_concurrent_encoding() {
     assert_eq!(request.commands()[0].body(), b"pre-encoded-get");
 }
 
+#[test]
+fn opaque_command_body_can_be_transferred_without_reencoding() {
+    let command = OpaqueBatchCommand::new(BatchCommandTag::Coprocessor, vec![1, 2, 3]);
+    assert_eq!(command.into_body(), vec![1, 2, 3]);
+}
+
 // A malformed response must not reach client_batch.go:1295-1298's indexed
 // response delivery; the Rust boundary rejects it before publication.
 #[test]

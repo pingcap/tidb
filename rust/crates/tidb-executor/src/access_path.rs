@@ -1014,10 +1014,12 @@ impl crate::table_access::TableAccess for HandleSourceExec {}
 /// order.
 /// One lookup window moving through the bounded-concurrency fetch pipeline.
 struct LookupBatchJob {
-    /// The handles this window was collected from, in collection order. A
-    /// remote refusal discovered off-thread is answered here through the
-    /// local byte seam, on the executor thread.
-    handles: Vec<TableHandle>,
+    /// Number of handles this window was collected from, in collection order.
+    /// The handles themselves move into the worker, just as Go's
+    /// `buildAndDispatchLookupTasks` hands one `lookupTableTask.handles` slice
+    /// to the table worker. Only a remote refusal moves them back in the
+    /// `LookupFetch::LocalFallback` variant.
+    handle_count: usize,
     /// The fetch outcome when the drain runs off-thread.
     receiver: Option<std::sync::mpsc::Receiver<Result<LookupFetch, String>>>,
     /// Windows that complete at collect time carry their payload directly.
@@ -1036,8 +1038,9 @@ enum LookupFetch {
     /// residual needs row materialization.
     RemoteChunk(crate::kv_table::FinishedLookupChunk),
     /// The backend refused the remote shape (`Ok(None)` upstream): answer
-    /// through the local byte seam instead.
-    LocalFallback,
+    /// through the local byte seam instead. The worker returns its owned
+    /// handles so the fallback does not require cloning them before dispatch.
+    LocalFallback(Vec<TableHandle>),
 }
 
 /// go `IndexLookUpExecutor`'s table-worker pool, narrowed to what this tier
@@ -1878,7 +1881,7 @@ impl IndexRangeSourceExec {
                         width: 1,
                         unemitted_handles: 0,
                     });
-                pipeline.unemitted_handles += job.handles.len() as u64;
+                pipeline.unemitted_handles += job.handle_count as u64;
                 pipeline.inflight.push_back(job);
             }
 
@@ -1898,7 +1901,7 @@ impl IndexRangeSourceExec {
             };
             if let Some(pipeline) = self.lookup_pipeline.as_mut() {
                 pipeline.unemitted_handles =
-                    pipeline.unemitted_handles.saturating_sub(job.handles.len() as u64);
+                    pipeline.unemitted_handles.saturating_sub(job.handle_count as u64);
             }
             let payload = if let Some(receiver) = job.receiver {
                 let wait_t0 = std::env::var_os("TIKV_QUERY_TRACE").is_some().then(std::time::Instant::now);
@@ -1915,7 +1918,7 @@ impl IndexRangeSourceExec {
                 if let Some(t0) = wait_t0 {
                     eprintln!(
                         "[XTRACE] lookup_emit n={} waited_ms={} queued_behind={}",
-                        job.handles.len(),
+                        job.handle_count,
                         t0.elapsed().as_millis(),
                         self.lookup_pipeline.as_ref().map_or(0, |p| p.inflight.len()),
                     );
@@ -1965,18 +1968,19 @@ impl IndexRangeSourceExec {
                         Some(chunk),
                     )));
                 }
-                LookupFetch::LocalFallback => {
+                LookupFetch::LocalFallback(handles) => {
                     // The local batch answers one slot per requested handle,
-                    // in the order asked, so `job.handles` lines up with it.
+                    // in the order asked, so the worker-owned handles line up
+                    // with it.
                     let lookup_handles = if self.extra_handle_slot.is_some() {
-                        job.handles.iter().cloned().map(Some).collect()
+                        handles.iter().cloned().map(Some).collect()
                     } else {
                         Vec::new()
                     };
                     let lookup_rows = self
                         .table
                         .get_rows_by_handles_projected_with_context(
-                            &job.handles,
+                            &handles,
                             Some(&self.keep),
                             &self.decode_context,
                         )
@@ -1997,6 +2001,7 @@ impl IndexRangeSourceExec {
     /// OPEN request to a worker for the network-bound drain. A refused shape
     /// becomes a `LocalFallback` answered inline at emission time.
     fn build_lookup_job(&mut self, handles: Vec<TableHandle>) -> Result<LookupBatchJob, ExecError> {
+        let handle_count = handles.len();
         let staged = if self.partial_aggregate.is_none() {
             self.table
                 .stage_rows_by_handles_filtered(
@@ -2019,9 +2024,9 @@ impl IndexRangeSourceExec {
         }
         let Some(staged) = staged else {
             return Ok(LookupBatchJob {
-                handles,
+                handle_count,
                 receiver: None,
-                ready: Some(Ok(LookupFetch::LocalFallback)),
+                ready: Some(Ok(LookupFetch::LocalFallback(handles))),
             });
         };
         if std::env::var_os("TIKV_QUERY_TRACE").is_some() {
@@ -2037,36 +2042,38 @@ impl IndexRangeSourceExec {
         // the fetch itself, and the answer is byte-identical. Larger batches
         // keep the dedicated thread so lookups still overlap planning.
         if handles.len() <= INDEX_LOOKUP_INLINE_HANDLES {
-            let outcome = crate::kv_table::KvTable::finish_lookup_by_handles(&handles, staged)
-                .map_err(|error| format!("{error:?}"))
-                .map(|answer| match answer {
-                    Some(crate::kv_table::FinishedLookup::Rows(rows, applied, wire_rows)) => {
-                        LookupFetch::Remote(rows, applied, wire_rows)
-                    }
-                    Some(crate::kv_table::FinishedLookup::Chunk(chunk)) => {
-                        LookupFetch::RemoteChunk(chunk)
-                    }
-                    None => LookupFetch::LocalFallback,
-                });
+            let outcome = match crate::kv_table::KvTable::finish_lookup_by_handles(&handles, staged)
+            {
+                Ok(Some(crate::kv_table::FinishedLookup::Rows(rows, applied, wire_rows))) => {
+                    Ok(LookupFetch::Remote(rows, applied, wire_rows))
+                }
+                Ok(Some(crate::kv_table::FinishedLookup::Chunk(chunk))) => {
+                    Ok(LookupFetch::RemoteChunk(chunk))
+                }
+                Ok(None) => Ok(LookupFetch::LocalFallback(handles)),
+                Err(error) => Err(format!("{error:?}")),
+            };
             return Ok(LookupBatchJob {
-                handles,
+                handle_count,
                 receiver: None,
                 ready: Some(outcome),
             });
         }
-        let worker_handles = handles.clone();
+        // Go's table worker takes ownership of the extracted handle slice.
+        // Moving it here avoids cloning every common-handle byte vector while
+        // the executor retains only the count needed for its limit budget.
+        let worker_handles = handles;
         let worker = move || {
-            crate::kv_table::KvTable::finish_lookup_by_handles(&worker_handles, staged)
-                .map_err(|error| format!("{error:?}"))
-                .map(|answer| match answer {
-                    Some(crate::kv_table::FinishedLookup::Rows(rows, applied, wire_rows)) => {
-                        LookupFetch::Remote(rows, applied, wire_rows)
-                    }
-                    Some(crate::kv_table::FinishedLookup::Chunk(chunk)) => {
-                        LookupFetch::RemoteChunk(chunk)
-                    }
-                    None => LookupFetch::LocalFallback,
-                })
+            match crate::kv_table::KvTable::finish_lookup_by_handles(&worker_handles, staged) {
+                Ok(Some(crate::kv_table::FinishedLookup::Rows(rows, applied, wire_rows))) => {
+                    Ok(LookupFetch::Remote(rows, applied, wire_rows))
+                }
+                Ok(Some(crate::kv_table::FinishedLookup::Chunk(chunk))) => {
+                    Ok(LookupFetch::RemoteChunk(chunk))
+                }
+                Ok(None) => Ok(LookupFetch::LocalFallback(worker_handles)),
+                Err(error) => Err(format!("{error:?}")),
+            }
         };
         // Reuse the executor's persistent pool instead of creating one native
         // thread for every lookup window. The task owns all non-Send storage
@@ -2075,7 +2082,7 @@ impl IndexRangeSourceExec {
         // width and ordered emission; it only avoids repeated pthread setup.
         let receiver = crate::worker_pool::spawn(worker);
         Ok(LookupBatchJob {
-            handles,
+            handle_count,
             receiver: Some(receiver),
             ready: None,
         })

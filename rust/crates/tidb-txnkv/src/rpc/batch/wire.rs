@@ -147,6 +147,16 @@ impl OpaqueBatchCommand {
     pub fn body(&self) -> &[u8] {
         &self.body
     }
+
+    /// Transfers the encoded command body to a completion consumer.
+    ///
+    /// Go's coprocessor response already owns the protobuf byte slice. The
+    /// completion path can therefore hand those bytes to the response owner
+    /// without cloning the body a second time.
+    #[must_use]
+    pub fn into_body(self) -> Vec<u8> {
+        self.body
+    }
 }
 
 /// Whether a malformed envelope was a request or response.

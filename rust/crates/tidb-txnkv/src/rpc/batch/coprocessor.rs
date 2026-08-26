@@ -93,7 +93,7 @@ impl BatchCoprocessorPending {
                     )
                 })?;
                 Ok(DirectUnaryResponse::from_physical_channel(
-                    command.body().to_vec(),
+                    command.into_body(),
                     route.physical_channel().clone(),
                 ))
             }

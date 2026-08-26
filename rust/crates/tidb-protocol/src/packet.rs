@@ -411,6 +411,8 @@ enum PacketOutput<W> {
 pub struct PacketIoWriter<W> {
     output: PacketOutput<W>,
     sequence: u8,
+    /// Reusable uncompressed frame buffer, mirroring Go `PacketIO.bufWriter`.
+    framed: Vec<u8>,
 }
 
 impl<W: Write> PacketIoWriter<W> {
@@ -423,6 +425,7 @@ impl<W: Write> PacketIoWriter<W> {
         Ok(Self {
             output,
             sequence: 0,
+            framed: Vec::with_capacity(16 * 1024),
         })
     }
 
@@ -481,14 +484,27 @@ impl<W: Write> PacketIoWriter<W> {
             return Ok(());
         }
 
-        let mut framed = Vec::new();
+        // Go's PacketIO appends every frame to one reusable packet buffer. A
+        // result batch already owns all logical payloads, so reserve their
+        // headers and bodies up front and avoid the geometric reallocations
+        // (and copies) that otherwise occur while assembling the same wire
+        // stream.
+        let framed_capacity = payloads.iter().fold(0usize, |capacity, payload| {
+            capacity.saturating_add(payload.len().saturating_add(4))
+        });
+        self.framed.clear();
+        if self.framed.capacity() < framed_capacity {
+            self.framed
+                .reserve(framed_capacity - self.framed.capacity());
+        }
         let mut sequence = self.sequence;
         for payload in payloads {
             let mut remaining = *payload;
             loop {
                 let frame_len = remaining.len().min(MAX_PAYLOAD_LEN);
-                framed.extend_from_slice(&PacketHeader::new(frame_len, sequence)?.encode());
-                framed.extend_from_slice(&remaining[..frame_len]);
+                self.framed
+                    .extend_from_slice(&PacketHeader::new(frame_len, sequence)?.encode());
+                self.framed.extend_from_slice(&remaining[..frame_len]);
                 sequence = sequence.wrapping_add(1);
                 remaining = &remaining[frame_len..];
                 if frame_len < MAX_PAYLOAD_LEN {
@@ -498,7 +514,7 @@ impl<W: Write> PacketIoWriter<W> {
         }
 
         if let PacketOutput::Uncompressed(inner) = &mut self.output {
-            inner.write_all(&framed)?;
+            inner.write_all(&self.framed)?;
         }
         self.sequence = sequence;
         Ok(())

@@ -55,6 +55,22 @@ fn connection_receipt_distinguishes_prepared_commands_from_text_fallback() {
 }
 
 #[test]
+fn slow_command_receipt_is_quiet_without_query_trace() {
+    let source = include_str!("../src/mysql_connection.rs");
+    let report = source
+        .find("// `TIKV_QUERY_TRACE`: report the previous command's full server-side")
+        .expect("slow-command receipt comment");
+    let block = &source[report..];
+    let guard = block
+        .find("if query_trace_enabled {")
+        .expect("slow-command receipt is guarded by the trace switch");
+    let log = block
+        .find("[QTRACE-SQL]")
+        .expect("slow-command receipt log");
+    assert!(guard < log, "quiet connections must not format trace logs");
+}
+
+#[test]
 fn prepare_and_execute_use_typed_real_session_and_binary_rows() {
     let connection = include_str!("../src/mysql_connection.rs");
     let prepare_branch = connection
@@ -79,7 +95,7 @@ fn prepare_and_execute_use_typed_real_session_and_binary_rows() {
         .map(|offset| execute_branch + offset)
         .expect("execute packet is split before execution");
     let execute = connection[execute_branch..]
-        .find(".execute_prepared_point_read(&point_read, &parameters)")
+        .find(".execute_prepared_point_read(point_read, &parameters)")
         .map(|offset| execute_branch + offset)
         .expect("typed values reach the concrete session");
     let binary = connection[execute_branch..]

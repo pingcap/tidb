@@ -62,6 +62,22 @@ fn test_packet_io_write() {
 }
 
 #[test]
+fn test_packet_io_write_packets_preserves_each_logical_frame() {
+    let payloads = [b"columns".as_slice(), b"row-1", b"eof"];
+    let mut writer =
+        PacketIoWriter::new(Cursor::new(Vec::new()), CompressionAlgorithm::None).unwrap();
+    writer.write_packets(&payloads).unwrap();
+    writer.flush().unwrap();
+
+    let encoded = writer.into_inner().into_inner();
+    let mut reader = PacketReader::new(Cursor::new(encoded));
+    assert_eq!(reader.read_packet().unwrap(), b"columns");
+    assert_eq!(reader.read_packet().unwrap(), b"row-1");
+    assert_eq!(reader.read_packet().unwrap(), b"eof");
+    assert_eq!(reader.sequence(), 3);
+}
+
+#[test]
 fn test_packet_io_write_compressed_batches_at_one_mib() {
     let mut writer =
         PacketIoWriter::new(Cursor::new(Vec::new()), CompressionAlgorithm::Zlib).unwrap();

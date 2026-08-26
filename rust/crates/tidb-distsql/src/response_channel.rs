@@ -25,6 +25,7 @@
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk as DecodedChunk;
 use tidb_chunk::codec::Codec as ChunkCodec;
@@ -503,8 +504,11 @@ impl ResponseChannel<Vec<u8>> {
     ) -> SelectResponseIter {
         SelectResponseIter {
             source: SelectResponseSource::Channel(self),
-            final_field_types,
-            intermediate_output_types,
+            final_field_types: Arc::from(final_field_types),
+            intermediate_output_types: intermediate_output_types
+                .into_iter()
+                .map(Arc::from)
+                .collect(),
             time_zone,
             warnings,
             channels: Vec::new(),
@@ -525,8 +529,8 @@ impl ResponseChannel<Vec<u8>> {
 /// `selectResultIter.Next`.
 pub struct SelectResponseIter {
     source: SelectResponseSource,
-    final_field_types: Vec<FieldType>,
-    intermediate_output_types: Vec<Vec<FieldType>>,
+    final_field_types: Arc<[FieldType]>,
+    intermediate_output_types: Vec<Arc<[FieldType]>>,
     time_zone: SessionTimeZone,
     warnings: WarningCollector,
     channels: Vec<SelectResponseChannel>,
@@ -551,7 +555,7 @@ struct SelectResponseChannel {
     channel_index: usize,
     raw_encode_type: Option<i32>,
     chunks: Vec<ResponseChunk>,
-    field_types: Vec<FieldType>,
+    field_types: Arc<[FieldType]>,
     /// Go `selectResult.respChunkDecoder`: keep one typed decoder per output
     /// channel instead of cloning its field metadata for every response chunk.
     codec: ChunkCodec,
@@ -785,8 +789,11 @@ impl SelectResponseIter {
             });
         Self {
             source: SelectResponseSource::Query(response),
-            final_field_types,
-            intermediate_output_types,
+            final_field_types: Arc::from(final_field_types),
+            intermediate_output_types: intermediate_output_types
+                .into_iter()
+                .map(Arc::from)
+                .collect(),
             time_zone,
             warnings,
             channels: Vec::new(),
@@ -813,14 +820,35 @@ impl SelectResponseIter {
         self.channels
             .iter()
             .find(|channel| channel.channel_index == channel_index)
-            .map(|channel| channel.field_types.as_slice())
+            .map(|channel| channel.field_types.as_ref())
             .or_else(|| {
                 if channel_index == self.intermediate_output_types.len() {
-                    Some(self.final_field_types.as_slice())
+                    Some(self.final_field_types.as_ref())
                 } else {
                     self.intermediate_output_types
                         .get(channel_index)
-                        .map(Vec::as_slice)
+                        .map(Arc::as_ref)
+                }
+            })
+    }
+
+    /// Returns the immutable field metadata owner for a decoded response
+    /// channel. Go's `selectResult` retains this metadata across result
+    /// batches; callers that keep a chunk-backed batch can therefore clone
+    /// the `Arc` instead of materializing another `Vec<FieldType>`.
+    #[must_use]
+    pub fn field_types_shared_for_channel(&self, channel_index: usize) -> Option<Arc<[FieldType]>> {
+        self.channels
+            .iter()
+            .find(|channel| channel.channel_index == channel_index)
+            .map(|channel| Arc::clone(&channel.field_types))
+            .or_else(|| {
+                if channel_index == self.intermediate_output_types.len() {
+                    Some(Arc::clone(&self.final_field_types))
+                } else {
+                    self.intermediate_output_types
+                        .get(channel_index)
+                        .map(Arc::clone)
                 }
             })
     }
@@ -1140,21 +1168,21 @@ impl SelectResponseIter {
             self.reusable_chunks.resize_with(channel_count, || None);
         }
         for (channel_index, output) in response.intermediate_outputs.into_iter().enumerate() {
-            let field_types = self.intermediate_output_types[channel_index].clone();
+            let field_types = Arc::clone(&self.intermediate_output_types[channel_index]);
             let reusable_chunk = self.reusable_chunks[channel_index].take();
             self.channels.push(SelectResponseChannel {
                 channel_index,
                 raw_encode_type: output.encode_type,
                 chunks: output.chunks,
-                field_types: field_types.clone(),
-                codec: ChunkCodec::new(field_types),
+                field_types: Arc::clone(&field_types),
+                codec: ChunkCodec::new_shared(field_types),
                 time_zone: self.time_zone.clone(),
                 next_chunk_index: 0,
                 decoded: None,
                 reusable_chunk,
             });
         }
-        let final_field_types = self.final_field_types.clone();
+        let final_field_types = Arc::clone(&self.final_field_types);
         let reusable_chunk = self
             .reusable_chunks
             .get_mut(self.intermediate_output_types.len())
@@ -1163,8 +1191,8 @@ impl SelectResponseIter {
             channel_index: self.intermediate_output_types.len(),
             raw_encode_type: response.encode_type,
             chunks: response.chunks,
-            field_types: final_field_types.clone(),
-            codec: ChunkCodec::new(final_field_types),
+            field_types: Arc::clone(&final_field_types),
+            codec: ChunkCodec::new_shared(final_field_types),
             time_zone: self.time_zone.clone(),
             next_chunk_index: 0,
             decoded: None,

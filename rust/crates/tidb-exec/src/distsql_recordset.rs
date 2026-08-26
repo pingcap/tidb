@@ -18,6 +18,7 @@
 //! not construct requests or invent a TiKV transport. Raw datum rows are
 //! exposed only as they are pulled, preserving the source's bounded lifecycle.
 
+use std::sync::Arc;
 use tidb_chunk::{chunk::Chunk, row::Row};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, MyDecimal, MYDECIMAL_STRUCT_SIZE};
 use tidb_distsql::{ResponseChannelError, SelectResponseIter, SelectResultRuntimeStats};
@@ -46,7 +47,7 @@ pub trait TextResultBatch {
 
 struct DistSqlTextBatch {
     chunk: Chunk,
-    field_types: Vec<FieldType>,
+    field_types: Arc<[FieldType]>,
 }
 
 impl TextResultBatch for DistSqlTextBatch {
@@ -80,9 +81,7 @@ impl TextResultBatch for DistSqlTextBatch {
                     | FieldTypeCode::Json
                     | FieldTypeCode::Enum
                     | FieldTypeCode::Set
-                    | FieldTypeCode::VectorFloat32 => {
-                        row.get_raw_len(column).saturating_add(9)
-                    }
+                    | FieldTypeCode::VectorFloat32 => row.get_raw_len(column).saturating_add(9),
                     FieldTypeCode::NewDecimal => 72,
                     FieldTypeCode::Date
                     | FieldTypeCode::Datetime
@@ -179,14 +178,13 @@ impl DistSqlRecordSet {
         };
         let field_types = self
             .iter
-            .field_types_for_channel(result.channel_index)
+            .field_types_shared_for_channel(result.channel_index)
             .ok_or_else(|| {
                 DistSqlRecordSetError::Source(format!(
                     "missing field types for response channel {}",
                     result.channel_index
                 ))
-            })?
-            .to_vec();
+            })?;
         Ok(Some(Box::new(DistSqlTextBatch {
             chunk: result.row,
             field_types,

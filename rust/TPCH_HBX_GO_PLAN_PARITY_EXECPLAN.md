@@ -1332,3 +1332,66 @@ open. This remains WIP: the checkout has no `go` executable, therefore the
 Ready-profile `make lint`/Go unit gate cannot run, and the full TPC-H catalog
 was not repeated in this iteration. The resulting commit message includes
 the literal `go 代码` requirement and a `Go code:` source reference.
+
+Revision note, 2026-08-27 (latest client-rust iteration, Go-owned buffers and
+lookup-task hand-off): `git fetch origin --prune` confirms the worktree is
+based on the current `origin/hparser-integration` at `5daec2a7674`. The
+production changes continue to follow the Go sources
+`pkg/server/internal/packetio.go` (`PacketIO.bufWriter`),
+`pkg/distsql/select_result.go` (`respChunkDecoder`),
+`pkg/server/internal/column/column.go` (`DumpTextRow`), and
+`pkg/executor/distsql.go` (`buildAndDispatchLookupTasks`). Rust now reuses one
+packet frame buffer, shares immutable result field metadata with `Arc`,
+transfers batch-command response bodies instead of copying them, suppresses
+the previous-command trace unless `TIKV_QUERY_TRACE` is enabled, and moves
+the index-lookup handle vector into the table worker like Go. A remote refusal
+returns that same owned vector through the local fallback, preserving row
+order and avoiding a common-handle clone. Source regressions cover each
+ownership/guard contract, including the stale prepared-point-read assertion
+updated to the current Go-shaped call.
+
+The release binary was rebuilt from this worktree and restarted on
+`127.0.0.1:14019`; Go nightly remains on `127.0.0.1:14000`, both reading the
+deterministic `hbx_web3_1g` 1 GiB fixture (1,048,576 rows × 1,024-byte
+payload). `/private/tmp/hbx-1g-20260825/compare.json` reports all four
+normalized plans and result hashes equal; hashes are q1
+`0c4882950464...`, q2/flex `45f8be119987...`, and swap
+`bf2ce5996ce3...`, with 100 rows per query. The 20-pair
+`/private/tmp/hbx-1g-20260825/bench.json` batch receipt reports exactly 100
+rows and `5050.000000000000000000` for every 100-row insert on both endpoints.
+With Rust lookup width 5 and transport shards 4, the final alternating
+medians are Go/Rust q1 `9.615/9.398 ms` (`0.978x`), q2 `8.340/8.915 ms`
+(`1.069x`), flex `7.574/9.507 ms` (`1.255x`), swap `14.318/19.085 ms`
+(`1.333x`), and batch `5.726/6.286 ms` (`1.098x`). A width-8/shards-8
+control was also measured (q1 `1.027x`, q2 `1.064x`, flex `1.240x`, swap
+`1.450x`, batch `1.146x`) and was not retained because it regressed. Thus
+correctness and Go-behavior gates remain green, but the strict one-client
+performance no-regression gate is still open. This iteration remains WIP:
+the checkout has no `go` executable, so Ready-profile `make lint` and Go unit
+tests are unavailable; full TPC-H/complete hbx-web3 query coverage was not
+rerun. The commit must retain the literal `go 代码` phrase and a `Go code:`
+source reference.
+
+Revision note, 2026-08-27 (client-rust resync re-test): the worktree was
+rebased onto the latest `origin/hparser-integration`
+`4c2914f8b3e6f613e1f7689c668e77ac9af93d1d` (`rust: resync vendored
+client-rust to 1f672dd`) and the release server was rebuilt before testing.
+The same deterministic `hbx_web3_1g` 1 GiB fixture was used with Go on
+`127.0.0.1:14000` and Rust on `127.0.0.1:14019`, lookup width 5 and four
+transport shards. All four normalized plans and result hashes still match
+(`q1`, `q2`, `flex`, `swap`), with 100 rows per query and hashes unchanged.
+The latest receipts are preserved as
+`/private/tmp/hbx-1g-20260825/compare-go-client-rust-4c2914-20260827.json`
+and
+`/private/tmp/hbx-1g-20260825/bench-go-client-rust-4c2914-20260827.json`.
+The 20-pair alternating medians are Go/Rust q1 `9.469/9.796 ms` (`1.035x`),
+q2 `8.379/9.096 ms` (`1.085x`), flex `7.450/9.390 ms` (`1.260x`), swap
+`14.278/19.424 ms` (`1.360x`), and batch `5.917/6.576 ms` (`1.111x`). Every
+100-row batch still returns 100 rows and sum `5050.000000000000000000` on
+both endpoints. Focused Rust regressions pass after the resync: protocol
+19, chunk 15, distsql 6, exec 7, executor source 1, executor access-path
+27, txnkv 7, and server source 7. Correctness and Go-behavior gates remain
+green, while the strict one-concurrency performance no-regression gate is
+still open; no Go executable, Ready-profile `make lint`, full Go unit suite,
+or complete hbx-web3/TPC-H catalog was available in this checkout. The
+commit message continues to include the literal `go 代码` phrase.

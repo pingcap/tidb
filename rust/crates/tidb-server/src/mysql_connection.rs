@@ -1285,23 +1285,25 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         // duration when its successor arrives (client-observed latency proxy).
         // The report names the statement (SQL head) so slow commands can be
         // attributed without replaying the client's parameter stream.
-        if let Some((started, fingerprint)) = last_command.take() {
-            let elapsed = started.elapsed();
-            if elapsed.as_millis() >= 20 {
-                match &fingerprint {
-                    CommandFingerprint::Kind(kind) => eprintln!(
-                        "[QTRACE-SQL] {}ms conn={} kind={}",
-                        elapsed.as_millis(),
-                        connection_id,
-                        kind
-                    ),
-                    CommandFingerprint::Sql(kind, sql) => eprintln!(
-                        "[QTRACE-SQL] {}ms conn={} kind={} {}",
-                        elapsed.as_millis(),
-                        connection_id,
-                        kind,
-                        sql
-                    ),
+        if query_trace_enabled {
+            if let Some((started, fingerprint)) = last_command.take() {
+                let elapsed = started.elapsed();
+                if elapsed.as_millis() >= 20 {
+                    match &fingerprint {
+                        CommandFingerprint::Kind(kind) => eprintln!(
+                            "[QTRACE-SQL] {}ms conn={} kind={}",
+                            elapsed.as_millis(),
+                            connection_id,
+                            kind
+                        ),
+                        CommandFingerprint::Sql(kind, sql) => eprintln!(
+                            "[QTRACE-SQL] {}ms conn={} kind={} {}",
+                            elapsed.as_millis(),
+                            connection_id,
+                            kind,
+                            sql
+                        ),
+                    }
                 }
             }
         }

@@ -35,6 +35,7 @@ use crate::column::Column;
 use crate::shared_bytes::SharedBytes;
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 use tidb_datatype::FieldType;
 
 pub use crate::column::{get_fixed_len, VAR_ELEM_LEN};
@@ -179,13 +180,24 @@ impl Error for CodecDecodeError {}
 /// column is fixed-width and how wide, which the image itself does not record.
 #[derive(Clone, Debug)]
 pub struct Codec {
-    col_types: Vec<FieldType>,
+    col_types: Arc<[FieldType]>,
 }
 
 impl Codec {
     /// Go `NewCodec`.
     #[must_use]
     pub fn new(col_types: Vec<FieldType>) -> Codec {
+        Codec {
+            col_types: Arc::from(col_types),
+        }
+    }
+
+    /// Creates a codec sharing field metadata with the response iterator.
+    /// Go's `selectResult.respChunkDecoder` keeps one decoder per output
+    /// channel; sharing this immutable schema avoids cloning every
+    /// `FieldType` whenever a paged response is installed.
+    #[must_use]
+    pub fn new_shared(col_types: Arc<[FieldType]>) -> Codec {
         Codec { col_types }
     }
 
