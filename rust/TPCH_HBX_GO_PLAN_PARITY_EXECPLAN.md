@@ -1190,6 +1190,10 @@ medians are Rust/Go q1 `10.060/9.306 ms` (`1.081x`), q2 `9.460/7.953 ms`
 (`1.189x`), flex `9.662/7.812 ms` (`1.237x`), swap `17.218/15.425 ms`
 (`1.116x`), and batch `6.192/5.595 ms` (`1.107x`). Correctness and Go
 behavior are green, but the strict one-concurrency performance no-regression
-gate remains open. The implementation is ready to commit with a required
-`Go code:` commit-body line; Ready-profile `make lint` remains unavailable
-because this checkout has no `go` executable.
+gate remains open. The implementation was committed and pushed as
+`1c2e712b99`; its commit body contains the required `Go code:` lines.
+The release identity was rebuilt at that commit and the final quick comparison
+is recorded in
+`/private/tmp/hbx-1g-20260825/compare-go-lock-fix-commit-20260826.json`.
+Ready-profile `make lint` remains unavailable because this checkout has no
+`go` executable.
