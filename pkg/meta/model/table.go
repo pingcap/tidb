@@ -232,8 +232,8 @@ type TableInfo struct {
 
 	// StorageClassTier is the storage class tier of the table level.
 	StorageClassTier string `json:"storage_class_tier,omitempty"`
-	// StorageClassTransitionRules are the storage class transition rules of the table level.
-	StorageClassTransitionRules []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
+	// StorageClassTransitions are the storage class transition rules of the table level.
+	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
 	// StorageClassTransition is the current explicit storage-class transition.
 	StorageClassTransition *StorageClassTransitionState `json:"storage_class_transition,omitempty"`
 	// StorageClassTransitionPendingHistory contains operations that have ended
@@ -317,7 +317,7 @@ func (t *TableInfo) Clone() *TableInfo {
 	if t.Affinity != nil {
 		nt.Affinity = t.Affinity.Clone()
 	}
-	nt.StorageClassTransitionRules = slices.Clone(t.StorageClassTransitionRules)
+	nt.StorageClassTransitions = slices.Clone(t.StorageClassTransitions)
 	nt.StorageClassTransition = t.StorageClassTransition.Clone()
 	nt.StorageClassTransitionPendingHistory = slices.Clone(t.StorageClassTransitionPendingHistory)
 	for i := range t.StorageClassTransitionPendingHistory {
@@ -568,7 +568,7 @@ func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 
 // StorageClassString returns a string representation of the storage class tier and transitions.
 func (t *TableInfo) StorageClassString() string {
-	return buildStorageClassString(t.StorageClassTier, t.StorageClassTransitionRules)
+	return buildStorageClassString(t.StorageClassTier, t.StorageClassTransitions)
 }
 
 // HasClusteredIndex checks whether the table has a clustered index.
@@ -1209,22 +1209,22 @@ type PartitionState struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID                          int64                        `json:"id"`
-	Name                        ast.CIStr                    `json:"name"`
-	LessThan                    []string                     `json:"less_than"`
-	InValues                    [][]string                   `json:"in_values"`
-	PlacementPolicyRef          *PolicyRefInfo               `json:"policy_ref_info"`
-	Comment                     string                       `json:"comment,omitempty"`
-	StorageClassTier            string                       `json:"storage_class_tier,omitempty"`
-	StorageClassTransitionRules []StorageClassTransitRule    `json:"storage_class_transitions,omitempty"`
-	StorageClassTransition      *StorageClassTransitionState `json:"storage_class_transition,omitempty"`
+	ID                      int64                        `json:"id"`
+	Name                    ast.CIStr                    `json:"name"`
+	LessThan                []string                     `json:"less_than"`
+	InValues                [][]string                   `json:"in_values"`
+	PlacementPolicyRef      *PolicyRefInfo               `json:"policy_ref_info"`
+	Comment                 string                       `json:"comment,omitempty"`
+	StorageClassTier        string                       `json:"storage_class_tier,omitempty"`
+	StorageClassTransitions []StorageClassTransitRule    `json:"storage_class_transitions,omitempty"`
+	StorageClassTransition  *StorageClassTransitionState `json:"storage_class_transition,omitempty"`
 }
 
 // Clone clones PartitionDefinition.
 func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
 	nci.LessThan = slices.Clone(ci.LessThan)
-	nci.StorageClassTransitionRules = slices.Clone(ci.StorageClassTransitionRules)
+	nci.StorageClassTransitions = slices.Clone(ci.StorageClassTransitions)
 	nci.StorageClassTransition = ci.StorageClassTransition.Clone()
 	return nci
 }
@@ -1255,7 +1255,7 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 
 // StorageClassString returns a string representation of the storage class tier and transitions.
 func (ci *PartitionDefinition) StorageClassString() string {
-	return buildStorageClassString(ci.StorageClassTier, ci.StorageClassTransitionRules)
+	return buildStorageClassString(ci.StorageClassTier, ci.StorageClassTransitions)
 }
 
 // ConstraintInfo provides meta data describing check-expression constraint.

@@ -216,13 +216,13 @@ func TestTableInfoCloneStorageClassTransitionHistory(t *testing.T) {
 	require.Nil(t, (&TableInfo{}).Clone().StorageClassTransitionPendingHistory)
 
 	tblInfo := &TableInfo{
-		StorageClassTransitionRules: []StorageClassTransitRule{{Tier: StorageClassTierIA, AfterDays: 30}},
+		StorageClassTransitions: []StorageClassTransitRule{{Tier: StorageClassTierIA, AfterDays: 30}},
 		StorageClassTransition: &StorageClassTransitionState{
 			Target: StorageClassTierIA, StartTS: 1234, SchemaName: "test", TableName: "orders",
 		},
 		Partition: &PartitionInfo{Definitions: []PartitionDefinition{{
-			ID:                          1,
-			StorageClassTransitionRules: []StorageClassTransitRule{{Tier: StorageClassTierIA, AfterDays: 7}},
+			ID:                      1,
+			StorageClassTransitions: []StorageClassTransitRule{{Tier: StorageClassTierIA, AfterDays: 7}},
 			StorageClassTransition: &StorageClassTransitionState{
 				Target: StorageClassTierIA, StartTS: 1234, PartitionName: "p0",
 			},
@@ -236,16 +236,16 @@ func TestTableInfoCloneStorageClassTransitionHistory(t *testing.T) {
 	}
 
 	cloned := tblInfo.Clone()
-	cloned.StorageClassTransitionRules[0].Tier = StorageClassTierStandard
+	cloned.StorageClassTransitions[0].Tier = StorageClassTierStandard
 	cloned.StorageClassTransition.Target = StorageClassTierStandard
-	cloned.Partition.Definitions[0].StorageClassTransitionRules[0].Tier = StorageClassTierStandard
+	cloned.Partition.Definitions[0].StorageClassTransitions[0].Tier = StorageClassTierStandard
 	cloned.Partition.Definitions[0].StorageClassTransition.Target = StorageClassTierStandard
 	cloned.StorageClassTransitionPendingHistory[0].Target = StorageClassTierStandard
 	cloned.StorageClassTransitionPendingHistory[0].Targets[0].PhysicalID = 2
 
-	require.Equal(t, StorageClassTierIA, tblInfo.StorageClassTransitionRules[0].Tier)
+	require.Equal(t, StorageClassTierIA, tblInfo.StorageClassTransitions[0].Tier)
 	require.Equal(t, StorageClassTierIA, tblInfo.StorageClassTransition.Target)
-	require.Equal(t, StorageClassTierIA, tblInfo.Partition.Definitions[0].StorageClassTransitionRules[0].Tier)
+	require.Equal(t, StorageClassTierIA, tblInfo.Partition.Definitions[0].StorageClassTransitions[0].Tier)
 	require.Equal(t, StorageClassTierIA, tblInfo.Partition.Definitions[0].StorageClassTransition.Target)
 	require.Equal(t, StorageClassTierIA, tblInfo.StorageClassTransitionPendingHistory[0].Target)
 	require.Equal(t, int64(1), tblInfo.StorageClassTransitionPendingHistory[0].Targets[0].PhysicalID)
@@ -262,7 +262,7 @@ func TestTableInfoCloneStorageClassTransitionHistory(t *testing.T) {
 
 	var decoded TableInfo
 	require.NoError(t, json.Unmarshal(encoded, &decoded))
-	require.Equal(t, tblInfo.StorageClassTransitionRules, decoded.StorageClassTransitionRules)
+	require.Equal(t, tblInfo.StorageClassTransitions, decoded.StorageClassTransitions)
 	require.Equal(t, tblInfo.StorageClassTransition, decoded.StorageClassTransition)
 	require.Equal(t, tblInfo.Partition.Definitions[0].StorageClassTransition,
 		decoded.Partition.Definitions[0].StorageClassTransition)
