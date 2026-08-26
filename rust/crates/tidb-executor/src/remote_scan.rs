@@ -426,6 +426,10 @@ pub struct PushdownScanRequest {
     pub topn: Option<PushdownTopN>,
     /// A row cap the backend may stop at. Best-effort: see the module doc.
     pub limit: Option<u64>,
+    /// Go's IndexLookUp worker seeds the index coprocessor request's row
+    /// paging window from its calculated handle batch size. `None` retains
+    /// the session default used by ordinary table/covering scans.
+    pub paging_min_size: Option<u64>,
     /// A partial aggregation above the scan/Selection. When present, every
     /// predicate must be lowered and no staged write may be merged locally.
     pub aggregate: Option<PushdownPartialAggregate>,

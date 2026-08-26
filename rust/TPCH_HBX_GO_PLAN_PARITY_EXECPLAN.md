@@ -1275,3 +1275,29 @@ no-regression gate remains open because Rust is still slower in each median.
 This remains WIP: this checkout has no `go` executable, so Ready-profile
 `make lint` cannot run, and the full 22-query/complete hbx-web3 catalog was
 not repeated.
+
+Revision note, 2026-08-27 (Go text-row prefix and lookup-window continuation):
+continued from the Go reference after the latest upstream fetch. The
+`tidb-protocol` owned result writer now starts each length-encoded cell with
+the one-byte prefix used by Go `dump.LengthEncodedString`, expanding and
+shifting only for values above 250 bytes. Its row capacity is estimated from
+the owned `Datum` payloads so wide 51-column rows avoid repeated growth. The
+boundary regression `owned_text_row_expands_only_when_go_length_prefix_requires_it`
+checks both sides of the 250/251-byte wire boundary. The same commit retains
+the package-level Go `IndexLookUp` batch-size, paging-hint, plan-statistics, and
+typed DistSQL changes above; no query-specific workaround was added.
+
+The release binary was rebuilt and restarted on `127.0.0.1:14019`. The latest
+1 GiB HBX comparison (`/private/tmp/hbx-1g-20260825/compare.json`) still has
+four normalized plan matches and four result-hash matches, with hashes
+`0c488295...`, `45f8be11...`, `45f8be11...`, and `bf2ce599...`; the 100-row
+batch checks still return 100 rows and sum `5050.000000000000000000` on both
+endpoints. The 20-pair receipt (`/private/tmp/hbx-1g-20260825/bench.json`)
+has Go/Rust medians q1 `9.426/9.931 ms` (`1.054x`), q2 `8.329/9.148 ms`
+(`1.098x`), flex `8.132/9.625 ms` (`1.184x`), swap `13.984/19.260 ms`
+(`1.377x`), and batch `5.479/6.226 ms` (`1.136x`). Correctness and
+Go-behavior gates remain green, while the strict one-concurrency performance
+gate remains open. The source commit message includes the literal `go 代码`
+requirement; this remains WIP because this checkout has no `go` executable,
+so Ready-profile `make lint` is unavailable and the full TPC-H catalog was
+not repeated.

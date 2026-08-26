@@ -293,7 +293,14 @@ impl ResultSetStream {
             });
         }
 
-        let mut payload = Vec::with_capacity(self.columns.len() * 16);
+        // The Go connection allocator grows one reusable row buffer. Estimate
+        // the same final size from the owned datum payloads so a wide row does
+        // not repeatedly reallocate while its text cells are appended.
+        let capacity = row
+            .iter()
+            .map(datum_text_capacity)
+            .fold(0usize, usize::saturating_add);
+        let mut payload = Vec::with_capacity(capacity);
         for (column_index, (column, datum)) in self.columns.iter().zip(row).enumerate() {
             let text_column = TextColumn {
                 type_code: column.type_code,
@@ -302,10 +309,10 @@ impl ResultSetStream {
                 table_is_empty: column.table.is_empty(),
             };
             let prefix_start = payload.len();
-            // Reserve the largest length-encoded prefix. Scalar formatting can
-            // then append straight into the final packet; `finish_cell_prefix`
-            // compacts the value when its actual prefix is shorter.
-            payload.resize(prefix_start + 9, 0);
+            // Go's `dump.LengthEncodedString` writes the one-byte prefix for
+            // the common short-value case. Reserve that prefix here; only a
+            // value longer than 250 bytes needs the slower prefix expansion.
+            payload.push(0);
             let value_start = payload.len();
             let formatted =
                 append_datum_text_owned(&mut payload, text_column, datum).map_err(|error| {
@@ -469,11 +476,43 @@ fn encode_owned_cell(
     encoder.encode_data_owned(value).unwrap_or(fallback)
 }
 
+/// Conservative size estimate for one Go `DumpTextRow` cell, including its
+/// length-encoded prefix. It is intentionally an upper bound for fixed-width
+/// text and a payload-length estimate for byte-preserving values; an estimate
+/// can only affect allocation growth, never the encoded bytes.
+fn datum_text_capacity(datum: &Datum) -> usize {
+    let value_len = match datum {
+        Datum::Null => 0,
+        Datum::Int(_) | Datum::UInt(_) => 20,
+        Datum::Decimal(_) => 72,
+        Datum::Real(_) | Datum::Float32(_) => 32,
+        Datum::String(_)
+        | Datum::Bytes(_)
+        | Datum::BinaryLiteral(_)
+        | Datum::Bit(_)
+        | Datum::Enum(_, _)
+        | Datum::Set(_, _) => datum.go_bytes().len(),
+        Datum::Duration(_) | Datum::Time(_) => 32,
+        Datum::Json(_) | Datum::VectorFloat32(_) => 72,
+        Datum::MinNotNull | Datum::MaxValue | Datum::Raw(_) => 0,
+    };
+    value_len.saturating_add(length_encoded_int_size(value_len))
+}
+
 fn finish_cell_prefix(payload: &mut Vec<u8>, prefix_start: usize, value_start: usize) {
     let value_len = payload.len() - value_start;
     let prefix = length_encoded_prefix(value_len);
-    payload.copy_within(value_start.., prefix_start + prefix.len);
-    payload.truncate(payload.len() - (9 - prefix.len));
+    let reserved = value_start - prefix_start;
+    if prefix.len > reserved {
+        let extra = prefix.len - reserved;
+        let old_len = payload.len();
+        payload.reserve(extra);
+        payload.resize(old_len + extra, 0);
+        payload.copy_within(value_start..old_len, value_start + extra);
+    } else if prefix.len < reserved {
+        payload.copy_within(value_start.., prefix_start + prefix.len);
+        payload.truncate(payload.len() - (reserved - prefix.len));
+    }
     payload[prefix_start..prefix_start + prefix.len].copy_from_slice(&prefix.bytes[..prefix.len]);
 }
 
@@ -534,7 +573,7 @@ impl TextRowWriter<'_> {
             });
         }
         let prefix_start = self.payload.len();
-        self.payload.resize(prefix_start + 9, 0);
+        self.payload.push(0);
         let value_start = self.payload.len();
         value.append_result_string_bytes(&mut self.payload);
         finish_cell_prefix(&mut self.payload, prefix_start, value_start);
@@ -587,7 +626,7 @@ impl TextRowWriter<'_> {
         }
 
         let prefix_start = self.payload.len();
-        self.payload.resize(prefix_start + 9, 0);
+        self.payload.push(0);
         let value_start = self.payload.len();
         let rendered = crate::textrow::append_text_value(&mut self.payload, text_column, value)
             .map_err(|error| ResultSetStreamError::TextFormat {

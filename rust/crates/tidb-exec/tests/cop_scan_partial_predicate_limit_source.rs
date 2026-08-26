@@ -465,6 +465,7 @@ fn count_star_lowers_to_count_with_one_constant_child() {
         output_offsets: None,
         topn: None,
         limit: None,
+        paging_min_size: None,
         aggregate: Some(PushdownPartialAggregate::Global {
             functions: vec![PushdownGlobalAggregateFunction {
                 kind: PushdownAggregateKind::Count,
@@ -538,6 +539,7 @@ fn a_descending_scan_marks_both_the_dag_and_dist_sql_request() {
         output_offsets: None,
         topn: None,
         limit: Some(1),
+        paging_min_size: None,
         aggregate: None,
         keep_order: true,
         desc: true,

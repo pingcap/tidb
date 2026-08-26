@@ -1186,6 +1186,10 @@ pub struct IndexRangeSourceExec {
     /// A keep-order parent's output window, used only to seed the first
     /// lookup task. It neither caps the scan nor changes plan shape.
     initial_batch_size: usize,
+    /// Go's `PhysicalIndexLookUpReader.Paging`: an ordered lookup with a
+    /// bounded expected count starts at the parent's window; an unbounded
+    /// lookup sizes its first task from the index estimate.
+    index_paging: bool,
     /// Rows decoded for the current handle batch, retained across output
     /// chunks when a batch is larger than the requested chunk size.
     lookup_rows: Vec<Option<Vec<Datum>>>,
@@ -1236,15 +1240,11 @@ pub struct IndexRangeSourceExec {
     chunk_demand: u64,
 }
 
-/// Go's `indexWorker.batchSize` at its first batch.
+/// Go's `IndexLookUpExecutor.CalculateBatchSize`.
 ///
-/// Go derives it from the chunk's `RequiredRows` and the plan's estimated row
-/// count (`IndexLookUpExecutor.calculateBatchSize` -> `CalculateBatchSize`),
-/// which for an unbounded read starts at `tidb_max_chunk_size` and is doubled
-/// until it covers the estimate. This tier starts at the same 1,024 and does
-/// the same doubling BETWEEN batches, but does not consult the row estimate
-/// for the FIRST one: the estimate lives in the planner and the batch is only
-/// observable as a row-order boundary past 1,024 rows of one index read.
+/// Paging reads deliberately keep the parent's initial window. Other reads
+/// double that window until it covers the planner estimate, up to
+/// `tidb_index_lookup_size`.
 const INIT_HANDLE_BATCH: usize = 1024;
 
 /// Go's `@@tidb_index_lookup_size` default, the cap on the doubling above.
@@ -1299,6 +1299,30 @@ fn lookup_initial_batch_size(initial_batch_size: usize, required_rows: usize) ->
     initial_batch_size
         .min(required_rows)
         .min(MAX_HANDLE_BATCH)
+}
+
+fn calculate_lookup_batch_size(
+    estimated_rows: Option<f64>,
+    initial_batch_size: usize,
+    index_paging: bool,
+) -> usize {
+    let mut batch_size = initial_batch_size.clamp(1, MAX_HANDLE_BATCH);
+    if index_paging {
+        return batch_size;
+    }
+    let estimated_rows = estimated_rows
+        .filter(|rows| rows.is_finite() && *rows > 0.0)
+        .map_or(0, |rows| rows as usize);
+    if estimated_rows >= MAX_HANDLE_BATCH {
+        return MAX_HANDLE_BATCH;
+    }
+    while batch_size < estimated_rows {
+        batch_size = batch_size.saturating_mul(2);
+        if batch_size >= MAX_HANDLE_BATCH {
+            return MAX_HANDLE_BATCH;
+        }
+    }
+    batch_size
 }
 
 impl IndexRangeSourceExec {
@@ -1401,6 +1425,7 @@ impl IndexRangeSourceExec {
             lookup_pushdown: false,
             batch_size: INIT_HANDLE_BATCH,
             initial_batch_size: INIT_HANDLE_BATCH,
+            index_paging: false,
             lookup_rows: Vec::new(),
             lookup_row_at: 0,
             lookup_chunk: None,
@@ -2617,7 +2642,11 @@ impl Executor for IndexRangeSourceExec {
         self.scanned.set(0);
         self.batch.clear();
         self.batch_at = 0;
-        self.batch_size = self.initial_batch_size;
+        self.batch_size = calculate_lookup_batch_size(
+            self.estimated_rows,
+            self.initial_batch_size,
+            self.index_paging,
+        );
         self.lookup_rows.clear();
         self.lookup_row_at = 0;
         self.lookup_chunk = None;
@@ -2754,6 +2783,11 @@ impl Executor for IndexRangeSourceExec {
                         self.limit
                             .map(|count| self.lookup_offset.saturating_add(count))
                     },
+                    // Go's IndexLookUp worker passes its calculated first
+                    // handle batch as the index request's paging floor. The
+                    // remote scan keeps the session default for all other
+                    // scan shapes.
+                    (!self.covering).then_some(self.batch_size as u64),
                     order_free,
                     // A double-read index worker consumes only handles from
                     // the index side when no predicate or TopN is evaluated
@@ -2786,17 +2820,13 @@ impl Executor for IndexRangeSourceExec {
             && self.lookup_rows.is_empty()
             && self.batch.is_empty()
         {
-            // Go seeds `indexWorker.batchSize` from the first output chunk's
-            // RequiredRows. A LIMIT/TopN parent therefore starts a double read
-            // at its requested window instead of decoding a full 1,024-row
-            // chunk that the parent will immediately discard.
-            // Go's `IndexLookUpExecutor.startWorkers` seeds the index worker
-            // from the first output chunk's `RequiredRows`, then doubles the
-            // task window after each extraction. Keep that seed for every
-            // lookup shape, including a remote table-side residual: the
-            // residual changes how many rows later tasks may need, but it
-            // does not make Go fetch a full 1,024-row first task for LIMIT 100.
-            self.batch_size = lookup_initial_batch_size(self.batch_size, cap);
+            // With no planner estimate Go still seeds the first worker from
+            // the output chunk's RequiredRows. Estimated non-paging reads
+            // were already sized by CalculateBatchSize in `open`; paging
+            // reads were seeded by the accepted expected-count window.
+            if self.estimated_rows.is_none() && !self.index_paging {
+                self.batch_size = lookup_initial_batch_size(self.batch_size, cap);
+            }
         }
         req.reset();
         if let Some(remote) = self.partial_remote.as_mut() {
@@ -3214,6 +3244,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         self.initial_batch_size = usize::try_from(size)
             .unwrap_or(MAX_HANDLE_BATCH)
             .clamp(1, MAX_HANDLE_BATCH);
+        self.index_paging = true;
         true
     }
 
@@ -3888,6 +3919,7 @@ impl IndexJoinLookupExec {
             self.decode_context.zone(),
             &self.statement,
             false,
+            None,
             None,
             // Unordered: the join matches rows by value.
             true,
@@ -4982,6 +5014,15 @@ mod tests {
         assert_eq!(lookup_initial_batch_size(INIT_HANDLE_BATCH, 100), 100);
         assert_eq!(lookup_initial_batch_size(INIT_HANDLE_BATCH, 2048), INIT_HANDLE_BATCH);
         assert_eq!(lookup_initial_batch_size(MAX_HANDLE_BATCH * 2, 100), 100);
+    }
+
+    #[test]
+    fn lookup_initial_batch_matches_go_calculate_batch_size() {
+        assert_eq!(calculate_lookup_batch_size(Some(252.17), 100, false), 400);
+        assert_eq!(calculate_lookup_batch_size(Some(20_000.0), 100, false), 20_000);
+        assert_eq!(calculate_lookup_batch_size(Some(20_001.0), 100, false), 20_000);
+        assert_eq!(calculate_lookup_batch_size(Some(5_000.0), 100, true), 100);
+        assert_eq!(calculate_lookup_batch_size(None, 100, false), 100);
     }
 
     /// A full scan under a `LIMIT` stops at the cap: the rows past it are

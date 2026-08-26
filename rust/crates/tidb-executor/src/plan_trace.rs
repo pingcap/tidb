@@ -3692,13 +3692,25 @@ impl PlanTrace {
             self.stack.push(union);
             return;
         }
+        let selectivity = stats_selectivity.unwrap_or_else(|| pseudo_selectivity(predicate));
         let estimate = logical_rows.map_or_else(
-            || {
-                Est::ScaleFloorOne(
-                    stats_selectivity.unwrap_or_else(|| pseudo_selectivity(predicate)),
-                )
+            || Est::ScaleFloorOne(selectivity),
+            |logical_rows| {
+                // Go's deriveIndexPathStats keeps CountAfterIndex no lower
+                // than the DataSource row count, so the logical estimate can
+                // never exceed this residual's physical input. Re-estimate
+                // from that input when the independently loaded logical
+                // statistics violate the invariant; otherwise retain the
+                // more selective logical estimate.
+                let bounded = self
+                    .stack
+                    .last()
+                    .and_then(|child| child.est_rows)
+                    .map_or(logical_rows, |input_rows| {
+                        logical_rows.min((input_rows * selectivity).max(1.0))
+                    });
+                Est::Fixed(bounded)
             },
-            Est::Fixed,
         );
         // Predicate pushdown can hand the recorder one residual conjunct at a
         // time, while Go's logical Selection keeps all accepted conjuncts in
@@ -4708,11 +4720,15 @@ impl PlanTrace {
             return false;
         }
         index_scan.task = "cop[tikv]";
+        // Go keeps the physical IndexRangeScan cardinality from the access
+        // path here.  Only the reader's output is capped by the embedded
+        // Limit; using the whole DataSource's logical rows would inflate the
+        // IndexLookUp/Limit(Build) stats (and differs from Go's
+        // ScaleByExpectCnt boundary).
         let estimate = Est::CapAt(count as f64).apply(index_scan.est_rows);
-        let output_estimate = logical_rows.or(estimate);
+        let output_estimate = estimate;
         let act_rows = index_scan.act_rows.clone();
         let key_ndv_ratio = index_scan.key_ndv_ratio;
-        index_scan.est_rows = estimate;
         index_scan.label = "";
         let mut partial = PlanNode::new(
             "Limit",
@@ -4726,7 +4742,6 @@ impl PlanTrace {
         partial.key_ndv_ratio = key_ndv_ratio;
         if let Some(mut selection) = residual_selection {
             selection.task = "cop[tikv]";
-            selection.est_rows = output_estimate;
             selection.children.push(index_scan);
             partial.children.push(selection);
         } else {
@@ -4880,7 +4895,7 @@ impl PlanTrace {
         qualify: &Qualifier<'_>,
         offset: u64,
         count: u64,
-        logical_rows: Option<f64>,
+        _logical_rows: Option<f64>,
     ) -> bool {
         let Some(top) = self.stack.pop() else {
             return false;
@@ -4914,7 +4929,10 @@ impl PlanTrace {
             return false;
         }
         index_scan.label = "";
-        let output_estimate = logical_rows.or(lookup.est_rows);
+        // A pushed TopN emits at most `count` rows. Its child scan keeps its
+        // own access estimate, while the TopN and lookup boundary expose the
+        // capped output just as Go's physical TopN/IndexLookUp do.
+        let output_estimate = Est::CapAt(count as f64).apply(lookup.est_rows);
         let mut pushed = PlanNode::new(
             "TopN",
             output_estimate,
@@ -4928,7 +4946,6 @@ impl PlanTrace {
         pushed.label = "(Build)";
         if let Some(mut selection) = residual_selection {
             selection.task = "cop[tikv]";
-            selection.est_rows = output_estimate;
             selection.children.push(index_scan);
             pushed.children.push(selection);
         } else {
@@ -7282,6 +7299,43 @@ mod tests {
                 .and_then(|node| node.est_rows),
             Some(1.0)
         );
+    }
+
+    #[test]
+    fn embedded_lookup_limit_preserves_scan_estimate_and_caps_reader_output() {
+        let mut trace = PlanTrace::planning();
+        let mut lookup = PlanNode::new("IndexLookUp", Some(5177.55), String::new(), String::new());
+        lookup.children.push(PlanNode::new(
+            "IndexRangeScan",
+            Some(150.78),
+            String::new(),
+            String::new(),
+        ));
+        lookup.children.push(PlanNode::new(
+            "TableRowIDScan",
+            Some(5177.55),
+            String::new(),
+            String::new(),
+        ));
+        let mut selection = PlanNode::new(
+            "Selection",
+            Some(150.78),
+            String::new(),
+            "gt(balance, 0)".to_owned(),
+        );
+        selection.children.push(lookup);
+        trace.stack.push(selection);
+
+        assert!(trace.embedded_lookup_limit(0, 100, Some(5177.55)));
+        let lookup = trace.stack.last().expect("lookup remains on stack");
+        assert_eq!(lookup.est_rows, Some(100.0));
+        assert_eq!(lookup.children[0].est_rows, Some(100.0));
+        assert_eq!(lookup.children[0].children[0].est_rows, Some(150.78));
+        assert_eq!(
+            lookup.children[0].children[0].children[0].est_rows,
+            Some(150.78)
+        );
+        assert_eq!(lookup.children[1].est_rows, Some(100.0));
     }
 
     #[test]

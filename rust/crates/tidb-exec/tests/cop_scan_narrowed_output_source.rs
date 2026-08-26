@@ -304,6 +304,7 @@ fn request_over(
         output_offsets,
         topn: None,
         limit: None,
+        paging_min_size: None,
         aggregate: None,
         keep_order: false,
         desc: false,

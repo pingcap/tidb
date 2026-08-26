@@ -163,6 +163,29 @@ fn borrowed_chunk_row_matches_go_dump_text_row_framing() {
 }
 
 #[test]
+fn owned_text_row_expands_only_when_go_length_prefix_requires_it() {
+    let mut var_string = column();
+    var_string.type_code = TYPE_VAR_STRING;
+    let mut stream = ResultSetStream::new(vec![var_string], ResultSetOptions::default());
+    stream.metadata_packets().unwrap();
+
+    // Go's dump.LengthEncodedString uses one byte through 250 and switches to
+    // the 0xfc + uint16 form at 251. The Rust writer starts with the same
+    // one-byte reservation, expanding only for the second row.
+    let short = stream
+        .row_packet_datums_owned(vec![Datum::new_string(vec![b'x'; 250])])
+        .unwrap();
+    assert_eq!(short.len(), 251);
+    assert_eq!(short[0], 250);
+
+    let long = stream
+        .row_packet_datums_owned(vec![Datum::new_string(vec![b'x'; 251])])
+        .unwrap();
+    assert_eq!(long.len(), 254);
+    assert_eq!(&long[..3], &[0xfc, 251, 0]);
+}
+
+#[test]
 fn deprecate_eof_skips_metadata_eof_but_keeps_ok_shaped_terminal() {
     let mut stream = ResultSetStream::new(
         vec![column()],

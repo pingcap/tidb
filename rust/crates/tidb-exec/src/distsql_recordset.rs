@@ -59,8 +59,37 @@ impl TextResultBatch for DistSqlTextBatch {
         for row_index in 0..self.chunk.num_rows() {
             let row = self.chunk.get_row(row_index);
             validate_chunk_row(row, &self.field_types)?;
-            let row_capacity = (0..row.len())
-                .map(|column| row.get_raw_len(column).saturating_add(9))
+            // The Go text writer appends directly into its reusable packet
+            // buffer.  Reserve a conservative scalar bound once instead of
+            // re-entering the chunk column view for every cell just to size a
+            // temporary row packet.  This changes only allocation sizing,
+            // never the encoded bytes.
+            let row_capacity = self
+                .field_types
+                .iter()
+                .enumerate()
+                .map(|(column, field_type)| match field_type.code() {
+                    FieldTypeCode::Varchar
+                    | FieldTypeCode::VarString
+                    | FieldTypeCode::String
+                    | FieldTypeCode::Blob
+                    | FieldTypeCode::TinyBlob
+                    | FieldTypeCode::MediumBlob
+                    | FieldTypeCode::LongBlob
+                    | FieldTypeCode::Bit
+                    | FieldTypeCode::Json
+                    | FieldTypeCode::Enum
+                    | FieldTypeCode::Set
+                    | FieldTypeCode::VectorFloat32 => {
+                        row.get_raw_len(column).saturating_add(9)
+                    }
+                    FieldTypeCode::NewDecimal => 72,
+                    FieldTypeCode::Date
+                    | FieldTypeCode::Datetime
+                    | FieldTypeCode::Timestamp
+                    | FieldTypeCode::Duration => 32,
+                    _ => 24,
+                })
                 .sum();
             let mut writer = stream
                 .text_row_with_capacity(row_capacity)

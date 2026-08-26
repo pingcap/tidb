@@ -742,6 +742,7 @@ where
             desc: request.desc,
             field_types: field_types.clone(),
             is_index_scan: request.index.is_some(),
+            paging_min_size: request.paging_min_size,
             time_zone: request.statement.time_zone.clone(),
             warnings: request.statement.warnings.clone(),
         };
@@ -910,6 +911,8 @@ struct RemoteScanPlan {
     /// IndexLookUp's Go decoder receives the normal MaxChunkSize (1024)
     /// boundary; full table scans retain the larger streaming batches above.
     is_index_scan: bool,
+    /// Optional Go IndexLookUp first-window paging floor for index scans.
+    paging_min_size: Option<u64>,
     time_zone: tidb_datatype::SessionTimeZone,
     /// The statement's warning sink, carried onto the scan thread. It is an
     /// `Arc` handler, so a warning appended here lands in the buffer
@@ -963,7 +966,15 @@ where
         std::env::var_os("TIKV_QUERY_TRACE").is_some().then(|| {
             (plan.key_ranges.len(), plan.key_range_hints.len())
         });
-    let mut builder = RequestBuilder::from_context(&DistSqlContext::new());
+    let mut context = DistSqlContext::new();
+    if let Some(min_size) = plan.paging_min_size {
+        // Go's buildIndexSelectResultForRange raises both paging bounds to
+        // the worker's first handle batch. Keep the normal session defaults
+        // for every request without this IndexLookUp hint.
+        context.request.paging.min_size = context.request.paging.min_size.max(min_size);
+        context.request.paging.max_size = context.request.paging.max_size.max(min_size);
+    }
+    let mut builder = RequestBuilder::from_context(&context);
     // Go's `RequestBuilder.SetTableHandles` preserves one row-count hint per
     // grouped range. Keep the ordinary no-hint path for full/table scans and
     // refuse misaligned metadata rather than attaching a hint to the wrong
