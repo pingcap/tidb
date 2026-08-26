@@ -4001,8 +4001,11 @@ impl IndexJoinLookupExec {
     }
 
     /// One window's rows through a record-range coprocessor scan, or `None`
-    /// where that shape is refused (dirty staging, partitions, non-integer
-    /// handles); the caller then reads the batch-get way, as before.
+    /// where that shape is refused OR the request cannot be served right now
+    /// (dirty staging, partitions, non-integer handles, a region that lost
+    /// its leader mid-drain); the caller then reads the batch-get way, as
+    /// before, so a transient routing failure costs a slower correct answer
+    /// instead of failing the statement.
     fn window_rows_by_ranges(
         &mut self,
         handles: &[TableHandle],
@@ -4012,30 +4015,20 @@ impl IndexJoinLookupExec {
             .clone()
             .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>());
         let predicates = scan_predicates_for_filters(&self.filters, &keep);
-        let Some(staged) = self
-            .table
-            .stage_rows_by_handles_filtered(
-                handles,
-                &keep,
-                &predicates,
-                self.decode_context.zone(),
-                &self.statement,
-            )
-            .map_err(|error| {
-                ExecError::unsupported(format!("index-join row scan failed: {error:?}"))
-            })?
-        else {
+        let Ok(Some(staged)) = self.table.stage_rows_by_handles_filtered(
+            handles,
+            &keep,
+            &predicates,
+            self.decode_context.zone(),
+            &self.statement,
+        ) else {
             return Ok(None);
         };
         // The drain restores the caller's handle order; the join matches by
         // value, so emitting the found rows in that order is fine, and a
         // handle naming no stored row simply contributes nothing -- the same
         // answer the batch-get gave as a `None` slot.
-        let Some((pairs, _, _)) = KvTable::finish_rows_by_handles(handles, staged)
-            .map_err(|error| {
-                ExecError::unsupported(format!("index-join row scan drained: {error:?}"))
-            })?
-        else {
+        let Ok(Some((pairs, _, _))) = KvTable::finish_rows_by_handles(handles, staged) else {
             return Ok(None);
         };
         Ok(Some(pairs.into_iter().map(|(_, row)| Some(row)).collect()))
@@ -4044,11 +4037,22 @@ impl IndexJoinLookupExec {
     fn next_batched_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
         if !matches!(self.object, LookupObject::CommonHandle) {
             if let Some(remote) = self.remote_handles.as_mut() {
-                return remote.next_handle().map_err(|error| {
-                    ExecError::unsupported(format!(
-                        "remote index handle failed to decode: {error:?}"
-                    ))
-                });
+                match remote.next_handle() {
+                    Ok(handle) => return Ok(handle),
+                    Err(_) => {
+                        // The stream died under us -- a region lost its
+                        // leader mid-drain, or an entry failed to decode.
+                        // This batch has emitted nothing yet and its probes
+                        // were fully consumed when the stream opened, so
+                        // restarting them over the local cursor re-reads
+                        // exactly the same key set: a slower answer instead
+                        // of a failed statement.
+                        self.remote_handles = None;
+                        self.cursor = None;
+                        self.record_cursor = None;
+                        self.next_probe = 0;
+                    }
+                }
             }
             return self.next_handle();
         }
