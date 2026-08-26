@@ -114,6 +114,23 @@ impl AvailablePaths {
         }
     }
 
+    /// Restricts enumeration to ONE index -- the prepared plan cache's
+    /// replayed winner. Go's plan-cache hit
+    /// (`RebuildPlan4CachedPlan`, pkg/planner/core/plan_cache_rebuild.go:30)
+    /// replays the recorded physical plan without re-running access-path
+    /// selection or costing; restricting the hints to the pinned index gives
+    /// this tier's enumerator the same shape.
+    pub(crate) fn pinned_to_single_index(index_id: i64) -> Self {
+        Self {
+            forced_indexes: Some(vec![index_id]),
+            table: false,
+            ignored: Vec::new(),
+            forced_common_primary: false,
+            ignored_common_primary: false,
+            pushdown_lookup_indexes: Vec::new(),
+        }
+    }
+
     /// Restricts one partial IndexMerge path to the indexes named by its hint.
     pub(crate) fn index_merge_only(indexes: Vec<i64>) -> Self {
         Self {

@@ -3623,6 +3623,37 @@ pub(crate) fn choose_index_range_path(
     source_rows: Option<f64>,
     required_order: Option<&[usize]>,
 ) -> Option<ChosenPath> {
+    // Prepared plan-cache REPLAY (Go `RebuildPlan4CachedPlan`,
+    // pkg/planner/core/plan_cache_rebuild.go:30): when this statement's first
+    // execution pinned the leaf's access path, restrict enumeration to
+    // exactly that index -- every other candidate's range build and
+    // histogram/cmsketch estimation would be discarded by the pin filter
+    // anyway. Ranges themselves are still rebuilt from the CURRENT
+    // parameters, which is all the rebuild needs. The table-scan pin keeps
+    // the ordinary flow: its candidate is the cheapest to build.
+    let visible_name = scope.tables.first().map(|t| t.name.clone());
+    let pinned_hints;
+    let hints = match (
+        visible_name.as_deref(),
+        visible_name
+            .as_deref()
+            .and_then(|name| ctx.prepared_path_pin_for(name)),
+    ) {
+        (Some(name), Some(crate::stmt_context::PinnedLeafAccess::IndexId(index_id))) => {
+            if std::env::var_os("TIKV_PIN_TRACE").is_some() {
+                eprintln!("[PINTRACE] single-table {name} replay index={index_id}");
+            }
+            pinned_hints =
+                crate::index_hints::AvailablePaths::pinned_to_single_index(index_id);
+            &pinned_hints
+        }
+        _ => {
+            if std::env::var_os("TIKV_PIN_TRACE").is_some() {
+                eprintln!("[PINTRACE] single-table no-replay");
+            }
+            hints
+        }
+    };
     let (best, needed) = best_single_table_access_path(
         select,
         catalog,
@@ -3635,6 +3666,24 @@ pub(crate) fn choose_index_range_path(
         source_rows,
         required_order,
     )?;
+    // Record the winner for this statement's next EXECUTE -- the capture
+    // half of the same contract, mirroring the join-leaf capture in
+    // `leaf_access`.
+    if let Some(name) = visible_name.as_deref() {
+        if let Some(sink) = ctx.prepared_pin_capture() {
+            if let Ok(mut slot) = sink.lock() {
+                let map = slot.get_or_insert_with(std::collections::HashMap::new);
+                map.entry(name.to_owned()).or_insert_with(|| {
+                    match &best.index {
+                        Some((index_id, _)) => {
+                            crate::stmt_context::PinnedLeafAccess::IndexId(*index_id)
+                        }
+                        None => crate::stmt_context::PinnedLeafAccess::TableScan,
+                    }
+                });
+            }
+        }
+    }
     let estimate = best.estimate;
     let planner_candidate = best.planner_candidate;
     let source_rows = best.source_rows;
