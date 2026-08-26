@@ -62,9 +62,7 @@ const (
 	DefMaxLimit int64 = 5e15
 
 	defTaskTickDur                            = time.Millisecond * 10
-	defMinHeapFreeBPS                  int64  = 100 * byteSizeMB
 	defHeapReclaimCheckDuration               = time.Second * 1
-	defHeapReclaimCheckMaxDuration            = time.Second * 5
 	defOOMRiskRatio                           = 0.95
 	defMemRiskRatio                           = 0.9
 	defTickDurMilli                           = kilo * 1            // 1s
@@ -1047,12 +1045,7 @@ type heapController struct {
 			t         time.Time
 			unixMilli atomic.Int64
 		}
-		lastMemStats struct {
-			startTime     time.Time
-			heapTotalFree int64
-		}
-		minHeapFreeBPS int64
-		oomRisk        bool
+		oomRisk bool
 	}
 	timedMemProfile [2]memProfile
 	lastGC          struct {
@@ -1139,14 +1132,6 @@ func (m *MemArbitrator) gc() {
 func (m *MemArbitrator) reclaimHeap() {
 	m.gc()
 	m.refreshRuntimeMemStats() // refresh runtime mem stats after GC and record
-}
-
-func (m *MemArbitrator) setMinHeapFreeBPS(sz int64) {
-	m.heapController.memRisk.minHeapFreeBPS = sz
-}
-
-func (m *MemArbitrator) minHeapFreeBPS() int64 {
-	return m.heapController.memRisk.minHeapFreeBPS
 }
 
 // ResetRootPoolByID resets the root pool by ID and analyze the memory consumption info
@@ -1678,7 +1663,6 @@ func NewMemArbitrator(limit int64, shardNum uint64, maxQuotaShardNum int, minQuo
 	m.resetDigestProfileCache(shardNum)
 	m.doSetLimit(limit)
 	m.resetStatistics()
-	m.setMinHeapFreeBPS(defMinHeapFreeBPS)
 	m.cleanupMu.fifoTasks.init()
 	m.underKill.init()
 	m.underCancel.init()
@@ -2779,6 +2763,10 @@ func (m *MemArbitrator) isMemSafe() bool {
 	return m.heapController.memInuse.Load() < m.oomRisk()
 }
 
+func (m *MemArbitrator) hardOOMRisk() bool {
+	return m.heapController.memInuse.Load() > m.limit()
+}
+
 func (m *MemArbitrator) isMemNoRisk() bool {
 	return m.isMemSafe() && m.heapController.heapAlloc.Load() < m.memRisk()
 }
@@ -2830,6 +2818,12 @@ func (m *MemArbitrator) handleMemIssues() (isSafe bool) {
 	} else if !m.isMemSafe() {
 		m.doReclaimNonBlockingTasks()
 		m.intoMemRisk()
+		// A hard-limit breach is not subject to the soft-risk grace period. The
+		// GC in intoMemRisk has already refreshed the runtime memory statistics,
+		// so start reclaiming SQL in the same arbitration round if it did not help.
+		if m.hardOOMRisk() {
+			m.handleMemRisk(true)
+		}
 		return false
 	}
 	return true
@@ -2846,116 +2840,93 @@ func (*MemArbitrator) innerTime() time.Time {
 
 func (m *MemArbitrator) handleMemRisk(gcExecuted bool) {
 	now := m.innerTime()
-	oomRisk := m.heapController.memInuse.Load() > m.limit()
-	dur := now.Sub(m.heapController.memRisk.lastMemStats.startTime)
-	if !oomRisk && dur < defHeapReclaimCheckDuration {
+	hardOOMRisk := m.hardOOMRisk()
+	// intoMemRisk already forces a GC and refreshes runtime memory statistics.
+	// Give it one check interval to resolve soft memory pressure before killing SQL.
+	if !hardOOMRisk && now.Sub(m.heapController.memRisk.startTime.t) < defHeapReclaimCheckDuration {
 		return
 	}
-	heapUseBPS := int64(0)
 
-	if dur > 0 {
-		heapFrees := m.heapController.heapTotalFree.Load() - m.heapController.memRisk.lastMemStats.heapTotalFree
-		heapUseBPS = int64(float64(heapFrees) / dur.Seconds())
+	memToReclaim := m.heapController.memInuse.Load() - m.memRisk()
+	newKillNum, reclaiming := m.killTopnEntry(memToReclaim)
+	underKillNum := 0
+	for _, entry := range m.underKill.entries {
+		if !entry.arbitratorMu.underKill.fail {
+			underKillNum++
+		}
 	}
-	if oomRisk || memHangRisk(heapUseBPS, m.minHeapFreeBPS(), now, m.heapController.memRisk.startTime.t) {
-		m.intoOOMRisk()
 
-		memToReclaim := m.heapController.memInuse.Load() - m.memRisk()
+	// In soft-risk, do not make AtOOMRisk visible unless a running root pool is
+	// actually being killed. There is nothing a new session can reclaim when no
+	// running root pool is available, so it should wait on AtMemRisk instead.
+	if hardOOMRisk || newKillNum != 0 || underKillNum != 0 {
+		if m.intoOOMRisk() {
+			profile := m.recordDebugProfile()
+			profile.append(zap.Int64("quota-to-reclaim", max(0, memToReclaim)))
+			m.actions.Warn("`OOM RISK`: try to `KILL` running root pool", profile.fields[:profile.n]...)
+		}
+	}
+
+	if newKillNum != 0 {
+		m.heapController.memRisk.startTime.t = m.innerTime() // restart oom check
+		m.heapController.memRisk.startTime.unixMilli.Store(m.heapController.memRisk.startTime.t.UnixMilli())
 
 		{ // warning
 			profile := m.recordDebugProfile()
 			profile.append(
-				zap.Float64("heap-use-speed(MiB/s)", float64(heapUseBPS*100/byteSizeMB)/100),
-				zap.Float64("required-speed(MiB/s)", float64(m.minHeapFreeBPS())/float64(byteSizeMB)),
-				zap.Int64("quota-to-reclaim", max(0, memToReclaim)),
+				zap.Int64("pool-under-kill-num", m.underKill.num),
+				zap.Int("new-kill-num", newKillNum),
+				zap.Int64("quota-under-reclaim", reclaiming),
+				zap.Int64("rest-quota-to-reclaim", max(0, memToReclaim-reclaiming)),
 			)
-			m.actions.Warn("`OOM RISK`: try to `KILL` running root pool", profile.fields[:profile.n]...)
+			m.actions.Warn("Restart runtime memory check", profile.fields[:profile.n]...)
 		}
-
-		if newKillNum, reclaiming := m.killTopnEntry(memToReclaim); newKillNum != 0 {
-			m.heapController.memRisk.startTime.t = m.innerTime() // restart oom check
-			m.heapController.memRisk.startTime.unixMilli.Store(m.heapController.memRisk.startTime.t.UnixMilli())
-
-			{ // warning
+	} else if hardOOMRisk || m.AtOOMRisk() {
+		if underKillNum == 0 {
+			forceKill := 0
+			for { // make all tasks success
+				entry := m.frontTaskEntry()
+				if entry == nil {
+					break
+				}
+				// force kill
+				if ctx := entry.ctx.Load(); ctx.available() {
+					ctx.stop(ArbitratorOOMRiskKill)
+					m.execMetrics.Risk.OOMKill[entry.ctx.memPriority]++
+					forceKill++
+					if m.removeTask(entry) {
+						entry.windUp(0, ArbitrateFail)
+					}
+				}
+			}
+			if forceKill != 0 {
 				profile := m.recordDebugProfile()
 				profile.append(
+					zap.Int("kill-awaiting-num", forceKill),
 					zap.Int64("pool-under-kill-num", m.underKill.num),
-					zap.Int("new-kill-num", newKillNum),
 					zap.Int64("quota-under-reclaim", reclaiming),
 					zap.Int64("rest-quota-to-reclaim", max(0, memToReclaim-reclaiming)),
 				)
-				m.actions.Warn("Restart runtime memory check", profile.fields[:profile.n]...)
-			}
-		} else {
-			underKillNum := 0
-			for _, entry := range m.underKill.entries {
-				if !entry.arbitratorMu.underKill.fail {
-					underKillNum++
-				}
-			}
-			if underKillNum == 0 {
-				forceKill := 0
-				for { // make all tasks success
-					entry := m.frontTaskEntry()
-					if entry == nil {
-						break
-					}
-					// force kill
-					if ctx := entry.ctx.Load(); ctx.available() {
-						ctx.stop(ArbitratorOOMRiskKill)
-						m.execMetrics.Risk.OOMKill[entry.ctx.memPriority]++
-						forceKill++
-						if m.removeTask(entry) {
-							entry.windUp(0, ArbitrateFail)
-						}
-					}
-				}
-				if forceKill != 0 {
-					profile := m.recordDebugProfile()
-					profile.append(
-						zap.Int("kill-awaiting-num", forceKill),
-						zap.Int64("pool-under-kill-num", m.underKill.num),
-						zap.Int64("quota-under-reclaim", reclaiming),
-						zap.Int64("rest-quota-to-reclaim", max(0, memToReclaim-reclaiming)),
-					)
-					m.actions.Warn("No more running root pool can be killed to resolve `OOM RISK`; KILL all awaiting tasks;",
-						profile.fields[:profile.n]...,
-					)
-				} else {
-					profile := m.recordDebugProfile()
-					profile.append(
-						zap.Int64("pool-under-kill-num", m.underKill.num),
-						zap.Int64("quota-under-reclaim", reclaiming),
-						zap.Int64("rest-quota-to-reclaim", max(0, memToReclaim-reclaiming)),
-					)
-					m.actions.Warn("No more running root pool or awaiting task can be terminated to resolve `OOM RISK`",
-						profile.fields[:profile.n]...,
-					)
-				}
+				m.actions.Warn("No more running root pool can be killed to resolve `OOM RISK`; KILL all awaiting tasks;",
+					profile.fields[:profile.n]...,
+				)
+			} else {
+				profile := m.recordDebugProfile()
+				profile.append(
+					zap.Int64("pool-under-kill-num", m.underKill.num),
+					zap.Int64("quota-under-reclaim", reclaiming),
+					zap.Int64("rest-quota-to-reclaim", max(0, memToReclaim-reclaiming)),
+				)
+				m.actions.Warn("No more running root pool or awaiting task can be terminated to resolve `OOM RISK`",
+					profile.fields[:profile.n]...,
+				)
 			}
 		}
-	} else {
-		{ // warning
-			profile := m.recordDebugProfile()
-			profile.append(zap.Float64("heap-use-speed(MiB/s)",
-				float64(heapUseBPS*100/byteSizeMB)/100),
-				zap.Float64("required-speed(MiB/s)", float64(m.minHeapFreeBPS())/float64(byteSizeMB)))
-			m.actions.Warn("Runtime memory free speed meets require, start re-check", profile.fields[:profile.n]...)
-		}
-	}
-
-	if dur >= defHeapReclaimCheckDuration {
-		m.heapController.memRisk.lastMemStats.heapTotalFree = m.heapController.heapTotalFree.Load()
-		m.heapController.memRisk.lastMemStats.startTime = m.innerTime()
 	}
 
 	if !gcExecuted {
 		m.gc()
 	}
-}
-
-func memHangRisk(freeSpeedBPS, minHeapFreeSpeedBPS int64, now, startTime time.Time) bool {
-	return freeSpeedBPS < minHeapFreeSpeedBPS || now.Sub(startTime) > defHeapReclaimCheckMaxDuration
 }
 
 func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed int64) {
@@ -3313,9 +3284,13 @@ func (m *MemArbitrator) atMemRisk() bool {
 	return m.heapController.memRisk.startTime.unixMilli.Load() != 0
 }
 
-func (m *MemArbitrator) intoOOMRisk() {
+func (m *MemArbitrator) intoOOMRisk() bool {
+	if m.heapController.memRisk.oomRisk {
+		return false
+	}
 	m.heapController.memRisk.oomRisk = true
 	m.execMetrics.Risk.OOM++
+	return true
 }
 
 //go:norace
@@ -3332,8 +3307,6 @@ func (m *MemArbitrator) intoMemRisk() {
 	now := m.innerTime()
 	m.heapController.memRisk.startTime.t = now
 	m.heapController.memRisk.startTime.unixMilli.Store(now.UnixMilli())
-	m.heapController.memRisk.lastMemStats.heapTotalFree = m.heapController.heapTotalFree.Load()
-	m.heapController.memRisk.lastMemStats.startTime = now
 	m.execMetrics.Risk.Mem++
 
 	{

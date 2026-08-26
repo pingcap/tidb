@@ -1026,7 +1026,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			TotalFree:  0,
 			MemOffHeap: 0,
 		}
-		m.HandleRuntimeStats(mockRuntimeMemStats)
+		m.setRuntimeMemStats(mockRuntimeMemStats)
 		m.runOneRound()
 
 		{
