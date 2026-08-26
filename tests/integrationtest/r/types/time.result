@@ -355,3 +355,70 @@ t	t3
 00:00:00	00:00:00.000
 00:00:00	00:00:00.000
 DROP TABLE t_empty_time;
+SELECT CAST('' AS TIME);
+CAST('' AS TIME)
+NULL
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
+SELECT TIME('');
+TIME('')
+NULL
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
+SELECT ADDTIME('01:00:00', '');
+ADDTIME('01:00:00', '')
+NULL
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
+SELECT SUBTIME('01:00:00', '');
+SUBTIME('01:00:00', '')
+NULL
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
+SELECT TIMEDIFF('', '01:00:00');
+TIMEDIFF('', '01:00:00')
+NULL
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
+SELECT TIMEDIFF('01:00:00', '');
+TIMEDIFF('01:00:00', '')
+NULL
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
+DROP TABLE IF EXISTS t_empty_time_vec;
+CREATE TABLE t_empty_time_vec(a VARCHAR(20), b VARCHAR(20));
+INSERT INTO t_empty_time_vec VALUES ('01:00:00', ''), ('', '01:00:00');
+SELECT CAST(a AS TIME), CAST(b AS TIME) FROM t_empty_time_vec ORDER BY a;
+CAST(a AS TIME)	CAST(b AS TIME)
+NULL	01:00:00
+01:00:00	NULL
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
+Warning	1292	Truncated incorrect time value: ''
+SELECT TIME(a), TIME(b) FROM t_empty_time_vec ORDER BY a;
+TIME(a)	TIME(b)
+NULL	01:00:00.000000
+01:00:00.000000	NULL
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
+Warning	1292	Truncated incorrect time value: ''
+SELECT ADDTIME(a, b) FROM t_empty_time_vec ORDER BY a;
+ADDTIME(a, b)
+01:00:00
+NULL
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
+SELECT SUBTIME(a, b) FROM t_empty_time_vec ORDER BY a;
+SUBTIME(a, b)
+-01:00:00
+NULL
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
+SELECT TIMEDIFF(a, b) FROM t_empty_time_vec ORDER BY a;
+TIMEDIFF(a, b)
+NULL
+NULL
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
+Warning	1292	Truncated incorrect time value: ''
+DROP TABLE t_empty_time_vec;

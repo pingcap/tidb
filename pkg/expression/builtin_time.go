@@ -2449,6 +2449,13 @@ func (b *builtinTimeSig) evalDuration(ctx EvalContext, row chunk.Row) (res types
 	if isNull || err != nil {
 		return res, isNull, err
 	}
+	if len(expr) == 0 {
+		// Unlike storing '' into a TIME column, TIME() never treats an empty
+		// string as a zero duration: MySQL always warns and returns NULL.
+		tc := typeCtx(ctx)
+		err = tc.HandleTruncate(types.ErrTruncatedWrongVal.FastGenByArgs("time", expr))
+		return res, true, err
+	}
 
 	fsp := 0
 	if idx := strings.Index(expr, "."); idx != -1 {
