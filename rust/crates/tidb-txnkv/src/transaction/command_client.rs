@@ -63,6 +63,85 @@ pub fn detached_flush_failures() -> u64 {
     DETACHED_FLUSH_FAILURES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// One queued detached flush: the requests to publish and the shared
+/// transport-owner authority they must serialize against.
+struct DetachedFlushJob {
+    requests: Vec<OwnedTransactionCommitRequest>,
+    client_authority: std::sync::Arc<std::sync::Mutex<TonicCoprocessorClient>>,
+}
+
+static DETACHED_FLUSH_QUEUE: std::sync::OnceLock<
+    std::sync::mpsc::Sender<DetachedFlushJob>,
+> = std::sync::OnceLock::new();
+
+fn detached_flush_sender() -> &'static std::sync::mpsc::Sender<DetachedFlushJob> {
+    DETACHED_FLUSH_QUEUE.get_or_init(|| {
+        let (sender, receiver) =
+            std::sync::mpsc::channel::<DetachedFlushJob>();
+        // Go hands the secondary-mutation flush to the transaction's own
+        // goroutine (client-go `2pc.go :: twoPhaseCommitter.execute` ->
+        // `commitMutations`), so no store resource is created or torn down
+        // per COMMIT. The rust equivalent of that cheap continuation is ONE
+        // persistent worker draining a queue -- not an OS thread spawned and
+        // joined per commit, whose arena bind/flush and scheduler entry
+        // showed up as `txn-secondary-flush` samples on every commit under
+        // load. Jobs run in submission order; today's per-commit threads
+        // raced arbitrarily, so FIFO is not a semantic change.
+        std::thread::Builder::new()
+            .name("txn-secondary-flush".to_owned())
+            .spawn(move || {
+                while let Ok(job) = receiver.recv() {
+                    run_detached_flush(job.requests, job.client_authority);
+                }
+            })
+            .expect("spawn the persistent detached-secondary flusher");
+        sender
+    })
+}
+
+fn run_detached_flush(
+    requests: Vec<OwnedTransactionCommitRequest>,
+    client_authority: std::sync::Arc<std::sync::Mutex<TonicCoprocessorClient>>,
+) {
+    // Holding the shared authority (not a clone) keeps the
+    // transport owner alive even when the transaction and its
+    // runtime are already dropped; the lock serializes this flush
+    // against any concurrent user of the same authority.
+    let mut client = match client_authority.lock() {
+        Ok(client) => client,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let call = UnaryCallContext::with_timeout(DETACHED_SECONDARY_COMMIT_BUDGET);
+    let refs: Vec<TransactionCommitRequest> = requests
+        .iter()
+        .map(|request| TransactionCommitRequest {
+            address: &request.address,
+            request: request.request.clone(),
+            context: request.context.clone(),
+        })
+        .collect();
+    for published in client.publish_commits(&refs, &call) {
+        match published {
+            PublishedCommand::Response(response) => {
+                if response.response.region_error.is_some()
+                    || response.response.error.is_some()
+                {
+                    // The transaction is committed either way —
+                    // Go logs and moves on; an unmaterialized
+                    // secondary write record resolves through
+                    // the primary lock on read.
+                    DETACHED_FLUSH_FAILURES
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+            _ => {
+                DETACHED_FLUSH_FAILURES
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    }
+}
+
 /// Outcome of one transaction command relative to the publication boundary.
 ///
 /// Publication is irrevocable: once a command is bound to a BatchCommands
@@ -603,49 +682,15 @@ impl TransactionCommandClient for TonicCoprocessorClient {
         if requests.is_empty() {
             return true;
         }
-        let spawned = std::thread::Builder::new()
-            .name("txn-secondary-flush".to_owned())
-            .spawn(move || {
-                // Holding the shared authority (not a clone) keeps the
-                // transport owner alive even when the transaction and its
-                // runtime are already dropped; the lock serializes this flush
-                // against any concurrent user of the same authority.
-                let mut client = match client_authority.lock() {
-                    Ok(client) => client,
-                    Err(poisoned) => poisoned.into_inner(),
-                };
-                let call =
-                    UnaryCallContext::with_timeout(DETACHED_SECONDARY_COMMIT_BUDGET);
-                let refs: Vec<TransactionCommitRequest> = requests
-                    .iter()
-                    .map(|request| TransactionCommitRequest {
-                        address: &request.address,
-                        request: request.request.clone(),
-                        context: request.context.clone(),
-                    })
-                    .collect();
-                for published in client.publish_commits(&refs, &call) {
-                    match published {
-                        PublishedCommand::Response(response) => {
-                            if response.response.region_error.is_some()
-                                || response.response.error.is_some()
-                            {
-                                // The transaction is committed either way —
-                                // Go logs and moves on; an unmaterialized
-                                // secondary write record resolves through
-                                // the primary lock on read.
-                                DETACHED_FLUSH_FAILURES
-                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            }
-                        }
-                        _ => {
-                            DETACHED_FLUSH_FAILURES
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
-                    }
-                }
-            });
-        spawned.is_ok()
+        // Enqueue onto the persistent flusher instead of spawning an OS
+        // thread per COMMIT. A send failure means the worker is gone (it is
+        // never taken down once started); report the job as not accepted,
+        // exactly as a spawn failure did.
+        detached_flush_sender().send(DetachedFlushJob {
+            requests,
+            client_authority,
+        })
+        .is_ok()
     }
 
     fn publish_pessimistic_locks(
@@ -783,5 +828,72 @@ where
             publication,
             error: error.to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod detached_flusher_tests {
+    use super::*;
+
+    fn flush_threads() -> usize {
+        std::fs::read_dir("/proc/self/task")
+            .map(|entries| {
+                entries
+                    .filter_map(std::result::Result::ok)
+                    .filter(|entry| {
+                        // /proc comm truncates to 15 chars.
+                        std::fs::read_to_string(format!("{}/comm", entry.path().display()))
+                            .map(|comm| comm.trim().starts_with("txn-secondary"))
+                            .unwrap_or(false)
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    fn one_request() -> OwnedTransactionCommitRequest {
+        OwnedTransactionCommitRequest {
+            address: "127.0.0.1:9".to_owned(),
+            request: KvrpcCommitRequest::default(),
+            context: KvrpcContext::default(),
+        }
+    }
+
+    /// Go hands the secondary flush to the transaction's goroutine, so the
+    /// rust port must not create a store resource per COMMIT either: N
+    /// detached publishes enqueue onto exactly ONE persistent worker.
+    #[test]
+    fn repeated_detached_flushes_reuse_one_worker_thread() {
+        let before = flush_threads();
+        let client = TonicCoprocessorClient::new().expect("client constructs without a socket");
+        let authority = std::sync::Arc::new(std::sync::Mutex::new(client));
+        let mut client = authority.lock().expect("fresh authority is unlocked");
+        let first = client.publish_commits_detached(
+            vec![one_request()],
+            std::sync::Arc::clone(&authority),
+        );
+        let second = client.publish_commits_detached(
+            vec![one_request()],
+            std::sync::Arc::clone(&authority),
+        );
+        drop(client);
+        assert!(first, "first detached publish must be accepted");
+        assert!(second, "second detached publish must be accepted");
+        // Both jobs reach the worker (each fails against the dead address and
+        // lands in the failure counter) -- the queue really drained.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while DETACHED_FLUSH_FAILURES.load(std::sync::atomic::Ordering::Relaxed) < 2 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "both queued flushes should have been attempted"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let after = flush_threads();
+        assert_eq!(
+            after,
+            before + 1,
+            "exactly one persistent flusher thread, not one per commit"
+        );
     }
 }
