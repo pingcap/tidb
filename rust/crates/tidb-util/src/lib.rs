@@ -118,4 +118,6 @@ pub mod watcher;
 pub mod zeropool;
 
 #[cfg(test)]
+mod tests_disjointset;
+#[cfg(test)]
 mod tests_naming;
