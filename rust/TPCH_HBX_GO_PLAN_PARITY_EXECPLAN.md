@@ -146,6 +146,20 @@ The source of truth for a behavioral fix is the complete owning Go package and i
   flex `8.572/10.208 ms`, swap `13.663/21.999 ms`, and batch
   `6.080/7.284 ms` (Rust/Go ratios `1.100x/1.246x/1.191x/1.610x/1.198x`),
   so the explicit one-concurrency performance gate remains open.
+- [x] (2026-08-26) Continued the Go-reference pass in commit `792b586638`:
+  the remote covering-index path now projects index rows directly in the
+  pruned table-column order, matching Go's `PhysicalIndexReader` instead of
+  constructing a handle lookup. The stream remains explicitly selected after
+  it is exhausted, so it cannot fall through to the local cursor and duplicate
+  rows. Source of truth: `Go code: pkg/executor/builder.go:5272-5290;`
+  `pkg/executor/distsql.go:2145-2218`. The covering-cursor regression and the
+  24-test `access_path` suite pass; a live balance-only covering probe returns
+  100 rows with identical first/last values and digest on Go and Rust. The
+  four required HBX plans/results and 100-row batch sums remain equal in
+  `/private/tmp/hbx-1g-20260825/compare-covering-20260826.json` and
+  `/private/tmp/hbx-1g-20260825/bench-covering-20260826.json`. The latest
+  20-pair Rust/Go median ratios are q1 `1.097x`, q2 `1.217x`, flex `1.209x`,
+  swap `1.496x`, and batch `1.218x`; performance acceptance remains open.
 - [x] (2026-08-18) Aligned q2's executable clustered-prefix lookup with Go's `pkg/distsql` record-range contract: DDL common-handle tables do not materialize a PRIMARY secondary index, so runtime range encoding now keys off `common_handle_offsets`; the new no-PRIMARY regression and the full q2 catalog fixture pass.
 - [x] (2026-08-18) Made q9 executable after plan parity by projecting a rebuilt composite index-lookup subtree back to the original pruned child schema by qualified column path. The live q9 result has 175 rows and matches Go's hash.
 - [x] (2026-08-18) Classified the TPC-H mismatches by owning Go package and added fail-before/pass-after regressions for each behavior cluster through q22. The current release source contains no query-specific plan substitution.
@@ -887,3 +901,20 @@ Rust/Go median ratios are q1 `1.110x`, q2 `1.146x`, flex `1.178x`, swap
 `1.663x`, and batch `1.222x`; Rust is still slower in every shape, so the
 single-concurrency no-regression gate remains open. The commits in this
 continuation include the required `Go code:` references.
+
+Revision note, 2026-08-26 (covering-index Go behavior): pulled and confirmed
+the current remote tip `93409344c407bf26ee7da5ac4c91992e1c98c6b6`, then
+committed `792b586638` with the required `Go code:` body reference. The
+`tidb-executor` access source now consumes a successful remote covering index
+stream directly, maps its dense wire positions back to the pruned table
+schema, preserves the primary-handle trailing duplicate rule, and never
+reopens the local cursor after the remote stream reaches EOF. This follows Go
+`pkg/executor/builder.go:5272-5290` and `pkg/executor/distsql.go:2145-2218`.
+The focused covering-cursor regression and all 24 access-path tests pass. A
+live balance-only covering probe on the 1G fixture returns 100 rows with the
+same first/last values and digest on Go `14000` and Rust `14019`; the required
+HBX plans/results and 100-row batch sums remain equal in the covering receipts
+listed above. Current 20-pair medians are still Rust-slower (`1.097x`,
+`1.217x`, `1.209x`, `1.496x`, `1.218x` for q1/q2/flex/swap/batch), so the
+one-concurrency performance gate remains open. The docs receipt itself is
+pending this follow-up commit; no push or Ready claim is made.
