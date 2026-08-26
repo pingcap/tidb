@@ -220,9 +220,6 @@ func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) erro
 	typeFlags := reorgTypeFlagsWithSQLMode(sqlMode)
 	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
 	sessCtx.GetSessionVars().StmtCtx.ResourceGroupName = reorgMeta.ResourceGroupName
-	if reorgMeta.MViewMaintenanceVersion > model.MViewMaintenanceVersionBase {
-		sessCtx.GetSessionVars().DivPrecisionIncrement = reorgMeta.DefinitionDivPrecisionIncrement
-	}
 	return nil
 }
 

@@ -401,8 +401,6 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if err := initJobReorgMetaFromVariables(job, ctx); err != nil {
 		return err
 	}
-	job.ReorgMeta.MViewMaintenanceVersion = mvTableInfo.MaterializedView.MViewMaintenanceVersion
-	job.ReorgMeta.DefinitionDivPrecisionIncrement = mvTableInfo.MaterializedView.DefinitionDivPrecisionIncrement
 	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	AddMViewExecutionSessionVarsToJob(job, ctx.GetSessionVars())
 	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewArgs{

@@ -770,7 +770,6 @@ func (s MVInitBuildState) AccessErrorMessage(objectName string) string {
 	}
 }
 
-// MaterializedViewInfo is stored in TableInfo for a materialized view table.
 const (
 	// MViewMaintenanceVersionBase is the maintenance contract without AVG state.
 	MViewMaintenanceVersionBase uint8 = iota + 1
@@ -778,6 +777,7 @@ const (
 	MViewMaintenanceVersionAVG
 )
 
+// MaterializedViewInfo is stored in TableInfo for a materialized view table.
 type MaterializedViewInfo struct {
 	// BaseTableIDs is the table IDs of the base tables referenced by this MV.
 	// For Stage-1, it contains exactly one element.

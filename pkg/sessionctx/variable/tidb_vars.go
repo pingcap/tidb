@@ -1672,7 +1672,6 @@ const (
 	DefTiDBSchemaCacheSize                            = 512 * 1024 * 1024
 	DefTiDBLowResolutionTSOUpdateInterval             = 2000
 	DefDivPrecisionIncrement                          = 4
-	MaxDivPrecisionIncrement                          = 30
 	DefTiDBDMLType                                    = "STANDARD"
 	DefGroupConcatMaxLen                              = uint64(1024)
 	DefDefaultWeekFormat                              = "0"
@@ -1684,6 +1683,9 @@ const (
 	DefTiDBLoadBindingTimeout                         = 200
 	DefEnableCachePrepareStmt                         = true
 )
+
+// MaxDivPrecisionIncrement is the maximum supported div_precision_increment value.
+const MaxDivPrecisionIncrement = 30
 
 // Process global variables.
 var (
