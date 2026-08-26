@@ -31,6 +31,9 @@ pub(crate) fn global_logger_test_guard() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|error| error.into_inner())
 }
 
+#[cfg(test)]
+mod tests_mathutil;
+
 pub mod arena;
 pub mod backoff;
 pub mod bitmap;
