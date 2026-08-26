@@ -75,7 +75,7 @@ use crate::storage::{MemTableStorage, StorageError, TableStorage};
 use auto_id::AutoIdAllocator;
 use row_decoder::fill_handle_columns;
 use std::collections::HashSet;
-use table_meta::NOT_NULL_FLAG;
+pub(crate) use table_meta::NOT_NULL_FLAG;
 use tidb_codec::table_key::{encode_row_key_with_handle, get_table_handle_key_range};
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
 
@@ -570,7 +570,26 @@ pub struct KvTable {
     /// whether a `UnionScan` sits above the reader; see
     /// [`crate::access_path::IndexRangeSourceExec`] for the row ORDER that
     /// operator imposes.
-    dirty_content: bool,
+    dirty_content: DirtyMark,
+}
+
+/// The staged-write mark, interior-mutable ON PURPOSE: a staged-undo image
+/// walks SHARED `Arc<TableEntry>` handles to reset it without detaching
+/// entries, which is only safe because a write DETACHES its entry
+/// (`Arc::make_mut`) before ever setting the flag -- a cell still shared
+/// between catalogs can hold only `false`.
+///
+/// `Clone` snapshots the VALUE rather than sharing the cell, so a detached
+/// copy's future flips never leak back into the table it was cloned from.
+#[derive(Debug, Default)]
+struct DirtyMark(std::sync::atomic::AtomicBool);
+
+impl Clone for DirtyMark {
+    fn clone(&self) -> Self {
+        DirtyMark(std::sync::atomic::AtomicBool::new(
+            self.0.load(std::sync::atomic::Ordering::Relaxed),
+        ))
+    }
 }
 
 /// A failure while encoding or decoding table bytes.
@@ -771,7 +790,7 @@ impl KvTable {
             partition: None,
             placement_policy: None,
             read_partitions: None,
-            dirty_content: false,
+            dirty_content: DirtyMark::default(),
         }
     }
 
@@ -798,13 +817,15 @@ impl KvTable {
     /// staged a row write to this table. See the field's own doc.
     #[must_use]
     pub fn has_dirty_content(&self) -> bool {
-        self.dirty_content
+        self.dirty_content.0.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Forgets the staged writes: the state Go's membuffer is in at the start
     /// of a transaction. See [`crate::driver::Catalog::clear_dirty_content`].
-    pub fn clear_dirty_content(&mut self) {
-        self.dirty_content = false;
+    pub fn clear_dirty_content(&self) {
+        self.dirty_content
+            .0
+            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Builds the table `CREATE TABLE ... LIKE self` creates: Go
@@ -2518,7 +2539,9 @@ impl KvTable {
         self.store
             .set(key, value)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        self.dirty_content = true;
+        self.dirty_content
+            .0
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(handle)
     }
 
@@ -2994,7 +3017,9 @@ impl KvTable {
         self.store
             .set(key, value)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        self.dirty_content = true;
+        self.dirty_content
+            .0
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -3044,7 +3069,9 @@ impl KvTable {
         self.store
             .delete(key)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        self.dirty_content = true;
+        self.dirty_content
+            .0
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -3066,7 +3093,9 @@ impl KvTable {
         self.store
             .delete(key)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        self.dirty_content = true;
+        self.dirty_content
+            .0
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 }

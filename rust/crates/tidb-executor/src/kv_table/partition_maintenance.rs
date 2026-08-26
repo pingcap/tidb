@@ -92,7 +92,9 @@ impl KvTable {
                 })
                 .collect()
         });
-        self.dirty_content = true;
+        self.dirty_content
+            .0
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -186,7 +188,9 @@ impl KvTable {
         if let Some(ids) = &mut self.read_partitions {
             ids.retain(|id| !old_ids.contains(id));
         }
-        self.dirty_content = true;
+        self.dirty_content
+            .0
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -283,6 +287,8 @@ impl KvTable {
             _ => unreachable!("DDL folds added definitions with the existing partition method"),
         }
         partition.definitions.extend(definitions);
-        self.dirty_content = true;
+        self.dirty_content
+            .0
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }

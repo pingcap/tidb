@@ -194,7 +194,11 @@ where
 /// and index keys itself, exactly as Go's `tablecodec` does before handing
 /// them to `kv.Retriever`/`kv.Mutator`. Nothing about row or index *layout*
 /// belongs here.
-pub trait TableStorage: fmt::Debug + Send {
+/// `Send + Sync` because a catalog's entries now live behind `Arc`, which
+/// shares one table handle across the session's staged copies; every backend
+/// is single-threaded in spirit and its interior mutability stays behind
+/// `&mut self` methods.
+pub trait TableStorage: fmt::Debug + Send + Sync {
     /// Reads one key, Go `kv.Retriever.Get`. Reports
     /// [`StorageError::NotFound`] when the key has no value, as Go returns
     /// `kv.ErrNotExist`.

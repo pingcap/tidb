@@ -80,7 +80,7 @@ struct Database {
     name: String,
     /// The defaults inherited by tables created without explicit options.
     charset: TableCharset,
-    tables: HashMap<String, TableEntry>,
+    tables: HashMap<String, std::sync::Arc<TableEntry>>,
 }
 
 /// A catalog of databases and their tables, the position Go's `infoschema`
@@ -137,7 +137,7 @@ pub struct Catalog {
     /// Without the list the permanent table would be DESTROYED by the
     /// temporary one that shadowed it -- the create would overwrite the slot
     /// and the detach would empty it.
-    shadowed_by_local_temporary: Vec<(String, String, TableEntry)>,
+    shadowed_by_local_temporary: Vec<(String, String, std::sync::Arc<TableEntry>)>,
     /// Loaded statistics by physical table id, Go's `StatsHandle` cache as
     /// the planner sees it.
     ///
@@ -466,7 +466,7 @@ impl Catalog {
             .ok_or_else(|| {
                 DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(database.to_owned()))
             })?;
-        schema.tables.insert(name.to_lowercase(), table);
+        schema.tables.insert(name.to_lowercase(), std::sync::Arc::new(table));
         self.version += 1;
         Ok(())
     }
@@ -511,7 +511,7 @@ impl Catalog {
             .tables
             .iter()
             .filter(|(_, entry)| {
-                !matches!(entry, TableEntry::Kv(table)
+                !matches!(entry.as_ref(), TableEntry::Kv(table)
                     if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
             })
             .map(|(name, _)| name.clone())
@@ -618,7 +618,7 @@ impl Catalog {
         let folded = tidb_ast::CiString::new(name).lowercase().to_owned();
         self.databases.values().any(|database| {
             database.tables.values().any(|entry| {
-                let crate::TableEntry::Kv(table) = entry else {
+                let crate::TableEntry::Kv(table) = &**entry else {
                     return false;
                 };
                 if table
@@ -743,11 +743,13 @@ impl Catalog {
         else {
             return false;
         };
-        // The table carries its own name for duplicate-key messages.
-        let mut source = source;
+        // The table carries its own name for duplicate-key messages. Renames
+        // are DDL-rare, so cloning a still-shared entry here is fine.
+        let mut source = Arc::unwrap_or_clone(source);
         if let TableEntry::Kv(table) = &mut source {
             table.set_name(to_name);
         }
+        let mut source = std::sync::Arc::new(source);
         // Infallible: the key was present at the top of this function and
         // nothing between here and there can remove a schema.
         self.databases
@@ -798,6 +800,7 @@ impl Catalog {
             .get(&database.to_lowercase())?
             .tables
             .get(&name.to_lowercase())
+            .map(|entry| &**entry)
     }
 
     /// A mutable table handle for a read whose storage API advances internal
@@ -808,10 +811,12 @@ impl Catalog {
         database: &str,
         name: &str,
     ) -> Option<&mut TableEntry> {
-        self.databases
+        let entry = self
+            .databases
             .get_mut(&database.to_ascii_lowercase())?
             .tables
-            .get_mut(&name.to_ascii_lowercase())
+            .get_mut(&name.to_ascii_lowercase())?;
+        Some(Arc::make_mut(entry))
     }
 
     fn get(&self, name: &str) -> Option<&TableEntry> {
@@ -853,10 +858,14 @@ impl Catalog {
     /// allow, never the reverse.
     pub(crate) fn get_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
         self.version += 1;
-        self.databases
+        let entry = self
+            .databases
             .get_mut(&database.to_ascii_lowercase())?
             .tables
-            .get_mut(&name.to_ascii_lowercase())
+            .get_mut(&name.to_ascii_lowercase())?;
+        // Go's write paths build a new `TableInfo` rather than editing the
+        // shared one; `make_mut` is the same copy-on-write at the entry level.
+        Some(Arc::make_mut(entry))
     }
 
     /// The catalog's mutation counter.
@@ -931,7 +940,7 @@ impl Catalog {
         let mut snapshot = crate::TidbDecodeKeySnapshot::default();
         for database in self.databases.values() {
             for entry in database.tables.values() {
-                if let TableEntry::Kv(table) = entry {
+                if let TableEntry::Kv(table) = &**entry {
                     snapshot.insert_table(table);
                 }
             }
@@ -956,9 +965,13 @@ impl Catalog {
     /// without it. It changes what a read is entitled to REORDER; see
     /// [`crate::kv_table::KvTable::has_dirty_content`].
     pub fn clear_dirty_content(&mut self) {
-        for database in self.databases.values_mut() {
-            for entry in database.tables.values_mut() {
-                if let TableEntry::Kv(table) = entry {
+        // The mark is interior-mutable (`AtomicBool`), so this walks SHARED
+        // entries without detaching any of them: a shared entry's cell can
+        // only ever hold `false` (a write detaches its entry before marking),
+        // so resetting it here cannot disturb another catalog's view.
+        for database in self.databases.values() {
+            for entry in database.tables.values() {
+                if let TableEntry::Kv(table) = &**entry {
                     table.clear_dirty_content();
                 }
             }
@@ -1133,7 +1146,7 @@ impl Catalog {
         })?;
         if let Some(displaced) = schema
             .tables
-            .insert(folded_name.clone(), TableEntry::Kv(table))
+            .insert(folded_name.clone(), std::sync::Arc::new(TableEntry::Kv(table)))
         {
             self.shadowed_by_local_temporary
                 .push((folded_database, folded_name, displaced));
@@ -1167,7 +1180,7 @@ impl Catalog {
             let Some(schema) = self.databases.get_mut(&database) else {
                 continue;
             };
-            if let Some(displaced) = schema.tables.insert(name.clone(), TableEntry::Kv(table)) {
+            if let Some(displaced) = schema.tables.insert(name.clone(), std::sync::Arc::new(TableEntry::Kv(table))) {
                 self.shadowed_by_local_temporary
                     .push((database, name, displaced));
             }
@@ -1199,7 +1212,10 @@ impl Catalog {
             let Some(schema) = self.databases.get_mut(&folded_database) else {
                 continue;
             };
-            let Some(TableEntry::Kv(table)) = schema.tables.remove(&folded_name) else {
+            let Some(entry) = schema.tables.remove(&folded_name) else {
+                continue;
+            };
+            let TableEntry::Kv(table) = Arc::unwrap_or_clone(entry) else {
                 continue;
             };
             taken.push((folded_database, folded_name, table));
@@ -1210,7 +1226,7 @@ impl Catalog {
             let Some(schema) = self.databases.get_mut(&folded_database) else {
                 continue;
             };
-            schema.tables.entry(folded_name).or_insert(entry);
+            schema.tables.entry(folded_name).or_insert_with(|| entry);
         }
         if moved_entries {
             self.temporary_sweep = None;
@@ -1231,7 +1247,7 @@ impl Catalog {
         let mut ids = Vec::new();
         for (folded_database, schema) in &self.databases {
             for (folded_name, entry) in &schema.tables {
-                if matches!(entry, TableEntry::Kv(table)
+                if matches!(&**entry, TableEntry::Kv(table)
                     if table.temp_table_type() == tidb_model::TempTableType::GLOBAL)
                 {
                     ids.push((folded_database.clone(), folded_name.clone()));
@@ -1267,7 +1283,7 @@ impl Catalog {
             let mut global: Vec<(String, String)> = Vec::new();
             for (folded_database, schema) in &self.databases {
                 for (folded_name, entry) in &schema.tables {
-                    let TableEntry::Kv(table) = entry else {
+                    let TableEntry::Kv(table) = &**entry else {
                         continue;
                     };
                     match table.temp_table_type() {
@@ -1305,7 +1321,13 @@ impl Catalog {
         database: &str,
         name: &str,
     ) -> Option<&mut KvTable> {
-        match self.databases.get_mut(database)?.tables.get_mut(name) {
+        match self
+            .databases
+            .get_mut(database)?
+            .tables
+            .get_mut(name)
+            .map(std::sync::Arc::make_mut)
+        {
             Some(TableEntry::Kv(table)) => Some(table),
             _ => None,
         }
@@ -1339,7 +1361,7 @@ impl Catalog {
         let mut out = HashMap::new();
         for (database_key, database) in &self.databases {
             for (table_key, entry) in &database.tables {
-                if let TableEntry::Sequence(sequence) = entry {
+                if let TableEntry::Sequence(sequence) = entry.as_ref() {
                     out.insert(
                         format!("{database_key}.{table_key}"),
                         sequence.allocator.clone(),
@@ -1405,7 +1427,7 @@ impl crate::keydecoder::KeyInfoCatalog for Catalog {
     ) -> Option<crate::keydecoder::KeyInfoTableLookup> {
         for database in self.databases.values() {
             for (registered_name, entry) in &database.tables {
-                let TableEntry::Kv(table) = entry else {
+                let TableEntry::Kv(table) = entry.as_ref() else {
                     continue;
                 };
                 if table.table_id == physical_id {
@@ -1417,7 +1439,7 @@ impl crate::keydecoder::KeyInfoCatalog for Catalog {
         }
         for database in self.databases.values() {
             for (registered_name, entry) in &database.tables {
-                let TableEntry::Kv(table) = entry else {
+                let TableEntry::Kv(table) = entry.as_ref() else {
                     continue;
                 };
                 let Some(partition) = table.partition() else {
