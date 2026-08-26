@@ -1064,6 +1064,28 @@ Go-behavior and correctness gates are green; the strict one-concurrency
 performance no-regression gate remains open. This remains WIP: the machine
 has no `go` executable, so `make lint`/Ready cannot run.
 
+Revision note, 2026-08-26 (Go full-index chunk handle fast path): the latest
+source change is pushed as `82bfe01903` after rebasing the remote test-port
+tip. Following Go code `pkg/executor/distsql.go:1729-1778` and
+`pkg/distsql/select_result.go:572-620`, integer handles are now decoded
+directly from complete index response chunks even when index predicates or
+TopN retain the full wire schema; this avoids materializing discarded index
+columns row by row. The trailing-handle regression exercises both
+`next_handle` and `next_handle_batch`, and `remote_cursor_tests` remains 13/13.
+The release binary used for the receipt included this source change before
+the commit/rebase (the intervening upstream delta is test-only). The 1G
+comparison remains correct for q1/q2/flex/swap (plans, 100 rows, and hashes)
+and for the 100-row batch INSERT (sum
+`5050.000000000000000000`). Receipt:
+`/private/tmp/hbx-1g-20260825/compare-handle-fast-d009-20260826.json` and
+`/private/tmp/hbx-1g-20260825/bench-handle-fast-d009-20260826.json`.
+Alternating 20-pair medians were Go/Rust q1 `9.075/9.939 ms` (`1.095x`), q2
+`7.669/9.467 ms` (`1.234x`), flex `8.416/9.704 ms` (`1.153x`), swap
+`12.873/16.616 ms` (`1.291x`), and batch `6.088/7.281 ms` (`1.196x`). The
+optimization preserves Go behavior and correctness; the strict
+one-concurrency performance no-regression gate remains open. This remains
+WIP: no `go` executable is available for `make lint`/Ready.
+
 Revision note, 2026-08-26 (latest `hparser-integration` Go chunk/handle fix):
 the remote branch was fetched and confirmed at
 `d009380a282e56e7ea45d75e44bcb39e5e1cf81b`. The Rust
