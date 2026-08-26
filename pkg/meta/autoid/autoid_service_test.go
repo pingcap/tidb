@@ -44,13 +44,19 @@ type mockAutoIDClient struct {
 	rebaseCallCount          atomic.Int64
 	allocResp                *autoid.AutoIDResponse
 	rebaseResp               *autoid.RebaseResponse
+	allocReq                 *autoid.AutoIDRequest
 	rebaseReq                *autoid.RebaseRequest
+	alloc                    func(int64, *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error)
 	allocErr                 error
 	rebaseErr                error
 }
 
-func (m *mockAutoIDClient) AllocAutoID(_ context.Context, _ *autoid.AutoIDRequest, _ ...grpc.CallOption) (*autoid.AutoIDResponse, error) {
-	m.allocCallCount.Add(1)
+func (m *mockAutoIDClient) AllocAutoID(_ context.Context, req *autoid.AutoIDRequest, _ ...grpc.CallOption) (*autoid.AutoIDResponse, error) {
+	call := m.allocCallCount.Add(1)
+	if m.alloc != nil {
+		return m.alloc(call, req)
+	}
+	m.allocReq = req
 	return m.allocResp, m.allocErr
 }
 
@@ -159,7 +165,7 @@ func runOperation(ctx context.Context, operation string, allocator *singlePointA
 		_, _, err := allocator.Alloc(ctx, 1, 1, 1)
 		return err
 	}
-	return allocator.rebase(ctx, 100, false)
+	return allocator.Rebase(ctx, 100, false)
 }
 
 func operationCallCount(operation string, service *scriptedServer) int64 {
@@ -231,7 +237,7 @@ func TestRebaseCanceledRPCReturnsQuickly(t *testing.T) {
 	cancel()
 
 	start := time.Now()
-	err := sp.rebase(ctx, 100, false)
+	err := sp.Rebase(ctx, 100, false)
 	elapsed := time.Since(start)
 
 	require.Error(t, err)
@@ -307,22 +313,78 @@ func TestAutoIDRPCRetryPolicy(t *testing.T) {
 }
 
 func TestSinglePointAllocTransfer(t *testing.T) {
-	mockCli := &mockAutoIDClient{
-		allocResp:  &autoid.AutoIDResponse{Min: 0, Max: 2},
-		rebaseResp: &autoid.RebaseResponse{},
-	}
-	allocator := newTestSinglePointAlloc(mockCli)
+	t.Run("uses authoritative source base", func(t *testing.T) {
+		mockCli := &mockAutoIDClient{
+			allocResp:  &autoid.AutoIDResponse{Min: 2, Max: 2},
+			rebaseResp: &autoid.RebaseResponse{},
+		}
+		allocator := newTestSinglePointAlloc(mockCli)
 
-	minID, maxID, err := allocator.Alloc(context.Background(), 2, 1, 1)
-	require.NoError(t, err)
-	require.Equal(t, int64(0), minID)
-	require.Equal(t, int64(2), maxID)
-	require.Equal(t, maxID, allocator.Base())
+		require.NoError(t, allocator.Transfer(2, 1))
+		require.Equal(t, int64(2), allocator.dbID)
+		require.Equal(t, int64(1), mockCli.allocCallCount.Load())
+		require.NotNil(t, mockCli.allocReq)
+		require.Equal(t, int64(1), mockCli.allocReq.DbID)
+		require.Equal(t, uint64(0), mockCli.allocReq.N)
+		require.NotNil(t, mockCli.rebaseReq)
+		require.Equal(t, int64(2), mockCli.rebaseReq.Base)
+	})
 
-	require.NoError(t, allocator.Transfer(2, 1))
-	require.Equal(t, int64(2), allocator.dbID)
-	require.NotNil(t, mockCli.rebaseReq)
-	require.Equal(t, maxID, mockCli.rebaseReq.Base)
+	t.Run("keeps source owner when destination rebase fails", func(t *testing.T) {
+		rebaseErr := errors.New("rebase failed")
+		mockCli := &mockAutoIDClient{
+			allocResp: &autoid.AutoIDResponse{Min: 2, Max: 2},
+			rebaseErr: rebaseErr,
+		}
+		allocator := newTestSinglePointAlloc(mockCli)
+
+		require.ErrorIs(t, allocator.Transfer(2, 1), rebaseErr)
+		require.Equal(t, int64(1), allocator.dbID)
+		require.Equal(t, int64(1), allocator.tblID)
+	})
+
+	t.Run("does not regress after a lower rebase", func(t *testing.T) {
+		mockCli := &mockAutoIDClient{
+			allocResp:  &autoid.AutoIDResponse{Min: 0, Max: 2},
+			rebaseResp: &autoid.RebaseResponse{},
+		}
+		allocator := newTestSinglePointAlloc(mockCli)
+
+		_, _, err := allocator.Alloc(context.Background(), 2, 1, 1)
+		require.NoError(t, err)
+		require.NoError(t, allocator.Rebase(context.Background(), 1, false))
+		require.Equal(t, int64(2), allocator.Base())
+		require.NoError(t, allocator.ForceRebase(1))
+		require.Equal(t, int64(1), allocator.Base())
+	})
+
+	t.Run("keeps the greatest out-of-order allocation response", func(t *testing.T) {
+		firstRequestStarted := make(chan struct{})
+		releaseFirstRequest := make(chan struct{})
+		mockCli := &mockAutoIDClient{
+			alloc: func(call int64, _ *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
+				if call == 1 {
+					close(firstRequestStarted)
+					<-releaseFirstRequest
+					return &autoid.AutoIDResponse{Min: 0, Max: 1}, nil
+				}
+				return &autoid.AutoIDResponse{Min: 1, Max: 2}, nil
+			},
+		}
+		allocator := newTestSinglePointAlloc(mockCli)
+		firstErr := make(chan error, 1)
+		go func() {
+			_, _, err := allocator.Alloc(context.Background(), 1, 1, 1)
+			firstErr <- err
+		}()
+
+		<-firstRequestStarted
+		_, _, err := allocator.Alloc(context.Background(), 1, 1, 1)
+		require.NoError(t, err)
+		close(releaseFirstRequest)
+		require.NoError(t, <-firstErr)
+		require.Equal(t, int64(2), allocator.Base())
+	})
 }
 
 func TestAutoIDRPCRetry(t *testing.T) {

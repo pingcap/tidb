@@ -910,6 +910,7 @@ func TestRenameTableWithReload(t *testing.T) {
 
 	tk.MustExec("create table rename1.t(id int primary key auto_increment, v varchar(20)) AUTO_ID_CACHE=1")
 	tk.MustExec("insert into rename1.t(v) values ('row1'), ('row2')")
+	forceFullReload(t, store, dom)
 	tk.MustExec("rename table rename1.t to rename2.t")
 	tk.MustExec("drop database rename1")
 	forceFullReload(t, store, dom)
