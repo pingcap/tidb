@@ -49,6 +49,7 @@ pub mod disttask;
 pub mod encrypt;
 pub mod errno_summary;
 pub mod fastrand;
+pub mod fast_hash;
 pub mod filter;
 pub mod format;
 pub mod generic;

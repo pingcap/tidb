@@ -1059,9 +1059,9 @@ fn uppercased_into<'b>(text: &str, buffer: &'b mut [u8]) -> Option<&'b str> {
 }
 
 struct KeywordSets {
-    general: std::collections::HashSet<&'static str>,
-    builtin: std::collections::HashSet<&'static str>,
-    window: std::collections::HashSet<&'static str>,
+    general: tidb_util::fast_hash::FxHashSet<&'static str>,
+    builtin: tidb_util::fast_hash::FxHashSet<&'static str>,
+    window: tidb_util::fast_hash::FxHashSet<&'static str>,
 }
 
 /// The three generated keyword tables as hashed name sets. Go resolves a word
