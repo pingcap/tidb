@@ -1,8 +1,7 @@
 //! Priority admission primitive used by the internal-client batch loop.
 //!
 //! This is a native, ownership-based mapping of client-go
-//! `internal/client/priority_queue.go`. The enclosing internal-client package
-//! remains unfinished, but `BatchCommandsBuilder` already uses this queue for
+//! `internal/client/priority_queue.go`, used by `BatchCommandsBuilder` for
 //! source-compatible priority selection and cancellation cleanup.
 
 /// An entry accepted by [`PriorityQueue`].

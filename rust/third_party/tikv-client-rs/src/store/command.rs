@@ -1,9 +1,9 @@
 //! Command identity and classification shared by TiKV RPC transport paths.
 //!
-//! This is the representation and batch-request-conversion part of client-go's
-//! `tikvrpc.go` command wrapper. Request context cloning, batch-response
-//! correlation, and streaming response handling remain on the unfinished
-//! transport slice.
+//! This is the typed representation and batch request/response correlation
+//! used by the client-go-compatible transport. Request context cloning and
+//! streaming dispatch are integrated by the adjacent request and client
+//! modules.
 
 use crate::proto::{coprocessor, kvrpcpb, tikvpb};
 use crate::stats::{
@@ -441,6 +441,23 @@ impl BatchPendingResponses {
     /// counter expressed without its transient negative-value race.
     pub(crate) fn len(&self) -> usize {
         self.entries.lock().unwrap().len()
+    }
+
+    /// Number of requests published through one pooled BatchCommands client.
+    /// client-go applies `MaxConcurrencyRequestLimit` independently to every
+    /// `batchCommandsClient`, not to the address-wide pending map.
+    pub(crate) fn len_for_connection(&self, connection_index: usize) -> usize {
+        self.entries
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|entry| {
+                entry
+                    .stream_metrics
+                    .as_ref()
+                    .is_some_and(|metrics| metrics.connection_index == connection_index)
+            })
+            .count()
     }
 
     /// Mirrors `inspectPendingBatchRequests`: count old pending entries and

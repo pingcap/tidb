@@ -247,7 +247,14 @@ impl KvConnect for TikvConnect {
                     self.grpc_initial_connection_window_size,
                     Some(self.dial_timeout),
                     |channel| {
-                        let debug_client = DebugClient::new(channel.clone());
+                        let debug_client = DebugClient::new(channel.clone())
+                            .max_decoding_message_size(self.grpc_max_decoding_message_size)
+                            .accept_compressed(CompressionEncoding::Gzip);
+                        let debug_client = if self.send_gzip_requests {
+                            debug_client.send_compressed(CompressionEncoding::Gzip)
+                        } else {
+                            debug_client
+                        };
                         let client = TikvClient::new(channel)
                             .max_decoding_message_size(self.grpc_max_decoding_message_size)
                             .accept_compressed(CompressionEncoding::Gzip);
@@ -277,7 +284,89 @@ impl KvConnect for TikvConnect {
 mod tests {
     use super::*;
     use serial_test::serial;
+    use std::convert::Infallible;
     use std::sync::atomic::AtomicUsize;
+    use std::task::{Context, Poll};
+    use tokio_stream::wrappers::TcpListenerStream;
+    use tonic::codegen::{http, Body, BoxFuture, Service, StdError};
+
+    #[derive(Clone)]
+    struct LargeDebugServer {
+        payload_len: usize,
+    }
+
+    impl tonic::server::NamedService for LargeDebugServer {
+        const NAME: &'static str = "debugpb.Debug";
+    }
+
+    impl<B> Service<http::Request<B>> for LargeDebugServer
+    where
+        B: Body + Send + 'static,
+        B::Error: Into<StdError> + Send + 'static,
+    {
+        type Response = http::Response<tonic::body::BoxBody>;
+        type Error = Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+
+        fn poll_ready(
+            &mut self,
+            _: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, request: http::Request<B>) -> Self::Future {
+            if request.uri().path() == "/debugpb.Debug/GetRegionProperties" {
+                let service = LargeRegionProperties {
+                    payload_len: self.payload_len,
+                };
+                return Box::pin(async move {
+                    Ok(
+                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                            .unary(service, request)
+                            .await,
+                    )
+                });
+            }
+            Box::pin(async move {
+                Ok(http::Response::builder()
+                    .status(200)
+                    .header("grpc-status", "12")
+                    .header("content-type", "application/grpc")
+                    .body(tonic::body::empty_body())
+                    .unwrap())
+            })
+        }
+    }
+
+    #[derive(Clone)]
+    struct LargeRegionProperties {
+        payload_len: usize,
+    }
+
+    impl tonic::server::UnaryService<crate::proto::debugpb::GetRegionPropertiesRequest>
+        for LargeRegionProperties
+    {
+        type Response = crate::proto::debugpb::GetRegionPropertiesResponse;
+        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+
+        fn call(
+            &mut self,
+            _: tonic::Request<crate::proto::debugpb::GetRegionPropertiesRequest>,
+        ) -> Self::Future {
+            let payload_len = self.payload_len;
+            Box::pin(async move {
+                Ok(tonic::Response::new(
+                    crate::proto::debugpb::GetRegionPropertiesResponse {
+                        props: vec![crate::proto::debugpb::Property {
+                            name: "large".to_owned(),
+                            value: "x".repeat(payload_len),
+                        }],
+                    },
+                ))
+            })
+        }
+    }
 
     #[test]
     fn source_grpc_compression_selection_is_preserved() {
@@ -390,6 +479,52 @@ mod tests {
         assert!(client.batch_worker.is_none());
         drop(client);
         server.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn source_receive_limit_applies_to_debug_service_responses() {
+        const PAYLOAD_LEN: usize = 5 * 1024 * 1024;
+        const RECEIVE_LIMIT: usize = 6 * 1024 * 1024;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (shutdown, shutdown_requested) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(
+            tonic::transport::Server::builder()
+                .add_service(LargeDebugServer {
+                    payload_len: PAYLOAD_LEN,
+                })
+                .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async move {
+                    let _ = shutdown_requested.await;
+                }),
+        );
+        let client = TikvConnect::new_with_grpc_compression(
+            Arc::new(SecurityManager::default()),
+            Duration::from_secs(1),
+            RECEIVE_LIMIT,
+            "none",
+            Duration::from_secs(10),
+            Duration::from_secs(3),
+            Some(1 << 27),
+            Some(1 << 27),
+            1,
+        )
+        .connect(&address.to_string())
+        .await
+        .unwrap();
+        let response = KvClient::dispatch(
+            &client,
+            &crate::proto::debugpb::GetRegionPropertiesRequest::default(),
+        )
+        .await
+        .unwrap()
+        .downcast::<crate::proto::debugpb::GetRegionPropertiesResponse>()
+        .unwrap();
+        assert_eq!(response.props[0].value.len(), PAYLOAD_LEN);
+
+        client.close();
+        let _ = shutdown.send(());
+        server.await.unwrap().unwrap();
     }
 
     #[tokio::test]
@@ -1105,6 +1240,10 @@ impl KvRpcClient {
         self.next_client_index()
     }
 
+    pub(crate) fn batch_connection_count(&self) -> usize {
+        self.rpc_clients.len()
+    }
+
     fn batch_commands_request<S>(
         requests: S,
         forwarded_host: &str,
@@ -1353,19 +1492,43 @@ impl KvRpcClient {
             self.batch_worker.as_ref(),
             BatchCommandRequest::from_store_request(request),
         ) {
-            let mut submission = worker
-                .submit(batch_request, request.batch_priority(), forwarded_host)
-                .await;
             let timeout = timeout.unwrap_or(self.timeout);
-            let response = match tokio::time::timeout(timeout, submission.recv()).await {
-                Err(_) => Err(crate::Error::GrpcAPI(tonic::Status::deadline_exceeded(
-                    "batch request deadline exceeded",
-                ))),
-                Ok(Err(_)) => Err(crate::Error::StringError(
-                    "BatchCommands worker stopped before responding".to_owned(),
-                )),
-                Ok(Ok(result)) => result.map_err(|error| self.wrap_connection_error(error)),
+            let deadline = tokio::time::Instant::now() + timeout;
+            let mut submission = match worker
+                .submit_until(
+                    batch_request,
+                    request.batch_priority(),
+                    forwarded_host,
+                    deadline,
+                )
+                .await
+            {
+                Ok(submission) => submission,
+                Err(error) => {
+                    crate::stats::observe_tikv_store_rpc(request, None, started_at.elapsed());
+                    return Err(self.wrap_connection_error(error));
+                }
             };
+            let response = match tokio::time::timeout_at(deadline, submission.recv()).await {
+                Err(_) => {
+                    submission.cancellation.cancel();
+                    let error = crate::Error::GrpcAPI(tonic::Status::deadline_exceeded(
+                        submission.timeout_reason(timeout, Instant::now()),
+                    ));
+                    submission.complete_with_error(&error);
+                    Err(error)
+                }
+                Ok(Err(_)) => {
+                    submission.cancellation.cancel();
+                    let error = crate::Error::StringError(
+                        "BatchCommands worker stopped before responding".to_owned(),
+                    );
+                    submission.complete_with_error(&error);
+                    Err(error)
+                }
+                Ok(Ok(result)) => result,
+            }
+            .map_err(|error| self.wrap_connection_error(error));
             return match response {
                 Ok(response) => {
                     let mut response = BatchCommandResponse::into_any(response);
