@@ -1192,6 +1192,9 @@ mod tests {
     #[path = "consistent_source.rs"]
     mod consistent_source;
 
+    #[path = "go_parity_b052_source.rs"]
+    mod go_parity_b052_source;
+
     #[path = "go_parity_b053_source.rs"]
     mod go_parity_b053_source;
 
