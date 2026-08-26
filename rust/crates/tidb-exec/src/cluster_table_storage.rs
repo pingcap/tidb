@@ -58,7 +58,7 @@
 //! [`ClusterSnapshot`]: tidb_executor::cluster_storage::ClusterSnapshot
 //! [`MutationBuffer`]: tidb_executor::cluster_storage::MutationBuffer
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -79,7 +79,7 @@ use std::time::Duration;
 
 use crate::multi_statement_transaction::TRANSACTION_END_TIMEOUT;
 use tidb_executor::cluster_storage::{
-    ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
+    ClusterSnapshot, ClusterTableStorage, DuplicateKeyHint, MutationBuffer, SnapshotPairs,
 };
 use tidb_executor::storage::StorageError;
 use tidb_pd_client::PdClient;
@@ -89,15 +89,17 @@ use tidb_txnkv::transaction::{
     CommitProtocol, LockKeepAlive, LockWaitTime, OptimisticCommitOutcome,
     OptimisticCoordinatorError, OptimisticMutation, PessimisticLockFailure,
     RealOptimisticTransaction, RealOptimisticTransactionOpener, RealPessimisticTransaction,
-    StorePdCapability, StoreWriteClient, StoreWriteLoader, MAX_OPTIMISTIC_MUTATIONS,
+    StorePdCapability, StoreWriteClient, StoreWriteLoader, TransactionCause,
+    MAX_OPTIMISTIC_MUTATIONS,
     MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 use tidb_txnkv::Key;
 use tidb_txnkv::PdRegionLoader;
 
 use crate::pessimistic_lock_error::{
-    commit_outcome_to_sql_error, is_retryable_statement_failure, lock_failure_to_sql_error,
-    transaction_cause_to_sql_error, LockSqlError,
+    commit_outcome_to_sql_error_with_hint, duplicate_key_sql_error,
+    is_retryable_statement_failure, lock_failure_to_sql_error, transaction_cause_to_sql_error,
+    LockSqlError,
 };
 use crate::pinned_thread_pool::PinnedThreadPool;
 
@@ -144,6 +146,12 @@ enum TransactionRequest {
     /// served from it without touching storage.
     LockKeys {
         keys: Vec<Vec<u8>>,
+        /// Keys whose staged INSERT carries Go's
+        /// `SetPresumeKeyNotExists` flag and therefore must assert absence
+        /// during pessimistic lock acquisition.
+        presume_not_exists: BTreeSet<Vec<u8>>,
+        /// Go's `ErrDupEntry` text for the corresponding encoded keys.
+        duplicate_hints: BTreeMap<Vec<u8>, DuplicateKeyHint>,
         return_values: bool,
         reply: cc::Sender<LockKeysOutcome>,
     },
@@ -680,6 +688,8 @@ fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: St
             }
             TransactionRequest::LockKeys {
                 keys,
+                presume_not_exists,
+                duplicate_hints,
                 return_values,
                 reply,
             } => {
@@ -689,6 +699,8 @@ fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: St
                     &mut keep_alive,
                     &mut lock_values,
                     &keys,
+                    &presume_not_exists,
+                    &duplicate_hints,
                     return_values,
                     call,
                 );
@@ -837,10 +849,11 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
     keep_alive: &mut Option<LockKeepAlive>,
     lock_values: &mut BTreeMap<Vec<u8>, Option<Vec<u8>>>,
     keys: &[Vec<u8>],
+    presume_not_exists: &BTreeSet<Vec<u8>>,
+    duplicate_hints: &BTreeMap<Vec<u8>, DuplicateKeyHint>,
     return_values: bool,
     call: &UnaryCallContext,
 ) -> LockKeysOutcome {
-    use std::collections::BTreeSet;
     let held: BTreeSet<Vec<u8>> = transaction.locked_keys().into_iter().collect();
     // Go `KVTxn.LockKeys` filters keys this transaction already holds BEFORE
     // any RPC (client-go `kv.go`: a key already in `txn.locks` is reported as
@@ -861,23 +874,29 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
             newly_locked: Vec::new(),
         };
     }
+    let presume_not_exists: BTreeSet<Vec<u8>> = presume_not_exists
+        .iter()
+        .filter(|key| !held.contains(*key))
+        .cloned()
+        .collect();
     /// Bound on deadlock-retryable re-acquisitions, the narrow driver's own.
     const MAX_LOCK_RETRIES: usize = 8;
     let mut attempt = 0usize;
     loop {
-        // No absence presumption: DML locks target rows that exist (the
-        // rewritten set); INSERT keeps its NotExist assertion at Prewrite.
+        // Go's `getPessimisticLazyCheckMode` selects whether a lazy INSERT's
+        // NotExist assertion lands here (`DupKeyCheckInAcquireLock`) or is
+        // retained for prewrite (`DupKeyCheckInPrewrite`).
         match if return_values {
             transaction.acquire_locks_returning_values(
                 &added,
-                &BTreeSet::new(),
+                &presume_not_exists,
                 LockWaitTime::session_lock_wait_timeout(),
                 call,
             )
         } else {
             transaction.acquire_locks(
                 &added,
-                &BTreeSet::new(),
+                &presume_not_exists,
                 LockWaitTime::session_lock_wait_timeout(),
                 call,
             )
@@ -947,6 +966,17 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
                     return LockKeysOutcome::TransactionError(transaction_cause_to_sql_error(
                         &cause,
                     ));
+                }
+                if let PessimisticLockFailure::Transaction(
+                    TransactionCause::AlreadyExists { key, .. },
+                ) = &failure
+                {
+                    if let Some(hint) = duplicate_hints.get(key) {
+                        // Go reports this assertion as a statement error: the
+                        // INSERT is rolled back, while the explicit
+                        // pessimistic transaction stays usable.
+                        return LockKeysOutcome::StatementError(duplicate_key_sql_error(hint));
+                    }
                 }
                 if !is_retryable_statement_failure(&failure) {
                     let error = lock_failure_to_sql_error(&failure);
@@ -1305,7 +1335,7 @@ impl SessionTransaction {
     /// lock step. The outcome tells the session layer whether the statement
     /// stands, must be re-executed at an advanced timestamp, or failed.
     pub fn lock_keys(&self, keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, StorageError> {
-        self.lock_keys_with_values(keys, false)
+        self.lock_keys_with_assertions(keys, BTreeSet::new(), BTreeMap::new(), false)
     }
 
     /// [`Self::lock_keys`], asking TiKV to answer each newly locked key's row
@@ -1317,11 +1347,25 @@ impl SessionTransaction {
         keys: Vec<Vec<u8>>,
         return_values: bool,
     ) -> Result<LockKeysOutcome, StorageError> {
+        self.lock_keys_with_assertions(keys, BTreeSet::new(), BTreeMap::new(), return_values)
+    }
+
+    /// Acquires statement locks with the lazy INSERT assertions selected by
+    /// Go's `getPessimisticLazyCheckMode`.
+    pub fn lock_keys_with_assertions(
+        &self,
+        keys: Vec<Vec<u8>>,
+        presume_not_exists: BTreeSet<Vec<u8>>,
+        duplicate_hints: BTreeMap<Vec<u8>, DuplicateKeyHint>,
+        return_values: bool,
+    ) -> Result<LockKeysOutcome, StorageError> {
         let requests = self.thread.sender()?;
         let (reply, answer) = cc::bounded(0);
         requests
             .send(TransactionRequest::LockKeys {
                 keys,
+                presume_not_exists,
+                duplicate_hints,
                 return_values,
                 reply,
             })
@@ -1457,7 +1501,8 @@ impl SessionTransaction {
             return Ok(None);
         }
         let outcome = self.thread.commit(mutations).map_err(engine_sql_error)?;
-        commit_outcome_to_sql_error(&outcome)?;
+        let duplicate_hint = deferred_duplicate_hint(&outcome, buffer);
+        commit_outcome_to_sql_error_with_hint(&outcome, duplicate_hint.as_ref())?;
         buffer.reset();
         Ok(Some(outcome))
     }
@@ -1612,6 +1657,24 @@ fn staged_mutations(
     Ok((mutations, planned_bytes))
 }
 
+/// Finds the table/index text that Go retained when a deferred insert marked a
+/// record key presumed absent. Only an `AlreadyExists` outcome can consume it;
+/// all other transaction failures keep their normal typed mapping.
+fn deferred_duplicate_hint(
+    outcome: &OptimisticCommitOutcome,
+    buffer: &MutationBuffer,
+) -> Option<DuplicateKeyHint> {
+    let key = match outcome {
+        OptimisticCommitOutcome::RolledBack(result) => &result.cause,
+        OptimisticCommitOutcome::CleanupFailed(result) => &result.cause,
+        _ => return None,
+    };
+    let TransactionCause::AlreadyExists { key, .. } = key else {
+        return None;
+    };
+    buffer.duplicate_key_hint_for(key)
+}
+
 /// Publishes every staged write of one autocommit statement as its own
 /// optimistic transaction, **at the timestamp the statement read at**.
 ///
@@ -1659,7 +1722,8 @@ pub fn commit_staged_buffer<C: StoreWriteClient, L: StoreWriteLoader, P: StorePd
     let outcome = transaction
         .commit(mutations, &call)
         .map_err(coordinator_sql_error)?;
-    commit_outcome_to_sql_error(&outcome)?;
+    let duplicate_hint = deferred_duplicate_hint(&outcome, buffer);
+    commit_outcome_to_sql_error_with_hint(&outcome, duplicate_hint.as_ref())?;
     buffer.reset();
     Ok(Some(outcome))
 }

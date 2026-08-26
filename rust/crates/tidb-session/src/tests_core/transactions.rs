@@ -157,6 +157,38 @@ fn a_begin_resolves_its_transaction_mode_from_the_keyword_then_the_variable() {
     ));
 }
 
+/// Go `optimizeDupKeyCheckForNormalInsert` (`pkg/executor/insert.go:331-337`)
+/// sees the implicit pessimistic transaction created for an autocommit DML,
+/// not only an explicit `BEGIN`. The statement context must therefore carry
+/// lazy duplicate checking on a normal user connection before the transaction
+/// exists; changing the mode or constraint variable keeps the same Go matrix.
+#[test]
+fn normal_insert_duplicate_mode_matches_go_for_autocommit_and_explicit_modes() {
+    let mut session = Session::new();
+    session.set_connection_id(42);
+
+    let default = session.statement_context(true);
+    assert!(!default.constraint_check_in_place());
+    assert!(default.pessimistic_lazy_dup_check());
+
+    session.apply_set("SET tidb_txn_mode = 'optimistic'").unwrap();
+    let optimistic = session.statement_context(true);
+    assert!(!optimistic.pessimistic_lazy_dup_check());
+    assert!(!optimistic.constraint_check_in_place());
+
+    session
+        .apply_set("SET tidb_constraint_check_in_place = ON")
+        .unwrap();
+    let eager = session.statement_context(true);
+    assert!(eager.constraint_check_in_place());
+    assert!(!eager.pessimistic_lazy_dup_check());
+
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    let explicit_pessimistic = session.statement_context(true);
+    assert!(explicit_pessimistic.constraint_check_in_place());
+    assert!(explicit_pessimistic.pessimistic_lazy_dup_check());
+}
+
 /// `autocommit = 0`'s captured rules (`corpus/table/transactions` and
 /// `corpus/table/autocommit_source`): a statement then runs inside a
 /// transaction the session opens for it, so `ROLLBACK` discards it; and only

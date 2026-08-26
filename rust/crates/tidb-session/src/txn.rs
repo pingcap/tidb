@@ -285,6 +285,18 @@ impl Session {
         self.txn.as_ref().map(|txn| txn.mode)
     }
 
+    /// The transaction mode a statement will use, including autocommit.
+    ///
+    /// Go's `optimizeDupKeyCheckForNormalInsert` asks the transaction returned
+    /// by `Txn(true)`, so an autocommit statement still observes the session's
+    /// `@@tidb_txn_mode` default before that implicit transaction is materialized.
+    /// Explicit `BEGIN <mode>` continues to win over the variable.
+    #[must_use]
+    pub fn statement_txn_mode(&self) -> SessionTxnMode {
+        self.txn_mode()
+            .unwrap_or_else(|| self.resolve_begin_txn_mode(tidb_ast::TransactionMode::Default))
+    }
+
     /// Installs a transaction over the shared catalog as it stands now.
     ///
     /// The lock is taken and released here rather than held across the

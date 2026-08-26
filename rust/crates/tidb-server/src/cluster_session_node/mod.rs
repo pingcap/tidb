@@ -1131,9 +1131,39 @@ impl ClusterServerSession {
         if keys.is_empty() {
             return Ok(PessimisticStep::Done);
         }
+        // Go `getPessimisticLazyCheckMode` (`pkg/executor/insert.go:346-350`):
+        // the default ON checks lazy INSERT assertions in LockKeys, while OFF
+        // inside an explicit client transaction defers them to prewrite.
+        let check_in_lock = self
+            .session
+            .vars()
+            .get_system("tidb_constraint_check_in_place_pessimistic")
+            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
+        let key_set: std::collections::BTreeSet<Vec<u8>> = keys.iter().cloned().collect();
+        let presume_not_exists = if check_in_lock {
+            self.buffer
+                .presume_not_exists_keys()
+                .into_iter()
+                .filter(|key| key_set.contains(key))
+                .collect()
+        } else {
+            std::collections::BTreeSet::new()
+        };
+        let duplicate_hints = presume_not_exists
+            .iter()
+            .filter_map(|key| {
+                self.buffer
+                    .duplicate_key_hint_for(key)
+                    .map(|hint| (key.clone(), hint))
+            })
+            .collect();
         // Every error exit rolls the STATEMENT back -- Go's `StmtRollback`
         // runs on any statement error, transport failures included.
-        let outcome = match transaction.lock_staged_keys(keys) {
+        let outcome = match transaction.lock_staged_keys_with_assertions(
+            keys,
+            presume_not_exists,
+            duplicate_hints,
+        ) {
             Ok(outcome) => outcome,
             Err(error) => {
                 self.buffer.restore(savepoint.clone());

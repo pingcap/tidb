@@ -1165,3 +1165,31 @@ performance gate remains open. The source commit message contains the
 required `Go code:` references; this remains WIP because no Go executable is
 available for `make lint`/Ready and the complete hbx-web3 query catalog was
 not rerun.
+
+Revision note, 2026-08-26 (Go pessimistic duplicate-check modes): the Rust
+statement context now carries Go `SessionVars.ConstraintCheckInPlace` and the
+resolved statement transaction mode, so `pkg/executor/insert.go:331-337`
+selects the same lazy/in-place normal-INSERT mode for both implicit
+autocommit and explicit transactions. The cluster lock path now carries Go's
+`SetPresumeKeyNotExists` assertions and the
+`tidb_constraint_check_in_place_pessimistic` choice from
+`pkg/executor/insert.go:347-350`; lock-stage `AlreadyExists` and deferred
+prewrite duplicates retain the original table/index text and SQL 1062
+identity. Focused Rust regressions pass, and live fresh-table checks on both
+endpoints match Go: with the pessimistic variable ON, the duplicate INSERT
+fails during the statement and COMMIT succeeds; with it OFF, INSERT succeeds
+and COMMIT returns 1062, leaving only the seed row in both cases. On the
+deterministic 1G `hbx_web3_1g` fixture, the four normalized plans and result
+hashes still match (q1 `0c488295...`, q2/flex `45f8be11...`, swap
+`bf2ce599...`), and the 100-row batch result remains 100 rows with sum
+`5050.000000000000000000`. Receipts:
+`/private/tmp/hbx-1g-20260825/compare-go-lock-fix-20260826.json`,
+`/private/tmp/hbx-1g-20260825/bench-go-lock-fix-20260826.json`, and the latest
+rerun in `/private/tmp/hbx-1g-20260825/bench.json`. The latest 20-pair
+medians are Rust/Go q1 `10.060/9.306 ms` (`1.081x`), q2 `9.460/7.953 ms`
+(`1.189x`), flex `9.662/7.812 ms` (`1.237x`), swap `17.218/15.425 ms`
+(`1.116x`), and batch `6.192/5.595 ms` (`1.107x`). Correctness and Go
+behavior are green, but the strict one-concurrency performance no-regression
+gate remains open. The implementation is ready to commit with a required
+`Go code:` commit-body line; Ready-profile `make lint` remains unavailable
+because this checkout has no `go` executable.

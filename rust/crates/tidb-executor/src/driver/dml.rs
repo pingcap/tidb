@@ -979,7 +979,8 @@ pub(crate) fn run_insert_traced(
     // constraint check. The moment a statement must RESOLVE a conflict rather
     // than report one, every prior read stays eager, exactly as Go keeps the
     // in-place mode for those statements.
-    let lazy_dup_check = ctx.pessimistic_lazy_dup_check()
+    let lazy_dup_check = (!ctx.constraint_check_in_place()
+        || ctx.pessimistic_lazy_dup_check())
         && !insert.replace
         && insert.on_duplicate.is_empty()
         && !insert.ignore;

@@ -2498,6 +2498,15 @@ impl KvTable {
             physical_id,
             &handle.record_handle(),
         ));
+        let duplicate_value = if clustered {
+            clustered_key_text(self, row)
+        } else {
+            match &handle {
+                TableHandle::Int(value) => value.to_string(),
+                TableHandle::Common(_) => unreachable!("a heap table has an integer handle"),
+            }
+        };
+        let duplicate_key = self.qualified_key("PRIMARY");
         // Go `AddRecord`'s duplicate check, in both of its modes. In place it
         // reads the whole transaction (staged writes, then snapshot); lazily
         // it reads the STAGED WRITES ONLY (`GetLocal`) and a miss marks the
@@ -2509,7 +2518,11 @@ impl KvTable {
             match self.store.get_local(&key) {
                 Ok(value) => !value.is_empty(),
                 Err(StorageError::NotFound) => {
-                    self.store.mark_presume_key_not_exists(&key);
+                    self.store.mark_presume_key_not_exists_with_hint(
+                        &key,
+                        &duplicate_value,
+                        &duplicate_key,
+                    );
                     false
                 }
                 Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
@@ -2521,17 +2534,8 @@ impl KvTable {
         };
         if duplicated {
             return Err(KvTableError::DuplicateEntry {
-                value: if clustered {
-                    clustered_key_text(self, row)
-                } else {
-                    match &handle {
-                        TableHandle::Int(value) => value.to_string(),
-                        TableHandle::Common(_) => {
-                            unreachable!("a heap table has an integer handle")
-                        }
-                    }
-                },
-                key: self.qualified_key("PRIMARY"),
+                value: duplicate_value,
+                key: duplicate_key,
             });
         }
         // Go writes the row first, then its index entries; a duplicate on a

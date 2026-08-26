@@ -56,6 +56,7 @@ pub(crate) struct StatementVarSnapshot {
     join_reorder_threshold: i32,
     default_string_match_selectivity: f64,
     advanced_join_reorder: bool,
+    constraint_check_in_place: bool,
     ordering_index_selectivity_ratio: f64,
     join_reorder_through_proj: bool,
     join_reorder_through_sel: bool,
@@ -604,6 +605,7 @@ impl Session {
             advanced_join_reorder: not_off(
                 tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
             ),
+            constraint_check_in_place: on(tidb_vardef::tidb_vars::TIDB_CONSTRAINT_CHECK_IN_PLACE),
             ordering_index_selectivity_ratio: self
                 .vars
                 .get_system("tidb_opt_ordering_index_selectivity_ratio")
@@ -715,6 +717,7 @@ impl Session {
         let join_reorder_threshold = snapshot.join_reorder_threshold;
         let default_string_match_selectivity = snapshot.default_string_match_selectivity;
         let advanced_join_reorder = snapshot.advanced_join_reorder;
+        let constraint_check_in_place = snapshot.constraint_check_in_place;
         let ordering_index_selectivity_ratio = snapshot.ordering_index_selectivity_ratio;
         let join_reorder_through_proj = snapshot.join_reorder_through_proj;
         let join_reorder_through_sel = snapshot.join_reorder_through_sel;
@@ -887,14 +890,15 @@ impl Session {
         .with_auto_increment_step(increment, offset)
         .with_auto_increment_zero_explicit(has("NO_AUTO_VALUE_ON_ZERO"))
         .with_foreign_key_checks(self.foreign_key_checks())
+        .with_constraint_check_in_place(constraint_check_in_place)
         // Go `optimizeDupKeyCheckForNormalInsert` + `getPessimisticLazyCheckMode`
-        // (`pkg/executor/insert.go`): a statement inside an explicit
-        // PESSIMISTIC transaction on a user connection checks inserted keys
-        // lazily -- staged writes only -- and defers the existence verdict to
-        // the commit. `txn_mode()` answers only while a transaction is open,
-        // which is Go's `InTxn()` guard; internal SQL carries no connection id.
+        // (`pkg/executor/insert.go:331-337,347-350`): normal INSERT uses
+        // `DupKeyCheckLazy` whenever constraint checks are disabled OR the
+        // statement transaction is pessimistic. The Go auto-commit path still
+        // opens a pessimistic transaction under the default `tidb_txn_mode`,
+        // so the Rust context must carry that mode before `Txn()` is opened.
         .with_pessimistic_lazy_dup_check(
-            matches!(self.txn_mode(), Some(crate::SessionTxnMode::Pessimistic))
+            self.statement_txn_mode().is_pessimistic()
                 && self.connection_id.is_some_and(|id| id > 0),
         )
         .with_allow_remove_auto_inc(self.allow_remove_auto_inc())

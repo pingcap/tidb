@@ -222,6 +222,19 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
         let _ = key;
     }
 
+    /// Marks a presumed-absent key and retains the Go duplicate text for a
+    /// deferred prewrite assertion. Backends without a commit boundary keep
+    /// the ordinary mark only.
+    fn mark_presume_key_not_exists_with_hint(
+        &mut self,
+        key: &Key,
+        value: &str,
+        index: &str,
+    ) {
+        let _ = (value, index);
+        self.mark_presume_key_not_exists(key);
+    }
+
     /// Reads several keys at one backend request boundary. Backends that do
     /// not have a native batch operation retain correctness through the
     /// point-read fallback; cluster storage overrides this with TiKV's

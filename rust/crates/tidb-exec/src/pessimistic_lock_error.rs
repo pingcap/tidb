@@ -29,6 +29,7 @@
 //! exceeded; try restarting transaction`.
 
 use tidb_error::terror::ERR_RESULT_UNDETERMINED;
+use tidb_executor::cluster_storage::DuplicateKeyHint;
 use tidb_txnkv::region::RegionBackoffKind;
 use tidb_txnkv::transaction::{OptimisticCommitOutcome, PessimisticLockFailure, TransactionCause};
 use tidb_txnkv::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
@@ -131,12 +132,33 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
 ///
 /// Returns the client-visible error for any outcome other than `Committed`.
 pub fn commit_outcome_to_sql_error(outcome: &OptimisticCommitOutcome) -> Result<(), LockSqlError> {
+    commit_outcome_to_sql_error_with_hint(outcome, None)
+}
+
+/// Maps a commit outcome while preserving the duplicate-key text captured by
+/// the INSERT executor before it deferred the primary assertion to prewrite.
+/// TiKV returns only the encoded key at that boundary; Go still reports the
+/// original `ErrDupEntry` (1062), so the session supplies the matching hint.
+pub fn commit_outcome_to_sql_error_with_hint(
+    outcome: &OptimisticCommitOutcome,
+    duplicate_hint: Option<&DuplicateKeyHint>,
+) -> Result<(), LockSqlError> {
     match outcome {
         OptimisticCommitOutcome::Committed(_) => Ok(()),
         OptimisticCommitOutcome::RolledBack(rolled_back) => {
+            if let TransactionCause::AlreadyExists { .. } = &rolled_back.cause {
+                if let Some(hint) = duplicate_hint {
+                    return Err(duplicate_key_sql_error(hint));
+                }
+            }
             Err(transaction_cause_to_sql_error(&rolled_back.cause))
         }
         OptimisticCommitOutcome::CleanupFailed(failed) => {
+            if let TransactionCause::AlreadyExists { .. } = &failed.cause {
+                if let Some(hint) = duplicate_hint {
+                    return Err(duplicate_key_sql_error(hint));
+                }
+            }
             Err(transaction_cause_to_sql_error(&failed.cause))
         }
         OptimisticCommitOutcome::Undetermined(_) => Err(LockSqlError {
@@ -144,6 +166,14 @@ pub fn commit_outcome_to_sql_error(outcome: &OptimisticCommitOutcome) -> Result<
             state: DEFAULT_SQL_STATE,
             message: ERR_RESULT_UNDETERMINED.message().to_owned(),
         }),
+    }
+}
+
+pub(crate) fn duplicate_key_sql_error(hint: &DuplicateKeyHint) -> LockSqlError {
+    LockSqlError {
+        code: 1062,
+        state: *b"23000",
+        message: format!("Duplicate entry '{}' for key '{}'", hint.value, hint.key),
     }
 }
 
@@ -255,13 +285,17 @@ pub const fn is_retryable_statement_failure(failure: &PessimisticLockFailure) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{commit_outcome_to_sql_error, transaction_cause_to_sql_error};
+    use super::{
+        commit_outcome_to_sql_error, commit_outcome_to_sql_error_with_hint,
+        transaction_cause_to_sql_error,
+    };
     use super::{
         is_retryable_statement_failure, lock_failure_to_sql_error,
         ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET, ERR_LOCK_DEADLOCK, ERR_LOCK_WAIT_TIMEOUT,
         ERR_REGION_UNAVAILABLE, ERR_WRITE_CONFLICT,
     };
     use tidb_error::terror::ERR_RESULT_UNDETERMINED;
+    use tidb_executor::cluster_storage::DuplicateKeyHint;
     use tidb_txnkv::region::RegionBackoffKind;
     use tidb_txnkv::transaction::{
         CommittedTransaction, DeadlockDetail, DeadlockWaitChainItem, OptimisticCommitOutcome,
@@ -313,6 +347,32 @@ mod tests {
         assert_eq!(error.code, 1105);
         assert_eq!(error.message, ERR_RESULT_UNDETERMINED.message());
         assert!(error.is_result_undetermined());
+    }
+
+    /// Go's lazy `AddRecord` carries the table/index text into the deferred
+    /// prewrite assertion; the wire result must remain ErrDupEntry (1062), not
+    /// the generic 1105 used for an untyped transaction failure.
+    #[test]
+    fn a_deferred_duplicate_outcome_keeps_go_err_dup_entry_identity() {
+        let refused = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+            receipt: receipt(),
+            cause: TransactionCause::AlreadyExists {
+                key: b"encoded-primary".to_vec(),
+                detail: "key already exists".to_owned(),
+            },
+        });
+        let hint = DuplicateKeyHint {
+            value: "1".to_owned(),
+            key: "hbx_dup.PRIMARY".to_owned(),
+        };
+        let error = commit_outcome_to_sql_error_with_hint(&refused, Some(&hint))
+            .expect_err("deferred duplicate must be reported as a SQL error");
+        assert_eq!(error.code, 1062);
+        assert_eq!(error.state, *b"23000");
+        assert_eq!(
+            error.message,
+            "Duplicate entry '1' for key 'hbx_dup.PRIMARY'"
+        );
     }
 
     #[test]

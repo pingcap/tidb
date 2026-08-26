@@ -49,7 +49,7 @@
 //!
 //! `LOCK IN SHARE MODE` is Go's own documented no-op and stays one.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
@@ -67,7 +67,9 @@ use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
 use tidb_executor::advisory_lock_state::{
     AdvisoryLockError, AdvisoryLockLease, AdvisoryLockService,
 };
-use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SnapshotPairs};
+use tidb_executor::cluster_storage::{
+    ClusterSnapshot, DuplicateKeyHint, MutationBuffer, SnapshotPairs,
+};
 use tidb_executor::storage::StorageError;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
@@ -235,6 +237,17 @@ pub trait OpenClusterTransaction: Send {
     /// next move.
     fn lock_staged_keys(&self, _keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, String> {
         Err("only a pessimistic transaction locks statement keys".to_owned())
+    }
+
+    /// [`Self::lock_staged_keys`] with the lazy INSERT assertions Go carries
+    /// from `MemBuffer` into `KVTxn.LockKeys`.
+    fn lock_staged_keys_with_assertions(
+        &self,
+        keys: Vec<Vec<u8>>,
+        _presume_not_exists: BTreeSet<Vec<u8>>,
+        _duplicate_hints: BTreeMap<Vec<u8>, DuplicateKeyHint>,
+    ) -> Result<LockKeysOutcome, String> {
+        self.lock_staged_keys(keys)
     }
 
     /// [`Self::lock_staged_keys`], asking TiKV to answer each newly locked
@@ -874,6 +887,22 @@ impl OpenClusterTransaction for SessionTransaction {
 
     fn lock_staged_keys(&self, keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, String> {
         SessionTransaction::lock_keys(self, keys).map_err(|error| error.to_string())
+    }
+
+    fn lock_staged_keys_with_assertions(
+        &self,
+        keys: Vec<Vec<u8>>,
+        presume_not_exists: BTreeSet<Vec<u8>>,
+        duplicate_hints: BTreeMap<Vec<u8>, DuplicateKeyHint>,
+    ) -> Result<LockKeysOutcome, String> {
+        SessionTransaction::lock_keys_with_assertions(
+            self,
+            keys,
+            presume_not_exists,
+            duplicate_hints,
+            false,
+        )
+        .map_err(|error| error.to_string())
     }
 
     fn lock_staged_keys_with_values(&self, keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, String> {

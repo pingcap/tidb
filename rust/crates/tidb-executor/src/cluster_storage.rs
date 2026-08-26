@@ -260,9 +260,24 @@ pub struct MutationBuffer {
     /// version turns out to exist; the pessimistic lock step reads the same
     /// set as Go's `KeysNeedToLock` reads its flags.
     presume_not_exists: Arc<Mutex<BTreeSet<Key>>>,
+    /// Client-visible duplicate text for deferred primary-key checks. TiKV
+    /// reports only the encoded key at prewrite, while Go formats the 1062
+    /// from the table/index context held by `addRecord`; retaining that small
+    /// hint lets the commit boundary preserve the same error identity.
+    duplicate_hints: Arc<Mutex<BTreeMap<Key, DuplicateKeyHint>>>,
     /// Prior states of every write since the last `reset`, oldest first:
     /// what [`Self::checkpoint`] positions and [`Self::restore`] unwinds.
     undo: Arc<Mutex<Vec<UndoEntry>>>,
+}
+
+/// The SQL text Go's `ErrDupEntry` carries when a deferred insert assertion
+/// discovers an existing key at prewrite.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DuplicateKeyHint {
+    /// The rejected key value, as MySQL prints it.
+    pub value: String,
+    /// The violated key name, usually `PRIMARY` for this path.
+    pub key: String,
 }
 
 impl MutationBuffer {
@@ -308,6 +323,46 @@ impl MutationBuffer {
             // with the insert that carried it.
             self.undo().push(UndoEntry::Presume { key: key.clone() });
         }
+    }
+
+    /// Marks a presumed-absent key and retains the Go duplicate error text in
+    /// case TiKV rejects the `Op_Insert` at commit.
+    pub fn mark_presume_key_not_exists_with_hint(
+        &self,
+        key: &Key,
+        value: impl Into<String>,
+        index: impl Into<String>,
+    ) {
+        self.mark_presume_key_not_exists(key);
+        self.duplicate_hints()
+            .insert(
+                key.clone(),
+                DuplicateKeyHint {
+                    value: value.into(),
+                    key: index.into(),
+                },
+            );
+    }
+
+    /// Returns the client-visible duplicate text for an encoded key, if the
+    /// current transaction staged it as a deferred normal INSERT.
+    #[must_use]
+    pub fn duplicate_key_hint_for(&self, key: &[u8]) -> Option<DuplicateKeyHint> {
+        self.duplicate_hints()
+            .get(&Key::from_bytes(key.to_vec()))
+            .cloned()
+    }
+
+    /// Returns the current presumed-absent keys without consuming their
+    /// commit flags. Go's pessimistic `KeysNeedToLock` reads these flags at
+    /// statement end, while the later prewrite still needs the same flags if
+    /// the session selected `DupKeyCheckInPrewrite`.
+    #[must_use]
+    pub fn presume_not_exists_keys(&self) -> BTreeSet<Vec<u8>> {
+        self.presume()
+            .iter()
+            .map(|key| key.as_bytes().to_vec())
+            .collect()
     }
 
     /// Drains every presumption mark, in no particular order. COMMIT consumes
@@ -402,6 +457,7 @@ impl MutationBuffer {
     pub fn reset(&self) {
         self.lock().clear();
         self.presume().clear();
+        self.duplicate_hints().clear();
         self.undo().clear();
     }
 
@@ -430,6 +486,7 @@ impl MutationBuffer {
                 },
                 Some(UndoEntry::Presume { key }) => {
                     self.presume().remove(&key);
+                    self.duplicate_hints().remove(&key);
                 }
                 None => break,
             }
@@ -438,6 +495,12 @@ impl MutationBuffer {
 
     fn presume(&self) -> std::sync::MutexGuard<'_, BTreeSet<Key>> {
         self.presume_not_exists
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    fn duplicate_hints(&self) -> std::sync::MutexGuard<'_, BTreeMap<Key, DuplicateKeyHint>> {
+        self.duplicate_hints
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
     }
@@ -650,6 +713,16 @@ impl TableStorage for ClusterTableStorage {
 
     fn mark_presume_key_not_exists(&mut self, key: &Key) {
         self.buffer.mark_presume_key_not_exists(key);
+    }
+
+    fn mark_presume_key_not_exists_with_hint(
+        &mut self,
+        key: &Key,
+        value: &str,
+        index: &str,
+    ) {
+        self.buffer
+            .mark_presume_key_not_exists_with_hint(key, value, index);
     }
 
     fn batch_get(&mut self, keys: &[Key]) -> Result<HashMap<Key, Vec<u8>>, StorageError> {
@@ -1168,10 +1241,20 @@ mod tests {
         let buffer = MutationBuffer::new();
         let first = key(b"k1");
         let second = key(b"k2");
-        buffer.mark_presume_key_not_exists(&first);
+        buffer.mark_presume_key_not_exists_with_hint(&first, "1", "t.PRIMARY");
         buffer.set(first.clone(), b"v1".to_vec());
         // The statement's savepoint: the mark and its write are both in.
         let savepoint = buffer.checkpoint();
+        assert!(buffer
+            .presume_not_exists_keys()
+            .contains(&first.as_bytes().to_vec()));
+        assert_eq!(
+            buffer.duplicate_key_hint_for(first.as_bytes()),
+            Some(DuplicateKeyHint {
+                value: "1".to_owned(),
+                key: "t.PRIMARY".to_owned(),
+            })
+        );
         // A second statement inserts another presumed-absent row ...
         buffer.mark_presume_key_not_exists(&second);
         buffer.set(second.clone(), b"v2".to_vec());

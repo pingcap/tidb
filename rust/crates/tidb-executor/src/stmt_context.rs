@@ -420,15 +420,17 @@ pub struct StmtContext {
     /// default): whether referential integrity is enforced at all. A context
     /// with no session behind it enforces, as a stock session does.
     foreign_key_checks: bool,
-    /// Go `table.DupKeyCheckLazy`, which the session resolves from
-    /// `optimizeDupKeyCheckForNormalInsert` plus `getPessimisticLazyCheckMode`
-    /// (`pkg/executor/insert.go`): an INSERT inside an explicit PESSIMISTIC
-    /// transaction on a user connection checks duplicate record keys against
-    /// its own staged writes only -- Go `GetLocal`, never the snapshot -- and
-    /// stages each inserted row presumed absent, deferring the real existence
-    /// verdict to the pessimistic lock / prewrite constraint check. Default
-    /// OFF: every other statement keeps the in-place check.
+    /// Go `txn.IsPessimistic()` half of `optimizeDupKeyCheckForNormalInsert`
+    /// (`pkg/executor/insert.go:331-337`), resolved for the current or
+    /// implicit statement transaction. On a user connection this transaction
+    /// mode signal is carried separately from the constraint variable below;
+    /// together they decide whether a normal INSERT can defer duplicate-key
+    /// checking to prewrite.
     pessimistic_lazy_dup_check: bool,
+    /// Go `SessionVars.ConstraintCheckInPlace` (`@@tidb_constraint_check_in_place`).
+    /// `optimizeDupKeyCheckForNormalInsert` (`pkg/executor/insert.go:331-337`)
+    /// combines this with the transaction mode to select lazy checking.
+    constraint_check_in_place: bool,
 
     /// Go `SessionVars.AllowRemoveAutoInc` (`@@tidb_allow_remove_auto_inc`,
     /// OFF by default), read by `ALTER TABLE ... MODIFY COLUMN`.
@@ -718,6 +720,7 @@ impl StmtContext {
             default_week_format: 0,
             foreign_key_checks: true,
             pessimistic_lazy_dup_check: false,
+            constraint_check_in_place: false,
             allow_remove_auto_inc: false,
             div_precision_increment: 4,
             cte_max_recursion_depth: 1000,
@@ -1447,6 +1450,19 @@ impl StmtContext {
     #[must_use]
     pub fn pessimistic_lazy_dup_check(&self) -> bool {
         self.pessimistic_lazy_dup_check
+    }
+
+    /// Whether Go's normal INSERT duplicate check is eager for this statement.
+    #[must_use]
+    pub const fn constraint_check_in_place(&self) -> bool {
+        self.constraint_check_in_place
+    }
+
+    /// Sets `@@tidb_constraint_check_in_place` for this statement.
+    #[must_use]
+    pub const fn with_constraint_check_in_place(mut self, enabled: bool) -> Self {
+        self.constraint_check_in_place = enabled;
+        self
     }
 
     /// Sets `@@tidb_allow_remove_auto_inc` for this statement.
