@@ -1033,3 +1033,33 @@ as `2b663fbb046ace3143709f140c64a7a7dcf3c7a5`. After the rebase, the focused
 the executor library check passed. The exact committed runtime receipt above
 was produced from the same production source before this test-only upstream
 rebase; the new upstream files do not alter that behavior.
+
+Revision note, 2026-08-26 (Go lookup seed and worker handoff continuation):
+explicitly fetched the latest remote test-port tip `1aff446400` and rebased the
+Rust changes onto it. The implementation now follows Go
+`pkg/executor/distsql.go:2145-2218` by retaining decoded table chunks and
+decorated `(batch,row)` positions through the lookup worker, and follows
+`pkg/executor/distsql.go:881-1149` by seeding the first lookup window from the
+parent output `RequiredRows`, including table-side residual predicates. Only
+point-select-sized windows remain inline; the 100-handle HBX window uses the
+Go table-worker asynchronous handoff. The regression
+`lookup_seed_uses_required_rows_for_table_residuals` and the 30-test
+`access_path` suite pass. The source commit is `fb5037e358a30dcaf50b26d07827c4fdc1a296c9`
+(`rust: match Go lookup task seed and handoff`) and its commit body contains
+the required `Go code:` references; it is pushed to
+`origin/hparser-integration`.
+
+The release binary was rebuilt from that exact HEAD and restarted on
+`127.0.0.1:14019`. On the deterministic 1G `hbx_web3_1g` fixture, the four
+normalized plans and result hashes remain equal (q1 `0c488295...`, q2/flex
+`45f8be11...`, swap `bf2ce599...`); all queries return 100 rows. The 100-row
+batch INSERT returns 100 rows and sum `5050.000000000000000000` on both
+endpoints. Receipts:
+`/private/tmp/hbx-1g-20260825/compare-fb503-go-seed-20260826.json` and
+`/private/tmp/hbx-1g-20260825/bench-fb503-go-seed-20260826.json`. Alternating
+20-pair medians are Go/Rust q1 `9.359/10.011 ms` (`1.070x`), q2
+`8.007/9.429 ms` (`1.178x`), flex `8.546/9.752 ms` (`1.141x`), swap
+`12.799/20.246 ms` (`1.582x`), and batch `6.050/7.328 ms` (`1.211x`). The
+Go-behavior and correctness gates are green; the strict one-concurrency
+performance no-regression gate remains open. This remains WIP: the machine
+has no `go` executable, so `make lint`/Ready cannot run.
