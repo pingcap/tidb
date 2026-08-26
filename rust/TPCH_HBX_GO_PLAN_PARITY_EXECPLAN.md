@@ -780,3 +780,21 @@ rebuild and restart on `127.0.0.1:14019`, the 1G hbx-web3 plans/results and
 Rust/Go median ratios are q1 `1.116x`, q2 `1.150x`, flex `1.227x`, swap
 `1.680x`, and batch `1.225x`; the one-concurrency no-regression gate remains
 open. The follow-up commit body contains the required `Go code:` references.
+
+Revision note, 2026-08-26 (latest remote and direct text append): pulled
+remote `0d8294e791` (prepared-statement access-path replay), rebased the Go
+text-row/decimal correction as `818a30ec8f`, and then changed the owned text
+row path to append each cell directly into the final payload in
+`5d19da4505`. This follows Go's `DumpTextRow` append order
+(`pkg/server/internal/column/column.go:162-177`) and removes the intermediate
+owned cell vector. Protocol `resultset_stream` remains 4/4 and server
+`resultset_writer` remains 12/12. A clean release build at the latest source
+was restarted on `127.0.0.1:14019`; the 1G hbx-web3 receipt remains equal for
+all four plans/results and both batch checks. Receipt:
+`/private/tmp/hbx-1g-20260825/compare-client-rust-71cc-owned-text-direct-20260826.json`;
+20-pair receipt:
+`/private/tmp/hbx-1g-20260825/bench-client-rust-71cc-owned-text-direct-20pairs-20260826.json`.
+Rust/Go median ratios are q1 `1.110x`, q2 `1.146x`, flex `1.178x`, swap
+`1.663x`, and batch `1.222x`; Rust is still slower in every shape, so the
+single-concurrency no-regression gate remains open. The commits in this
+continuation include the required `Go code:` references.
