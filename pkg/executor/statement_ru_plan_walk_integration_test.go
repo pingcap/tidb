@@ -203,6 +203,12 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b))")
 		tk.MustExec("insert into t values (1, 10, 100), (2, 20, 200), (3, 30, 300)")
+		tk.MustExec("create table nullable_join(a int)")
+		tk.MustExec("insert into nullable_join values (1), (null), (2)")
+		tk.MustExec("create table naaj_a(a int, b int, c int)")
+		tk.MustExec("create table naaj_b(a int, b int, c int)")
+		tk.MustExec("insert into naaj_a values (1, 1, 1)")
+		tk.MustExec("insert into naaj_b values (1, 2, 2), (1, null, 3)")
 		tk.MustExec("set @@tidb_enable_non_prepared_plan_cache = off")
 
 		var observation *statementRUObservation
@@ -212,12 +218,14 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			}
 		})
 		type calibrationObservation struct {
-			count         int
-			state         string
-			cpuWork       float64
-			scanBytes     float64
-			netBytes      float64
-			frontendBytes float64
+			count          int
+			state          string
+			cpuWork        float64
+			scanBytes      float64
+			netBytes       float64
+			frontendBytes  float64
+			hashStateRows  float64
+			joinOutputRows float64
 		}
 		connectionID := tk.Session().GetSessionVars().ConnectionID
 		var calibrationMu sync.Mutex
@@ -225,7 +233,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
 			observedConnectionID uint64,
 			state string,
-			cpuWork, scanBytes, netBytes, frontendCompileBytes float64,
+			cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -238,16 +246,24 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			calibration.scanBytes = scanBytes
 			calibration.netBytes = netBytes
 			calibration.frontendBytes = frontendCompileBytes
+			calibration.hashStateRows = hashStateRows
+			calibration.joinOutputRows = joinOutputRows
 		})
 		type operatorExpectation func(base.Plan) bool
 		testCases := []struct {
 			name           string
+			before         []string
+			after          []string
 			query          string
 			rows           [][]any
 			expectOperator operatorExpectation
 			sortRows       bool
 			wantPublish    bool
 			wantCPUWork    bool
+			wantHashState  bool
+			wantHashRows   float64
+			wantJoinOutput bool
+			wantRootAndCop bool
 		}{
 			{name: "Selection", query: "select * from t ignore index (idx_b) where b > 10", rows: testkit.Rows("2 20 200", "3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalSelection], sortRows: true, wantPublish: true, wantCPUWork: true},
 			{name: "Sort", query: "select * from t ignore index (idx_b) order by b desc", rows: testkit.Rows("3 30 300", "2 20 200", "1 10 100"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalSort], wantPublish: true, wantCPUWork: true},
@@ -255,10 +271,28 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			{name: "Limit", query: "select * from t ignore index (idx_b) limit 2", rows: testkit.Rows("1 10 100", "2 20 200"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalLimit], wantPublish: true, wantCPUWork: true},
 			{name: "IndexReader", query: "select b from t use index (idx_b) where b >= 20", rows: testkit.Rows("20", "30"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexReader], sortRows: true, wantPublish: true},
 			{name: "IndexLookup", query: "select * from t use index (idx_b) where b >= 20", rows: testkit.Rows("2 20 200", "3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexLookUpReader], sortRows: true, wantPublish: true},
+			{name: "HashJoin optimized", before: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantJoinOutput: true},
+			{name: "HashJoin legacy", before: []string{"set tidb_hash_join_version = 'legacy'"}, after: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantJoinOutput: true},
+			{name: "HashJoin legacy excludes ordinary null keys", before: []string{"set tidb_hash_join_version = 'legacy'"}, after: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ HASH_JOIN(n1, n2) */ * from nullable_join n1 join nullable_join n2 on n1.a = n2.a", rows: testkit.Rows("1 1", "2 2"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 2, wantJoinOutput: true},
+			{name: "HashJoin legacy NAAJ includes null bucket", before: []string{"set tidb_hash_join_version = 'legacy'", "set tidb_enable_null_aware_anti_join = on"}, after: []string{"set tidb_enable_null_aware_anti_join = default", "set tidb_hash_join_version = 'optimized'"}, query: "select * from naaj_a where (a, b) not in (select a, b from naaj_b)", rows: testkit.Rows(), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 2},
+			{name: "MergeJoin", query: "select /*+ MERGE_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalMergeJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantJoinOutput: true},
+			{name: "IndexJoin", query: "select /*+ INL_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantJoinOutput: true},
+			{name: "IndexHashJoin", query: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexHashJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantJoinOutput: true},
+			{name: "HashAgg parallel", query: "select /*+ HASH_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 6, wantRootAndCop: true},
+			{name: "HashAgg serial", before: []string{"set tidb_hashagg_partial_concurrency = 1", "set tidb_hashagg_final_concurrency = 1"}, after: []string{"set tidb_hashagg_partial_concurrency = default", "set tidb_hashagg_final_concurrency = default"}, query: "select /*+ HASH_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 6, wantRootAndCop: true},
+			{name: "StreamAgg", query: "select /*+ STREAM_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalStreamAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantRootAndCop: true},
 			{name: "unsupported Projection", query: "select b + 1 from t ignore index (idx_b)", rows: testkit.Rows("11", "21", "31"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalProjection], sortRows: true},
 		}
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
+				for _, sql := range tc.before {
+					tk.MustExec(sql)
+				}
+				defer func() {
+					for _, sql := range tc.after {
+						tk.MustExec(sql)
+					}
+				}()
 				observation = nil
 				calibrationMu.Lock()
 				calibration = calibrationObservation{}
@@ -304,6 +338,14 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 				require.True(t, slices.ContainsFunc(flat.Main, func(operator *plannercore.FlatOperator) bool {
 					return operator != nil && operator.Origin != nil && tc.expectOperator(operator.Origin)
 				}), "query plan does not contain expected operator: %s; flat plan: %v", tc.query, planSummary)
+				if tc.wantRootAndCop {
+					require.True(t, slices.ContainsFunc(flat.Main, func(operator *plannercore.FlatOperator) bool {
+						return operator != nil && operator.IsRoot && tc.expectOperator(operator.Origin)
+					}), "query plan does not contain expected root operator: %s; flat plan: %v", tc.query, planSummary)
+					require.True(t, slices.ContainsFunc(flat.Main, func(operator *plannercore.FlatOperator) bool {
+						return operator != nil && !operator.IsRoot && tc.expectOperator(operator.Origin)
+					}), "query plan does not contain expected cop operator: %s; flat plan: %v", tc.query, planSummary)
+				}
 
 				calibrationMu.Lock()
 				published := calibration
@@ -319,6 +361,15 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 				require.GreaterOrEqual(t, published.netBytes, float64(0))
 				if tc.wantCPUWork {
 					require.Positive(t, published.cpuWork)
+				}
+				if tc.wantHashState {
+					require.Positive(t, published.hashStateRows)
+				}
+				if tc.wantHashRows > 0 {
+					require.Equal(t, tc.wantHashRows, published.hashStateRows)
+				}
+				if tc.wantJoinOutput {
+					require.Positive(t, published.joinOutputRows)
 				}
 			})
 		}

@@ -17,7 +17,10 @@ package executor
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -68,6 +71,57 @@ func BenchmarkStatementRUOperatorCalculation(b *testing.B) {
 	}
 }
 
+func BenchmarkStatementRUJoinAggOperatorCalculation(b *testing.B) {
+	b.Run("join", func(b *testing.B) {
+		// This timer contains the Join occurrence's checked input sum and typed
+		// CPU/output/state accumulation. It excludes evidence lookup and traversal.
+		b.ReportAllocs()
+		for b.Loop() {
+			calculator := statementRUCalculator{}
+			inputRows, valid := checkedStatementRURowSum(100, 50)
+			valid = valid && addStatementRUCPUWork(&calculator, float64(inputRows)*3)
+			valid = valid && addStatementRUJoinOutputRows(&calculator, 40)
+			valid = valid && addStatementRUHashStateRows(&calculator, 50)
+			statementRUCalculatorSink = calculator
+			statementRUCalculatedSink = valid
+		}
+	})
+
+	b.Run("hash-aggregation", func(b *testing.B) {
+		// This timer contains the HashAgg occurrence's CPU/state accumulation.
+		// It excludes executor group-map construction and evidence lookup.
+		b.ReportAllocs()
+		for b.Loop() {
+			calculator := statementRUCalculator{}
+			valid := addStatementRUCPUWork(&calculator, 100*3)
+			valid = valid && addStatementRUHashStateRows(&calculator, 25)
+			statementRUCalculatorSink = calculator
+			statementRUCalculatedSink = valid
+		}
+	})
+}
+
+func BenchmarkStatementRUExecutionDetailsAggregation(b *testing.B) {
+	zero := uint64(0)
+	rows := uint64(25)
+	summary := &tipb.ExecutorExecutionSummary{
+		TimeProcessedNs: &zero,
+		NumProducedRows: &rows,
+		NumIterations:   &zero,
+	}
+	var reuse *execdetails.RuntimeStatsColl
+
+	// This timer covers one cop-response expectation, typed summary merge, and
+	// value-only snapshot. It excludes protobuf decoding and network transport.
+	b.ReportAllocs()
+	for b.Loop() {
+		reuse = execdetails.NewRuntimeStatsColl(reuse)
+		reuse.RecordExpectedCopResponseSummaries([]int{1})
+		reuse.RecordOneCopTask(1, kv.TiKV, summary)
+		statementRUCalculatedSink = reuse.GetCopRowsSnapshot(1).Observed()
+	}
+}
+
 func BenchmarkStatementRUTreeTraversal(b *testing.B) {
 	fixture := newStatementRUSimpleSelectFixture(b)
 	flat := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
@@ -99,6 +153,8 @@ func BenchmarkStatementRUFinalizePublication(b *testing.B) {
 			ScanBytes:            10,
 			NetBytes:             20,
 			FrontendCompileBytes: fixture.owner.calculationSetup.frontendCompileBytes,
+			HashStateRows:        7,
+			JoinOutputRows:       8,
 		},
 	}
 

@@ -51,8 +51,9 @@ const (
 // that this supported occurrence was calculated from the evidence currently
 // visible at finalization; it does not claim producer-side evidence coverage.
 type statementRUOperatorResult struct {
-	state      statementRUOperatorState
-	outputRows int64
+	state              statementRUOperatorState
+	outputRows         int64
+	outputRowsObserved bool
 }
 
 type statementRUOperatorRU struct {
@@ -182,7 +183,7 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) {
 		}
 
 		// The fresh-session slice must use a flat plan rooted at this ExecStmt.
-		// General flat-plan generation identity remains outside this layer.
+		// General flat-plan generation identity is not statement-RU evidence.
 		if len(flat.Main) == 0 || flat.Main[0] == nil || flat.Main[0].Origin != a.Plan {
 			return
 		}
@@ -241,10 +242,9 @@ func calculateStatementRUInternal(
 		return statementRUFinalizedSnapshot{}, false
 	}
 	calculator := newStatementRUCalculator(setup)
-	// Transport bytes are statement evidence in both the current producer and
-	// the demo model. Read them once; do not attribute the same aggregate to
-	// every Reader occurrence. Missing evidence contributes zero to the
-	// best-effort ResultOnly value.
+	// Transport bytes are statement-owned evidence. Read them once; do not
+	// attribute the same aggregate to every Reader occurrence. Missing evidence
+	// contributes zero to the best-effort ResultOnly value.
 	if metrics != nil && !metrics.Bypass() {
 		netBytes := metrics.TiKVCoprocessorResponseBytes()
 		if netBytes < 0 {
@@ -328,11 +328,24 @@ func calculateStatementRUPlanChildFirst(
 	}
 
 	outputRows := int64(0)
+	outputRowsObserved := false
 	if runtimeStatsColl != nil {
 		if operator.IsRoot {
-			outputRows = runtimeStatsColl.GetPlanActRows(operator.Origin.ID())
+			snapshot := runtimeStatsColl.GetRootRowsSnapshot(operator.Origin.ID())
+			if snapshot.Invalid() {
+				return statementRUOperatorResult{state: statementRUOperatorInvalid}
+			}
+			outputRows = snapshot.Rows
+			outputRowsObserved = snapshot.Observed()
 		} else {
-			_, outputRows = runtimeStatsColl.GetCopCountAndRows(operator.Origin.ID())
+			snapshot := runtimeStatsColl.GetCopRowsSnapshot(operator.Origin.ID())
+			if snapshot.Invalid {
+				return statementRUOperatorResult{state: statementRUOperatorInvalid}
+			}
+			outputRows = snapshot.Rows
+			// Missing summary slots remain marked by Complete, but do not discard
+			// rows from other valid responses for the same cop occurrence.
+			outputRowsObserved = snapshot.Observed()
 		}
 	}
 	if outputRows < 0 {
@@ -456,6 +469,22 @@ func calculateStatementRUPlanChildFirst(
 		if !addStatementRUCPUWork(calculator, float64(children[0].outputRows)) {
 			return statementRUOperatorResult{state: statementRUOperatorInvalid}
 		}
+	case *physicalop.PhysicalHashJoin, *physicalop.PhysicalMergeJoin,
+		*physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin,
+		*physicalop.PhysicalIndexMergeJoin:
+		state := collectStatementRUJoinUnits(
+			tree, operator, children, outputRows, outputRowsObserved, runtimeStatsColl, calculator,
+		)
+		if state != statementRUOperatorComplete {
+			return statementRUOperatorResult{state: state}
+		}
+	case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
+		state := collectStatementRUAggregationUnits(
+			tree, operator, children, outputRows, outputRowsObserved, runtimeStatsColl, calculator,
+		)
+		if state != statementRUOperatorComplete {
+			return statementRUOperatorResult{state: state}
+		}
 	case *physicalop.PhysicalTableScan, *physicalop.PhysicalIndexScan:
 		// TableScan and IndexScan do not contribute units directly. Their scan
 		// evidence is accounted for by the owning Reader boundary.
@@ -484,7 +513,290 @@ func calculateStatementRUPlanChildFirst(
 		}
 	}
 
-	return statementRUOperatorResult{state: statementRUOperatorComplete, outputRows: outputRows}
+	return statementRUOperatorResult{
+		state:              statementRUOperatorComplete,
+		outputRows:         outputRows,
+		outputRowsObserved: outputRowsObserved,
+	}
+}
+
+// collectStatementRUJoinUnits charges one supported root Join occurrence.
+// CPUWork is (left child rows + right child rows) multiplied by the subtype's
+// audited expression slots; JoinOutputRows is the occurrence's own observed
+// output. HashJoin additionally owns completed lookup-state rows. Cop/TiFlash,
+// FullOuter, mismatched child roles, and incomplete evidence fail closed.
+func collectStatementRUJoinUnits(
+	tree plannercore.FlatPlanTree,
+	operator *plannercore.FlatOperator,
+	children []statementRUOperatorResult,
+	outputRows int64,
+	outputRowsObserved bool,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	calculator *statementRUCalculator,
+) statementRUOperatorState {
+	delta := statementRUCalculator{}
+	if operator == nil || !operator.IsRoot || len(children) != 2 ||
+		!children[0].outputRowsObserved || !children[1].outputRowsObserved || !outputRowsObserved {
+		return statementRUOperatorUnsupported
+	}
+	physicalJoin, ok := operator.Origin.(base.PhysicalPlan)
+	if !ok || len(physicalJoin.Children()) != 2 || len(operator.ChildrenIdx) != 2 {
+		return statementRUOperatorUnsupported
+	}
+	contract, ok := statementRUJoinContractForPlan(operator.Origin)
+	if !ok {
+		return statementRUOperatorUnsupported
+	}
+	for ordinal, childIndex := range operator.ChildrenIdx {
+		if childIndex < 0 || childIndex >= len(tree) || tree[childIndex] == nil {
+			return statementRUOperatorInvalid
+		}
+		if tree[childIndex].Origin != physicalJoin.Children()[ordinal] ||
+			tree[childIndex].Label != contract.childLabels[ordinal] {
+			return statementRUOperatorUnsupported
+		}
+	}
+	inputRows, valid := checkedStatementRURowSum(children[0].outputRows, children[1].outputRows)
+	if !valid || !addStatementRUCPUWork(&delta, float64(inputRows)*float64(contract.expressionCount)) ||
+		!addStatementRUJoinOutputRows(&delta, float64(outputRows)) {
+		return statementRUOperatorInvalid
+	}
+	if contract.hashState {
+		if runtimeStatsColl == nil {
+			return statementRUOperatorUnsupported
+		}
+		snapshot, found := runtimeStatsColl.GetRootHashStateRowsSnapshot(operator.Origin.ID())
+		if !found {
+			return statementRUOperatorUnsupported
+		}
+		if !snapshot.Complete() {
+			if snapshot.Invalid() {
+				return statementRUOperatorInvalid
+			}
+			return statementRUOperatorUnsupported
+		}
+		if !addStatementRUHashStateRows(&delta, float64(snapshot.Rows)) {
+			return statementRUOperatorInvalid
+		}
+	}
+	if !mergeStatementRUUnitDelta(calculator, delta.units) {
+		return statementRUOperatorInvalid
+	}
+	return statementRUOperatorComplete
+}
+
+type statementRUJoinContract struct {
+	childLabels     [2]plannercore.OperatorLabel
+	expressionCount int64
+	hashState       bool
+}
+
+// statementRUJoinContractForPlan is the single support matrix for root Join
+// accounting. Each subtype defines its audited expression slots and the
+// build/probe labels expected on its two FlatPlanTree child occurrences.
+func statementRUJoinContractForPlan(plan base.Plan) (statementRUJoinContract, bool) {
+	contract := statementRUJoinContract{}
+	compareFilterCount := func(filters *physicalop.ColWithCmpFuncManager) int {
+		if filters == nil {
+			return 0
+		}
+		return len(filters.OpType)
+	}
+	indexLabels := func(innerChildIdx int) ([2]plannercore.OperatorLabel, bool) {
+		switch innerChildIdx {
+		case 0:
+			return [2]plannercore.OperatorLabel{plannercore.ProbeSide, plannercore.BuildSide}, true
+		case 1:
+			return [2]plannercore.OperatorLabel{plannercore.BuildSide, plannercore.ProbeSide}, true
+		default:
+			return [2]plannercore.OperatorLabel{}, false
+		}
+	}
+	var joinType base.JoinType
+	var valid bool
+	switch join := plan.(type) {
+	case *physicalop.PhysicalHashJoin:
+		if join.InnerChildIdx < 0 || join.InnerChildIdx > 1 ||
+			len(join.LeftJoinKeys) != len(join.RightJoinKeys) ||
+			len(join.LeftNAJoinKeys) != len(join.RightNAJoinKeys) {
+			return statementRUJoinContract{}, false
+		}
+		joinType = join.JoinType
+		contract.hashState = true
+		if join.UseOuterToBuild {
+			contract.childLabels[join.InnerChildIdx] = plannercore.ProbeSide
+			contract.childLabels[1-join.InnerChildIdx] = plannercore.BuildSide
+		} else {
+			contract.childLabels[join.InnerChildIdx] = plannercore.BuildSide
+			contract.childLabels[1-join.InnerChildIdx] = plannercore.ProbeSide
+		}
+		contract.expressionCount, valid = checkedStatementRUExpressionCount(
+			len(join.EqualConditions), len(join.NAEqualConditions), len(join.LeftConditions),
+			len(join.RightConditions), len(join.OtherConditions),
+		)
+	case *physicalop.PhysicalMergeJoin:
+		if len(join.LeftJoinKeys) != len(join.RightJoinKeys) {
+			return statementRUJoinContract{}, false
+		}
+		joinType = join.JoinType
+		contract.childLabels = [2]plannercore.OperatorLabel{plannercore.ProbeSide, plannercore.BuildSide}
+		if join.JoinType == base.RightOuterJoin {
+			contract.childLabels = [2]plannercore.OperatorLabel{plannercore.BuildSide, plannercore.ProbeSide}
+		}
+		contract.expressionCount, valid = checkedStatementRUExpressionCount(
+			len(join.CompareFuncs), len(join.LeftConditions), len(join.RightConditions), len(join.OtherConditions),
+		)
+	case *physicalop.PhysicalIndexJoin:
+		if len(join.OuterJoinKeys) != len(join.InnerJoinKeys) {
+			return statementRUJoinContract{}, false
+		}
+		joinType = join.JoinType
+		contract.childLabels, valid = indexLabels(join.InnerChildIdx)
+		if !valid {
+			return statementRUJoinContract{}, false
+		}
+		contract.expressionCount, valid = checkedStatementRUExpressionCount(
+			len(join.OuterJoinKeys), len(join.LeftConditions), len(join.RightConditions),
+			len(join.OtherConditions), compareFilterCount(join.CompareFilters),
+		)
+	case *physicalop.PhysicalIndexHashJoin:
+		if len(join.OuterHashKeys) != len(join.InnerHashKeys) {
+			return statementRUJoinContract{}, false
+		}
+		joinType = join.JoinType
+		contract.childLabels, valid = indexLabels(join.InnerChildIdx)
+		if !valid {
+			return statementRUJoinContract{}, false
+		}
+		contract.expressionCount, valid = checkedStatementRUExpressionCount(
+			len(join.OuterHashKeys), len(join.LeftConditions), len(join.RightConditions),
+			len(join.OtherConditions), compareFilterCount(join.CompareFilters),
+		)
+	case *physicalop.PhysicalIndexMergeJoin:
+		if join.NeedOuterSort != (len(join.OuterCompareFuncs) > 0) {
+			return statementRUJoinContract{}, false
+		}
+		joinType = join.JoinType
+		contract.childLabels, valid = indexLabels(join.InnerChildIdx)
+		if !valid {
+			return statementRUJoinContract{}, false
+		}
+		contract.expressionCount, valid = checkedStatementRUExpressionCount(
+			len(join.CompareFuncs), len(join.OuterCompareFuncs), len(join.LeftConditions),
+			len(join.RightConditions), len(join.OtherConditions), compareFilterCount(join.CompareFilters),
+		)
+	default:
+		return statementRUJoinContract{}, false
+	}
+	return contract, valid && joinType != base.FullOuterJoin
+}
+
+// collectStatementRUAggregationUnits charges one supported root or TiKV cop
+// Aggregation occurrence. CPUWork is child rows multiplied by GroupByItems plus
+// AggFuncs. Root HashAgg owns completed producer group-map state; TiKV HashAgg
+// uses observed response-summary output as produced group state. A response
+// with a missing summary contributes no rows while other valid responses remain
+// chargeable. StreamAgg has no hash state. TiFlash, malformed evidence, and an
+// occurrence with no valid summary remain unsupported.
+func collectStatementRUAggregationUnits(
+	tree plannercore.FlatPlanTree,
+	operator *plannercore.FlatOperator,
+	children []statementRUOperatorResult,
+	outputRows int64,
+	outputRowsObserved bool,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	calculator *statementRUCalculator,
+) statementRUOperatorState {
+	delta := statementRUCalculator{}
+	if operator == nil || !statementRUOperatorRunsAtSupportedSite(operator) || len(children) != 1 ||
+		!children[0].outputRowsObserved || !outputRowsObserved || len(operator.ChildrenIdx) != 1 {
+		return statementRUOperatorUnsupported
+	}
+	physicalAgg, ok := operator.Origin.(base.PhysicalPlan)
+	if !ok || len(physicalAgg.Children()) != 1 {
+		return statementRUOperatorUnsupported
+	}
+	childIndex := operator.ChildrenIdx[0]
+	if childIndex < 0 || childIndex >= len(tree) || tree[childIndex] == nil {
+		return statementRUOperatorInvalid
+	}
+	if tree[childIndex].Origin != physicalAgg.Children()[0] {
+		return statementRUOperatorUnsupported
+	}
+	var baseAgg *physicalop.BasePhysicalAgg
+	hashAgg := false
+	switch agg := operator.Origin.(type) {
+	case *physicalop.PhysicalHashAgg:
+		hashAgg = true
+		baseAgg = &agg.BasePhysicalAgg
+	case *physicalop.PhysicalStreamAgg:
+		baseAgg = &agg.BasePhysicalAgg
+	default:
+		return statementRUOperatorUnsupported
+	}
+	expressionCount, ok := checkedStatementRUExpressionCount(len(baseAgg.GroupByItems), len(baseAgg.AggFuncs))
+	if !ok || !addStatementRUCPUWork(
+		&delta,
+		float64(children[0].outputRows)*float64(expressionCount),
+	) {
+		return statementRUOperatorInvalid
+	}
+	if !hashAgg {
+		if !mergeStatementRUUnitDelta(calculator, delta.units) {
+			return statementRUOperatorInvalid
+		}
+		return statementRUOperatorComplete
+	}
+	if runtimeStatsColl == nil {
+		return statementRUOperatorUnsupported
+	}
+	if operator.IsRoot {
+		snapshot, found := runtimeStatsColl.GetRootHashStateRowsSnapshot(operator.Origin.ID())
+		if !found {
+			return statementRUOperatorUnsupported
+		}
+		if !snapshot.Complete() {
+			if snapshot.Invalid() {
+				return statementRUOperatorInvalid
+			}
+			return statementRUOperatorUnsupported
+		}
+		if !addStatementRUHashStateRows(&delta, float64(snapshot.Rows)) {
+			return statementRUOperatorInvalid
+		}
+		if !mergeStatementRUUnitDelta(calculator, delta.units) {
+			return statementRUOperatorInvalid
+		}
+		return statementRUOperatorComplete
+	}
+	// Each valid TiKV HashAgg execution summary reports the group states produced
+	// by that response. Missing response summaries are marked by execdetails and
+	// skipped; outputRows contains only the observed summaries.
+	if !addStatementRUHashStateRows(&delta, float64(outputRows)) {
+		return statementRUOperatorInvalid
+	}
+	if !mergeStatementRUUnitDelta(calculator, delta.units) {
+		return statementRUOperatorInvalid
+	}
+	return statementRUOperatorComplete
+}
+
+func checkedStatementRUExpressionCount(parts ...int) (int64, bool) {
+	var total int64
+	for _, part := range parts {
+		if part < 0 || int64(part) > math.MaxInt64-total {
+			return 0, false
+		}
+		total += int64(part)
+	}
+	return total, true
+}
+
+func checkedStatementRURowSum(left, right int64) (int64, bool) {
+	if left < 0 || right < 0 || left > math.MaxInt64-right {
+		return 0, false
+	}
+	return left + right, true
 }
 
 func mergeStatementRUOperatorState(left, right statementRUOperatorState) statementRUOperatorState {
@@ -587,12 +899,48 @@ func addStatementRUScanBytes(calculator *statementRUCalculator, scanBytes float6
 	return !math.IsInf(calculator.units.ScanBytes, 0)
 }
 
+func addStatementRUHashStateRows(calculator *statementRUCalculator, rows float64) bool {
+	if calculator == nil || rows < 0 || math.IsNaN(rows) || math.IsInf(rows, 0) {
+		return false
+	}
+	calculator.units.HashStateRows += rows
+	return !math.IsInf(calculator.units.HashStateRows, 0)
+}
+
+func addStatementRUJoinOutputRows(calculator *statementRUCalculator, rows float64) bool {
+	if calculator == nil || rows < 0 || math.IsNaN(rows) || math.IsInf(rows, 0) {
+		return false
+	}
+	calculator.units.JoinOutputRows += rows
+	return !math.IsInf(calculator.units.JoinOutputRows, 0)
+}
+
+// mergeStatementRUUnitDelta commits one fully validated operator occurrence.
+// Mutating a copy prevents a later field overflow from retaining a partial
+// occurrence in the statement-local calculator.
+func mergeStatementRUUnitDelta(calculator *statementRUCalculator, delta statementRURawUnits) bool {
+	if calculator == nil {
+		return false
+	}
+	merged := *calculator
+	if !addStatementRUCPUWork(&merged, delta.CPUWork) ||
+		!addStatementRUScanBytes(&merged, delta.ScanBytes) ||
+		!addStatementRUHashStateRows(&merged, delta.HashStateRows) ||
+		!addStatementRUJoinOutputRows(&merged, delta.JoinOutputRows) {
+		return false
+	}
+	*calculator = merged
+	return true
+}
+
 func addStatementRURawUnits(left, right statementRURawUnits) statementRURawUnits {
 	return statementRURawUnits{
 		CPUWork:              left.CPUWork + right.CPUWork,
 		ScanBytes:            left.ScanBytes + right.ScanBytes,
 		NetBytes:             left.NetBytes + right.NetBytes,
 		FrontendCompileBytes: left.FrontendCompileBytes + right.FrontendCompileBytes,
+		HashStateRows:        left.HashStateRows + right.HashStateRows,
+		JoinOutputRows:       left.JoinOutputRows + right.JoinOutputRows,
 	}
 }
 
@@ -602,5 +950,7 @@ func subtractStatementRURawUnits(left, right statementRURawUnits) statementRURaw
 		ScanBytes:            left.ScanBytes - right.ScanBytes,
 		NetBytes:             left.NetBytes - right.NetBytes,
 		FrontendCompileBytes: left.FrontendCompileBytes - right.FrontendCompileBytes,
+		HashStateRows:        left.HashStateRows - right.HashStateRows,
+		JoinOutputRows:       left.JoinOutputRows - right.JoinOutputRows,
 	}
 }
