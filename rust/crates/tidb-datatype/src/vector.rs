@@ -584,6 +584,21 @@ mod tests {
         assert!(deserialize_vector_float32(&[0xF1, 0xFC]).is_err());
     }
 
+    // Go: pkg/types/vector_test.go::TestVectorDeserializeOverflow
+    // 0x40000000 elements overflows the uint32 size computation
+    // (0x40000000*4 + 4 wraps to 4), so without checked arithmetic the header
+    // would be accepted with a 4-byte buffer and a huge dimension that
+    // Elements() would read out of bounds. The Rust port must reject it too;
+    // unlike Go's `(v, err)` signature, the Err branch carries no value, so
+    // Go's trailing `v.IsZeroValue()` assertion has no Rust counterpart.
+    #[test]
+    fn test_vector_deserialize_overflow() {
+        let b: [u8; 4] = [0x00, 0x00, 0x00, 0x40];
+        assert!(peek_vector_float32(&b).is_err());
+        assert!(deserialize_vector_float32(&b).is_err());
+        assert!(VectorFloat32::default().is_zero_value());
+    }
+
     #[test]
     fn vector_functions_cover_source_precision_errors_and_edge_cases() {
         let left = VectorFloat32::must_create(vec![1.0, 2.0, 3.0]);
