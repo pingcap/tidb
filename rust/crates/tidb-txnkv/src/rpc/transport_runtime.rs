@@ -321,6 +321,24 @@ impl Drop for TransportRuntime {
     }
 }
 
+/// The publication receipt of a submission that has not been collected yet.
+///
+/// Holding one is the whole of client-go's post-send state: the entry is on
+/// the worker's queue, its own completion is the only thing the caller waits
+/// on, and the receipt is read only if the attempt has to be named.
+pub(super) struct DeferredReceipts {
+    response: mpsc::Receiver<Vec<BatchPublicationReceipt>>,
+}
+
+impl DeferredReceipts {
+    /// Collects the receipt, blocking only if the worker has not sent it yet.
+    pub(super) fn wait(self) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
+        self.response
+            .recv()
+            .map_err(|_| DirectUnaryClientError::Closed)
+    }
+}
+
 impl TransportHandle {
     pub(super) fn unary_send(
         &self,
@@ -359,6 +377,15 @@ impl TransportHandle {
         self.batch_submit_inner(address, entries, Some(call.clone()))
     }
 
+    pub(super) fn batch_submit_deferred_with_call(
+        &self,
+        address: &str,
+        entries: Vec<BatchCommandEntry>,
+        call: &UnaryCallContext,
+    ) -> Result<DeferredReceipts, DirectUnaryClientError> {
+        self.batch_submit_deferred(address, entries, Some(call.clone()))
+    }
+
     fn batch_submit_inner(
         &self,
         address: &str,
@@ -366,6 +393,30 @@ impl TransportHandle {
         call: Option<UnaryCallContext>,
     ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
         let started = std::time::Instant::now();
+        let deferred = self.batch_submit_deferred(address, entries, call)?;
+        let receipts = deferred.wait();
+        admit_diag::note_admit_wait(started.elapsed());
+        receipts
+    }
+
+    /// Hands the entries to the transport worker WITHOUT waiting for their
+    /// publication receipt -- client-go's `sendBatchRequest`
+    /// (`internal/client/client_batch.go:1465`), whose first `select` only
+    /// puts the entry on `batchCommandsCh` and whose second waits once, on the
+    /// response.
+    ///
+    /// The caller used to block here for a receipt it needs only to NAME a
+    /// failed attempt, and that wait cost 22-25us on every RPC -- a full
+    /// cross-thread wake-up round trip ahead of the network wait, measured
+    /// over 20000 RPCs per window. The receipt still arrives; it is simply
+    /// collected when it is read, by which time the worker has long since
+    /// sent it.
+    pub(super) fn batch_submit_deferred(
+        &self,
+        address: &str,
+        entries: Vec<BatchCommandEntry>,
+        call: Option<UnaryCallContext>,
+    ) -> Result<DeferredReceipts, DirectUnaryClientError> {
         let (reply, response) = mpsc::channel();
         self.commands
             .send(WorkerCommand::BatchSubmit {
@@ -375,9 +426,7 @@ impl TransportHandle {
                 reply,
             })
             .map_err(|_| DirectUnaryClientError::Closed)?;
-        let receipts = response.recv().map_err(|_| DirectUnaryClientError::Closed);
-        admit_diag::note_admit_wait(started.elapsed());
-        receipts
+        Ok(DeferredReceipts { response })
     }
 
     pub(super) fn close_address(&self, address: &str) -> Result<(), DirectUnaryClientError> {

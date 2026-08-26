@@ -139,6 +139,14 @@ pub struct TransactionBatchPending<R> {
     tag: BatchCommandTag,
     completion: CompletionPull<OpaqueBatchCommand, BatchInflightError>,
     publication: Option<TransactionBatchPublication>,
+    /// The receipt this attempt was submitted under, not yet collected.
+    ///
+    /// client-go's caller never learns its entry's identity at send time --
+    /// `sendBatchRequest` puts the entry on `batchCommandsCh` and waits only
+    /// on the response. The receipt is read here only when the attempt has to
+    /// be NAMED, which is the error path; by then the worker has long since
+    /// sent it, so collecting it costs nothing.
+    deferred: Option<crate::rpc::transport_runtime::DeferredReceipts>,
     response: PhantomData<fn() -> R>,
 }
 
@@ -164,9 +172,32 @@ where
                 tag,
                 completion: pull,
                 publication: None,
+                deferred: None,
                 response: PhantomData,
             },
         )
+    }
+
+    /// Retains the submission's uncollected receipt.
+    fn retain_deferred(&mut self, deferred: crate::rpc::transport_runtime::DeferredReceipts) {
+        self.deferred = Some(deferred);
+    }
+
+    /// Collects the deferred receipt, if one is still outstanding.
+    ///
+    /// Idempotent: once bound, the publication stands. A receipt the worker
+    /// could not produce leaves the publication unset, which every caller
+    /// already tolerates -- they read only the error beside it.
+    fn resolve_publication(&mut self) {
+        if self.publication.is_some() {
+            return;
+        }
+        let Some(deferred) = self.deferred.take() else {
+            return;
+        };
+        if let Ok(receipts) = deferred.wait() {
+            let _ = self.bind_publication(&receipts);
+        }
     }
 
     fn bind_publication(
@@ -186,8 +217,12 @@ where
     }
 
     /// Publication identity, available after successful in-flight admission.
+    ///
+    /// Collects the deferred receipt on first read -- the submission no longer
+    /// waits for it, so this is where it lands.
     #[must_use]
-    pub const fn publication(&self) -> Option<&TransactionBatchPublication> {
+    pub fn publication(&mut self) -> Option<&TransactionBatchPublication> {
+        self.resolve_publication();
         self.publication.as_ref()
     }
 
@@ -280,18 +315,17 @@ impl TonicCoprocessorClient {
                 timeout_ms: 0,
             });
         }
-        let receipts =
-            match self.submit_batch_commands_with_call(physical_address, vec![entry], call) {
-                Ok(receipts) => receipts,
+        // Hand off and wait once, as `sendBatchRequest` does: the receipt is
+        // retained unread, and the only wait that remains is `complete`'s.
+        let deferred =
+            match self.submit_batch_commands_deferred(physical_address, vec![entry], call) {
+                Ok(deferred) => deferred,
                 Err(error) => {
                     pending.cancel();
                     return Err(error);
                 }
             };
-        if let Err(error) = pending.bind_publication(&receipts) {
-            pending.cancel();
-            return Err(error);
-        }
+        pending.retain_deferred(deferred);
         Ok(retain_published_pending(pending, call))
     }
 
@@ -426,7 +460,7 @@ fn retain_published_pending<R>(
     // is bound must flow through `complete`, which cancels the physical attempt
     // while leaving its identity available to transaction cleanup or
     // undetermined-primary classification.
-    debug_assert!(pending.publication.is_some());
+    debug_assert!(pending.publication.is_some() || pending.deferred.is_some());
     pending
 }
 
@@ -461,7 +495,7 @@ mod tests {
         cancellation.cancel();
         let call = UnaryCallContext::new(Duration::from_secs(1), cancellation);
 
-        let pending = retain_published_pending(pending, &call);
+        let mut pending = retain_published_pending(pending, &call);
 
         let publication = pending
             .publication()

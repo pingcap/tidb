@@ -374,6 +374,17 @@ impl RawTransportClient {
         self.route()?.batch_submit(address, entries)
     }
 
+    /// [`Self::submit_batch_with_call`] without the receipt wait -- see
+    /// `TransportHandle::batch_submit_deferred`.
+    pub(super) fn submit_batch_deferred(
+        &self,
+        address: &str,
+        entries: Vec<BatchCommandEntry>,
+        call: &UnaryCallContext,
+    ) -> Result<super::transport_runtime::DeferredReceipts, DirectUnaryClientError> {
+        self.route()?.batch_submit_deferred_with_call(address, entries, call)
+    }
+
     pub(super) fn submit_batch_with_call(
         &self,
         address: &str,

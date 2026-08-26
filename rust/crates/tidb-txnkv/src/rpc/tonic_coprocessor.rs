@@ -87,6 +87,16 @@ impl TonicCoprocessorClient {
         self.transport.submit_batch(address, entries)
     }
 
+    /// [`Self::submit_batch_commands_with_call`] without the receipt wait.
+    pub(in crate::rpc) fn submit_batch_commands_deferred(
+        &mut self,
+        address: &str,
+        entries: Vec<BatchCommandEntry>,
+        call: &UnaryCallContext,
+    ) -> Result<super::transport_runtime::DeferredReceipts, DirectUnaryClientError> {
+        self.transport.submit_batch_deferred(address, entries, call)
+    }
+
     pub(in crate::rpc) fn submit_batch_commands_with_call(
         &mut self,
         address: &str,
