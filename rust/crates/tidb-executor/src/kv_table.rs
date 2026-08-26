@@ -2987,16 +2987,37 @@ impl KvTable {
                     owned_old.as_deref()
                 }
             };
-            if let Some(old) = &old {
-                self.delete_index_entries(old, handle, old_physical_id, &zone)?;
-            }
-            if let Err(error) = self.write_index_entries(row, &new_handle, new_physical_id, &zone) {
-                // Restore the entries the failed update removed, so a rejected
-                // statement leaves the index as it found it.
-                if let Some(old) = &old {
-                    self.write_index_entries(old, handle, old_physical_id, &zone)?;
+            match &old {
+                Some(old) if new_handle == *handle && old_physical_id == new_physical_id => {
+                    // The row keeps its key, so every entry whose indexed
+                    // columns and payload did not change would be rewritten to
+                    // its own current bytes. Go skips those rewrites
+                    // (`SkipWriteUntouchedIndices`, see
+                    // `rewrite_changed_index_entries`); this port does too.
+                    if let Err(error) =
+                        self.rewrite_changed_index_entries(old, row, handle, new_physical_id, &zone)
+                    {
+                        // Restore every entry the failed update disturbed, so a
+                        // rejected statement leaves the index as it found it.
+                        self.delete_index_entries(old, handle, old_physical_id, &zone)?;
+                        self.write_index_entries(old, handle, old_physical_id, &zone)?;
+                        return Err(error);
+                    }
                 }
-                return Err(error);
+                Some(old) => {
+                    self.delete_index_entries(old, handle, old_physical_id, &zone)?;
+                    if let Err(error) =
+                        self.write_index_entries(row, &new_handle, new_physical_id, &zone)
+                    {
+                        // Restore the entries the failed update removed, so a
+                        // rejected statement leaves the index as it found it.
+                        self.write_index_entries(old, handle, old_physical_id, &zone)?;
+                        return Err(error);
+                    }
+                }
+                None => {
+                    self.write_index_entries(row, &new_handle, new_physical_id, &zone)?;
+                }
             }
         }
         // The handle columns stay out of the value, as on insert.
@@ -3398,6 +3419,107 @@ mod tests {
                 assert_eq!(actual, expected, "condition {condition}");
             }
         }
+    }
+
+    #[test]
+    fn update_rewrites_only_index_entries_whose_bytes_change() {
+        // Go `pkg/table/tables/tables.go ::
+        // rebuildUpdateRecordIndices` skips an index whose columns are all
+        // untouched, and `pkg/executor/write.go :: updateRecord` arms that
+        // skip (`SkipWriteUntouchedIndices`) for autocommit updates. An
+        // update that leaves every indexed value alone must therefore leave
+        // the entry byte-for-byte as it was (and stage no index write at
+        // all), while an update that changes an indexed column must move the
+        // entry to its new key.
+        let mut table = KvTable::new(
+            42,
+            vec![
+                KvColumn {
+                    name: "a".to_owned(),
+                    id: 1,
+                    field_type: long(),
+                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    default_value: None,
+                    origin_default: None,
+                    comment: String::new(),
+                    generated: None,
+                },
+                KvColumn {
+                    name: "s".to_owned(),
+                    id: 2,
+                    field_type: varstr(),
+                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    default_value: None,
+                    origin_default: None,
+                    comment: String::new(),
+                    generated: None,
+                },
+                KvColumn {
+                    name: "x".to_owned(),
+                    id: 3,
+                    field_type: long(),
+                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    default_value: None,
+                    origin_default: None,
+                    comment: String::new(),
+                    generated: None,
+                },
+            ],
+        );
+        table.set_pk_handle_offset(0);
+        table.add_index(
+            KvIndex {
+                id: 1,
+                name: "s".to_owned(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: vec![1],
+                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                visible: true,
+                global: false,
+                clustered_primary: false,
+            },
+            false,
+        );
+        table
+            .insert_row(
+                &[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(10)],
+                &tidb_expr::NoColumns,
+            )
+            .unwrap();
+        let handle = TableHandle::Int(1);
+        let before = table.index_entries_for_check(1).unwrap();
+        assert_eq!(before.len(), 1);
+
+        // Update a NON-indexed column only: the index entry must survive
+        // byte-identical.
+        table
+            .update_row_with_old(
+                &handle,
+                Some(&[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(10)]),
+                &[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(11)],
+                &tidb_expr::NoColumns,
+            )
+            .unwrap();
+        let after_untouched = table.index_entries_for_check(1).unwrap();
+        assert_eq!(after_untouched, before, "untouched index stayed as it was");
+        let rows = table
+            .scan_rows_with_handles_with_context(&RowDecodeContext::for_test_query_utc())
+            .unwrap();
+        assert_eq!(rows[0].1[2], Datum::Int(11), "the row itself did update");
+
+        // Update the INDEXED column: the entry moves to the new key.
+        table
+            .update_row_with_old(
+                &handle,
+                Some(&[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(11)]),
+                &[Datum::Int(1), Datum::Bytes(b"s9".to_vec()), Datum::Int(11)],
+                &tidb_expr::NoColumns,
+            )
+            .unwrap();
+        let after_touched = table.index_entries_for_check(1).unwrap();
+        assert_eq!(after_touched.len(), 1, "exactly one entry, moved not copied");
+        assert_ne!(after_touched, before, "entry follows the new indexed value");
     }
 
     #[test]

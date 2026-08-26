@@ -461,6 +461,74 @@ impl KvTable {
         Ok(())
     }
 
+    /// Rewrites only the index entries whose stored bytes the update changes.
+    ///
+    /// Go `pkg/table/tables/tables.go :: TableCommon.rebuildUpdateRecordIndices`
+    /// skips an index entirely when none of its `Meta().Columns` /
+    /// `AffectColumn` offsets are touched, and
+    /// `pkg/executor/write.go :: updateRecord` arms that skip with
+    /// `table.SkipWriteUntouchedIndices` for every update that is not
+    /// continuing an explicit transaction and has no foreign-key cascades
+    /// pending ("If txn is auto commit and index is untouched, no need to
+    /// write index value"). A rewrite whose resulting key AND value are
+    /// byte-identical to the stored entry changes no committed state and no
+    /// read result -- so this port skips exactly those rewrites on every
+    /// update shape: the same rows as Go in both of its branches, minus work
+    /// whose only effect was storing the same bytes again (which also keeps
+    /// single-row updates inside one region, where Go's 1PC lives).
+    pub(in crate::kv_table) fn rewrite_changed_index_entries(
+        &mut self,
+        old_row: &[Datum],
+        new_row: &[Datum],
+        handle: &TableHandle,
+        physical_id: i64,
+        zone: &SessionTimeZone,
+    ) -> Result<(), KvTableError> {
+        let indexes = self.indexes.clone();
+        for index in indexes.iter() {
+            // A clustered PRIMARY's key IS the record handle; updating the row
+            // already rewrote it.
+            if index.clustered_primary {
+                continue;
+            }
+            let (old_key, old_distinct) =
+                self.index_key(index, old_row, handle, physical_id, zone)?;
+            let (new_key, new_distinct) =
+                self.index_key(index, new_row, handle, physical_id, zone)?;
+            if old_key == new_key && old_distinct == new_distinct {
+                let old_value =
+                    self.index_entry_value(index, old_row, handle, old_distinct, zone)?;
+                let new_value =
+                    self.index_entry_value(index, new_row, handle, new_distinct, zone)?;
+                if old_value == new_value {
+                    // Byte-identical entry: Go's untouched-index skip.
+                    continue;
+                }
+                // Same index key, different payload (a covering or appended
+                // column changed): overwrite the entry in place.
+                self.store
+                    .set(Key::from_bytes(new_key), new_value)
+                    .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                continue;
+            }
+            let value = self.index_entry_value(index, new_row, handle, new_distinct, zone)?;
+            let key = Key::from_bytes(new_key);
+            if new_distinct && self.store.get(&key).is_ok() {
+                return Err(KvTableError::DuplicateEntry {
+                    value: duplicate_value_text(&self.index_values(index, new_row)),
+                    key: self.qualified_key(&index.name),
+                });
+            }
+            self.store
+                .delete(Key::from_bytes(old_key))
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            self.store
+                .set(key, value)
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        }
+        Ok(())
+    }
+
     /// Looks a row handle up through a unique index, the point-get Go plans as
     /// `PointGetPlan` on a unique key. `None` when no entry matches.
     pub fn lookup_unique(
