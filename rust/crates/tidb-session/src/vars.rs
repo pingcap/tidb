@@ -43,7 +43,7 @@
 //! removed-variable list Go silently accepts.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use tidb_planner::fix_control::OptimizerFixControl;
 use tidb_util::versioninfo::VersionInfo;
@@ -103,6 +103,9 @@ pub struct GlobalSysvars {
     /// publish process-wide runtime settings until [`Self::replace_from`]
     /// makes the committed state live.
     publishes_runtime_settings: bool,
+    /// The read-mostly image described on [`ResolvedGlobals`]. Writers swap it
+    /// wholesale; readers clone the `Arc` under a read lock.
+    resolved: Arc<RwLock<Arc<ResolvedGlobals>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -118,8 +121,44 @@ impl Default for GlobalSysvars {
             instances: Arc::default(),
             instance_mutations: None,
             publishes_runtime_settings: true,
+            resolved: Arc::new(RwLock::new(EMPTY_RESOLVED.with(|it| it.clone()))),
         }
     }
+}
+
+/// One read-mostly image of the node-wide variable tables.
+///
+/// [`GlobalSysvars::get`] used to answer through the authoritative
+/// `Mutex<HashMap<String, String>>`: per statement execution that cost a lock,
+/// a SipHash probe over a ~40-character name, and an owned String clone --
+/// times the dozen-plus variables `Session::statement_context_ignoring`
+/// re-reads every statement. Go pays none of that: its `SetSysVar` writes a
+/// typed object once and every read is a field load. This image is the rust
+/// equivalent at table granularity: rebuilt wholesale whenever a mutation
+/// lands (`SET GLOBAL`, cluster loads), read lock-free otherwise, with each
+/// slot holding an immutable `Arc<str>` so a read clones only the `Arc`.
+/// Slot `i` mirrors registry entry `i`; the owning tier is static per
+/// variable, so one flat table serves both maps.
+#[derive(Default, Debug, Clone)]
+struct ResolvedGlobals {
+    values: std::boxed::Box<[Option<Arc<str>>]>,
+}
+
+impl ResolvedGlobals {
+    /// Writes one slot by name; `None` records "at the registry default".
+    fn note(&mut self, name: &str, value: Option<&str>) {
+        if let Some(index) = crate::sysvar::sys_var_index_lookup(name) {
+            if let Some(slot) = self.values.get_mut(index) {
+                *slot = value.map(Arc::from);
+            }
+        }
+    }
+}
+
+thread_local! {
+    /// The empty image `Default` starts from; `SYS_VARS`' length is not yet
+    /// readable in a `const` context, so the first real build sizes the table.
+    static EMPTY_RESOLVED: Arc<ResolvedGlobals> = Arc::default();
 }
 
 impl GlobalSysvars {
@@ -147,10 +186,100 @@ impl GlobalSysvars {
 
     /// Reads a node-wide value (GLOBAL or INSTANCE tier), falling back to the
     /// registry default.
+    ///
+    /// The answer comes from the [`ResolvedGlobals`] image when it is current;
+    /// only a mutation that has not been published yet falls through to the
+    /// authoritative maps.
     pub fn get(&self, name: &str) -> Result<String, VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        let Some(index) = crate::sysvar::sys_var_index_lookup(name) else {
+            return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
+        };
+        let def = &crate::sysvar::SYS_VARS[index];
+        let snapshot = Arc::clone(
+            &*self
+                .resolved
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        if let Some(value) = snapshot.values.get(index).and_then(|slot| slot.as_ref()) {
+            return Ok(value.to_string());
+        }
+        if snapshot.values.len() == crate::sysvar::SYS_VARS.len() {
+            // The image is current (a mutation republishes it before releasing
+            // its writer), so an empty slot means "at its registry default".
+            return Ok(crate::sysvar::effective_default(def));
+        }
+        // A pre-image from `Default` (or a racing rebuild): answer from the
+        // authoritative maps, the way every caller saw before this cache.
         let lowered = crate::sysvar::lowered_if_needed(name);
+        Ok(self
+            .store(def)
+            .lock()
+            .expect("global sysvar lock poisoned")
+            .get(lowered.as_ref())
+            .cloned()
+            .unwrap_or_else(|| crate::sysvar::effective_default(def)))
+    }
+
+    /// Rebuilds the read-mostly image from the two authoritative maps. Every
+    /// mutating entry point calls this after releasing its map lock; readers
+    /// swap in the new `Arc` wholesale.
+    fn refresh_resolved(&self) {
+        let mut slots: Vec<Option<Arc<str>>> =
+            std::vec::Vec::with_capacity(crate::sysvar::SYS_VARS.len());
+        slots.resize_with(crate::sysvar::SYS_VARS.len(), || None);
+        for (name, value) in self
+            .values
+            .lock()
+            .expect("global sysvar lock poisoned")
+            .iter()
+        {
+            if let Some(index) = crate::sysvar::sys_var_index_lookup(name) {
+                if crate::sysvar::SYS_VARS[index].has_global_scope() {
+                    slots[index] = Some(Arc::from(value.as_str()));
+                }
+            }
+        }
+        for (name, value) in self
+            .instances
+            .lock()
+            .expect("instance sysvar lock poisoned")
+            .iter()
+        {
+            if let Some(index) = crate::sysvar::sys_var_index_lookup(name) {
+                if !crate::sysvar::SYS_VARS[index].has_global_scope() {
+                    slots[index] = Some(Arc::from(value.as_str()));
+                }
+            }
+        }
+        let mut publish = self
+            .resolved
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *publish = Arc::new(ResolvedGlobals {
+            values: slots.into(),
+        });
+    }
+
+    /// Reads one variable by its registry position, skipping the name probe
+    /// callers already paid (`SessionVars::get_system` resolves the index
+    /// once for both tiers). Same image-then-authoritative fallback as
+    /// [`Self::get`].
+    pub(crate) fn get_by_registry_index(&self, index: usize) -> Result<String, VarError> {
+        let def = &crate::sysvar::SYS_VARS[index];
+        let snapshot = Arc::clone(
+            &*self
+                .resolved
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        if let Some(value) = snapshot.values.get(index).and_then(|slot| slot.as_ref()) {
+            return Ok(value.to_string());
+        }
+        if snapshot.values.len() == crate::sysvar::SYS_VARS.len() {
+            return Ok(crate::sysvar::effective_default(def));
+        }
+        let lowered = crate::sysvar::lowered_if_needed(def.name);
         Ok(self
             .store(def)
             .lock()
@@ -201,6 +330,7 @@ impl GlobalSysvars {
             .lock()
             .expect("global sysvar lock poisoned")
             .insert(name.to_ascii_lowercase(), value);
+        self.refresh_resolved();
     }
 
     fn write(&self, name: &str, value: String, scope: u8) -> Result<bool, VarError> {
@@ -232,6 +362,7 @@ impl GlobalSysvars {
             }
             values.insert(key.clone(), stored_value.clone());
         }
+        self.refresh_resolved();
         if key == tidb_vardef::tidb_vars::TIDB_REDACT_LOG {
             self.publish_redaction_mode();
         }
@@ -260,6 +391,7 @@ impl GlobalSysvars {
             .lock()
             .expect("global sysvar lock poisoned")
             .remove(&key);
+        self.refresh_resolved();
         if !def.has_global_scope() {
             self.record_instance_mutation(InstanceMutation::Reset(key.clone()));
         }
@@ -289,6 +421,7 @@ impl GlobalSysvars {
             .lock()
             .expect("global sysvar lock poisoned")
             .remove(&key);
+        self.refresh_resolved();
         if !def.has_global_scope() {
             self.record_instance_mutation(InstanceMutation::Reset(key));
         }
@@ -333,6 +466,7 @@ impl GlobalSysvars {
         if loaded_memory_arbitration {
             self.publish_memory_arbitration_settings();
         }
+        self.refresh_resolved();
     }
 
     /// Every variable this table currently overrides from its default, for
@@ -371,6 +505,7 @@ impl GlobalSysvars {
     pub fn replace_from(&self, fresh: &Self) {
         *self.values.lock().expect("global sysvar lock poisoned") =
             std::mem::take(&mut *fresh.values.lock().expect("global sysvar lock poisoned"));
+        self.refresh_resolved();
         self.publish_committer_concurrency();
         self.publish_redaction_mode();
         self.publish_memory_arbitration_settings();
@@ -568,6 +703,12 @@ pub struct SessionVars {
     generation: u64,
     /// Parsed authority kept in lockstep with the raw system-variable text.
     optimizer_fix_control: OptimizerFixControl,
+    /// The session-tier read-mostly image (`ResolvedGlobals`, same shape as
+    /// the global one): rebuilt whenever `systems` mutates, consulted by
+    /// [`Self::get_system`] ahead of the authoritative map so a statement's
+    /// dozens of variable reads cost one fixed-seed probe plus an `Arc` slot
+    /// check instead of a SipHash probe and a String clone apiece.
+    session_resolved: ResolvedGlobals,
     /// The shared GLOBAL-scope table this session's factory holds. Cloning a
     /// [`GlobalSysvars`] is cheap (one `Arc` bump), so every session shares
     /// the same underlying map.
@@ -618,10 +759,45 @@ impl SessionVars {
         self.systems = systems;
         self.globals = globals;
         self.optimizer_fix_control = optimizer_fix_control;
+        self.session_resolved = Self::build_session_image(&self.systems);
         // The wholesale replacement above is a mutation like any other; the
         // parsed-product caches keyed on `generation` must not survive it.
         self.generation += 1;
         Ok(())
+    }
+
+    /// Updates ONE registry-indexed slot of the session image after the
+    /// authoritative map changed. Statement-scoped save/restore pairs call
+    /// this a handful of times each, so a whole-image rebuild here would run
+    /// per statement -- the exact cost the image exists to avoid.
+    ///
+    /// `None` restores the registry default (the map no longer holds `name`).
+    fn note_system_change(&mut self, name: &str) {
+        let resolved = match self.systems.get(name) {
+            Some(value) => Some(Arc::from(value.as_str())),
+            None => None,
+        };
+        if let Some(index) = crate::sysvar::sys_var_index_lookup(name) {
+            if let Some(slot) = self.session_resolved.values.get_mut(index) {
+                *slot = resolved;
+            }
+        }
+    }
+
+    /// The session-tier twin of [`GlobalSysvars::refresh_resolved`]: one flat
+    /// registry-indexed table of the current `systems` overrides.
+    fn build_session_image(systems: &HashMap<String, String>) -> ResolvedGlobals {
+        let mut slots: Vec<Option<Arc<str>>> =
+            std::vec::Vec::with_capacity(crate::sysvar::SYS_VARS.len());
+        slots.resize_with(crate::sysvar::SYS_VARS.len(), || None);
+        for (name, value) in systems {
+            if let Some(index) = crate::sysvar::sys_var_index_lookup(name) {
+                slots[index] = Some(Arc::from(value.as_str()));
+            }
+        }
+        ResolvedGlobals {
+            values: slots.into(),
+        }
     }
 
     /// Reads a system variable the way `SELECT @@name` does.
@@ -641,8 +817,10 @@ impl SessionVars {
     }
 
     pub fn get_system(&self, name: &str) -> Result<String, VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        let Some(index) = crate::sysvar::sys_var_index_lookup(name) else {
+            return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
+        };
+        let def = &crate::sysvar::SYS_VARS[index];
         if def.name == "version_comment" {
             return Ok(self.version_info.version_comment());
         }
@@ -656,7 +834,17 @@ impl SessionVars {
         // (`port`, `socket`) reads the same node tier, which is where the
         // startup `set_global_vars` push (Go `variable.SetSysVar`) lives.
         if !def.has_session_scope() {
-            return self.globals.get(name);
+            return self.globals.get_by_registry_index(index);
+        }
+        if let Some(value) = self.session_resolved.values.get(index) {
+            if let Some(value) = value.as_ref() {
+                return Ok(value.to_string());
+            }
+            if self.session_resolved.values.len() == crate::sysvar::SYS_VARS.len() {
+                // A full-length image is current by construction -- every
+                // `systems` mutation republishes it before returning.
+                return Ok(crate::sysvar::effective_default(def));
+            }
         }
         let lowered = crate::sysvar::lowered_if_needed(name);
         Ok(self
@@ -702,8 +890,14 @@ impl SessionVars {
     pub fn restore_system(&mut self, snapshot: Vec<(String, Option<String>)>) {
         for (key, previous) in snapshot {
             match previous {
-                Some(value) => self.systems.insert(key, value),
-                None => self.systems.remove(&key),
+                Some(value) => {
+                    self.session_resolved.note(key.as_str(), Some(value.as_str()));
+                    self.systems.insert(key, value);
+                }
+                None => {
+                    self.session_resolved.note(key.as_str(), None);
+                    self.systems.remove(&key);
+                }
             };
         }
         self.generation += 1;
@@ -775,7 +969,11 @@ impl SessionVars {
             self.systems
                 .insert(other.to_owned(), validated.value.clone());
         }
-        self.systems.insert(key, validated.value);
+        self.systems.insert(key.clone(), validated.value.clone());
+        self.note_system_change(&key);
+        if let Some(other) = alias_of(&key) {
+            self.note_system_change(other);
+        }
         self.generation += 1;
         if let Some(parsed) = parsed_fix_control {
             self.optimizer_fix_control = parsed;

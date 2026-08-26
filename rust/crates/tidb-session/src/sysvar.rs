@@ -179,18 +179,25 @@ pub(crate) fn lowered_if_needed(name: &str) -> std::borrow::Cow<'_, str> {
 /// entries pays a string compare per level every single time.
 #[must_use]
 pub fn get_sys_var(name: &str) -> Option<&'static SysVarDef> {
+    sys_var_index_lookup(name).map(|index| &SYS_VARS[index])
+}
+
+/// The registry position of the entry `name` addresses (case-insensitively),
+/// for callers that want the slot itself -- the global-variable snapshot is
+/// indexed by registry position so a read needs no second string probe.
+#[must_use]
+pub(crate) fn sys_var_index_lookup(name: &str) -> Option<usize> {
     let lowered = lowered_if_needed(name);
-    sys_var_index()
-        .get(lowered.as_ref())
-        .copied()
-        .map(|index| &SYS_VARS[index])
+    sys_var_index().get(lowered.as_ref()).copied()
 }
 
 /// The registry's names are unique (the sortedness test rejects duplicates),
 /// so a hash table keyed by the entry's own name answers exactly what the old
-/// binary search answered -- just without the per-probe comparisons.
-fn sys_var_index() -> &'static std::collections::HashMap<&'static str, usize> {
-    static INDEX: std::sync::OnceLock<std::collections::HashMap<&'static str, usize>> =
+/// binary search answered -- just without the per-probe comparisons. The keys
+/// are engine constants, not attacker input, so the fixed-seed hasher from
+/// [`tidb_util::fast_hash`] answers probes without SipHash's mixing rounds.
+fn sys_var_index() -> &'static tidb_util::fast_hash::FxHashMap<&'static str, usize> {
+    static INDEX: std::sync::OnceLock<tidb_util::fast_hash::FxHashMap<&'static str, usize>> =
         std::sync::OnceLock::new();
     INDEX.get_or_init(|| {
         SYS_VARS
