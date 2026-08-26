@@ -24,6 +24,11 @@ tidb-mysql = { path = "../tidb-mysql" }
 
 [dev-dependencies]
 serde_json.workspace = true
+# `pkg/parser/ast`'s own Go tests live in external package `ast_test` and
+# import `github.com/pingcap/tidb/pkg/parser` to drive their Restore tests;
+# this dev-dependency is the same relationship (dev-dependency cycles are
+# permitted because tidb-parser's normal dependency on tidb-ast is unchanged).
+tidb-parser = { path = "../tidb-parser" }
 
 [[bench]]
 name = "base_source"

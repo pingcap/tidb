@@ -195,7 +195,7 @@ pub use user::{
     CreateUserCredential, CreateUserPasswordOption, CreateUserSpec, UserSpec,
 };
 pub use user_variable::{SetUserVarStmt, UserVariableAssignment};
-pub use util::redact_url;
+pub use util::{back_quote, push_name_path, redact_url};
 pub use visitor::{Visitable, Visitor};
 
 /// Parser payload for an optional `BINARY` modifier.
@@ -556,3 +556,12 @@ impl crate::Visitable for PrepareSource {
     }
 }
 // END GENERATED AST VISITOR IMPLEMENTATIONS
+
+// Source-package unit-test ports (`pkg/parser/ast` Go tests). Sibling crates
+// register their `tests_<area>` modules the same way. Parser-driven Restore
+// ports are integration modules under `tests/` because they parse through
+// `tidb-parser`; only parser-free Visitor ports compile in-lib.
+#[cfg(test)]
+mod tests_ddl_package_source;
+#[cfg(test)]
+mod tests_dml_package_source;

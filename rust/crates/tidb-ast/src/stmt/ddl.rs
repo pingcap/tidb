@@ -408,11 +408,26 @@ impl DdlStmt {
                     restore(out);
                 }
             }
-            Self::CreatePlacementPolicy(statement) => statement.restore_into(out),
-            Self::AlterPlacementPolicy(statement) => {
-                if !context.flags().has_skip_placement_rule_for_restore() {
+            Self::CreatePlacementPolicy(statement) => {
+                // Go's Restore consults `RestoreTiDBSpecialComment` itself;
+                // `SkipPlacementRuleForRestore` suppresses only the options,
+                // so the statement header stays visible here.
+                if context.flags().has_tidb_special_comment() {
+                    statement
+                        .restore_into_with_mode(out, crate::PlacementRestoreMode::SpecialComment);
+                } else {
                     statement.restore_into(out);
                 }
+            }
+            Self::AlterPlacementPolicy(statement) => {
+                let mode = if context.flags().has_skip_placement_rule_for_restore() {
+                    crate::PlacementRestoreMode::Skip
+                } else if context.flags().has_tidb_special_comment() {
+                    crate::PlacementRestoreMode::SpecialComment
+                } else {
+                    crate::PlacementRestoreMode::Default
+                };
+                statement.restore_into_with_mode(out, mode);
             }
             Self::AlterTable(table) => table.restore_into_with_context(out, context),
             Self::RenameTable(table) => table.restore_into(out),
@@ -459,7 +474,16 @@ impl DdlStmt {
                 }
                 out.push_str(&back_quote(name));
             }
-            Self::DropPlacementPolicy(statement) => statement.restore_into(out),
+            Self::DropPlacementPolicy(statement) => {
+                if context.flags().has_tidb_special_comment()
+                    && !context.flags().has_skip_placement_rule_for_restore()
+                {
+                    statement
+                        .restore_into_with_mode(out, crate::PlacementRestoreMode::SpecialComment);
+                } else {
+                    statement.restore_into(out);
+                }
+            }
             Self::DropResourceGroup(statement) => statement.restore_into(out),
             Self::CreateResourceGroup(statement) => statement.restore_into(out),
             Self::AlterResourceGroup(statement) => statement.restore_into(out),

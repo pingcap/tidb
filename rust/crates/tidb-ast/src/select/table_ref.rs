@@ -85,6 +85,14 @@ pub struct TableRef {
 }
 
 impl TableRef {
+    /// Restores this table reference, matching Go's public
+    /// `ast.TableName.Restore`/`ast.TableSource.Restore` envelope.
+    pub fn restore_with_context(&self, context: &RestoreContext) -> String {
+        let mut out = String::new();
+        self.restore_into_with_context(&mut out, context);
+        out
+    }
+
     pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         if self.name.len() == 1 {
             if let Some(database) = context.default_db_for_table(&self.name[0], false) {
@@ -280,6 +288,15 @@ impl Join {
     /// immediately preceding term (the accumulated join's own left operand)
     /// is a `SELECT`-in-parens derived table, not a plain table reference.
     /// The right operand is parenthesized whenever it is a join, regardless.
+    ///
+    /// Restores this join subtree (Go's public `ast.Join.Restore`) with an
+    /// explicit formatting context.
+    pub fn restore_with_context(&self, context: &RestoreContext) -> String {
+        let mut out = String::new();
+        self.restore_into_with_context(&mut out, context);
+        out
+    }
+
     pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         let left_is_join = self.left.is_join();
         let use_comma_join = matches!(
@@ -381,6 +398,14 @@ pub enum JoinNode {
 }
 
 impl JoinNode {
+    /// Restores this single table-source/join/derived-table operand (Go's
+    /// public `ast.TableSource.Restore`/`ast.Join.Restore` boundary).
+    pub fn restore_with_context(&self, context: &RestoreContext) -> String {
+        let mut out = String::new();
+        self.restore_into_with_context(&mut out, context);
+        out
+    }
+
     pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         match self {
             JoinNode::Table(t) => t.restore_into_with_context(out, context),
