@@ -870,8 +870,7 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	if kerneltype.IsClassic() {
 		d.detectAndUpdateJobVersion()
 	}
-	campaignOwner := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()
-	campaignOwner = false
+	campaignOwner := false // test diagnostic mode: don't run DDL owner
 	if startMode == Upgrade {
 		if !campaignOwner {
 			return errors.New("DDL must be enabled when upgrading")

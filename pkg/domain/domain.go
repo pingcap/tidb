@@ -1165,10 +1165,9 @@ func (do *Domain) InitDistTaskLoop() error {
 		serverID = disttaskutil.GenerateSubtaskExecID(ctx, do.ddl.GetID())
 	}
 
-	// if serverID == "" {
-	// 	errMsg := fmt.Sprintf("TiDB node ID( = %s ) not found in available TiDB nodes list", do.ddl.GetID())
-	// 	return errors.New(errMsg)
-	// }
+	if serverID == "" {
+		// test diagnostic mode: can't find itself since it doesn't register to PD/etcd
+	}
 	managerCtx, cancel := context.WithCancel(ctx)
 	do.cancelFns.mu.Lock()
 	do.cancelFns.fns = append(do.cancelFns.fns, cancel)
