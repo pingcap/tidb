@@ -441,3 +441,6 @@ impl<K, V> Iterator for Indices<'_, K, V> {
         Some(index)
     }
 }
+
+#[cfg(test)]
+mod tests_simple_lru;
