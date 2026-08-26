@@ -2621,6 +2621,13 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
     /// (Go refuses on `RemainedConds`), and one range keeps the walk a single
     /// ordered stream, which the LIMIT-1 cut below leans on.
     fn accept_extreme_boundary(&mut self, order_offset: usize, desc: bool) -> bool {
+        if std::env::var_os("TIKV_QUERY_TRACE").is_some() {
+            eprintln!(
+                "[BTRACE] extreme_boundary offer: covering={} top_n={} limit={} part_agg={} pushed={} ranges={} order_offset={}",
+                self.covering, self.top_n.is_some(), self.limit.is_some(),
+                self.partial_aggregate.is_some(), self.pushed.len(), self.ranges.len(), order_offset,
+            );
+        }
         if self.covering
             || self.top_n.is_some()
             || self.limit.is_some()
@@ -2668,7 +2675,11 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
                 return false;
             }
         }
-        self.accept_keep_order(desc) && self.accept_scan_limit(1)
+        let accepted = self.accept_keep_order(desc) && self.accept_scan_limit(1);
+        if std::env::var_os("TIKV_QUERY_TRACE").is_some() {
+            eprintln!("[BTRACE] extreme_boundary accepted={accepted}");
+        }
+        accepted
     }
 
     fn accept_partial_aggregate(
@@ -2864,6 +2875,13 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
     }
 
     fn accept_index_top_n(&mut self, order_by: &[(usize, bool)], limit: u64) -> bool {
+        if std::env::var_os("TIKV_QUERY_TRACE").is_some() {
+            eprintln!(
+                "[BTRACE] index_top_n offer: top_n={} dirty={} order_by={:?} idx_filter={} pushed={}",
+                self.top_n.is_some(), self.table.has_dirty_content(), order_by,
+                self.index_filter, self.pushed.len(),
+            );
+        }
         // A covering declaration does not opt out: this tier reads the row
         // through its lookup either way, so a region-reduced entry stream
         // serves it exactly as it serves a double read.
@@ -2888,6 +2906,9 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
             .iter()
             .find(|index| index.id == self.index_id)
         else {
+            if std::env::var_os("TIKV_QUERY_TRACE").is_some() {
+                eprintln!("[BTRACE] top_n decline: index_id={} not found", self.index_id);
+            }
             return false;
         };
         if order_by.iter().any(|(offset, _)| {
@@ -2899,7 +2920,14 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
                 // prefix.
                 let handled = self.table.common_handle_offsets().contains(physical)
                     || self.table.pk_handle_offset() == Some(*physical);
-                !indexed && !handled
+                let ok = indexed || handled;
+                if !ok && std::env::var_os("TIKV_QUERY_TRACE").is_some() {
+                    eprintln!(
+                        "[BTRACE] top_n decline: offset={offset} physical={physical:?} ordered={:?} not_indexed_not_handle",
+                        index.ordered_column_offsets(),
+                    );
+                }
+                !ok
             })
         }) {
             return false;

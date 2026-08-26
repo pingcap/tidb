@@ -459,6 +459,12 @@ impl TransportHandle {
     }
 }
 
+/// Env gate for wire-level stall tracing (`TIKV_QUERY_TRACE`).
+pub(in crate::rpc) fn wtrace_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("TIKV_QUERY_TRACE").is_some())
+}
+
 fn run_worker(
     runtime: tokio::runtime::Runtime,
     receiver: mpsc::Receiver<WorkerCommand>,

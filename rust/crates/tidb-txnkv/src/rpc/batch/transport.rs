@@ -97,6 +97,7 @@ impl StreamKey {
 }
 
 struct ActiveStream {
+    serial: u64,
     route: BatchRoute,
     terminal: Arc<Mutex<Option<BatchInflightError>>>,
     open_state: Arc<Mutex<StreamOpenState>>,
@@ -337,6 +338,13 @@ impl BatchTransportState {
             drop(terminal_guard);
             return None;
         }
+        if super::super::transport_runtime::wtrace_enabled() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            eprintln!("[WTRACE s{} w={now}] publish addr={address} ids={:?}", stream.serial, request_ids);
+        }
         let send_error = outbound.send(request.into_proto()).err().map(|_| {
             BatchInflightError::Transport(stream_error(
                 route.physical_address(),
@@ -486,6 +494,8 @@ impl BatchTransportState {
     }
 }
 
+static NEXT_STREAM_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 fn open_stream(
     key: &StreamKey,
     route: &BatchRoute,
@@ -494,6 +504,7 @@ fn open_stream(
     inflight: Arc<Mutex<BatchInflightTable>>,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<ActiveStream, DirectUnaryClientError> {
+    let stream_serial = NEXT_STREAM_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let (outbound, receiver) = mpsc::unbounded_channel();
     let mut request = tonic::Request::new(UnboundedReceiverStream::new(receiver));
     forwarding::attach_forwarded_host(&mut request, key.forwarded_host.as_deref())?;
@@ -515,6 +526,13 @@ fn open_stream(
     }));
     let receive_open_state = Arc::clone(&open_state);
     tokio::spawn(async move {
+        if super::super::transport_runtime::wtrace_enabled() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            eprintln!("[WTRACE s{stream_serial} w={now}] reader_spawned");
+        }
         // A BatchCommands server is allowed to wait for the first inbound
         // packet before returning response headers. Publish through `outbound`
         // while this task opens the response half, matching grpc-go's
@@ -532,6 +550,13 @@ fn open_stream(
         };
         let mut inbound = match response {
             Ok(response) => {
+                if super::super::transport_runtime::wtrace_enabled() {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0);
+                    eprintln!("[WTRACE s{stream_serial} w={now}] headers_ok");
+                }
                 receive_open_state
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -551,7 +576,32 @@ fn open_stream(
                 return;
             }
         };
+        if super::super::transport_runtime::wtrace_enabled() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            eprintln!("[WTRACE s{stream_serial} w={now}] stream_opened addr={receive_address} v={version}");
+        }
+        let mut last_poll = std::time::Instant::now();
+        let mut first_poll = true;
         loop {
+            {
+                let now = std::time::Instant::now();
+                let gap = now.duration_since(last_poll);
+                last_poll = now;
+                if super::super::transport_runtime::wtrace_enabled() && !first_poll {
+                    let wall = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0);
+                    eprintln!(
+                        "[WTRACE s{stream_serial} w={wall}] reader_loop_iter gap_ms={}",
+                        gap.as_millis()
+                    );
+                }
+                first_poll = false;
+            }
             match inbound.message().await {
                 Ok(Some(response)) => match BatchWireResponse::try_from(response) {
                     Ok(response) => {
@@ -612,6 +662,7 @@ fn open_stream(
         terminal,
         open_state,
         outbound,
+        serial: stream_serial,
     })
 }
 

@@ -400,6 +400,19 @@ impl BatchInflightTable {
         route: &BatchRoute,
         response: BatchWireResponse,
     ) -> BatchRetirementReport {
+        if crate::rpc::transport_runtime::wtrace_enabled() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let tikv_send_ms = u128::from(response.tikv_send_time_ns() / 1_000_000);
+            eprintln!(
+                "[WTRACE w={}] recv route_v={} ids={:?}",
+                now,
+                route.physical_channel_version(),
+                response.request_ids(),
+            );
+        }
         let max_response_request_id = response.request_ids().iter().copied().max().unwrap_or(0);
         let state = self.routes.entry(route.clone()).or_default();
         if max_response_request_id > 0 {

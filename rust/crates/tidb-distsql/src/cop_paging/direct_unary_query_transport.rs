@@ -728,12 +728,23 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         let requested_ranges =
             metadata_region_ranges(metadata).map_err(|error| error.to_string())?;
         let cluster_id = self.shared_runtime.cluster_id();
+        let trace_t0 = crate::cop_paging::direct_unary_query_transport::query_trace_enabled()
+            .then(std::time::Instant::now);
+        crate::cop_paging::direct_unary_query_transport::qtrace(
+            trace_t0,
+            format_args!("send begin ranges={}", requested_ranges.len()),
+        );
         let locations = self
             .shared_runtime
             .locate_ranges(&requested_ranges)
             .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle.to_string())?
             .map_err(|error| DirectUnaryTransportError::Route(error).to_string())?;
         let topology = topology_from_locations(locations);
+        crate::cop_paging::direct_unary_query_transport::qtrace(
+            trace_t0,
+            format_args!("locate_done tasks={} t={:.1}ms", topology.len(),
+                trace_t0.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0)),
+        );
         *self.publication_observer.borrow_mut() = None;
         {
             let mut evidence = self.evidence.borrow_mut();
@@ -785,6 +796,11 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         let call =
             UnaryCallContext::with_deadline(bound_at + timeout, cancellation.unary_cancellation());
 
+        let trace_start = trace_t0;
+        if let Some(t0) = trace_start {
+            eprintln!("[QTRACE +{:.1}ms] resp_open tasks={} keep_order={}",
+                t0.elapsed().as_secs_f64() * 1000.0, logical_order.len(), metadata.keep_order);
+        }
         Ok(Some(DirectUnaryQueryResponse {
             shared_runtime: self.shared_runtime.clone(),
             locked_response_delegate: Rc::clone(&self.locked_response_delegate),
@@ -813,6 +829,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             evidence: Rc::clone(&self.evidence),
             publication_observer: Rc::clone(&self.publication_observer),
             snapshot_locks: tidb_txnkv::lock::SnapshotLockSet::default(),
+            trace_start: query_trace_enabled().then(std::time::Instant::now),
         }))
     }
 }
@@ -907,6 +924,29 @@ fn task_region_ver_id(
     ))
 }
 
+/// Session-side wall-clock tracing for stall attribution (`TIKV_QUERY_TRACE`).
+pub(crate) fn query_trace_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("TIKV_QUERY_TRACE").is_some())
+}
+
+fn format_elapsed(elapsed: std::time::Duration) -> String {
+    format!("{:.1}", elapsed.as_secs_f64() * 1000.0)
+}
+
+fn wall_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+fn qtrace(start: Option<std::time::Instant>, message: std::fmt::Arguments<'_>) {
+    if let Some(start) = start {
+        eprintln!("[QTRACE +{}ms w={}] {}", format_elapsed(start.elapsed()), wall_ms(), message);
+    }
+}
+
 /// Lazy response owner returned by [`DirectUnaryQueryTransport`].
 pub struct DirectUnaryQueryResponse<C, L> {
     shared_runtime: SharedReadRuntime<C, L>,
@@ -955,6 +995,8 @@ pub struct DirectUnaryQueryResponse<C, L> {
     /// `ClientHelper`. One Cop response owns one read, so the sets live for
     /// exactly as long as the read that filled them.
     snapshot_locks: tidb_txnkv::lock::SnapshotLockSet,
+    /// Wall-clock origin for `TIKV_QUERY_TRACE` lines; `None` disables tracing.
+    trace_start: Option<std::time::Instant>,
 }
 
 struct PreparedRegionDispatch {
@@ -977,6 +1019,8 @@ struct PendingBatchAttempt {
 
 impl<C, L> Drop for DirectUnaryQueryResponse<C, L> {
     fn drop(&mut self) {
+        qtrace(self.trace_start, format_args!("resp_close pending={} inflight={}",
+            self.pending_batches.len(), self.unordered_inflight.len()));
         for attempt in self.pending_batches.values_mut() {
             attempt.pending.cancel();
         }
@@ -1153,10 +1197,15 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 continue;
             }
 
+            let wait_started = std::time::Instant::now();
             let logical_task_id = self
                 .completion_notifier
                 .wait(&self.call)
                 .map_err(Self::completion_error)?;
+            if query_trace_enabled() && wait_started.elapsed().as_millis() >= 1 {
+                qtrace(self.trace_start, format_args!("wait_completion {}ms -> task {}",
+                    wait_started.elapsed().as_millis(), logical_task_id));
+            }
             if self.pending_batches.contains_key(&logical_task_id)
                 && self
                     .try_complete_batch_attempt(logical_task_id)
@@ -1237,6 +1286,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         attempt_id: u64,
     ) -> Result<(), DirectUnaryTransportError> {
         self.check_retry_active()?;
+        qtrace(self.trace_start, format_args!("dispatch task={} attempt={}", logical_task_id, attempt_id));
         let prepared = self.runtime.prepared_attempt(attempt_id).cloned().ok_or(
             DirectUnaryTransportError::ResponseState("active attempt is not prepared"),
         )?;
@@ -1553,6 +1603,9 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             batch_attempt,
             pre_batch_network_metrics,
         } = dispatch;
+        qtrace(self.trace_start, format_args!("task_done id={} attempt={} rpc={}ms bytes={} ok={}",
+            logical_task_id, attempt_id, dispatch_duration.as_millis(), request_bytes,
+            send_result.is_ok()));
         // Go checks ctx.Err after SendRequest returns. Caller cancellation has
         // precedence over a simultaneous transport error or successful reply.
         if self.cancellation.is_cancelled()
@@ -2085,6 +2138,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         if delay.is_zero() {
             return Ok(());
         }
+        qtrace(self.trace_start, format_args!("sleep_retry {}ms", delay.as_millis()));
         let remaining = self.call.timeout();
         if remaining.is_zero() || delay >= remaining {
             return Err(DirectUnaryTransportError::DeadlineExceeded);

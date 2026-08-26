@@ -1131,6 +1131,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     };
     let mut queries = 0_u64;
     let mut prepared = PreparedStatementRegistry::default();
+    let mut last_command: Option<(std::time::Instant, &'static str)> = None;
     loop {
         // A `KILL` that arrived while the previous command ran ends the
         // connection here, before it serves another one.
@@ -1213,6 +1214,23 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         let _query_cancellation = engine
             .query_cancellation()
             .map(|active| cancellation.install(active));
+        // `TIKV_QUERY_TRACE`: report the previous command's full server-side
+        // duration when its successor arrives (client-observed latency proxy).
+        if let Some((started, kind)) = last_command.take() {
+            let elapsed = started.elapsed();
+            if elapsed.as_millis() >= 20 {
+                eprintln!("[QTRACE-SQL] {}ms kind={}", elapsed.as_millis(), kind);
+            }
+        }
+        last_command = Some((
+            std::time::Instant::now(),
+            match command {
+                Command::Query(_) => "query",
+                Command::StmtExecute(_) => "stmt_execute",
+                Command::StmtPrepare(_) => "stmt_prepare",
+                _ => "other",
+            },
+        ));
         match command {
             Command::Quit => {
                 return Ok(ConnectionReport {
