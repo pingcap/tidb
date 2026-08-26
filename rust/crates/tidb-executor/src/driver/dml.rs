@@ -1755,6 +1755,7 @@ pub fn run_fast_prepared_update(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Option<u64>, DriverError> {
+    let __fast_t0 = std::time::Instant::now();
     if update.ignore || !update.order_by.is_empty() || update.limit.is_some()
         || !update.returning.is_empty() || update.assignments.is_empty() { return Ok(None); }
     let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else { return Ok(None) };
@@ -1790,10 +1791,15 @@ pub fn run_fast_prepared_update(
     }
     // An assignment touching a FOREIGN-KEY column of this table (`fk.cols`)
     // changes a referential fact; the full planner runs that check. An
-    // assignment touching an INDEXED column keeps the planner too, so index
-    // maintenance above never sees a changed entry pair mid-flight.
+    // assignment touching a UNIQUE secondary-index column keeps the planner
+    // so the duplicate-key answer stays the planner's; a NON-unique index's
+    // entry pair carries no constraint, and `update_row_in` already rewrites
+    // exactly that pair (old deleted, new written, restored on failure), so
+    // handing it here is Go's own cached-point-update behavior.
     if kv.indexes().iter().any(|index|
-        index.column_offsets.iter().any(|offset| assignment_offsets.contains(offset)))
+        index.unique
+            && !index.clustered_primary
+            && index.column_offsets.iter().any(|offset| assignment_offsets.contains(offset)))
         || kv.foreign_keys().iter().any(|fk| fk.cols.iter().any(|column|
             update.assignments.iter().any(|assignment|
                 assignment.col.last().is_some_and(|assigned| assigned.eq_ignore_ascii_case(column)))))
@@ -1821,10 +1827,17 @@ pub fn run_fast_prepared_update(
         .map_err(|error| DriverError::unsupported(format!("cannot encode common handle: {error:?}")))?;
     let handle = tidb_txnkv::CommonHandle::new(encoded)
         .map_err(|error| DriverError::unsupported(format!("cannot encode common handle: {error:?}")))?;
+    if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("upd")) {
+        eprintln!("[upd] admitted+encoded {}us", __fast_t0.elapsed().as_micros());
+    }
     let handle = TableHandle::Common(handle.encoded().to_vec());
+    let __upd_t0 = std::time::Instant::now();
     let old_row = match kv.get_row_by_handle(&handle, &ctx.session_zone()).map_err(kv_write_error)? {
         Some(row) => row, None => return Ok(Some(0)),
     };
+    if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("upd")) {
+        eprintln!("[upd] read-old-row {}us", __upd_t0.elapsed().as_micros());
+    }
     let field_types: Vec<FieldType> = columns.iter().map(|column| column.field_type.clone()).collect();
     let names: Vec<String> = columns.iter().map(|column| column.name.clone()).collect();
     for (offset, bound) in &residual_eqs {
@@ -1857,8 +1870,14 @@ pub fn run_fast_prepared_update(
         crate::bad_null::handle_bad_null(value, field_type, name, level, ctx)?;
     }
     if row == old_row { return Ok(Some(0)); }
+    if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("upd")) {
+        eprintln!("[upd] pre-write {}us", __upd_t0.elapsed().as_micros());
+    }
     kv.update_row_with_old(&handle, Some(&old_row), &row, ctx)
         .map_err(kv_write_error)?;
+    if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("upd")) {
+        eprintln!("[upd] stage-write {}us", __upd_t0.elapsed().as_micros());
+    }
     Ok(Some(1))
 }
 
