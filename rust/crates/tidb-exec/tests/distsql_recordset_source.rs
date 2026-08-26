@@ -14,11 +14,13 @@
 
 #![allow(missing_docs)]
 
+use prost::Message;
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_distsql::{ResponseChannel, WarningCollector};
 use tidb_exec::distsql_recordset::{DistSqlRecordSet, DistSqlRecordSetError};
+use tidb_proto::{Chunk, EncodeType, SelectResponse};
 use tidb_protocol::resultset_stream::ResultSetStream;
-use tidb_protocol::{ColumnInfo, ResultSetOptions, TYPE_LONG};
+use tidb_protocol::{ColumnInfo, ResultSetOptions, TYPE_LONG, TYPE_NEW_DECIMAL};
 
 fn column() -> ColumnInfo {
     ColumnInfo {
@@ -59,6 +61,28 @@ fn recordset(values: &[u8]) -> DistSqlRecordSet {
     DistSqlRecordSet::new(iter, vec![column()])
 }
 
+fn typed_recordset(field_type: FieldType, type_code: u8, cell: &[u8]) -> DistSqlRecordSet {
+    let mut rows_data = Vec::with_capacity(8 + cell.len());
+    rows_data.extend_from_slice(&1_u32.to_le_bytes());
+    rows_data.extend_from_slice(&0_u32.to_le_bytes());
+    rows_data.extend_from_slice(cell);
+    let response = SelectResponse {
+        encode_type: Some(EncodeType::TypeChunk as i32),
+        chunks: vec![Chunk {
+            rows_data: Some(rows_data),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let mut source = ResponseChannel::new();
+    source.push_result(response.encode_to_vec()).unwrap();
+    source.finish().unwrap();
+    let iter = source.into_select_iter(vec![field_type], Vec::new(), WarningCollector::new());
+    let mut result_column = column();
+    result_column.type_code = type_code;
+    DistSqlRecordSet::new(iter, vec![result_column])
+}
+
 #[test]
 fn select_response_rows_are_pulled_in_bounded_batches() {
     let mut recordset = recordset(&[1, 2, 3]);
@@ -97,6 +121,42 @@ fn select_response_chunk_writes_go_text_rows_before_advancing() {
     );
     assert!(recordset.next_text_batch(2).unwrap().is_none());
     assert_eq!(stream.row_count(), 3);
+}
+
+#[test]
+fn typed_primitive_chunk_writes_go_text_without_rematerializing_a_datum() {
+    let mut recordset = typed_recordset(
+        FieldType::new(FieldTypeCode::Long),
+        TYPE_LONG,
+        &14_i64.to_ne_bytes(),
+    );
+    let batch = recordset.next_text_batch(1).unwrap().unwrap();
+    let mut stream = ResultSetStream::new(vec![column()], ResultSetOptions::default());
+    stream.metadata_packets().unwrap();
+
+    assert_eq!(
+        batch.write_rows(&mut stream).unwrap(),
+        vec![b"\x0214".to_vec()]
+    );
+}
+
+#[test]
+fn typed_chunk_text_path_rejects_a_malformed_decimal_before_getter_use() {
+    let mut invalid_decimal = vec![0; 40];
+    invalid_decimal[3] = 2;
+    let mut recordset = typed_recordset(
+        FieldType::new(FieldTypeCode::NewDecimal),
+        TYPE_NEW_DECIMAL,
+        &invalid_decimal,
+    );
+    let batch = recordset.next_text_batch(1).unwrap().unwrap();
+    let mut decimal_column = column();
+    decimal_column.type_code = TYPE_NEW_DECIMAL;
+    let mut stream = ResultSetStream::new(vec![decimal_column], ResultSetOptions::default());
+    stream.metadata_packets().unwrap();
+
+    let error = batch.write_rows(&mut stream).unwrap_err();
+    assert!(error.contains("invalid payload"), "{error}");
 }
 
 #[test]

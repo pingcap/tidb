@@ -203,23 +203,26 @@ fn validate_chunk_row(row: Row<'_>, field_types: &[FieldType]) -> Result<(), Str
         ));
     }
     for (column, field_type) in field_types.iter().enumerate().take(row.len()) {
-        // The columnar decoder has already checked variable-column offsets
-        // and lengths.  Go's text formatter consumes those byte slices
-        // directly, so avoid materializing a throwaway `Datum::String` here;
-        // retaining this check for fixed/structured values still rejects the
-        // malformed payloads covered by the source response tests.
-        let is_raw_bytes = matches!(
+        // Go's checked TypeChunk decoder owns the structural boundary: it
+        // validates each fixed-width column's complete byte count and every
+        // variable-column offset before a `chunk.Row` exists. Primitive
+        // numeric getters and raw byte getters therefore need no second
+        // per-cell materialization here. Only values whose payload has an
+        // internal semantic layout still need validation before their Go
+        // formatter-shaped getters are used below.
+        let needs_semantic_validation = matches!(
             field_type.code(),
-            FieldTypeCode::Varchar
-                | FieldTypeCode::VarString
-                | FieldTypeCode::String
-                | FieldTypeCode::Blob
-                | FieldTypeCode::TinyBlob
-                | FieldTypeCode::MediumBlob
-                | FieldTypeCode::LongBlob
-                | FieldTypeCode::Bit
+            FieldTypeCode::Json
+                | FieldTypeCode::Enum
+                | FieldTypeCode::Set
+                | FieldTypeCode::Date
+                | FieldTypeCode::Datetime
+                | FieldTypeCode::Timestamp
+                | FieldTypeCode::Duration
+                | FieldTypeCode::NewDecimal
+                | FieldTypeCode::VectorFloat32
         );
-        if !is_raw_bytes {
+        if needs_semantic_validation {
             if field_type.code() == FieldTypeCode::NewDecimal {
                 let raw = row.get_raw(column);
                 let raw: [u8; MYDECIMAL_STRUCT_SIZE] = raw.as_ref().try_into().map_err(|_| {

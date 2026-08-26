@@ -3666,6 +3666,38 @@ fn run_select_traced_with_delivery_choice_inner(
             })
             .collect::<Vec<_>>()
     });
+    // Go retains an intermediate Projection when a non-covering
+    // IndexLookUp's physical row order differs from the written select list
+    // (the reader emits requested table columns in table order). The Rust
+    // executor maps those columns directly in its final ProjectionExec, so
+    // this is a plan-trace-only boundary. Keep the gate to a direct-column
+    // permutation over one scope: computed expressions and joins have their
+    // own projection/restore rules above.
+    let index_lookup_projection_fields = (direct_column_projection
+        && projection_sources.len() == current_scope.width()
+        && projection_sources
+            .iter()
+            .enumerate()
+            .any(|(offset, source)| *source != Some(offset))
+        && current_scope.tables.len() == 1)
+        .then(|| {
+            current_scope
+                .tables
+                .iter()
+                .flat_map(|table| {
+                    table.columns.iter().map(|(name, _)| SelectField::Expr {
+                        expr: tidb_ast::Expr::Column(vec![table.name.clone(), name.clone()]),
+                        alias: None,
+                    })
+                })
+                .collect::<Vec<_>>()
+        });
+    if let (Some(trace), Some(fields)) = (
+        trace.as_deref_mut(),
+        index_lookup_projection_fields.as_deref(),
+    ) {
+        trace.index_lookup_projection(fields, &qualify);
+    }
     let mut root: Box<dyn Executor> = if let Some(input) = direct_distinct_input.as_ref() {
         let input = if partial_distinct {
             Expression::Column(source.schema().columns[0].clone())
@@ -3743,24 +3775,30 @@ fn run_select_traced_with_delivery_choice_inner(
         ))
     };
     if direct_distinct_input.is_none() && !projection_elided && !logical_column_prune {
-        if let Some(trace) = trace.as_deref_mut() {
-            let physical = projection_trace_exprs
-                .as_deref()
-                .is_some_and(|expressions| {
-                    trace.physical_real_projection(
-                        expressions,
-                        projection_trace_columns.as_deref().unwrap_or(&[]),
-                        reader_ready.then_some(logical_rows).flatten(),
-                    )
-                });
-            if !physical {
-                if reader_ready {
-                    trace.projection_at_rows(traced_select.fields.fields(), &qualify, logical_rows);
-                } else {
-                    trace.projection(traced_select.fields.fields(), &qualify);
+        if !(index_lookup_projection_fields.is_some() && !limit_before_projection) {
+            if let Some(trace) = trace.as_deref_mut() {
+                let physical = projection_trace_exprs
+                    .as_deref()
+                    .is_some_and(|expressions| {
+                        trace.physical_real_projection(
+                            expressions,
+                            projection_trace_columns.as_deref().unwrap_or(&[]),
+                            reader_ready.then_some(logical_rows).flatten(),
+                        )
+                    });
+                if !physical {
+                    if reader_ready {
+                        trace.projection_at_rows(
+                            traced_select.fields.fields(),
+                            &qualify,
+                            logical_rows,
+                        );
+                    } else {
+                        trace.projection(traced_select.fields.fields(), &qualify);
+                    }
                 }
+                root = trace.meter(root);
             }
-            root = trace.meter(root);
         }
     }
 
@@ -3839,6 +3877,37 @@ fn run_select_traced_with_delivery_choice_inner(
         ));
         if let Some(trace) = trace.as_deref_mut() {
             trace.limit(offset, count);
+            root = trace.meter(root);
+        }
+    }
+
+    // For the non-covering lookup permutation above, Go's written Projection
+    // stays ABOVE the root Limit while the intermediate table-order
+    // Projection stays below it. Record that outer boundary after LIMIT;
+    // other shapes retain the established projection-before-limit order.
+    if index_lookup_projection_fields.is_some()
+        && !limit_before_projection
+        && direct_distinct_input.is_none()
+        && !projection_elided
+        && !logical_column_prune
+    {
+        if let Some(trace) = trace.as_deref_mut() {
+            let physical = projection_trace_exprs
+                .as_deref()
+                .is_some_and(|expressions| {
+                    trace.physical_real_projection(
+                        expressions,
+                        projection_trace_columns.as_deref().unwrap_or(&[]),
+                        reader_ready.then_some(logical_rows).flatten(),
+                    )
+                });
+            if !physical {
+                if reader_ready {
+                    trace.projection_at_rows(traced_select.fields.fields(), &qualify, logical_rows);
+                } else {
+                    trace.projection(traced_select.fields.fields(), &qualify);
+                }
+            }
             root = trace.meter(root);
         }
     }

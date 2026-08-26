@@ -4953,9 +4953,29 @@ impl PlanTrace {
         let Some(mut input) = self.stack.pop() else {
             return false;
         };
+        // Go's `findBestTask` leaves a coprocessor Selection between an
+        // ordered covering-index scan and the pushed Limit.  The Limit still
+        // belongs inside the IndexReader; refusing this shape makes an
+        // otherwise valid `SELECT indexed_column ... ORDER BY ... LIMIT`
+        // fail during EXPLAIN even though execution can serve it.  Accept the
+        // same one-selection boundary as `pushed_topn_inside_cop_task`.
         let reader_name = match input.name {
             "TableFullScan" | "TableRangeScan" => "TableReader",
             "IndexFullScan" | "IndexRangeScan" => "IndexReader",
+            "Selection" if input.children.len() == 1 => {
+                let scan = &input.children[0];
+                let reader = match scan.name {
+                    "TableFullScan" | "TableRangeScan" => "TableReader",
+                    "IndexFullScan" | "IndexRangeScan" => "IndexReader",
+                    _ => {
+                        self.stack.push(input);
+                        return false;
+                    }
+                };
+                input.task = "cop[tikv]";
+                input.children[0].task = "cop[tikv]";
+                reader
+            }
             // A source that collapsed to `TableDual` reads no partition and
             // no range at all ([`Self::pruned_away_table_dual`],
             // [`Self::empty_range_table_dual`]). There is no cop task to push
@@ -5017,6 +5037,26 @@ impl PlanTrace {
         self.in_cop_task(|trace| trace.pushed_topn_inside_cop_task(order_by, qualify, count))
     }
 
+    /// Records Go's physical projection that restores table-column order
+    /// above a non-covering `IndexLookUp`. The executable projection remains
+    /// the outer select-list projection; this node describes the intermediate
+    /// row layout produced by `PhysicalIndexLookUpReader`.
+    pub(crate) fn index_lookup_projection(
+        &mut self,
+        fields: &[tidb_ast::SelectField],
+        qualify: &Qualifier<'_>,
+    ) -> bool {
+        if !self
+            .stack
+            .last()
+            .is_some_and(|node| node.name == "IndexLookUp")
+        {
+            return false;
+        }
+        self.wrap("Projection", Est::Inherit, field_list(fields, qualify));
+        true
+    }
+
     fn pushed_topn_inside_cop_task(
         &mut self,
         order_by: &[tidb_ast::OrderItem],
@@ -5026,22 +5066,35 @@ impl PlanTrace {
         let Some(mut input) = self.stack.pop() else {
             return false;
         };
-        let valid = if matches!(input.name, "TableFullScan" | "TableRangeScan") {
-            input.task = "cop[tikv]";
-            true
-        } else if input.name == "Selection" && input.children.len() == 1 {
-            let scan = &mut input.children[0];
-            if matches!(scan.name, "TableFullScan" | "TableRangeScan") {
+        let reader_name = match input.name {
+            "TableFullScan" | "TableRangeScan" => {
+                input.task = "cop[tikv]";
+                "TableReader"
+            }
+            "IndexFullScan" | "IndexRangeScan" => {
+                input.task = "cop[tikv]";
+                "IndexReader"
+            }
+            "Selection" if input.children.len() == 1 => {
+                let scan = &mut input.children[0];
+                let reader = match scan.name {
+                    "TableFullScan" | "TableRangeScan" => "TableReader",
+                    "IndexFullScan" | "IndexRangeScan" => "IndexReader",
+                    _ => {
+                        self.stack.push(input);
+                        return false;
+                    }
+                };
                 scan.task = "cop[tikv]";
                 input.task = "cop[tikv]";
-                true
-            } else {
-                false
+                reader
             }
-        } else {
-            false
+            _ => {
+                self.stack.push(input);
+                return false;
+            }
         };
-        if !valid {
+        if !matches!(reader_name, "TableReader" | "IndexReader") {
             self.stack.push(input);
             return false;
         }
@@ -5062,10 +5115,14 @@ impl PlanTrace {
         partial.children.push(input);
 
         let mut reader = PlanNode::new(
-            "TableReader",
+            reader_name,
             estimate,
             String::new(),
-            "data:TopN".to_owned(),
+            if reader_name == "TableReader" {
+                "data:TopN".to_owned()
+            } else {
+                "index:TopN".to_owned()
+            },
         );
         reader.key_ndv_ratio = key_ndv_ratio;
         reader.act_rows = act_rows;
@@ -7567,6 +7624,80 @@ mod tests {
         assert_eq!(reader.name, "TableReader");
         assert_eq!(reader.children.len(), 1);
         assert_eq!(reader.children[0].name, "TableRangeScan");
+    }
+
+    #[test]
+    fn pushed_limit_accepts_a_covering_index_selection() {
+        // Go's `PhysicalIndexReader` keeps an index-covered Selection below
+        // the cop Limit.  This is the plan produced by a projection such as
+        // `SELECT platform_id ... ORDER BY balance DESC LIMIT 100`; the
+        // selection is part of the index task, not a root filter that would
+        // make the limit unsound.
+        let mut selection = PlanNode::new(
+            "Selection",
+            Some(1.0),
+            String::new(),
+            "gt(tag_whale, 0)".to_owned(),
+        );
+        selection.task = "root";
+        selection.children.push(PlanNode::new(
+            "IndexRangeScan",
+            Some(1.25),
+            "table:t, index:idx(token, balance)".to_owned(),
+            "keep order:true, desc".to_owned(),
+        ));
+        let mut trace = PlanTrace::planning();
+        trace.stack.push(selection);
+
+        assert!(trace.pushed_limit_reader(0, 100));
+        assert_eq!(trace.stack.len(), 1);
+        let reader = &trace.stack[0];
+        assert_eq!(reader.name, "IndexReader");
+        assert_eq!(reader.info, "index:Limit");
+        assert_eq!(reader.children.len(), 1);
+        let limit = &reader.children[0];
+        assert_eq!(limit.name, "Limit");
+        assert_eq!(limit.info, "offset:0, count:100");
+        assert_eq!(limit.children[0].name, "Selection");
+        assert_eq!(limit.children[0].task, "cop[tikv]");
+        assert_eq!(limit.children[0].children[0].name, "IndexRangeScan");
+        assert_eq!(limit.children[0].children[0].task, "cop[tikv]");
+    }
+
+    #[test]
+    fn pushed_topn_accepts_a_covering_index_selection() {
+        let mut selection = PlanNode::new(
+            "Selection",
+            Some(1.0),
+            String::new(),
+            "gt(tag_whale, 0)".to_owned(),
+        );
+        selection.children.push(PlanNode::new(
+            "IndexRangeScan",
+            Some(1.25),
+            "table:t, index:idx(token, balance, last_active_time)".to_owned(),
+            "keep order:false".to_owned(),
+        ));
+        let mut trace = PlanTrace::planning();
+        trace.stack.push(selection);
+
+        let order_by = vec![tidb_ast::OrderItem {
+            expr: tidb_ast::Expr::Column(vec!["balance".to_owned()]),
+            desc: true,
+        }];
+        let qualify = Qualifier {
+            db: "",
+            scope: &FromScope::default(),
+            catalog: None,
+        };
+        assert!(trace.pushed_topn_reader(&order_by, &qualify, 100));
+        let reader = &trace.stack[0];
+        assert_eq!(reader.name, "IndexReader");
+        assert_eq!(reader.info, "index:TopN");
+        assert_eq!(reader.children[0].name, "TopN");
+        assert_eq!(reader.children[0].task, "cop[tikv]");
+        assert_eq!(reader.children[0].children[0].name, "Selection");
+        assert_eq!(reader.children[0].children[0].task, "cop[tikv]");
     }
 
     /// MUTATION PROBE for the RETRACTION's descent: it passes through the

@@ -3248,9 +3248,18 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
     }
 
     fn accept_index_filter(&mut self) -> bool {
-        if self.covering || self.filter.is_none() || self.table.has_dirty_content() {
+        if self.filter.is_none() || self.table.has_dirty_content() {
             return false;
         }
+        // Go's `PhysicalIndexReader` evaluates a Selection in the coprocessor
+        // when every referenced column is carried by the index.  A covering
+        // reader therefore needs the same offer as a non-covering
+        // `PhysicalIndexLookUpReader`: without it, a pushed Limit counts raw
+        // index entries before the residual filter and drops qualifying rows
+        // after the first rejected entry.  `driver` has already proved the
+        // residual uses only ordered index columns (or handles), and the
+        // coprocessor request still fails closed if its descriptors cannot be
+        // lowered.
         self.index_filter = true;
         true
     }
@@ -3323,6 +3332,31 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
             limit,
         });
         true
+    }
+
+    fn accept_remote_topn(&mut self, topn: &crate::remote_scan::PushdownTopN) -> bool {
+        // A covering index is Go's PhysicalIndexReader: its index entries are
+        // already the output rows, so the same cop TopN request used by an
+        // IndexLookUp can run before any table lookup.  Mark the filter as
+        // index-evaluable only for this covering path; non-covering lookups
+        // must continue through the dedicated index_top_n offer below.
+        if !self.covering {
+            return false;
+        }
+        let was_index_filter = self.index_filter;
+        if self.filter.is_some() {
+            self.index_filter = true;
+        }
+        let order_by = topn
+            .order_by
+            .iter()
+            .map(|item| (item.offset, item.desc))
+            .collect::<Vec<_>>();
+        let accepted = self.accept_index_top_n(&order_by, topn.limit);
+        if !accepted {
+            self.index_filter = was_index_filter;
+        }
+        accepted
     }
 
     fn scanned_rows_counter(&self) -> Option<Rc<Cell<u64>>> {
@@ -5064,6 +5098,27 @@ mod tests {
             gets.load(Ordering::Relaxed),
             1,
             "the five rows share one table lookup batch"
+        );
+    }
+
+    /// A covering index may evaluate a residual Selection before its pushed
+    /// LIMIT, just like Go's `PhysicalIndexReader`.  If the filter is left on
+    /// the client side, the first rejected index entry spends one of the five
+    /// LIMIT slots and the answer is short by one row.
+    #[test]
+    fn a_covering_index_filter_counts_qualifying_rows_before_the_limit() {
+        let ctx = crate::StmtContext::for_query();
+        let (catalog, entries, _) = table_of(ROWS, true);
+        let rows = run_select_on(
+            "SELECT b FROM t WHERE MOD(b, 2) = 0 ORDER BY b LIMIT 5",
+            &catalog,
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(first_column(&rows), vec![2, 4, 6, 8, 10]);
+        assert!(
+            entries.load(Ordering::Relaxed) >= 6,
+            "the index must pass the rejected entry before producing five rows"
         );
     }
 
