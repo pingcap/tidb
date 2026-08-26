@@ -240,11 +240,16 @@ impl Session {
     /// visibility the ordinary planner would build for it (Go serves these
     /// from its prepared plan cache inside transactions as well).
     pub(crate) fn can_reuse_prepared_point_get(&self, plan: &PreparedPointGetPlan) -> bool {
-        if !self.session_bindings.is_empty()
-            || self
-                .vars
-                .optimizer_fix_control()
-                .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
+        if !self.session_bindings.is_empty() {
+            if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("decline")) {
+                eprintln!("[pg-reuse-no] session_bindings");
+            }
+            return false;
+        }
+        if self
+            .vars
+            .optimizer_fix_control()
+            .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
             || self.vars.get_system("sql_select_limit").as_deref() != Ok("18446744073709551615")
             || self
                 .vars
@@ -255,10 +260,18 @@ impl Session {
                 .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS)
                 .is_ok_and(|value| value.trim().parse::<i64>().is_ok_and(|value| value != 0))
         {
+            if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("decline")) {
+                eprintln!("[pg-reuse-no] vars gate");
+            }
             return false;
         }
-        self.lock_catalog()
-            .is_ok_and(|catalog| plan.matches_catalog(&catalog, self.current_database()))
+        let matched = self
+            .lock_catalog()
+            .is_ok_and(|catalog| plan.matches_catalog(&catalog, self.current_database()));
+        if !matched && std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("decline")) {
+            eprintln!("[pg-reuse-no] catalog identity moved");
+        }
+        matched
     }
 
     /// Binds a retained point-get plan for a binary EXECUTE after applying
@@ -269,8 +282,15 @@ impl Session {
         plan: &Arc<PreparedPointGetPlan>,
         values: &[Datum],
     ) -> Option<PreparedPointGetExecution> {
-        self.can_reuse_prepared_point_get(plan)
-            .then(|| plan.bind(values, &self.session_time_zone()))
-            .flatten()
+        if !self.can_reuse_prepared_point_get(plan) {
+            return None;
+        }
+        let bound = plan.bind(values, &self.session_time_zone());
+        if bound.is_none()
+            && std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("decline"))
+        {
+            eprintln!("[pg-bind-none] {}.{}", plan.names().0, plan.names().1);
+        }
+        bound
     }
 }

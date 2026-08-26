@@ -121,6 +121,15 @@ where
                 ));
             }
         };
+        super::txn_trace(&format!(
+            "prewrite start_ts={} mutations={} batches={} async_commit={} one_pc={}",
+            self.start_ts,
+            mutations.len(),
+            queue.len(),
+            protocol.use_async_commit,
+            protocol.use_one_pc
+        ));
+        let prewrite_started = std::time::Instant::now();
         let mut lock_attempts = 0usize;
 
         loop {
@@ -429,6 +438,13 @@ where
             .map(|mutation| mutation.key().to_vec())
             .collect::<Vec<_>>();
 
+        super::txn_trace(&format!(
+            "prewrite done in {}us one_pc_commit_ts={} min_commit_ts={}",
+            prewrite_started.elapsed().as_micros(),
+            protocol.one_pc_commit_ts,
+            min_commit_ts
+        ));
+
         // 1PC: TiKV already committed every key while answering the prewrite,
         // so publishing a Commit would be a second, contradictory decision.
         if protocol.use_one_pc {
@@ -497,6 +513,8 @@ where
             }));
         }
 
+        let classic_started = std::time::Instant::now();
+        super::txn_trace("classic 2pc: fetching commit timestamp");
         let commit_ts = match self.commit_timestamp(min_commit_ts, call) {
             Ok(timestamp) => timestamp,
             Err(error) => {
@@ -504,6 +522,11 @@ where
             }
         };
         receipt.commit_ts = commit_ts;
+        super::txn_trace(&format!(
+            "classic 2pc: commit_ts={} fetched in {}us",
+            commit_ts,
+            classic_started.elapsed().as_micros()
+        ));
 
         self.state
             .transition(CoordinatorState::PrimaryCommitting)
@@ -532,6 +555,10 @@ where
                 ));
             }
         };
+        super::txn_trace(&format!(
+            "classic 2pc: primary committed at {}us from phase start",
+            classic_started.elapsed().as_micros()
+        ));
         self.state
             .transition(CoordinatorState::PrimaryCommitted)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
