@@ -961,4 +961,5 @@ plans/results and all 100-row batch checks remain equal. Receipts:
 medians are Rust/Go q1 `1.056x`, q2 `1.204x`, flex `1.155x`, swap `1.628x`,
 and batch `1.230x`; the single-concurrency no-regression gate remains open.
 This is still WIP: `make lint`/Ready cannot run because this environment has
-no `go` executable, and the continuation changes are pending commit/push.
+no `go` executable. The continuation was committed as `cca7e29b11` with the
+required `Go code:` references and pushed to `origin/hparser-integration`.
