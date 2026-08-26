@@ -70,6 +70,7 @@ type mppExec interface {
 	takeIntermediateResults() []*chunk.Chunk
 	getFieldTypes() []*types.FieldType
 	buildSummary() *tipb.ExecutorExecutionSummary
+	scanDetail() *kvrpcpb.ScanDetailV2
 }
 
 type baseMPPExec struct {
@@ -93,6 +94,49 @@ func (b *baseMPPExec) getFieldTypes() []*types.FieldType {
 
 func (b *baseMPPExec) buildSummary() *tipb.ExecutorExecutionSummary {
 	return b.execSummary.buildSummary()
+}
+
+func (b *baseMPPExec) scanDetail() *kvrpcpb.ScanDetailV2 {
+	detail := &kvrpcpb.ScanDetailV2{}
+	for _, child := range b.children {
+		mergeScanDetailV2(detail, child.scanDetail())
+	}
+	return detail
+}
+
+func mergeScanDetailV2(dst, src *kvrpcpb.ScanDetailV2) {
+	if dst == nil || src == nil {
+		return
+	}
+	dst.ProcessedVersions += src.ProcessedVersions
+	dst.ProcessedVersionsSize += src.ProcessedVersionsSize
+	dst.TotalVersions += src.TotalVersions
+	dst.RocksdbDeleteSkippedCount += src.RocksdbDeleteSkippedCount
+	dst.RocksdbKeySkippedCount += src.RocksdbKeySkippedCount
+	dst.RocksdbBlockCacheHitCount += src.RocksdbBlockCacheHitCount
+	dst.RocksdbBlockReadCount += src.RocksdbBlockReadCount
+	dst.RocksdbBlockReadByte += src.RocksdbBlockReadByte
+	dst.RocksdbBlockReadNanos += src.RocksdbBlockReadNanos
+	dst.GetSnapshotNanos += src.GetSnapshotNanos
+	dst.ReadIndexProposeWaitNanos += src.ReadIndexProposeWaitNanos
+	dst.ReadIndexConfirmWaitNanos += src.ReadIndexConfirmWaitNanos
+	dst.ReadPoolScheduleWaitNanos += src.ReadPoolScheduleWaitNanos
+	dst.TotalVersionsSize += src.TotalVersionsSize
+	dst.IaCacheHitCount += src.IaCacheHitCount
+	dst.IaRemoteReadSegmentCount += src.IaRemoteReadSegmentCount
+	dst.IaRemoteReadSegmentBytes += src.IaRemoteReadSegmentBytes
+	dst.IaRemoteReadSegmentNanos += src.IaRemoteReadSegmentNanos
+}
+
+func recordScannedKV(detail *kvrpcpb.ScanDetailV2, key, value []byte) {
+	if detail == nil {
+		return
+	}
+	detail.ProcessedVersions++
+	detail.TotalVersions++
+	kvSize := uint64(len(key) + len(value))
+	detail.ProcessedVersionsSize += kvSize
+	detail.TotalVersionsSize += kvSize
 }
 
 func (b *baseMPPExec) open() error {
@@ -138,6 +182,7 @@ type tableScanExec struct {
 	counts        []int64
 	ndvs          []int64
 	rowCnt        int64
+	scanStats     kvrpcpb.ScanDetailV2
 
 	chk      *chunk.Chunk
 	result   chan scanResult
@@ -170,6 +215,7 @@ func (e *tableScanExec) Process(key, value []byte, commitTS uint64) error {
 		tblID := tablecodec.DecodeTableID(key)
 		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
 	}
+	recordScannedKV(&e.scanStats, key, value)
 	e.rowCnt++
 
 	if e.chk.IsFull() {
@@ -187,6 +233,10 @@ func (e *tableScanExec) Process(key, value []byte, commitTS uint64) error {
 	default:
 	}
 	return nil
+}
+
+func (e *tableScanExec) scanDetail() *kvrpcpb.ScanDetailV2 {
+	return &e.scanStats
 }
 
 func (e *tableScanExec) open() error {
@@ -290,6 +340,7 @@ type indexScanExec struct {
 	prevVals      [][]byte
 	rowCnt        int64
 	ndvCnt        int64
+	scanStats     kvrpcpb.ScanDetailV2
 	chk           *chunk.Chunk
 	chkIdx        int
 	chunks        []*chunk.Chunk
@@ -372,6 +423,7 @@ func (e *indexScanExec) Process(key, value []byte, _ uint64) error {
 		e.chk.AppendBytes(*e.commonHandleKeyIdx, commonHandle.Encoded())
 	}
 
+	recordScannedKV(&e.scanStats, key, value)
 	if e.chk.IsFull() {
 		e.chunks = append(e.chunks, e.chk)
 		if e.paging != nil {
@@ -381,6 +433,10 @@ func (e *indexScanExec) Process(key, value []byte, _ uint64) error {
 		e.chk = chunk.NewChunkWithCapacity(e.fieldTypes, DefaultBatchSize)
 	}
 	return nil
+}
+
+func (e *indexScanExec) scanDetail() *kvrpcpb.ScanDetailV2 {
+	return &e.scanStats
 }
 
 func (e *indexScanExec) open() error {
@@ -455,6 +511,7 @@ type indexLookUpExec struct {
 	extraReaderProvider dbreader.ExtraDbReaderProvider
 	buildTableScan      func(*dbreader.DBReader, []kv.KeyRange) (*tableScanExec, error)
 	indexChunks         []*chunk.Chunk
+	tableScanStats      kvrpcpb.ScanDetailV2
 }
 
 func (e *indexLookUpExec) open() error {
@@ -488,6 +545,7 @@ func (e *indexLookUpExec) next() (ret *chunk.Chunk, _ error) {
 				if err != nil {
 					panic(err)
 				}
+				mergeScanDetailV2(&e.tableScanStats, tblScan.scanDetail())
 			}()
 
 			readCnt := 0
@@ -524,6 +582,12 @@ func (e *indexLookUpExec) next() (ret *chunk.Chunk, _ error) {
 	}
 
 	return ret, nil
+}
+
+func (e *indexLookUpExec) scanDetail() *kvrpcpb.ScanDetailV2 {
+	detail := e.baseMPPExec.scanDetail()
+	mergeScanDetailV2(detail, &e.tableScanStats)
+	return detail
 }
 
 func (e *indexLookUpExec) fetchTableScans() (tableScans []*tableScanExec, counts []int, indexChk *chunk.Chunk, err error) {

@@ -15,6 +15,7 @@
 package core_test
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -59,5 +60,30 @@ func TestExplainAnalyzeRUFormat(t *testing.T) {
 		})
 		require.Equal(t, tt.SQL, output[i].SQL)
 		require.Equal(t, output[i].Rows, toStringRows(tk.MustQuery(tt.SQL).Rows()))
+	}
+}
+
+func TestExplainAnalyzeRUFormatIncreasesWithScannedBytes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t_unistore_ru_scan_bytes")
+	tk.MustExec("create table t_unistore_ru_scan_bytes(a int primary key, b varchar(4096))")
+	getReaderCumRU := func() float64 {
+		rows := tk.MustQuery("explain analyze format = 'ru' select * from t_unistore_ru_scan_bytes").Rows()
+		require.NotEmpty(t, rows)
+		ru, err := strconv.ParseFloat(rows[0][4].(string), 64)
+		require.NoError(t, err)
+		return ru
+	}
+
+	previousRU := getReaderCumRU()
+	for i := 0; i < 20; i++ {
+		firstID := i*2 + 1
+		tk.MustExec("insert into t_unistore_ru_scan_bytes values (" + strconv.Itoa(firstID) + ", repeat('a', 4096)), (" + strconv.Itoa(firstID+1) + ", repeat('b', 4096))")
+		currentRU := getReaderCumRU()
+		require.Greater(t, currentRU, previousRU)
+		previousRU = currentRU
 	}
 }
