@@ -1236,6 +1236,34 @@ const INIT_HANDLE_BATCH: usize = 1024;
 /// Go's `@@tidb_index_lookup_size` default, the cap on the doubling above.
 const MAX_HANDLE_BATCH: usize = 20000;
 
+/// Computes the raw handle budget for the next lookup task.
+///
+/// Go's `IndexLookUpExecutor` only charges a pushed limit against extracted
+/// handles when the index side can prove those handles are the rows the limit
+/// counts. A residual evaluated after the table lookup may reject any handle,
+/// so its output limit cannot shrink the next raw handle task. The distinction
+/// is visible in `pkg/executor/distsql.go`: `extractTaskHandles` charges
+/// `PushedLimit` before sorting only for the index-side stream, while a
+/// table-side residual keeps filling tasks until enough rows survive.
+fn lookup_batch_target(
+    batch_size: usize,
+    limit: Option<u64>,
+    produced: u64,
+    unemitted: u64,
+    table_filter: bool,
+) -> usize {
+    let Some(limit) = limit else {
+        return batch_size;
+    };
+    if table_filter {
+        return batch_size;
+    }
+    batch_size.min(
+        usize::try_from(limit.saturating_sub(produced.saturating_add(unemitted)))
+            .unwrap_or(usize::MAX),
+    )
+}
+
 impl IndexRangeSourceExec {
     /// Builds a source over `ranges` with an explicit row-decode context.
     #[must_use]
@@ -1463,7 +1491,7 @@ impl IndexRangeSourceExec {
         let pushdown = self.lookup_pushdown && self.can_reorder_handles;
         let mut want = self.batch_size;
         if let Some(limit) = self.limit {
-            let cap = if pushdown {
+            if pushdown {
                 // The pushed limit rides INSIDE each per-partition cop
                 // request (Go plants `Limit offset:o, count:c | cop[tikv]`
                 // under `LocalIndexLookUp`), so it cuts THIS partition's
@@ -1479,7 +1507,10 @@ impl IndexRangeSourceExec {
                 // prefix where Go keeps its handle-order prefix:
                 // `select ... from tp2 where a > 33 limit 5` records `e`
                 // as its fifth row, not `f`.
-                self.lookup_offset.saturating_add(limit)
+                want = want.min(
+                    usize::try_from(self.lookup_offset.saturating_add(limit))
+                        .unwrap_or(usize::MAX),
+                );
             } else if self.filter.is_none() {
                 // Go `extractTaskHandles`: `leftCnt := w.PushedLimit.Offset
                 // + w.PushedLimit.Count - w.scannedKeys` cuts the
@@ -1492,18 +1523,28 @@ impl IndexRangeSourceExec {
                 // offset itself is skipped handle by handle by
                 // `next_window_handle` below, so this counter is net of
                 // it.)
-                limit.saturating_sub(self.limit_scanned_keys)
+                want = lookup_batch_target(
+                    self.batch_size,
+                    Some(limit),
+                    self.limit_scanned_keys,
+                    0,
+                    false,
+                );
             } else {
-                // With a residual filter accepted at the source, Go's cop
-                // evaluates its Selection BELOW the pushed limit, so
-                // `scannedKeys` counts only QUALIFYING keys -- which this
-                // tier only learns after the table read. Budgeting on
-                // `produced` keeps collecting handles until `count`
-                // qualifying rows exist, the same fixpoint one refill at a
-                // time.
-                limit.saturating_sub(self.produced.get())
-            };
-            want = want.min(usize::try_from(cap).unwrap_or(usize::MAX));
+                // An index-side Selection has already reduced the handle
+                // stream to qualifying rows, so the remaining output count
+                // is a sound budget. A TABLE-side residual is learned only
+                // after lookup; `lookup_batch_target` leaves its raw handle
+                // task at the normal growing size, matching Go's absence of
+                // an index-worker PushedLimit for that shape.
+                want = lookup_batch_target(
+                    self.batch_size,
+                    Some(limit),
+                    self.produced.get(),
+                    0,
+                    !self.index_filter,
+                );
+            }
         }
         while self.batch.len() < want {
             let entry = if pushdown {
@@ -1619,12 +1660,10 @@ impl IndexRangeSourceExec {
     /// per-window handle order for an unordered one. Concurrency changes only
     /// WHEN each window's network wait happens, never what the scan answers.
     ///
-    /// The pushed-Limit budget is unchanged: windows are still collected one
-    /// at a time on this thread with the same per-window targets, so a capped
-    /// read collects the same prefix of qualifying rows it always did; only
-    /// their fetches overlap. An early-stopping caller tears the pipeline
-    /// down and discards whatever is in flight -- the rows a serial walk
-    /// never reached.
+    /// An index-side pushed-Limit budget is unchanged. A table-side residual
+    /// cannot charge raw handles against its output count; its windows retain
+    /// Go's growing task sizes until enough rows survive. An early-stopping
+    /// caller tears the pipeline down and discards whatever is in flight.
     #[allow(clippy::type_complexity)]
     fn next_lookup_batch(
         &mut self,
@@ -1663,17 +1702,16 @@ impl IndexRangeSourceExec {
                 //   answer of zero rows is a real answer, and the only sound
                 //   end of stream is the phase-A walk itself running out. An
                 //   empty pipeline therefore always draws one window.
-                let mut target = self.batch_size;
-                if let Some(limit) = self.limit {
-                    target = target.min(
-                        usize::try_from(
-                            limit.saturating_sub(self.produced.get().saturating_add(unemitted)),
-                        )
-                        .unwrap_or(0),
-                    );
-                    if target == 0 {
-                        break;
-                    }
+                let table_filter = self.filter.is_some() && !self.index_filter;
+                let target = lookup_batch_target(
+                    self.batch_size,
+                    self.limit,
+                    self.produced.get(),
+                    unemitted,
+                    table_filter,
+                );
+                if target == 0 {
+                    break;
                 }
                 let demand_allowance = usize::try_from(
                     self.chunk_demand
@@ -1688,8 +1726,7 @@ impl IndexRangeSourceExec {
                 // Index-covered filters already have their qualifying handle
                 // count from the cop stream, so retain the strict demand
                 // bound for those and for unfiltered reads.
-                let needs_table_filter_read_ahead = self.filter.is_some()
-                    && !self.index_filter
+                let needs_table_filter_read_ahead = table_filter
                     && self.top_n.is_none()
                     // Local test/in-memory cursors have no network wait to
                     // overlap; keep their exact demand-bounded behavior.
@@ -4560,6 +4597,18 @@ mod tests {
 
     const ROWS: i64 = 5000;
 
+    /// A table-side residual must not spend the output LIMIT as a raw-handle
+    /// budget. This is the small arithmetic contract behind Go's expanding
+    /// `IndexLookUpExecutor` tasks; the pre-fix implementation returned the
+    /// remaining output count here and serialized selective lookups.
+    #[test]
+    fn a_table_filter_does_not_turn_output_limit_into_handle_budget() {
+        assert_eq!(lookup_batch_target(1024, Some(100), 0, 0, true), 1024);
+        assert_eq!(lookup_batch_target(1024, Some(100), 6, 0, true), 1024);
+        assert_eq!(lookup_batch_target(1024, Some(100), 0, 0, false), 100);
+        assert_eq!(lookup_batch_target(1024, Some(100), 6, 0, false), 94);
+    }
+
     /// A full scan under a `LIMIT` stops at the cap: the rows past it are
     /// never advanced past, let alone decoded into memory.
     #[test]
@@ -4699,6 +4748,36 @@ mod tests {
             gets.load(Ordering::Relaxed),
             1,
             "one five-handle lookup task"
+        );
+    }
+
+    /// Go `indexWorker.extractTaskHandles` grows successive lookup tasks from
+    /// the parent's `RequiredRows`; a table-side residual does not turn the
+    /// remaining output count into a cap on raw index handles. Otherwise a
+    /// selective residual degenerates into one tiny table request per output
+    /// window instead of the 3, 6, 12, ... task growth in
+    /// `pkg/executor/distsql.go`.
+    #[test]
+    fn a_table_residual_keeps_growing_lookup_tasks() {
+        let ctx = crate::StmtContext::for_query();
+        let (catalog, entries, gets) = table_of(ROWS, true);
+        let rows = run_select_on(
+            "SELECT a FROM t USE INDEX (ib) \
+             WHERE b > 0 AND c < 5 ORDER BY b LIMIT 3",
+            &catalog,
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(first_column(&rows), vec![4996, 4997, 4998]);
+        assert!(
+            entries.load(Ordering::Relaxed) >= 4998,
+            "the selective residual must reach its third qualifying row"
+        );
+        assert!(
+            gets.load(Ordering::Relaxed) <= 12,
+            "the lookup tasks must grow like Go instead of staying at the \
+             three-row output remainder; got {} table requests",
+            gets.load(Ordering::Relaxed)
         );
     }
 

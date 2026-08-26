@@ -2577,12 +2577,12 @@ fn run_select_traced_with_delivery_choice_inner(
                 Some(offset) => eval_limit_bound(offset)?,
                 None => 0,
             };
-            // A residual filter can reject rows inside the lookup task. Keep
-            // one bounded amount of read-ahead so a moderately selective
-            // predicate normally fills the root window without serializing
-            // several remote table scans; the source still emits at most
-            // what the unchanged root Limit consumes.
-            let window = offset.saturating_add(count).saturating_mul(3);
+            // Go seeds `IndexLookUpExecutor.calculateBatchSize` with the
+            // parent's `RequiredRows`, which is offset + count for this root
+            // Limit. Successive lookup tasks grow inside the source; inflating
+            // the first task here changes Go's request shape and delays the
+            // first table lookup for a selective residual.
+            let window = offset.saturating_add(count);
             if window > 0 {
                 let _ = source
                     .table_access()
