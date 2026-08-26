@@ -1541,6 +1541,142 @@ func TestUpgradeVersion256PlanCacheSkipStatsOnBinding(t *testing.T) {
 	require.Equal(t, "ON", row.GetString(0))
 }
 
+func TestUpgradeVersion284EnableTxnFile(t *testing.T) {
+	tests := []struct {
+		name          string
+		legacyValue   string
+		newValue      string
+		expectedValue string
+		rollback      bool
+	}{
+		{name: "legacy ON", legacyValue: "ON", newValue: "ON", expectedValue: "OFF"},
+		{name: "legacy OFF", legacyValue: "OFF", newValue: "OFF", expectedValue: "ON"},
+		{name: "target absent", legacyValue: "ON", expectedValue: "OFF"},
+		{name: "legacy absent", newValue: "ON", expectedValue: "ON"},
+		{name: "rollback on error", legacyValue: "ON", newValue: "ON", expectedValue: "ON", rollback: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+			upgradeFromVersion := session.CurrentBootstrapVersion - 1
+			var migrationCommitted atomicutil.Bool
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/afterUpgradeToVer284Commit", func(s sessionapi.Session) {
+				migrationCommitted.Store(!s.GetSessionVars().InTxn())
+			})
+			var readInTxn atomicutil.Bool
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/afterUpgradeToVer284Read", func(s sessionapi.Session) {
+				readInTxn.Store(s.GetSessionVars().InTxn())
+			})
+			var replacementUncommitted atomicutil.Bool
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/afterUpgradeToVer284Replace", func(sessionapi.Session) {
+				observer := testkit.NewTestKit(t, store)
+				expectedRows := testkit.Rows("tidb_disable_txn_file " + tt.legacyValue)
+				if tt.newValue != "" {
+					expectedRows = testkit.Rows(
+						"tidb_disable_txn_file "+tt.legacyValue,
+						"tidb_enable_txn_file "+tt.newValue,
+					)
+				}
+				observer.MustQuery("SELECT variable_name, variable_value FROM mysql.global_variables WHERE variable_name IN ('tidb_disable_txn_file', 'tidb_enable_txn_file') ORDER BY variable_name").Check(expectedRows)
+				observer.MustQuery("SELECT variable_value FROM mysql.tidb WHERE variable_name='tidb_server_version'").Check(
+					testkit.Rows(fmt.Sprintf("%d", upgradeFromVersion)),
+				)
+				replacementUncommitted.Store(true)
+			})
+			var rollbackObserved atomicutil.Bool
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/afterUpgradeToVer284Rollback", func(s sessionapi.Session) {
+				require.False(t, s.GetSessionVars().InTxn())
+				observer := testkit.NewTestKit(t, store)
+				observer.MustQuery("SELECT variable_name, variable_value FROM mysql.global_variables WHERE variable_name IN ('tidb_disable_txn_file', 'tidb_enable_txn_file') ORDER BY variable_name").Check(
+					testkit.Rows(
+						"tidb_disable_txn_file "+tt.legacyValue,
+						"tidb_enable_txn_file "+tt.newValue,
+					),
+				)
+				observer.MustQuery("SELECT variable_value FROM mysql.tidb WHERE variable_name='tidb_server_version'").Check(
+					testkit.Rows(fmt.Sprintf("%d", upgradeFromVersion)),
+				)
+				rollbackObserved.Store(true)
+				panic("upgradeToVer284 rollback observed")
+			})
+			if kerneltype.IsNextGen() && tt.rollback {
+				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/mockUpgradeToVer284Error", "return()")
+			}
+
+			se := session.CreateSessionAndSetID(t, store)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			m := meta.NewMutator(txn)
+			require.NoError(t, m.FinishBootstrap(upgradeFromVersion))
+			require.NoError(t, txn.Commit(context.Background()))
+			revertVersionAndVariables(t, se, int(upgradeFromVersion))
+
+			if tt.legacyValue == "" {
+				session.MustExec(t, se, "DELETE FROM mysql.global_variables WHERE variable_name='tidb_disable_txn_file'")
+			} else {
+				session.MustExec(t, se, "REPLACE INTO mysql.global_variables VALUES (?, ?)", "tidb_disable_txn_file", tt.legacyValue)
+			}
+			if tt.newValue == "" {
+				session.MustExec(t, se, "DELETE FROM mysql.global_variables WHERE variable_name='tidb_enable_txn_file'")
+			} else {
+				session.MustExec(t, se, "REPLACE INTO mysql.global_variables VALUES (?, ?)", "tidb_enable_txn_file", tt.newValue)
+			}
+			session.MustExec(t, se, "COMMIT")
+
+			store.SetOption(session.StoreBootstrappedKey, nil)
+			dom.Close()
+			if kerneltype.IsNextGen() && tt.rollback {
+				require.PanicsWithValue(t, "upgradeToVer284 rollback observed", func() {
+					_, _ = session.BootstrapSession(store)
+				})
+				domCurrent, err := session.GetDomain(store)
+				require.NoError(t, err)
+				defer domCurrent.Close()
+			} else {
+				domCurrent, err := session.BootstrapSession(store)
+				require.NoError(t, err)
+				defer domCurrent.Close()
+			}
+
+			tk := testkit.NewTestKit(t, store)
+			expectedRows := testkit.Rows("tidb_enable_txn_file " + tt.expectedValue)
+			if kerneltype.IsNextGen() && tt.legacyValue != "" {
+				expectedRows = testkit.Rows(
+					"tidb_disable_txn_file "+tt.legacyValue,
+					"tidb_enable_txn_file "+tt.expectedValue,
+				)
+			} else if kerneltype.IsClassic() {
+				switch {
+				case tt.legacyValue != "" && tt.newValue != "":
+					expectedRows = testkit.Rows(
+						"tidb_disable_txn_file "+tt.legacyValue,
+						"tidb_enable_txn_file "+tt.newValue,
+					)
+				case tt.legacyValue != "":
+					expectedRows = testkit.Rows("tidb_disable_txn_file " + tt.legacyValue)
+				}
+			}
+			tk.MustQuery("SELECT variable_name, variable_value FROM mysql.global_variables WHERE variable_name IN ('tidb_disable_txn_file', 'tidb_enable_txn_file') ORDER BY variable_name").Check(
+				expectedRows,
+			)
+			if kerneltype.IsNextGen() {
+				require.True(t, readInTxn.Load())
+				if tt.rollback {
+					require.True(t, rollbackObserved.Load())
+					require.False(t, migrationCommitted.Load())
+				} else {
+					require.True(t, migrationCommitted.Load())
+				}
+				if tt.legacyValue != "" {
+					require.True(t, replacementUncommitted.Load())
+				}
+			}
+		})
+	}
+}
+
 func TestDefaultAnalyzeBackgroundOnlyAffectsFreshBootstrap(t *testing.T) {
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
