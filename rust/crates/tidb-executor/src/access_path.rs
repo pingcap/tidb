@@ -2675,7 +2675,9 @@ impl Executor for IndexRangeSourceExec {
                     (self.covering && self.extra_handle_slot.is_none())
                         .then_some(self.keep.as_slice()),
                 )
-                .map_err(|_| ExecError::unsupported("remote index scan failed to open"))?;
+                .map_err(|error| {
+                    ExecError::unsupported(format!("remote index scan failed to open: {error:?}"))
+                })?;
             self.remote_covering_selected =
                 self.covering && self.extra_handle_slot.is_none() && self.remote_index.is_some();
         }

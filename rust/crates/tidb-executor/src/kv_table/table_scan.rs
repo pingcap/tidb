@@ -1615,9 +1615,12 @@ impl KvTable {
                                 .position(|candidate| *candidate == Some(*offset))
                         }
                         .ok_or_else(|| {
-                            KvTableError::Decode(
-                                "covering index omitted a requested table column".to_owned(),
-                            )
+                            KvTableError::Decode(format!(
+                                "covering index omitted a requested table column \
+                                 (requested_offset={offset}, keep={keep:?}, table_offsets={table_offsets:?}, \
+                                 pk_handle_offset={:?}, common_handle_offsets={:?})",
+                                self.pk_handle_offset, self.common_handle_offsets,
+                            ))
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()

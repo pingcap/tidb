@@ -161,6 +161,29 @@ pub(crate) fn prunable_columns(select: &SelectStmt, scope: &FromScope) -> Option
     let resolver = crate::driver::scope_resolver(scope);
     let mut wanted = BTreeSet::new();
     collect_statement_columns(select, &resolver, &mut wanted)?;
+    // Go `DataSource.PruneColumns`: when nothing the statement reads leaves
+    // the DataSource schema EMPTY (`select count(*) from t`,
+    // `select 1 from t`), TiKV would answer an empty response, so one key
+    // column is forced back via `preferKeyColumnFromTable`. This tier cannot
+    // APPEND a column the scope does not name (Go's `_tidb_rowid` fallback),
+    // so a table without a named handle or unique key keeps the full-width
+    // path; every keyed table names its preferred key as the first strict
+    // key -- the FD builder pushes the int handle, else the common-handle
+    // columns, ahead of every other unique index.
+    if wanted.is_empty() {
+        let preferred_key = scope
+            .tables
+            .first()
+            .and_then(|table| table.func_deps.strict_keys.first())
+            .and_then(|key| key.first())
+            .copied();
+        match preferred_key {
+            Some(offset) => {
+                wanted.insert(offset);
+            }
+            None => return None,
+        }
+    }
     Some(wanted.into_iter().collect())
 }
 
