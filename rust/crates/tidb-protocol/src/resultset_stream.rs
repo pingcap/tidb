@@ -189,11 +189,8 @@ impl ResultSetStream {
                 actual: row.len(),
             });
         }
-        let encoded = self.encode_row_data_owned(row);
         let mut payload = Vec::new();
-        for value in encoded {
-            append_length_encoded_bytes(&mut payload, value.as_deref());
-        }
+        self.append_row_data_owned(&mut payload, row);
         self.rows += 1;
         Ok(payload)
     }
@@ -230,44 +227,54 @@ impl ResultSetStream {
             .collect()
     }
 
-    /// Owned counterpart of [`Self::encode_row_data`].
-    fn encode_row_data_owned(&self, row: Vec<Option<Vec<u8>>>) -> Vec<Option<Vec<u8>>> {
+    /// Appends an owned row directly into its final text-protocol payload.
+    ///
+    /// This mirrors Go's `DumpTextRow` loop: `FormatValueText` produces one
+    /// cell and `dump.LengthEncodedString` immediately appends it to the
+    /// connection buffer (`pkg/server/internal/column/column.go:162-177`).
+    /// Keeping the framing in this same loop avoids a second owned cell vector
+    /// on the common result path.
+    fn append_row_data_owned(&self, payload: &mut Vec<u8>, row: Vec<Option<Vec<u8>>>) {
         let encoder = self.options.result_encoder;
         if encoder.result_charset().is_none() {
             // Go's `isNull` state leaves the column bytes untouched; retain
             // the caller's allocation for the final length-encoded append.
-            return row;
+            for value in row {
+                append_length_encoded_bytes(payload, value.as_deref());
+            }
+            return;
         }
-        row.into_iter()
-            .zip(&self.columns)
-            .map(|(value, column)| {
-                let value = value?;
-                if !crate::result_encoder::is_string_column_type(column.type_code) {
-                    return Some(value);
+        for (value, column) in row.into_iter().zip(&self.columns) {
+            let Some(value) = value else {
+                append_length_encoded_bytes(payload, None);
+                continue;
+            };
+            if !crate::result_encoder::is_string_column_type(column.type_code) {
+                append_length_encoded_bytes(payload, Some(&value));
+                continue;
+            }
+            let mut encoder = encoder;
+            // Go treats JSON and VECTOR as utf8mb4 regardless of the
+            // column's own (binary) collation.
+            let collation = match column.type_code {
+                crate::column::TYPE_JSON | crate::column::TYPE_TIDB_VECTOR_FLOAT32 => {
+                    crate::result_encoder::UTF8MB4_DEFAULT_COLLATION_ID
                 }
-                let mut encoder = encoder;
-                // Go treats JSON and VECTOR as utf8mb4 regardless of the
-                // column's own (binary) collation.
-                let collation = match column.type_code {
-                    crate::column::TYPE_JSON | crate::column::TYPE_TIDB_VECTOR_FLOAT32 => {
-                        crate::result_encoder::UTF8MB4_DEFAULT_COLLATION_ID
-                    }
-                    _ => column.charset,
-                };
-                if encoder.update_data_encoding(collation).is_err() {
-                    return Some(value);
-                }
-                // `update_data_encoding` initializes the encoder, and all
-                // registered conversions are infallible. This is the owned
-                // equivalent of Go's EncodeData fallback without cloning the
-                // source bytes on the successful path.
-                Some(
-                    encoder
-                        .encode_data_owned(value)
-                        .expect("data encoding was initialized above"),
-                )
-            })
-            .collect()
+                _ => column.charset,
+            };
+            if encoder.update_data_encoding(collation).is_err() {
+                append_length_encoded_bytes(payload, Some(&value));
+                continue;
+            }
+            // `update_data_encoding` initializes the encoder, and all
+            // registered conversions are infallible. This is the owned
+            // equivalent of Go's EncodeData fallback without cloning the
+            // source bytes on the successful path.
+            let value = encoder
+                .encode_data_owned(value)
+                .expect("data encoding was initialized above");
+            append_length_encoded_bytes(payload, Some(&value));
+        }
     }
 
     /// Emits the terminal EOF exactly once.
