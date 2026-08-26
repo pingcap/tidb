@@ -14,4 +14,5 @@
 
 mod bytes;
 mod datum;
+mod go_codec_port;
 mod number;
