@@ -941,5 +941,6 @@ fresh release build and restart, the 1G receipts
 plan/result parity and valid 100-row batch sums. The new median Rust/Go
 ratios are q1 `1.112x`, q2 `1.200x`, flex `1.180x`, swap `1.583x`, and batch
 `1.212x`; performance remains an open failure. Both rebased commits retain
-the required `Go code:` references; the branch is ready to push after this
-receipt update, while Ready validation remains unavailable without Go.
+the required `Go code:` references; the rebased commits were pushed to
+`origin/hparser-integration` at `b516c00b1f`. Ready validation remains
+unavailable without Go.
