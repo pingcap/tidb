@@ -32,6 +32,7 @@ pub(crate) fn global_logger_test_guard() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[cfg(test)]
+mod tests_fastrand;
 mod tests_mathutil;
 
 pub mod arena;
