@@ -30,6 +30,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/constants"
+	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -226,7 +227,11 @@ func (w waitFlashback) checkAndWait(
 		}
 		logutil.BgLogger().Info("found unfinished flashback; retry with full flashback", logFields...)
 	} else {
-		skipRanges, err := loadFlashbackSkipRanges(ctx, pdCli, store.GetCodec(), curr.GetFlashbackTs())
+		standbyVersion, err := getExpectedStandbyVersion(ctx, pdHTTPCli)
+		if err != nil {
+			return version, errors.Annotate(err, "get standby version for flashback skip ranges")
+		}
+		skipRanges, err := loadFlashbackSkipRanges(ctx, pdCli, store.GetCodec(), curr.GetFlashbackTs(), standbyVersion)
 		if err != nil {
 			logutil.BgLogger().Warn("load flashback skip ranges failed; fall back to full flashback",
 				zap.Uint64("version", version),
@@ -312,6 +317,7 @@ func loadFlashbackSkipRanges(
 	pdCli pd.Client,
 	keyCodec tikv.Codec,
 	flashbackTS uint64,
+	standbyVersion uint64,
 ) ([]tikvstore.KeyRange, error) {
 	stores, err := pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
@@ -347,7 +353,10 @@ func loadFlashbackSkipRanges(
 			callCtx, cancel := context.WithTimeout(gCtx, flashbackTimeout)
 			defer cancel()
 			resp, err := client.GetFlashbackSkipRanges(callCtx, &logreplicationpb.GetFlashbackSkipRangesRequest{
-				Header:      &logreplicationpb.Header{ClusterId: clusterID},
+				Header: &logreplicationpb.Header{
+					ClusterId:      clusterID,
+					StandbyVersion: standbyVersion,
+				},
 				FlashbackTs: flashbackTS,
 			})
 			if err != nil {
@@ -569,6 +578,11 @@ func (s saveRaftIndex) checkAndWait(
 	if pdCli == nil {
 		return 0, errors.New("saveRaftIndex got nil pd client")
 	}
+	pdHTTPCli := storeWithPD.GetPDHTTPClient()
+	standbyVersion, err := getExpectedStandbyVersion(ctx, pdHTTPCli)
+	if err != nil {
+		return 0, errors.Annotate(err, "get standby version for saving raft progress")
+	}
 
 	physical, logical, err := pdCli.GetTS(ctx)
 	if err != nil {
@@ -583,7 +597,7 @@ func (s saveRaftIndex) checkAndWait(
 		zap.Int("storeConcurrency", pkdbDefaultReadStoreConcurrency),
 	)
 
-	savedStates, err := saveStoreRegionProgresses(ctx, pdCli, raftProgressID, maxTS)
+	savedStates, err := saveStoreRegionProgresses(ctx, pdCli, standbyVersion, raftProgressID, maxTS)
 	if err != nil {
 		return 0, err
 	}
@@ -616,7 +630,7 @@ func (l loadRaftIndex) getVersion(bs []byte) uint64 {
 	return tmp.GetVersion()
 }
 
-func (l loadRaftIndex) checkAndWait(ctx context.Context, newJobBytes []byte, lastFinishedVersion uint64, _ kv.Storage, _ *clientv3.Client) (version uint64, err error) {
+func (l loadRaftIndex) checkAndWait(ctx context.Context, newJobBytes []byte, lastFinishedVersion uint64, store kv.Storage, _ *clientv3.Client) (version uint64, err error) {
 	curr := &pdpb.ReplicaLoadRaftProgress{}
 	if err = curr.Unmarshal(newJobBytes); err != nil {
 		return 0, errors.Errorf("loadRaftIndex failed to unmarshal request: %v", err)
@@ -626,6 +640,15 @@ func (l loadRaftIndex) checkAndWait(ctx context.Context, newJobBytes []byte, las
 		return version, nil
 	}
 	raftProgressID := curr.GetRaftProgressId()
+
+	storeWithPD, ok := store.(kv.StorageWithPD)
+	if !ok {
+		return 0, errors.Errorf("loadRaftIndex requires kv.StorageWithPD, got %T", store)
+	}
+	standbyVersion, err := getExpectedStandbyVersion(ctx, storeWithPD.GetPDHTTPClient())
+	if err != nil {
+		return 0, errors.Annotate(err, "get standby version for loading raft progress")
+	}
 
 	pdAddrs := curr.GetNewPrimaryPdAddrs()
 	if len(pdAddrs) == 0 {
@@ -659,6 +682,9 @@ func (l loadRaftIndex) checkAndWait(ctx context.Context, newJobBytes []byte, las
 	if err != nil {
 		return 0, err
 	}
+	for _, state := range states {
+		state.StandbyVersion = standbyVersion
+	}
 
 	g, gCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	g.SetLimit(pkdbDefaultReadStoreConcurrency)
@@ -688,7 +714,7 @@ func (l loadRaftIndex) checkAndWait(ctx context.Context, newJobBytes []byte, las
 	return version, nil
 }
 
-func saveStoreRegionProgresses(ctx context.Context, pdCli pd.Client, raftProgressID string, maxTS uint64) (uint64, error) {
+func saveStoreRegionProgresses(ctx context.Context, pdCli pd.Client, standbyVersion uint64, raftProgressID string, maxTS uint64) (uint64, error) {
 	stores, err := pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return 0, err
@@ -720,7 +746,10 @@ func saveStoreRegionProgresses(ctx context.Context, pdCli pd.Client, raftProgres
 
 			client := logreplicationpb.NewLogReplicationClient(conn)
 			resp, err := client.SaveStoreRegionProgresses(gCtx, &logreplicationpb.SaveStoreRegionProgressesRequest{
-				Header:         &logreplicationpb.Header{ClusterId: clusterID},
+				Header: &logreplicationpb.Header{
+					ClusterId:      clusterID,
+					StandbyVersion: standbyVersion,
+				},
 				MaxTs:          maxTS,
 				RaftProgressId: raftProgressID,
 			})
@@ -770,7 +799,9 @@ func loadStoreRegionProgresses(ctx context.Context, pdCli pd.Client, raftProgres
 
 			client := logreplicationpb.NewLogReplicationClient(conn)
 			resp, err := client.LoadStoreRegionProgresses(gCtx, &logreplicationpb.LoadStoreRegionProgressesRequest{
-				Header:         &logreplicationpb.Header{ClusterId: clusterID},
+				Header: &logreplicationpb.Header{
+					ClusterId: clusterID,
+				},
 				RaftProgressId: raftProgressID,
 			})
 			if err != nil {
@@ -806,6 +837,17 @@ func loadStoreRegionProgresses(ctx context.Context, pdCli pd.Client, raftProgres
 		merged = append(merged, state)
 	}
 	return merged, nil
+}
+
+func getExpectedStandbyVersion(ctx context.Context, pdHTTPCli pdhttp.Client) (uint64, error) {
+	if pdHTTPCli == nil {
+		return 0, errors.New("PD HTTP client is unavailable")
+	}
+	status, err := pdHTTPCli.GetExpectedStandbyStatus(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return status.Version, nil
 }
 
 // tidbWaitJobManager manages all supported tidbWaitJob.
