@@ -135,6 +135,9 @@ pub use tipb::{
 };
 
 #[cfg(test)]
+mod tests_planner_property;
+
+#[cfg(test)]
 mod tests {
     use prost::Message;
 
