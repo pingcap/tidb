@@ -116,11 +116,14 @@ fn test_get_charset_desc() {
     }
 }
 
+// Go: pkg/parser/charset/charset_test.go::TestGetCollationByName -- every
+// supported collation must resolve by name with full-struct equality.
 #[test]
 fn test_get_collation_by_name() {
     let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
-    assert_eq!(get_collation_by_name("UTF8MB4_BIN").unwrap().id, 46);
-    assert_eq!(get_collation_by_name("utf8mb3_unicode_ci").unwrap().id, 192);
+    for row in get_supported_collations() {
+        assert_eq!(get_collation_by_name(&row.name).unwrap(), row);
+    }
     assert_eq!(
         get_collation_by_name("non_exist").unwrap_err().to_string(),
         "[ddl:1273]Unknown collation: 'non_exist'"
@@ -276,7 +279,9 @@ fn test_encoding() {
 
 #[test]
 fn test_encoding_validate() {
+    // Go: pkg/parser/charset/encoding_test.go::TestEncodingValidate.
     let invalid = b"\xFF\xFE\xFD";
+    let rune_error = "\u{fffd}".as_bytes();
     let rows: Vec<(&str, Vec<u8>, Vec<u8>, bool)> = vec![
         ("ascii", vec![], vec![], true),
         ("ascii", b"qwerty".to_vec(), b"qwerty".to_vec(), true),
@@ -288,12 +293,59 @@ fn test_encoding_validate() {
         ),
         ("ascii", "中文".as_bytes().to_vec(), b"??".to_vec(), false),
         (
+            "ascii",
+            "中文?qwert".as_bytes().to_vec(),
+            b"???qwert".to_vec(),
+            false,
+        ),
+        ("utf8mb4", vec![], vec![], true),
+        ("utf8mb4", b"qwerty".to_vec(), b"qwerty".to_vec(), true),
+        (
+            "utf8mb4",
+            "qwÊrty".as_bytes().to_vec(),
+            "qwÊrty".as_bytes().to_vec(),
+            true,
+        ),
+        (
+            "utf8mb4",
+            "qwÊ合法字符串".as_bytes().to_vec(),
+            "qwÊ合法字符串".as_bytes().to_vec(),
+            true,
+        ),
+        (
             "utf8mb4",
             "😂".as_bytes().to_vec(),
             "😂".as_bytes().to_vec(),
             true,
         ),
         ("utf8mb4", invalid.to_vec(), b"???".to_vec(), false),
+        (
+            "utf8mb4",
+            joined(&["中文".as_bytes(), invalid]),
+            joined(&["中文".as_bytes(), b"???"]),
+            false,
+        ),
+        (
+            "utf8mb4",
+            rune_error.to_vec(),
+            "\u{fffd}".as_bytes().to_vec(),
+            true,
+        ),
+        ("utf8", vec![], vec![], true),
+        ("utf8", b"qwerty".to_vec(), b"qwerty".to_vec(), true),
+        (
+            "utf8",
+            "qwÊrty".as_bytes().to_vec(),
+            "qwÊrty".as_bytes().to_vec(),
+            true,
+        ),
+        (
+            "utf8",
+            "qwÊ合法字符串".as_bytes().to_vec(),
+            "qwÊ合法字符串".as_bytes().to_vec(),
+            true,
+        ),
+        ("utf8", "😂".as_bytes().to_vec(), b"?".to_vec(), false),
         (
             "utf8",
             "valid_str😂".as_bytes().to_vec(),
@@ -302,11 +354,21 @@ fn test_encoding_validate() {
         ),
         ("utf8", invalid.to_vec(), b"???".to_vec(), false),
         (
+            "utf8",
+            joined(&["中文".as_bytes(), invalid]),
+            joined(&["中文".as_bytes(), b"???"]),
+            false,
+        ),
+        ("utf8", rune_error.to_vec(), "\u{fffd}".as_bytes().to_vec(), true),
+        ("gbk", vec![], vec![], true),
+        ("gbk", b"asdf".to_vec(), b"asdf".to_vec(), true),
+        (
             "gbk",
             "中文".as_bytes().to_vec(),
             "中文".as_bytes().to_vec(),
             true,
         ),
+        ("gbk", "À".as_bytes().to_vec(), b"?".to_vec(), false),
         (
             "gbk",
             "中文À中文".as_bytes().to_vec(),
@@ -314,9 +376,30 @@ fn test_encoding_validate() {
             false,
         ),
         (
+            "gbk",
+            joined(&[b"asdf", "À".as_bytes()]),
+            b"asdf?".to_vec(),
+            false,
+        ),
+        ("gb18030", vec![], vec![], true),
+        ("gb18030", b"asdf".to_vec(), b"asdf".to_vec(), true),
+        (
+            "gb18030",
+            "中文".as_bytes().to_vec(),
+            "中文".as_bytes().to_vec(),
+            true,
+        ),
+        ("gb18030", "À".as_bytes().to_vec(), "À".as_bytes().to_vec(), true),
+        (
             "gb18030",
             "中文À中文".as_bytes().to_vec(),
             "中文À中文".as_bytes().to_vec(),
+            true,
+        ),
+        (
+            "gb18030",
+            joined(&[b"asdf", "À".as_bytes()]),
+            joined(&[b"asdf", "À".as_bytes()]),
             true,
         ),
         (
@@ -355,7 +438,15 @@ fn test_encoding_gb18030() {
 
     for (source, expected, valid) in [
         ("一二三".as_bytes(), "涓?浜屼笁".as_bytes(), false),
+        ("一二三123".as_bytes(), "涓?浜屼笁123".as_bytes(), false),
         ("测试".as_bytes(), "娴嬭瘯".as_bytes(), true),
+        ("案1案2".as_bytes(), "妗?1妗?2".as_bytes(), false),
+        ("焊䏷菡釬".as_bytes(), "鐒婁彿鑿￠嚞".as_bytes(), true),
+        (
+            "鞍杏以伊位依".as_bytes(),
+            "闉嶆潖浠ヤ紛浣嶄緷".as_bytes(),
+            true,
+        ),
         (
             "移維緯胃萎衣謂違".as_bytes(),
             "绉荤董绶\u{e21d}儍钀庤。璎傞仌".as_bytes(),
@@ -378,7 +469,16 @@ fn test_encoding_gb18030() {
     for (source, expected, valid) in [
         (b"\x80".as_slice(), b"?".as_slice(), false),
         (b"\x80a", b"?a", false),
+        (b"\x80aa", b"?aa", false),
         (b"aa\x80ab", b"aa?ab", false),
+        (
+            &joined(&["a你好".as_bytes(), b"\x80", "a测试".as_bytes()]),
+            "a浣犲ソ?a娴嬭瘯".as_bytes(),
+            false,
+        ),
+        (b"aa\x80", b"aa?", false),
+        // \xb0\xb2 is the GB18030 code point for 安.
+        (b"\xB0\xB2", "安".as_bytes(), true),
         (
             b"\xB0\xB2\x84\x31\xA4\x37\x30\x84\x31\xA4\x37\x32",
             "安�0�2".as_bytes(),
