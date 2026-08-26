@@ -2238,11 +2238,6 @@ unwrapStmt:
 			// Avoid unexpectedly killing them when client keepalive is not configured properly.
 			return false
 		}
-		stmt = prepared.PreparedAst.Stmt
-	}
-	switch stmt.(type) {
-	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.SelectStmt:
-		return true
 	case ast.DDLNode, *ast.AnalyzeTableStmt, *ast.LoadDataStmt, *ast.ImportIntoStmt:
 		// Avoid unexpectedly killing long-running operations when client keepalive
 		// is not configured properly.
@@ -2252,7 +2247,6 @@ unwrapStmt:
 		// non-interruptible, so keep SQL transaction finalization non-interruptible too.
 		return false
 	}
-  
 	return true
 }
 

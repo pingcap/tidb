@@ -3027,7 +3027,7 @@ func TestParseHandshakeAttrsTruncation(t *testing.T) {
 	})
 }
 
-func TestShouldInstallConnectionAliveDuringExecute(t *testing.T) {
+func TestShouldInstallConnectionAlive(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -3049,7 +3049,7 @@ func TestShouldInstallConnectionAliveDuringExecute(t *testing.T) {
 		"update t set a = 1",
 		"delete from t",
 	} {
-		require.True(t, shouldInstallConnectionAliveDuringExecute(mustParse(sql), sessVars), sql)
+		require.True(t, shouldInstallConnectionAlive(mustParse(sql), sessVars), sql)
 	}
 
 	// Statements outside the whitelist never install the probe.
@@ -3058,17 +3058,17 @@ func TestShouldInstallConnectionAliveDuringExecute(t *testing.T) {
 		"show tables",
 		"create table t2 (a int)",
 	} {
-		require.False(t, shouldInstallConnectionAliveDuringExecute(mustParse(sql), sessVars), sql)
+		require.False(t, shouldInstallConnectionAlive(mustParse(sql), sessVars), sql)
 	}
 
 	// Inside a transaction the probe is never installed, even for SELECT.
 	sessVars.SetInTxn(true)
-	require.False(t, shouldInstallConnectionAliveDuringExecute(mustParse("select * from t"), sessVars))
+	require.False(t, shouldInstallConnectionAlive(mustParse("select * from t"), sessVars))
 	sessVars.SetInTxn(false)
 
 	// Without autocommit the probe is never installed.
 	sessVars.SetStatusFlag(mysql.ServerStatusAutocommit, false)
-	require.False(t, shouldInstallConnectionAliveDuringExecute(mustParse("select * from t"), sessVars))
+	require.False(t, shouldInstallConnectionAlive(mustParse("select * from t"), sessVars))
 }
 
 func TestSetSQLKillerConnectionAlive(t *testing.T) {
