@@ -18,7 +18,6 @@ use tidb_datatype::Datum;
 use tidb_protocol::resultset_stream::ResultSetStream;
 use tidb_protocol::{
     format_datum_text, PacketWriter, ResultSetOptions, TextColumn, TextFormatError,
-    NOT_FIXED_DECIMAL, TYPE_NEW_DECIMAL,
 };
 
 use crate::resultset_source::ResultSetSource;
@@ -263,7 +262,7 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
             let row = format_row(row, &text_columns, stream.row_count())
                 .map_err(|message| tracked_after_pull(message, sink, false))?;
             let payload = stream
-                .row_packet(&row)
+                .row_packet_owned(row)
                 .map_err(|error| tracked_after_pull(error.to_string(), sink, false))?;
             payloads.push(payload);
         }
@@ -355,21 +354,11 @@ fn format_row(
 /// Go `dumpTextRow` for one cell, over the ONE renderer both this writer and
 /// the recorded-output harness use ([`tidb_protocol::format_datum_text`]).
 fn format_datum(column: TextColumn, datum: Datum) -> Result<Option<Vec<u8>>, String> {
-    // Go `dumpTextValue` rounds a TypeNewDecimal cell to the column's decimal
-    // before dumping (`col.Decimal < digitsFrac` triggers `dec.Round`), so the
-    // wire text carries the result type's scale rather than the raw internal
-    // one. Division keeps full internal precision on purpose (Go passes
-    // UnspecifiedLength to MyDecimal.Div), which makes this rounding the only
-    // place the inferred scale becomes visible (TPC-DS q66 ratios).
-    let datum = match (&datum, column.type_code) {
-        (Datum::Decimal(value), TYPE_NEW_DECIMAL)
-            if column.decimal != NOT_FIXED_DECIMAL
-                && value.scale() > column.decimal as u32 =>
-        {
-            Datum::Decimal(value.round_to_scale(column.decimal as i32))
-        }
-        _ => datum,
-    };
+    // Go `DumpTextRow` delegates every non-null cell to
+    // `textrow.FormatValueText` (`pkg/server/internal/column/column.go:162-177`;
+    // `pkg/format/textrow/textrow.go:55-94`). In particular, the
+    // `TypeNewDecimal` branch writes `MyDecimal.String()` directly; the
+    // result column's Decimal is not a second rounding step here.
     format_datum_text(column, &datum).map_err(|error| match error {
         TextFormatError::UnsupportedType(type_code) => format!("invalid type {type_code}"),
         TextFormatError::NotARowValue(_) | TextFormatError::ScalarTypeMismatch(_) => {

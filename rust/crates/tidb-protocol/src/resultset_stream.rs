@@ -19,8 +19,8 @@
 //! a server can preserve `clientConn.writeChunks`' lazy pull/write ordering.
 
 use crate::{
-    append_length_encoded_int, encode_eof_packet, encode_text_row, ColumnInfo, EofPacket,
-    ResultSetOptions,
+    append_length_encoded_bytes, append_length_encoded_int, encode_eof_packet, encode_text_row,
+    ColumnInfo, EofPacket, ResultSetOptions,
 };
 
 /// Lifecycle of an incremental result-set payload stream.
@@ -164,6 +164,40 @@ impl ResultSetStream {
         Ok(payload)
     }
 
+    /// Emits one text row by consuming its already-owned value bytes.
+    ///
+    /// Go's `DumpTextRow` appends each value directly into the connection's
+    /// reusable packet buffer (`pkg/server/internal/column/column.go:162-177`)
+    /// after `FormatValueText` returns its scratch-backed bytes.  The owned
+    /// path keeps that source ordering while avoiding an intermediate clone
+    /// for each Rust cell; charset rewriting and lifecycle checks remain the
+    /// same as [`Self::row_packet`].
+    pub fn row_packet_owned(
+        &mut self,
+        row: Vec<Option<Vec<u8>>>,
+    ) -> Result<Vec<u8>, ResultSetStreamError> {
+        if self.state != ResultSetStreamState::Rows {
+            return Err(ResultSetStreamError::InvalidState {
+                state: self.state,
+                operation: "emit row for",
+            });
+        }
+        if row.len() != self.columns.len() {
+            return Err(ResultSetStreamError::RowColumnCount {
+                row: self.rows,
+                expected: self.columns.len(),
+                actual: row.len(),
+            });
+        }
+        let encoded = self.encode_row_data_owned(row);
+        let mut payload = Vec::new();
+        for value in encoded {
+            append_length_encoded_bytes(&mut payload, value.as_deref());
+        }
+        self.rows += 1;
+        Ok(payload)
+    }
+
     /// Applies `@@character_set_results` to the string cells of one row.
     fn encode_row_data(&self, row: &[Option<Vec<u8>>]) -> Vec<Option<Vec<u8>>> {
         let encoder = self.options.result_encoder;
@@ -192,6 +226,46 @@ impl ResultSetStream {
                     return Some(value.clone());
                 }
                 Some(encoder.encode_data(value).unwrap_or_else(|_| value.clone()))
+            })
+            .collect()
+    }
+
+    /// Owned counterpart of [`Self::encode_row_data`].
+    fn encode_row_data_owned(&self, row: Vec<Option<Vec<u8>>>) -> Vec<Option<Vec<u8>>> {
+        let encoder = self.options.result_encoder;
+        if encoder.result_charset().is_none() {
+            // Go's `isNull` state leaves the column bytes untouched; retain
+            // the caller's allocation for the final length-encoded append.
+            return row;
+        }
+        row.into_iter()
+            .zip(&self.columns)
+            .map(|(value, column)| {
+                let value = value?;
+                if !crate::result_encoder::is_string_column_type(column.type_code) {
+                    return Some(value);
+                }
+                let mut encoder = encoder;
+                // Go treats JSON and VECTOR as utf8mb4 regardless of the
+                // column's own (binary) collation.
+                let collation = match column.type_code {
+                    crate::column::TYPE_JSON | crate::column::TYPE_TIDB_VECTOR_FLOAT32 => {
+                        crate::result_encoder::UTF8MB4_DEFAULT_COLLATION_ID
+                    }
+                    _ => column.charset,
+                };
+                if encoder.update_data_encoding(collation).is_err() {
+                    return Some(value);
+                }
+                // `update_data_encoding` initializes the encoder, and all
+                // registered conversions are infallible. This is the owned
+                // equivalent of Go's EncodeData fallback without cloning the
+                // source bytes on the successful path.
+                Some(
+                    encoder
+                        .encode_data_owned(value)
+                        .expect("data encoding was initialized above"),
+                )
             })
             .collect()
     }

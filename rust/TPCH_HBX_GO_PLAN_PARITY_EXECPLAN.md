@@ -761,3 +761,22 @@ Rust/Go median ratios are q1 `1.084x`, q2 `1.144x`, flex `1.184x`, swap
 `1.455x`, and batch `1.227x`. Rust remains slower in every shape, so the
 one-concurrency performance gate is still open. Correctness receipt:
 `/private/tmp/hbx-1g-20260825/compare-client-rust-71cc-single-decode-20260826.json`.
+
+Revision note, 2026-08-26 (Go text-row ownership and decimal behavior): added
+an owned `ResultSetStream::row_packet_owned` path, matching Go's direct
+`DumpTextRow` append contract (`pkg/server/internal/column/column.go:162-177`)
+while retaining the same row-width, lifecycle, NULL, and charset checks. The
+Rust writer now consumes the already-formatted row instead of cloning every
+cell through the borrowed API. Also removed the earlier Rust-only
+`TypeNewDecimal` rounding: Go `textrow.FormatValueText`
+(`pkg/format/textrow/textrow.go:55-94`) writes `MyDecimal.String()` directly,
+so the result column Decimal is not a second rounding step. Focused protocol
+and server result-set suites pass (4/4 and 12/12). After a clean release
+rebuild and restart on `127.0.0.1:14019`, the 1G hbx-web3 plans/results and
+100-row batch outputs remain equal. Receipt:
+`/private/tmp/hbx-1g-20260825/compare-client-rust-71cc-owned-text-20260826.json`;
+20-pair receipt:
+`/private/tmp/hbx-1g-20260825/bench-client-rust-71cc-owned-text-20pairs-20260826.json`.
+Rust/Go median ratios are q1 `1.116x`, q2 `1.150x`, flex `1.227x`, swap
+`1.680x`, and batch `1.225x`; the one-concurrency no-regression gate remains
+open. The follow-up commit body contains the required `Go code:` references.

@@ -60,6 +60,25 @@ fn incremental_sequence_matches_write_chunks_without_row_buffering() {
 }
 
 #[test]
+fn owned_text_row_matches_borrowed_go_framing_and_encoding() {
+    let options = ResultSetOptions {
+        result_encoder: tidb_protocol::ResultEncoder::new("utf8mb4").unwrap(),
+        ..ResultSetOptions::default()
+    };
+    let mut borrowed = ResultSetStream::new(vec![column()], options);
+    let mut owned = ResultSetStream::new(vec![column()], options);
+    borrowed.metadata_packets().unwrap();
+    owned.metadata_packets().unwrap();
+
+    let row = vec![Some("go-compatible".as_bytes().to_vec())];
+    assert_eq!(
+        borrowed.row_packet(&row).unwrap(),
+        owned.row_packet_owned(row).unwrap()
+    );
+    assert_eq!(borrowed.row_count(), owned.row_count());
+}
+
+#[test]
 fn deprecate_eof_skips_metadata_eof_but_keeps_ok_shaped_terminal() {
     let mut stream = ResultSetStream::new(
         vec![column()],
