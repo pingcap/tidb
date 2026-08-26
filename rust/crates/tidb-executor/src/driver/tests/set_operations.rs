@@ -6,9 +6,9 @@
 
 use super::*;
 
-/// Non-recursive CTEs: each is materialized in written order and then
-/// resolves like an ordinary table, which is the shape Go's buildWith
-/// plans. The previous behavior was an "unknown table" error.
+/// Non-recursive CTEs resolve like ordinary tables. Go inlines exactly one
+/// consumer and materializes zero or multiple consumers; either path must
+/// preserve the same rows and column names.
 #[test]
 fn common_table_expressions() {
     let mut catalog = Catalog::default();
@@ -105,6 +105,85 @@ fn common_table_expressions() {
         &crate::StmtContext::for_query()
     )
     .is_err());
+}
+
+/// A merged CTE must expose the base table to the normal optimizer so its
+/// analyzed statistics remain available. More than one consumer still uses
+/// the shared materialization path rather than duplicating the CTE body.
+#[test]
+fn single_use_cte_explain_keeps_base_statistics_and_multiple_uses_materialize() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE warehouse (w_id BIGINT, w_name VARCHAR(16))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO warehouse VALUES (1, 'one'), (2, 'two'), (3, 'three')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let (table_id, statistics) = {
+        let TableEntry::Kv(table) = catalog
+            .table_mut_in(crate::driver::DEFAULT_DATABASE, "warehouse")
+            .expect("warehouse exists")
+        else {
+            panic!("warehouse is not a KV table");
+        };
+        (
+            table.table_id,
+            crate::analyze::kv::analyze_kv_table(
+                table,
+                &crate::analyze::AnalyzeOptions::default(),
+                None,
+                &ctx,
+            )
+            .unwrap(),
+        )
+    };
+    catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    catalog.clear_dirty_content();
+
+    let Stmt::Query(query) =
+        tidb_parser::parse("WITH w AS (SELECT w_id, w_name FROM warehouse) SELECT w_id FROM w")
+            .unwrap()
+    else {
+        panic!("expected query");
+    };
+    let QueryStmt::Select(select) = &*query else {
+        panic!("expected SELECT");
+    };
+    let (_, plan) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let scan = plan
+        .iter()
+        .find(|row| datum_text_for_test(&row[0]).contains("TableFullScan"))
+        .expect("the inlined CTE retains warehouse's base scan");
+    assert_eq!(datum_text_for_test(&scan[1]), "3.00");
+    assert_eq!(datum_text_for_test(&scan[3]), "table:warehouse");
+    assert!(
+        !datum_text_for_test(&scan[4]).contains("stats:pseudo"),
+        "analyzed base statistics must survive CTE inlining: {plan:?}"
+    );
+
+    assert_eq!(
+        run_select_on(
+            "WITH w AS (SELECT w_id FROM warehouse) \
+             SELECT x.w_id FROM w AS x JOIN w AS y ON x.w_id = y.w_id ORDER BY x.w_id",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        vec![
+            vec![Datum::Int(1)],
+            vec![Datum::Int(2)],
+            vec![Datum::Int(3)],
+        ],
+    );
 }
 
 /// Set operations, checked against results captured from a running TiDB

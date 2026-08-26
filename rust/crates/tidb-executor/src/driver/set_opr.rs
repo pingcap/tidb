@@ -364,6 +364,16 @@ pub(crate) fn run_set_opr_traced_with_deferred(
     mut trace: Option<&mut crate::plan_trace::PlanTrace>,
     mut deferred_exec: Option<&mut Option<Box<dyn Executor>>>,
 ) -> Result<SelectMeta, DriverError> {
+    // Keep set-operation consumers on the same Go
+    // `computeCTEInlineFlag`/`buildDataSourceFromCTEMerge` path as SELECT.
+    let inlined_ctes;
+    let stmt = match super::cte_inline::inline_set_opr(stmt, current_db) {
+        Some(rewritten) => {
+            inlined_ctes = rewritten;
+            &inlined_ctes
+        }
+        None => stmt,
+    };
     validate_set_opr_usage(stmt)?;
     let union_shape = traced_set_opr(stmt);
     if trace.is_some() && union_shape.is_none() {

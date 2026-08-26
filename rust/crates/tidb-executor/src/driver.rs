@@ -303,8 +303,10 @@ mod agg_select;
 mod catalog;
 mod clause_resolve;
 mod correlated_agg_decorrelate;
+mod cte_inline;
 mod decorrelate_exists;
 mod derived_agg_pruning;
+pub(crate) use cte_inline::inline_select as inline_single_use_ctes;
 pub(crate) use derived_agg_pruning::has_pruned_row_count;
 mod derived_projection_pushdown;
 mod dml;
@@ -1452,6 +1454,19 @@ fn run_select_traced_with_delivery_choice_inner(
     parent_duplicate_agnostic: bool,
     aggregation_choice: AggregationChoice,
 ) -> Result<SelectMeta, DriverError> {
+    // Go `pkg/planner/core/logical_plan_builder.go::computeCTEInlineFlag`
+    // inlines a non-recursive CTE only when preprocess counted exactly one
+    // consumer, and `buildDataSourceFromCTEMerge` plans its body as the
+    // relation itself. Rewrite before WITH materialization and every ordinary
+    // optimizer pass so execution and EXPLAIN share the base-table subtree.
+    let inlined_ctes;
+    let select = match cte_inline::inline_select(select, current_db) {
+        Some(rewritten) => {
+            inlined_ctes = rewritten;
+            &inlined_ctes
+        }
+        None => select,
+    };
     // Go resolves a positional ORDER BY item (`ORDER BY 1`) to its projected
     // expression before any optimizer rule runs -- the parser builds it as an
     // `ast.PositionExpr` and `positionToScalarFunc` rewrites it onto the

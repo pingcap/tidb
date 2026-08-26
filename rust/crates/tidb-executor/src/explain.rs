@@ -295,6 +295,17 @@ pub fn explain_select_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    // Go `pkg/planner/core/logical_plan_builder.go::computeCTEInlineFlag`
+    // removes a single-consumer non-recursive WITH before plan tracing; the
+    // unchanged refusal below therefore remains only for materialized CTEs.
+    let inlined_ctes;
+    let select = match crate::driver::inline_single_use_ctes(select, current_db) {
+        Some(rewritten) => {
+            inlined_ctes = rewritten;
+            &inlined_ctes
+        }
+        None => select,
+    };
     refuse_untraced_select(select)?;
     let mut trace = PlanTrace::planning();
     if let Some(plan) = plan_fast_single_row_scan(select, catalog, current_db, ctx)? {
@@ -343,6 +354,14 @@ pub fn explain_analyze_select_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    let inlined_ctes;
+    let select = match crate::driver::inline_single_use_ctes(select, current_db) {
+        Some(rewritten) => {
+            inlined_ctes = rewritten;
+            &inlined_ctes
+        }
+        None => select,
+    };
     refuse_untraced_select(select)?;
     let mut trace = PlanTrace::analyzing();
     run_select_traced(
