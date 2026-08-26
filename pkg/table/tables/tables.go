@@ -1112,7 +1112,7 @@ func DecodeRawRowData(ctx expression.BuildContext, tbl table.Table, h kv.Handle,
 	if err != nil {
 		return nil, rowMap, err
 	}
-	defaultVals := make([]types.Datum, len(cols))
+	defaultVals := make([]types.Datum, len(tbl.Meta().Columns))
 	for i, col := range cols {
 		if col == nil {
 			continue
