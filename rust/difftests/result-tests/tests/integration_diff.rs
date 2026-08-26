@@ -2627,6 +2627,33 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // The three that remain: one each of index_join, stale_txn
     // (MVCC-blocked), and autoid.
     //
+    // 2 -> 0, restoring the corpus after the client-rust integration reopened
+    // it. Both were index-join SELECTION, in opposite directions, and Go's
+    // own numbers decided each: a real `tidb-server` was asked for
+    // `explain format='verbose'` on both fixtures, plainly and with
+    // `INL_JOIN`.
+    //
+    //  * `explain_complex` chose an index join where TiDB hash-joins. The
+    //    double read was priced on the count after ALL inner filters, where
+    //    Go uses `indexRows := getCardinality(p.IndexPlan)` -- the index
+    //    side's OUTPUT, narrowed by only the filters the index itself
+    //    evaluates (`pushDownIndexConds`). Go's probe costs 19,626,187 and
+    //    this tier's read 275,835. The split matters both ways: TPCC's
+    //    `eq(h_w_id, 1)` IS an index filter, so its `IndexRangeScan` reads
+    //    1250 while its `TableRowIDScan` reads 1.25.
+    //
+    //  * `explain_easy` hash-joined where TiDB index-joins, for three
+    //    reasons in series. The signedness gate refused the probe outright
+    //    (`bigint unsigned` outer against a signed PK) although
+    //    `constructDatumLookupKey`'s convert-and-compare was already on the
+    //    probe path; the `UNION ALL` side then reported no physical task, so
+    //    nothing could be costed, because one of its terms folds to a
+    //    `TableDual` and this tier gave a dual no candidate where Go gives a
+    //    childless plan `NewZeroCostVer2`; and the outer key finally printed
+    //    the base column of the term it came from, where
+    //    `buildProjection4Union` allocates a fresh column per union output
+    //    that `EXPLAIN` shows as a bare `Column`.
+    //
     const KNOWN_DIVERGENCES: usize = 0;
     // 9 -> 8: `partition_pruner` fully closed (293 of 294 matched, one
     // `PlanWithoutProperty` skip). The last statement was the col_95

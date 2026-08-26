@@ -143,4 +143,13 @@ fn a_union_all_side_can_drive_an_index_join() {
         plan.contains("TableRangeScan"),
         "the inner side is a handle range, not a full scan:\n{plan}"
     );
+    // Go's `buildProjection4Union` (`logical_plan_builder.go:2053`) allocates
+    // a FRESH `*expression.Column` per union output and gives every term a
+    // clone, so the outer key carries no `OrigName` and `EXPLAIN` prints it
+    // as a bare `Column` -- not as the base column of whichever term the
+    // value came from.
+    assert!(
+        plan.contains("decided by [Column]"),
+        "the outer key is the union's own schema column:\n{plan}"
+    );
 }

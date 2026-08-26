@@ -2508,8 +2508,15 @@ fn computed_columns(node: &tidb_ast::JoinNode, width: usize) -> Vec<bool> {
     let tidb_ast::JoinNode::Derived { subquery, .. } = node else {
         return none;
     };
-    let tidb_ast::QueryStmt::Select(select) = &**subquery else {
-        return none;
+    let select = match &**subquery {
+        tidb_ast::QueryStmt::Select(select) => select,
+        // A SET OPERATION's outputs are its OWN columns, never a
+        // pass-through of any term's: `buildProjection4Union`
+        // (`logical_plan_builder.go:2053`) allocates one fresh
+        // `*expression.Column` per output through `AllocPlanColumnID` and
+        // gives every child a clone of that schema, so none of them carries
+        // an `OrigName` and `EXPLAIN` prints each as a bare `Column`.
+        tidb_ast::QueryStmt::SetOpr(_) => return vec![true; width],
     };
     let fields = select.fields.fields();
     if fields.len() != width {
