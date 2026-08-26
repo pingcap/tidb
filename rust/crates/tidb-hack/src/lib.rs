@@ -40,6 +40,8 @@
 #![allow(unsafe_code)]
 
 mod map;
+#[cfg(test)]
+mod tests_hack;
 
 /// Live-allocation counters of the running jemalloc, the seam Go gets for
 /// free from `runtime.ReadMemStats`: TiDB's memory arbitrator samples the
