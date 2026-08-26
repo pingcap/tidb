@@ -464,6 +464,12 @@ pub(crate) struct IndexJoinDecision {
     /// Selectivity of the filter residue not already represented by a static
     /// object-key part.
     pub(crate) filter_selectivity: f64,
+    /// The selectivity of only those filters the INDEX side can evaluate --
+    /// Go's `pushDownIndexConds` half of `constructDS2IndexScanTask`
+    /// (`exhaust_physical_plans.go:1029`). It turns the probe's access count
+    /// into `CountAfterIndex`, which is what the double read actually carries
+    /// to the table side. `1.0` for an object with no index/table split.
+    pub(crate) index_filter_selectivity: f64,
     /// Selectivity of every predicate on the base-table source, including
     /// predicates represented by static lookup-key parts. Go uses this when
     /// an IndexJoin runtime property crosses a retained aggregation: the
@@ -1076,6 +1082,7 @@ fn decide_over(
                 join_key_count: keys.len(),
                 table: table.clone(),
                 object: crate::access_path::LookupObject::Handle,
+                index_filter_selectivity: 1.0,
                 filter_selectivity: residual_filter_selectivity(
                     &filters,
                     &[],
@@ -1144,6 +1151,7 @@ fn decide_over(
                 join_key_count: keys.len(),
                 table: table.clone(),
                 object: crate::access_path::LookupObject::CommonHandle,
+                index_filter_selectivity: 1.0,
                 filter_selectivity: residual_filter_selectivity(
                     &filters,
                     &static_columns,
@@ -1248,6 +1256,16 @@ fn decide_over(
         join_key_count: keys.len(),
         table: table.clone(),
         object: crate::access_path::LookupObject::Index(index_id),
+        index_filter_selectivity: index_side_filter_selectivity(
+            &filters,
+            &static_columns,
+            &columns,
+            table,
+            index_id,
+            &inner.source_visible,
+            statistics,
+            &ctx.session_zone(),
+        ),
         filter_selectivity: residual_filter_selectivity(
             &filters,
             &static_columns,
@@ -1363,6 +1381,7 @@ pub(crate) fn cast_lookup_decision(
         join_key_count: 1,
         table: table.clone(),
         object: crate::access_path::LookupObject::Handle,
+        index_filter_selectivity: 1.0,
         filter_selectivity: 1.0,
         source_filter_selectivity: 1.0,
         aggregation: None,
@@ -1568,6 +1587,82 @@ fn static_equalities(
 /// Pseudo selectivity of the inner filters not already represented by static
 /// key parts. Go leaves the static equality visible in the cop Selection but
 /// prices it in the range only once.
+/// [`residual_filter_selectivity`] over only the filters an INDEX scan can
+/// evaluate itself: every column the filter mentions is a column of that
+/// index.
+///
+/// Go splits the inner filters in `constructDS2IndexScanTask`
+/// (`exhaust_physical_plans.go:1029`) into `pushDownIndexConds` and
+/// `pushDownTblConds`, and applies only the former before `CountAfterIndex`.
+/// The double read then carries `CountAfterIndex` rows to the table side --
+/// `getCardinality(p.IndexPlan)` in
+/// `getPlanCostVer24PhysicalIndexLookUpReader` reads the index side's OUTPUT,
+/// which is the Selection above the range scan when there is one.
+fn index_side_filter_selectivity(
+    filters: &[tidb_ast::Expr],
+    static_columns: &[usize],
+    columns: &[(String, FieldType)],
+    table: &KvTable,
+    index_id: i64,
+    visible: &str,
+    statistics: Option<&crate::access_cost::TableStatistics>,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> f64 {
+    let Some(index) = table.indexes().iter().find(|index| index.id == index_id) else {
+        return 1.0;
+    };
+    let index_names = index
+        .column_offsets
+        .iter()
+        .filter_map(|offset| table.visible_columns().get(*offset))
+        .map(|column| column.name.to_lowercase())
+        .collect::<std::collections::BTreeSet<_>>();
+    let index_side = filters
+        .iter()
+        .filter(|filter| {
+            let mut names = Vec::new();
+            collect_filter_column_names(filter, &mut names);
+            !names.is_empty()
+                && names
+                    .iter()
+                    .all(|name| index_names.contains(&name.to_lowercase()))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    residual_filter_selectivity(
+        &index_side,
+        static_columns,
+        columns,
+        table,
+        visible,
+        statistics,
+        zone,
+    )
+}
+
+/// Every column name a filter mentions, unqualified and in traversal order.
+fn collect_filter_column_names(filter: &tidb_ast::Expr, out: &mut Vec<String>) {
+    let mut filter = filter.clone();
+    struct Names<'a> {
+        out: &'a mut Vec<String>,
+    }
+    impl tidb_ast::Visitor for Names<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(tidb_ast::Expr::Column(path)) = node.downcast_mut::<tidb_ast::Expr>() {
+                if let Some(name) = path.last() {
+                    self.out.push(name.clone());
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    tidb_ast::Visitable::accept(&mut filter, &mut Names { out });
+}
+
 pub(crate) fn residual_filter_selectivity(
     filters: &[tidb_ast::Expr],
     static_columns: &[usize],
@@ -1670,20 +1765,35 @@ pub(crate) fn physical_outer_column_name(
 /// identically -- while the type code, the signedness and, for strings, the
 /// collation decide the bytes an index entry was written with.
 fn probe_compatible(inner: &FieldType, outer: &FieldType) -> bool {
-    if inner.is_unsigned() != outer.is_unsigned() {
-        // An unsigned index column stores its entries under the unsigned
-        // encoding; a signed probe would ask the wrong bytes for the same
-        // number. Go converts and compares per value instead. NAMED RESIDUE.
-        return false;
-    }
     if inner.code().is_type_integer() && outer.code().is_type_integer() {
         // Every integer width shares ONE index encoding, so a `BIGINT`
-        // expression probes an `INT` column's index with its own value and no
-        // conversion. A value the narrower column cannot hold simply has no
-        // entry -- which is the same answer Go reaches by dropping the row
-        // when `ConvertTo` overflows, arrived at through the index rather
-        // than through a check.
+        // expression probes an `INT` column's index with its own value. A
+        // value the narrower column cannot hold simply has no entry.
+        //
+        // Differing SIGNEDNESS is admitted here too, because the probe value
+        // is converted to the inner column's type BEFORE it is encoded, which
+        // is Go's `constructDatumLookupKey`
+        // (`index_lookup_merge_join.go:658`) verbatim:
+        //
+        //   innerValue, err := outerValue.ConvertTo(sc.TypeCtx(), innerColType)
+        //   if ErrOverflow / ErrWarnDataOutOfRange { return nil, nil }   // skip
+        //   cmp, _ := outerValue.Compare(sc.TypeCtx(), &innerValue, ...)
+        //   if cmp != 0 { return nil, nil }                              // skip
+        //
+        // Both halves already exist on the probe path:
+        // `IndexJoinLookupExec::probe_in_key_domain` runs
+        // `point_get_key::point_get_value`, which is that convert-then-
+        // compare with the same skip-on-inequality; and the integer-handle
+        // arm screens through `handle_of`, whose `i64::try_from` drops a
+        // `u64` above `i64::MAX` exactly where Go's `ConvertTo` overflows.
+        // So the encoded bytes are always the INNER column's, and a value
+        // outside its domain reads nothing rather than reading the wrong
+        // entry. (This was previously refused outright and recorded as
+        // NAMED RESIDUE; the residue is now closed.)
         return true;
+    }
+    if inner.is_unsigned() != outer.is_unsigned() {
+        return false;
     }
     inner.code() == outer.code()
         && inner

@@ -2108,10 +2108,15 @@ fn index_probe_candidate(
     } else {
         needed_columns.clone()
     };
+    // Go's `CountAfterIndex`: the access count narrowed by only the filters
+    // the INDEX side evaluates. This is what the double read carries to the
+    // table side -- see `index_join_probe_cost`.
+    let index_output_rows = base_rows * decision.index_filter_selectivity.clamp(0.0, 1.0);
     let cost = crate::access_cost::index_join_probe_cost(
         &decision.table,
         &decision.object,
         base_rows,
+        index_output_rows,
         after_filter,
         &needed_columns,
         &table_scan_columns,

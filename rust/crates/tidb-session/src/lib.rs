@@ -1601,6 +1601,7 @@ mod tests_index_key_length;
 #[cfg(test)]
 mod tests_join_key_cast;
 mod tests_merge_join_mixed_key_types;
+mod tests_mixed_sign_index_join;
 mod tests_union_all_predicate_push_down;
 #[cfg(test)]
 mod tests_join_predicate_placement;

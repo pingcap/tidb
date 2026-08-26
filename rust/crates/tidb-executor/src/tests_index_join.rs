@@ -744,11 +744,21 @@ mod decision {
         assert_eq!(decision.range_info, "[eq(db.t.b, db.o.b)]");
     }
 
-    /// An unsigned indexed column is refused against a signed probe: the
-    /// index entries were written under a different encoding, and Go's
-    /// per-value `ConvertTo` is not ported.
+    /// An unsigned indexed column ACCEPTS a signed probe, because the probe
+    /// value is converted to the indexed column's type before it is encoded.
+    ///
+    /// This is Go's `constructDatumLookupKey`
+    /// (`index_lookup_merge_join.go:658`): `outerValue.ConvertTo(innerColType)`,
+    /// skip the row on overflow, then `outerValue.Compare(&innerValue)` and
+    /// skip it again unless the round trip is exact. Both halves are on the
+    /// probe path here -- `probe_in_key_domain` runs
+    /// `point_get_key::point_get_value` for an index or common handle, and
+    /// `handle_of` drops a `u64` above `i64::MAX` for an integer handle -- so
+    /// the bytes asked for are always the inner column's, and a value outside
+    /// its domain reads nothing rather than reading the wrong entry.
+    /// `tests_mixed_sign_index_join` in `tidb-session` pins the ANSWERS.
     #[test]
-    fn a_signed_probe_of_an_unsigned_index_column_is_refused() {
+    fn a_signed_probe_of_an_unsigned_index_column_is_accepted_and_converted() {
         let mut b = column("b", 2);
         b.field_type = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
         let mut table = KvTable::new(93, vec![column("a", 1), b]);
@@ -771,14 +781,18 @@ mod decision {
         table
             .insert_row(&[Datum::Int(1), Datum::UInt(1)], &tidb_expr::NoColumns)
             .unwrap();
-        assert!(index_join_decision(
-            JoinKind::Inner,
-            &key(),
-            &outer_side(),
-            &inner_side(&table),
-            false,
-        )
-        .is_none());
+        assert!(
+            index_join_decision(
+                JoinKind::Inner,
+                &key(),
+                &outer_side(),
+                &inner_side(&table),
+                false,
+            )
+            .is_some(),
+            "the probe converts to the indexed column's type, so the pair is \
+             admissible -- Go accepts it too"
+        );
     }
 }
 

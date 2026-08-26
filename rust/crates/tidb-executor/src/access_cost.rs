@@ -820,6 +820,7 @@ pub(crate) fn index_join_probe_cost(
     table: &KvTable,
     object: &crate::access_path::LookupObject,
     rows: f64,
+    index_output_rows: f64,
     after_filter: f64,
     needed_columns: &[usize],
     table_scan_columns: &[usize],
@@ -893,10 +894,31 @@ pub(crate) fn index_join_probe_cost(
                 false,
             )
             .max(MIN_ROW_SIZE);
-            let table_side = scan_cost(after_filter, table_row_size) / DIST_SQL_SCAN_CONCURRENCY;
-            let double_read_cpu = after_filter * TIKV_CPU_FACTOR;
+            // Go's `getPlanCostVer24PhysicalIndexLookUpReader`
+            // (`plan_cost_ver2.go:359`) drives the double read from
+            // `indexRows := getCardinality(p.IndexPlan)` -- the index side's
+            // OUTPUT, which is `CountAfterIndex`: the access count narrowed by
+            // the filters the index itself evaluates, and NOT by the
+            // table-side ones:
+            //
+            //   doubleReadRows    := indexRows
+            //   doubleReadCPUCost := indexRows * cpuFactor
+            //   doubleReadTasks   := doubleReadRows / batchSize * taskPerBatch
+            //
+            // and `tableChildCost` is the table subtree, whose
+            // `TableRowIDScan` reads one row per row the double read carries.
+            // Verified against a real Go server: for an inner filter the index
+            // evaluates the two counts coincide (TPCC's `eq(h_w_id, 1)` gives
+            // `IndexRangeScan` 1250 but `TableRowIDScan` 1.25), while an inner
+            // filter only the table can evaluate leaves them apart
+            // (`IndexRangeScan` 10000 and `TableRowIDScan` 10000). Pricing
+            // this on the fully filtered count instead made such a probe look
+            // ~71x cheaper than Go's.
+            let table_side =
+                scan_cost(index_output_rows, table_row_size) / DIST_SQL_SCAN_CONCURRENCY;
+            let double_read_cpu = index_output_rows * TIKV_CPU_FACTOR;
             let double_read_request =
-                after_filter * DOUBLE_READ_REQUESTS_PER_ROW * TIDB_REQUEST_FACTOR;
+                index_output_rows * DOUBLE_READ_REQUESTS_PER_ROW * TIDB_REQUEST_FACTOR;
             index_side
                 + (table_side + double_read_cpu + double_read_request) / INDEX_LOOKUP_CONCURRENCY
         }
