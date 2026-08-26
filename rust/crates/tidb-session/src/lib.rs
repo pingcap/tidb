@@ -1600,6 +1600,7 @@ mod tests_index_join_inner_pattern;
 mod tests_index_key_length;
 #[cfg(test)]
 mod tests_join_key_cast;
+mod tests_merge_join_mixed_key_types;
 #[cfg(test)]
 mod tests_join_predicate_placement;
 #[cfg(test)]

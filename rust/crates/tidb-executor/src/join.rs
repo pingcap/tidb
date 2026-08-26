@@ -5167,29 +5167,26 @@ fn merge_key_cmp_row(
                 | tidb_datatype::FieldTypeCode::LongLong
         ) && !ft.is_unsigned()
         {
-            let Some(Datum::Int(left_value)) = left.first() else {
-                // A NULL cached key matches nothing: under Go's NULL ordering
-                // a NULL group compares Less than every real key, which the
-                // generic arm would have produced from the same datums.
-                let null_cmp = if desc {
-                    Ordering::Greater
-                } else {
-                    Ordering::Less
-                };
-                return Ok(null_cmp);
-            };
-            if right.is_null(offset) {
-                // NULL vs NULL walks Equal (the pair still produces no rows);
-                // a real key vs NULL compares Greater, as the datum order does.
-                let cmp = if left.first() == Some(&Datum::Null) {
-                    Ordering::Equal
-                } else {
-                    Ordering::Greater
-                };
+            // Go picks the comparison from BOTH sides
+            // (`GetCmpFunction` -> `GetAccurateCmpType(lhs, rhs)`), and its
+            // `CompareInt` takes EACH side's own unsigned flag
+            // (`types.CompareInt`, `pkg/types/compare.go:90`). This typed
+            // path reproduces that only when both sides are signed
+            // integers: the row's type is checked above, and the cached key
+            // is a signed integer exactly when its datum is `Int`. A key of
+            // any other shape -- an unsigned column, a `bit` -- falls
+            // through to the generic comparison, which IS `CompareInt`'s
+            // answer for the mixed case.
+            if let Some(Datum::Int(left_value)) = left.first() {
+                if right.is_null(offset) {
+                    // A real key against NULL compares Greater, as the datum
+                    // order does.
+                    let cmp = Ordering::Greater;
+                    return Ok(if desc { cmp.reverse() } else { cmp });
+                }
+                let cmp = left_value.cmp(&right.get_int64(offset));
                 return Ok(if desc { cmp.reverse() } else { cmp });
             }
-            let cmp = left_value.cmp(&right.get_int64(offset));
-            return Ok(if desc { cmp.reverse() } else { cmp });
         }
     }
     for (left, &offset) in left.iter().zip(key_offsets) {
@@ -5290,15 +5287,13 @@ fn merge_row_key_cmp(
                 };
                 return Ok(if desc { cmp.reverse() } else { cmp });
             }
-            let Some(Datum::Int(key_value)) = key.first() else {
-                return Ok(if desc {
-                    Ordering::Greater
-                } else {
-                    Ordering::Less
-                });
-            };
-            let cmp = row.get_int64(offset).cmp(key_value);
-            return Ok(if desc { cmp.reverse() } else { cmp });
+            // Both sides must be signed integers for this to equal Go's
+            // `CompareInt` -- see the note in `merge_key_cmp_row`. A key of
+            // any other shape falls through to the generic comparison.
+            if let Some(Datum::Int(key_value)) = key.first() {
+                let cmp = row.get_int64(offset).cmp(key_value);
+                return Ok(if desc { cmp.reverse() } else { cmp });
+            }
         }
     }
     for (&offset, key) in key_offsets.iter().zip(key) {
