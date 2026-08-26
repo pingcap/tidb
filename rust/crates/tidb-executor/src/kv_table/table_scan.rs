@@ -1291,6 +1291,7 @@ impl KvTable {
         index_limit: Option<u64>,
         unordered: bool,
         handle_only: bool,
+        projected_keep: Option<&[usize]>,
     ) -> Result<Option<RemoteIndexHandleCursor>, KvTableError> {
         // The wire contract this request once broke -- reordered and
         // truncated columns on real TiKV -- came from the executor schema
@@ -1481,6 +1482,35 @@ impl KvTable {
         } else {
             handle_indices.clone()
         };
+        // Go's covering `PhysicalIndexReader` returns the requested table
+        // columns directly from the index executor; it never constructs a
+        // table-handle lookup task. Keep the complete wire schema for the
+        // normal handle consumer, but remember the dense positions needed to
+        // project a covering row back into the pruned table schema. A primary
+        // key column uses the trailing handle copy, not an indexed sort-key
+        // copy (prefix/collation encodings may differ).
+        let projected_indices = projected_keep
+            .map(|keep| {
+                keep.iter()
+                    .map(|offset| {
+                        if self.pk_handle_offset == Some(*offset) {
+                            table_offsets
+                                .iter()
+                                .rposition(|candidate| *candidate == Some(*offset))
+                        } else {
+                            table_offsets
+                                .iter()
+                                .position(|candidate| *candidate == Some(*offset))
+                        }
+                        .ok_or_else(|| {
+                            KvTableError::Decode(
+                                "covering index omitted a requested table column".to_owned(),
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
         let request = PushdownScanRequest {
             table_id: self.table_id,
             index: Some(PushdownIndexScan {
@@ -1530,6 +1560,7 @@ impl KvTable {
         Ok(Some(RemoteIndexHandleCursor {
             inner: scan.stream,
             handle_indices: returned_handle_indices,
+            projected_indices,
             common_handle: !self.common_handle_offsets.is_empty(),
             zone: zone.clone(),
             use_new_collation: self.use_new_collation,
@@ -2407,6 +2438,9 @@ impl Drop for RemoteRowCursor {
 pub struct RemoteIndexHandleCursor {
     inner: Box<dyn PushdownRowStream>,
     handle_indices: Vec<usize>,
+    /// Dense wire positions for a covering index row. `None` means this
+    /// cursor is consumed as handles only by an IndexLookUp worker.
+    projected_indices: Option<Vec<usize>>,
     common_handle: bool,
     zone: SessionTimeZone,
     use_new_collation: bool,
@@ -2414,6 +2448,40 @@ pub struct RemoteIndexHandleCursor {
 }
 
 impl RemoteIndexHandleCursor {
+    fn note_rows(&mut self) {
+        let returned = self.inner.rows_returned();
+        let fresh = returned.saturating_sub(self.noted_rows);
+        self.noted_rows = returned;
+        if fresh > 0 {
+            crate::storage::note_storage_op(|ops| ops.cop_rows += fresh);
+        }
+    }
+
+    /// Returns one covering index row in the source's pruned table-column
+    /// order. Go's `PhysicalIndexReader` emits these values directly from the
+    /// index stream, so no table row lookup or handle reordering is involved.
+    pub fn next_projected_row(&mut self) -> Result<Option<Vec<Datum>>, KvTableError> {
+        let Some(row) = self
+            .inner
+            .next_row()
+            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
+        else {
+            self.note_rows();
+            return Ok(None);
+        };
+        self.note_rows();
+        let projected_indices = self.projected_indices.as_ref().ok_or_else(|| {
+            KvTableError::Decode("index cursor has no covering projection".to_owned())
+        })?;
+        let mut projected = Vec::with_capacity(projected_indices.len());
+        for index in projected_indices {
+            projected.push(row.get(*index).cloned().ok_or_else(|| {
+                KvTableError::Decode("index row omitted a covering column".to_owned())
+            })?);
+        }
+        Ok(Some(projected))
+    }
+
     /// Returns the next row handle in the remote index order.
     pub fn next_handle(&mut self) -> Result<Option<TableHandle>, KvTableError> {
         let Some(row) = self
@@ -2423,12 +2491,7 @@ impl RemoteIndexHandleCursor {
         else {
             return Ok(None);
         };
-        let returned = self.inner.rows_returned();
-        let fresh = returned.saturating_sub(self.noted_rows);
-        self.noted_rows = returned;
-        if fresh > 0 {
-            crate::storage::note_storage_op(|ops| ops.cop_rows += fresh);
-        }
+        self.note_rows();
         if self.common_handle {
             let values = self
                 .handle_indices
@@ -4106,6 +4169,35 @@ mod remote_cursor_tests {
         }
 
         fn close(&mut self) {}
+    }
+
+    /// Go's covering `PhysicalIndexReader` returns the requested projection
+    /// from the index response itself; it must not turn the row into a table
+    /// handle lookup. This is the direct cursor-level regression for that
+    /// contract (the integration receipt exercises the live TiKV stream).
+    #[test]
+    fn covering_cursor_projects_index_rows_without_lookup() {
+        let mut cursor = RemoteIndexHandleCursor {
+            inner: Box::new(VecStream {
+                rows: std::collections::VecDeque::from([vec![
+                    Datum::Int(11),
+                    Datum::Int(22),
+                    Datum::Int(33),
+                ]]),
+                returned: 0,
+            }),
+            handle_indices: vec![2],
+            projected_indices: Some(vec![1, 0]),
+            common_handle: false,
+            zone: tidb_datatype::SessionTimeZone::utc(),
+            use_new_collation: false,
+            noted_rows: 0,
+        };
+        assert_eq!(
+            cursor.next_projected_row().unwrap(),
+            Some(vec![Datum::Int(22), Datum::Int(11)])
+        );
+        assert!(cursor.next_projected_row().unwrap().is_none());
     }
 
     struct ChunkStream {

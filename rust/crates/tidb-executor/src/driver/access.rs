@@ -3084,9 +3084,9 @@ fn commit_index_range_source(
     }
     // A covering path is Go's `PhysicalIndexReader`: the index answers on its
     // own, no handle batch is ever built, and the rows leave in INDEX order.
-    // This tier reads the row either way (it has no index-only reader), so the
-    // difference has to be declared here rather than shown by the executor's
-    // shape.
+    // The remote TiKV path now emits the projected index row directly; local
+    // storage retains its byte-level fallback. The difference still has to be
+    // declared here so the executor can preserve the source's index order.
     //
     // A DIRTY table reaches the same answer by the other door: Go's
     // `tableHasDirtyContent` (`pkg/planner/core/logical_plan_builder.go:5316`)

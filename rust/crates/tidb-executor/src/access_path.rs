@@ -1192,6 +1192,10 @@ pub struct IndexRangeSourceExec {
     /// A remote coprocessor index stream, when the TiKV backend can serve the
     /// selected index/filter/TopN shape.
     remote_index: Option<crate::kv_table::RemoteIndexHandleCursor>,
+    /// Set once a covering read has selected the remote stream. It prevents a
+    /// completed remote stream from falling through to the local cursor and
+    /// emitting the same rows a second time.
+    remote_covering_selected: bool,
     /// The statement-class flags and session zone the row is decoded under;
     /// the zone also encodes the index probe. See [`HandleSourceExec`].
     decode_context: crate::kv_table::RowDecodeContext,
@@ -1383,6 +1387,7 @@ impl IndexRangeSourceExec {
             lookup_row_at: 0,
             lookup_filter_complete: false,
             remote_index: None,
+            remote_covering_selected: false,
             decode_context,
             statement,
             estimated_rows: None,
@@ -1427,10 +1432,9 @@ impl IndexRangeSourceExec {
     /// rules about the same order:
     ///
     /// * a COVERING path -- Go's `path.IsSingleScan`, which lowers to a
-    ///   `PhysicalIndexReader` that never builds a handle batch at all. This
-    ///   tier reads the row through the handle either way, because it has no
-    ///   index-only reader, so the declaration is what keeps the ORDER of the
-    ///   two readers apart;
+    ///   `PhysicalIndexReader` that never builds a handle batch at all. The
+    ///   remote path emits the projected index row directly; the local
+    ///   fallback still uses the declaration to preserve reader order;
     /// * a DIRTY table -- Go's `UnionScanExec` above the reader, whose
     ///   `compare()` re-imposes index-key-then-handle order on whatever the
     ///   lookup below it produced.
@@ -2451,6 +2455,8 @@ impl Executor for IndexRangeSourceExec {
         self.partial_remote = None;
         self.partial_rows = None;
         self.partial_done = false;
+        self.remote_index = None;
+        self.remote_covering_selected = false;
         // A DESCENDING lookup must not ride the local cursor on cluster
         // storage: [`TableStorage::iter_reverse`]'s fallback materializes the
         // WHOLE bounded range forward before reversing, so a keep-order
@@ -2546,8 +2552,12 @@ impl Executor for IndexRangeSourceExec {
                     // those handle columns; a covering reader must retain
                     // its indexed values because they are the result rows.
                     !self.covering && lowered.is_empty() && self.top_n.is_none(),
+                    (self.covering && self.extra_handle_slot.is_none())
+                        .then_some(self.keep.as_slice()),
                 )
                 .map_err(|_| ExecError::unsupported("remote index scan failed to open"))?;
+            self.remote_covering_selected =
+                self.covering && self.extra_handle_slot.is_none() && self.remote_index.is_some();
         }
         self.lookup_pipeline = Some(LookupPipeline {
             inflight: VecDeque::new(),
@@ -2616,6 +2626,47 @@ impl Executor for IndexRangeSourceExec {
             }
             return Ok(());
         }
+        // Go's covering `PhysicalIndexReader` emits index columns directly;
+        // it does not collect handles or issue the table-side double read.
+        // When the coprocessor stream is available, keep that fast path
+        // explicit. A refused remote shape falls through to the existing
+        // byte-level lookup path below, preserving the fail-closed answer.
+        if self.covering && self.remote_covering_selected {
+            if self.remote_index.is_none() {
+                return Ok(());
+            }
+            while req.num_rows() < cap {
+                if self.limit.is_some_and(|limit| self.produced.get() >= limit) {
+                    self.remote_index = None;
+                    return Ok(());
+                }
+                let row = self
+                    .remote_index
+                    .as_mut()
+                    .expect("covering remote cursor is present")
+                    .next_projected_row()
+                    .map_err(|error| {
+                        ExecError::unsupported(format!(
+                            "covering index row failed to decode: {error:?}"
+                        ))
+                    })?;
+                let Some(row) = row else {
+                    self.remote_index = None;
+                    return Ok(());
+                };
+                self.scanned.set(self.scanned.get() + 1);
+                if let Some(filter) = self.filter.as_mut() {
+                    if !filter.admits(&row)? {
+                        continue;
+                    }
+                }
+                for (column, value) in row.iter().enumerate() {
+                    req.append_datum(column, value);
+                }
+                self.produced.set(self.produced.get() + 1);
+            }
+            return Ok(());
+        }
         while req.num_rows() < cap {
             if self.limit.is_some_and(|limit| self.produced.get() >= limit) {
                 // Early stop: the cursor is dropped, so no entry past the cap
@@ -2657,6 +2708,7 @@ impl Executor for IndexRangeSourceExec {
         self.partial_rows = None;
         self.partial_done = false;
         self.remote_index = None;
+        self.remote_covering_selected = false;
         self.teardown_lookup_pipeline();
         Ok(())
     }
@@ -2968,9 +3020,8 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
                 self.index_filter, self.pushed.len(),
             );
         }
-        // A covering declaration does not opt out: this tier reads the row
-        // through its lookup either way, so a region-reduced entry stream
-        // serves it exactly as it serves a double read.
+        // A covering declaration can use the same coprocessor TopN tier: Go's
+        // `PhysicalIndexReader` consumes the ordered index rows directly.
         if self.top_n.is_some()
             || self.table.has_dirty_content()
             || order_by.is_empty()
@@ -3560,6 +3611,7 @@ impl IndexJoinLookupExec {
             // which reads nothing else from the entries, and no predicate or
             // TopN rides the index side here.
             true,
+            None,
         ) {
             Ok(Some(stream)) => self.remote_handles = Some(stream),
             // Refused or failed: reopen the probes over the local cursor, the
@@ -4721,9 +4773,10 @@ mod tests {
     /// sorting it.
     ///
     /// The projection is covering on purpose. A non-covering one adds a
-    /// double read, and this tier's double read issues one round trip per
-    /// row, which [`crate::access_cost`] now prices honestly -- on a table
-    /// this small the chooser then prefers the scan, and the cap would be
+    /// double read, and this tier's local test storage still exercises that
+    /// lookup path; the cluster path now emits covering rows directly from
+    /// the index stream, like Go's `PhysicalIndexReader`. On a table this
+    /// small the chooser otherwise prefers the scan, so the cap would be
     /// tested through the wrong path. See
     /// `a_double_read_costs_more_than_the_scan_it_replaces` below.
     #[test]
@@ -4742,8 +4795,9 @@ mod tests {
             5,
             "only five index entries were walked"
         );
-        // The source still performs a table lookup for this covering shape,
-        // but the handles are admitted as one batch at the storage seam.
+        // The in-memory test storage has no remote covering stream, so this
+        // fallback performs one table lookup batch; the TiKV path emits the
+        // same five rows directly from the index reader.
         assert_eq!(
             gets.load(Ordering::Relaxed),
             1,
