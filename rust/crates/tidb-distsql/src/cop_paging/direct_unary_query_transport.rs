@@ -893,17 +893,14 @@ fn metadata_region_ranges(
 fn topology_from_locations(locations: Vec<RegionLocation>) -> Vec<RegionTaskTopology> {
     let mut topology = Vec::with_capacity(locations.len());
     for location in locations {
-        // Go's `buildCopTasks` splits every located region by its PD bucket
-        // metadata (`SplitKeyRangesByBuckets`), so one large hot region
-        // becomes many small cop tasks whose request ranges stay STABLE
-        // across replays -- which is also what makes them cacheable by the
-        // TiKV coprocessor cache and runnable concurrently. Dropping the
-        // bucket metadata here collapsed each region to ONE whole-range
-        // task, forcing row-paging to crawl it cursor-style instead.
-        let buckets = location.buckets.as_ref();
-        let (bucket_keys, buckets_version) = buckets
-            .map(|buckets| (buckets.keys.clone(), buckets.version))
-            .unwrap_or_default();
+        // Go's `buildCopTasks` normally splits each located region by PD
+        // buckets so the small, stable ranges can be cached by TiKV and
+        // executed concurrently by the coprocessor worker pool.
+        // The rust direct-unary transport dispatches bucket fragments
+        // serially, so at concurrency=1 a single region scan becomes many
+        // sequential round trips. Keep the pre-bucket "one task per located
+        // region" behavior until the dispatcher can overlap fragments.
+        let (bucket_keys, buckets_version) = (Vec::new(), 0u64);
         topology.push(RegionTaskTopology {
             region_id: location.region.id,
             region_epoch: Some(RegionTaskEpoch {
