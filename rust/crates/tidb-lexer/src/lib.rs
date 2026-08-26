@@ -1201,6 +1201,9 @@ mod tests {
     #[path = "go_parity_b053_source.rs"]
     mod go_parity_b053_source;
 
+    #[path = "go_parity_b054_source.rs"]
+    mod go_parity_b054_source;
+
     #[path = "go_parity_b055_source.rs"]
     mod go_parity_b055_source;
 
