@@ -23,6 +23,7 @@ import (
 // API defines the subset of OSS client methods used by ossstore.
 type API interface {
 	IsBucketExist(ctx context.Context, bucket string, optFns ...func(*oss.Options)) (bool, error)
+	Presign(ctx context.Context, request any, optFns ...func(*oss.PresignOptions)) (*oss.PresignResult, error)
 	HeadObject(ctx context.Context, request *oss.HeadObjectRequest, optFns ...func(*oss.Options)) (*oss.HeadObjectResult, error)
 	GetObject(ctx context.Context, request *oss.GetObjectRequest, optFns ...func(*oss.Options)) (*oss.GetObjectResult, error)
 	PutObject(ctx context.Context, request *oss.PutObjectRequest, optFns ...func(*oss.Options)) (*oss.PutObjectResult, error)

@@ -15,11 +15,16 @@
 package ossstore
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"net/url"
 	"testing"
+	"time"
 
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
+	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
 	"github.com/aws/smithy-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -29,6 +34,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+type presignAPI struct {
+	API
+	presign func(context.Context, any, ...func(*oss.PresignOptions)) (*oss.PresignResult, error)
+}
+
+func (a *presignAPI) Presign(ctx context.Context, request any, optFns ...func(*oss.PresignOptions)) (*oss.PresignResult, error) {
+	return a.presign(ctx, request, optFns...)
+}
 
 type Suite struct {
 	Controller *gomock.Controller
@@ -153,6 +167,136 @@ func TestClientGetObject(t *testing.T) {
 	_, err = cli.GetObject(ctx, "object", 0, 10)
 	require.ErrorContains(t, err, "mock get error")
 	require.True(t, s.Controller.Satisfied())
+}
+
+func TestClientPresignObject(t *testing.T) {
+	ctx := context.Background()
+	const presignedURL = "https://bucket.example.com/prefix/object?signature=test"
+
+	t.Run("public endpoint when data client uses internal endpoint", func(t *testing.T) {
+		config := oss.NewConfig().
+			WithRegion("cn-hangzhou").
+			WithCredentialsProvider(credentials.NewStaticCredentialsProvider("access-key-id", "access-key-secret", "")).
+			WithUseInternalEndpoint(true)
+		cli := &client{
+			presignSvc:   newPresignClient(config),
+			BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+		}
+
+		presignedURL, err := cli.PresignObject(ctx, "object", time.Hour)
+		require.NoError(t, err)
+		parsedURL, err := url.Parse(presignedURL)
+		require.NoError(t, err)
+		require.Equal(t, "bucket.oss-cn-hangzhou.aliyuncs.com", parsedURL.Host)
+	})
+
+	t.Run("success", func(t *testing.T) {
+		cli := &client{
+			presignSvc: &presignAPI{
+				presign: func(_ context.Context, request any, optFns ...func(*oss.PresignOptions)) (*oss.PresignResult, error) {
+					getRequest, ok := request.(*oss.GetObjectRequest)
+					require.True(t, ok)
+					require.Equal(t, "bucket", oss.ToString(getRequest.Bucket))
+					require.Equal(t, "prefix/object", oss.ToString(getRequest.Key))
+
+					options := &oss.PresignOptions{}
+					for _, optFn := range optFns {
+						optFn(options)
+					}
+					require.Equal(t, time.Hour, options.Expires)
+					return &oss.PresignResult{URL: presignedURL}, nil
+				},
+			},
+			BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+		}
+		storage := s3like.NewStorage(cli, cli.BucketPrefix, &backuppb.S3{}, nil)
+
+		url, err := storage.PresignFile(ctx, "object", time.Hour)
+		require.NoError(t, err)
+		require.Equal(t, presignedURL, url)
+	})
+
+	t.Run("error", func(t *testing.T) {
+		presignErr := errors.New("mock presign error")
+		cli := &client{
+			presignSvc: &presignAPI{
+				presign: func(context.Context, any, ...func(*oss.PresignOptions)) (*oss.PresignResult, error) {
+					return nil, presignErr
+				},
+			},
+			BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+		}
+		storage := s3like.NewStorage(cli, cli.BucketPrefix, &backuppb.S3{}, nil)
+
+		url, err := storage.PresignFile(ctx, "object", time.Hour)
+		require.Empty(t, url)
+		require.ErrorIs(t, err, presignErr)
+	})
+
+	t.Run("negative expiration", func(t *testing.T) {
+		cli := &client{
+			presignSvc: &presignAPI{
+				presign: func(context.Context, any, ...func(*oss.PresignOptions)) (*oss.PresignResult, error) {
+					require.FailNow(t, "Presign called for non-positive expiration")
+					return nil, nil
+				},
+			},
+			BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+		}
+		storage := s3like.NewStorage(cli, cli.BucketPrefix, &backuppb.S3{}, nil)
+
+		url, err := storage.PresignFile(ctx, "object", -time.Second)
+		require.Empty(t, url)
+		require.ErrorContains(t, err, "expiration must be positive")
+	})
+
+	t.Run("zero expiration", func(t *testing.T) {
+		cli := &client{
+			presignSvc: &presignAPI{
+				presign: func(context.Context, any, ...func(*oss.PresignOptions)) (*oss.PresignResult, error) {
+					require.FailNow(t, "Presign called for non-positive expiration")
+					return nil, nil
+				},
+			},
+			BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+		}
+		storage := s3like.NewStorage(cli, cli.BucketPrefix, &backuppb.S3{}, nil)
+
+		url, err := storage.PresignFile(ctx, "object", 0)
+		require.Empty(t, url)
+		require.ErrorContains(t, err, "expiration must be positive")
+	})
+}
+
+func TestClientPresignObjectDoesNotLogCredentials(t *testing.T) {
+	const securityToken = "recognizable-security-token"
+	var logOutput bytes.Buffer
+	config := oss.NewConfig().
+		WithRegion("cn-hangzhou").
+		WithEndpoint("https://oss-cn-hangzhou.aliyuncs.com").
+		WithCredentialsProvider(credentials.NewStaticCredentialsProvider("access-key-id", "access-key-secret", securityToken)).
+		WithSignatureVersion(oss.SignatureVersionV4).
+		WithLogLevel(oss.LogDebug).
+		WithLogPrinter(oss.LogPrinterFunc(func(values ...any) {
+			_, _ = fmt.Fprint(&logOutput, values...)
+		}))
+	cli := &client{
+		svc:          oss.NewClient(config),
+		presignSvc:   newPresignClient(config),
+		BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+	}
+	require.Equal(t, oss.LogDebug, oss.ToInt(config.LogLevel))
+
+	presignedURL, err := cli.PresignObject(context.Background(), "object", time.Hour)
+	require.NoError(t, err)
+	parsedURL, err := url.Parse(presignedURL)
+	require.NoError(t, err)
+	query := parsedURL.Query()
+	signature := query.Get("x-oss-signature")
+	require.NotEmpty(t, signature)
+	require.Equal(t, securityToken, query.Get("x-oss-security-token"))
+	require.NotContains(t, logOutput.String(), signature)
+	require.NotContains(t, logOutput.String(), securityToken)
 }
 
 func TestClientDeleteObjects(t *testing.T) {
