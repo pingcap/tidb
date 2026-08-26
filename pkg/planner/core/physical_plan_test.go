@@ -101,19 +101,24 @@ func TestFullOuterJoinSyntaxUnsupported(t *testing.T) {
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("create table t2(a int)")
 
-	sqls := []string{
-		"select * from t1 full outer join t2 on t1.a = t2.a",
+	fullOuterJoinSQL := "select * from t1 full outer join t2 on t1.a = t2.a"
+	unsupportedSQLs := []string{
 		"select * from t1 full outer join lateral (select 1 as a) as t2 on false",
 		"select * from t1 full outer join lateral (select t1.a) as t2 on true",
 		"select * from t1 full outer join (t2 join lateral (select t2.a) as t3 on true) on false",
 	}
 	expectedErr := plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
-	for _, enableFullOuterJoin := range []string{"off", "on"} {
-		tk.MustExec("set @@tidb_enable_full_outer_join=" + enableFullOuterJoin)
-		for _, sql := range sqls {
-			err := tk.ExecToErr(sql)
-			require.Truef(t, terror.ErrorEqual(expectedErr, err), "sql: %s, err: %v", sql, err)
-		}
+	tk.MustExec("set @@tidb_enable_full_outer_join=off")
+	for _, sql := range append([]string{fullOuterJoinSQL}, unsupportedSQLs...) {
+		err := tk.ExecToErr(sql)
+		require.Truef(t, terror.ErrorEqual(expectedErr, err), "sql: %s, err: %v", sql, err)
+	}
+
+	tk.MustExec("set @@tidb_enable_full_outer_join=on")
+	require.NoError(t, tk.ExecToErr(fullOuterJoinSQL))
+	for _, sql := range unsupportedSQLs {
+		err := tk.ExecToErr(sql)
+		require.Truef(t, terror.ErrorEqual(expectedErr, err), "sql: %s, err: %v", sql, err)
 	}
 }
 
@@ -331,6 +336,73 @@ func TestJoinHintCompatibilityWithVariable(t *testing.T) {
 		res := tk.MustQuery("show warnings").Rows()
 		require.Equal(t, len(res) > 0, true)
 	})
+}
+
+func prepareMPPFullOuterJoinTest(t *testing.T, tk *testkit.TestKit) {
+	t.Helper()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("set @@tidb_allow_mpp=1")
+	tk.MustExec("set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_enable_full_outer_join=1")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("alter table t1 set tiflash replica 1")
+	tk.MustExec("alter table t2 set tiflash replica 1")
+	for _, tableName := range []string{"t1", "t2"} {
+		tb := external.GetTableByName(t, tk, "test", tableName)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		require.NoError(t, err)
+	}
+}
+
+func findMPPFullOuterHashJoin(t *testing.T, tk *testkit.TestKit, sql string) *physicalop.PhysicalHashJoin {
+	t.Helper()
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	nodeW := resolve.NewNodeW(stmt)
+	plan, _, err := planner.Optimize(context.Background(), tk.Session(), nodeW, domain.GetDomain(tk.Session()).InfoSchema())
+	require.NoError(t, err)
+
+	flat := core.FlattenPhysicalPlan(plan, true)
+	for _, op := range flat.Main {
+		hashJoin, ok := op.Origin.(*physicalop.PhysicalHashJoin)
+		if !ok {
+			continue
+		}
+		if hashJoin.StoreTp == kv.TiFlash && hashJoin.MppShuffleJoin && hashJoin.GetJoinType() == base.FullOuterJoin {
+			return hashJoin
+		}
+	}
+	require.FailNow(t, "expected MPP TiFlash full outer hash join")
+	return nil
+}
+
+func TestMPPFullOuterJoinToPB(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	prepareMPPFullOuterJoinTest(t, tk)
+
+	sql := "select /*+ shuffle_join(t1, t2), read_from_storage(tiflash[t1, t2]) */ * from t1 full outer join t2 on t1.a = t2.a and t1.b > 1 and t2.b > 1"
+	hashJoin := findMPPFullOuterHashJoin(t, tk, sql)
+	require.Len(t, hashJoin.LeftConditions, 1)
+	require.Len(t, hashJoin.RightConditions, 1)
+
+	pb, err := hashJoin.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
+	require.NoError(t, err)
+	require.Equal(t, tipb.JoinType_TypeFullOuterJoin, pb.Join.JoinType)
+}
+
+func TestMPPFullOuterJoinWithoutShuffleHint(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	prepareMPPFullOuterJoinTest(t, tk)
+	tk.MustExec("set @@tidb_broadcast_join_threshold_count=1000000000")
+	tk.MustExec("set @@tidb_broadcast_join_threshold_size=1000000000")
+
+	sql := "select /*+ read_from_storage(tiflash[t1, t2]) */ * from t1 full outer join t2 on t1.a = t2.a and t1.b > 1 and t2.b > 1"
+	findMPPFullOuterHashJoin(t, tk, sql)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
 func TestHintAlias(t *testing.T) {

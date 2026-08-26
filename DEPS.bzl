@@ -999,6 +999,13 @@ def go_deps():
         version = "v0.3.1",
     )
     go_repository(
+        name = "com_github_clbanning_mxj",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/clbanning/mxj",
+        sum = "h1:HuhwZtbyvyOw+3Z1AowPkU87JkJUSv751ELWaiTpj8I=",
+        version = "v1.8.4",
+    )
+    go_repository(
         name = "com_github_clbanning_mxj_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/clbanning/mxj/v2",
@@ -3452,6 +3459,13 @@ def go_deps():
         version = "v1.0.0",
     )
     go_repository(
+        name = "com_github_mozillazg_go_httpheader",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/mozillazg/go-httpheader",
+        sum = "h1:geV7TrjbL8KXSyvghnFm+NyTux/hxwueTSrwhe88TQQ=",
+        version = "v0.2.1",
+    )
+    go_repository(
         name = "com_github_muesli_termenv",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/muesli/termenv",
@@ -3777,8 +3791,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:JBrbgynAz4RkeXUvqXAOhySZK5FYFCeHdKWUrj+Z2Vw=",
-        version = "v0.0.0-20260724054804-059694ae4472",
+        sum = "h1:Z1gFEBIzhT7Cuc0IBAsKgUxMapL2kwqe3QQq7g9XiJw=",
+        version = "v0.0.0-20260820070758-623e58e60fa9",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -3791,8 +3805,8 @@ def go_deps():
         name = "com_github_pingcap_metering_sdk",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/metering_sdk",
-        sum = "h1:5JCgncG9X7tOsqKqbIXpV2VG4mu/hv3RvvZewqFj0U4=",
-        version = "v0.0.0-20260324055927-14fead745f1d",
+        sum = "h1:8gzQg9J2ENtsZKgXpum7Set5Ga/crKGqap5nlGoqAZQ=",
+        version = "v0.0.0-20260814062708-9e3b68cd9adf",
     )
     go_repository(
         name = "com_github_pingcap_sysutil",
@@ -4038,6 +4052,13 @@ def go_deps():
         importpath = "github.com/rogpeppe/go-internal",
         sum = "h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=",
         version = "v1.14.1",
+    )
+    go_repository(
+        name = "com_github_rs_dnscache",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/rs/dnscache",
+        sum = "h1:18kd+8ZUlt/ARXhljq+14TwAoKa61q6dX8jtwOf6DH8=",
+        version = "v0.0.0-20230804202142-fc85eb664529",
     )
     go_repository(
         name = "com_github_russross_blackfriday",
@@ -4425,6 +4446,34 @@ def go_deps():
         version = "v2.6.4",
     )
     go_repository(
+        name = "com_github_tencentcloud_tencentcloud_sdk_go_tencentcloud_common",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common",
+        sum = "h1:oK2uueo6FtSdhepL64WqJD0NjVl6prDSreUYKuzSp3M=",
+        version = "v1.3.142",
+    )
+    go_repository(
+        name = "com_github_tencentcloud_tencentcloud_sdk_go_tencentcloud_kms",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/kms",
+        sum = "h1:FoX+MK4vHThvPO6FbP5q98zD8S3n+d5+DbtK7skl++c=",
+        version = "v1.0.563",
+    )
+    go_repository(
+        name = "com_github_tencentyun_cos_go_sdk_v5",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/tencentyun/cos-go-sdk-v5",
+        sum = "h1:YCsGhIK+Q5vMcmAiQqPuMyhSQ3zN1p7U+dhlHQD++6c=",
+        version = "v0.7.74",
+    )
+    go_repository(
+        name = "com_github_tencentyun_qcloud_cos_sts_sdk",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/tencentyun/qcloud-cos-sts-sdk",
+        sum = "h1:OBdxZoM27gCwvBiXfdnzoyT0rSOYktwm0L6a3ArBEZI=",
+        version = "v0.0.0-20250515025012-e0eec8a5d123",
+    )
+    go_repository(
         name = "com_github_tenntenn_modver",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tenntenn/modver",
@@ -4492,8 +4541,8 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:2A+FjDtw0Ej6TT6fX496j+/jDNj7wz4ENMXnjOqhc80=",
-        version = "v2.0.8-0.20260807103401-b75f6efa8ddd",
+        sum = "h1:t1c0xFvwh1sW6uy5nNwRucJKUQ81FnOeQ+6fDPZpa5Y=",
+        version = "v2.0.8-0.20260813104652-52c1e76cec99",
     )
     go_repository(
         name = "com_github_tikv_pd_client",

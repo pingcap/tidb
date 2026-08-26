@@ -195,9 +195,9 @@ func checkAnalyzeRUFormat(t *testing.T, tk *testkit.TestKit, sql string, expecte
 		require.NotEmpty(t, row[0])
 		require.NotEmpty(t, row[1])
 		require.Equal(t, expectedActRows[id], row[2], fmt.Sprintf("error comparing %s", sql))
-		require.Equal(t, "", row[3])
-		require.Equal(t, "", row[4])
-		require.Equal(t, "", row[5])
+		require.NotEmpty(t, row[3])
+		require.NotEmpty(t, row[4])
+		require.NotEmpty(t, row[5])
 		require.Equal(t, "", row[6])
 	}
 }

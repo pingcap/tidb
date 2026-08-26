@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	meter_config "github.com/pingcap/metering_sdk/config"
@@ -1359,6 +1360,7 @@ func TestDeployModeConfig(t *testing.T) {
 	conf := NewConfig()
 	require.Equal(t, deploymode.Premium, conf.DeployMode)
 	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
+	require.Zero(t, conf.StarterParams.MaxImportDataSize)
 	require.NoError(t, conf.Valid())
 	conf.DeployMode = deploymode.Mode(100)
 	require.ErrorContains(t, conf.Valid(), "invalid deploy-mode")
@@ -1391,6 +1393,7 @@ func TestDeployModeConfig(t *testing.T) {
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, deploymode.PremiumReserved, conf.DeployMode)
 	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
+	require.Zero(t, conf.StarterParams.MaxImportDataSize)
 	require.NoError(t, conf.Valid())
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
@@ -1423,6 +1426,7 @@ dxf-resource-limit = 101`), 0644))
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, deploymode.Starter, conf.DeployMode)
 	require.True(t, conf.Standby.EnableZeroBackend)
+	require.EqualValues(t, 25*units.GiB, conf.StarterParams.MaxImportDataSize)
 	require.NoError(t, conf.Valid())
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
@@ -1443,6 +1447,14 @@ max-import-data-size = "1MiB"`), 0644))
 	conf = NewConfig()
 	require.NoError(t, conf.Load(configFile))
 	require.EqualValues(t, 1024*1024, conf.StarterParams.MaxImportDataSize)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
+[starter-params]
+max-import-data-size = "0B"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Zero(t, conf.StarterParams.MaxImportDataSize)
 	require.NoError(t, conf.Valid())
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"

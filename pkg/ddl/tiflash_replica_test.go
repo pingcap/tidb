@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -849,4 +851,80 @@ func TestColumnarStorageEnabledGateColumnarIndex(t *testing.T) {
 	require.NotNil(t, tbl.Meta().TiFlashReplica)
 	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
 	require.Equal(t, 1, len(tbl.Meta().Indices))
+func TestKillCancelsBatchSetDatabaseTiFlashReplica(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"))
+	}()
+
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database shop")
+	tk.MustExec("create table shop.t1 (a int)")
+	tk.MustExec("create table shop.t2 (a int)")
+
+	// Hold the scheduler so the first SET TIFLASH REPLICA job stays queued.
+	// KILL then cancels that in-flight job and doDDLJob2 returns ErrCancelledDDLJob,
+	// which must abort the batch instead of counting it as a per-table failure.
+	schedulerBlocked := make(chan struct{})
+	resumeScheduler := make(chan struct{})
+	var blockSchedulerOnce sync.Once
+	var resumeSchedulerOnce sync.Once
+	releaseScheduler := func() {
+		resumeSchedulerOnce.Do(func() {
+			close(resumeScheduler)
+		})
+	}
+	t.Cleanup(releaseScheduler)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+		blockSchedulerOnce.Do(func() {
+			close(schedulerBlocked)
+			<-resumeScheduler
+		})
+	})
+	require.Eventually(t, func() bool {
+		select {
+		case <-schedulerBlocked:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 10*time.Millisecond)
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted", func() {
+		tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- tk.ExecToErr("alter database shop set tiflash replica 1")
+	}()
+
+	checkTK := testkit.NewTestKit(t, store)
+	require.Eventually(t, func() bool {
+		jobs, err := ddl.GetAllDDLJobs(context.Background(), checkTK.Session())
+		if err != nil {
+			return false
+		}
+		for _, job := range jobs {
+			if job.Type == model.ActionSetTiFlashReplica && job.State == model.JobStateCancelling {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 10*time.Millisecond)
+	releaseScheduler()
+
+	var execErr error
+	require.Eventually(t, func() bool {
+		select {
+		case execErr = <-errCh:
+			return true
+		default:
+			return false
+		}
+	}, 10*time.Second, 10*time.Millisecond)
+	require.True(t, dbterror.ErrCancelledDDLJob.Equal(execErr), execErr)
+	require.Nil(t, external.GetTableByName(t, tk, "shop", "t1").Meta().TiFlashReplica)
+	require.Nil(t, external.GetTableByName(t, tk, "shop", "t2").Meta().TiFlashReplica)
 }

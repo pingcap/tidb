@@ -562,6 +562,8 @@ func (p *PhysicalHashJoin) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType
 		pbJoinType = tipb.JoinType_TypeLeftOuterJoin
 	case base.RightOuterJoin:
 		pbJoinType = tipb.JoinType_TypeRightOuterJoin
+	case base.FullOuterJoin:
+		pbJoinType = tipb.JoinType_TypeFullOuterJoin
 	case base.SemiJoin:
 		pbJoinType = tipb.JoinType_TypeSemiJoin
 	case base.AntiSemiJoin:
