@@ -961,6 +961,98 @@ impl KvTable {
         Ok(Some((rows, predicates_applied, wire_rows)))
     }
 
+    /// Finishes one staged table lookup using the same chunk-backed handoff as
+    /// Go's `tableWorker.executeTask`, falling back to the row contract for
+    /// sources that cannot transfer typed chunks.
+    pub(crate) fn finish_lookup_by_handles(
+        handles: &[TableHandle],
+        staged: StagedHandlesLookup,
+    ) -> Result<Option<FinishedLookup>, KvTableError> {
+        if !staged.cursor.supports_lookup_chunks() || !staged.cursor.predicates_applied() {
+            return Self::finish_rows_by_handles(handles, staged).map(|answer| {
+                answer.map(|(rows, applied, wire_rows)| {
+                    FinishedLookup::Rows(rows, applied, wire_rows)
+                })
+            });
+        }
+        Self::finish_lookup_chunks_by_handles(handles, staged)
+            .map(|answer| answer.map(FinishedLookup::Chunk))
+    }
+
+    /// Retains decoded table rows as one output chunk instead of converting
+    /// each row to `Vec<Datum>`. Go stores `chunk.Row` references in the table
+    /// task and computes the integer `rowIdx` once per row before sorting;
+    /// this implementation follows that contract with `(chunk,row)` pairs,
+    /// then copies cells directly into the ordered output chunk.
+    fn finish_lookup_chunks_by_handles(
+        handles: &[TableHandle],
+        mut staged: StagedHandlesLookup,
+    ) -> Result<Option<FinishedLookupChunk>, KvTableError> {
+        let wire_rows = staged.cursor.rows_returned();
+        let predicates_applied = staged.cursor.predicates_applied();
+        let mut batches = Vec::new();
+        let mut rows = Vec::with_capacity(handles.len());
+        loop {
+            let Some(batch) = staged.cursor.next_raw_chunk_with_handle()? else {
+                break;
+            };
+            if batch.num_rows() == 0 {
+                break;
+            }
+            if staged.handle_position >= batch.num_cols() {
+                return Err(KvTableError::Decode(
+                    "a coprocessor row carried no integer handle".to_owned(),
+                ));
+            }
+            let batch_index = batches.len();
+            for row_index in 0..batch.num_rows() {
+                let row = batch.get_row(row_index);
+                let handle = match row.get_datum(
+                    staged.handle_position,
+                    &staged.cursor.field_types[staged.handle_position],
+                ) {
+                    Datum::Int(handle) => handle,
+                    Datum::UInt(handle) => handle as i64,
+                    _ => {
+                        return Err(KvTableError::Decode(
+                            "a coprocessor row carried no integer handle".to_owned(),
+                        ));
+                    }
+                };
+                rows.push((TableHandle::Int(handle), batch_index, row_index));
+            }
+            batches.push(batch);
+        }
+        let wire_rows = staged.cursor.rows_returned().saturating_sub(wire_rows);
+        let mut ordered = rows;
+        if !handles.windows(2).all(|window| window[0] <= window[1]) {
+            let positions = handles
+                .iter()
+                .enumerate()
+                .map(|(position, handle)| (handle, position))
+                .collect::<HashMap<_, _>>();
+            ordered
+                .sort_by_key(|(handle, _, _)| positions.get(handle).copied().unwrap_or(usize::MAX));
+        }
+        let width = batches.first().map_or(
+            staged.cursor.width + usize::from(staged.appended_handle),
+            |batch| batch.num_cols(),
+        );
+        let field_types =
+            staged.cursor.field_types[..width.min(staged.cursor.field_types.len())].to_vec();
+        let mut output = Chunk::new_with_capacity(&field_types, ordered.len());
+        for (_, batch_index, row_index) in ordered {
+            output.append_row(batches[batch_index].get_row(row_index));
+        }
+        Ok(Some(FinishedLookupChunk {
+            chunk: output,
+            handle_position: staged.handle_position,
+            appended_handle: staged.appended_handle,
+            predicates_applied,
+            wire_rows,
+        }))
+    }
+
     /// Opens a coprocessor partial aggregation over this table, or returns
     /// `None` so the executor computes the same partial result locally.
     ///
@@ -2180,6 +2272,35 @@ pub struct StagedHandlesLookup {
     appended_handle: bool,
 }
 
+/// A table-lookup response kept in its decoded columnar form.
+///
+/// Go's `tableWorker.executeTask` retains `chunk.Row` values until the parent
+/// executor consumes them. Keeping the same shape across the Rust worker
+/// boundary avoids turning every cell into an owned `Datum` and then copying
+/// it into the parent's output chunk a second time.
+pub(crate) struct FinishedLookupChunk {
+    /// Rows are already restored to the caller's index-handle order.
+    pub(crate) chunk: Chunk,
+    /// The source column carrying the integer handle.
+    pub(crate) handle_position: usize,
+    /// Whether the handle column was appended only for lookup association.
+    pub(crate) appended_handle: bool,
+    /// Whether the remote response evaluated every requested predicate.
+    pub(crate) predicates_applied: bool,
+    /// Number of rows that crossed the remote response boundary.
+    pub(crate) wire_rows: u64,
+}
+
+/// One completed table lookup, preserving Go's chunk-backed worker result
+/// whenever the remote stream supports it and retaining the row fallback for
+/// hand-built or row-only sources.
+pub(crate) enum FinishedLookup {
+    /// A chunk-backed response from a real coprocessor stream.
+    Chunk(FinishedLookupChunk),
+    /// The compatibility path for row-only streams.
+    Rows(Vec<(TableHandle, Vec<Datum>)>, bool, u64),
+}
+
 pub struct RemoteRowCursor {
     stream: Box<dyn PushdownRowStream>,
     staged: std::vec::IntoIter<StagedRow>,
@@ -2225,6 +2346,13 @@ impl RemoteRowCursor {
     #[must_use]
     pub fn predicates_applied(&self) -> bool {
         self.predicates_applied
+    }
+
+    /// Whether this cursor can preserve Go's chunk.Row handoff through a
+    /// table-lookup worker. A staged merge must stay on the row path because
+    /// its snapshot/staged ordering is resolved one row at a time.
+    fn supports_lookup_chunks(&self) -> bool {
+        !self.merge_staged && self.stream.supports_chunks() && !self.field_types.is_empty()
     }
 
     /// Appends clean remote rows without materializing an owned datum vector
@@ -2429,7 +2557,27 @@ impl RemoteRowCursor {
     /// `None` means the stream is row-only (or a hand-built cursor lacks wire
     /// type metadata), so callers must use [`Self::next_row_with_handle`].
     fn next_chunk_with_handle(&mut self) -> Result<Option<Vec<Vec<Datum>>>, KvTableError> {
-        if self.merge_staged || !self.stream.supports_chunks() || self.field_types.is_empty() {
+        let Some(batch) = self.next_raw_chunk_with_handle()? else {
+            return Ok(None);
+        };
+        // Go's tableWorker iterates the decoded chunk and calls GetDatum on
+        // each cell; the response decoder has already validated the wire
+        // schema. Use the infallible, buffer-oriented equivalent here instead
+        // of constructing a Result for every cell in every lookup row.
+        let rows = (0..batch.num_rows())
+            .map(|row| batch.get_row(row).get_datum_row(&self.field_types))
+            .collect();
+        Ok(Some(rows))
+    }
+
+    /// Pulls one decoded response chunk without materializing its rows.
+    ///
+    /// The response decoder already validated the wire schema. This is the
+    /// chunk.Row equivalent of Go's `exec.Next` result handed to
+    /// `tableWorker.executeTask`; the caller decides whether to retain the
+    /// chunk or use the compatibility row conversion above.
+    fn next_raw_chunk_with_handle(&mut self) -> Result<Option<Chunk>, KvTableError> {
+        if !self.supports_lookup_chunks() {
             return Ok(None);
         }
         let Some(batch) = self
@@ -2438,7 +2586,10 @@ impl RemoteRowCursor {
             .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
         else {
             self.note_wire_rows();
-            return Ok(Some(Vec::new()));
+            return Ok(Some(Chunk::new_with_capacity(
+                &self.field_types[..self.width.min(self.field_types.len())],
+                0,
+            )));
         };
         self.note_wire_rows();
         if batch.num_cols() > self.field_types.len() {
@@ -2448,14 +2599,7 @@ impl RemoteRowCursor {
                 self.field_types.len()
             )));
         }
-        // Go's tableWorker iterates the decoded chunk and calls GetDatum on
-        // each cell; the response decoder has already validated the wire
-        // schema. Use the infallible, buffer-oriented equivalent here instead
-        // of constructing a Result for every cell in every lookup row.
-        let rows = (0..batch.num_rows())
-            .map(|row| batch.get_row(row).get_datum_row(&self.field_types))
-            .collect();
-        Ok(Some(rows))
+        Ok(Some(batch))
     }
 }
 
@@ -4520,20 +4664,22 @@ mod remote_cursor_tests {
             appended_handle: true,
         };
         let handles = vec![TableHandle::Int(8), TableHandle::Int(7)];
-        let Some((rows, applied, wire_rows)) =
-            KvTable::finish_rows_by_handles(&handles, staged).unwrap()
+        let Some(FinishedLookup::Chunk(finished)) =
+            KvTable::finish_lookup_by_handles(&handles, staged).unwrap()
         else {
             panic!("columnar handle lookup unexpectedly refused");
         };
-        assert!(applied);
-        assert_eq!(wire_rows, 2);
-        assert_eq!(
-            rows,
-            vec![
-                (TableHandle::Int(8), vec![Datum::Int(80)]),
-                (TableHandle::Int(7), vec![Datum::Int(70)]),
-            ]
-        );
+        assert!(finished.predicates_applied);
+        assert_eq!(finished.wire_rows, 2);
+        let rows = (0..finished.chunk.num_rows())
+            .map(|row| {
+                (
+                    finished.chunk.get_row(row).get_int64(1),
+                    finished.chunk.get_row(row).get_int64(0),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(rows, vec![(8, 80), (7, 70)]);
     }
 
     #[test]

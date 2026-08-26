@@ -976,3 +976,48 @@ Rust/Go q1 `1.087x`, q2 `1.227x`, flex `1.167x`, swap `1.685x`, and batch
 `1.171x`; correctness is green but the single-concurrency performance gate
 is still open. The TiUP playground and both endpoints remain running for the
 next iteration.
+
+Revision note, 2026-08-26 (latest remote plus Go table-worker chunk handoff):
+explicitly fetched `origin/hparser-integration` and rebased the worktree onto
+`b1f37d75c0e28b850b1fdd44aa6b997a1a98b1f5`, which includes the upstream Go
+parser/config/sessionctx/meta test ports and retains vendored
+`ngaut/client-rust@71cc8d9fff13ce30cdf535229e524cec0ad30a01` from the earlier
+client-rust resync. The package-level `tidb-executor` continuation follows Go
+code `pkg/executor/distsql.go:2145-2218` and
+`pkg/executor/builder.go:5272-5290`: clean remote table lookup responses stay
+as decoded `Chunk` values through the lookup worker, row positions are
+decorated once for Go-equivalent keep-order restoration, and residual/staged
+or row-only sources retain the existing materialized-row fallback. Focused
+Rust regressions pass (`17` cursor tests and `29` access-path tests), and a
+release build was rebuilt/restarted with the Go-aligned default lookup worker
+concurrency (`5`) on
+`127.0.0.1:14019`. On the deterministic 1G `hbx_web3_1g` fixture, the four
+normalized plans and result hashes remain equal (q1
+`0c488295...`, q2/flex `45f8be11...`, swap `bf2ce599...`); each query returns
+100 rows, and the 100-row batch INSERT sum remains
+`5050.000000000000000000` on both endpoints. Receipts:
+`/private/tmp/hbx-1g-20260825/compare-b1f37-default5-20260826.json` and
+`/private/tmp/hbx-1g-20260825/bench-b1f37-default5-20260826.json`.
+Alternating one-client medians are Go/Rust q1 `8.923/10.184 ms`, q2
+`7.674/9.582 ms`, flex `8.158/9.999 ms`, swap `11.670/21.953 ms`, and batch
+`5.567/7.294 ms`; the explicit one-concurrency no-regression gate remains
+open. This remains WIP because the machine has no `go` executable, so
+`make lint`/Ready cannot run; the source commit includes an explicit `Go code:`
+body line as required.
+
+Revision note, 2026-08-26 (exact committed runtime receipt): rebuilt the
+release binary from local commit `d5c5ded896e9ca028b78e45b459b45c65256161b`
+and confirmed that hash at Rust startup on `127.0.0.1:14019`, using the
+Go-aligned default lookup worker concurrency (`5`). The final deterministic 1G
+`hbx_web3_1g` comparison receipts are
+`/private/tmp/hbx-1g-20260825/compare-d5c5-final-20260826.json` and
+`/private/tmp/hbx-1g-20260825/bench-d5c5-final-20260826.json`. All four
+normalized plans and result hashes match; q1/q2/flex/swap each return 100 rows
+with hashes `0c488295...`, `45f8be11...`, `45f8be11...`, and `bf2ce599...`.
+The 100-row batch INSERT returns 100 rows and sum
+`5050.000000000000000000` on both endpoints. Alternating one-client medians
+are Go/Rust q1 `9.341/10.143 ms` (`1.086x`), q2 `7.904/9.634 ms` (`1.219x`),
+flex `8.573/9.782 ms` (`1.141x`), swap `12.654/22.084 ms` (`1.745x`), and
+batch `6.189/7.383 ms` (`1.193x`). Correctness is green, while the strict
+single-concurrency performance no-regression gate remains open. The commit
+message includes the required `Go code:` source references.

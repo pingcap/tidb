@@ -1030,6 +1030,10 @@ enum LookupFetch {
     /// region streamed (for the executor thread's storage probe -- a worker
     /// thread has no probe of its own).
     Remote(Vec<(TableHandle, Vec<Datum>)>, bool, u64),
+    /// The Go-shaped chunk handoff for clean remote table lookups. The
+    /// executor consumes this directly into its output chunk when no local
+    /// residual needs row materialization.
+    RemoteChunk(crate::kv_table::FinishedLookupChunk),
     /// The backend refused the remote shape (`Ok(None)` upstream): answer
     /// through the local byte seam instead.
     LocalFallback,
@@ -1185,6 +1189,11 @@ pub struct IndexRangeSourceExec {
     /// chunks when a batch is larger than the requested chunk size.
     lookup_rows: Vec<Option<Vec<Datum>>>,
     lookup_row_at: usize,
+    /// A clean remote table-lookup batch retained in columnar form. This is
+    /// the Rust equivalent of Go's table worker retaining `chunk.Row` values
+    /// until `IndexLookUpExecutor` emits them.
+    lookup_chunk: Option<crate::kv_table::FinishedLookupChunk>,
+    lookup_chunk_row: usize,
     /// Whether the current lookup batch was completely filtered by TiKV.
     /// When true, re-evaluating the same probe residual locally only adds
     /// expression work and cannot change the result.
@@ -1385,6 +1394,8 @@ impl IndexRangeSourceExec {
             initial_batch_size: INIT_HANDLE_BATCH,
             lookup_rows: Vec::new(),
             lookup_row_at: 0,
+            lookup_chunk: None,
+            lookup_chunk_row: 0,
             lookup_filter_complete: false,
             remote_index: None,
             remote_covering_selected: false,
@@ -1627,22 +1638,34 @@ impl IndexRangeSourceExec {
     /// one region-grouped batch request instead of one point read per handle.
     fn next_lookup_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
         loop {
+            if self.lookup_chunk.is_some() {
+                // The caller's direct chunk path owns this batch. Returning a
+                // sentinel here lets it continue without fetching a second
+                // window and dropping the chunk.
+                return Ok(None);
+            }
             if self.lookup_row_at == self.lookup_rows.len() {
                 self.lookup_rows.clear();
                 self.lookup_row_at = 0;
                 self.lookup_filter_complete = false;
-                let Some((rows, lookup_handles, filter_complete)) = self.next_lookup_batch()?
+                let Some((rows, lookup_handles, filter_complete, lookup_chunk)) =
+                    self.next_lookup_batch()?
                 else {
                     return Ok(None);
                 };
                 self.lookup_rows = rows;
                 self.lookup_handles = lookup_handles;
                 self.lookup_filter_complete = filter_complete;
+                self.lookup_chunk = lookup_chunk;
+                self.lookup_chunk_row = 0;
+                if self.lookup_chunk.is_some() {
+                    return Ok(None);
+                }
                 // A fully-filtered batch leaves no rows for this window: the
                 // next handle batch must be collected NOW, or the emission
                 // below indexes an empty vector. The stream-exhaustion arm
                 // inside the refill still terminates the scan.
-                if self.lookup_rows.is_empty() {
+                if self.lookup_rows.is_empty() && self.lookup_chunk.is_none() {
                     self.lookup_row_at = 0;
                     continue;
                 }
@@ -1688,7 +1711,15 @@ impl IndexRangeSourceExec {
     #[allow(clippy::type_complexity)]
     fn next_lookup_batch(
         &mut self,
-    ) -> Result<Option<(Vec<Option<Vec<Datum>>>, Vec<Option<TableHandle>>, bool)>, ExecError> {
+    ) -> Result<
+        Option<(
+            Vec<Option<Vec<Datum>>>,
+            Vec<Option<TableHandle>>,
+            bool,
+            Option<crate::kv_table::FinishedLookupChunk>,
+        )>,
+        ExecError,
+    > {
         loop {
             // Top the pipeline up while the phase-A stream still yields
             // windows and the width allows more drains in flight.
@@ -1837,7 +1868,23 @@ impl IndexRangeSourceExec {
                             )
                         })
                         .unzip();
-                    return Ok(Some((lookup_rows, lookup_handles, predicates_applied)));
+                    return Ok(Some((
+                        lookup_rows,
+                        lookup_handles,
+                        predicates_applied,
+                        None,
+                    )));
+                }
+                LookupFetch::RemoteChunk(chunk) => {
+                    if chunk.wire_rows > 0 {
+                        crate::storage::note_storage_op(|ops| ops.cop_rows += chunk.wire_rows);
+                    }
+                    return Ok(Some((
+                        Vec::new(),
+                        Vec::new(),
+                        chunk.predicates_applied,
+                        Some(chunk),
+                    )));
                 }
                 LookupFetch::LocalFallback => {
                     // The local batch answers one slot per requested handle,
@@ -1859,7 +1906,7 @@ impl IndexRangeSourceExec {
                                 "table bytes failed to decode: {error:?}"
                             ))
                         })?;
-                    return Ok(Some((lookup_rows, lookup_handles, false)));
+                    return Ok(Some((lookup_rows, lookup_handles, false, None)));
                 }
             }
         }
@@ -1901,15 +1948,17 @@ impl IndexRangeSourceExec {
         // the fetch itself, and the answer is byte-identical. Larger batches
         // keep the dedicated thread so lookups still overlap planning.
         if handles.len() <= INDEX_LOOKUP_INLINE_HANDLES {
-            let outcome = crate::kv_table::KvTable::finish_rows_by_handles(
-                &handles,
-                staged,
-            )
-            .map_err(|error| format!("{error:?}"))
-            .map(|answer| match answer {
-                Some((rows, applied, wire_rows)) => LookupFetch::Remote(rows, applied, wire_rows),
-                None => LookupFetch::LocalFallback,
-            });
+            let outcome = crate::kv_table::KvTable::finish_lookup_by_handles(&handles, staged)
+                .map_err(|error| format!("{error:?}"))
+                .map(|answer| match answer {
+                    Some(crate::kv_table::FinishedLookup::Rows(rows, applied, wire_rows)) => {
+                        LookupFetch::Remote(rows, applied, wire_rows)
+                    }
+                    Some(crate::kv_table::FinishedLookup::Chunk(chunk)) => {
+                        LookupFetch::RemoteChunk(chunk)
+                    }
+                    None => LookupFetch::LocalFallback,
+                });
             return Ok(LookupBatchJob {
                 handles,
                 receiver: None,
@@ -1918,14 +1967,17 @@ impl IndexRangeSourceExec {
         }
         let worker_handles = handles.clone();
         let worker = move || {
-            crate::kv_table::KvTable::finish_rows_by_handles(&worker_handles, staged)
-            .map_err(|error| format!("{error:?}"))
-            .map(|answer| match answer {
-                Some((rows, applied, wire_rows)) => {
-                    LookupFetch::Remote(rows, applied, wire_rows)
-                }
-                None => LookupFetch::LocalFallback,
-            })
+            crate::kv_table::KvTable::finish_lookup_by_handles(&worker_handles, staged)
+                .map_err(|error| format!("{error:?}"))
+                .map(|answer| match answer {
+                    Some(crate::kv_table::FinishedLookup::Rows(rows, applied, wire_rows)) => {
+                        LookupFetch::Remote(rows, applied, wire_rows)
+                    }
+                    Some(crate::kv_table::FinishedLookup::Chunk(chunk)) => {
+                        LookupFetch::RemoteChunk(chunk)
+                    }
+                    None => LookupFetch::LocalFallback,
+                })
         };
         // Reuse the executor's persistent pool instead of creating one native
         // thread for every lookup window. The task owns all non-Send storage
@@ -2432,6 +2484,62 @@ impl IndexRangeSourceExec {
     }
 }
 
+impl IndexRangeSourceExec {
+    /// Appends rows from a clean remote lookup chunk directly into `req`.
+    ///
+    /// The source chunk carries the table projection plus an optional
+    /// synthetic handle column. Build the same output mapping as
+    /// `insert_extra_handle`, then use `Chunk::append_row_by_col_idxs` so no
+    /// intermediate `Vec<Datum>` is allocated for each row.
+    fn append_lookup_chunk(&mut self, req: &mut Chunk, cap: usize) -> Result<(), ExecError> {
+        let Some(lookup) = self.lookup_chunk.as_ref() else {
+            return Ok(());
+        };
+        let output_width = self.meta.schema().columns.len();
+        let projection = if let Some(slot) = self.extra_handle_slot {
+            if lookup.appended_handle {
+                let mut source = 0;
+                (0..output_width)
+                    .map(|output| {
+                        if output == slot {
+                            lookup.handle_position
+                        } else {
+                            let value = source;
+                            source += 1;
+                            value
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                (0..output_width)
+                    .map(|output| {
+                        if output == slot {
+                            lookup.handle_position
+                        } else {
+                            output
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            }
+        } else {
+            (0..output_width).collect::<Vec<_>>()
+        };
+        while req.num_rows() < cap && self.lookup_chunk_row < lookup.chunk.num_rows() {
+            let row = lookup.chunk.get_row(self.lookup_chunk_row);
+            debug_assert!(lookup.predicates_applied);
+            req.append_row_by_col_idxs(row, Some(&projection));
+            self.lookup_chunk_row += 1;
+            self.scanned.set(self.scanned.get() + 1);
+            self.produced.set(self.produced.get() + 1);
+        }
+        if self.lookup_chunk_row == lookup.chunk.num_rows() {
+            self.lookup_chunk = None;
+            self.lookup_chunk_row = 0;
+        }
+        Ok(())
+    }
+}
+
 impl Executor for IndexRangeSourceExec {
     fn open(&mut self) -> Result<(), ExecError> {
         self.next_range = if self.descending {
@@ -2447,6 +2555,8 @@ impl Executor for IndexRangeSourceExec {
         self.batch_size = self.initial_batch_size;
         self.lookup_rows.clear();
         self.lookup_row_at = 0;
+        self.lookup_chunk = None;
+        self.lookup_chunk_row = 0;
         self.lookup_filter_complete = false;
         self.skipped_handles = 0;
         self.limit_scanned_keys = 0;
@@ -2680,6 +2790,15 @@ impl Executor for IndexRangeSourceExec {
             return Ok(());
         }
         while req.num_rows() < cap {
+            if self.lookup_chunk.is_some() {
+                self.append_lookup_chunk(req, cap)?;
+                if req.num_rows() >= cap {
+                    return Ok(());
+                }
+                if self.lookup_chunk.is_some() {
+                    continue;
+                }
+            }
             if self.limit.is_some_and(|limit| self.produced.get() >= limit) {
                 // Early stop: the cursor is dropped, so no entry past the cap
                 // is read and no row past it is looked up. In-flight lookup
@@ -2694,6 +2813,9 @@ impl Executor for IndexRangeSourceExec {
                 return Ok(());
             }
             let Some(row) = self.next_lookup_row()? else {
+                if self.lookup_chunk.is_some() {
+                    continue;
+                }
                 return Ok(());
             };
             // An index entry whose row is gone is not a row: the same
@@ -2721,6 +2843,8 @@ impl Executor for IndexRangeSourceExec {
         self.partial_done = false;
         self.remote_index = None;
         self.remote_covering_selected = false;
+        self.lookup_chunk = None;
+        self.lookup_chunk_row = 0;
         self.teardown_lookup_pipeline();
         Ok(())
     }
