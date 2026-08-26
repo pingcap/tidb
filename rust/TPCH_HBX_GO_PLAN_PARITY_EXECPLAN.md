@@ -1231,5 +1231,7 @@ The latest alternating 20-pair one-client medians are Go/Rust q1
 the strict one-concurrency no-regression gate remains open because Rust is
 slower in every median. This remains WIP: the checkout has no `go` executable,
 so Ready-profile `make lint` is unavailable; full 22-query TPC-H rerun and the
-complete hbx-web3 catalog were not repeated in this iteration. The pending
-source commit must include a literal `Go code:` line in its commit message.
+complete hbx-web3 catalog were not repeated in this iteration. The final
+rebase-after-upstream focused test log is recorded at
+`/private/tmp/hbx-1g-20260825/test-final-2edf465d51.log`. Both source and
+receipt commits include a literal `Go code:` line in their commit messages.
