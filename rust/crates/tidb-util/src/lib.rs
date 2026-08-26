@@ -113,3 +113,6 @@ pub mod versioninfo;
 pub mod vitess;
 pub mod watcher;
 pub mod zeropool;
+
+#[cfg(test)]
+mod tests_naming;
