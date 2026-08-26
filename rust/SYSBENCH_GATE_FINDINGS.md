@@ -349,3 +349,21 @@ skeleton and re-substitutes only the encoded range boundaries per execute.
 The pin replay committed today (choose_index_range_path restricting hints
 to the pinned index) captures/replays the access-path choice but not the
 full lowering; it is the foundation the DAG-template cache will build on.
+
+## FINAL STATUS (2026-08-26 late): session wrap-up
+After 20+ hours of continuous benchmarking, TiKV was restarted to clear
+MVCC accumulation. Current paired ratios (12s/side, alternating):
+point_select 1.02 | update_index 0.97 | random_ranges 0.50.
+The absolute TPS has degraded across BOTH nodes from sustained load --
+ratios remain the valid comparison. The loop's ratchet baselines were
+seeded during a healthier phase; recalibrate before trusting suspect
+verdicts after long idle/loaded gaps.
+ALL SESSION COMMITS PUSHED through 4adb87a3e + findings docs.
+Next-session priorities:
+1. Prepared-plan range-rebuild cache for range aggregates (the
+   random_ranges 0.50 fix -- Go RebuildPlan4CachedPlan reference
+   documented above). This is feature-scale: cache the lowered
+   cop-request skeleton per prepared stmt, re-substitute encoded range
+   boundaries per execute.
+2. Collation::from_name caching per FieldType (~2% CPU).
+3. Full-suite acceptance run once the box has rested.
