@@ -4167,12 +4167,20 @@ impl crate::table_access::TableAccess for TableScanExec {
         if filter.is_empty() {
             return false;
         }
-        self.pushed = filter.predicates().to_vec();
-        self.filter = Some(crate::predicate_pushdown::ScanFilterProbe::new(
-            filter.clone(),
-            ctx.clone(),
-            self.meta.new_chunk(),
-        ));
+        match self.filter.as_mut() {
+            Some(existing) => existing.conjoin(filter),
+            None => {
+                self.filter = Some(crate::predicate_pushdown::ScanFilterProbe::new(
+                    filter.clone(),
+                    ctx.clone(),
+                    self.meta.new_chunk(),
+                ));
+            }
+        }
+        self.pushed = self
+            .filter
+            .as_ref()
+            .map_or_else(Vec::new, |filter| filter.predicates().to_vec());
         true
     }
 

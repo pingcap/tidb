@@ -420,6 +420,22 @@ impl PushedScanFilter {
             .collect()
     }
 
+    /// Adds predicates from a later offer without dropping any conjunct this
+    /// source already accepted. Identical descriptions are retained once: the
+    /// paired expression has the same semantics, and evaluating it twice can
+    /// duplicate statement warnings.
+    fn conjoin(&mut self, additional: &Self) {
+        for (predicate, filter) in additional.predicates.iter().zip(&additional.filters) {
+            if self.predicates.contains(predicate) {
+                continue;
+            }
+            self.fast_paths
+                .push(FastScanFilter::from_predicate(predicate));
+            self.predicates.push(predicate.clone());
+            self.filters.push(filter.clone());
+        }
+    }
+
     /// Whether anything was pushed at all.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -823,6 +839,14 @@ impl ScanFilterProbe {
             ctx,
             scratch,
         }
+    }
+
+    /// Adds a later accepted offer to the existing conjunction.
+    ///
+    /// The additional filter is compiled against the source's current row
+    /// space, which is also the row space described by `scratch`.
+    pub(crate) fn conjoin(&mut self, additional: &PushedScanFilter) {
+        self.filter.conjoin(additional);
     }
 
     /// Whether `row` passes every pushed conjunct.
@@ -1272,6 +1296,93 @@ mod tests {
                 "{sql}"
             );
         }
+    }
+
+    /// Physical planning can offer a leaf's original predicate and then a
+    /// parent join's derived predicate in separate passes. Accepting the
+    /// second offer must add to, rather than replace, the first one: the
+    /// Selection owning the first predicate has already been removed.
+    #[test]
+    fn repeated_scan_filter_offers_are_conjoined() {
+        use tidb_expr::column::Column;
+        use tidb_expr::schema::Schema;
+
+        use crate::driver::{split_scan_predicates, FromScope, FromTable, ScopeResolver};
+        use crate::executor::{Executor, ExecutorMeta};
+        use crate::mem_table::MemTableSourceExec;
+        use crate::table_access::TableAccess;
+
+        let columns = vec![("a".to_owned(), long()), ("b".to_owned(), long())];
+        let scope = FromScope {
+            tables: vec![FromTable {
+                name: "t".to_owned(),
+                database: None,
+                physical: None,
+                columns: columns.clone(),
+                offset: 0,
+                func_deps: Default::default(),
+            }],
+            ..FromScope::default()
+        };
+        let ctx = crate::StmtContext::for_query();
+        let pushed = |predicate: &str| {
+            let sql = format!("SELECT a, b FROM t WHERE {predicate}");
+            let tidb_ast::Stmt::Query(query) = tidb_parser::parse(&sql).unwrap() else {
+                panic!("not a query")
+            };
+            let tidb_ast::QueryStmt::Select(select) = &*query else {
+                panic!("not a SELECT")
+            };
+            let (pushed, residual) = split_scan_predicates(
+                select.where_clause.as_ref().unwrap(),
+                &ScopeResolver { scope: &scope },
+                &ctx,
+            );
+            assert!(residual.is_none(), "the test predicate must push whole");
+            pushed
+        };
+
+        let schema = Schema::new(
+            columns
+                .iter()
+                .enumerate()
+                .map(|(offset, (_, field_type))| {
+                    let mut column = Column::new(offset as i64 + 1, field_type.clone());
+                    column.index = offset as i64;
+                    column
+                })
+                .collect(),
+        );
+        let mut source = MemTableSourceExec::new(
+            ExecutorMeta::new(schema, 0, 4, 4),
+            vec![
+                vec![Datum::Int(0), Datum::Int(10)],
+                vec![Datum::Int(2), Datum::Int(20)],
+                vec![Datum::Int(3), Datum::Int(40)],
+            ],
+        );
+        assert!(TableAccess::accept_scan_filter(
+            &mut source,
+            &pushed("a > 1"),
+            &ctx,
+        ));
+        assert!(TableAccess::accept_scan_filter(
+            &mut source,
+            &pushed("b < 30"),
+            &ctx,
+        ));
+
+        source.open().unwrap();
+        let mut output = source.new_chunk();
+        source.next(&mut output).unwrap();
+        assert_eq!(
+            (0..output.num_rows())
+                .map(|row| output.get_row(row).get_datum_row(source.ret_field_types()))
+                .collect::<Vec<_>>(),
+            vec![vec![Datum::Int(2), Datum::Int(20)]],
+            "the later offer must not erase the already-accepted `a > 1`",
+        );
+        source.close().unwrap();
     }
 
     #[test]

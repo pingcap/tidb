@@ -110,11 +110,16 @@ impl crate::table_access::TableAccess for MemTableSourceExec {
         if filter.is_empty() {
             return false;
         }
-        self.filter = Some(ScanFilterProbe::new(
-            filter.clone(),
-            ctx.clone(),
-            self.meta.new_chunk(),
-        ));
+        match self.filter.as_mut() {
+            Some(existing) => existing.conjoin(filter),
+            None => {
+                self.filter = Some(ScanFilterProbe::new(
+                    filter.clone(),
+                    ctx.clone(),
+                    self.meta.new_chunk(),
+                ));
+            }
+        }
         true
     }
 }

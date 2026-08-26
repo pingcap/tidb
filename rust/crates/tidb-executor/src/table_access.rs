@@ -115,8 +115,16 @@ pub trait TableAccess {
     /// Returning `true` is a promise the driver relies on to *remove* those
     /// conjuncts from the `Selection` above: the source must apply every one
     /// of them to every row it emits, staged rows included (see the module
-    /// doc). A source that cannot promise that leaves the default `false` and
-    /// the whole `WHERE` stays where it was.
+    /// doc). Offers are cumulative: physical planning may reach the same leaf
+    /// again with predicates derived by a parent join, and accepting that
+    /// later offer must preserve every conjunct accepted earlier. This mirrors
+    /// Go `pkg/planner/core/operator/logicalop/logical_join.go::DeriveOtherConditions`
+    /// deriving child conditions and
+    /// `pkg/planner/core/find_best_task.go::addPushedDownSelection4PhysicalTableScan`
+    /// retaining the table plan's accumulated filter condition. Replacing the
+    /// old filter would leave its already-removed `Selection` unevaluated.
+    /// A source that cannot promise this leaves the default `false` and the
+    /// whole `WHERE` stays where it was.
     ///
     /// See [`crate::predicate_pushdown`] for the split rule and the reasoning.
     fn accept_scan_filter(&mut self, filter: &PushedScanFilter, ctx: &StmtContext) -> bool {
