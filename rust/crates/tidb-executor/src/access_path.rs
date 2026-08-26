@@ -3441,6 +3441,7 @@ impl IndexJoinLookupExec {
             false,
             None,
             true,
+            true,
         ) {
             Ok(Some(stream)) => self.remote_handles = Some(stream),
             // Refused or failed: reopen the probes over the local cursor, the

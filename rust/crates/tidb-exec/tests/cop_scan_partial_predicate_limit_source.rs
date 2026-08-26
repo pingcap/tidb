@@ -539,7 +539,6 @@ fn a_descending_scan_marks_both_the_dag_and_dist_sql_request() {
         limit: Some(1),
         aggregate: None,
         keep_order: true,
-        allow_unordered_response: false,
         desc: true,
         // A globally ordered scan cannot accept unordered region responses.
         allow_unordered_response: false,
