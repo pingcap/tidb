@@ -1139,3 +1139,29 @@ one-client medians are Go/Rust q1 `9.563/9.951 ms` (`1.041x`), q2
 behavior and correctness are green; the strict one-concurrency performance
 no-regression gate remains open. This is WIP because no `go` executable is
 available for the Ready profile and `make lint`.
+
+Revision note, 2026-08-26 (Go response-chunk reuse): explicitly fetched the
+latest `hparser-integration` test-port tip `bc46e34b52`, rebased the response
+decoder change, and pushed it as `49b5c12955`. The Rust
+`SelectResponseChannel` now mirrors Go `selectResult.respChunkDecoder` by
+keeping a typed intermediate chunk per output channel, swapping it into an
+empty caller chunk at the `remaining > required*0.8` boundary, and carrying
+the emptied chunk into the next response. The regression
+`typed_chunk_large_result_reuses_the_empty_output_chunk` proves the Go
+`ReuseIntermChk` swap and allocation-retention contract. Focused distsql
+source tests pass (14/14 plus the new unit test), and the release binary was
+rebuilt with an explicit `TIDB_GIT_HASH=49b5c12955...` identity and restarted
+on `127.0.0.1:14019`. The deterministic 1G HBX comparison remains exact for
+all four normalized plans/results (100 rows each, hashes
+`0c488295...`/`45f8be11...`/`45f8be11...`/`bf2ce599...`); all 20 batch pairs
+remain 100 rows with sum `5050.000000000000000000`. Receipts:
+`/private/tmp/hbx-1g-20260825/compare-final-49b5-20260826.json` and
+`/private/tmp/hbx-1g-20260825/bench-final-49b5-20260826.json`. The latest
+20-pair medians are Go/Rust q1 `17.304/18.805 ms` (`1.087x`), q2
+`14.055/14.805 ms` (`1.053x`), flex `13.224/15.231 ms` (`1.152x`), swap
+`19.287/25.651 ms` (`1.330x`), and batch `11.387/17.792 ms` (`1.562x`).
+Correctness and Go-reference behavior are green; the strict one-concurrency
+performance gate remains open. The source commit message contains the
+required `Go code:` references; this remains WIP because no Go executable is
+available for `make lint`/Ready and the complete hbx-web3 query catalog was
+not rerun.
