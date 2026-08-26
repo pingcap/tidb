@@ -1264,6 +1264,21 @@ fn lookup_batch_target(
     )
 }
 
+/// The next pipeline window after handles have already been extracted.
+///
+/// Go charges every dispatched and in-flight lookup task to
+/// `indexWorker.scannedKeys`; it does not reconstruct that count from rows
+/// emitted by completed table tasks. A missing table row can make those two
+/// values differ, so the exact extraction counter is the only sound input.
+fn lookup_pipeline_batch_target(
+    batch_size: usize,
+    limit: Option<u64>,
+    scanned_keys: u64,
+    table_filter: bool,
+) -> usize {
+    lookup_batch_target(batch_size, limit, scanned_keys, 0, table_filter)
+}
+
 impl IndexRangeSourceExec {
     /// Builds a source over `ranges` with an explicit row-decode context.
     #[must_use]
@@ -1672,6 +1687,7 @@ impl IndexRangeSourceExec {
             // Top the pipeline up while the phase-A stream still yields
             // windows and the width allows more drains in flight.
             let mut stream_exhausted = false;
+            let mut limit_exhausted = false;
             loop {
                 let inflight = self
                     .lookup_pipeline
@@ -1690,11 +1706,12 @@ impl IndexRangeSourceExec {
                     .map_or(0, |pipeline| pipeline.unemitted_handles);
                 // Two budgets bound one window:
                 // * a PUSHED limit cuts at the cumulative remainder it always
-                //   did (charged with in-flight handles, as go charges
-                //   `scannedKeys`). Zero here means the limit is satisfied --
-                //   stop collecting for good; any in-flight windows sit
-                //   inside the same cumulative cut and are emitted, and the
-                //   emission-side early stop then ends the read.
+                //   did (charged with extracted handles, as Go charges
+                //   `indexWorker.scannedKeys`). Zero here means the limit is
+                //   satisfied -- stop collecting for good; any in-flight
+                //   windows sit inside the same cumulative cut and are
+                //   emitted, and the emission-side early stop then ends the
+                //   read.
                 // * UNEXPOSED parent demand pauses PREFETCHING when something
                 //   is already in flight -- a Selection between this scan and
                 //   the parent's Limit means the parent exposes demand one
@@ -1703,14 +1720,14 @@ impl IndexRangeSourceExec {
                 //   end of stream is the phase-A walk itself running out. An
                 //   empty pipeline therefore always draws one window.
                 let table_filter = self.filter.is_some() && !self.index_filter;
-                let target = lookup_batch_target(
+                let target = lookup_pipeline_batch_target(
                     self.batch_size,
                     self.limit,
-                    self.produced.get(),
-                    unemitted,
+                    self.limit_scanned_keys,
                     table_filter,
                 );
                 if target == 0 {
+                    limit_exhausted = true;
                     break;
                 }
                 let demand_allowance = usize::try_from(
@@ -1767,7 +1784,10 @@ impl IndexRangeSourceExec {
                 .as_mut()
                 .and_then(|pipeline| pipeline.inflight.pop_front());
             let Some(job) = job else {
-                debug_assert!(stream_exhausted, "an empty pipeline only ends an                  exhausted stream");
+                debug_assert!(
+                    stream_exhausted || limit_exhausted,
+                    "an empty pipeline only ends an exhausted or limit-cut stream"
+                );
                 return Ok(None);
             };
             if let Some(pipeline) = self.lookup_pipeline.as_mut() {
@@ -4607,6 +4627,11 @@ mod tests {
         assert_eq!(lookup_batch_target(1024, Some(100), 6, 0, true), 1024);
         assert_eq!(lookup_batch_target(1024, Some(100), 0, 0, false), 100);
         assert_eq!(lookup_batch_target(1024, Some(100), 6, 0, false), 94);
+        assert_eq!(
+            lookup_pipeline_batch_target(1024, Some(100), 100, false),
+            0,
+            "Go stops extracting once scannedKeys reaches offset + count"
+        );
     }
 
     /// A full scan under a `LIMIT` stops at the cap: the rows past it are
@@ -4749,6 +4774,41 @@ mod tests {
             1,
             "one five-handle lookup task"
         );
+    }
+
+    /// Go charges a pushed IndexLookUp LIMIT to index keys as soon as
+    /// `extractTaskHandles` extracts them. If an orphaned index entry has no
+    /// table row, the lookup returns fewer than the written LIMIT; once the
+    /// extracted-key budget is exhausted, the pipeline must finish cleanly
+    /// instead of treating the empty queue as an unexpected stream end.
+    #[test]
+    fn a_missing_lookup_row_does_not_reopen_the_scanned_key_limit() {
+        let ctx = crate::StmtContext::for_query();
+        let (mut catalog, entries, gets) = table_of(ROWS, true);
+        let Some(crate::driver::TableEntry::Kv(table)) =
+            catalog.get_mut_in(crate::driver::DEFAULT_DATABASE, "t")
+        else {
+            panic!("test table must be byte-backed");
+        };
+        table
+            .delete_record_for_test(&TableHandle::Int(1))
+            .unwrap();
+        entries.store(0, Ordering::Relaxed);
+        gets.store(0, Ordering::Relaxed);
+
+        let rows = run_select_on(
+            "SELECT * FROM t USE INDEX (ib) WHERE b > 0 ORDER BY b LIMIT 5",
+            &catalog,
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(first_column(&rows), vec![2, 3, 4, 5]);
+        assert_eq!(
+            entries.load(Ordering::Relaxed),
+            5,
+            "the orphaned first index key still spends one scannedKeys slot"
+        );
+        assert_eq!(gets.load(Ordering::Relaxed), 1, "one five-handle task");
     }
 
     /// Go `indexWorker.extractTaskHandles` grows successive lookup tasks from
