@@ -2662,9 +2662,29 @@ impl Executor for IndexRangeSourceExec {
                     // Go buildIndexLookUpReader plants the sunk PushedLimit
                     // as a Limit offset+count executor under the index DAG,
                     // so TiKV stops after the capped prefix instead of
-                    // streaming entries the local Limit discards.
-                    self.limit
-                        .map(|count| self.lookup_offset.saturating_add(count)),
+                    // streaming entries the local Limit discards. Go SINKS a
+                    // limit into the reader at all only when the reader's
+                    // table plan carries no Selection (`sinkIntoIndexLookUp`,
+                    // pkg/planner/core/task.go: "We can sink Limit into
+                    // IndexLookUpReader only if tablePlan contains no
+                    // Selection"). With a table-side residual the limit lives
+                    // ABOVE that Selection -- filter first, count after -- and
+                    // the index worker streams until the table side holds
+                    // offset+count qualifying rows. Capping THIS entry stream
+                    // while the residual still runs above it truncates raw
+                    // entries before the residual ran and drops rows the
+                    // statement still owed, so the cap rides only when every
+                    // pushed predicate already evaluated on the entries
+                    // (index-side lowering, like `index_filter` or a pushed
+                    // TopN) or there is no probe waiting above.
+                    if self.filter.is_some()
+                        && !(self.index_filter || self.top_n.is_some())
+                    {
+                        None
+                    } else {
+                        self.limit
+                            .map(|count| self.lookup_offset.saturating_add(count))
+                    },
                     order_free,
                     // A double-read index worker consumes only handles from
                     // the index side when no predicate or TopN is evaluated

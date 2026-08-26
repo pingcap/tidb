@@ -1684,3 +1684,93 @@ fn nested_unread_left_join_chain_eliminates_to_fixpoint() {
         "a parenthesized ON equality must still prove the join key"
     );
 }
+
+/// Go sinks a root LIMIT into an `IndexLookUpReader` only when the reader's
+/// table plan carries no Selection (`pkg/planner/core/task.go ::
+/// sinkIntoIndexLookUp`: "We can sink Limit into IndexLookUpReader only if
+/// tablePlan contains no Selection"). With a residual Selection the limit
+/// counts POST-filter rows: go's own plan for this shape plants the cop-side
+/// `Limit` ABOVE that Selection (`Selection_32 -> Limit_33`, both under the
+/// IndexLookUp's table task), so the read continues until `offset + count`
+/// qualifying rows exist. Truncating RAW index entries at offset+count and
+/// running the residual afterwards answers 25 where the statement owed 50 --
+/// exactly what an index join's build side returned here before the fix.
+#[test]
+fn a_join_leaf_limit_counts_after_its_residual_selection() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE jr_core (pk BIGINT PRIMARY KEY CLUSTERED, mi VARCHAR(8), m BIGINT, \
+         country VARCHAR(4), KEY mi_m (mi, m))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE jr_ts (pk BIGINT PRIMARY KEY CLUSTERED, w BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    // Sixty entries share one (mi, m) prefix; every second entry carries the
+    // residual's value, so a capped RAW entry read answers half the truth.
+    let core_values = (1..=60)
+        .map(|pk| {
+            format!(
+                "({}, 'x', 7, '{}')",
+                pk,
+                if pk % 2 == 0 { "CN" } else { "US" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    run_insert_on(
+        &format!(
+            "INSERT INTO jr_core (pk, mi, m, country) VALUES {core_values}"
+        ),
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let ts_values = (1..=60)
+        .map(|pk| format!("({}, {})", pk, pk * 10))
+        .collect::<Vec<_>>()
+        .join(", ");
+    run_insert_on(
+        &format!("INSERT INTO jr_ts VALUES {ts_values}"),
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    // The projection reads an INNER column, so the left join plans as Go's
+    // IndexHashJoin whose BUILD side is the filtered, limited jr_core leaf.
+    let pks_of = |sql: &str| -> Vec<i64> {
+        let mut values = run_select_on(sql, &catalog, &ctx)
+            .unwrap()
+            .into_iter()
+            .map(|row| match &row[0] {
+                Datum::Int(pk) => *pk,
+                other => panic!("pk is an integer, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        values.sort_unstable();
+        values
+    };
+
+    let base = "SELECT c.pk, t.w FROM jr_core c FORCE INDEX (mi_m) \
+                LEFT JOIN jr_ts t ON (c.pk = t.pk) \
+                WHERE c.m = 7 AND c.mi = 'x' AND c.country = 'CN' LIMIT";
+    // The residual keeps 30 of the 60 entries. A limit past the surviving
+    // cardinality must return ALL of them -- a raw-entry cap would stop at
+    // half.
+    assert_eq!(pks_of(&format!("{base} 50")), (1..=30).map(|i| i * 2).collect::<Vec<_>>());
+    // And a limit inside it must keep the FIRST 20 qualifying rows in index
+    // order, not the qualifying subset of the first 20 entries.
+    assert_eq!(pks_of(&format!("{base} 20")), (1..=20).map(|i| i * 2).collect::<Vec<_>>());
+
+    // The control: without the residual predicate there is nothing above the
+    // capped read, so the same join answers the plain index-order prefix.
+    let plain = "SELECT c.pk FROM jr_core c FORCE INDEX (mi_m) \
+                 LEFT JOIN jr_ts t ON (c.pk = t.pk) \
+                 WHERE c.m = 7 AND c.mi = 'x' LIMIT 20";
+    assert_eq!(pks_of(plain), (1..=20).collect::<Vec<_>>());
+}
