@@ -122,9 +122,8 @@ func (s *mockGCSSuite) TestImportParquetLogicalTimeNanos() {
 	// not exact microseconds verify that import converts the nanosecond units.
 	s.tk.MustQuery("SELECT id, time_nanos, timestamp_nanos FROM test.t ORDER BY id").Check(
 		testkit.RowsWithSep("|",
-			"1|00:00:00.000000|1969-12-31 23:59:59.999999",
-			"2|12:34:56.789123|1970-01-01 00:00:00.000000",
-			"3|23:59:59.999999|2020-10-29 09:27:52.356956",
+			"1|23:59:59.999999|1969-12-31 23:59:59.999999",
+			"2|24:00:00.000000|2020-10-29 09:27:52.356956",
 		),
 	)
 }

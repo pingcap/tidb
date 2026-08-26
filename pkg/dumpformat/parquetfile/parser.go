@@ -137,6 +137,18 @@ func newColumnIterator[T parquet.ColumnTypes, R innerReader[T]](
 	}
 }
 
+func newColumnIteratorForLogicalType[T parquet.ColumnTypes, R innerReader[T]](
+	batchSize int,
+	colType *parquetColumnType,
+	valueSetter setter[T],
+) *columnIterator[T, R] {
+	switch colType.logicalType.(type) {
+	case schema.NullLogicalType, schema.UnknownLogicalType:
+		valueSetter = unsupportedParquetValueSetter[T](colType.logicalType)
+	}
+	return newColumnIterator[T, R](batchSize, valueSetter)
+}
+
 // SetReader sets the column reader for the iterator.
 // Remember to call Close() before setting a new reader.
 func (it *columnIterator[T, R]) SetReader(colReader file.ColumnChunkReader) {
@@ -199,21 +211,29 @@ func (it *columnIterator[T, R]) Next(d *types.Datum) error {
 func createColumnIterator(tp parquet.Type, colType *parquetColumnType, loc *time.Location, batchSize int) iterator {
 	switch tp {
 	case parquet.Types.Boolean:
-		return newColumnIterator[bool, *file.BooleanColumnChunkReader](batchSize, getBoolDataSetter)
+		return newColumnIteratorForLogicalType[bool, *file.BooleanColumnChunkReader](
+			batchSize, colType, getBoolDataSetter)
 	case parquet.Types.Int32:
-		return newColumnIterator[int32, *file.Int32ColumnChunkReader](batchSize, getInt32Setter(colType, loc))
+		return newColumnIteratorForLogicalType[int32, *file.Int32ColumnChunkReader](
+			batchSize, colType, getInt32Setter(colType, loc))
 	case parquet.Types.Int64:
-		return newColumnIterator[int64, *file.Int64ColumnChunkReader](batchSize, getInt64Setter(colType, loc))
+		return newColumnIteratorForLogicalType[int64, *file.Int64ColumnChunkReader](
+			batchSize, colType, getInt64Setter(colType, loc))
 	case parquet.Types.Float:
-		return newColumnIterator[float32, *file.Float32ColumnChunkReader](batchSize, setFloat32Data)
+		return newColumnIteratorForLogicalType[float32, *file.Float32ColumnChunkReader](
+			batchSize, colType, setFloat32Data)
 	case parquet.Types.Double:
-		return newColumnIterator[float64, *file.Float64ColumnChunkReader](batchSize, setFloat64Data)
+		return newColumnIteratorForLogicalType[float64, *file.Float64ColumnChunkReader](
+			batchSize, colType, setFloat64Data)
 	case parquet.Types.Int96:
-		return newColumnIterator[parquet.Int96, *file.Int96ColumnChunkReader](batchSize, getInt96Setter(colType, loc))
+		return newColumnIteratorForLogicalType[parquet.Int96, *file.Int96ColumnChunkReader](
+			batchSize, colType, getInt96Setter(colType, loc))
 	case parquet.Types.ByteArray:
-		return newColumnIterator[parquet.ByteArray, *file.ByteArrayColumnChunkReader](batchSize, getByteArraySetter(colType))
+		return newColumnIteratorForLogicalType[parquet.ByteArray, *file.ByteArrayColumnChunkReader](
+			batchSize, colType, getByteArraySetter(colType))
 	case parquet.Types.FixedLenByteArray:
-		return newColumnIterator[parquet.FixedLenByteArray, *file.FixedLenByteArrayColumnChunkReader](batchSize, getFixedLenByteArraySetter(colType))
+		return newColumnIteratorForLogicalType[parquet.FixedLenByteArray, *file.FixedLenByteArrayColumnChunkReader](
+			batchSize, colType, getFixedLenByteArraySetter(colType))
 	default:
 		return nil
 	}
@@ -671,6 +691,9 @@ func NewParser(
 
 	fileMeta := reader.MetaData()
 	fileSchema := fileMeta.Schema
+	if fileSchema.HasRepeatedFields() {
+		return nil, errors.New("nested or repeated Parquet fields are unsupported")
+	}
 	colTypes := make([]parquetColumnType, fileSchema.NumColumns())
 	colNames := make([]string, 0, fileSchema.NumColumns())
 	effectiveLoc := meta.Loc
@@ -704,7 +727,8 @@ func NewParser(
 				}
 			}
 		case parquet.Types.Int64:
-			if _, ok := logicalType.(schema.TimestampLogicalType); ok {
+			if timestamp, ok := logicalType.(schema.TimestampLogicalType); ok &&
+				timestamp.TimeUnit() != schema.TimeUnitNanos {
 				colTypes[i].sparkRebaseMicros, err = sparkRebaseMicrosFromMetadata(
 					fileMeta, sparkDatetimeRebaseCutoff, sparkLegacyDateTimeMetadataKey, effectiveLoc)
 				if err != nil {
@@ -717,11 +741,6 @@ func NewParser(
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-		}
-		if timestamp, ok := logicalType.(schema.TimestampLogicalType); ok &&
-			timestamp.TimeUnit() == schema.TimeUnitNanos &&
-			colTypes[i].sparkRebaseMicros.timeZoneID != "" {
-			return nil, errors.New("Spark legacy rebase is unsupported for TIMESTAMP(NANOS)")
 		}
 	}
 

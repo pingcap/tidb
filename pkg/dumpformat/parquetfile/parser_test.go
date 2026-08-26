@@ -191,29 +191,35 @@ func TestParquetParser(t *testing.T) {
 }
 
 func TestParquetParserLogicalTimeNanos(t *testing.T) {
-	const nanos = int64(123456)
+	const nanosPerDay = int64(24 * time.Hour)
+	values := []int64{
+		nanosPerDay - 501,
+		nanosPerDay - 500,
+	}
 	pc := []testutils.ParquetColumn{{
 		Name:    "time_nanos",
 		Type:    parquet.Types.Int64,
 		Logical: schema.NewTimeLogicalType(false, schema.TimeUnitNanos),
 		Gen: func(_ int) (any, []int16) {
-			return []int64{nanos}, []int16{1}
+			return values, []int16{1, 1}
 		},
 	}}
 
 	dir := t.TempDir()
 	name := "logical-time-nanos.parquet"
-	require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 1))
+	require.NoError(t, testutils.WriteParquetFile(dir, name, pc, len(values)))
 
 	reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
 	logicalType, ok := reader.colTypes[0].logicalType.(schema.TimeLogicalType)
 	require.True(t, ok)
 	require.Equal(t, schema.TimeUnitNanos, logicalType.TimeUnit())
-	require.NoError(t, reader.ReadRow())
 
-	got, err := reader.lastRow.Row[0].GetMysqlTime().GoTime(time.UTC)
-	require.NoError(t, err)
-	require.Equal(t, time.Date(1970, 1, 1, 0, 0, 0, int(nanos/1000)*1000, time.UTC), got)
+	for _, expected := range []string{"23:59:59.999999", "24:00:00.000000"} {
+		require.NoError(t, reader.ReadRow())
+		datum := reader.lastRow.Row[0]
+		require.Equal(t, types.KindMysqlDuration, datum.Kind())
+		require.Equal(t, expected, datum.GetMysqlDuration().String())
+	}
 }
 
 func TestParquetParserMultipleRowGroup(t *testing.T) {
@@ -420,20 +426,36 @@ func TestParquetVariousTypes(t *testing.T) {
 	})
 
 	t.Run("logical_null_non_null_value_is_rejected", func(t *testing.T) {
-		pc := []testutils.ParquetColumn{{
-			Name:    "malformed_null",
-			Type:    parquet.Types.Int32,
-			Logical: schema.NullLogicalType{},
-			Gen: func(_ int) (any, []int16) {
-				return []int32{1}, []int16{1}
-			},
-		}}
-		dir := t.TempDir()
-		name := "logical-null-malformed.parquet"
-		require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 1))
+		testCases := []struct {
+			name   string
+			typeID parquet.Type
+			values any
+		}{
+			{name: "boolean", typeID: parquet.Types.Boolean, values: []bool{true}},
+			{name: "int32", typeID: parquet.Types.Int32, values: []int32{1}},
+			{name: "int64", typeID: parquet.Types.Int64, values: []int64{1}},
+			{name: "float", typeID: parquet.Types.Float, values: []float32{1}},
+			{name: "double", typeID: parquet.Types.Double, values: []float64{1}},
+			{name: "int96", typeID: parquet.Types.Int96, values: []parquet.Int96{{}}},
+		}
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				pc := []testutils.ParquetColumn{{
+					Name:    "malformed_null",
+					Type:    tc.typeID,
+					Logical: schema.NullLogicalType{},
+					Gen: func(_ int) (any, []int16) {
+						return tc.values, []int16{1}
+					},
+				}}
+				dir := t.TempDir()
+				name := "logical-null-malformed.parquet"
+				require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 1))
 
-		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
-		require.ErrorContains(t, reader.ReadRow(), "unsupported parquet logical type Null")
+				reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
+				require.ErrorContains(t, reader.ReadRow(), "unsupported parquet logical type Null")
+			})
+		}
 	})
 
 	t.Run("rejects_inapplicable_logical_type", func(t *testing.T) {
@@ -445,18 +467,60 @@ func TestParquetVariousTypes(t *testing.T) {
 		require.ErrorContains(t, err, "not applicable")
 	})
 
-	t.Run("rejects_spark_rebase_for_logical_timestamp_nanos", func(t *testing.T) {
+	t.Run("rejects_nested_repeated_schema", func(t *testing.T) {
+		element, err := schema.NewPrimitiveNodeConverted(
+			"element", parquet.Repetitions.Required, parquet.Types.Int32,
+			schema.ConvertedTypes.None, -1, 0, 0, -1)
+		require.NoError(t, err)
+		listGroup, err := schema.NewGroupNode(
+			"list", parquet.Repetitions.Repeated, schema.FieldList{element}, -1)
+		require.NoError(t, err)
+		list, err := schema.NewGroupNodeLogical(
+			"values", parquet.Repetitions.Optional, schema.FieldList{listGroup},
+			schema.NewListLogicalType(), -1)
+		require.NoError(t, err)
+		root, err := schema.NewGroupNode(
+			"schema", parquet.Repetitions.Required, schema.FieldList{list}, -1)
+		require.NoError(t, err)
+
+		dir := t.TempDir()
+		name := "logical-list.parquet"
+		out, err := os.Create(filepath.Join(dir, name))
+		require.NoError(t, err)
+		require.NoError(t, file.NewParquetWriter(out, root).Close())
+
+		store, err := objstore.NewLocalStorage(dir)
+		require.NoError(t, err)
+		defer store.Close()
+		_, err = NewParser(context.Background(), store, func(ctx context.Context) (io.ReadSeekCloser, error) {
+			return store.Open(ctx, name, nil)
+		}, name, 0, FileMeta{})
+		require.ErrorContains(t, err, "nested or repeated Parquet fields are unsupported")
+	})
+
+	t.Run("logical_timestamp_nanos_ignores_spark_rebase_marker", func(t *testing.T) {
 		meta := metadata.NewKeyValueMetadata()
-		require.NoError(t, meta.Append("org.apache.spark.version", "2.4.8"))
-		require.NoError(t, meta.Append("org.apache.spark.timeZone", "UTC"))
-		pc := []testutils.ParquetColumn{{
-			Name:    "timestamp_nanos",
-			Type:    parquet.Types.Int64,
-			Logical: schema.NewTimestampLogicalType(false, schema.TimeUnitNanos),
-			Gen: func(_ int) (any, []int16) {
-				return []int64{1}, []int16{1}
+		require.NoError(t, meta.Append(sparkLegacyDateTimeMetadataKey, ""))
+		require.NoError(t, meta.Append(sparkTimeZoneMetadataKey, "UTC"))
+		const nanos = int64(1603963672356956000)
+		pc := []testutils.ParquetColumn{
+			{
+				Name:    "timestamp_nanos_adjusted",
+				Type:    parquet.Types.Int64,
+				Logical: schema.NewTimestampLogicalType(true, schema.TimeUnitNanos),
+				Gen: func(_ int) (any, []int16) {
+					return []int64{nanos}, []int16{1}
+				},
 			},
-		}}
+			{
+				Name:    "timestamp_nanos_local",
+				Type:    parquet.Types.Int64,
+				Logical: schema.NewTimestampLogicalType(false, schema.TimeUnitNanos),
+				Gen: func(_ int) (any, []int16) {
+					return []int64{nanos}, []int16{1}
+				},
+			},
+		}
 		dir := t.TempDir()
 		name := "logical-timestamp-nanos-spark-rebase.parquet"
 		require.NoError(t, testutils.WriteParquetFile(
@@ -468,10 +532,26 @@ func TestParquetVariousTypes(t *testing.T) {
 		store, err := objstore.NewLocalStorage(dir)
 		require.NoError(t, err)
 		defer store.Close()
-		_, err = NewParser(context.Background(), store, func(ctx context.Context) (io.ReadSeekCloser, error) {
+		asiaShanghai, err := time.LoadLocation("Asia/Shanghai")
+		require.NoError(t, err)
+		reader, err := NewParser(context.Background(), store, func(ctx context.Context) (io.ReadSeekCloser, error) {
 			return store.Open(ctx, name, nil)
-		}, name, 0, FileMeta{Loc: time.UTC})
-		require.ErrorContains(t, err, "Spark legacy rebase is unsupported for TIMESTAMP(NANOS)")
+		}, name, 0, FileMeta{Loc: asiaShanghai})
+		require.NoError(t, err)
+		for _, colType := range reader.colTypes {
+			require.Empty(t, colType.sparkRebaseMicros.timeZoneID)
+		}
+		require.NoError(t, reader.ReadRow())
+
+		expected := []time.Time{
+			time.Date(2020, 10, 29, 17, 27, 52, 356956000, time.UTC),
+			time.Date(2020, 10, 29, 9, 27, 52, 356956000, time.UTC),
+		}
+		for i, expectedTime := range expected {
+			got, err := reader.lastRow.Row[i].GetMysqlTime().GoTime(time.UTC)
+			require.NoError(t, err)
+			require.Equal(t, expectedTime, got)
+		}
 	})
 
 	t.Run("logical_uint32_preserves_high_bits", func(t *testing.T) {
@@ -603,15 +683,15 @@ func TestParquetVariousTypes(t *testing.T) {
 		// Remember to also update the expected values below if the implementation changes.
 		expectedStringValues := []string{
 			"2020-10-29",
-			"1970-01-01 17:26:15.123Z",
-			"1970-01-01 17:26:15.123456Z",
+			"17:26:15.123000",
+			"17:26:15.123456",
 			"2020-10-29 09:27:52.356Z",
 			"2020-10-29 09:27:52.356956Z",
 			"2020-10-29 09:27:52.356956Z",
 			"-123456.78", "0.0456", "1234567890123456.78", "-0.0001",
 		}
 		expectedTypes := []byte{
-			mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeTimestamp,
+			mysql.TypeDate, mysql.TypeDuration, mysql.TypeDuration,
 			mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
 			mysql.TypeNewDecimal, mysql.TypeNewDecimal, mysql.TypeNewDecimal, mysql.TypeNewDecimal,
 		}
@@ -625,7 +705,7 @@ func TestParquetVariousTypes(t *testing.T) {
 				continue
 			}
 			tp := types.NewFieldType(expectedTypes[i])
-			if expectedTypes[i] == mysql.TypeTimestamp {
+			if expectedTypes[i] == mysql.TypeTimestamp || expectedTypes[i] == mysql.TypeDuration {
 				tp.SetDecimal(6)
 			}
 			expectedDatum, err := table.CastColumnValueWithStrictMode(types.NewStringDatum(s), tp)
@@ -743,14 +823,10 @@ func TestParquetVariousTypes(t *testing.T) {
 		require.NoError(t, reader.ReadRow())
 		row := reader.lastRow.Row
 		require.Len(t, row, 2)
-		expected := []time.Time{
-			time.Date(1970, 1, 1, 0, 2, 3, 456000000, time.UTC),
-			time.Date(1970, 1, 1, 0, 2, 3, 456789000, time.UTC),
-		}
+		expected := []string{"00:02:03.456000", "00:02:03.456789"}
 		for i, want := range expected {
-			got, err := row[i].GetMysqlTime().GoTime(time.UTC)
-			require.NoError(t, err)
-			require.Equal(t, want, got)
+			require.Equal(t, types.KindMysqlDuration, row[i].Kind())
+			require.Equal(t, want, row[i].GetMysqlDuration().String())
 		}
 	})
 

@@ -179,6 +179,52 @@ func setParquetDecimalFromInt64(
 	return dec.Round(dec, int(scale), types.ModeTruncate)
 }
 
+func timeOfDayAsDuration(t time.Time) time.Duration {
+	hour, minute, second := t.Clock()
+	return time.Duration(hour)*time.Hour +
+		time.Duration(minute)*time.Minute +
+		time.Duration(second)*time.Second +
+		time.Duration(t.Nanosecond())
+}
+
+func setTimeAsDuration(
+	val int64,
+	unit schema.TimeUnitType,
+	d *types.Datum,
+	loc *time.Location,
+	adjustedToUTC bool,
+) error {
+	var (
+		unitsPerDay int64
+		duration    time.Duration
+	)
+	switch unit {
+	case schema.TimeUnitMillis:
+		unitsPerDay = int64(24 * time.Hour / time.Millisecond)
+		duration = time.Duration(val) * time.Millisecond
+	case schema.TimeUnitMicros:
+		unitsPerDay = int64(24 * time.Hour / time.Microsecond)
+		duration = time.Duration(val) * time.Microsecond
+	case schema.TimeUnitNanos:
+		// Nanosecond values can round across midnight; a duration preserves the carry as 24:00:00.
+		unitsPerDay = int64(24 * time.Hour)
+		duration = time.Duration(val)
+	default:
+		return errors.Errorf("unsupported parquet TIME unit %d", unit)
+	}
+	if val < 0 || val >= unitsPerDay {
+		return errors.Errorf("parquet TIME value %d is outside the valid range for unit %d", val, unit)
+	}
+
+	if adjustedToUTC {
+		localTime := time.Unix(0, int64(duration)).In(loc)
+		duration = timeOfDayAsDuration(localTime)
+	}
+	duration = duration.Round(time.Microsecond)
+	d.SetMysqlDuration(types.Duration{Duration: duration, Fsp: types.MaxFsp})
+	return nil
+}
+
 //nolint:all_revive
 func getBoolDataSetter(val bool, d *types.Datum) error {
 	if val {
@@ -211,9 +257,8 @@ func getInt32Setter(colType *parquetColumnType, loc *time.Location) setter[int32
 		}
 	case schema.TimeLogicalType:
 		return func(val int32, d *types.Datum) error {
-			// Convert milliseconds to time.Time
-			t := time.UnixMilli(int64(val)).In(time.UTC)
-			return setTimestampDatum(t, d, loc, logicalType.IsAdjustedToUTC())
+			return setTimeAsDuration(
+				int64(val), logicalType.TimeUnit(), d, loc, logicalType.IsAdjustedToUTC())
 		}
 	case schema.IntLogicalType:
 		return func(val int32, d *types.Datum) error {
@@ -253,18 +298,13 @@ func getInt64Setter(colType *parquetColumnType, loc *time.Location) setter[int64
 		}
 	case schema.TimeLogicalType:
 		timeUnit := logicalType.TimeUnit()
-		var toTime func(int64) time.Time
 		switch timeUnit {
-		case schema.TimeUnitNanos:
-			toTime = func(val int64) time.Time { return time.Unix(0, val).In(time.UTC) }
-		case schema.TimeUnitMicros:
-			toTime = func(val int64) time.Time { return time.UnixMicro(val).In(time.UTC) }
+		case schema.TimeUnitMicros, schema.TimeUnitNanos:
 		default:
 			return unsupportedParquetValueSetter[int64](logicalType)
 		}
 		return func(val int64, d *types.Datum) error {
-			t := toTime(val)
-			return setTimestampDatum(t, d, loc, logicalType.IsAdjustedToUTC())
+			return setTimeAsDuration(val, timeUnit, d, loc, logicalType.IsAdjustedToUTC())
 		}
 	case schema.TimestampLogicalType:
 		timeUnit := logicalType.TimeUnit()
@@ -336,7 +376,7 @@ func rebaseTimestampValue(val int64, unit schema.TimeUnitType, lookup sparkRebas
 	case schema.TimeUnitMicros:
 		return lookup.rebase(val)
 	case schema.TimeUnitNanos:
-		return 0, errors.New("Spark legacy rebase is unsupported for TIMESTAMP(NANOS)")
+		return val, nil
 	default:
 		return 0, errors.Errorf("unsupported parquet timestamp time unit %d", unit)
 	}
