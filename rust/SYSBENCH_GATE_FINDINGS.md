@@ -328,3 +328,24 @@ pinned winner is already chosen; estimates cannot change the pick) and
 build ranges for the pinned candidate directly. Secondary: cache
 Collation/Charset::from_name resolution per FieldType (string parse
 per call, ~2% CPU).
+
+## RANDOM_RANGES FINAL ANALYSIS (2026-08-26): module-level CPU accounting
+Definitive inclusive-presence breakdown over 18981 conn-thread samples
+(select_random_ranges @2 threads, perf 399Hz):
+- KERNEL (syscalls/sched/page-faults): 37.7%
+- tidb_executor: 21.8% -- of which index_range RANGE BUILD 45%, semantic/fd
+  checks (funcdep translate, only_full_group_by, join_reorder) 13%
+- JEMALLOC: 18.6%
+- tidb_expr (eval/coerce/constant fold): 13.2%
+- tidb_datatype (Datum/collation parse): 13.0%
+- MEMMOVE/MEMCPY: 8.5%; tidb_stats estimation: 5.8%; AST walk: 5.3%
+CONCLUSION: rust replans the full query per EXECUTE (bind clone -> pushdown
+-> fd checks -> enumerate+cost -> range build) while Go's prepared plan
+cache replays the recorded physical plan and ONLY rebuilds ranges
+(RebuildPlan4CachedPlan -> rebuildRange,
+pkg/planner/core/plan_cache_rebuild.go:30-76). The gap is architectural:
+closing it needs a prepared-plan cache that stores the lowered cop-request
+skeleton and re-substitutes only the encoded range boundaries per execute.
+The pin replay committed today (choose_index_range_path restricting hints
+to the pinned index) captures/replays the access-path choice but not the
+full lowering; it is the foundation the DAG-template cache will build on.
