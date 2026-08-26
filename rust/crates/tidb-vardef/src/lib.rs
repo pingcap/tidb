@@ -78,6 +78,8 @@ pub mod defaults;
 /// leaf, and because it is pure policy over those same constants.
 pub mod global_sysvar_initial;
 pub mod modes;
-pub mod tidb_vars;
+#[cfg(test)]
+mod tests_sysvar_port;
 #[cfg(test)]
 mod tests_vardef_port;
+pub mod tidb_vars;
