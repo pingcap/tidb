@@ -1063,3 +1063,26 @@ endpoints. Receipts:
 Go-behavior and correctness gates are green; the strict one-concurrency
 performance no-regression gate remains open. This remains WIP: the machine
 has no `go` executable, so `make lint`/Ready cannot run.
+
+Revision note, 2026-08-26 (latest `hparser-integration` Go chunk/handle fix):
+the remote branch was fetched and confirmed at
+`d009380a282e56e7ea45d75e44bcb39e5e1cf81b`. The Rust
+index cursor now follows Go code in
+`pkg/distsql/select_result.go:572-620` and
+`pkg/executor/distsql.go:1671-1778`: an unbounded double read keeps Go's
+`readFromChunk` response-chunk boundary, and integer/common handles are
+decoded from their declared wire positions, including a trailing handle under
+TopN/index-side predicates. The focused `remote_cursor_tests` suite passes
+13/13, and the `access_path` suite passes 30/30. On the deterministic 1G
+`hbx_web3_1g` fixture, q1/q2/flex/swap normalized plans, row counts, and
+SHA-256 result hashes all match; the 100-row batch INSERT returns 100 rows
+with sum `5050.000000000000000000` on both endpoints. Receipts:
+`/private/tmp/hbx-1g-20260825/compare-d009-live-20260826.json` and
+`/private/tmp/hbx-1g-20260825/bench-d009-live-20260826.json`. Alternating
+20-pair medians are Go/Rust q1 `9.288/9.882 ms` (`1.064x`), q2
+`8.085/9.428 ms` (`1.166x`), flex `8.705/9.742 ms` (`1.119x`), swap
+`14.170/16.740 ms` (`1.181x`), and batch `6.190/7.381 ms` (`1.192x`).
+Correctness and Go-reference gates are green; the strict one-concurrency
+performance no-regression gate remains open. This is WIP because the machine
+has no `go` executable, so the Ready profile and `make lint` are not locally
+available. The source commit message contains the required `Go code:` line.
