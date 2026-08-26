@@ -689,15 +689,15 @@ type subqueryOffsetExtractor struct {
 	offsets map[int]struct{}
 }
 
-func (e *subqueryOffsetExtractor) Enter(in ast.Node) (node ast.Node, skipChildren bool) {
+func (e *subqueryOffsetExtractor) Enter(in ast.Node) (skipChildren bool) {
 	if subq, ok := in.(*ast.SubqueryExpr); ok {
 		collectSubqueryOffsets(subq.Query, e.offsets)
 	}
-	return in, false
+	return false
 }
 
-func (*subqueryOffsetExtractor) Leave(in ast.Node) (node ast.Node, ok bool) {
-	return in, true
+func (*subqueryOffsetExtractor) Leave(ast.Node) bool {
+	return true
 }
 
 func collectSubqueryOffsets(node ast.ResultSetNode, offsets map[int]struct{}) {
@@ -730,8 +730,8 @@ func collectSubqueryOffsetsFromSelectList(list *ast.SetOprSelectList, offsets ma
 	}
 }
 
-// Enter implements ast.Visitor interface.
-func (e *tableNameExtractor) Enter(in ast.Node) (node ast.Node, skipChildren bool) {
+// Enter implements ast.InPlaceVisitor interface.
+func (e *tableNameExtractor) Enter(in ast.Node) (skipChildren bool) {
 	if name, ok := in.(*ast.TableName); ok {
 		t := &tableName{
 			schema: name.Schema.L,
@@ -744,12 +744,12 @@ func (e *tableNameExtractor) Enter(in ast.Node) (node ast.Node, skipChildren boo
 			e.tableNames[t.String()] = t
 		}
 	}
-	return in, false
+	return false
 }
 
-// Leave implements ast.Visitor interface.
-func (*tableNameExtractor) Leave(in ast.Node) (node ast.Node, ok bool) {
-	return in, true
+// Leave implements ast.InPlaceVisitor interface.
+func (*tableNameExtractor) Leave(ast.Node) bool {
+	return true
 }
 
 // extractSelectTableNames returns the table names in the SELECT statement.
@@ -762,7 +762,7 @@ func extractSelectTableNames(defaultSchema string, node ast.StmtNode) []*tableNa
 		defaultSchema: defaultSchema,
 		tableNames:    make(map[string]*tableName),
 	}
-	selStmt.Accept(extractor)
+	ast.Walk(selStmt, extractor)
 
 	names := make([]*tableName, 0, len(extractor.tableNames))
 	for _, name := range extractor.tableNames {
@@ -784,7 +784,7 @@ func extractNoDecorrelateQBs(node ast.StmtNode) []ast.CIStr {
 	selStmt.Accept(assigner)
 
 	extractor := &subqueryOffsetExtractor{offsets: make(map[int]struct{})}
-	selStmt.Accept(extractor)
+	ast.Walk(selStmt, extractor)
 
 	if len(extractor.offsets) == 0 {
 		return nil
@@ -814,32 +814,32 @@ type predicateColumnExtractor struct {
 	allowAnyTable bool
 }
 
-func (e *predicateColumnExtractor) Enter(in ast.Node) (node ast.Node, skipChildren bool) {
+func (e *predicateColumnExtractor) Enter(in ast.Node) (skipChildren bool) {
 	switch n := in.(type) {
 	case *ast.SubqueryExpr:
 		// Only consider predicates in the current SELECT, skip inner queries to avoid mixing scopes.
-		return in, true
+		return true
 	case *ast.ColumnNameExpr:
 		if n.Name == nil {
-			return in, false
+			return false
 		}
 		if !e.allowAnyTable {
 			if n.Name.Table.L == "" {
-				return in, false
+				return false
 			}
 			if !matchesColumnTable(e.table, n.Name) {
-				return in, false
+				return false
 			}
 		} else if n.Name.Schema.L != "" && n.Name.Schema.L != e.table.schema {
-			return in, false
+			return false
 		}
 		e.columns[n.Name.Name.L] = struct{}{}
 	}
-	return in, false
+	return false
 }
 
-func (*predicateColumnExtractor) Leave(in ast.Node) (node ast.Node, ok bool) {
-	return in, true
+func (*predicateColumnExtractor) Leave(ast.Node) bool {
+	return true
 }
 
 func matchesColumnTable(target *tableName, name *ast.ColumnName) bool {
@@ -906,7 +906,7 @@ func collectJoinPredicates(node ast.ResultSetNode, extractor *predicateColumnExt
 	switch n := node.(type) {
 	case *ast.Join:
 		if n.On != nil && n.On.Expr != nil {
-			n.On.Expr.Accept(extractor)
+			ast.Walk(n.On.Expr, extractor)
 		}
 		collectJoinPredicates(n.Left, extractor)
 		collectJoinPredicates(n.Right, extractor)
@@ -937,7 +937,7 @@ func extractSelectIndexHints(sctx sessionctx.Context, defaultSchema string, node
 			allowAnyTable: allowAnyTable,
 		}
 		if selStmt.Where != nil {
-			selStmt.Where.Accept(extractor)
+			ast.Walk(selStmt.Where, extractor)
 		}
 		if selStmt.From != nil && selStmt.From.TableRefs != nil {
 			collectJoinPredicates(selStmt.From.TableRefs, extractor)

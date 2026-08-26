@@ -429,7 +429,7 @@ func CheckBindingFromHistoryComplete(node ast.Node, hintStr string) (complete bo
 		complete: true,
 		tables:   make(map[ast.CIStr]struct{}, 2),
 	}
-	node.Accept(&checker)
+	ast.Walk(node, &checker)
 	return checker.complete, checker.reason
 }
 
@@ -440,13 +440,13 @@ type bindableChecker struct {
 	tables   map[ast.CIStr]struct{}
 }
 
-// Enter implements Visitor interface.
-func (checker *bindableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+// Enter implements InPlaceVisitor interface.
+func (checker *bindableChecker) Enter(in ast.Node) (skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
 		checker.complete = false
 		checker.reason = "auto-generated hint for queries with sub queries might not be complete, the plan might change even after creating this binding"
-		return in, true
+		return true
 	case *ast.TableName:
 		if _, ok := checker.tables[node.Schema]; !ok {
 			checker.tables[node.Name] = struct{}{}
@@ -454,13 +454,13 @@ func (checker *bindableChecker) Enter(in ast.Node) (out ast.Node, skipChildren b
 		if len(checker.tables) >= 3 {
 			checker.complete = false
 			checker.reason = "auto-generated hint for queries with more than 3 table join might not be complete, the plan might change even after creating this binding"
-			return in, true
+			return true
 		}
 	}
-	return in, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (checker *bindableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, checker.complete
+// Leave implements InPlaceVisitor interface.
+func (checker *bindableChecker) Leave(ast.Node) bool {
+	return checker.complete
 }
