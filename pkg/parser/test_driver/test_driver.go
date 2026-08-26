@@ -188,6 +188,14 @@ func (n *ValueExpr) Accept(v ast.Visitor) (ast.Node, bool) {
 	return v.Leave(n)
 }
 
+// AcceptInPlace implements direct in-place traversal for ast.Walk.
+func (n *ValueExpr) AcceptInPlace(v ast.InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	return v.Leave(n)
+}
+
 // ParamMarkerExpr expression holds a place for another expression.
 // Used in parsing prepare statement.
 type ParamMarkerExpr struct {
@@ -221,6 +229,14 @@ func (n *ParamMarkerExpr) Accept(v ast.Visitor) (ast.Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ParamMarkerExpr)
+	return v.Leave(n)
+}
+
+// AcceptInPlace implements direct in-place traversal for ast.Walk.
+func (n *ParamMarkerExpr) AcceptInPlace(v ast.InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
 	return v.Leave(n)
 }
 
