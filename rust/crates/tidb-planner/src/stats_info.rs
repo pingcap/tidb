@@ -136,6 +136,13 @@ impl StatsInfo {
     }
 
     /// Returns the source row count.
+    /// One column's NDV, exactly Go's `ColNDVs[id]` map read: `0.0` when the
+    /// profile carries no entry for the column.
+    #[must_use]
+    pub fn col_ndv(&self, id: i64) -> f64 {
+        self.col_ndvs.get(&id).copied().unwrap_or(0.0)
+    }
+
     #[must_use]
     pub const fn row_count(&self) -> f64 {
         self.row_count

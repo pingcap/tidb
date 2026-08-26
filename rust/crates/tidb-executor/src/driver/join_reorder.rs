@@ -981,6 +981,7 @@ fn collect<'a>(
             match leaf_of(right, catalog, current_db, ctx, scope, ids)
                 .or_else(|| modeled_view_leaf(right, catalog, current_db, ctx, ids))
                 .or_else(|| modeled_grouped_derived_leaf(right, catalog, current_db, ctx, ids))
+                .or_else(|| modeled_union_all_leaf(right, catalog, current_db, ctx, ids))
             {
                 Some(leaf) => leaves.push(leaf),
                 None => return false,
@@ -992,6 +993,7 @@ fn collect<'a>(
             match leaf_of(&join.left, catalog, current_db, ctx, scope, ids)
                 .or_else(|| modeled_view_leaf(&join.left, catalog, current_db, ctx, ids))
                 .or_else(|| modeled_grouped_derived_leaf(&join.left, catalog, current_db, ctx, ids))
+                .or_else(|| modeled_union_all_leaf(&join.left, catalog, current_db, ctx, ids))
             {
                 Some(leaf) => leaves.push(leaf),
                 None => return false,
@@ -1043,6 +1045,7 @@ fn push_node<'a>(
     match leaf_of(node, catalog, current_db, ctx, scope, ids)
         .or_else(|| modeled_view_leaf(node, catalog, current_db, ctx, ids))
         .or_else(|| modeled_grouped_derived_leaf(node, catalog, current_db, ctx, ids))
+        .or_else(|| modeled_union_all_leaf(node, catalog, current_db, ctx, ids))
     {
         Some(leaf) => {
             leaves.push(leaf);
@@ -2773,6 +2776,7 @@ fn push_row_node<'a>(
     match leaf_of(node, catalog, current_db, ctx, &scope, ids)
         .or_else(|| modeled_view_leaf(node, catalog, current_db, ctx, ids))
         .or_else(|| modeled_grouped_derived_leaf(node, catalog, current_db, ctx, ids))
+        .or_else(|| modeled_union_all_leaf(node, catalog, current_db, ctx, ids))
     {
         Some(leaf) => {
             leaves.push(leaf);
@@ -2815,6 +2819,165 @@ fn modeled_grouped_derived_leaf<'a>(
         ctx,
         ids,
     )
+}
+
+/// A derived `UNION ALL` modelled as Go's `LogicalUnionAll` and retained as
+/// one atomic member of the surrounding join group.
+///
+/// Go recurses `optimizeRecursive` into the set operation: each term becomes
+/// a child subtree, `buildProjection4Union`
+/// (`logical_plan_builder.go:2053`) puts a `LogicalProjection` above every
+/// child whose schema is a CLONE of the union's own columns, and
+/// `LogicalUnionAll.DeriveStats` (`logical_union_all.go:151`) sums the
+/// children's row counts and per-column NDVs under those shared ids. This
+/// builder reproduces exactly that tree: one [`LogicalNode::Projection`] per
+/// term onto one allocated output-id set, under one
+/// [`LogicalNode::UnionAll`].
+///
+/// Refusals are fail-closed -- a shape this cannot model leaves the leaf
+/// unmodelled, which is the pre-existing behaviour: a distinct `UNION`
+/// (Go adds a `LogicalAggregation` above the union), `EXCEPT`/`INTERSECT`,
+/// a term that is itself nested, grouped, or without a `FROM`, and any
+/// set-level `ORDER BY`/`LIMIT`/lock.
+fn modeled_union_all_leaf<'a>(
+    node: &'a JoinNode,
+    catalog: &'a Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    ids: &mut Ids,
+) -> Option<Leaf<'a>> {
+    let JoinNode::Derived {
+        subquery,
+        alias: Some(alias),
+        lateral: false,
+        column_names,
+    } = node
+    else {
+        return None;
+    };
+    if alias.is_empty() || !column_names.is_empty() {
+        return None;
+    }
+    let QueryStmt::SetOpr(set_opr) = &**subquery else {
+        return None;
+    };
+    if set_opr.with.is_some()
+        || !set_opr.order_by.is_empty()
+        || set_opr.limit.is_some()
+        || set_opr.lock.is_some()
+        || set_opr.terms.len() < 2
+    {
+        return None;
+    }
+    let mut terms = set_opr.terms.iter();
+    let first = terms.next()?;
+    if first.op.is_some() {
+        return None;
+    }
+    for term in terms {
+        if !matches!(term.op, Some(tidb_ast::SetOp::Union { all: true })) {
+            return None;
+        }
+    }
+    let tidb_ast::SetOprTermBody::Select(first_select) = &first.body else {
+        return None;
+    };
+    let names = crate::driver::from::derived_field_names(first_select)?;
+    // Go `buildProjection4Union`: the union's schema columns, allocated once
+    // and cloned onto every child projection.
+    let output_ids = ids.take(names.len());
+    let mut children = Vec::with_capacity(set_opr.terms.len());
+    for term in &set_opr.terms {
+        let tidb_ast::SetOprTermBody::Select(select) = &term.body else {
+            return None;
+        };
+        children.push(union_term_model(select, &names, &output_ids, catalog, current_db, ctx)?);
+    }
+    Some(Leaf {
+        node,
+        visible: alias.clone(),
+        columns: names,
+        rel: Rel::ModeledDerived {
+            model: LogicalNode::UnionAll {
+                children,
+                columns: output_ids.clone(),
+            },
+            ids: output_ids,
+        },
+    })
+}
+
+/// One term's child subtree for [`modeled_union_all_leaf`]: the term's own
+/// `FROM`-with-`WHERE` model under a projection onto the union's column ids.
+fn union_term_model(
+    select: &tidb_ast::SelectStmt,
+    names: &[String],
+    output_ids: &[ColumnId],
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Option<LogicalNode> {
+    // Only a plain projection term: grouping, DISTINCT and the row-changing
+    // clauses are logical nodes this model does not build for a term.
+    if select.with.is_some()
+        || select.distinct
+        || select.rollup
+        || !select.group_by.is_empty()
+        || select.having.is_some()
+        || !select.order_by.is_empty()
+        || select.limit.is_some()
+        || !select.windows.is_empty()
+        || select.lock.is_some()
+        || select.into_outfile.is_some()
+        || !select.values.is_empty()
+    {
+        return None;
+    }
+    let fields = select.fields.fields();
+    if fields.len() != names.len() {
+        return None;
+    }
+    let source = row_source(
+        select.from.as_ref()?,
+        select.where_clause.as_ref(),
+        catalog,
+        current_db,
+        ctx,
+    )?;
+    let child = source.plan.model(&source)?;
+    let mut exprs = Vec::with_capacity(fields.len());
+    for (slot, field) in fields.iter().enumerate() {
+        let SelectField::Expr { expr, .. } = field else {
+            return None;
+        };
+        if expr.has_aggregate_flag() {
+            return None;
+        }
+        let mut inputs = Vec::new();
+        for path in column_paths(expr) {
+            let (leaf, column) = source.resolve_output_path(&path)?;
+            inputs.push(*source.leaves.get(leaf)?.ids.get(column)?);
+        }
+        let direct_input = match strip(expr) {
+            Expr::Column(path) => {
+                let (leaf, column) = source.resolve_output_path(path)?;
+                Some(*source.leaves.get(leaf)?.ids.get(column)?)
+            }
+            _ => None,
+        };
+        exprs.push(ProjectionExpr {
+            output: output_ids[slot],
+            inputs,
+            direct_input,
+        });
+    }
+    // Go's per-child projection carries the union's cloned schema, so its
+    // outputs ARE the union ids; its row count is the term's own.
+    Some(LogicalNode::Projection {
+        child: Box::new(child),
+        injected: false,
+        exprs,
+    })
 }
 
 /// A persisted view is the same atomic logical relation as its derived SELECT
