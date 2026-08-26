@@ -79,3 +79,5 @@ pub mod defaults;
 pub mod global_sysvar_initial;
 pub mod modes;
 pub mod tidb_vars;
+#[cfg(test)]
+mod tests_vardef_port;
