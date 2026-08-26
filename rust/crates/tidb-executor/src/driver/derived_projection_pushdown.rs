@@ -33,7 +33,7 @@
 
 use tidb_ast::{
     Expr, IsTarget, Join, JoinNode, JoinType, QueryStmt, SelectField, SelectStatementKind,
-    SelectStmt, StatementPriority,
+    SelectStmt, SetOprTermBody, StatementPriority,
 };
 
 use super::catalog::{split_table_path, Catalog};
@@ -285,15 +285,18 @@ fn push_node_predicates(
             column_names,
             lateral: false,
         } => {
-            let QueryStmt::Select(select) = &**subquery else {
-                return false;
-            };
-            if !pass_through_select(select) {
-                // Direct grouped relations already receive their local
-                // filters from the physical RowSource walk. The early pass is
-                // needed only to cross an intervening projection before
-                // column pruning decides which projection outputs survive.
-                return false;
+            match &**subquery {
+                QueryStmt::Select(select) if !pass_through_select(select) => {
+                    // Direct grouped relations already receive their local
+                    // filters from the physical RowSource walk. The early pass
+                    // is needed only to cross an intervening projection before
+                    // column pruning decides which projection outputs survive.
+                    return false;
+                }
+                // A UNION ALL is Go's `LogicalUnionAll`, whose own
+                // `PredicatePushDown` offers the predicate to every term; the
+                // per-term admission lives in `push_filters_into_union_all`.
+                QueryStmt::Select(_) | QueryStmt::SetOpr(_) => {}
             }
             let predicate = rows.filters_for(alias).and_then(|filters| {
                 filters.iter().cloned().reduce(|left, right| {
@@ -341,7 +344,17 @@ fn recurse_node_predicates(
         JoinNode::Join(join) => recurse_join_predicates(join, catalog, current_db, ctx),
         JoinNode::Derived { subquery, .. } => match &mut **subquery {
             QueryStmt::Select(select) => push_select_predicates(select, catalog, current_db, ctx),
-            QueryStmt::SetOpr(_) => false,
+            // Each term is its own query block, so a predicate the term
+            // already carries keeps descending inside it.
+            QueryStmt::SetOpr(set_opr) => {
+                let mut changed = false;
+                for term in &mut set_opr.terms {
+                    if let SetOprTermBody::Select(select) = &mut term.body {
+                        changed |= push_select_predicates(select, catalog, current_db, ctx);
+                    }
+                }
+                changed
+            }
         },
     }
 }
@@ -394,6 +407,111 @@ pub(crate) fn fuse_global_count(
 /// Pushes filters attributed to a derived relation through its projection.
 /// Grouped SELECTs accept only selected bare group keys, so a predicate can
 /// never be moved from HAVING semantics into WHERE semantics by this helper.
+/// Go `LogicalUnionAll.PredicatePushDown` (`logical_union_all.go:45`): every
+/// predicate is offered to EVERY child, and the union itself returns `nil`
+/// upward -- a union never holds a predicate of its own.
+///
+/// Each child is the derived projection of one term, so the predicate is
+/// substituted through THAT term's select list, which is Go's
+/// `LogicalProjection.PredicatePushDown` -> `breakDownPredicates` ->
+/// `ColumnSubstituteImpl` (`logical_projection.go:93,647`). The outer
+/// predicate names the derived table's columns by the FIRST term's output
+/// names -- that is the union's schema -- so every term substitutes under
+/// those names against its OWN expressions, positionally.
+///
+/// Restricted to `UNION ALL`. A distinct `UNION` builds a `LogicalAggregation`
+/// over the union in Go, and a predicate crossing that aggregation is a
+/// different rule; `EXCEPT`/`INTERSECT` are different operators again. Any
+/// term this cannot substitute refuses the WHOLE rewrite, because Go's
+/// contract is that the union keeps nothing back: a predicate that reached
+/// only some terms would silently change the others' rows.
+fn push_filters_into_union_all(
+    set_opr: &tidb_ast::SetOprStmt,
+    alias: &str,
+    predicate: &Expr,
+) -> Option<QueryStmt> {
+    if set_opr.with.is_some()
+        || !set_opr.order_by.is_empty()
+        || set_opr.limit.is_some()
+        || set_opr.lock.is_some()
+        || set_opr.terms.len() < 2
+    {
+        return None;
+    }
+    // The first term carries no operator; every later one must be `UNION ALL`.
+    let mut terms = set_opr.terms.iter();
+    let first = terms.next()?;
+    if first.op.is_some() {
+        return None;
+    }
+    for term in terms {
+        if !matches!(term.op, Some(tidb_ast::SetOp::Union { all: true })) {
+            return None;
+        }
+    }
+    // The union's schema, and therefore the names the predicate uses.
+    let SetOprTermBody::Select(first_select) = &first.body else {
+        return None;
+    };
+    let schema_names = super::from::derived_field_names(first_select)?;
+
+    let mut rewritten = set_opr.clone();
+    for term in &mut rewritten.terms {
+        let SetOprTermBody::Select(select) = &mut term.body else {
+            return None;
+        };
+        let pushed = union_term_predicate(select, alias, &schema_names, predicate)?;
+        select.where_clause = and_unique(select.where_clause.take(), pushed);
+    }
+    Some(QueryStmt::SetOpr(Box::new(rewritten)))
+}
+
+/// One term's share of [`push_filters_into_union_all`]: the predicate with the
+/// union's column names replaced by this term's own defining expressions.
+fn union_term_predicate(
+    select: &SelectStmt,
+    alias: &str,
+    schema_names: &[String],
+    predicate: &Expr,
+) -> Option<Expr> {
+    // The same shapes `push_filters_into_derived` refuses for a lone derived
+    // SELECT: anything that changes which rows the term produces would be
+    // reordered by moving a filter below it.
+    if select.from.is_none()
+        || select.distinct
+        || select.rollup
+        || select.having.is_some()
+        || select.limit.is_some()
+        || !select.windows.is_empty()
+        || select.lock.is_some()
+        || select.into_outfile.is_some()
+        || !select.group_by.is_empty()
+        || !select.order_by.is_empty()
+    {
+        return None;
+    }
+    if !projection_only_select(select) {
+        return None;
+    }
+    // This term's own definitions, keyed by the UNION's column names: the
+    // union matches its terms positionally, so position `i` of this term
+    // defines the column the outer predicate knows as `schema_names[i]`.
+    let definitions = projection_definitions(select)?;
+    if definitions.len() != schema_names.len() {
+        // A term whose projection this cannot fully describe (an aggregate,
+        // a window, a parameter marker) is not substitutable.
+        return None;
+    }
+    let renamed = unique_definitions(
+        schema_names
+            .iter()
+            .cloned()
+            .zip(definitions.into_iter().map(|(_, expr)| expr))
+            .collect(),
+    )?;
+    substitute_outputs(predicate, alias, &renamed)
+}
+
 pub(crate) fn push_filters_into_derived(
     subquery: &QueryStmt,
     alias: &str,
@@ -402,6 +520,9 @@ pub(crate) fn push_filters_into_derived(
 ) -> Option<QueryStmt> {
     if !column_names.is_empty() {
         return None;
+    }
+    if let QueryStmt::SetOpr(set_opr) = subquery {
+        return push_filters_into_union_all(set_opr, alias, predicate);
     }
     let QueryStmt::Select(select) = subquery else {
         return None;

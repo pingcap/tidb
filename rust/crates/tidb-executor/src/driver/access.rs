@@ -1663,7 +1663,12 @@ pub(crate) fn commit_fast_path_source(
                 ..AccessPathCommit::default()
             });
         }
-        if crate::index_range::where_is_unsatisfiable(&columns, where_clause, zone) {
+        // Go's `Conds2TableDual` (`expression_util.go:24`) via `AddSelection`:
+        // a predicate that constant folding has reduced to a false or NULL
+        // literal plans as a zero-row Dual, not as a Selection over the scan.
+        if crate::index_range::where_is_constant_false(where_clause, zone)
+            || crate::index_range::where_is_unsatisfiable(&columns, where_clause, zone)
+        {
             logical_rows = Some(
                 crate::access_cost::realtime_row_count(statistics.map(AsRef::as_ref))
                     * stats_selectivity_with_default_string_match_selectivity(

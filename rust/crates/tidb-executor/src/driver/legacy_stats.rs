@@ -152,6 +152,18 @@ pub enum LogicalNode {
         /// Which side the join PRESERVES.
         kind: JoinKind,
     },
+    /// A `LogicalUnionAll`.
+    ///
+    /// Go's `buildProjection4Union` (`logical_plan_builder.go:2053`) puts a
+    /// `LogicalProjection` above every child whose schema is a CLONE of the
+    /// union's own — the same `UniqueID`s — so each child here must end in a
+    /// [`LogicalNode::Projection`] whose outputs are exactly `columns`.
+    UnionAll {
+        /// One child per `UNION ALL` term, already projected onto `columns`.
+        children: Vec<LogicalNode>,
+        /// The union's output schema columns.
+        columns: Vec<ColumnId>,
+    },
 }
 
 /// Go `base.JoinType`, narrowed to the three kinds a `FROM` clause spells.
@@ -487,6 +499,34 @@ fn derive_stats_with_groups(
                 injected: false,
             }
         }
+        LogicalNode::UnionAll { children, columns } => {
+            // `LogicalUnionAll.DeriveStats` (`logical_union_all.go:151-169`):
+            // the row count is the SUM of the children's, and each schema
+            // column's NDV is the sum of the children's NDV under the same
+            // UniqueID -- valid because every child projects onto the union's
+            // own column ids (`buildProjection4Union`). Go derives no
+            // GroupNDVs for a union.
+            let derived: Vec<DerivedNode> = children
+                .iter()
+                .map(|child| derive_stats_with_groups(child, ctx, &[]))
+                .collect();
+            let mut row_count = 0.0;
+            let mut ndvs = vec![0.0_f64; columns.len()];
+            for child in &derived {
+                row_count += child.stats.row_count();
+                for (slot, column) in columns.iter().enumerate() {
+                    ndvs[slot] += child.stats.col_ndv(*column);
+                }
+            }
+            DerivedNode {
+                stats: StatsInfo::new(
+                    row_count,
+                    columns.iter().copied().zip(ndvs),
+                ),
+                children: derived,
+                injected: false,
+            }
+        }
     }
 }
 
@@ -500,6 +540,7 @@ fn logical_columns(node: &LogicalNode) -> BTreeSet<ColumnId> {
             .into_iter()
             .chain(logical_columns(right))
             .collect(),
+        LogicalNode::UnionAll { columns, .. } => columns.iter().copied().collect(),
     }
 }
 

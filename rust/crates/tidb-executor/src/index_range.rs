@@ -2444,6 +2444,44 @@ fn detach_conjuncts_and_build_range_for_index_with_like_default_escape<'a>(
 /// Intersecting the equality's single point with each other comparison's point
 /// set and asking whether the result is empty is exactly Go's pairwise check:
 /// the intersection drops the equality's value iff some `c1 <op> c2` is false.
+/// Go `logicalop.IsConstFalse` (`expression_util.go:55`), the test
+/// `Conds2TableDual` applies to a single condition: the predicate is a
+/// CONSTANT, and it is either NULL or converts to boolean false.
+///
+/// Go reaches this through `AddSelection` (`logical_plans_misc.go:85`), which
+/// replaces the child with a zero-row `LogicalTableDual` rather than building
+/// a `LogicalSelection` that admits nothing. `a = 1 AND a = 2` never arrives
+/// here -- the ranger proves that contradiction and
+/// [`where_is_unsatisfiable`] reports it -- but a predicate that constant
+/// folding has already reduced to a literal does, most often after a
+/// projected constant was substituted into it (`0 > 0` from
+/// `registration_num > 0` over a `0 registration_num` union term).
+pub(crate) fn where_is_constant_false(
+    where_clause: &Expr,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> bool {
+    // Go reaches the dual through TWO steps, and both matter here.
+    // `shortCircuitLogicalConstants` (`rule_predicate_simplification.go:535`)
+    // walks the CONJUNCT list and, on the first false one, returns THAT
+    // predicate alone as the whole list; `Conds2TableDual` then sees a
+    // single const-false condition and answers a dual. So a false conjunct
+    // anywhere in an `AND` chain is enough -- which is the shape a
+    // substituted constant arrives in (`period = 1 AND ... AND 0`).
+    let mut conjuncts = Vec::new();
+    collect_conjuncts(where_clause, &mut conjuncts);
+    conjuncts.iter().any(|conjunct| {
+        let Some(value) = constant_value(conjunct, zone) else {
+            return false;
+        };
+        match value {
+            // Go: `con.Value.IsNull()` is const-false outright.
+            Datum::Null => true,
+            // Go: `con.Value.ToBool(...) == 0`; an error is NOT const-false.
+            other => matches!(tidb_expr::truthy_of(&other), Ok(Some(false))),
+        }
+    })
+}
+
 pub(crate) fn where_is_unsatisfiable(
     columns: &[(String, FieldType)],
     where_clause: &Expr,
