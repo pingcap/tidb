@@ -86,6 +86,9 @@ mod fsp_tests;
 #[cfg(test)]
 mod overflow_tests;
 
+#[cfg(test)]
+mod type_name_tests;
+
 pub use binary_json::{
     compare_binary_json, decode_escaped_unicode, quote_json_string, unquote_json_string,
     unquote_string, BinaryJSON, BinaryJSONError, BinaryJSONValue, Opaque, JSON_LITERAL_FALSE,
