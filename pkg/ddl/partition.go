@@ -760,7 +760,7 @@ func rewritePartitionQueryString(ctx sessionctx.Context, s *ast.PartitionOptions
 func getPartitionColSlices(sctx expression.BuildContext, tblInfo *model.TableInfo, s *ast.PartitionOptions) (partCols stringSlice, err error) {
 	if s.Expr != nil {
 		extractCols := newPartitionExprChecker(sctx, tblInfo)
-		s.Expr.Accept(extractCols)
+		ast.Walk(s.Expr, extractCols)
 		partColumns, err := extractCols.columns, extractCols.err
 		if err != nil {
 			return nil, err
@@ -1601,7 +1601,7 @@ func buildListPartitionDefinitions(ctx expression.BuildContext, defs []*ast.Part
 				}
 			} else {
 				for i := range vs {
-					vs[i].Accept(exprChecker)
+					ast.Walk(vs[i], exprChecker)
 					if exprChecker.err != nil {
 						return nil, exprChecker.err
 					}
@@ -1680,7 +1680,7 @@ func buildRangePartitionDefinitions(ctx expression.BuildContext, defs []*ast.Par
 		buf := new(bytes.Buffer)
 		// Range columns partitions support multi-column partitions.
 		for i, expr := range clause.Exprs {
-			expr.Accept(exprChecker)
+			ast.Walk(expr, exprChecker)
 			if exprChecker.err != nil {
 				return nil, exprChecker.err
 			}
@@ -1847,7 +1847,7 @@ func checkPartitionFuncValid(ctx expression.BuildContext, tblInfo *model.TableIn
 		return nil
 	}
 	exprChecker := newPartitionExprChecker(ctx, tblInfo, checkPartitionExprArgs, checkPartitionExprAllowed)
-	expr.Accept(exprChecker)
+	ast.Walk(expr, exprChecker)
 	if exprChecker.err != nil {
 		return errors.Trace(exprChecker.err)
 	}
@@ -4796,21 +4796,21 @@ type columnNameExtractor struct {
 	err              error
 }
 
-func (*columnNameExtractor) Enter(node ast.Node) (ast.Node, bool) {
-	return node, false
+func (*columnNameExtractor) Enter(ast.Node) bool {
+	return false
 }
 
-func (cne *columnNameExtractor) Leave(node ast.Node) (ast.Node, bool) {
+func (cne *columnNameExtractor) Leave(node ast.Node) bool {
 	if c, ok := node.(*ast.ColumnNameExpr); ok {
 		info := findColumnByName(c.Name.Name.L, cne.tblInfo)
 		if info != nil {
 			cne.extractedColumns = append(cne.extractedColumns, info)
-			return node, true
+			return true
 		}
 		cne.err = dbterror.ErrBadField.GenWithStackByArgs(c.Name.Name.O, "expression")
-		return nil, false
+		return false
 	}
-	return node, true
+	return true
 }
 
 func findColumnByName(colName string, tblInfo *model.TableInfo) *model.ColumnInfo {
@@ -4835,7 +4835,7 @@ func extractPartitionColumns(partExpr string, tblInfo *model.TableInfo) ([]*mode
 		tblInfo:          tblInfo,
 		extractedColumns: make([]*model.ColumnInfo, 0),
 	}
-	stmts[0].Accept(extractor)
+	ast.Walk(stmts[0], extractor)
 	if extractor.err != nil {
 		return nil, errors.Trace(extractor.err)
 	}
@@ -4940,23 +4940,23 @@ func newPartitionExprChecker(ctx expression.BuildContext, tbInfo *model.TableInf
 	return p
 }
 
-func (p *partitionExprChecker) Enter(n ast.Node) (node ast.Node, skipChildren bool) {
+func (p *partitionExprChecker) Enter(n ast.Node) (skipChildren bool) {
 	expr, ok := n.(ast.ExprNode)
 	if !ok {
-		return n, true
+		return true
 	}
 	for _, processor := range p.processors {
 		if err := processor(p.ctx, p.tbInfo, expr); err != nil {
 			p.err = err
-			return n, true
+			return true
 		}
 	}
 
-	return n, false
+	return false
 }
 
-func (p *partitionExprChecker) Leave(n ast.Node) (node ast.Node, ok bool) {
-	return n, p.err == nil
+func (p *partitionExprChecker) Leave(ast.Node) (ok bool) {
+	return p.err == nil
 }
 
 func (p *partitionExprChecker) extractColumns(_ expression.BuildContext, _ *model.TableInfo, expr ast.ExprNode) error {

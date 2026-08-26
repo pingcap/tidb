@@ -146,7 +146,7 @@ func findDependedColumnNames(schemaName ast.CIStr, tableName ast.CIStr, colDef *
 // FindColumnNamesInExpr returns a slice of ast.ColumnName which is referred in expr.
 func FindColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
 	var c generatedColumnChecker
-	expr.Accept(&c)
+	ast.Walk(expr, &c)
 	return c.cols
 }
 
@@ -181,15 +181,15 @@ type generatedColumnChecker struct {
 	cols []*ast.ColumnName
 }
 
-func (*generatedColumnChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
-	return inNode, false
+func (*generatedColumnChecker) Enter(ast.Node) (skipChildren bool) {
+	return false
 }
 
-func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+func (c *generatedColumnChecker) Leave(inNode ast.Node) (ok bool) {
 	if x, ok := inNode.(*ast.ColumnName); ok {
 		c.cols = append(c.cols, x)
 	}
-	return inNode, true
+	return true
 }
 
 // checkModifyGeneratedColumn checks the modification between
@@ -296,24 +296,24 @@ type illegalFunctionChecker struct {
 	allowEmbedText        bool
 }
 
-func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+func (c *illegalFunctionChecker) Enter(inNode ast.Node) (skipChildren bool) {
 	switch node := inNode.(type) {
 	case *ast.FuncCallExpr:
 		// Grouping function is not allowed, issue #49909.
 		if node.FnName.L == ast.Grouping {
 			c.hasAggFunc = true
-			return inNode, true
+			return true
 		}
 		// Blocked functions & non-builtin functions is not allowed
 		_, isFunctionBlocked := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]
 		if (isFunctionBlocked && !(c.allowEmbedText && node.FnName.L == ast.EmbedText)) || !expression.IsFunctionSupported(node.FnName.L) {
 			c.hasIllegalFunc = true
-			return inNode, true
+			return true
 		}
 		err := expression.VerifyArgsWrapper(node.FnName.L, len(node.Args))
 		if err != nil {
 			c.otherErr = err
-			return inNode, true
+			return true
 		}
 		_, isFuncGA := variable.GAFunction4ExpressionIndex[node.FnName.L]
 		if !isFuncGA {
@@ -322,32 +322,32 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 	case *ast.SubqueryExpr, *ast.ValuesExpr, *ast.VariableExpr:
 		// Subquery & `values(x)` & variable is not allowed
 		c.hasIllegalFunc = true
-		return inNode, true
+		return true
 	case *ast.AggregateFuncExpr:
 		// Aggregate function is not allowed
 		c.hasAggFunc = true
-		return inNode, true
+		return true
 	case *ast.RowExpr:
 		c.hasRowVal = true
-		return inNode, true
+		return true
 	case *ast.WindowFuncExpr:
 		c.hasWindowFunc = true
-		return inNode, true
+		return true
 	case *ast.FuncCastExpr:
 		c.hasCastArrayFunc = c.hasCastArrayFunc || node.Tp.IsArray()
 		if c.disallowCastArrayFunc && node.Tp.IsArray() {
 			c.otherErr = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
-			return inNode, true
+			return true
 		}
 	case *ast.ParenthesesExpr:
-		return inNode, false
+		return false
 	}
 	c.disallowCastArrayFunc = true
-	return inNode, false
+	return false
 }
 
-func (*illegalFunctionChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
-	return inNode, true
+func (*illegalFunctionChecker) Leave(ast.Node) (ok bool) {
+	return true
 }
 
 const (
@@ -363,7 +363,7 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 	// which admits only the dedicated STORED EMBED_TEXT form. Functional
 	// indexes keep EMBED_TEXT blocked by the general illegal-function list.
 	c := illegalFunctionChecker{allowEmbedText: genType == typeColumn}
-	expr.Accept(&c)
+	ast.Walk(expr, &c)
 	if c.hasIllegalFunc {
 		switch genType {
 		case typeColumn:
