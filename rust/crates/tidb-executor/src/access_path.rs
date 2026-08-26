@@ -71,7 +71,8 @@ use crate::executor::{ExecError, Executor, ExecutorMeta};
 /// leaving uncapped scans on the Go-shaped pool. The answer is byte-identical.
 const INDEX_LOOKUP_INLINE_HANDLES: usize = 128;
 use crate::kv_table::{
-    IndexRange, IndexRangeCursor, KvTable, RemoteRowCursor, RowCursor, TableHandle,
+    IndexRange, IndexRangeCursor, KvTable, RemoteIndexHandleCursor, RemoteRowCursor, RowCursor,
+    TableHandle,
 };
 use crate::predicate_pushdown::{
     ScanColumnComparison, ScanComparison, ScanComparisonOp, ScanPredicate,
@@ -3268,6 +3269,14 @@ pub struct IndexJoinLookupExec {
     /// Go sends the task's complete range set through one table reader and
     /// leaves region concurrency to DistSQL.
     remote_cursor: Option<RemoteRowCursor>,
+    /// The open coprocessor stream over one outer batch's secondary-index
+    /// probe ranges, yielding table handles only. Go's index-join inner
+    /// reader feeds every probe range of one task to a SINGLE distsql request
+    /// (`buildRangesForIndexJoin` -> the builder's `IndexRangeScan`), whose
+    /// transport fans the range list out per region; walking one local
+    /// iterator per point range instead costs one single-range MVCC scan RPC
+    /// per probe.
+    remote_handles: Option<RemoteIndexHandleCursor>,
     /// Rows returned by one batched handle lookup. Keeping the batch across
     /// output chunks avoids one remote point read per row handle.
     lookup_rows: Vec<Option<Vec<Datum>>>,
@@ -3341,6 +3350,7 @@ impl IndexJoinLookupExec {
             cursor: None,
             record_cursor: None,
             remote_cursor: None,
+            remote_handles: None,
             lookup_rows: Vec::new(),
             lookup_row_at: 0,
             produced: Rc::new(Cell::new(0)),
@@ -3387,8 +3397,56 @@ impl IndexJoinLookupExec {
         self.cursor = None;
         self.record_cursor = None;
         self.remote_cursor = None;
+        self.remote_handles = None;
         self.lookup_rows.clear();
         self.lookup_row_at = 0;
+        self.open_remote_index_handles();
+    }
+
+    /// Streams one secondary-index batch's handles through the coprocessor,
+    /// Go's inner-reader shape: every probe range of the outer task travels
+    /// in ONE multi-range distsql request (`buildRangesForIndexJoin` builds
+    /// them all for `buildExecutorForIndexJoin`), and its transport opens the
+    /// request's regions concurrently. The local fallback below opens one
+    /// iterator per point range, and each iterator's snapshot read is a
+    /// single-range MVCC scan -- N probes cost N round trips there instead of
+    /// roughly the region count.
+    ///
+    /// A pure accelerator: any refusal or open failure restores the walk
+    /// position and leaves the byte-level cursor path exactly as it was.
+    fn open_remote_index_handles(&mut self) {
+        let LookupObject::Index(index_id) = self.object else {
+            return;
+        };
+        let first_probe = self.next_probe;
+        let mut ranges = Vec::with_capacity(self.probes.len().saturating_sub(first_probe));
+        while let Some((probe, bounds)) = self.next_probe_with_bounds() {
+            ranges.push(self.probe_index_range(&probe, &bounds));
+        }
+        if ranges.is_empty() {
+            return;
+        }
+        // Handles only, unordered: the join matches rows by key values, so no
+        // consumer observes the stream's order -- the same license the local
+        // multi-range walk takes. No predicates ride the index side; row
+        // filters apply after the batched row lookup either way.
+        match self.table.pushdown_index_handle_cursor(
+            index_id,
+            &ranges,
+            &[],
+            &[],
+            None,
+            self.decode_context.zone(),
+            &self.statement,
+            false,
+            None,
+            true,
+        ) {
+            Ok(Some(stream)) => self.remote_handles = Some(stream),
+            // Refused or failed: reopen the probes over the local cursor, the
+            // only reader this source offered before the stream existed.
+            _ => self.next_probe = first_probe,
+        }
     }
 
     /// Forks one common-handle prefix task and starts its remote table reader.
@@ -3429,6 +3487,7 @@ impl IndexJoinLookupExec {
             cursor: None,
             record_cursor: None,
             remote_cursor: None,
+            remote_handles: None,
             lookup_rows: Vec::new(),
             lookup_row_at: 0,
             produced: Rc::clone(&self.produced),
@@ -3903,8 +3962,89 @@ impl IndexJoinLookupExec {
         }
     }
 
+    /// Reads one handle window's rows.
+    ///
+    /// Preferred shape -- Go's index-join table fetch (`buildTableReader` over
+    /// the window's handles turned into record-key ranges): ONE multi-range
+    /// distsql request whose regions answer concurrently and whose rows TiKV
+    /// evaluates vectorized. Fallback shape -- [`KvTable::
+    /// get_rows_by_handles_projected_with_context`], one MVCC point command
+    /// per key over BatchCommands; correct, but each command resolves MVCC
+    /// alone and costs a round trip, which dominates large windows.
+    ///
+    /// Rows arrive in KEY order either way; the join above matches rows by
+    /// their column values, so the reordering is unobservable -- the same
+    /// license the unordered local index walk takes. A window read through
+    /// the range scan carries every row the handles name exactly once (the
+    /// stager dedupes), which is also what the batch-get answered.
+    fn window_rows(
+        &mut self,
+        handles: &[TableHandle],
+    ) -> Result<Vec<Option<Vec<Datum>>>, ExecError> {
+        if let Some(rows) = self.window_rows_by_ranges(handles)? {
+            return Ok(rows);
+        }
+        self.table
+            .get_rows_by_handles_projected_with_context(
+                handles,
+                self.decode_offsets.as_deref(),
+                &self.decode_context,
+            )
+            .map_err(|error| {
+                ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+            })
+    }
+
+    /// One window's rows through a record-range coprocessor scan, or `None`
+    /// where that shape is refused (dirty staging, partitions, non-integer
+    /// handles); the caller then reads the batch-get way, as before.
+    fn window_rows_by_ranges(
+        &mut self,
+        handles: &[TableHandle],
+    ) -> Result<Option<Vec<Option<Vec<Datum>>>>, ExecError> {
+        let keep = self
+            .decode_offsets
+            .clone()
+            .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>());
+        let predicates = scan_predicates_for_filters(&self.filters, &keep);
+        let Some(staged) = self
+            .table
+            .stage_rows_by_handles_filtered(
+                handles,
+                &keep,
+                &predicates,
+                self.decode_context.zone(),
+                &self.statement,
+            )
+            .map_err(|error| {
+                ExecError::unsupported(format!("index-join row scan failed: {error:?}"))
+            })?
+        else {
+            return Ok(None);
+        };
+        // The drain restores the caller's handle order; the join matches by
+        // value, so emitting the found rows in that order is fine, and a
+        // handle naming no stored row simply contributes nothing -- the same
+        // answer the batch-get gave as a `None` slot.
+        let Some((pairs, _, _)) = KvTable::finish_rows_by_handles(handles, staged)
+            .map_err(|error| {
+                ExecError::unsupported(format!("index-join row scan drained: {error:?}"))
+            })?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(pairs.into_iter().map(|(_, row)| Some(row)).collect()))
+    }
+
     fn next_batched_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
         if !matches!(self.object, LookupObject::CommonHandle) {
+            if let Some(remote) = self.remote_handles.as_mut() {
+                return remote.next_handle().map_err(|error| {
+                    ExecError::unsupported(format!(
+                        "remote index handle failed to decode: {error:?}"
+                    ))
+                });
+            }
             return self.next_handle();
         }
         loop {
@@ -3939,18 +4079,7 @@ impl IndexJoinLookupExec {
                     if handles.is_empty() {
                         return Ok(None);
                     }
-                    self.lookup_rows = self
-                        .table
-                        .get_rows_by_handles_projected_with_context(
-                            &handles,
-                            self.decode_offsets.as_deref(),
-                            &self.decode_context,
-                        )
-                        .map_err(|error| {
-                            ExecError::unsupported(format!(
-                                "table bytes failed to decode: {error:?}"
-                            ))
-                        })?;
+                    self.lookup_rows = self.window_rows(&handles)?;
                 }
                 let row = self.lookup_rows[self.lookup_row_at].take();
                 self.lookup_row_at += 1;
@@ -4110,6 +4239,7 @@ impl Executor for IndexJoinLookupExec {
         self.cursor = None;
         self.record_cursor = None;
         self.remote_cursor = None;
+        self.remote_handles = None;
         self.lookup_rows.clear();
         self.lookup_row_at = 0;
         self.produced.set(0);
@@ -4153,6 +4283,7 @@ impl Executor for IndexJoinLookupExec {
         self.cursor = None;
         self.record_cursor = None;
         self.remote_cursor = None;
+        self.remote_handles = None;
         self.lookup_rows.clear();
         self.lookup_row_at = 0;
         Ok(())
