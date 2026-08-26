@@ -917,8 +917,15 @@ func checkCertSAN(priv *globalPrivRecord, cert *x509.Certificate, sans map[util.
 		}
 		var givenMatchOne bool
 		for _, req := range requireOr {
-			if slices.Contains(given, req) {
+			if typ == util.URI && slices.ContainsFunc(given, func(san string) bool {
+				return matchURIWithWildcard(req, san)
+			}) {
 				givenMatchOne = true
+				break
+			}
+			if typ != util.URI && slices.Contains(given, req) {
+				givenMatchOne = true
+				break
 			}
 		}
 		if !givenMatchOne {
@@ -929,6 +936,31 @@ func checkCertSAN(priv *globalPrivRecord, cert *x509.Certificate, sans map[util.
 		}
 	}
 	return
+}
+
+// matchURIWithWildcard matches URI SANs while allowing a required segment that
+// is exactly "*" to match one non-empty segment.
+func matchURIWithWildcard(required, given string) bool {
+	if !strings.Contains(required, "*") {
+		return required == given
+	}
+	requiredSegments := strings.Split(required, "/")
+	givenSegments := strings.Split(given, "/")
+	if len(requiredSegments) != len(givenSegments) {
+		return false
+	}
+	for i, requiredSegment := range requiredSegments {
+		if requiredSegment == "*" {
+			if givenSegments[i] == "" {
+				return false
+			}
+			continue
+		}
+		if requiredSegment != givenSegments[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // DBIsVisible implements the Manager interface.
