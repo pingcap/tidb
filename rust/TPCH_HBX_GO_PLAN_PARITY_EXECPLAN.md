@@ -1212,22 +1212,22 @@ the `ToString` representation directly into the packet. Regression tests cover
 all affected protocol, DistSQL, server-writer, and decimal paths; the focused
 suites pass (16 MyDecimal, 7 protocol, 5 DistSQL recordset, 12 server writer,
 and 14 response-channel tests). The release binary was rebuilt from this
-source and restarted on `127.0.0.1:14019` (PID 94900).
+source and restarted on `127.0.0.1:14019` (PID 24410).
 
 On the deterministic 1 GiB `hbx_web3_1g` fixture (1,048,576 rows × 1,024-byte
 payload), the latest comparison receipt
-`/private/tmp/hbx-1g-20260825/compare-go-decimal-final5-5f4d-20260827.json`
+`/private/tmp/hbx-1g-20260825/compare-go-decimal-final6-c4ee-20260827.json`
 shows normalized plans and result hashes matching for q1, q2, flex, and swap;
 each query returns 100 rows with hashes
 `0c4882950464...`, `45f8be119987...`, `45f8be119987...`, and
 `bf2ce5996ce3...`, respectively. The 100-row batch INSERT receipt
-`/private/tmp/hbx-1g-20260825/bench-go-decimal-final5-5f4d-20260827.json`
+`/private/tmp/hbx-1g-20260825/bench-go-decimal-final6-c4ee-20260827.json`
 reports 100 rows and sum `5050.000000000000000000` for every Go/Rust pair.
 
 The latest alternating 20-pair one-client medians are Go/Rust q1
-`9.315/9.868 ms` (`1.059x`), q2 `7.707/9.166 ms` (`1.189x`), flex
-`7.806/9.598 ms` (`1.230x`), swap `12.791/16.736 ms` (`1.308x`), and batch
-`5.639/6.268 ms` (`1.111x`). Correctness and Go-behavior gates are green, but
+`9.334/9.809 ms` (`1.051x`), q2 `7.751/9.358 ms` (`1.207x`), flex
+`7.777/9.707 ms` (`1.248x`), swap `13.103/16.716 ms` (`1.276x`), and batch
+`5.894/6.417 ms` (`1.089x`). Correctness and Go-behavior gates are green, but
 the strict one-concurrency no-regression gate remains open because Rust is
 slower in every median. This remains WIP: the checkout has no `go` executable,
 so Ready-profile `make lint` is unavailable; full 22-query TPC-H rerun and the
