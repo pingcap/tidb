@@ -451,7 +451,15 @@ impl ScalarFunction {
             return;
         }
         let collator = tidb_datatype::get_collator(self.derived_collation().name());
-        let mut hash_set = std::collections::HashSet::new();
+        // Go's `pkg/expression/builtin_other.go::builtinInStringSig` keeps
+        // these immutable literal keys in a per-function map and probes it
+        // for every row. Reserve the complete
+        // literal-list capacity up front, matching the source map's intended
+        // read-mostly shape without changing its collision-resistant hasher or
+        // any membership/collation semantics.
+        let mut hash_set = std::collections::HashSet::with_capacity(
+            self.args.len().saturating_sub(1),
+        );
         let mut non_const_args = Vec::new();
         let mut has_null = false;
         for (index, argument) in self.args.iter().enumerate().skip(1) {
@@ -1331,8 +1339,19 @@ impl ScalarFunction {
             let mut found_match = false;
             if let Some(hash_set) = &self.in_string_hash_set {
                 if let Some(bytes) = crate::coerce::coerce_str_bytes(&value)? {
-                    let key = tidb_datatype::get_collator(collation.name()).key(&bytes);
-                    found_match = hash_set.contains(&key);
+                    let collator = tidb_datatype::get_collator(collation.name());
+                    // Go's `builtinInStringSig.evalInt` uses the raw input
+                    // for binary/derived collators (`collate.Key` returns
+                    // the same bytes). Borrow it directly so the hot row
+                    // path does not allocate a temporary Vec for each probe;
+                    // PAD SPACE collations still take the allocating key path
+                    // and therefore retain their trailing-space semantics.
+                    found_match = if collator.can_use_raw_mem_as_key() {
+                        hash_set.contains::<[u8]>(bytes.as_slice())
+                    } else {
+                        let key = collator.key(bytes.as_ref());
+                        hash_set.contains(&key)
+                    };
                 }
                 if found_match && self.in_string_non_const_args.is_empty() {
                     return Ok(Datum::Int(1));
@@ -2446,6 +2465,59 @@ mod tests {
             function.eval(&crate::NoColumns, chunk.get_row(0)).unwrap(),
             Datum::Int(1)
         );
+    }
+
+    #[test]
+    fn string_in_raw_key_probe_preserves_go_collation_semantics() {
+        use tidb_chunk::chunk::Chunk;
+        use tidb_datatype::Collation;
+
+        let string = |value: &str| {
+            Expression::Constant(Constant::new(Datum::new_string(value), text_ft()))
+        };
+        let chunk = Chunk::new_with_capacity(&[], 1);
+
+        // Go's `builtinInStringSig.buildHashMapForConstArgs` stores the
+        // `collator.Key` result and `evalInt` probes the same key. Binary and
+        // derived-binary collators return the source bytes directly, so the
+        // Rust probe may borrow them without changing membership behavior.
+        let binary_type = text_ft().with_collation(Collation::Binary);
+        let mut binary = ScalarFunction::new(
+            CiString::new("in"),
+            binary_type,
+            vec![string("a"), string("a")],
+        );
+        binary.prepare_in_string_hash_set();
+        assert_eq!(
+            binary.eval(&crate::NoColumns, chunk.get_row(0)).unwrap(),
+            Datum::Bytes(b"1".to_vec())
+        );
+
+        // PAD SPACE collations still allocate a trimmed sort key. This is
+        // the source behavior for `utf8mb4_bin`: `a` and `a ` compare equal.
+        let pad_type = text_ft().with_collation(Collation::Utf8Mb4Bin);
+        let mut pad = ScalarFunction::new(
+            CiString::new("in"),
+            pad_type,
+            vec![string("a "), string("a")],
+        );
+        pad.prepare_in_string_hash_set();
+        assert_eq!(
+            pad.eval(&crate::NoColumns, chunk.get_row(0)).unwrap(),
+            Datum::new_string("1")
+        );
+
+        // The Go map is built once for the immutable literal list. Reserving
+        // that list's complete size avoids growth/rehash when a query has a
+        // large `IN (...)` predicate (the hbx swap query has 1000 literals).
+        let mut many = Vec::with_capacity(1001);
+        many.push(string("probe"));
+        for value in 0..1000 {
+            many.push(string(&format!("maker-{value}")));
+        }
+        let mut large = ScalarFunction::new(CiString::new("in"), text_ft(), many);
+        large.prepare_in_string_hash_set();
+        assert!(large.in_string_hash_set.as_ref().unwrap().capacity() >= 1000);
     }
     /// The stock-level shape: `ge(ol_o_id, minus(d_next_o_id, 20))` over a
     /// joined chunk row -- the exact residual predicate class jTPCC's
