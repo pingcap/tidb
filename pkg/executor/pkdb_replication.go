@@ -664,6 +664,16 @@ func newLogReplWorkflowCleanedErr(workflowID uint64) error {
 	return fmt.Errorf("%w: workflow %d", errLogReplWorkflowCleaned, workflowID)
 }
 
+func newLogReplWorkflowCancelledErr(workflowID uint64, stateInfo string) error {
+	var info struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(stateInfo), &info); err == nil && info.Error != "" {
+		return errors.Errorf("workflow %d is cancelled: %s", workflowID, info.Error)
+	}
+	return errors.Errorf("workflow %d is cancelled", workflowID)
+}
+
 func pollWorkflowComplete(
 	ctx context.Context,
 	workflowLister logReplWorkflowLister,
@@ -707,7 +717,7 @@ func pollWorkflowComplete(
 			return nil
 		}
 		if wf.State == "CANCELLED" {
-			return backoff.Permanent(errors.Errorf("workflow %d is cancelled", workflowID))
+			return backoff.Permanent(newLogReplWorkflowCancelledErr(workflowID, wf.GetStateInfo()))
 		}
 		return fmt.Errorf("workflow %d not completed, state=%s", workflowID, wf.State)
 	}, backoff.WithContext(bo, ctx), func(err error, next time.Duration) {

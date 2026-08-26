@@ -167,15 +167,39 @@ func TestPollWorkflowCompleteReturnsWorkflowNotCancelableOnCancel(t *testing.T) 
 }
 
 func TestPollWorkflowCompleteReturnsErrorOnCancelledState(t *testing.T) {
-	lister := &mockWorkflowLister{
-		results: []mockWorkflowListResult{
-			{workflows: []*pdpb.WorkflowInfo{{Id: 42, State: "CANCELLED"}}},
-		},
-	}
+	t.Run("with error in state info", func(t *testing.T) {
+		lister := &mockWorkflowLister{
+			results: []mockWorkflowListResult{
+				{workflows: []*pdpb.WorkflowInfo{
+					{
+						Id:        42,
+						State:     "CANCELLED",
+						StateInfo: `{"type":"ACTIVATE_STANDBY","error":"reject FORCE_COMMIT: store max_log_replication_version 8 exceeds allowed version 7"}`,
+					},
+				}},
+			},
+		}
 
-	err := pollWorkflowComplete(context.Background(), lister, 42, &sqlkiller.SQLKiller{})
-	require.ErrorContains(t, err, "workflow 42 is cancelled")
-	require.Equal(t, 1, lister.calls)
+		err := pollWorkflowComplete(context.Background(), lister, 42, &sqlkiller.SQLKiller{})
+		require.EqualError(t, err, "workflow 42 is cancelled: reject FORCE_COMMIT: store max_log_replication_version 8 exceeds allowed version 7")
+		require.Equal(t, 1, lister.calls)
+	})
+
+	t.Run("without error in state info", func(t *testing.T) {
+		lister := &mockWorkflowLister{
+			results: []mockWorkflowListResult{
+				{workflows: []*pdpb.WorkflowInfo{{
+					Id:        42,
+					State:     "CANCELLED",
+					StateInfo: `{"type":"ACTIVATE_STANDBY"}`,
+				}}},
+			},
+		}
+
+		err := pollWorkflowComplete(context.Background(), lister, 42, &sqlkiller.SQLKiller{})
+		require.EqualError(t, err, "workflow 42 is cancelled")
+		require.Equal(t, 1, lister.calls)
+	})
 }
 
 func TestPollWorkflowCompleteReturnsCleanedWorkflowError(t *testing.T) {
