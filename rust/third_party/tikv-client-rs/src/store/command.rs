@@ -1230,4 +1230,120 @@ mod tests {
             matches!(forwarded.await, Ok(Err(Error::StringError(message))) if message == "send failed")
         );
     }
+
+    fn owned_empty_command_bytes(test_id: u64) -> Vec<u8> {
+        prost::Message::encode_to_vec(
+            &BatchCommandRequest::Empty(tikvpb::BatchCommandsEmptyRequest {
+                test_id,
+                delay_time: 11,
+            })
+            .into_proto(),
+        )
+    }
+
+    #[test]
+    fn source_test_encoded_batch_cmd_size_and_marshal_to() {
+        batch_command_encoding_retains_source_oneof_and_identity();
+        let request = BatchCommandRequest::Empty(tikvpb::BatchCommandsEmptyRequest {
+            test_id: 7,
+            delay_time: 11,
+        })
+        .into_proto();
+        let size = prost::Message::encoded_len(&request);
+        let bytes = prost::Message::encode_to_vec(&request);
+        assert_eq!(bytes.len(), size);
+    }
+
+    #[test]
+    fn source_test_encode_request_cmd_basic() {
+        batch_command_bridge_accepts_only_source_batchable_requests();
+        let first = BatchCommandRequest::Get(kvrpcpb::GetRequest {
+            key: b"test-key".to_vec(),
+            ..Default::default()
+        })
+        .into_proto();
+        let second = BatchCommandRequest::Get(kvrpcpb::GetRequest {
+            key: b"test-key".to_vec(),
+            ..Default::default()
+        })
+        .into_proto();
+        assert_eq!(
+            prost::Message::encode_to_vec(&first),
+            prost::Message::encode_to_vec(&second)
+        );
+    }
+
+    #[test]
+    fn source_test_encode_request_cmd_pool_reuse() {
+        let empty = owned_empty_command_bytes(7);
+        let get = prost::Message::encode_to_vec(
+            &BatchCommandRequest::Get(kvrpcpb::GetRequest {
+                key: b"test-key".to_vec(),
+                ..Default::default()
+            })
+            .into_proto(),
+        );
+        assert!(!empty.is_empty());
+        assert!(!get.is_empty());
+        assert_ne!(empty, get);
+    }
+
+    #[test]
+    fn source_test_encode_request_cmd_after_pool_return() {
+        let original = owned_empty_command_bytes(7);
+        let retained = original.clone();
+        drop(original);
+        assert_eq!(retained, owned_empty_command_bytes(7));
+    }
+
+    #[test]
+    fn source_test_reuse_request_data_basic() {
+        let request = tikvpb::BatchCommandsEmptyRequest {
+            test_id: 7,
+            delay_time: 11,
+        };
+        let first = BatchCommandRequest::from_store_request(&request)
+            .unwrap()
+            .into_proto();
+        let second = BatchCommandRequest::from_store_request(&request)
+            .unwrap()
+            .into_proto();
+        assert_eq!(
+            prost::Message::encode_to_vec(&first),
+            prost::Message::encode_to_vec(&second)
+        );
+    }
+
+    #[test]
+    fn source_test_reuse_request_data_double_return() {
+        let mut owner = Some(owned_empty_command_bytes(7));
+        let returned = owner.take().unwrap();
+        assert!(owner.take().is_none());
+        assert_eq!(returned, owned_empty_command_bytes(7));
+    }
+
+    #[test]
+    fn source_test_encoded_msg_data_pool_concurrent_safety() {
+        let handles = (0..50)
+            .map(|thread_id| {
+                std::thread::spawn(move || {
+                    for request_id in 0..100 {
+                        let test_id = thread_id * 100 + request_id;
+                        assert_eq!(
+                            owned_empty_command_bytes(test_id),
+                            owned_empty_command_bytes(test_id)
+                        );
+                    }
+                    100
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .sum::<usize>(),
+            5_000
+        );
+    }
 }

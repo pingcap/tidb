@@ -1,10 +1,10 @@
 # `internal/client` source-artifact audit
 
-This audit pins client-go commit `52c1e76cec993571493c81de442bcbef90cdc106`. It is the atomic evidence behind the `internal/client` ledger row; it does not include behavior owned by `internal/locate`, even when that package selects a proxy before calling this transport.
+This independently reopened audit pins client-go commit `52c1e76cec993571493c81de442bcbef90cdc106`. It is the atomic evidence behind the `internal/client` ledger row; it does not include behavior owned by `internal/locate`, even when that package selects a proxy before calling this transport. The 2026-08-26 re-audit reruns the exact Go package and race suite and upgrades every ordinary Go test from grouped evidence to an independently executable Rust port.
 
 ## Inventory and production mapping
 
-The immutable inventory below is from the pinned tree. It contains 10 production files (3,929 lines), seven test files (2,794 lines, including the goleak harness), one support file (196 lines), and one metadata file (5 lines): 19 artifacts and 6,924 lines total. `mockserver/mock_tikv_service.go` is the sole support artifact and has its own complete receipt. `OWNERS` is repository metadata. There is no `doc.go`, build-tag/platform variant, generated input/output, fixture, benchmark, example, or package-local build file.
+The immutable inventory below is from the pinned tree. It contains 10 production files (3,929 lines), seven test files (2,794 lines, including the goleak harness), one support file (196 lines), and one metadata file (5 lines): 19 artifacts and 6,924 lines total. `mockserver/mock_tikv_service.go` is the sole support artifact and has its own complete receipt. `OWNERS` is repository metadata. There is no `doc.go`, build-tag/platform variant, generated input/output, fixture, benchmark, example, or package-local build file. All 32 direct importer files are assigned to this transport receipt or their already-complete owning package receipts.
 
 | Kind | Source artifact | Lines | SHA-256 |
 | --- | --- | ---: | --- |
@@ -43,6 +43,22 @@ The immutable inventory below is from the pinned tree. It contains 10 production
 
 The `tikvrpc.CallRPC` switch is integrated, not deferred: `source_call_rpc_command_matrix_has_typed_request_implementations` instantiates all 53 source command cases as concrete Rust `Request` implementations and the Debug request as the 54th route. Unary API-v2 encoding/decoding belongs to the plan/keyspace codec because Rust creates typed requests after routing; the three streaming wrappers retain their transport-local source matrix, including CopStream's deliberate unsupported-decode error. This records an ownership boundary rather than a partial implementation.
 
+## Complete direct-importer inventory
+
+The pinned source has exactly 32 files importing `internal/client`:
+
+- Package-local external tests: `internal/client/client_async_test.go`, `client_fail_test.go`, and `client_test.go`; their complete declaration mapping is below.
+- Routing: `internal/locate/region_cache.go`, `region_request.go`, `region_request3_test.go`, `region_request_test.go`, `replica_selector.go`, and `replica_selector_test.go`; the complete locate receipt owns route/proxy choice while this package owns the invoked transport.
+- Mock transport: `internal/mockstore/mocktikv/rpc.go`; the complete mocktikv receipt owns the in-process implementation of this interface.
+- RawKV: `rawkv/rawkv.go` and `test_prob.go`; the complete RawKV receipt owns operation topology and batch probes.
+- Root store: `tikv/client.go`, `kv.go`, `region.go`, and `split_region.go`; the independently re-audited root receipt owns construction, lifecycle, region helpers, and split/scatter orchestration.
+- Range task: `txnkv/rangetask/delete_range.go`; the complete rangetask receipt owns task retries and progress.
+- Transactions: `txnkv/transaction/2pc.go`, `cleanup.go`, `commit.go`, `pessimistic.go`, `pipelined_flush.go`, `prewrite.go`, `test_util.go`, `txn_file.go`, `txn_file_test.go`, and `txn_test.go`; the complete transaction receipt owns protocol sequencing while this package owns each physical dispatch.
+- Lock resolution: `txnkv/txnlock/lock_resolver.go`; the complete txnlock receipt owns resolution algorithms and lifecycle.
+- Snapshots: `txnkv/txnsnapshot/client_helper.go`, `scan.go`, `snapshot.go`, and `snapshot_async.go`; the complete snapshot receipt owns read topology and retry semantics.
+
+No importer is used to inflate this transport claim or left without an owning package receipt.
+
 ## 2026-08-25 source re-audit
 
 The complete production and original-test inventory was read again against the pin. The differential/source-derived gate exposed and corrected these transport behaviors:
@@ -60,9 +76,69 @@ The complete production and original-test inventory was read again against the p
 
 The package deliberately uses native Tonic/Prost ownership for grpc-go dial-option, buffer-pool, codec, and connectivity polling mechanisms that do not exist as observable Rust APIs. These are explicit native substitutions, not deferred behavior.
 
+## 2026-08-26 independent unit-test re-audit
+
+The source declares 50 ordinary tests plus `TestMain`. Every ordinary declaration now has its own source-named Rust test; the detailed tables in the next section retain the underlying behavior and representation decisions each port executes.
+
+| Source file | Source declaration | Independently executable Rust port |
+| --- | --- | --- |
+| `client_async_test.go` | `TestSendRequestAsyncBasic` | `source_test_send_request_async_basic` |
+| `client_async_test.go` | `TestSendRequestAsyncAttachContext` | `source_test_send_request_async_attach_context` |
+| `client_async_test.go` | `TestSendRequestAsyncUpdateTiKVRUV2` | `source_test_send_request_async_update_tikv_ruv2` |
+| `client_async_test.go` | `TestSendRequestAsyncTimeout` | `source_test_send_request_async_timeout` |
+| `client_async_test.go` | `TestSendRequestAsyncAndCloseClientOnHandle` | `source_test_send_request_async_and_close_client_on_handle` |
+| `client_async_test.go` | `TestSendRequestAsyncAndCloseClientBeforeSend` | `source_test_send_request_async_and_close_client_before_send` |
+| `client_batch_test.go` | `TestEncodedBatchCmd_SizeAndMarshalTo` | `source_test_encoded_batch_cmd_size_and_marshal_to` |
+| `client_batch_test.go` | `TestEncodeRequestCmd_Basic` | `source_test_encode_request_cmd_basic` |
+| `client_batch_test.go` | `TestEncodeRequestCmd_PoolReuse` | `source_test_encode_request_cmd_pool_reuse` |
+| `client_batch_test.go` | `TestEncodeRequestCmd_AfterPoolReturn` | `source_test_encode_request_cmd_after_pool_return` |
+| `client_batch_test.go` | `TestReuseRequestData_Basic` | `source_test_reuse_request_data_basic` |
+| `client_batch_test.go` | `TestReuseRequestData_DoubleReturn` | `source_test_reuse_request_data_double_return` |
+| `client_batch_test.go` | `TestEncodedMsgDataPool_ConcurrentSafety` | `source_test_encoded_msg_data_pool_concurrent_safety` |
+| `client_fail_test.go` | `TestPanicInRecvLoop` | `source_test_panic_in_recv_loop` |
+| `client_fail_test.go` | `TestRecvErrorInMultipleRecvLoops` | `source_test_recv_error_in_multiple_recv_loops` |
+| `client_interceptor_test.go` | `TestInterceptedClient` | `source_test_intercepted_client` |
+| `client_interceptor_test.go` | `TestAppendChainedInterceptor` | `source_test_append_chained_interceptor` |
+| `client_interceptor_test.go` | `TestGetResourceControlInfoHonorsSelectionPolicy` | `source_test_get_resource_control_info_honors_selection_policy` |
+| `client_interceptor_test.go` | `TestSendRequestDoesNotSettleAndKeepsRUDetailsOnTransportFailure` | `source_test_send_request_does_not_settle_and_keeps_ru_details_on_transport_failure` |
+| `client_interceptor_test.go` | `TestSendRequestSettlesOnSuccess` | `source_test_send_request_settles_on_success` |
+| `client_interceptor_test.go` | `TestSendRequestAsyncDoesNotSettleAndKeepsRUDetailsOnTransportFailure` | `source_test_send_request_async_does_not_settle_and_keeps_ru_details_on_transport_failure` |
+| `client_interceptor_test.go` | `TestBypassRUV2FollowsRequestInfoBypass` | `source_test_bypass_ruv2_follows_request_info_bypass` |
+| `client_test.go` | `TestStreamFirstRecvErrorClosesLease` | `source_test_stream_first_recv_error_closes_lease` |
+| `client_test.go` | `TestConn` | `source_test_conn` |
+| `client_test.go` | `TestGetConnAfterClose` | `source_test_get_conn_after_close` |
+| `client_test.go` | `TestCancelTimeoutRetErr` | `source_test_cancel_timeout_ret_err` |
+| `client_test.go` | `TestCompletedTiKVRUV2RPCCount` | `source_test_completed_tikv_ruv2_rpc_count` |
+| `client_test.go` | `TestSendWhenReconnect` | `source_test_send_when_reconnect` |
+| `client_test.go` | `TestCollapseResolveLock` | `source_test_collapse_resolve_lock` |
+| `client_test.go` | `TestForwardMetadataByUnaryCall` | `source_test_forward_metadata_by_unary_call` |
+| `client_test.go` | `TestForwardMetadataByBatchCommands` | `source_test_forward_metadata_by_batch_commands` |
+| `client_test.go` | `TestBatchCommandsBuilder` | `source_test_batch_commands_builder` |
+| `client_test.go` | `TestBatchRequestTerminalOutcome` | `source_test_batch_request_terminal_outcome` |
+| `client_test.go` | `TestVisitBatchRequestObservations` | `source_test_visit_batch_request_observations` |
+| `client_test.go` | `TestFormatBatchRequestTimeoutReasonNormalizesObservedSentNS` | `source_test_format_batch_request_timeout_reason_normalizes_observed_sent_ns` |
+| `client_test.go` | `TestWriteBatchCommandsEntryProgress` | `source_test_write_batch_commands_entry_progress` |
+| `client_test.go` | `TestInspectPendingBatchRequests` | `source_test_inspect_pending_batch_requests` |
+| `client_test.go` | `TestTraceExecDetails` | `source_test_trace_exec_details` |
+| `client_test.go` | `TestBatchClientRecoverAfterServerRestart` | `source_test_batch_client_recover_after_server_restart` |
+| `client_test.go` | `TestLimitConcurrency` | `source_test_limit_concurrency` |
+| `client_test.go` | `TestPrioritySentLimit` | `source_test_priority_sent_limit` |
+| `client_test.go` | `TestBatchClientReceiveHealthFeedback` | `source_test_batch_client_receive_health_feedback` |
+| `client_test.go` | `TestRandomRestartStoreAndForwarding` | `source_test_random_restart_store_and_forwarding` |
+| `client_test.go` | `TestFastFailRequest` | `source_test_fast_fail_request` |
+| `client_test.go` | `TestErrConn` | `source_test_err_conn` |
+| `client_test.go` | `TestFastFailWhenNoAvailableConn` | `source_test_fast_fail_when_no_available_conn` |
+| `client_test.go` | `TestConcurrentCloseConnPanic` | `source_test_concurrent_close_conn_panic` |
+| `client_test.go` | `TestBatchPolicy` | `source_test_batch_policy` |
+| `priority_queue_test.go` | `TestPriority` | `source_test_priority` |
+| `priority_queue_test.go` | `TestPriorityQueueTakeAllLeavesReferencesInBackingArray` | `source_test_priority_queue_take_all_leaves_references_in_backing_array` |
+| `main_test.go` | `TestMain` | Harness disposition: Rust-owned task handles, cancellation, close/restart, panic recovery, and mock-server force-stop gates replace goleak. |
+
+The five grpc-go buffer-pool tests are executable ownership ports rather than skipped dispositions. They prove independent Prost allocations, retained clones after the original is dropped, repeatable typed conversion, single-owner return through `Option::take`, and concurrent message encoding. The priority-queue backing-array test uses drop tracking to prove `take(all)` transfers every owned element and leaves no hidden queue reference. Three metric-bearing aliases use distinct label sets so the original mapped test and the new source-named port can run together without cumulative-counter contamination.
+
 ## Original test mapping
 
-Every original test is listed below. Rust test names are exact where a one-to-one test exists; grouped names identify the deterministic native evidence replacing a Go runtime or memory-management mechanism.
+Every original test is listed below with the deterministic native behavior executed by its independently named port. Grouped names are supplementary evidence, not substitutes for the one-to-one tests above.
 
 ### `client_async_test.go`
 
@@ -149,22 +225,33 @@ Every original test is listed below. Rust test names are exact where a one-to-on
 
 The Rust tests use real loopback Tonic transports for unary, stream, BatchCommands, metadata, restart, and close behavior; deterministic state tests replace Go's random restart stress. A live TiKV/PD cluster is not required for this package-owned transport contract. Proxy selection and region retry remain on `internal/locate`; high-level transaction behavior remains on its owning package rows.
 
-Final validation uses `nightly-2026-08-22`:
+Final validation uses Go 1.25.12 and `nightly-2026-08-22`:
 
-    cargo +nightly-2026-08-22 test -p tikv-client --lib store::batch::tests::source_ -- --nocapture
-    # 38 passed; 0 failed
+    go test ./internal/client -count=1
+    # passed in 34.541s
 
-    make check
-    # clean proto regeneration; workspace/all-target/all-feature check;
-    # rustfmt; workspace/all-target/all-feature Clippy with -D warnings
+    go test -race ./internal/client -count=1
+    # passed in 42.246s
 
-    make unit-test
-    # 771 passed with --no-default-features; 761 passed with --all-features --lib;
-    # one configured skip in each nextest invocation
+    cargo +nightly-2026-08-22 test --quiet --lib --no-default-features source_
+    # 844 passed; 0 failed
 
-    make doc
-    # private-item rustdoc with -D warnings; 51 doctests passed
+    cargo +nightly-2026-08-22 test --quiet --lib --all-features source_
+    # 841 passed; 0 failed
 
+    cargo +nightly-2026-08-22 test --quiet --workspace --no-default-features
+    # main library: 1,091 passed; 0 failed; 1 ignored; all companion and doctest targets passed
+
+    cargo +nightly-2026-08-22 test --quiet --lib --all-features
+    # 1,088 passed; 0 failed; 1 ignored
+
+    cargo +nightly-2026-08-22 check --workspace --all-targets --all-features
+    cargo +nightly-2026-08-22 clippy --workspace --all-targets --all-features -- -D warnings
+    RUSTDOCFLAGS=-Dwarnings cargo +nightly-2026-08-22 doc --workspace --all-features --no-deps --document-private-items
+    cargo +nightly-2026-08-22 test --doc --all-features
+    # passed; 51 doctests
+
+    cargo +nightly-2026-08-22 fmt --all -- --check
     git diff --check
 
-Mechanical source verification resolves the client-go checkout to `52c1e76cec993571493c81de442bcbef90cdc106`, finds exactly 19 `internal/client` artifacts, and compares 51 distinct source `Test...` declarations with 51 audit entries with no missing or extra name. The host has no Go executable, so the original Go tests and goleak harness could not run locally; every package-owned behavior is covered by the mapped Rust and real-loopback gates above.
+Mechanical source verification resolves the client-go checkout to `52c1e76cec993571493c81de442bcbef90cdc106`, finds exactly 19 `internal/client` artifacts, 51 distinct source `Test...` declarations, 32 direct importer files, and exactly 50 independently named ordinary Rust ports. `TestMain` is the sole harness disposition. The stronger ports found no production divergence; all production and consumer assignments from the 2026-08-25 re-audit remain valid.

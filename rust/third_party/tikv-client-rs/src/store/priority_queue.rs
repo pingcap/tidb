@@ -186,4 +186,51 @@ mod tests {
         queue.reset();
         assert!(queue.is_empty());
     }
+
+    #[test]
+    fn source_test_priority() {
+        source_priority_take_and_cancelled_cleanup_contract();
+    }
+
+    #[test]
+    fn source_test_priority_queue_take_all_leaves_references_in_backing_array() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        #[derive(Debug)]
+        struct TrackedItem {
+            priority: u64,
+            drops: Arc<AtomicUsize>,
+        }
+
+        impl PriorityItem for TrackedItem {
+            fn priority(&self) -> u64 {
+                self.priority
+            }
+
+            fn is_cancelled(&self) -> bool {
+                false
+            }
+        }
+
+        impl Drop for TrackedItem {
+            fn drop(&mut self) {
+                self.drops.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let drops = Arc::new(AtomicUsize::new(0));
+        let mut queue = PriorityQueue::new();
+        for priority in 0..8 {
+            queue.push(TrackedItem {
+                priority,
+                drops: drops.clone(),
+            });
+        }
+        let taken = queue.take(usize::MAX);
+        assert!(queue.is_empty());
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+        drop(taken);
+        assert_eq!(drops.load(Ordering::SeqCst), 8);
+    }
 }

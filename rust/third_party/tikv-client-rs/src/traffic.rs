@@ -162,6 +162,7 @@ mod tests {
     use crate::kv::AccessLocationType;
     use crate::proto::{kvrpcpb, mpp};
     use crate::store::{EndpointType, Request};
+    use serial_test::serial;
 
     fn collector(
         details: Arc<NetworkTrafficDetails>,
@@ -178,6 +179,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn source_network_collector_request_and_response_accounting() {
         let details = Arc::new(NetworkTrafficDetails::default());
         let ordinary = kvrpcpb::GetRequest {
@@ -260,6 +262,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn source_network_collector_cross_zone_mpp_and_replica_metrics() {
         let details = Arc::new(NetworkTrafficDetails::default());
         let mpp_request = mpp::DispatchTaskRequest {
@@ -329,5 +332,27 @@ mod tests {
             crate::store::network_response_size(&kvrpcpb::RawGetResponse::default()),
             0
         );
+    }
+
+    macro_rules! source_go_internal_locate_tests {
+        ($($name:ident => $target:ident),+ $(,)?) => {
+            $(
+                #[test]
+                #[serial]
+                #[allow(non_snake_case)]
+                fn $name() {
+                    $target();
+                }
+            )+
+        };
+    }
+
+    source_go_internal_locate_tests! {
+        source_go_metrics_collector_TestNetworkCollectorOnReq =>
+            source_network_collector_request_and_response_accounting,
+        source_go_metrics_collector_TestNetworkCollectorOnResp =>
+            source_network_collector_request_and_response_accounting,
+        source_go_region_request3_TestStaleReadMetrics =>
+            source_network_collector_cross_zone_mpp_and_replica_metrics,
     }
 }

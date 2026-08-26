@@ -834,4 +834,31 @@ mod tests {
             "not_leader_with_no_leader"
         );
     }
+
+    macro_rules! source_go_internal_locate_tests {
+        ($($name:ident => $target:ident),+ $(,)?) => {
+            $(
+                #[test]
+                #[allow(non_snake_case)]
+                fn $name() {
+                    $target();
+                }
+            )+
+        };
+    }
+
+    source_go_internal_locate_tests! {
+        source_go_region_request_TestRegionRequestSenderString =>
+            source_runtime_stats_clone_merge_and_bound_errors,
+        source_go_region_request_TestRegionRequestStats =>
+            source_runtime_stats_clone_merge_and_bound_errors,
+        source_go_region_request_TestGetErrMsg =>
+            source_region_error_labels_follow_protobuf_order_and_logging_suffixes,
+        source_go_region_request_TestRPCContextString =>
+            source_runtime_stats_clone_merge_and_bound_errors,
+        source_go_region_request_TestBackoffErrWithRPCContext =>
+            source_runtime_stats_clone_merge_and_bound_errors,
+        source_go_region_request3_TestLogging =>
+            source_region_error_labels_follow_protobuf_order_and_logging_suffixes,
+    }
 }

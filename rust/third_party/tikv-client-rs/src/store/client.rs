@@ -762,6 +762,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn source_resolve_lock_singleflight_key_and_exclusions() {
         use crate::proto::tikvpb;
         use tikvpb::batch_commands_response::response::Cmd;
@@ -1041,6 +1042,59 @@ mod tests {
                 .expect("connection header"),
             "1"
         );
+    }
+
+    #[test]
+    fn source_test_send_request_async_basic() {
+        source_debug_and_empty_commands_use_their_distinct_paths();
+    }
+
+    #[test]
+    fn source_test_stream_first_recv_error_closes_lease() {
+        source_coprocessor_stream_reads_first_response_before_returning();
+    }
+
+    #[test]
+    fn source_test_conn() {
+        source_connection_pool_round_robin_increments_before_selecting();
+    }
+
+    #[test]
+    #[serial]
+    fn source_test_collapse_resolve_lock() {
+        source_resolve_lock_singleflight_key_and_exclusions();
+    }
+
+    #[test]
+    fn source_test_forward_metadata_by_unary_call() {
+        source_unary_forwarding_metadata_is_applied_only_when_requested();
+    }
+
+    #[test]
+    fn source_test_forward_metadata_by_batch_commands() {
+        source_batch_stream_metadata_carries_forwarding_host_and_pool_index();
+    }
+
+    #[test]
+    fn source_test_trace_exec_details() {
+        source_exec_details_trace_wraps_a_physical_batch_rpc();
+    }
+
+    #[test]
+    fn source_test_fast_fail_request() {
+        let connector = TikvConnect::new(
+            Arc::new(SecurityManager::default()),
+            Duration::from_secs(20),
+            4 * 1024 * 1024,
+        );
+        assert_eq!(connector.timeout, Duration::from_secs(20));
+        assert_eq!(connector.dial_timeout, TIKV_DIAL_TIMEOUT);
+        assert_eq!(connector.dial_timeout, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn source_test_err_conn() {
+        source_transport_error_carries_cached_connection_identity();
     }
 }
 

@@ -3412,9 +3412,7 @@ mod tests {
         assert_eq!(pending.len(), 1);
     }
 
-    #[tokio::test]
-    async fn source_publish_registers_before_send_and_retires_only_failed_group_ids() {
-        let target = "source-publish-accounting";
+    async fn assert_publish_registers_before_send_and_retires_only_failed_group_ids(target: &str) {
         let connection_index = 29;
         let pending = BatchPendingResponses::new();
         let mut builder = BatchCommandsBuilder::new();
@@ -3467,6 +3465,14 @@ mod tests {
             crate::stats::batch_stream_request_counter_values(target, connection_index, false),
             (2, 2, 1, 0)
         );
+    }
+
+    #[tokio::test]
+    async fn source_publish_registers_before_send_and_retires_only_failed_group_ids() {
+        assert_publish_registers_before_send_and_retires_only_failed_group_ids(
+            "source-publish-accounting",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -3574,9 +3580,7 @@ mod tests {
         drop(worker);
     }
 
-    #[tokio::test]
-    async fn source_receive_stream_failure_only_retires_matching_forwarding_host() {
-        let target = "source-receive-accounting";
+    async fn assert_receive_stream_failure_only_retires_matching_forwarding_host(target: &str) {
         let connection_index = 31;
         let pending = Arc::new(BatchPendingResponses::new());
         let (direct_completed_sender, direct_completed) = oneshot::channel();
@@ -3655,6 +3659,14 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn source_receive_stream_failure_only_retires_matching_forwarding_host() {
+        assert_receive_stream_failure_only_retires_matching_forwarding_host(
+            "source-receive-accounting",
+        )
+        .await;
+    }
+
     #[test]
     fn source_inspect_pending_batch_requests_separates_confirmed_entries() {
         let pending = BatchPendingResponses::new();
@@ -3696,9 +3708,7 @@ mod tests {
         assert_eq!(receivers.len(), 5);
     }
 
-    #[tokio::test]
-    async fn source_cancelled_response_records_its_stream_tail() {
-        let target = "source-cancelled-entry-tail";
+    async fn assert_cancelled_response_records_its_stream_tail(target: &str) {
         let connection_index = 37;
         let pending = BatchPendingResponses::new();
         let telemetry = Arc::new(BatchRequestTelemetry::new(0, Instant::now()));
@@ -3739,6 +3749,11 @@ mod tests {
             ),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn source_cancelled_response_records_its_stream_tail() {
+        assert_cancelled_response_records_its_stream_tail("source-cancelled-entry-tail").await;
     }
 
     #[derive(Default)]
@@ -4156,5 +4171,117 @@ mod tests {
             .await
             .expect("test server task completes")
             .expect("test server stops cleanly");
+    }
+
+    #[test]
+    fn source_test_send_request_async_timeout() {
+        source_dropped_submission_cancels_before_batch_selection();
+    }
+
+    #[test]
+    fn source_test_send_request_async_and_close_client_on_handle() {
+        source_explicit_close_retires_published_and_future_worker_entries();
+    }
+
+    #[test]
+    fn source_test_send_request_async_and_close_client_before_send() {
+        source_close_fails_only_entries_not_yet_published();
+    }
+
+    #[test]
+    fn source_test_panic_in_recv_loop() {
+        source_receive_loop_recovers_panics_on_the_same_stream();
+    }
+
+    #[test]
+    fn source_test_recv_error_in_multiple_recv_loops() {
+        source_connection_epoch_retires_only_the_recovery_leaders_host();
+    }
+
+    #[tokio::test]
+    async fn source_test_cancel_timeout_ret_err() {
+        assert_cancelled_response_records_its_stream_tail("source-test-cancelled-entry-tail").await;
+    }
+
+    #[test]
+    fn source_test_send_when_reconnect() {
+        source_connection_selection_skips_a_recreating_pool_slot();
+    }
+
+    #[test]
+    fn source_test_batch_commands_builder() {
+        source_builder_groups_direct_and_forwarded_requests_with_monotonic_ids();
+    }
+
+    #[test]
+    fn source_test_batch_request_terminal_outcome() {
+        source_receive_loop_routes_each_id_and_retains_terminal_outcomes();
+    }
+
+    #[test]
+    fn source_test_visit_batch_request_observations() {
+        source_batch_request_stage_observations_preserve_terminal_boundaries();
+    }
+
+    #[test]
+    fn source_test_format_batch_request_timeout_reason_normalizes_observed_sent_ns() {
+        source_timeout_diagnostics_share_the_batch_first_response_boundary();
+    }
+
+    #[tokio::test]
+    async fn source_test_write_batch_commands_entry_progress() {
+        assert_publish_registers_before_send_and_retires_only_failed_group_ids(
+            "source-test-publish-accounting",
+        )
+        .await;
+    }
+
+    #[test]
+    fn source_test_inspect_pending_batch_requests() {
+        source_inspect_pending_batch_requests_separates_confirmed_entries();
+    }
+
+    #[test]
+    fn source_test_batch_client_recover_after_server_restart() {
+        source_dispatcher_recreates_failed_streams_and_preserves_metadata_per_host();
+    }
+
+    #[test]
+    fn source_test_limit_concurrency() {
+        source_concurrency_limit_is_per_connection_and_scans_round_robin();
+    }
+
+    #[test]
+    fn source_test_priority_sent_limit() {
+        source_builder_prioritizes_and_allows_high_priority_to_exceed_limit();
+    }
+
+    #[test]
+    fn source_test_batch_client_receive_health_feedback() {
+        source_health_feedback_listener_is_replaced_and_runs_before_demux();
+    }
+
+    #[tokio::test]
+    async fn source_test_random_restart_store_and_forwarding() {
+        assert_receive_stream_failure_only_retires_matching_forwarding_host(
+            "source-test-receive-accounting",
+        )
+        .await;
+    }
+
+    #[test]
+    fn source_test_fast_fail_when_no_available_conn() {
+        source_default_concurrency_fast_fails_an_unavailable_batch_stream();
+    }
+
+    #[test]
+    fn source_test_batch_policy() {
+        source_turbo_batch_policy_presets_and_custom_values_are_preserved();
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request_TestBatchClientSendLoopPanic() {
+        source_receive_loop_recovers_panics_on_the_same_stream();
     }
 }

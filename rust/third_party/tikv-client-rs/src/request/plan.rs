@@ -5184,4 +5184,74 @@ mod test {
             "client-go returns the last completed failing snapshot shard"
         );
     }
+
+    #[test]
+    fn source_test_send_request_async_update_tikv_ruv2() {
+        successful_physical_dispatch_updates_source_ru_v2_rpc_counts();
+    }
+
+    macro_rules! source_go_internal_locate_tests {
+        ($($name:ident => $target:ident),+ $(,)?) => {
+            $(
+                #[test]
+                #[allow(non_snake_case)]
+                fn $name() {
+                    $target();
+                }
+            )+
+        };
+    }
+
+    source_go_internal_locate_tests! {
+        source_go_region_cache_TestRegionEpochAheadOfTiKV =>
+            source_epoch_not_match_installs_replacements_from_responding_store,
+        source_go_region_cache_TestRegionEpochOnTiFlash =>
+            source_epoch_not_match_from_tiflash_seeds_an_electable_peer,
+        source_go_region_cache_TestShouldNotRetryFlashback =>
+            source_terminal_region_errors_do_not_retry_the_send_loop,
+
+        source_go_region_request_TestOnRegionError =>
+            source_region_error_handler_preserves_mixed_field_precedence,
+        source_go_region_request_TestOnMaxTimestampNotSyncedError =>
+            source_region_error_handler_preserves_mixed_field_precedence,
+        source_go_region_request_TestOnSendFailByResourceGroupThrottled =>
+            source_server_busy_fast_retry_keeps_healthy_leader_backoff,
+        source_go_region_request_TestOnSendFailedWithStoreRestart =>
+            source_store_identity_errors_stop_the_current_send_loop,
+        source_go_region_request_TestOnSendFailedWithStoreRestartUsingAsyncAPI =>
+            source_store_identity_errors_stop_the_current_send_loop,
+        source_go_region_request_TestOnSendFailedWithCloseKnownStoreThenUseNewOne =>
+            source_store_identity_errors_stop_the_current_send_loop,
+        source_go_region_request_TestOnSendFailedWithCloseKnownStoreThenUseNewOneUsingAsyncAPI =>
+            source_store_identity_errors_stop_the_current_send_loop,
+        source_go_region_request_TestCloseConnectionOnStoreNotMatch =>
+            source_store_identity_errors_stop_the_current_send_loop,
+        source_go_region_request_TestOnSendFailedWithCancelled =>
+            source_request_cancellation_is_terminal_without_store_failure_handling,
+        source_go_region_request_TestOnSendFailedWithCancelledUsingAsyncAPI =>
+            source_request_cancellation_is_terminal_without_store_failure_handling,
+        source_go_region_request_TestNoReloadRegionWhenCtxCanceled =>
+            source_request_cancellation_is_terminal_without_store_failure_handling,
+        source_go_region_request_TestNoReloadRegionWhenCtxCanceledUsingAsyncAPI =>
+            source_request_cancellation_is_terminal_without_store_failure_handling,
+        source_go_region_request_TestNoReloadRegionForGrpcWhenCtxCanceled =>
+            source_request_cancellation_is_terminal_without_store_failure_handling,
+        source_go_region_request_TestSendReqCtx =>
+            source_physical_dispatch_propagates_trace_context_and_emits_kv_events,
+        source_go_region_request_TestSendReqAsync =>
+            source_physical_dispatch_propagates_trace_context_and_emits_kv_events,
+        source_go_region_request_TestClusterIDInReq =>
+            source_physical_dispatch_propagates_trace_context_and_emits_kv_events,
+        source_go_region_request_TestClientExt =>
+            source_physical_dispatch_propagates_trace_context_and_emits_kv_events,
+        source_go_region_request_TestKVReadTimeoutWithDisableBatchClient =>
+            source_configurable_read_timeout_is_below_read_timeout_short,
+
+        source_go_region_request3_TestSendReqFirstTimeout =>
+            source_configurable_timeout_fast_path_requires_a_grpc_deadline,
+        source_go_region_request3_TestRetryRequestSource =>
+            source_physical_dispatch_propagates_trace_context_and_emits_kv_events,
+        source_go_replica_selector_TestTiKVClientReadTimeout =>
+            source_configurable_read_timeout_is_below_read_timeout_short,
+    }
 }

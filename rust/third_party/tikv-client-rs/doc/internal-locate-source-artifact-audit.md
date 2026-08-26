@@ -84,7 +84,7 @@ Go's synchronous and asynchronous test variants call the same sender algorithms.
 
 ## Original test mapping
 
-All 147 original declarations are named below. A comma-separated source group maps to the listed deterministic Rust evidence; paired sync/async declarations intentionally share evidence because Rust has only the future path.
+All 147 original declarations are named below. `TestMain` is the package harness and `TestRegionCache`, `TestRegionCacheWithDelay`, `TestRegionRequestToSingleStore`, and `TestRegionRequestToThreeStores` are testify suite runners, so they have explicit lifecycle/runner dispositions rather than duplicate unit tests. Every one of the remaining 142 assertion-bearing declarations has an independently selectable Rust identity named `source_go_<source-artifact>_<Go-name>`. The identities reuse the native assertion bodies listed below so fixture construction and branch tables have one authority. Sync/async source pairs remain distinct Rust tests while both exercise Rust's single future-based production path.
 
 ### Harness, metrics, codec, and stale-state tests (6)
 
@@ -185,12 +185,23 @@ The downstream TiDB checkout was also read directly. `pkg/store/copr` consumes t
 
 The package is exercised through deterministic cache/selector tests and completed real loopback Tonic transport tests. A live TiKV/PD cluster is not required for package-owned selection, retry, index, error, coding, and lifecycle behavior; cross-client live-cluster workflows remain a final repository gate for high-level raw, snapshot, transaction, and root `tikv` consumers.
 
-The 147 original test declarations and five benchmark declarations are fully mapped above, including duplicated sync/async façades and the goleak harness. Mechanical closeout reconfirmed the exact Go commit, 17-file/20,132-line inventory, every recorded SHA-256, 147 `Test*` declarations, and five `Benchmark*` declarations. No Go executable is available in the current environment, so no fresh Go test command was run during this closeout; the previously configured Go 1.25.12 run passed the complete pinned `go test --tags=intest ./...` and `go test -race --tags=intest ./...` repository suites.
+The 147 original test declarations and five benchmark declarations are fully mapped above, including duplicated sync/async façades and the goleak harness. The 2026-08-26 independent closeout reconfirmed the exact Go commit, 17-file/20,132-line inventory, every recorded SHA-256, 147 `Test*` declarations, five `Benchmark*` declarations, and all 28 direct importer files. A mechanical source/Rust identity reconciliation proves exactly 142 executable Go declarations and 142 independently named Rust tests, with no missing, extra, or duplicate identity.
 
-Fresh Rust completion gates for this receipt are:
+Go 1.25.12 executed the exact pinned package in both normal and race modes. The first sandboxed attempt was intentionally discarded because loopback bind denial made the mock server receive a nil listener; the same command with local loopback permission passed:
 
-- `make check`: workspace/all-target/all-feature checking, formatting, and clippy with warnings denied passed.
-- `make unit-test`: 789/789 tests passed without default features (one skipped), then 778/778 all-feature library tests passed (one skipped).
-- `make doc`: private-item workspace rustdoc passed with warnings denied and 51/51 doctests passed.
-- The final source-derived region-cache subset passed 46/46 tests, including containing-range inheritance and exact TiFlash probe/refresh ordering.
-- Final `cargo fmt --all --check` and `git diff --check` are required immediately before the package commit.
+    go test --tags=intest ./internal/locate -count=1
+    # passed in 70.470s
+
+    go test -race --tags=intest ./internal/locate -count=1
+    # passed in 70.383s
+
+Fresh Rust gates on `nightly-2026-08-22` are:
+
+- `cargo test --no-default-features source_go_ -- --nocapture`: 142/142 independently named source tests passed.
+- `cargo test --no-default-features --lib`: 1,233 passed and one unrelated subprocess-only test remained ignored.
+- `cargo test --all-features --lib`: 1,230 passed and the same unrelated test remained ignored.
+- Canonical `make unit-test`: 1,285 no-default workspace tests and 1,264 all-feature workspace-library tests passed; one unrelated test was skipped in each configuration.
+- Source-derived inventories list 986 no-default and 983 all-feature tests.
+- `make check` regenerated the bindings, checked every workspace target and feature, verified formatting, and passed Clippy with warnings denied.
+- `make doc` passed private-item workspace rustdoc with warnings denied and all 51 doctests.
+- Exact pin, 17-artifact line/hash inventory, 147-declaration/five-benchmark inventory, 28-importer inventory, 142-test source identity, `nightly-2026-08-22`, formatting, and whitespace checks pass.

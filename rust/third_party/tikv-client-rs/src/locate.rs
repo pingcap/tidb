@@ -1232,4 +1232,118 @@ mod tests {
             Some((BO_TIKV_SERVER_BUSY, "err-3".to_owned()))
         );
     }
+
+    macro_rules! source_go_internal_locate_tests {
+        ($($name:ident => $target:ident),+ $(,)?) => {
+            $(
+                #[test]
+                #[allow(non_snake_case)]
+                fn $name() {
+                    $target();
+                }
+            )+
+        };
+    }
+
+    source_go_internal_locate_tests! {
+        source_go_region_request_state_TestRegionCacheStaleRead =>
+            source_stale_retry_uses_replica_read_after_the_leader_was_attempted,
+        source_go_region_request_state_TestRegionCacheStaleReadUsingAsyncAPI =>
+            source_stale_retry_uses_replica_read_after_the_leader_was_attempted,
+
+        source_go_region_cache_TestUpdateLeader =>
+            source_not_leader_switches_to_an_untried_concrete_leader,
+        source_go_region_cache_TestUpdateLeader2 =>
+            source_not_leader_without_hint_marks_only_the_failed_peer,
+        source_go_region_cache_TestUpdateLeader3 =>
+            source_not_leader_switches_to_an_untried_concrete_leader,
+        source_go_region_cache_TestLabelSelectorTiKVPeer =>
+            source_mixed_replica_score_prioritizes_matching_labels_over_leader,
+        source_go_region_cache_TestFollowerReadFallback =>
+            source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader,
+        source_go_region_cache_TestMixedReadFallback =>
+            source_mixed_selection_allows_unknown_but_not_unreachable_liveness,
+        source_go_region_cache_TestSwitchPeerWhenNoLeader =>
+            source_not_leader_without_hint_marks_only_the_failed_peer,
+        source_go_region_cache_TestSlowScoreStat =>
+            source_slow_score_rises_when_request_rate_drops_and_latency_rises,
+        source_go_region_cache_TestTiKVSideSlowScore =>
+            source_store_health_gates_feedback_and_decays_stale_tikv_scores,
+        source_go_region_cache_TestStoreHealthStatus =>
+            source_store_health_combines_client_and_tikv_slow_scores,
+
+        source_go_region_request3_TestSwitchPeerWhenNoLeader =>
+            source_not_leader_without_hint_marks_only_the_failed_peer,
+        source_go_region_request3_TestSwitchPeerWhenNoLeaderErrorWithNewLeaderInfo =>
+            source_not_leader_switches_to_an_untried_concrete_leader,
+        source_go_region_request3_TestReplicaReadFallbackToLeaderRegionError =>
+            source_not_leader_switches_to_an_untried_concrete_leader,
+        source_go_region_request3_TestLearnerReplicaSelector =>
+            source_prefer_leader_skips_slow_followers_and_learner_mode_scores_learners,
+        source_go_region_request3_TestPreferLeader =>
+            source_prefer_leader_skips_slow_followers_and_learner_mode_scores_learners,
+        source_go_region_request3_TestReplicaSelector =>
+            source_mixed_replica_score_prioritizes_matching_labels_over_leader,
+        source_go_region_request3_TestLoadBasedReplicaRead =>
+            source_mixed_replica_score_prioritizes_matching_labels_over_leader,
+        source_go_region_request3_TestReplicaReadWithFlashbackInProgress =>
+            source_flashback_replica_read_forces_a_threshold_free_leader_retry,
+        source_go_region_request3_TestAccessFollowerAfter1TiKVDown =>
+            source_mixed_selection_allows_unknown_but_not_unreachable_liveness,
+        source_go_region_request3_TestDoNotTryUnreachableLeader =>
+            source_mixed_selection_allows_unknown_but_not_unreachable_liveness,
+        source_go_region_request3_TestStaleReadTryFollowerAfterTimeout =>
+            source_stale_retry_uses_replica_read_after_the_leader_was_attempted,
+        source_go_region_request3_TestLeaderStuck =>
+            source_leader_exhaustion_combines_attempt_count_time_and_error_flags,
+
+        source_go_replica_selector_TestReplicaSelectorBasic =>
+            source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader,
+        source_go_replica_selector_TestNextGenReadFeaturesDisabled =>
+            source_access_mode_and_replica_flow_names_are_stable,
+        source_go_replica_selector_TestReplicaSelectorCalculateScore =>
+            source_mixed_replica_score_prioritizes_matching_labels_over_leader,
+        source_go_replica_selector_TestCanFastRetry =>
+            source_not_leader_switches_to_an_untried_concrete_leader,
+        source_go_replica_selector_TestPendingBackoff =>
+            source_pending_backoff_replaces_by_store_consumes_on_retry_and_chooses_largest,
+        source_go_replica_selector_TestReplicaReadAccessPathByCase =>
+            source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader,
+        source_go_replica_selector_TestReplicaReadAccessPathByCaseUsingAsyncAPI =>
+            source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader,
+        source_go_replica_selector_TestReplicaReadAccessPathByCase2 =>
+            source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader,
+        source_go_replica_selector_TestReplicaReadAccessPathByCase2UsingAsyncAPI =>
+            source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader,
+        source_go_replica_selector_TestReplicaReadAccessPathByBasicCase =>
+            source_mixed_selection_allows_unknown_but_not_unreachable_liveness,
+        source_go_replica_selector_TestReplicaReadAccessPathByBasicCaseUsingAsyncAPI =>
+            source_mixed_selection_allows_unknown_but_not_unreachable_liveness,
+        source_go_replica_selector_TestReplicaReadAccessPathByLeaderCase =>
+            source_not_leader_switches_to_an_untried_concrete_leader,
+        source_go_replica_selector_TestReplicaReadAccessPathByLeaderCaseUsingAsyncAPI =>
+            source_not_leader_switches_to_an_untried_concrete_leader,
+        source_go_replica_selector_TestReplicaReadAccessPathByFollowerCase =>
+            source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader,
+        source_go_replica_selector_TestReplicaReadAccessPathByFollowerCaseUsingAsyncAPI =>
+            source_selector_state_allows_data_not_ready_follower_once_more_and_probes_leader,
+        source_go_replica_selector_TestReplicaReadAccessPathByMixedAndPreferLeaderCase =>
+            source_prefer_leader_skips_slow_followers_and_learner_mode_scores_learners,
+        source_go_replica_selector_TestReplicaReadAccessPathByMixedAndPreferLeaderCaseUsingAsyncAPI =>
+            source_prefer_leader_skips_slow_followers_and_learner_mode_scores_learners,
+        source_go_replica_selector_TestReplicaReadAccessPathByStaleReadCase =>
+            source_stale_retry_uses_replica_read_after_the_leader_was_attempted,
+        source_go_replica_selector_TestReplicaReadAccessPathByTryIdleReplicaCase =>
+            source_suspect_leader_is_temporarily_skipped_then_restored,
+        source_go_replica_selector_TestReplicaSelectorLeaderBusyProbe =>
+            source_busy_leader_probe_is_second_rejection_and_is_scoped_to_leader,
+        source_go_replica_selector_TestReplicaReadAccessPathByFlashbackInProgressCase =>
+            source_flashback_replica_read_forces_a_threshold_free_leader_retry,
+        source_go_replica_selector_TestReplicaReadAccessPathByLearnerCase =>
+            source_prefer_leader_skips_slow_followers_and_learner_mode_scores_learners,
+        source_go_replica_selector_TestReplicaReadAvoidSlowStore =>
+            source_prefer_leader_skips_slow_followers_and_learner_mode_scores_learners,
+        source_go_replica_selector_TestReplicaFlag =>
+            source_leader_exhaustion_combines_attempt_count_time_and_error_flags,
+    }
 }

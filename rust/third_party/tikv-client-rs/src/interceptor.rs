@@ -510,4 +510,14 @@ mod tests {
         .unwrap();
         assert_eq!(*events.lock().unwrap(), ["second", "third", "first"]);
     }
+
+    #[test]
+    fn source_test_intercepted_client() {
+        source_test_interceptor();
+    }
+
+    #[test]
+    fn source_test_append_chained_interceptor() {
+        source_uncovered_chain_is_onion_ordered_and_replaces_duplicate_names();
+    }
 }

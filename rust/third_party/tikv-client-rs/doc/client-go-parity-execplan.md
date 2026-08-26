@@ -76,6 +76,7 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 - [x] (2026-08-26) Independently re-audited root `tikv` and ported every one of its 12 Go suite methods plus the lifecycle test under one-to-one Rust names. The complete 17-artifact/3,895-line boundary, suite/goleak harness dispositions, and all 35 direct importers are assigned. Four red/green regressions corrected region-cache-before-client close ordering, primitive safe-TS probe overwrites while retaining updater monotonicity, immediate scatter header-error propagation, and transaction-file split lock waits on the operation's shared TTL-capped retry owner. Exact Go normal/race tests pass; final Rust gates pass 29 focused tests in both configurations, 769/766 source-derived tests, 1,026 no-default and 1,023 all-feature active main-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
 - [x] (2026-08-26) Independently re-audited `config/retry` and ported all nine Go unit tests under one-to-one Rust names. The complete four-artifact/1,020-line boundary, 17 retry classes, goleak disposition, every production branch, and all 43 direct importers are assigned. Production behavior was already parity-correct; the older grouped evidence had omitted three kill-handler branches, three cancelled region-error cases, the exact 32-error retention workload, and independent clone/fork/update execution. Exact Go normal/race suites pass; final Rust gates pass 21 focused tests in both configurations, 778/775 source-derived tests, 1,027 no-default and 1,024 all-feature active main-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
 - [x] (2026-08-26) Independently re-audited `internal/apicodec` and ported all 17 assertion-bearing Go tests under one-to-one Rust names. The exact seven-artifact/2,703-line boundary, eight directly required pinned protocol inputs, suite-runner/empty-test dispositions, every production transform, and all 14 direct importers are assigned. The exact constructor/range, six-region epoch, nested key-error, response-command, empty-MVCC, MPP, and three bucket-edge tables found no additional production divergence but replace the older grouped evidence. Exact Go normal/race suites pass; final Rust gates pass 794/791 source-derived tests, 1,041 no-default and 1,038 all-feature active main-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
+- [x] (2026-08-26) Independently re-audited `internal/client` and ported all 50 ordinary Go tests under one-to-one Rust names. The exact 19-artifact/6,924-line boundary, `TestMain` harness disposition, every production/native representation surface, and all 32 direct importers are assigned. Five grpc-go buffer-pool/GC tests now execute ownership-specific Prost/queue cases instead of remaining grouped dispositions. Stronger tests found no production divergence; independently repeated metric cases required unique labels to coexist with their original mapped tests. Exact Go normal/race suites pass; final Rust gates pass 844/841 source-derived tests, 1,091 no-default and 1,088 all-feature active main-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
 
 ## Surprises & Discoveries
 
@@ -1254,3 +1255,39 @@ tests, 1,041 no-default and 1,038 all-feature active main-library tests plus one
 unrelated ignore, strict all-target check/Clippy/private rustdoc, all 51
 doctests, rustfmt, exact inventory/declaration/importer reconciliation, and
 whitespace checks. This receipt is the package-sized integration boundary.
+
+Plan revision note (2026-08-26): independently reopened `internal/client`
+against its exact 19-artifact/6,924-line boundary, 50 ordinary Go tests,
+`TestMain`, every production/native representation surface, and 32 direct
+importer files. Each ordinary Go declaration now has one independently
+executable source-named Rust port. The five grpc-go buffer-pool and backing-
+array GC cases are executable ownership ports proving distinct Prost storage,
+post-drop clone retention, repeatable typed conversion, single-owner return,
+concurrent encoding, and queue element destruction rather than skipped native
+dispositions. The stronger ports pass without a production change. Three
+metric-bearing aliases needed unique label sets so their original mapped test
+and one-to-one port can execute in the same process without cumulative-counter
+contamination. Exact Go normal/race suites pass. Final pinned-nightly gates
+pass 844/841 source-derived tests, 1,091 no-default and 1,088 all-feature active
+main-library tests plus one unrelated ignore, strict all-target
+check/Clippy/private rustdoc, all 51 doctests, rustfmt, exact
+inventory/declaration/importer reconciliation, and whitespace checks. This
+receipt is the package-sized integration boundary.
+
+Plan revision note (2026-08-26): independently reopened `internal/locate`
+against its exact 17-artifact/20,132-line boundary, 147 test declarations,
+five colocated benchmarks, every production/native representation surface,
+ten direct pinned protocol inputs, and 28 direct importer files. `TestMain`
+and the four testify suite runners have explicit non-test dispositions; every
+one of the remaining 142 assertion-bearing declarations now has an
+independently selectable, source-named Rust port. Sync/async source pairs keep
+separate identities while executing Rust's one future path. The source-name
+bijection, focused ports, and complete parallel suites pass without a
+production change, confirming the implementation while correcting the older
+grouped evidence. Exact Go normal/race suites pass. Final pinned-nightly gates
+pass all 142 independent ports, 986/983 source-derived tests, 1,233/1,230
+active no-default/all-feature main-library tests, and 1,285/1,264 canonical
+workspace tests plus one unrelated ignore/skip. Strict all-target
+check/Clippy/private rustdoc, all 51 doctests, formatting, exact
+inventory/declaration/importer reconciliation, source identity, and whitespace
+checks pass. This receipt is the package-sized integration boundary.

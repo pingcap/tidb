@@ -2597,4 +2597,14 @@ mod tests {
         assert_eq!(bypass_ru.storage_processed_keys_batch_get, 3);
         assert!(bypass_details.drain_ru_v2().is_none());
     }
+
+    #[test]
+    fn source_test_send_request_async_attach_context() {
+        source_context_bearing_unary_requests_retain_full_context_metadata();
+    }
+
+    #[test]
+    fn source_test_completed_tikv_ruv2_rpc_count() {
+        source_cop_stream_ru_v2_counts_only_the_first_received_rpc();
+    }
 }

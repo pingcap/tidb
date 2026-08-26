@@ -576,4 +576,10 @@ mod tests {
         drop(token);
         assert_eq!(count.load(Ordering::Relaxed), 0);
     }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestStoreTokenLimit() {
+        source_store_token_limit_rejects_and_releases();
+    }
 }

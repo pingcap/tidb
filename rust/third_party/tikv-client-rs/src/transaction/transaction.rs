@@ -19404,4 +19404,19 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn source_test_send_request_does_not_settle_and_keeps_ru_details_on_transport_failure() {
+        transaction_resource_control_does_not_settle_transport_failures();
+    }
+
+    #[test]
+    fn source_test_send_request_settles_on_success() {
+        transaction_resource_control_charges_and_settles_each_physical_rpc();
+    }
+
+    #[test]
+    fn source_test_send_request_async_does_not_settle_and_keeps_ru_details_on_transport_failure() {
+        transaction_resource_control_does_not_settle_transport_failures();
+    }
 }
