@@ -803,12 +803,14 @@ impl KvTable {
         else {
             return Ok(None);
         };
-        // TiKV requires record ranges in ascending, disjoint order. The
-        // index worker may deliberately hand us a descending index-order
-        // batch, so sort only the request copy and restore index order below.
+        // Go's `buildTableReaderFromHandles` sorts the request copy but keeps
+        // duplicate handles. `TableHandlesToKVRanges` then emits one point
+        // range per duplicate, preserving the multiplicity of a non-unique
+        // index lookup. The index worker may deliberately hand us a
+        // descending index-order batch, so sort only the request copy and
+        // restore index order below.
         let mut request_handles = handles.to_vec();
         request_handles.sort();
-        request_handles.dedup();
         // Go's `buildKeyRanges` over a sorted handle batch: consecutive
         // handles collapse into one closed interval, so a bulk-loaded window
         // arrives as a handful of wide ranges instead of one seek per row --
@@ -4895,8 +4897,13 @@ mod remote_cursor_tests {
             .unwrap_or_else(|poison| poison.into_inner())
             .clone()
             .expect("handle lookup request");
-        assert_eq!(request.ranges.len(), 2);
-        assert_eq!(request.range_hints, vec![1, 2]);
+        // Go's TableHandlesToKVRanges (request_builder.go:626-674) does not
+        // deduplicate equal handles: [5, 5, 7, 8] becomes two point ranges
+        // for the duplicate 5 followed by one [7, 8] range. Keeping both
+        // point ranges is required to emit both rows from a non-unique index
+        // lookup.
+        assert_eq!(request.ranges.len(), 3);
+        assert_eq!(request.range_hints, vec![1, 1, 2]);
     }
 
     #[test]
