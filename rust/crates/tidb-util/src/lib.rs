@@ -126,3 +126,5 @@ pub mod zeropool;
 mod tests_naming;
 #[cfg(test)]
 mod tests_redact;
+#[cfg(test)]
+mod tests_slice;
