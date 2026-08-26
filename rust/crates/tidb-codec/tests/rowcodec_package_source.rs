@@ -823,3 +823,384 @@ fn hex(input: &str) -> Vec<u8> {
         })
         .collect()
 }
+
+/// Source: `rowcodec_test.go::TestTypesNewRowCodec`.
+///
+/// Full-parity port of all three subtests (`small`, `largeColID`,
+/// `largeData`) over the complete 18-entry `smallTestDataList`, including the
+/// third "decode to old row bytes" phase whose converted output kinds
+/// (`KindBytes`, packed-uint timestamps, nanosecond durations, numeric
+/// enum/set/bit/year projections) the earlier partial port above omits.
+#[test]
+fn test_types_new_row_codec_full_table_with_old_format_outputs() {
+    let utc = tidb_datatype::SessionTimeZone::utc();
+
+    // Go td order and IDs, unchanged.
+    let ids: &[i64] = &[
+        1, 22, 3, 24, 25, 5, 16, 8, 12, 9, 14, 11, 2, 100, 116, 117, 118, 119,
+    ];
+    // Indices compared through their textual projection: decimal (Go compares
+    // GetMysqlDecimal equality) and JSON.
+    const TEXTUAL: [usize; 2] = [7, 10];
+    const BLOB_ENTRY: usize = 3;
+
+    let base_columns = vec![
+        column(1, FieldTypeCode::LongLong),
+        ColumnInfo {
+            field_type: field(FieldTypeCode::Short).with_unsigned(true),
+            ..column(22, FieldTypeCode::Short)
+        },
+        column(3, FieldTypeCode::Double),
+        ColumnInfo {
+            field_type: field(FieldTypeCode::Blob).with_collation(Collation::DEFAULT),
+            ..column(24, FieldTypeCode::Blob)
+        },
+        ColumnInfo {
+            field_type: field(FieldTypeCode::String).with_collation(Collation::DEFAULT),
+            ..column(25, FieldTypeCode::String)
+        },
+        ColumnInfo {
+            field_type: field(FieldTypeCode::Timestamp).with_decimal(6),
+            ..column(5, FieldTypeCode::Timestamp)
+        },
+        ColumnInfo {
+            field_type: field(FieldTypeCode::Duration).with_decimal(0),
+            ..column(16, FieldTypeCode::Duration)
+        },
+        column(8, FieldTypeCode::NewDecimal),
+        column(12, FieldTypeCode::Year),
+        ColumnInfo {
+            field_type: field(FieldTypeCode::Enum)
+                .with_elems(["y", "n"])
+                .with_collation(Collation::DEFAULT),
+            ..column(9, FieldTypeCode::Enum)
+        },
+        column(14, FieldTypeCode::Json),
+        column(11, FieldTypeCode::Null),
+        column(2, FieldTypeCode::Null),
+        column(100, FieldTypeCode::Null),
+        column(116, FieldTypeCode::Float),
+        ColumnInfo {
+            field_type: field(FieldTypeCode::Set)
+                .with_elems(["n1", "n2"])
+                .with_collation(Collation::DEFAULT),
+            ..column(117, FieldTypeCode::Set)
+        },
+        ColumnInfo {
+            field_type: field(FieldTypeCode::Bit).with_flen(24),
+            ..column(118, FieldTypeCode::Bit)
+        },
+        ColumnInfo {
+            field_type: field(FieldTypeCode::VarString).with_collation(Collation::DEFAULT),
+            ..column(119, FieldTypeCode::VarString)
+        },
+    ];
+
+    let json = BinaryJSON::parse(r#"{"a":2}"#).unwrap();
+    let base_inputs = vec![
+        Datum::Int(1),
+        Datum::UInt(1),
+        Datum::Real(2.0),
+        Datum::new_collation_string(b"abc", Collation::DEFAULT),
+        Datum::new_collation_string(b"ab", Collation::DEFAULT),
+        Datum::Time(
+            Time::new(
+                CoreTime::from_date(2011, 11, 10, 11, 11, 11, 999_999),
+                TimeType::Timestamp,
+                6,
+            )
+            .unwrap(),
+        ),
+        Datum::Duration(MySqlDuration::from_nanoseconds(14_400_000_000_000, 0).unwrap()),
+        Datum::Decimal(Decimal::from_literal("11.9900")),
+        Datum::Int(1999),
+        Datum::Enum(MysqlEnum::new("n", 2), Collation::DEFAULT),
+        Datum::Json(json.clone()),
+        Datum::Null,
+        Datum::Null,
+        Datum::Null,
+        Datum::Float32(f64::from(6_f32)),
+        Datum::Set(MysqlSet::new("n1", 1), Collation::DEFAULT),
+        Datum::Bit(BinaryLiteral::from_uint(
+            3_223_600,
+            Some(BinaryLiteralWidth::try_from(3_u8).unwrap()),
+        )),
+        Datum::new_collation_string(b"", Collation::DEFAULT),
+    ];
+    // Expected value after `DecodeToBytes` + `codec.DecodeOne`: strings stay
+    // octets, timestamps become their packed uint (Go: 1840446893366133311),
+    // durations their nanosecond count, enum/set/bit their numeric values,
+    // float32 is widened to the stored double, year stays a signed int.
+    let base_old_expected = vec![
+        Datum::Int(1),
+        Datum::UInt(1),
+        Datum::Real(2.0),
+        Datum::Bytes(b"abc".to_vec()),
+        Datum::Bytes(b"ab".to_vec()),
+        Datum::UInt(1840446893366133311),
+        Datum::Int(14_400_000_000_000),
+        Datum::Decimal(Decimal::from_literal("11.9900")),
+        Datum::Int(1999),
+        Datum::UInt(2),
+        Datum::Json(json),
+        Datum::Null,
+        Datum::Null,
+        Datum::Null,
+        Datum::Real(6.0),
+        Datum::UInt(1),
+        Datum::UInt(3_223_600),
+        Datum::Bytes(Vec::new()),
+    ];
+
+    let expect_matches = |got: &Datum, want: &Datum, index: usize| {
+        if index == TEXTUAL[0] {
+            assert_eq!(
+                got.as_decimal().unwrap().to_string(),
+                want.as_decimal().unwrap().to_string()
+            );
+        } else if index == TEXTUAL[1] {
+            match (got, want) {
+                (Datum::Json(got), Datum::Json(want)) => {
+                    assert_eq!(got.to_string(), want.to_string());
+                }
+                (got, _) => panic!("unexpected json datum: {got:?}"),
+            }
+        } else {
+            assert_eq!(got, want);
+        }
+    };
+
+    for case in 0..=2 {
+        let mut case_ids = ids.to_vec();
+        let mut case_columns = base_columns.clone();
+        let mut case_inputs = base_inputs.clone();
+        let mut case_old = base_old_expected.clone();
+        if case == 1 {
+            case_ids[0] = 300;
+            case_columns[0].id = 300;
+        } else if case == 2 {
+            let oversized = vec![b'a'; u16::MAX as usize + 1];
+            case_inputs[BLOB_ENTRY] =
+                Datum::new_collation_string(oversized.clone(), Collation::DEFAULT);
+            case_old[BLOB_ENTRY] = Datum::Bytes(oversized);
+        }
+
+        let mut encoded = Vec::new();
+        encode_row(Some(&utc), &case_ids, &case_inputs, &mut encoded).unwrap();
+
+        // Decode to datum map: every ID exists, including explicit NULLs.
+        let map = decode_row_to_map(&encoded, &case_columns, Some(&utc)).unwrap();
+        assert_eq!(map.len(), case_ids.len());
+        for (index, &id) in case_ids.iter().enumerate() {
+            let got = map
+                .get(&id)
+                .unwrap_or_else(|| panic!("missing map col {id}"));
+            expect_matches(got, &case_inputs[index], index);
+        }
+
+        // Decode to chunk-equivalent datums.
+        let decoded = decode_row_to_datums(
+            &encoded,
+            &case_columns,
+            &DecodeRowOptions {
+                timezone: Some(&utc),
+                ..DecodeRowOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(decoded.values.len(), case_inputs.len());
+        for (index, (got, want)) in decoded.values.iter().zip(&case_inputs).enumerate() {
+            expect_matches(got, want, index);
+        }
+
+        // Decode to old row bytes, then back through `codec.DecodeOne`.
+        let offsets: BTreeMap<i64, usize> = case_ids
+            .iter()
+            .enumerate()
+            .map(|(index, &id)| (id, index))
+            .collect();
+        let old =
+            decode_row_to_old_bytes(&encoded, &case_columns, &offsets, &[], None, None).unwrap();
+        assert_eq!(old.len(), case_columns.len());
+        for (index, bytes) in old.iter().enumerate() {
+            let (remainder, got) = decode_one(bytes).unwrap();
+            assert!(remainder.is_empty());
+            expect_matches(&got, &case_old[index], index);
+        }
+    }
+}
+
+/// Source: `rowcodec_test.go::TestVarintCompatibility`.
+///
+/// Byte-exact counterpart of the existing value-level port above: Go asserts
+/// each converted old-format column equals `tablecodec.EncodeValue(output)`.
+#[test]
+fn test_varint_compatibility_matches_encode_value_byte_for_byte() {
+    let columns = [
+        column(1, FieldTypeCode::LongLong),
+        ColumnInfo {
+            field_type: field(FieldTypeCode::LongLong).with_unsigned(true),
+            ..column(2, FieldTypeCode::LongLong)
+        },
+    ];
+    let mut encoded = Vec::new();
+    encode_row(
+        None,
+        &[1, 2],
+        &[Datum::Int(1), Datum::UInt(1)],
+        &mut encoded,
+    )
+    .unwrap();
+    let old = decode_row_to_old_bytes(
+        &encoded,
+        &columns,
+        &BTreeMap::from([(1, 0), (2, 1)]),
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(old[0], encode_value(&[Datum::Int(1)]).unwrap());
+    assert_eq!(old[1], encode_value(&[Datum::UInt(1)]).unwrap());
+}
+
+/// Source: `rowcodec_test.go::TestNilAndDefault`.
+///
+/// Covers the two branches the existing port skips: chunk decoding without a
+/// default function fills missing columns with NULL, and byte decoding honours
+/// per-column encoded defaults (`bdf`) verbatim.
+#[test]
+fn test_nil_and_default_missing_columns_take_null_or_encoded_defaults() {
+    let columns = [
+        column(1, FieldTypeCode::LongLong),
+        ColumnInfo {
+            field_type: field(FieldTypeCode::LongLong).with_unsigned(true),
+            ..column(2, FieldTypeCode::LongLong)
+        },
+    ];
+    let mut encoded = Vec::new();
+    encode_row(None, &[1], &[Datum::Int(1)], &mut encoded).unwrap();
+
+    let decoded = decode_row_to_datums(&encoded, &columns, &DecodeRowOptions::default()).unwrap();
+    assert_eq!(decoded.values, [Datum::Int(1), Datum::Null]);
+
+    let encoded_default = encode_value(&[Datum::UInt(9)]).unwrap();
+    let old = decode_row_to_old_bytes(
+        &encoded,
+        &columns,
+        &BTreeMap::from([(1, 0), (2, 1)]),
+        &[],
+        None,
+        Some(&[None, Some(encoded_default.clone())]),
+    )
+    .unwrap();
+    assert_eq!(old[0], encode_value(&[Datum::Int(1)]).unwrap());
+    assert_eq!(old[1], encoded_default);
+    let (remainder, value) = decode_one(&old[1]).unwrap();
+    assert!(remainder.is_empty());
+    assert_eq!(value, Datum::UInt(9));
+}
+
+/// Source: `rowcodec_test.go::TestDecodeRowWithHandle`.
+///
+/// Byte-decoder branch: the materialized handle column carries the declared
+/// signedness (`Int(10000)` versus `UInt(10000)`) next to the stored column.
+#[test]
+fn test_decode_row_with_handle_materializes_typed_handle_into_old_bytes() {
+    for unsigned in [false, true] {
+        let columns = [
+            ColumnInfo {
+                id: -1,
+                is_pk_handle: true,
+                virtual_generated: false,
+                field_type: field(FieldTypeCode::LongLong).with_unsigned(unsigned),
+            },
+            column(10, FieldTypeCode::LongLong),
+        ];
+        let mut encoded = Vec::new();
+        encode_row(None, &[10], &[Datum::Int(1)], &mut encoded).unwrap();
+        let old = decode_row_to_old_bytes(
+            &encoded,
+            &columns,
+            &BTreeMap::from([(-1, 0), (10, 1)]),
+            &[-1],
+            Some(&Handle::Int(10_000)),
+            None,
+        )
+        .unwrap();
+        let (_, handle_value) = decode_one(&old[0]).unwrap();
+        let (_, stored_value) = decode_one(&old[1]).unwrap();
+        let expected_handle = if unsigned {
+            Datum::UInt(10_000)
+        } else {
+            Datum::Int(10_000)
+        };
+        assert_eq!(handle_value, expected_handle);
+        assert_eq!(stored_value, Datum::Int(1));
+    }
+}
+
+/// Source: `rowcodec_test.go::TestColumnEncode` (`{"null", …}` and
+/// `{"geometry", …}` rows).
+///
+/// TypeNull and TypeGeometry absorb any non-NULL datum into zero bytes.
+#[test]
+fn test_column_encode_type_null_and_geometry_absorb_any_datum() {
+    for code in [FieldTypeCode::Null, FieldTypeCode::Geometry] {
+        let mut output = Vec::new();
+        append_datum_for_checksum(None, &mut output, &Datum::Int(1), code).unwrap();
+        assert!(output.is_empty());
+    }
+}
+
+/// Source: `rowcodec_test.go::TestRowChecksum`
+/// (`unordered` subtest including its timestamp column).
+///
+/// Callers sort `RowData` by ID first; checksum equals CRC32 of the sorted
+/// encoding even when the caller hands columns over out of order.
+#[test]
+fn test_row_checksum_unordered_columns_sort_before_crc() {
+    let timestamp = Time::new(
+        CoreTime::from_date(2023, 1, 2, 3, 4, 5, 678_000),
+        TimeType::Timestamp,
+        6,
+    )
+    .unwrap();
+    let make_column = |id, datum| DatumColumn {
+        id,
+        field_type: match &datum {
+            Datum::Null => field(FieldTypeCode::Null),
+            Datum::Int(_) => field(FieldTypeCode::Long),
+            Datum::Time(_) => field(FieldTypeCode::Timestamp),
+            _ => field(FieldTypeCode::Varchar),
+        },
+        datum,
+    };
+    let mut row = RowData {
+        columns: vec![
+            make_column(3, Datum::new_collation_string(b"foobar", Collation::Binary)),
+            make_column(1, Datum::Null),
+            make_column(4, Datum::Time(timestamp)),
+            make_column(2, Datum::Int(42)),
+        ],
+        data: Vec::new(),
+    };
+    assert_ne!(row.columns[0].id, row.columns[1].id);
+    row.columns.sort_by_key(|column| column.id);
+    let checksum = row.checksum(None).unwrap();
+    let raw = row.encode(None).unwrap().to_vec();
+    assert_eq!(checksum, crc32fast::hash(&raw));
+}
+
+/// Source: `main_test.go::EncodeFromOldRow`.
+///
+/// The package conversion helper short-circuits an already-new-format row
+/// unchanged instead of re-encoding it.
+#[test]
+fn test_encode_from_old_row_passes_new_format_through_unchanged() {
+    let mut new_format = Vec::new();
+    encode_row(None, &[1], &[Datum::Int(1)], &mut new_format).unwrap();
+    let mut output = Vec::new();
+    encode_row_from_old(None, &new_format, &mut output).unwrap();
+    assert_eq!(output, new_format);
+}
