@@ -1486,3 +1486,50 @@ slower on the four workload medians); no Go executable, Ready-profile
 `make lint`, full Go unit suite, or complete hbx-web3/TPC-H catalog was
 available locally. Any subsequent fix must continue to cite its owning Go
 package and use a commit message containing the literal `go 代码`.
+
+Revision note, 2026-08-27 (latest client-rust/upstream refresh and Go IN
+probe continuation): the explicit fetch and rebase now put this worktree on
+`origin/hparser-integration` `7b4e2c91aa4`. The refresh includes upstream
+`7b4e2c91aa4` (client-rust RPC hand-off/wait parity) and
+`31a3a1eee2d` (the `pkg/util/rowcodec` Go test package port). The local
+behavior fix is `51ccc6666c2`, whose source reference is Go
+`pkg/expression/builtin_other.go::builtinInStringSig`:
+`buildHashMapForConstArgs` builds immutable collation keys once and
+`evalInt` probes them for each row. Rust now reserves the literal-list map,
+borrows raw bytes for the Go-equivalent binary/derived-binary collators, and
+keeps the allocating `collator.key` path for PAD SPACE collations. The
+regression covers binary membership, `utf8mb4_bin` trailing-space equality,
+and a 1000-literal map.
+
+The release server was rebuilt from `51ccc6666c20d530a96e06fdd3b476fc53fa2380`
+with the pinned OpenSSL environment. Go nightly remains on
+`127.0.0.1:14000`; the Rust process was run on `127.0.0.1:14019` and then
+stopped, while the Go TiUP playground remains available. Both endpoints used
+the deterministic `hbx_web3_1g` fixture (1,048,576 rows × 1,024-byte payload,
+1 GiB). The fresh receipt
+`/private/tmp/hbx-1g-20260825/compare-51ccc6666c20-20260827.json` reports all
+four normalized plans and result hashes equal (`q1`, `q2`, `flex`, `swap`),
+100 rows per query, with hashes q1 `0c488295...`, q2/flex `45f8be11...`, and
+swap `bf2ce599...`. The 20-pair one-client receipt
+`/private/tmp/hbx-1g-20260825/bench-51ccc-shards1-20260827.json` (the best
+controlled transport-shard setting in this run) has Go/Rust medians q1
+`9.514/9.663 ms` (`1.016x`), q2 `8.386/9.124 ms` (`1.088x`), flex
+`7.624/9.423 ms` (`1.236x`), swap `13.713/17.927 ms` (`1.307x`), and
+100-row batch insert `5.898/6.280 ms` (`1.065x`). Every batch returns 100
+rows and `sum_balance = 5050.000000000000000000` on both endpoints. The
+default-like four-shard control is preserved in
+`/private/tmp/hbx-1g-20260825/bench-51ccc6666c20-20260827.json` and is also
+correct, but slower for this single-client shape (q1 `1.032x`, q2 `1.090x`,
+flex `1.274x`, swap `1.403x`, batch `1.081x`).
+
+Post-refresh focused gates are green: `cargo test -p tidb-expr --lib --
+--nocapture` is 861 passed/3 ignored, the new string-IN filter is 3/3,
+`cargo test -p tidb-txnkv --lib rpc -- --nocapture` is 11/11, and
+`cargo test -p tidb-codec --test all rowcodec_package_source -- --nocapture`
+is 25/25. The release build succeeds. Correctness and source-behavior gates
+remain green, but strict one-concurrency no-regression is still open for all
+four workload medians; this iteration therefore remains WIP. The checkout has
+no Go executable, so Go unit tests and Ready-profile `make lint` are not
+available, and the complete hbx-web3/TPC-H catalog was not rerun. The source
+fix and this receipt commit retain a `Go code:` line and the literal `go 代码`
+phrase.
