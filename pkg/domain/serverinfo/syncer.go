@@ -174,17 +174,18 @@ func (s *Syncer) cleanupFailedRegistration(session *concurrency.Session) {
 
 // StoreServerInfo stores self server static information to etcd.
 func (s *Syncer) StoreServerInfo(ctx context.Context) error {
-	if s.etcdCli == nil {
-		return nil
-	}
-	info := s.info.Load()
-	infoBuf, err := info.Marshal()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	str := string(hack.String(infoBuf))
-	err = util.PutKVToEtcd(ctx, s.etcdCli, KeyOpDefaultRetryCnt, s.serverInfoPath, str, clientv3.WithLease(s.session.Lease()))
-	return err
+	return nil
+	// if s.etcdCli == nil {
+	// 	return nil
+	// }
+	// info := s.info.Load()
+	// infoBuf, err := info.Marshal()
+	// if err != nil {
+	// 	return errors.Trace(err)
+	// }
+	// str := string(hack.String(infoBuf))
+	// err = util.PutKVToEtcd(ctx, s.etcdCli, KeyOpDefaultRetryCnt, s.serverInfoPath, str, clientv3.WithLease(s.session.Lease()))
+	// return err
 }
 
 // GetLocalServerInfo returns self server information.

@@ -871,6 +871,7 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 		d.detectAndUpdateJobVersion()
 	}
 	campaignOwner := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()
+	campaignOwner = false
 	if startMode == Upgrade {
 		if !campaignOwner {
 			return errors.New("DDL must be enabled when upgrading")
