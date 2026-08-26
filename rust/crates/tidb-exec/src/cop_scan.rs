@@ -759,12 +759,15 @@ where
         // full scans, where response decoding must overlap executor work.
         if request.limit == Some(1) {
             serve_scan(&factory, plan, &rows, &node_rows);
-        } else if !request.range_hints.is_empty() {
-            // Handle-grouped requests are the Go table-worker shape: their
-            // ranges carry one `SetTableHandles` cardinality hint per group.
-            // Keep the transport on a persistent producer instead of
-            // creating one native thread for every lookup window.  The
-            // channel remains bounded, so cancellation and back-pressure are
+        } else if request.index.is_some() || !request.range_hints.is_empty() {
+            // Go's IndexLookUpExecutor starts both its index worker and its
+            // table workers from one persistent worker pool
+            // (`pkg/executor/distsql.go:743-745,881-1149`). Handle-grouped
+            // requests are the table-worker shape: their ranges carry one
+            // `SetTableHandles` cardinality hint per group. Keep both those
+            // requests and index scans on a persistent producer instead of
+            // creating one native thread for every lookup window. The channel
+            // remains bounded, so cancellation and back-pressure are
             // unchanged from the dedicated-thread path.
             enqueue_scan(move || serve_scan(&factory, plan, &rows, &node_rows));
         } else {
