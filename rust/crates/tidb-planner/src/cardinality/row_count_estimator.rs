@@ -43,7 +43,7 @@ use tidb_stats::cmsketch::{CmsSketch, TopN};
 use tidb_stats::histogram::{Histogram, OutOfRangeContext};
 
 use super::pseudo::{
-    pseudo_row_count_by_scalar_ranges, pseudo_row_count_by_signed_int_ranges,
+    pseudo_equal_count, pseudo_row_count_by_scalar_ranges, pseudo_row_count_by_signed_int_ranges,
     pseudo_row_count_by_unsigned_int_ranges, PseudoBoundKind, ScalarRange, SignedIntRange,
     UnsignedIntRange,
 };
@@ -699,6 +699,40 @@ pub fn get_row_count_by_column_ranges(
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{get_row_count_by_column_ranges, pseudo_equal_count, ColumnRange};
+    use tidb_datatype::{Collation, Datum, StringDatum};
+
+    #[test]
+    fn pseudo_long_point_ranges_keep_go_equality_accumulation() {
+        let ranges: Vec<ColumnRange> = (0..1000)
+            .map(|value| {
+                let datum = Datum::String(StringDatum::new(
+                    format!("maker-{value}").into_bytes(),
+                    Collation::Utf8Mb4Bin,
+                ));
+                ColumnRange::point(datum)
+            })
+            .collect();
+        let table_rows = 1_048_576;
+        let expected = (0..ranges.len()).fold(0.0_f64, |total, _| {
+            total + pseudo_equal_count(table_rows as f64)
+        });
+        let actual = get_row_count_by_column_ranges(
+            None,
+            &ranges,
+            Collation::Utf8Mb4Bin,
+            table_rows,
+            0,
+            false,
+            Default::default(),
+        )
+        .est;
+        assert_eq!(actual.to_bits(), expected.min(table_rows as f64).to_bits());
+    }
+}
+
 fn bound_kind(value: &Datum) -> PseudoBoundKind {
     match value {
         Datum::Null => PseudoBoundKind::Null,
@@ -783,6 +817,26 @@ fn pseudo_row_count(
             })
             .collect();
         return pseudo_row_count_by_unsigned_int_ranges(&unsigned, table_row_count);
+    }
+
+    // Go's pseudo column estimator charges the equality rate once for each
+    // closed point range.  Long literal IN lists are already normalized into
+    // exactly that shape by the ranger.  Avoid materializing a second
+    // `ScalarRange` for every point and the collation comparison that the
+    // generic path repeats for each one; keep the source's left-to-right
+    // accumulation so the floating-point result remains the same.
+    if ranges.len() >= 32
+        && ranges.iter().all(|range| {
+            range.low == range.high
+                && !matches!(
+                    range.low,
+                    Datum::Null | Datum::MinNotNull | Datum::MaxValue
+                )
+        })
+    {
+        let equality_count = pseudo_equal_count(table_row_count);
+        let row_count = (0..ranges.len()).fold(0.0_f64, |total, _| total + equality_count);
+        return row_count.min(table_row_count);
     }
     let scalar: Vec<ScalarRange> = ranges
         .iter()
