@@ -307,3 +307,24 @@ Remaining gaps, priority order:
 2. select_random_points (0.82) / read_only (0.89): moderate.
 3. The 7 failing driver::tests::aggregates tests are collaborator-introduced
    (their own commit message names the compact-key regression); not ours.
+
+## RANDOM_RANGES PROFILE (2026-08-26): full frame accounting
+perf record 45s @399Hz during select_random_ranges (20739 samples total,
+19313 conn-thread). Phase classification of conn frames:
+- RANGE BUILD (points_on_column/merge/convert_points/build_cnf+dnf): ~10.5%
+- STATS ESTIMATION (Histogram::locate_bucket + cmsketch TopN lookups): ~4.8%
+- DATUM clone/compare/drop: ~10.4%
+- JEMALLOC + memmove/memcpy band: ~18-26%
+- EXPR EVAL: ~5%; ROUTE/TRANSPORT: ~2%; FUNCDEP translate: ~1.6%
+- Collation/Charset::from_name string parse: ~2%
+KEY FINDING: every EXECUTE re-runs detach_cond_and_build_range_for_index
+(needed -- params changed) AND the full cost/cardinality estimation over
+histogram+cmsketch+TopN (NOT needed once the access path is pinned --
+Go's plan-cache hit path skips costing: RebuildPlan4CachedPlan ->
+rebuildRange, pkg/planner/core/plan_cache_rebuild.go:30-76).
+NEXT FIX (highest leverage, Go-aligned): when prepared_path_pins HIT,
+skip enumerate_paths' per-candidate row_count_estimator work (the
+pinned winner is already chosen; estimates cannot change the pick) and
+build ranges for the pinned candidate directly. Secondary: cache
+Collation/Charset::from_name resolution per FieldType (string parse
+per call, ~2% CPU).
