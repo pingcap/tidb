@@ -947,6 +947,44 @@ fn points_from_in(
         values.push(value);
     }
 
+    // The legacy binary collations compare bytes (with optional PAD SPACE).
+    // When no value ends in a pad byte, the raw bytes are already the complete
+    // ordering/equality key. Sorting the owned values directly avoids one key
+    // allocation per IN item; collations with weight tables keep the keyed
+    // path below because their keys are not byte-identical.
+    let raw_binary_key = matches!(
+        collation,
+        Collation::Binary | Collation::Utf8Mb40900Bin
+    ) || (matches!(
+        collation,
+        Collation::AsciiBin
+            | Collation::Latin1Bin
+            | Collation::Utf8Bin
+            | Collation::Utf8Mb4Bin
+    ) && values.iter().all(|value| {
+        matches!(value, Datum::String(string) if string.bytes().last() != Some(&b' '))
+    }));
+    if raw_binary_key && values.iter().all(|value| matches!(value, Datum::String(_))) {
+        values.sort_unstable_by(|left, right| {
+            let (Datum::String(left), Datum::String(right)) = (left, right) else {
+                unreachable!("the homogeneous string check above covers every value")
+            };
+            left.bytes().cmp(right.bytes())
+        });
+        values.dedup_by(|left, right| {
+            let (Datum::String(left), Datum::String(right)) = (left, right) else {
+                unreachable!("the homogeneous string check above covers every value")
+            };
+            left.bytes() == right.bytes()
+        });
+        let mut points = Vec::with_capacity(values.len() * 2);
+        for value in values {
+            points.push(Point::start(value.clone(), false));
+            points.push(Point::end(value, false));
+        }
+        return Some((points, has_null));
+    }
+
     // String comparison computes a collation key. Calling `point_cmp` from
     // the generic sort below would rebuild that allocated key for both sides
     // of every comparison (and twice per value, for the start/end points).
