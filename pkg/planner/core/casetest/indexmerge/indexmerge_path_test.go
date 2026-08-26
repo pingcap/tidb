@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -112,6 +113,90 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	sf, ok = mvFilterMutations[1].(*expression.ScalarFunction)
 	require.True(t, ok)
 	require.Equal(t, sf.FuncName.L, ast.JSONMemberOf)
+}
+
+// TestMVIndexMergeCollationDistinctPredicates verifies that two access
+// conditions on the same column that differ only by an explicit COLLATE
+// clause are both preserved through predicate simplification, instead of
+// being merged as duplicates. See https://github.com/pingcap/tidb/issues/70645:
+// `Constant.HashCode()` used to ignore collation, so
+// `c = 'A' collate utf8mb4_general_ci AND c = 'A' collate utf8mb4_bin` had one
+// of the two predicates silently dropped, which then let
+// generateMVIndexMergePartialPaths4And build an index merge path that used
+// only the weaker (case-insensitive) predicate and returned extra rows.
+func TestMVIndexMergeCollationDistinctPredicates(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t_hash")
+	tk.MustExec(`create table t_hash(
+		id int primary key,
+		c varchar(10) collate utf8mb4_general_ci,
+		j json,
+		k int,
+		index idx_mv(c, (cast(j->'$.a' as signed array))),
+		index idx_k(k)
+	)`)
+	sql := "SELECT /*+ use_index_merge(t_hash, idx_mv, idx_k) */ id FROM t_hash " +
+		"WHERE c = 'A' collate utf8mb4_general_ci AND c = 'A' collate utf8mb4_bin " +
+		"AND 1 member of (j->'$.a') AND k = 1"
+
+	par := parser.New()
+	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
+	err := domain.Reload()
+	require.NoError(t, err)
+	is := domain.InfoSchema()
+	is = &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
+	require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO(), nil))
+	require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
+	stmt, err := par.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	tk.Session().GetSessionVars().PlanID.Store(0)
+	tk.Session().GetSessionVars().PlanColumnID.Store(0)
+	nodeW := resolve.NewNodeW(stmt)
+	err = plannercore.Preprocess(context.Background(), tk.Session(), nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+	require.NoError(t, err)
+	require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
+	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.TODO(), nodeW)
+	require.NoError(t, err)
+	logicalP, err := plannercore.LogicalOptimizeTest(context.TODO(), builder.GetOptFlag(), p.(base.LogicalPlan))
+	require.NoError(t, err)
+
+	ds, ok := logicalP.(*logicalop.DataSource)
+	for !ok {
+		p := logicalP.Children()[0]
+		ds, ok = p.(*logicalop.DataSource)
+	}
+
+	// The query has exactly two `eq(c, <string constant>)` predicates, differing
+	// only by the constant's collation; both must survive predicate simplification.
+	eqOnC := 0
+	for _, cond := range ds.AllConds {
+		sf, ok := cond.(*expression.ScalarFunction)
+		if !ok || sf.FuncName.L != ast.EQ {
+			continue
+		}
+		args := sf.GetArgs()
+		if _, ok := args[0].(*expression.Column); !ok {
+			continue
+		}
+		cst, ok := args[1].(*expression.Constant)
+		if ok && (cst.Value.Kind() == types.KindString || cst.Value.Kind() == types.KindBytes) {
+			eqOnC++
+		}
+	}
+	require.Equal(t, 2, eqOnC, "both collation-distinct predicates on column c must survive predicate simplification")
+
+	// End-to-end: only the row that satisfies both collations should match.
+	tk.MustExec(`insert into t_hash values
+		(1,'A','{"a":[1]}',1),
+		(2,'a','{"a":[1]}',1),
+		(3,'B','{"a":[1]}',1),
+		(4,'A','{"a":[2]}',1),
+		(5,'a','{"a":[2]}',1)`)
+	tk.MustQuery(sql + " ORDER BY id").Check(testkit.Rows("1"))
 }
 
 func TestMultiMVIndexRandom(t *testing.T) {

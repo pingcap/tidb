@@ -125,6 +125,18 @@
           "1"
         ],
         "Warning": null
+      },
+      {
+        "SQL": "SELECT c1 FROM t2 WHERE c1 = 'A' COLLATE utf8mb4_general_ci AND c1 = 'A' COLLATE utf8mb4_bin;",
+        "Plan": [
+          "TableReader root  data:Selection",
+          "└─Selection cop[tikv]  eq(test.t2.c1, \"A\")",
+          "  └─TableRangeScan cop[tikv] table:t2 range:[\"A\",\"A\"], keep order:false, stats:pseudo"
+        ],
+        "LastPlanFromCache": [
+          "0"
+        ],
+        "Warning": null
       }
     ]
   }

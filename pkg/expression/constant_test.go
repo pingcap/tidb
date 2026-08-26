@@ -585,3 +585,25 @@ func TestConstantHashEquals(t *testing.T) {
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, cst1.Equals(cst2))
 }
+
+// TestConstantHashCodeCollation verifies that two constants with the same raw
+// string value but different collations produce different HashCode() results.
+// See https://github.com/pingcap/tidb/issues/70645: HashCode() is used as a
+// dedup key (e.g. RemoveDupExprs), so a collision here caused predicates like
+// `c = 'A' collate utf8mb4_general_ci` and `c = 'A' collate utf8mb4_bin` to be
+// treated as duplicates and one of them silently dropped.
+func TestConstantHashCodeCollation(t *testing.T) {
+	ciType := newStringFieldType()
+	ciType.SetCollate("utf8mb4_general_ci")
+	binType := newStringFieldType()
+	binType.SetCollate("utf8mb4_bin")
+
+	cstCI := &Constant{Value: types.NewStringDatum("A"), RetType: ciType}
+	cstBin := &Constant{Value: types.NewStringDatum("A"), RetType: binType}
+	require.NotEqual(t, cstCI.HashCode(), cstBin.HashCode())
+	require.False(t, cstCI.Equals(cstBin))
+
+	// same collation and value must still hash equal.
+	cstCI2 := &Constant{Value: types.NewStringDatum("A"), RetType: ciType.Clone()}
+	require.Equal(t, cstCI.HashCode(), cstCI2.HashCode())
+}

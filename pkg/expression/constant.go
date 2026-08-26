@@ -615,6 +615,15 @@ func (c *Constant) getHashCode(canonical bool) []byte {
 	intest.Assert(c.DeferredExpr == nil && c.ParamMarker == nil)
 	c.hashcode = append(c.hashcode, constantFlag)
 	c.hashcode = codec.HashCode(c.hashcode, c.Value)
+	// The collation affects how the value compares against other values (e.g. a
+	// case-insensitive collation makes 'A' and 'a' equal), so two constants with the
+	// same raw value but different collations must not collide here. Otherwise callers
+	// that use HashCode as a dedup key (e.g. RemoveDupExprs) can wrongly drop one of two
+	// semantically distinct predicates such as `c = 'A' collate utf8mb4_general_ci` and
+	// `c = 'A' collate utf8mb4_bin`.
+	if (c.Value.Kind() == types.KindString || c.Value.Kind() == types.KindBytes) && c.RetType != nil {
+		c.hashcode = codec.EncodeCompactBytes(c.hashcode, []byte(c.RetType.GetCollate()))
+	}
 	return c.hashcode
 }
 
