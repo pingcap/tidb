@@ -4390,8 +4390,9 @@ impl IndexJoinLookupExec {
     /// Rows arrive in KEY order either way; the join above matches rows by
     /// their column values, so the reordering is unobservable -- the same
     /// license the unordered local index walk takes. A window read through
-    /// the range scan carries every row the handles name exactly once (the
-    /// stager dedupes), which is also what the batch-get answered.
+    /// the range scan carries every row occurrence named by the handles,
+    /// including duplicate handles from a non-unique index; this matches
+    /// Go's `TableHandlesToKVRanges` request shape and the batch-get answer.
     fn window_rows(
         &mut self,
         handles: &[TableHandle],
