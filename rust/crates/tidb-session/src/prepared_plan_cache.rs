@@ -78,17 +78,17 @@ const UNCACHEABLE_FUNCTIONS: &[&str] = &[
 pub(crate) struct PreparedPlanKey {
     /// The catalog's schema version: any DDL between the two executes is a
     /// miss, which is what makes a cached plan never read a dropped column.
-    schema_version: u64,
+    pub(crate) schema_version: u64,
     /// Go hashes the current database because an unqualified name resolves
     /// differently under another `USE`.
-    current_db: String,
+    pub(crate) current_db: String,
     /// `@@sql_mode`, which changes evaluation semantics.
-    sql_mode: String,
+    pub(crate) sql_mode: String,
     /// `@@time_zone`, which changes every temporal answer.
-    time_zone: String,
+    pub(crate) time_zone: String,
     /// Go `ExprPushDownBlackListReloadTimeStamp`: bumped by `ADMIN RELOAD
     /// EXPR_PUSHDOWN_BLACKLIST`, so a reload invalidates cached plans.
-    blacklist_generation: u64,
+    pub(crate) blacklist_generation: u64,
 }
 
 impl Session {

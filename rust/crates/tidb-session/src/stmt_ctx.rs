@@ -826,6 +826,18 @@ impl Session {
                 .with_default_string_match_selectivity(default_string_match_selectivity)
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_clock(clock, zone);
+            // Prepared plan cache, the reusable half: hand the in-flight
+            // statement its replay pins and/or capture sink.
+            if let Some(state) = self.active_prepared_pin.borrow().as_ref() {
+                let mut ctx = ctx;
+                if let Some(pins) = &state.apply {
+                    ctx = ctx.with_prepared_path_pins(Arc::clone(pins));
+                }
+                if let Some(sink) = &state.capture {
+                    ctx = ctx.with_prepared_pin_capture(Arc::clone(sink));
+                }
+                return ctx;
+            }
             return ctx;
         }
         let (increment, offset) = self.auto_increment_step();

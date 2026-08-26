@@ -232,6 +232,28 @@ impl RowIdShardGenerator {
 /// DEFERRED (documented): the rest of `StatementContext` -- the remaining
 /// error groups (bad NULL, no default), the resource tracker and runtime
 /// stats.
+/// One prepared statement's committed access path for ONE named leaf --
+/// Go's prepared plan cache reduced to the decision this tier reuses safely.
+///
+/// Go caches a whole physical plan and rebinds its ranges per execute. This
+/// tier keeps every range, constant fold and residual split freshly derived
+/// from the CURRENT parameters, and pins only the SHAPE decision -- which
+/// access path won the cost race at the statement's first execution -- so a
+/// later execution whose literals would flip that race replays the original
+/// winner instead, exactly as a cache hit does in Go. Correctness never
+/// depends on the pin: every candidate is built from the same pushed
+/// conditions with the same residual handling, so forcing one changes only
+/// what it costs, never what it reads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PinnedLeafAccess {
+    /// The whole-table handle scan won (`TableFullScan`/`TableRangeScan`).
+    TableScan,
+    /// An index read won, by catalog index id (stable within one schema
+    /// version; a DDL that drops or recreates the index fails the pin and
+    /// the statement replans freely).
+    IndexId(i64),
+}
+
 #[derive(Clone, Default)]
 pub struct StmtContext {
     /// Go's `StaticWarnHandler` entries: a LEVEL, a code and a message.
@@ -467,6 +489,13 @@ pub struct StmtContext {
     /// prepared-statement layer that reads it is outside the driver that
     /// knows.
     planned_apply: Arc<AtomicBool>,
+    /// Prepared plan cache, the reusable half: this execution's pins
+    /// (apply) and/or its capture sink, installed by
+    /// [`crate::Session::begin_prepared_path_pins`]. `None` outside the
+    /// prepared funnel leaves planning exactly as before.
+    prepared_path_pins: Option<Arc<HashMap<String, PinnedLeafAccess>>>,
+    prepared_pin_capture:
+        Option<Arc<Mutex<Option<HashMap<String, PinnedLeafAccess>>>>>,
     /// Go `SessionVars.AllowWriteRowID` (`tidb_opt_write_row_id`): whether an
     /// `INSERT`/`REPLACE`/`UPDATE` may name `_tidb_rowid` and write it.
     allow_write_row_id: bool,
@@ -708,6 +737,8 @@ impl StmtContext {
             // Go `vardef.DefTiDBEnableIndexMerge = true`.
             index_merge: true,
             planned_apply: Arc::default(),
+            prepared_path_pins: None,
+            prepared_pin_capture: None,
             allow_write_row_id: false,
             expr_pushdown_blacklist: std::sync::Arc::default(),
             disabled_logical_rules: std::sync::Arc::default(),
@@ -1259,6 +1290,44 @@ impl StmtContext {
     /// `PhysicalApply`), which `isPhysicalPlanCacheable` refuses to cache.
     pub fn report_planned_apply(&self) {
         self.planned_apply.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Installs this execution's access-path pins (Go's cached plan, read
+    /// side). A pin names the access path a leaf committed to on an earlier
+    /// execution of the same prepared statement.
+    #[must_use]
+    pub fn with_prepared_path_pins(
+        mut self,
+        pins: Arc<HashMap<String, PinnedLeafAccess>>,
+    ) -> Self {
+        self.prepared_path_pins = Some(pins);
+        self
+    }
+
+    /// Installs the capture sink this execution records its winners into
+    /// (Go's cache STORE side): the session reads it back after the
+    /// statement succeeds and keeps it as the statement's pins.
+    #[must_use]
+    pub fn with_prepared_pin_capture(
+        mut self,
+        sink: Arc<Mutex<Option<HashMap<String, PinnedLeafAccess>>>>,
+    ) -> Self {
+        self.prepared_pin_capture = Some(sink);
+        self
+    }
+
+    /// The pin recorded for THIS named leaf on the statement's first
+    /// execution, when the current execution replays it.
+    #[must_use]
+    pub fn prepared_path_pin_for(&self, leaf: &str) -> Option<PinnedLeafAccess> {
+        self.prepared_path_pins.as_ref()?.get(leaf).cloned()
+    }
+
+    /// The capture sink, when this execution records pins.
+    pub(crate) fn prepared_pin_capture(
+        &self,
+    ) -> Option<Arc<Mutex<Option<HashMap<String, PinnedLeafAccess>>>>> {
+        self.prepared_pin_capture.clone()
     }
 
     /// Installs the two published blacklists. See

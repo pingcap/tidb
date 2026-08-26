@@ -129,6 +129,8 @@ use super::*;
 // rather than a field of any of the others. Grouping the catalog inputs into a
 // wrapper would name the table twice without changing what travels; the
 // sibling choosers in this module carry the same allow.
+use crate::stmt_context::PinnedLeafAccess;
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn leaf_index_path(
     table: &KvTable,
@@ -249,7 +251,49 @@ pub(crate) fn leaf_index_path(
             None => leaf_handle_order(table, columns).starts_with(wanted),
         });
     }
+    // Prepared plan cache, the reusable half (Go `GetPlanFromPlanCache`):
+    // a pin from the statement's first execution NARROWS the candidates to
+    // the path that won then, whatever today's literals would cost. Every
+    // candidate here was built from the same pushed conditions with the same
+    // residual handling, so the narrowing can only change what the read
+    // costs, never what it answers. An empty narrowed set (the pinned index
+    // left the catalog, or the order filter already refused it) falls back
+    // to the free race -- Go's miss-and-replan.
+    let paths = match ctx.prepared_path_pin_for(visible) {
+        Some(pin) => {
+            let (pinned, rest): (Vec<_>, Vec<_>) = paths
+                .into_iter()
+                .partition(|candidate| match (&pin, &candidate.path.index) {
+                    (PinnedLeafAccess::IndexId(pinned_id), Some((id, _))) => id == pinned_id,
+                    (PinnedLeafAccess::TableScan, None) => true,
+                    _ => false,
+                });
+            if pinned.is_empty() {
+                rest
+            } else {
+                pinned
+            }
+        }
+        None => paths,
+    };
     let best = crate::access_cost::choose_access_path(paths, stats, false, false)?;
+    // Capture what just won, when this execution stores pins: the session
+    // keeps the map as the statement's pins after it succeeds. The early
+    // point-get arm above returns BEFORE this line on purpose -- a point
+    // shape is parameter-derived and already has its own template cache, so
+    // it records nothing here.
+    if let Some(sink) = ctx.prepared_pin_capture() {
+        if let Ok(mut slot) = sink.lock() {
+            let map = slot.get_or_insert_with(std::collections::HashMap::new);
+            map.insert(
+                visible.to_owned(),
+                match &best.index {
+                    Some((index_id, _)) => PinnedLeafAccess::IndexId(*index_id),
+                    None => PinnedLeafAccess::TableScan,
+                },
+            );
+        }
+    }
     let Some((index_id, ranges)) = best.index else {
         let residual_filters = where_clause.map_or_else(Vec::new, |predicate| {
             crate::handle_range::build_handle_ranges(table, predicate, &ctx.session_zone())

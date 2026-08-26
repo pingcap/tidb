@@ -613,6 +613,15 @@ pub struct Session {
     /// statement now running planned an Apply. Read by the prepared plan
     /// cache (Go's `PhysicalApply` refusal) and cleared per statement.
     planned_apply: Arc<std::sync::atomic::AtomicBool>,
+    /// Prepared plan cache, the reusable half: each entry is one prepared
+    /// statement's committed access-path shapes with the key they were
+    /// planned under. See [`crate::prepared_path_pins`].
+    prepared_plan_pins:
+        std::cell::RefCell<HashMap<String, crate::prepared_path_pins::PreparedPathPinEntry>>,
+    /// The in-flight statement's pin state, opened by the prepared funnel
+    /// and consumed while its statement context is built.
+    active_prepared_pin:
+        std::cell::RefCell<Option<crate::prepared_path_pins::ActivePreparedPinState>>,
     /// Go `SessionVars.FoundInBinding`: whether the statement RUNNING now
     /// took its hints from a binding.
     found_in_binding: bool,
@@ -692,6 +701,8 @@ impl Default for Session {
             session_bindings: binding::SessionBindings::default(),
             pushdown_blacklists: blacklist::PushdownBlacklists::default(),
             planned_apply: Arc::default(),
+            prepared_plan_pins: std::cell::RefCell::default(),
+            active_prepared_pin: std::cell::RefCell::default(),
             found_in_binding: false,
             prev_found_in_binding: false,
         };
@@ -739,6 +750,7 @@ mod load_stats_arm;
 mod non_prepared_plan_cache;
 mod noop;
 mod prepared_ast;
+mod prepared_path_pins;
 mod prepared_plan_cache;
 mod prepared_statements;
 pub mod session_vars;
@@ -1213,13 +1225,21 @@ impl Session {
     /// merely to obtain text would add work to every execute.
     pub fn run_parsed_bound_owned_with_sql(
         &mut self,
-        bound: tidb_ast::Stmt,
+        mut bound: tidb_ast::Stmt,
         sql: &str,
     ) -> Result<StmtOutput, DriverError> {
-        self.run_with_columns_using(sql, false, move |session| {
+        // Prepared plan cache, the reusable half (Go `GetPlanFromPlanCache`
+        // narrowed to access-path shapes): open pins for a cacheable query,
+        // run, then store what a successful miss captured. The PREPARE-time
+        // probe never enters here -- it calls `run_bound_prepared`, which
+        // has no pin state -- so NULL-marker probing cannot poison pins.
+        let pin_state = self.begin_prepared_path_pins(&mut bound, sql);
+        *self.active_prepared_pin.borrow_mut() = pin_state;
+        let result = self.run_with_columns_using(sql, false, move |session| {
             session.execute_statement_parsed(bound, sql)
-        })
-        .map(|(output, _)| output)
+        });
+        self.finish_prepared_path_pins(sql, result.is_ok());
+        result.map(|(output, _)| output)
     }
 
     fn run_bound_prepared_internal(
@@ -1609,6 +1629,8 @@ mod tests_partition_prune_collation;
 mod tests_planner_core_rewriter;
 #[cfg(test)]
 mod tests_positional_orderby;
+#[cfg(test)]
+mod tests_prepared_path_pins;
 #[cfg(test)]
 mod tests_prepared_plan_cache;
 #[cfg(test)]
