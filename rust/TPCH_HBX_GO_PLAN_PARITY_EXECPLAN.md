@@ -944,3 +944,21 @@ ratios are q1 `1.112x`, q2 `1.200x`, flex `1.180x`, swap `1.583x`, and batch
 the required `Go code:` references; the rebased commits were pushed to
 `origin/hparser-integration` at `e1fa296a43`. Ready validation remains
 unavailable without Go.
+
+Revision note, 2026-08-26 (Go lookup decode and string-IN continuation):
+fetched `origin/hparser-integration` explicitly and confirmed it remains at
+`cb83b9b3ab`. The Rust table-lookup drain now follows Go
+`pkg/executor/distsql.go:2145-2218` by using the already validated response
+chunk's infallible `GetDatum`-equivalent path, with an explicit wire-column
+bound check. The clean covering reader skips a duplicate local Selection only
+when the coprocessor receipt confirms every predicate was lowered, and the
+large string `IN` fast path uses the hash-backed membership shape from Go
+`pkg/expression/builtin_other.go:329-394`. Cursor and predicate-pushdown
+regressions pass. After a clean release rebuild/restart, the four 1G HBX
+plans/results and all 100-row batch checks remain equal. Receipts:
+`/private/tmp/hbx-1g-20260825/compare-getdatum-20260826.json` and
+`/private/tmp/hbx-1g-20260825/bench-getdatum-20260826.json`. The 20-pair
+medians are Rust/Go q1 `1.056x`, q2 `1.204x`, flex `1.155x`, swap `1.628x`,
+and batch `1.230x`; the single-concurrency no-regression gate remains open.
+This is still WIP: `make lint`/Ready cannot run because this environment has
+no `go` executable, and the continuation changes are pending commit/push.

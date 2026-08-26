@@ -891,7 +891,13 @@ impl KvTable {
             };
             let handle = TableHandle::Int(*handle);
             if staged.appended_handle {
-                row.remove(staged.handle_position);
+                // pushdown_row_cursor_with_context appends a synthetic
+                // handle after every requested column. Go's table worker
+                // keeps that handle in a side field rather than shifting the
+                // row; pop the trailing slot to avoid an O(width) move for
+                // every fetched row.
+                debug_assert_eq!(staged.handle_position, row.len().saturating_sub(1));
+                row.pop();
             }
             rows.push((handle, row));
             Ok(())
@@ -938,7 +944,19 @@ impl KvTable {
                 .enumerate()
                 .map(|(position, handle)| (handle, position))
                 .collect::<HashMap<_, _>>();
-            rows.sort_by_key(|(handle, _)| positions.get(handle).copied());
+            // Go's `tableWorker.executeTask` computes `rowIdx` once per row
+            // and sorts that integer field. Decorate before sorting for the
+            // same O(n) handle-map work; calling `HashMap::get` from a
+            // comparison key would repeat the hash lookup O(n log n) times.
+            let mut ordered = rows
+                .into_iter()
+                .map(|row| {
+                    let position = positions.get(&row.0).copied().unwrap_or(usize::MAX);
+                    (position, row)
+                })
+                .collect::<Vec<_>>();
+            ordered.sort_by_key(|(position, _)| *position);
+            rows = ordered.into_iter().map(|(_, row)| row).collect();
         }
         Ok(Some((rows, predicates_applied, wire_rows)))
     }
@@ -1482,6 +1500,14 @@ impl KvTable {
         } else {
             handle_indices.clone()
         };
+        let handle_is_unsigned = if handle_only && self.common_handle_offsets.is_empty() {
+            handle_indices
+                .first()
+                .and_then(|index| columns.get(*index))
+                .map(|column| column.field_type.is_unsigned())
+        } else {
+            None
+        };
         // Go's covering `PhysicalIndexReader` returns the requested table
         // columns directly from the index executor; it never constructs a
         // table-handle lookup task. Keep the complete wire schema for the
@@ -1565,6 +1591,9 @@ impl KvTable {
             zone: zone.clone(),
             use_new_collation: self.use_new_collation,
             noted_rows: 0,
+            handle_is_unsigned,
+            pending_chunk: None,
+            pending_chunk_row: 0,
         }))
     }
 
@@ -2412,14 +2441,20 @@ impl RemoteRowCursor {
             return Ok(Some(Vec::new()));
         };
         self.note_wire_rows();
+        if batch.num_cols() > self.field_types.len() {
+            return Err(KvTableError::Decode(format!(
+                "a coprocessor row carried {} columns but only {} field types were requested",
+                batch.num_cols(),
+                self.field_types.len()
+            )));
+        }
+        // Go's tableWorker iterates the decoded chunk and calls GetDatum on
+        // each cell; the response decoder has already validated the wire
+        // schema. Use the infallible, buffer-oriented equivalent here instead
+        // of constructing a Result for every cell in every lookup row.
         let rows = (0..batch.num_rows())
-            .map(|row| {
-                batch
-                    .get_row(row)
-                    .try_get_datum_row(&self.field_types)
-                    .map_err(|error| KvTableError::Decode(error.to_string()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|row| batch.get_row(row).get_datum_row(&self.field_types))
+            .collect();
         Ok(Some(rows))
     }
 }
@@ -2445,6 +2480,12 @@ pub struct RemoteIndexHandleCursor {
     zone: SessionTimeZone,
     use_new_collation: bool,
     noted_rows: u64,
+    /// A clean integer-handle response can be consumed directly from the
+    /// decoded chunk. None keeps the row path for common handles, where all
+    /// key columns must still be encoded together.
+    handle_is_unsigned: Option<bool>,
+    pending_chunk: Option<Chunk>,
+    pending_chunk_row: usize,
 }
 
 impl RemoteIndexHandleCursor {
@@ -2482,8 +2523,63 @@ impl RemoteIndexHandleCursor {
         Ok(Some(projected))
     }
 
+    /// Whether the remote coprocessor evaluated every requested predicate.
+    /// Go's `PhysicalIndexReader` consumes the Selection result directly; the
+    /// executor may therefore avoid re-running the same filter once the clean
+    /// remote stream confirms the complete pushdown.
+    pub fn predicates_applied(&self) -> bool {
+        self.inner.predicates_applied()
+    }
+
+    /// Reads one integer handle directly from the remote response chunk.
+    /// Go's indexWorker iterates the SelectResult chunk and extracts only the
+    /// handle column; materializing a one-column Vec<Datum> for every index
+    /// entry is unnecessary and especially costly for wide ranges.
+    fn next_integer_handle_from_chunk(&mut self) -> Result<Option<TableHandle>, KvTableError> {
+        loop {
+            if let Some(batch) = self.pending_chunk.as_ref() {
+                if self.pending_chunk_row < batch.num_rows() {
+                    if batch.num_cols() == 0 {
+                        return Err(KvTableError::Decode(
+                            "index response omitted its integer handle column".to_owned(),
+                        ));
+                    }
+                    let row = batch.get_row(self.pending_chunk_row);
+                    let handle = if self.handle_is_unsigned == Some(true) {
+                        row.get_uint64(0) as i64
+                    } else {
+                        row.get_int64(0)
+                    };
+                    let last = self.pending_chunk_row + 1 == batch.num_rows();
+                    self.pending_chunk_row += 1;
+                    if last {
+                        self.pending_chunk = None;
+                        self.pending_chunk_row = 0;
+                    }
+                    return Ok(Some(TableHandle::Int(handle)));
+                }
+                self.pending_chunk = None;
+                self.pending_chunk_row = 0;
+            }
+            let Some(batch) = self
+                .inner
+                .next_chunk()
+                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
+            else {
+                self.note_rows();
+                return Ok(None);
+            };
+            self.note_rows();
+            self.pending_chunk = Some(batch);
+            self.pending_chunk_row = 0;
+        }
+    }
+
     /// Returns the next row handle in the remote index order.
     pub fn next_handle(&mut self) -> Result<Option<TableHandle>, KvTableError> {
+        if self.handle_is_unsigned.is_some() && self.inner.supports_chunks() {
+            return self.next_integer_handle_from_chunk();
+        }
         let Some(row) = self
             .inner
             .next_row()
@@ -4153,6 +4249,7 @@ mod remote_cursor_tests {
     struct VecStream {
         rows: std::collections::VecDeque<Vec<Datum>>,
         returned: u64,
+        predicates_applied: bool,
     }
 
     impl PushdownRowStream for VecStream {
@@ -4166,6 +4263,10 @@ mod remote_cursor_tests {
 
         fn rows_returned(&self) -> u64 {
             self.returned
+        }
+
+        fn predicates_applied(&self) -> bool {
+            self.predicates_applied
         }
 
         fn close(&mut self) {}
@@ -4185,6 +4286,7 @@ mod remote_cursor_tests {
                     Datum::Int(33),
                 ]]),
                 returned: 0,
+                predicates_applied: true,
             }),
             handle_indices: vec![2],
             projected_indices: Some(vec![1, 0]),
@@ -4192,10 +4294,17 @@ mod remote_cursor_tests {
             zone: tidb_datatype::SessionTimeZone::utc(),
             use_new_collation: false,
             noted_rows: 0,
+            handle_is_unsigned: None,
+            pending_chunk: None,
+            pending_chunk_row: 0,
         };
         assert_eq!(
             cursor.next_projected_row().unwrap(),
             Some(vec![Datum::Int(22), Datum::Int(11)])
+        );
+        assert!(
+            cursor.predicates_applied(),
+            "covering readers may skip a duplicate local Selection only after the cop confirms it"
         );
         assert!(cursor.next_projected_row().unwrap().is_none());
     }
@@ -4228,6 +4337,39 @@ mod remote_cursor_tests {
     }
 
     #[test]
+    fn integer_handle_cursor_reads_chunk_without_row_materialization() {
+        let field_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
+        let mut batch = Chunk::new_with_capacity(&field_types, 2);
+        batch.append_int64(0, 7);
+        batch.append_int64(0, 8);
+        let mut cursor = RemoteIndexHandleCursor {
+            inner: Box::new(ChunkStream {
+                chunks: std::collections::VecDeque::from([batch]),
+                returned: 0,
+            }),
+            handle_indices: vec![0],
+            projected_indices: None,
+            common_handle: false,
+            zone: tidb_datatype::SessionTimeZone::utc(),
+            use_new_collation: false,
+            noted_rows: 0,
+            handle_is_unsigned: Some(false),
+            pending_chunk: None,
+            pending_chunk_row: 0,
+        };
+
+        assert_eq!(
+            cursor.next_handle().unwrap(),
+            Some(TableHandle::Int(7))
+        );
+        assert_eq!(
+            cursor.next_handle().unwrap(),
+            Some(TableHandle::Int(8))
+        );
+        assert_eq!(cursor.next_handle().unwrap(), None);
+    }
+
+    #[test]
     fn clean_remote_cursor_skips_record_key_reconstruction() {
         let mut cursor = RemoteRowCursor {
             stream: Box::new(VecStream {
@@ -4236,6 +4378,7 @@ mod remote_cursor_tests {
                     vec![Datum::Int(8), Datum::Int(80)],
                 ]),
                 returned: 0,
+                predicates_applied: false,
             }),
             staged: Vec::new().into_iter(),
             pending_staged: None,

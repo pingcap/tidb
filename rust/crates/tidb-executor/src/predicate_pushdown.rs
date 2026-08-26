@@ -107,6 +107,8 @@
 //!
 //! [`TableAccess::accept_scan_filter`]: crate::table_access::TableAccess::accept_scan_filter
 
+use std::collections::HashSet;
+
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
@@ -341,7 +343,11 @@ enum FastScanFilter {
     StringIn {
         column_offset: usize,
         collator: tidb_datatype::Collator,
-        keys: Vec<Vec<u8>>,
+        /// Go's `builtinInStringSig` builds a `set.StringSet` once and does
+        /// hash membership per row. Keep the same O(1)-average lookup shape;
+        /// sorting the keys and binary-searching them makes large `IN` lists
+        /// (such as hbx-web3's maker list) needlessly O(log n) per row.
+        keys: HashSet<Vec<u8>>,
         negated: bool,
     },
     Like {
@@ -509,15 +515,13 @@ impl FastScanFilter {
             return None;
         }
         let collation = collation.name().to_owned();
-        let mut keys = literals
+        let keys = literals
             .iter()
             .map(|literal| literal.as_raw_bytes().map(|bytes| (literal, bytes)))
             .collect::<Option<Vec<_>>>()?
             .into_iter()
             .map(|(_, bytes)| tidb_datatype::get_collator(&collation).key(bytes))
-            .collect::<Vec<_>>();
-        keys.sort_unstable();
-        keys.dedup();
+            .collect::<HashSet<_>>();
         Some(Self::StringIn {
             column_offset: usize::try_from(column_offset).ok()?,
             // The PROBE has to use the same collator the keys were built
@@ -543,7 +547,7 @@ impl FastScanFilter {
                     return false;
                 }
                 let key = collator.key(row.get_string(*column_offset).as_bytes());
-                let found = keys.binary_search(&key).is_ok();
+                let found = keys.contains(&key);
                 if *negated {
                     !found
                 } else {

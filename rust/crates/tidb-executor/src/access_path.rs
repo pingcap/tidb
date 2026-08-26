@@ -2635,6 +2635,16 @@ impl Executor for IndexRangeSourceExec {
             if self.remote_index.is_none() {
                 return Ok(());
             }
+            // Go `IndexReaderExecutor.Next` forwards the already filtered
+            // `SelectResult` to the output chunk without evaluating the same
+            // Selection again. The remote stream is clean here (staged rows
+            // make `open_remote_scan` refuse), so a complete cop pushdown is
+            // safe to consume directly; partial pushdown still keeps the
+            // local semantic check below.
+            let remote_filter_complete = self
+                .remote_index
+                .as_ref()
+                .is_some_and(crate::kv_table::RemoteIndexHandleCursor::predicates_applied);
             while req.num_rows() < cap {
                 if self.limit.is_some_and(|limit| self.produced.get() >= limit) {
                     self.remote_index = None;
@@ -2655,9 +2665,11 @@ impl Executor for IndexRangeSourceExec {
                     return Ok(());
                 };
                 self.scanned.set(self.scanned.get() + 1);
-                if let Some(filter) = self.filter.as_mut() {
-                    if !filter.admits(&row)? {
-                        continue;
+                if !remote_filter_complete {
+                    if let Some(filter) = self.filter.as_mut() {
+                        if !filter.admits(&row)? {
+                            continue;
+                        }
                     }
                 }
                 for (column, value) in row.iter().enumerate() {
