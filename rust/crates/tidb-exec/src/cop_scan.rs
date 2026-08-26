@@ -163,6 +163,19 @@ pub struct CopScanSource<F> {
     /// encoded request. This is the receipt that the Selection and the cap
     /// really travelled, rather than a claim that they did.
     requests: Arc<Mutex<Vec<String>>>,
+    /// The same table lookup opens several region scans with identical
+    /// columns and predicates. Keep the lowered Selection for that request
+    /// shape so a large `IN` list is encoded once per node instead of once per
+    /// region window.
+    selection_cache: Arc<Mutex<Option<SelectionCache>>>,
+}
+
+#[derive(Clone)]
+struct SelectionCache {
+    columns: Vec<ScanColumnInfo>,
+    predicates: Vec<ScanPredicate>,
+    lowered: Vec<ScanPredicate>,
+    conditions: Vec<Expr>,
 }
 
 impl<F> fmt::Debug for CopScanSource<F> {
@@ -206,6 +219,7 @@ impl<F> CopScanSource<F> {
             scans_served: Arc::new(AtomicU64::new(0)),
             scans_refused: Arc::new(AtomicU64::new(0)),
             requests: Arc::new(Mutex::new(Vec::new())),
+            selection_cache: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -269,20 +283,47 @@ where
 
         // Every conjunct this lowering accepts travels; the rest simply stay
         // behind, because the scan source tests all of them locally anyway.
-        let lowered: Vec<ScanPredicate> = request
-            .predicates
-            .iter()
-            .filter(|predicate| accepts(predicate, &columns))
-            .cloned()
-            .collect();
-        let predicates_applied = lowered.len() == request.predicates.len();
-        let conditions: Vec<Expr> = if lowered.is_empty() {
-            Vec::new()
+        // Table lookup windows repeat this exact shape, often with a large
+        // string `IN` list. Reuse both the admission result and its protobuf
+        // tree across those opens; the cache key includes the full descriptors
+        // and source predicates, so it cannot cross a schema or statement
+        // boundary.
+        let cached = self
+            .selection_cache
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .as_ref()
+            .filter(|cache| cache.columns == columns && cache.predicates == request.predicates)
+            .cloned();
+        let (lowered, conditions) = if let Some(cache) = cached {
+            (cache.lowered, cache.conditions)
         } else {
-            wide_scan_selection_conditions(&lowered, &columns).map_err(|error| {
-                PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
-            })?
+            let lowered: Vec<ScanPredicate> = request
+                .predicates
+                .iter()
+                .filter(|predicate| accepts(predicate, &columns))
+                .cloned()
+                .collect();
+            let conditions: Vec<Expr> = if lowered.is_empty() {
+                Vec::new()
+            } else {
+                wide_scan_selection_conditions(&lowered, &columns).map_err(|error| {
+                    PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
+                })?
+            };
+            let mut slot = self
+                .selection_cache
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            *slot = Some(SelectionCache {
+                columns: columns.clone(),
+                predicates: request.predicates.clone(),
+                lowered: lowered.clone(),
+                conditions: conditions.clone(),
+            });
+            (lowered, conditions)
         };
+        let predicates_applied = lowered.len() == request.predicates.len();
 
         // Go's `ConstructDAGReq` narrows a projected scan by sending
         // `DAGRequest.output_offsets`, so TiKV encodes only the projected
