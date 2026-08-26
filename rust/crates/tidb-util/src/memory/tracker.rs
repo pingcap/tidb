@@ -1410,6 +1410,32 @@ mod tests {
         }
     }
 
+    // Go `TestRelease`: GC-aware flag-on path.
+    #[test]
+    #[ignore] // go-parity-gap: relies on Go runtime.SetFinalizer machinery; Rust has no finalizers
+    fn release_gc_aware_flag_on() {
+        // Go: pkg/util/memory/tracker_test.go TestRelease (EnableGCAwareMemoryTrack=true).
+        // The Go test attaches a global tracker with GC-aware tracking on,
+        // consumes/releases, then loops runtime.GC() until the parent's async
+        // finalizer reports BytesReleased. The Rust Tracker has no finalizer
+        // hook, so this contract cannot be pinned here yet.
+    }
+
+    // Go `TestGlobalMemArbitrator`.
+    #[test]
+    #[ignore] // go-parity-gap: needs the globalArbitrator singleton (global_arbitrator.go) which is not ported
+    fn global_mem_arbitrator() {
+        // Go: pkg/util/memory/tracker_test.go TestGlobalMemArbitrator.
+        // The Go test drives SetupGlobalMemArbitratorForTest /
+        // SetGlobalMemArbitratorWorkMode / SetGlobalMemArbitratorSoftLimit /
+        // RemovePoolFromGlobalMemArbitrator and the globalArbitrator.metrics
+        // pool counters (big/small/intoBig/internal/internalSession). None of
+        // that server-side wiring exists in this crate yet; only the in-process
+        // MemArbitrator + Tracker::init_mem_arbitrator pieces are ported. The
+        // mem-state-recorder block of this test is separately covered by
+        // `memory::mem_state_recorder::tests::recorder_round_trip`.
+    }
+
     // Go `TestOOMActionPriority`: 100 shuffled actions fire in strict
     // priority order, one per consume.
     #[test]
