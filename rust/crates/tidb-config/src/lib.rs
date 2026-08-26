@@ -31,6 +31,13 @@ pub mod store;
 pub mod tiflash;
 pub mod tikvcfg;
 
+#[cfg(test)]
+mod tests_config_subpkgs;
+#[cfg(test)]
+mod tests_pkg_config;
+#[cfg(test)]
+mod tests_pkg_config_util;
+
 /// Default sample-rate row count (Go `pkg/config/const.go`
 /// `DefRowsForSampleRate`).
 pub const DEF_ROWS_FOR_SAMPLE_RATE: i64 = 110000;
