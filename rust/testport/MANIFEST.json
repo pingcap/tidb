@@ -1,0 +1,1657 @@
+{
+ "branch": "hparser-integration",
+ "cap": 60,
+ "scope_rows": [
+  {
+   "crate": "tidb-config",
+   "gopath": "pkg/config",
+   "nfuncs": 46,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-mysql",
+   "gopath": "pkg/parser/mysql",
+   "nfuncs": 11,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-error",
+   "gopath": "pkg/parser/terror",
+   "nfuncs": 6,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-hack",
+   "gopath": "pkg/util/hack",
+   "nfuncs": 7,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-kvcache",
+   "gopath": "pkg/util/kvcache",
+   "nfuncs": 9,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-metadef",
+   "gopath": "pkg/meta/metadef",
+   "nfuncs": 4,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-metadef",
+   "gopath": "pkg/meta/model",
+   "nfuncs": 75,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-funcdep",
+   "gopath": "pkg/planner/funcdep",
+   "nfuncs": 12,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-vardef",
+   "gopath": "pkg/sessionctx/variable",
+   "nfuncs": 150,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-util",
+   "gopath": "pkg/util/backoff",
+   "nfuncs": 1,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-util",
+   "gopath": "pkg/util/checksum",
+   "nfuncs": 11,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-util",
+   "gopath": "pkg/util/chunk",
+   "nfuncs": 152,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-util",
+   "gopath": "pkg/util/collate",
+   "nfuncs": 56,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-util",
+   "gopath": "pkg/util/dbterror",
+   "nfuncs": 3,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-util",
+   "gopath": "pkg/util/disjointset",
+   "nfuncs": 3,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-util",
+   "gopath": "pkg/util/encrypt",
+   "nfuncs": 19,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-util",
+   "gopath": "pkg/util/fastrand",
+   "nfuncs": 6,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-util",
+   "gopath": "pkg/util/intest",
+   "nfuncs": 1,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-util",
+   "gopath": "pkg/util/mathutil",
+   "nfuncs": 9,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-util",
+   "gopath": "pkg/util/memory",
+   "nfuncs": 38,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-util",
+   "gopath": "pkg/util/naming",
+   "nfuncs": 1,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-util",
+   "gopath": "pkg/util/redact",
+   "nfuncs": 3,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-schemacmp",
+   "gopath": "pkg/util/schemacmp",
+   "nfuncs": 9,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-util",
+   "gopath": "pkg/util/slice",
+   "nfuncs": 2,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-util",
+   "gopath": "pkg/util/sqlescape",
+   "nfuncs": 9,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-util",
+   "gopath": "pkg/util/zeropool",
+   "nfuncs": 5,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-datatype",
+   "gopath": "pkg/parser/charset",
+   "nfuncs": 10,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-tablecodec",
+   "gopath": "pkg/tablecodec",
+   "nfuncs": 37,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-datatype",
+   "gopath": "pkg/types",
+   "nfuncs": 233,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-codec",
+   "gopath": "pkg/util/codec",
+   "nfuncs": 38,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-meta",
+   "gopath": "pkg/meta",
+   "nfuncs": 130,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-stats",
+   "gopath": "pkg/statistics",
+   "nfuncs": 437,
+   "testdata": 3
+  },
+  {
+   "crate": "tidb-pd-client",
+   "gopath": "pkg/ddl/placement",
+   "nfuncs": 26,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-lexer",
+   "gopath": "pkg/parser",
+   "nfuncs": 332,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-ast",
+   "gopath": "pkg/parser/ast",
+   "nfuncs": 128,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-proto",
+   "gopath": "pkg/planner/property",
+   "nfuncs": 1,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-protocol",
+   "gopath": "pkg/store/mockstore",
+   "nfuncs": 65,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-protocol",
+   "gopath": "pkg/util/rowcodec",
+   "nfuncs": 21,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-distsql",
+   "gopath": "pkg/distsql",
+   "nfuncs": 38,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-txnkv",
+   "gopath": "pkg/kv",
+   "nfuncs": 31,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-expr",
+   "gopath": "pkg/expression",
+   "nfuncs": 664,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-planner",
+   "gopath": "pkg/planner",
+   "nfuncs": 1278,
+   "testdata": 154
+  },
+  {
+   "crate": "tidb-executor",
+   "gopath": "pkg/ddl",
+   "nfuncs": 1002,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-session",
+   "gopath": "pkg/domain",
+   "nfuncs": 73,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-executor",
+   "gopath": "pkg/executor",
+   "nfuncs": 1389,
+   "testdata": 8
+  },
+  {
+   "crate": "tidb-executor",
+   "gopath": "pkg/executor/internal",
+   "nfuncs": 25,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-session",
+   "gopath": "pkg/session",
+   "nfuncs": 311,
+   "testdata": 0
+  },
+  {
+   "crate": "tidb-executor",
+   "gopath": "pkg/table",
+   "nfuncs": 108,
+   "testdata": 0
+  }
+ ],
+ "total_funcs": 7025,
+ "total_batches": 151,
+ "batches": [
+  {
+   "id": "b001",
+   "gopath": "pkg/config",
+   "base_gopath": "pkg/config",
+   "crate": "tidb-config",
+   "funcs": 46,
+   "tier": 1,
+   "pod": "pod1"
+  },
+  {
+   "id": "b002",
+   "gopath": "pkg/parser/mysql",
+   "base_gopath": "pkg/parser/mysql",
+   "crate": "tidb-mysql",
+   "funcs": 11,
+   "tier": 1,
+   "pod": "pod2"
+  },
+  {
+   "id": "b003",
+   "gopath": "pkg/parser/terror",
+   "base_gopath": "pkg/parser/terror",
+   "crate": "tidb-error",
+   "funcs": 6,
+   "tier": 1,
+   "pod": "pod3"
+  },
+  {
+   "id": "b004",
+   "gopath": "pkg/util/hack",
+   "base_gopath": "pkg/util/hack",
+   "crate": "tidb-hack",
+   "funcs": 7,
+   "tier": 1,
+   "pod": "pod1"
+  },
+  {
+   "id": "b005",
+   "gopath": "pkg/util/kvcache",
+   "base_gopath": "pkg/util/kvcache",
+   "crate": "tidb-kvcache",
+   "funcs": 9,
+   "tier": 1,
+   "pod": "pod2"
+  },
+  {
+   "id": "b006",
+   "gopath": "pkg/meta/metadef",
+   "base_gopath": "pkg/meta/metadef",
+   "crate": "tidb-metadef",
+   "funcs": 4,
+   "tier": 2,
+   "pod": "pod3"
+  },
+  {
+   "id": "b007",
+   "gopath": "pkg/meta/model.part1",
+   "base_gopath": "pkg/meta/model",
+   "crate": "tidb-metadef",
+   "funcs": 60,
+   "tier": 2,
+   "pod": "pod1"
+  },
+  {
+   "id": "b008",
+   "gopath": "pkg/meta/model.part2",
+   "base_gopath": "pkg/meta/model",
+   "crate": "tidb-metadef",
+   "funcs": 15,
+   "tier": 2,
+   "pod": "pod2"
+  },
+  {
+   "id": "b009",
+   "gopath": "pkg/planner/funcdep",
+   "base_gopath": "pkg/planner/funcdep",
+   "crate": "tidb-funcdep",
+   "funcs": 12,
+   "tier": 2,
+   "pod": "pod3"
+  },
+  {
+   "id": "b010",
+   "gopath": "pkg/sessionctx/variable.part1",
+   "base_gopath": "pkg/sessionctx/variable",
+   "crate": "tidb-vardef",
+   "funcs": 60,
+   "tier": 2,
+   "pod": "pod1"
+  },
+  {
+   "id": "b011",
+   "gopath": "pkg/sessionctx/variable.part2",
+   "base_gopath": "pkg/sessionctx/variable",
+   "crate": "tidb-vardef",
+   "funcs": 60,
+   "tier": 2,
+   "pod": "pod2"
+  },
+  {
+   "id": "b012",
+   "gopath": "pkg/sessionctx/variable.part3",
+   "base_gopath": "pkg/sessionctx/variable",
+   "crate": "tidb-vardef",
+   "funcs": 30,
+   "tier": 2,
+   "pod": "pod3"
+  },
+  {
+   "id": "b013",
+   "gopath": "pkg/util/backoff",
+   "base_gopath": "pkg/util/backoff",
+   "crate": "tidb-util",
+   "funcs": 1,
+   "tier": 2,
+   "pod": "pod1"
+  },
+  {
+   "id": "b014",
+   "gopath": "pkg/util/checksum",
+   "base_gopath": "pkg/util/checksum",
+   "crate": "tidb-util",
+   "funcs": 11,
+   "tier": 2,
+   "pod": "pod2"
+  },
+  {
+   "id": "b015",
+   "gopath": "pkg/util/chunk.part1",
+   "base_gopath": "pkg/util/chunk",
+   "crate": "tidb-util",
+   "funcs": 60,
+   "tier": 2,
+   "pod": "pod3"
+  },
+  {
+   "id": "b016",
+   "gopath": "pkg/util/chunk.part2",
+   "base_gopath": "pkg/util/chunk",
+   "crate": "tidb-util",
+   "funcs": 60,
+   "tier": 2,
+   "pod": "pod1"
+  },
+  {
+   "id": "b017",
+   "gopath": "pkg/util/chunk.part3",
+   "base_gopath": "pkg/util/chunk",
+   "crate": "tidb-util",
+   "funcs": 32,
+   "tier": 2,
+   "pod": "pod2"
+  },
+  {
+   "id": "b018",
+   "gopath": "pkg/util/collate",
+   "base_gopath": "pkg/util/collate",
+   "crate": "tidb-util",
+   "funcs": 56,
+   "tier": 2,
+   "pod": "pod3"
+  },
+  {
+   "id": "b019",
+   "gopath": "pkg/util/dbterror",
+   "base_gopath": "pkg/util/dbterror",
+   "crate": "tidb-util",
+   "funcs": 3,
+   "tier": 2,
+   "pod": "pod1"
+  },
+  {
+   "id": "b020",
+   "gopath": "pkg/util/disjointset",
+   "base_gopath": "pkg/util/disjointset",
+   "crate": "tidb-util",
+   "funcs": 3,
+   "tier": 2,
+   "pod": "pod2"
+  },
+  {
+   "id": "b021",
+   "gopath": "pkg/util/encrypt",
+   "base_gopath": "pkg/util/encrypt",
+   "crate": "tidb-util",
+   "funcs": 19,
+   "tier": 2,
+   "pod": "pod3"
+  },
+  {
+   "id": "b022",
+   "gopath": "pkg/util/fastrand",
+   "base_gopath": "pkg/util/fastrand",
+   "crate": "tidb-util",
+   "funcs": 6,
+   "tier": 2,
+   "pod": "pod1"
+  },
+  {
+   "id": "b023",
+   "gopath": "pkg/util/intest",
+   "base_gopath": "pkg/util/intest",
+   "crate": "tidb-util",
+   "funcs": 1,
+   "tier": 2,
+   "pod": "pod2"
+  },
+  {
+   "id": "b024",
+   "gopath": "pkg/util/mathutil",
+   "base_gopath": "pkg/util/mathutil",
+   "crate": "tidb-util",
+   "funcs": 9,
+   "tier": 2,
+   "pod": "pod3"
+  },
+  {
+   "id": "b025",
+   "gopath": "pkg/util/memory",
+   "base_gopath": "pkg/util/memory",
+   "crate": "tidb-util",
+   "funcs": 38,
+   "tier": 2,
+   "pod": "pod1"
+  },
+  {
+   "id": "b026",
+   "gopath": "pkg/util/naming",
+   "base_gopath": "pkg/util/naming",
+   "crate": "tidb-util",
+   "funcs": 1,
+   "tier": 2,
+   "pod": "pod2"
+  },
+  {
+   "id": "b027",
+   "gopath": "pkg/util/redact",
+   "base_gopath": "pkg/util/redact",
+   "crate": "tidb-util",
+   "funcs": 3,
+   "tier": 2,
+   "pod": "pod3"
+  },
+  {
+   "id": "b028",
+   "gopath": "pkg/util/schemacmp",
+   "base_gopath": "pkg/util/schemacmp",
+   "crate": "tidb-schemacmp",
+   "funcs": 9,
+   "tier": 2,
+   "pod": "pod1"
+  },
+  {
+   "id": "b029",
+   "gopath": "pkg/util/slice",
+   "base_gopath": "pkg/util/slice",
+   "crate": "tidb-util",
+   "funcs": 2,
+   "tier": 2,
+   "pod": "pod2"
+  },
+  {
+   "id": "b030",
+   "gopath": "pkg/util/sqlescape",
+   "base_gopath": "pkg/util/sqlescape",
+   "crate": "tidb-util",
+   "funcs": 9,
+   "tier": 2,
+   "pod": "pod3"
+  },
+  {
+   "id": "b031",
+   "gopath": "pkg/util/zeropool",
+   "base_gopath": "pkg/util/zeropool",
+   "crate": "tidb-util",
+   "funcs": 5,
+   "tier": 2,
+   "pod": "pod1"
+  },
+  {
+   "id": "b032",
+   "gopath": "pkg/parser/charset",
+   "base_gopath": "pkg/parser/charset",
+   "crate": "tidb-datatype",
+   "funcs": 10,
+   "tier": 3,
+   "pod": "pod2"
+  },
+  {
+   "id": "b033",
+   "gopath": "pkg/tablecodec",
+   "base_gopath": "pkg/tablecodec",
+   "crate": "tidb-tablecodec",
+   "funcs": 37,
+   "tier": 3,
+   "pod": "pod3"
+  },
+  {
+   "id": "b034",
+   "gopath": "pkg/types.part1",
+   "base_gopath": "pkg/types",
+   "crate": "tidb-datatype",
+   "funcs": 60,
+   "tier": 3,
+   "pod": "pod1"
+  },
+  {
+   "id": "b035",
+   "gopath": "pkg/types.part2",
+   "base_gopath": "pkg/types",
+   "crate": "tidb-datatype",
+   "funcs": 60,
+   "tier": 3,
+   "pod": "pod2"
+  },
+  {
+   "id": "b036",
+   "gopath": "pkg/types.part3",
+   "base_gopath": "pkg/types",
+   "crate": "tidb-datatype",
+   "funcs": 60,
+   "tier": 3,
+   "pod": "pod3"
+  },
+  {
+   "id": "b037",
+   "gopath": "pkg/types.part4",
+   "base_gopath": "pkg/types",
+   "crate": "tidb-datatype",
+   "funcs": 53,
+   "tier": 3,
+   "pod": "pod1"
+  },
+  {
+   "id": "b038",
+   "gopath": "pkg/util/codec",
+   "base_gopath": "pkg/util/codec",
+   "crate": "tidb-codec",
+   "funcs": 38,
+   "tier": 3,
+   "pod": "pod2"
+  },
+  {
+   "id": "b039",
+   "gopath": "pkg/meta.part1",
+   "base_gopath": "pkg/meta",
+   "crate": "tidb-meta",
+   "funcs": 60,
+   "tier": 4,
+   "pod": "pod3"
+  },
+  {
+   "id": "b040",
+   "gopath": "pkg/meta.part2",
+   "base_gopath": "pkg/meta",
+   "crate": "tidb-meta",
+   "funcs": 60,
+   "tier": 4,
+   "pod": "pod1"
+  },
+  {
+   "id": "b041",
+   "gopath": "pkg/meta.part3",
+   "base_gopath": "pkg/meta",
+   "crate": "tidb-meta",
+   "funcs": 10,
+   "tier": 4,
+   "pod": "pod2"
+  },
+  {
+   "id": "b042",
+   "gopath": "pkg/statistics.part1",
+   "base_gopath": "pkg/statistics",
+   "crate": "tidb-stats",
+   "funcs": 60,
+   "tier": 4,
+   "pod": "pod3"
+  },
+  {
+   "id": "b043",
+   "gopath": "pkg/statistics.part2",
+   "base_gopath": "pkg/statistics",
+   "crate": "tidb-stats",
+   "funcs": 60,
+   "tier": 4,
+   "pod": "pod1"
+  },
+  {
+   "id": "b044",
+   "gopath": "pkg/statistics.part3",
+   "base_gopath": "pkg/statistics",
+   "crate": "tidb-stats",
+   "funcs": 60,
+   "tier": 4,
+   "pod": "pod2"
+  },
+  {
+   "id": "b045",
+   "gopath": "pkg/statistics.part4",
+   "base_gopath": "pkg/statistics",
+   "crate": "tidb-stats",
+   "funcs": 60,
+   "tier": 4,
+   "pod": "pod3"
+  },
+  {
+   "id": "b046",
+   "gopath": "pkg/statistics.part5",
+   "base_gopath": "pkg/statistics",
+   "crate": "tidb-stats",
+   "funcs": 60,
+   "tier": 4,
+   "pod": "pod1"
+  },
+  {
+   "id": "b047",
+   "gopath": "pkg/statistics.part6",
+   "base_gopath": "pkg/statistics",
+   "crate": "tidb-stats",
+   "funcs": 60,
+   "tier": 4,
+   "pod": "pod2"
+  },
+  {
+   "id": "b048",
+   "gopath": "pkg/statistics.part7",
+   "base_gopath": "pkg/statistics",
+   "crate": "tidb-stats",
+   "funcs": 60,
+   "tier": 4,
+   "pod": "pod3"
+  },
+  {
+   "id": "b049",
+   "gopath": "pkg/statistics.part8",
+   "base_gopath": "pkg/statistics",
+   "crate": "tidb-stats",
+   "funcs": 17,
+   "tier": 4,
+   "pod": "pod1"
+  },
+  {
+   "id": "b050",
+   "gopath": "pkg/ddl/placement",
+   "base_gopath": "pkg/ddl/placement",
+   "crate": "tidb-pd-client",
+   "funcs": 26,
+   "tier": 5,
+   "pod": "pod2"
+  },
+  {
+   "id": "b051",
+   "gopath": "pkg/parser.part1",
+   "base_gopath": "pkg/parser",
+   "crate": "tidb-lexer",
+   "funcs": 60,
+   "tier": 5,
+   "pod": "pod3"
+  },
+  {
+   "id": "b052",
+   "gopath": "pkg/parser.part2",
+   "base_gopath": "pkg/parser",
+   "crate": "tidb-lexer",
+   "funcs": 60,
+   "tier": 5,
+   "pod": "pod1"
+  },
+  {
+   "id": "b053",
+   "gopath": "pkg/parser.part3",
+   "base_gopath": "pkg/parser",
+   "crate": "tidb-lexer",
+   "funcs": 60,
+   "tier": 5,
+   "pod": "pod2"
+  },
+  {
+   "id": "b054",
+   "gopath": "pkg/parser.part4",
+   "base_gopath": "pkg/parser",
+   "crate": "tidb-lexer",
+   "funcs": 60,
+   "tier": 5,
+   "pod": "pod3"
+  },
+  {
+   "id": "b055",
+   "gopath": "pkg/parser.part5",
+   "base_gopath": "pkg/parser",
+   "crate": "tidb-lexer",
+   "funcs": 60,
+   "tier": 5,
+   "pod": "pod1"
+  },
+  {
+   "id": "b056",
+   "gopath": "pkg/parser.part6",
+   "base_gopath": "pkg/parser",
+   "crate": "tidb-lexer",
+   "funcs": 32,
+   "tier": 5,
+   "pod": "pod2"
+  },
+  {
+   "id": "b057",
+   "gopath": "pkg/parser/ast.part1",
+   "base_gopath": "pkg/parser/ast",
+   "crate": "tidb-ast",
+   "funcs": 60,
+   "tier": 5,
+   "pod": "pod3"
+  },
+  {
+   "id": "b058",
+   "gopath": "pkg/parser/ast.part2",
+   "base_gopath": "pkg/parser/ast",
+   "crate": "tidb-ast",
+   "funcs": 60,
+   "tier": 5,
+   "pod": "pod1"
+  },
+  {
+   "id": "b059",
+   "gopath": "pkg/parser/ast.part3",
+   "base_gopath": "pkg/parser/ast",
+   "crate": "tidb-ast",
+   "funcs": 8,
+   "tier": 5,
+   "pod": "pod2"
+  },
+  {
+   "id": "b060",
+   "gopath": "pkg/planner/property",
+   "base_gopath": "pkg/planner/property",
+   "crate": "tidb-proto",
+   "funcs": 1,
+   "tier": 5,
+   "pod": "pod3"
+  },
+  {
+   "id": "b061",
+   "gopath": "pkg/store/mockstore.part1",
+   "base_gopath": "pkg/store/mockstore",
+   "crate": "tidb-protocol",
+   "funcs": 60,
+   "tier": 5,
+   "pod": "pod1"
+  },
+  {
+   "id": "b062",
+   "gopath": "pkg/store/mockstore.part2",
+   "base_gopath": "pkg/store/mockstore",
+   "crate": "tidb-protocol",
+   "funcs": 5,
+   "tier": 5,
+   "pod": "pod2"
+  },
+  {
+   "id": "b063",
+   "gopath": "pkg/util/rowcodec",
+   "base_gopath": "pkg/util/rowcodec",
+   "crate": "tidb-protocol",
+   "funcs": 21,
+   "tier": 5,
+   "pod": "pod3"
+  },
+  {
+   "id": "b064",
+   "gopath": "pkg/distsql",
+   "base_gopath": "pkg/distsql",
+   "crate": "tidb-distsql",
+   "funcs": 38,
+   "tier": 6,
+   "pod": "pod1"
+  },
+  {
+   "id": "b065",
+   "gopath": "pkg/kv",
+   "base_gopath": "pkg/kv",
+   "crate": "tidb-txnkv",
+   "funcs": 31,
+   "tier": 6,
+   "pod": "pod2"
+  },
+  {
+   "id": "b066",
+   "gopath": "pkg/expression.part1",
+   "base_gopath": "pkg/expression",
+   "crate": "tidb-expr",
+   "funcs": 60,
+   "tier": 7,
+   "pod": "pod3"
+  },
+  {
+   "id": "b067",
+   "gopath": "pkg/expression.part2",
+   "base_gopath": "pkg/expression",
+   "crate": "tidb-expr",
+   "funcs": 60,
+   "tier": 7,
+   "pod": "pod1"
+  },
+  {
+   "id": "b068",
+   "gopath": "pkg/expression.part3",
+   "base_gopath": "pkg/expression",
+   "crate": "tidb-expr",
+   "funcs": 60,
+   "tier": 7,
+   "pod": "pod2"
+  },
+  {
+   "id": "b069",
+   "gopath": "pkg/expression.part4",
+   "base_gopath": "pkg/expression",
+   "crate": "tidb-expr",
+   "funcs": 60,
+   "tier": 7,
+   "pod": "pod3"
+  },
+  {
+   "id": "b070",
+   "gopath": "pkg/expression.part5",
+   "base_gopath": "pkg/expression",
+   "crate": "tidb-expr",
+   "funcs": 60,
+   "tier": 7,
+   "pod": "pod1"
+  },
+  {
+   "id": "b071",
+   "gopath": "pkg/expression.part6",
+   "base_gopath": "pkg/expression",
+   "crate": "tidb-expr",
+   "funcs": 60,
+   "tier": 7,
+   "pod": "pod2"
+  },
+  {
+   "id": "b072",
+   "gopath": "pkg/expression.part7",
+   "base_gopath": "pkg/expression",
+   "crate": "tidb-expr",
+   "funcs": 60,
+   "tier": 7,
+   "pod": "pod3"
+  },
+  {
+   "id": "b073",
+   "gopath": "pkg/expression.part8",
+   "base_gopath": "pkg/expression",
+   "crate": "tidb-expr",
+   "funcs": 60,
+   "tier": 7,
+   "pod": "pod1"
+  },
+  {
+   "id": "b074",
+   "gopath": "pkg/expression.part9",
+   "base_gopath": "pkg/expression",
+   "crate": "tidb-expr",
+   "funcs": 60,
+   "tier": 7,
+   "pod": "pod2"
+  },
+  {
+   "id": "b075",
+   "gopath": "pkg/expression.part10",
+   "base_gopath": "pkg/expression",
+   "crate": "tidb-expr",
+   "funcs": 60,
+   "tier": 7,
+   "pod": "pod3"
+  },
+  {
+   "id": "b076",
+   "gopath": "pkg/expression.part11",
+   "base_gopath": "pkg/expression",
+   "crate": "tidb-expr",
+   "funcs": 60,
+   "tier": 7,
+   "pod": "pod1"
+  },
+  {
+   "id": "b077",
+   "gopath": "pkg/expression.part12",
+   "base_gopath": "pkg/expression",
+   "crate": "tidb-expr",
+   "funcs": 4,
+   "tier": 7,
+   "pod": "pod2"
+  },
+  {
+   "id": "b078",
+   "gopath": "pkg/planner.part1",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod3"
+  },
+  {
+   "id": "b079",
+   "gopath": "pkg/planner.part2",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod1"
+  },
+  {
+   "id": "b080",
+   "gopath": "pkg/planner.part3",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod2"
+  },
+  {
+   "id": "b081",
+   "gopath": "pkg/planner.part4",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod3"
+  },
+  {
+   "id": "b082",
+   "gopath": "pkg/planner.part5",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod1"
+  },
+  {
+   "id": "b083",
+   "gopath": "pkg/planner.part6",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod2"
+  },
+  {
+   "id": "b084",
+   "gopath": "pkg/planner.part7",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod3"
+  },
+  {
+   "id": "b085",
+   "gopath": "pkg/planner.part8",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod1"
+  },
+  {
+   "id": "b086",
+   "gopath": "pkg/planner.part9",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod2"
+  },
+  {
+   "id": "b087",
+   "gopath": "pkg/planner.part10",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod3"
+  },
+  {
+   "id": "b088",
+   "gopath": "pkg/planner.part11",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod1"
+  },
+  {
+   "id": "b089",
+   "gopath": "pkg/planner.part12",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod2"
+  },
+  {
+   "id": "b090",
+   "gopath": "pkg/planner.part13",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod3"
+  },
+  {
+   "id": "b091",
+   "gopath": "pkg/planner.part14",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod1"
+  },
+  {
+   "id": "b092",
+   "gopath": "pkg/planner.part15",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod2"
+  },
+  {
+   "id": "b093",
+   "gopath": "pkg/planner.part16",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod3"
+  },
+  {
+   "id": "b094",
+   "gopath": "pkg/planner.part17",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod1"
+  },
+  {
+   "id": "b095",
+   "gopath": "pkg/planner.part18",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod2"
+  },
+  {
+   "id": "b096",
+   "gopath": "pkg/planner.part19",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod3"
+  },
+  {
+   "id": "b097",
+   "gopath": "pkg/planner.part20",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod1"
+  },
+  {
+   "id": "b098",
+   "gopath": "pkg/planner.part21",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 60,
+   "tier": 8,
+   "pod": "pod2"
+  },
+  {
+   "id": "b099",
+   "gopath": "pkg/planner.part22",
+   "base_gopath": "pkg/planner",
+   "crate": "tidb-planner",
+   "funcs": 18,
+   "tier": 8,
+   "pod": "pod3"
+  },
+  {
+   "id": "b100",
+   "gopath": "pkg/ddl.part1",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b101",
+   "gopath": "pkg/ddl.part2",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b102",
+   "gopath": "pkg/ddl.part3",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b103",
+   "gopath": "pkg/ddl.part4",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b104",
+   "gopath": "pkg/ddl.part5",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b105",
+   "gopath": "pkg/ddl.part6",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b106",
+   "gopath": "pkg/ddl.part7",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b107",
+   "gopath": "pkg/ddl.part8",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b108",
+   "gopath": "pkg/ddl.part9",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b109",
+   "gopath": "pkg/ddl.part10",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b110",
+   "gopath": "pkg/ddl.part11",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b111",
+   "gopath": "pkg/ddl.part12",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b112",
+   "gopath": "pkg/ddl.part13",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b113",
+   "gopath": "pkg/ddl.part14",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b114",
+   "gopath": "pkg/ddl.part15",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b115",
+   "gopath": "pkg/ddl.part16",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b116",
+   "gopath": "pkg/ddl.part17",
+   "base_gopath": "pkg/ddl",
+   "crate": "tidb-executor",
+   "funcs": 42,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b117",
+   "gopath": "pkg/domain.part1",
+   "base_gopath": "pkg/domain",
+   "crate": "tidb-session",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b118",
+   "gopath": "pkg/domain.part2",
+   "base_gopath": "pkg/domain",
+   "crate": "tidb-session",
+   "funcs": 13,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b119",
+   "gopath": "pkg/executor.part1",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b120",
+   "gopath": "pkg/executor.part2",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b121",
+   "gopath": "pkg/executor.part3",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b122",
+   "gopath": "pkg/executor.part4",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b123",
+   "gopath": "pkg/executor.part5",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b124",
+   "gopath": "pkg/executor.part6",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b125",
+   "gopath": "pkg/executor.part7",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b126",
+   "gopath": "pkg/executor.part8",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b127",
+   "gopath": "pkg/executor.part9",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b128",
+   "gopath": "pkg/executor.part10",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b129",
+   "gopath": "pkg/executor.part11",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b130",
+   "gopath": "pkg/executor.part12",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b131",
+   "gopath": "pkg/executor.part13",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b132",
+   "gopath": "pkg/executor.part14",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b133",
+   "gopath": "pkg/executor.part15",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b134",
+   "gopath": "pkg/executor.part16",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b135",
+   "gopath": "pkg/executor.part17",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b136",
+   "gopath": "pkg/executor.part18",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b137",
+   "gopath": "pkg/executor.part19",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b138",
+   "gopath": "pkg/executor.part20",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b139",
+   "gopath": "pkg/executor.part21",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b140",
+   "gopath": "pkg/executor.part22",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b141",
+   "gopath": "pkg/executor.part23",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b142",
+   "gopath": "pkg/executor.part24",
+   "base_gopath": "pkg/executor",
+   "crate": "tidb-executor",
+   "funcs": 9,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b143",
+   "gopath": "pkg/executor/internal",
+   "base_gopath": "pkg/executor/internal",
+   "crate": "tidb-executor",
+   "funcs": 25,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b144",
+   "gopath": "pkg/session.part1",
+   "base_gopath": "pkg/session",
+   "crate": "tidb-session",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b145",
+   "gopath": "pkg/session.part2",
+   "base_gopath": "pkg/session",
+   "crate": "tidb-session",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b146",
+   "gopath": "pkg/session.part3",
+   "base_gopath": "pkg/session",
+   "crate": "tidb-session",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b147",
+   "gopath": "pkg/session.part4",
+   "base_gopath": "pkg/session",
+   "crate": "tidb-session",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b148",
+   "gopath": "pkg/session.part5",
+   "base_gopath": "pkg/session",
+   "crate": "tidb-session",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod1"
+  },
+  {
+   "id": "b149",
+   "gopath": "pkg/session.part6",
+   "base_gopath": "pkg/session",
+   "crate": "tidb-session",
+   "funcs": 11,
+   "tier": 9,
+   "pod": "pod2"
+  },
+  {
+   "id": "b150",
+   "gopath": "pkg/table.part1",
+   "base_gopath": "pkg/table",
+   "crate": "tidb-executor",
+   "funcs": 60,
+   "tier": 9,
+   "pod": "pod3"
+  },
+  {
+   "id": "b151",
+   "gopath": "pkg/table.part2",
+   "base_gopath": "pkg/table",
+   "crate": "tidb-executor",
+   "funcs": 48,
+   "tier": 9,
+   "pod": "pod1"
+  }
+ ]
+}
