@@ -1428,3 +1428,27 @@ and
 `/private/tmp/hbx-1g-20260825/bench-go-client-rust-current-bba0936.json`.
 The source and regression commit must retain both a `Go code:` source line and
 the literal `go 代码` phrase.
+
+Revision note, 2026-08-27 (current commit receipt after remote-tip refresh):
+the remote branch is now `e6567b03f4b` (`docs: record the YCSB gate receipt for
+workloads a-f`), and the local `4a91039a88c` statistics continuation is based
+on that tip. The release binary was rebuilt and its startup banner reports
+the exact `4a91039a88c7e84ecb9189d833ee9a30b2b51d40` commit. Go nightly remains
+on `127.0.0.1:14000`; Rust runs on `127.0.0.1:14019` against the same
+deterministic 1 GiB `hbx_web3_1g` fixture.
+
+The fresh comparison receipt
+`/private/tmp/hbx-1g-20260825/compare-4a91039a88c-20260827.json` has all four
+normalized plans and result hashes equal (q1 `0c488295...`, q2/flex
+`45f8be11...`, swap `bf2ce599...`), with 100 rows for each query. The fresh
+20-pair receipt
+`/private/tmp/hbx-1g-20260825/bench-4a91039a88c-20260827.json` keeps every
+100-row batch INSERT at 100 rows and decimal sum
+`5050.000000000000000000`. Its Go/Rust medians are q1 `9.535/9.638 ms`
+(`1.011x`), q2 `8.373/9.186 ms` (`1.097x`), flex `7.603/9.360 ms`
+(`1.231x`), swap `14.733/17.735 ms` (`1.204x`), and batch `5.952/6.304 ms`
+(`1.059x`). Correctness and the Go source-behavior regressions remain green;
+the strict one-client no-regression gate is still open, and the full Go/Ready
+profile cannot run because this checkout has no `go` executable. The next
+performance change must continue to cite the owning Go package and preserve
+the literal `go 代码` commit-message requirement.
