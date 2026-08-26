@@ -1021,3 +1021,15 @@ flex `8.660/10.051 ms` (`1.161x`), swap `13.481/22.169 ms` (`1.644x`), and
 batch `6.237/7.452 ms` (`1.195x`). Correctness is green, while the strict
 single-concurrency performance no-regression gate remains open. The commit
 message includes the required `Go code:` source references.
+
+Revision note, 2026-08-26 (post-rebase latest upstream verification): before
+the push, an explicit fetch advanced `origin/hparser-integration` from
+`b1f37d75c0e` to `10f63ab64a`; the upstream delta was limited to chunk/vardef
+test ports and receipts, with no changes to the lookup production sources.
+The Go-referenced implementation was rebased cleanly as
+`52c240b0f3c63be712eab3fb9ffec0f0bdd4e1972`, and the receipt-only follow-up
+as `2b663fbb046ace3143709f140c64a7a7dcf3c7a5`. After the rebase, the focused
+`tidb-executor` cursor (`17`) and access-path (`29`) suites passed again, and
+the executor library check passed. The exact committed runtime receipt above
+was produced from the same production source before this test-only upstream
+rebase; the new upstream files do not alter that behavior.
