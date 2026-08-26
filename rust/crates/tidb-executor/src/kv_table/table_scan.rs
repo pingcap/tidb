@@ -979,11 +979,11 @@ impl KvTable {
             .map(|answer| answer.map(FinishedLookup::Chunk))
     }
 
-    /// Retains decoded table rows as one output chunk instead of converting
-    /// each row to `Vec<Datum>`. Go stores `chunk.Row` references in the table
-    /// task and computes the integer `rowIdx` once per row before sorting;
-    /// this implementation follows that contract with `(chunk,row)` pairs,
-    /// then copies cells directly into the ordered output chunk.
+    /// Retains decoded table batches and row positions instead of converting
+    /// each row to `Vec<Datum>` or copying rows into a merged chunk. Go stores
+    /// `chunk.Row` references in the table task and computes the integer
+    /// `rowIdx` once per row before sorting; this implementation follows that
+    /// contract with `(batch,row)` positions.
     fn finish_lookup_chunks_by_handles(
         handles: &[TableHandle],
         mut staged: StagedHandlesLookup,
@@ -1034,18 +1034,12 @@ impl KvTable {
             ordered
                 .sort_by_key(|(handle, _, _)| positions.get(handle).copied().unwrap_or(usize::MAX));
         }
-        let width = batches.first().map_or(
-            staged.cursor.width + usize::from(staged.appended_handle),
-            |batch| batch.num_cols(),
-        );
-        let field_types =
-            staged.cursor.field_types[..width.min(staged.cursor.field_types.len())].to_vec();
-        let mut output = Chunk::new_with_capacity(&field_types, ordered.len());
-        for (_, batch_index, row_index) in ordered {
-            output.append_row(batches[batch_index].get_row(row_index));
-        }
         Ok(Some(FinishedLookupChunk {
-            chunk: output,
+            batches,
+            row_positions: ordered
+                .into_iter()
+                .map(|(_, batch_index, row_index)| (batch_index, row_index))
+                .collect(),
             handle_position: staged.handle_position,
             appended_handle: staged.appended_handle,
             predicates_applied,
@@ -2275,12 +2269,14 @@ pub struct StagedHandlesLookup {
 /// A table-lookup response kept in its decoded columnar form.
 ///
 /// Go's `tableWorker.executeTask` retains `chunk.Row` values until the parent
-/// executor consumes them. Keeping the same shape across the Rust worker
-/// boundary avoids turning every cell into an owned `Datum` and then copying
-/// it into the parent's output chunk a second time.
+/// executor consumes them. Keep the source chunks and row positions instead
+/// of copying every row into a second merged chunk; the parent performs the
+/// one required append into its output chunk, just as Go does.
 pub(crate) struct FinishedLookupChunk {
-    /// Rows are already restored to the caller's index-handle order.
-    pub(crate) chunk: Chunk,
+    /// Decoded response batches retained until the parent consumes them.
+    pub(crate) batches: Vec<Chunk>,
+    /// `(batch index, row index)` entries in the caller's index-handle order.
+    pub(crate) row_positions: Vec<(usize, usize)>,
     /// The source column carrying the integer handle.
     pub(crate) handle_position: usize,
     /// Whether the handle column was appended only for lookup association.
@@ -4634,14 +4630,15 @@ mod remote_cursor_tests {
             FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
         ];
-        let mut batch = Chunk::new_with_capacity(&source_types, 2);
-        batch.append_int64(0, 70);
-        batch.append_int64(1, 7);
-        batch.append_int64(0, 80);
-        batch.append_int64(1, 8);
+        let mut first_batch = Chunk::new_with_capacity(&source_types, 1);
+        first_batch.append_int64(0, 70);
+        first_batch.append_int64(1, 7);
+        let mut second_batch = Chunk::new_with_capacity(&source_types, 1);
+        second_batch.append_int64(0, 80);
+        second_batch.append_int64(1, 8);
         let cursor = RemoteRowCursor {
             stream: Box::new(ChunkStream {
-                chunks: std::collections::VecDeque::from([batch]),
+                chunks: std::collections::VecDeque::from([first_batch, second_batch]),
                 returned: 0,
             }),
             staged: Vec::new().into_iter(),
@@ -4671,15 +4668,19 @@ mod remote_cursor_tests {
         };
         assert!(finished.predicates_applied);
         assert_eq!(finished.wire_rows, 2);
-        let rows = (0..finished.chunk.num_rows())
-            .map(|row| {
+        let rows = finished
+            .row_positions
+            .iter()
+            .map(|(batch, row)| {
                 (
-                    finished.chunk.get_row(row).get_int64(1),
-                    finished.chunk.get_row(row).get_int64(0),
+                    finished.batches[*batch].get_row(*row).get_int64(1),
+                    finished.batches[*batch].get_row(*row).get_int64(0),
                 )
             })
             .collect::<Vec<_>>();
         assert_eq!(rows, vec![(8, 80), (7, 70)]);
+        assert_eq!(finished.batches.len(), 2);
+        assert_eq!(finished.row_positions, vec![(1, 0), (0, 0)]);
     }
 
     #[test]

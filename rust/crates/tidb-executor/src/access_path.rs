@@ -65,11 +65,12 @@ use tidb_expr::truthy_of;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 
 /// Lookups over at most this many handles are fetched inline by the calling
-/// worker instead of crossing the persistent `idx-lookup` pool channel. A
-/// capped IndexLookUp normally asks for one client chunk (100 handles here),
-/// so keeping that bounded request inline avoids a worker handoff while still
-/// leaving uncapped scans on the Go-shaped pool. The answer is byte-identical.
-const INDEX_LOOKUP_INLINE_HANDLES: usize = 128;
+/// worker instead of crossing the persistent `idx-lookup` pool channel. Go's
+/// `IndexLookUpExecutor` sends its first 100-handle window to a table worker;
+/// only point-select-sized windows are cheaper inline than that handoff.
+/// Larger windows stay asynchronous so the index worker can overlap table
+/// response waits exactly as Go does. The answer is byte-identical.
+const INDEX_LOOKUP_INLINE_HANDLES: usize = 4;
 use crate::kv_table::{
     IndexRange, IndexRangeCursor, KvTable, RemoteIndexHandleCursor, RemoteRowCursor, RowCursor,
     TableHandle,
@@ -1290,6 +1291,14 @@ fn lookup_pipeline_batch_target(
     table_filter: bool,
 ) -> usize {
     lookup_batch_target(batch_size, limit, scanned_keys, 0, table_filter)
+}
+
+/// Go's `IndexLookUpExecutor.startWorkers` seeds the index worker with the
+/// first output chunk's `RequiredRows`; subsequent tasks grow independently.
+fn lookup_initial_batch_size(initial_batch_size: usize, required_rows: usize) -> usize {
+    initial_batch_size
+        .min(required_rows)
+        .min(MAX_HANDLE_BATCH)
 }
 
 impl IndexRangeSourceExec {
@@ -2524,15 +2533,16 @@ impl IndexRangeSourceExec {
         } else {
             (0..output_width).collect::<Vec<_>>()
         };
-        while req.num_rows() < cap && self.lookup_chunk_row < lookup.chunk.num_rows() {
-            let row = lookup.chunk.get_row(self.lookup_chunk_row);
+        while req.num_rows() < cap && self.lookup_chunk_row < lookup.row_positions.len() {
+            let (batch_index, row_index) = lookup.row_positions[self.lookup_chunk_row];
+            let row = lookup.batches[batch_index].get_row(row_index);
             debug_assert!(lookup.predicates_applied);
             req.append_row_by_col_idxs(row, Some(&projection));
             self.lookup_chunk_row += 1;
             self.scanned.set(self.scanned.get() + 1);
             self.produced.set(self.produced.get() + 1);
         }
-        if self.lookup_chunk_row == lookup.chunk.num_rows() {
+        if self.lookup_chunk_row == lookup.row_positions.len() {
             self.lookup_chunk = None;
             self.lookup_chunk_row = 0;
         }
@@ -2689,15 +2699,13 @@ impl Executor for IndexRangeSourceExec {
             // RequiredRows. A LIMIT/TopN parent therefore starts a double read
             // at its requested window instead of decoding a full 1,024-row
             // chunk that the parent will immediately discard.
-            // A remote lookup with a table-side residual is already bounded
-            // by the driver's Go-shaped read-ahead hint (the parent LIMIT
-            // window, offset + count). Keep that first window intact so the
-            // table workers can overlap the residual's remote reads. Local
-            // cursors and index-covered filters retain the exact parent-cap
-            // seed used by the in-memory tests.
-            if !(self.remote_index.is_some() && self.filter.is_some() && !self.index_filter) {
-                self.batch_size = self.batch_size.min(cap).min(MAX_HANDLE_BATCH);
-            }
+            // Go's `IndexLookUpExecutor.startWorkers` seeds the index worker
+            // from the first output chunk's `RequiredRows`, then doubles the
+            // task window after each extraction. Keep that seed for every
+            // lookup shape, including a remote table-side residual: the
+            // residual changes how many rows later tasks may need, but it
+            // does not make Go fetch a full 1,024-row first task for LIMIT 100.
+            self.batch_size = lookup_initial_batch_size(self.batch_size, cap);
         }
         req.reset();
         if let Some(remote) = self.partial_remote.as_mut() {
@@ -4822,6 +4830,17 @@ mod tests {
             0,
             "Go stops extracting once scannedKeys reaches offset + count"
         );
+    }
+
+    /// The first lookup task follows Go's output-demand seed even when a
+    /// residual predicate is evaluated on the table side. The predicate keeps
+    /// later tasks growing until enough rows survive; it does not justify
+    /// replacing Go's initial `RequiredRows` window with the 1,024-row default.
+    #[test]
+    fn lookup_seed_uses_required_rows_for_table_residuals() {
+        assert_eq!(lookup_initial_batch_size(INIT_HANDLE_BATCH, 100), 100);
+        assert_eq!(lookup_initial_batch_size(INIT_HANDLE_BATCH, 2048), INIT_HANDLE_BATCH);
+        assert_eq!(lookup_initial_batch_size(MAX_HANDLE_BATCH * 2, 100), 100);
     }
 
     /// A full scan under a `LIMIT` stops at the cap: the rows past it are
