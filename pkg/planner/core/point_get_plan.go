@@ -1130,22 +1130,22 @@ type subQueryChecker struct {
 	hasSubQuery bool
 }
 
-func (s *subQueryChecker) Enter(in ast.Node) (node ast.Node, skipChildren bool) {
+func (s *subQueryChecker) Enter(in ast.Node) (skipChildren bool) {
 	if s.hasSubQuery {
-		return in, true
+		return true
 	}
 
 	if _, ok := in.(*ast.SubqueryExpr); ok {
 		s.hasSubQuery = true
-		return in, true
+		return true
 	}
 
-	return in, false
+	return false
 }
 
-func (s *subQueryChecker) Leave(in ast.Node) (ast.Node, bool) {
+func (s *subQueryChecker) Leave(ast.Node) bool {
 	// Before we enter the sub-query, we should keep visiting its children.
-	return in, !s.hasSubQuery
+	return !s.hasSubQuery
 }
 
 func isExprHasSubQuery(expr ast.Node) bool {
@@ -1155,7 +1155,7 @@ func isExprHasSubQuery(expr ast.Node) bool {
 		checker.hasSubQuery = false
 		subQueryCheckerPool.Put(checker)
 	}()
-	expr.Accept(checker)
+	ast.Walk(expr, checker)
 	return checker.hasSubQuery
 }
 

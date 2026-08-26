@@ -4955,7 +4955,7 @@ func (p *partitionExprChecker) Enter(n ast.Node) (skipChildren bool) {
 	return false
 }
 
-func (p *partitionExprChecker) Leave(ast.Node) (ok bool) {
+func (p *partitionExprChecker) Leave(ast.Node) (proceed bool) {
 	return p.err == nil
 }
 

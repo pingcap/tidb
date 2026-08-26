@@ -185,7 +185,7 @@ func (*generatedColumnChecker) Enter(ast.Node) (skipChildren bool) {
 	return false
 }
 
-func (c *generatedColumnChecker) Leave(inNode ast.Node) (ok bool) {
+func (c *generatedColumnChecker) Leave(inNode ast.Node) (proceed bool) {
 	if x, ok := inNode.(*ast.ColumnName); ok {
 		c.cols = append(c.cols, x)
 	}
@@ -346,7 +346,7 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (skipChildren bool) {
 	return false
 }
 
-func (*illegalFunctionChecker) Leave(ast.Node) (ok bool) {
+func (*illegalFunctionChecker) Leave(ast.Node) (proceed bool) {
 	return true
 }
 

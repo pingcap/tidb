@@ -41,16 +41,16 @@ type embedTextFnVisitor struct {
 	found bool
 }
 
-func (v *embedTextFnVisitor) Enter(in ast.Node) (ast.Node, bool) {
+func (v *embedTextFnVisitor) Enter(in ast.Node) bool {
 	if fnCall, ok := in.(*ast.FuncCallExpr); ok && fnCall.FnName.L == ast.EmbedText {
 		v.found = true
-		return in, true
+		return true
 	}
-	return in, false
+	return false
 }
 
-func (*embedTextFnVisitor) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
+func (*embedTextFnVisitor) Leave(ast.Node) bool {
+	return true
 }
 
 // ContainsEmbedTextFunc reports whether expr contains EMBED_TEXT at any level.
@@ -59,7 +59,7 @@ func ContainsEmbedTextFunc(expr ast.ExprNode) bool {
 		return false
 	}
 	visitor := &embedTextFnVisitor{}
-	expr.Accept(visitor)
+	ast.Walk(expr, visitor)
 	return visitor.found
 }
 

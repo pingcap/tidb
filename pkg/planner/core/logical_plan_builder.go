@@ -6927,7 +6927,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 	expr := expression.Constant{Value: val, RetType: boundClause.Expr.GetType()}
 
 	checker := &expression.ParamMarkerInPrepareChecker{}
-	boundClause.Expr.Accept(checker)
+	ast.Walk(boundClause.Expr, checker)
 
 	// If it has paramMarker and is in prepare stmt. We don't need to eval it since its value is not decided yet.
 	if !checker.InPrepareStmt {
@@ -7011,7 +7011,7 @@ func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p base.LogicalPla
 		}
 		checker.InPrepareStmt = false
 		for _, expr := range windowFuncExpr.Args {
-			expr.Accept(checker)
+			ast.Walk(expr, checker)
 		}
 		desc, err := aggregation.NewWindowFuncDesc(b.ctx.GetExprCtx(), windowFuncExpr.Name, args, checker.InPrepareStmt)
 		if err != nil {
@@ -7130,7 +7130,7 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p base.LogicalPl
 		for _, windowFunc := range funcs {
 			checker.InPrepareStmt = false
 			for _, expr := range windowFunc.Args {
-				expr.Accept(checker)
+				ast.Walk(expr, checker)
 			}
 			desc, err := aggregation.NewWindowFuncDesc(b.ctx.GetExprCtx(), windowFunc.Name, args[preArgs:preArgs+len(windowFunc.Args)], checker.InPrepareStmt)
 			if err != nil {

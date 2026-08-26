@@ -99,6 +99,6 @@ func (checker *readOnlyChecker) Enter(in Node) (skipChildren bool) {
 }
 
 // Leave implements InPlaceVisitor interface.
-func (checker *readOnlyChecker) Leave(Node) (ok bool) {
+func (checker *readOnlyChecker) Leave(Node) (proceed bool) {
 	return checker.readOnly
 }
