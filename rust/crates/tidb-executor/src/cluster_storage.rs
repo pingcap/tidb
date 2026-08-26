@@ -777,9 +777,11 @@ impl TableStorage for ClusterTableStorage {
             .unwrap_or_else(|poison| poison.into_inner())
             .start_ts();
         // One staged slice per requested range, concatenated. The ranges are
-        // ascending and disjoint, so the concatenation is still in key order,
-        // which is the order the merge below relies on. A staged row outside
-        // every range is dropped for the same reason a snapshot row there is:
+        // ascending; equal point ranges are allowed by Go's table-handle
+        // lookup and deliberately repeat the same staged row. Thus the
+        // concatenation remains nondecreasing, which is the order the merge
+        // below relies on. A staged row outside every range is dropped for the
+        // same reason a snapshot row there is:
         // the ranges bound the `WHERE`'s access conditions, so no row outside
         // them can satisfy the statement.
         let mut staged: Vec<_> = request

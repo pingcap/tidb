@@ -218,9 +218,10 @@ impl KvTable {
         // PARTITIONED (`find_best_task.go:2960`), so the count that decides
         // the merge is the number of physical tables, not the number of key
         // ranges: `WHERE id IN (1,5,9)` on an unpartitioned table opens three
-        // ranges that are already disjoint and ascending, and Go concatenates
-        // them. This is the same rule the index path states as
-        // `physical_ids.len() > 1`.
+        // ranges that are already ascending, and Go concatenates them. A
+        // `SetTableHandles` request may additionally contain equal point
+        // ranges for duplicate index entries; those are intentionally
+        // overlapping and must remain duplicated.
         let physical_count = self.record_physical_ids().len();
         let mut iterators = Vec::new();
         for (low, upper) in self.record_key_ranges(handle_ranges, zone, ordered || descending)? {
@@ -4897,8 +4898,8 @@ mod remote_cursor_tests {
             .unwrap_or_else(|poison| poison.into_inner())
             .clone()
             .expect("handle lookup request");
-        // Go's TableHandlesToKVRanges (request_builder.go:626-674) does not
-        // deduplicate equal handles: [5, 5, 7, 8] becomes two point ranges
+        // Go's TableHandlesToKVRanges (request_builder.go:626-674) retains
+        // equal handles: [5, 5, 7, 8] becomes two point ranges
         // for the duplicate 5 followed by one [7, 8] range. Keeping both
         // point ranges is required to emit both rows from a non-unique index
         // lookup.

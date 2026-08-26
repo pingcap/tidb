@@ -885,9 +885,11 @@ struct RemoteScanPlan {
     /// The executor shapes the request builder reads for concurrency, which
     /// must match the DAG's own executor list.
     envelope: RequestEnvelope,
-    /// The record intervals to read, ascending and disjoint. A whole-table
+    /// The record intervals to read, ascending by encoded key. A whole-table
     /// scan is one; a `TableRangeScan` over a clustered handle is one per
-    /// handle range, and the coprocessor request carries them all.
+    /// handle range, and the coprocessor request carries them all. Go's
+    /// `SetTableHandles` can intentionally supply equal point intervals for
+    /// duplicate index entries, so this list is not universally disjoint.
     key_ranges: Vec<KeyRange>,
     /// Go `RequestBuilder.SetTableHandles` row-count hints, aligned with
     /// `key_ranges`; empty for scans without grouped handle cardinalities.

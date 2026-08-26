@@ -91,6 +91,30 @@ pub fn table_handles_to_kv_ranges(
     (ranges, hints)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_txnkv::{Handle, IntHandle};
+
+    #[test]
+    fn duplicate_handles_keep_go_point_ranges_and_hints() {
+        // Go `TableHandlesToKVRanges` (`pkg/distsql/request_builder.go:626-674`)
+        // receives a sorted handle list and does not collapse equal entries.
+        // The duplicate point ranges preserve one table row per non-unique
+        // index occurrence; only strictly consecutive handles are coalesced.
+        let handles = [
+            Handle::from(IntHandle::new(5)),
+            Handle::from(IntHandle::new(5)),
+            Handle::from(IntHandle::new(7)),
+            Handle::from(IntHandle::new(8)),
+        ];
+        let (ranges, hints) = table_handles_to_kv_ranges(91, &handles);
+        assert_eq!(ranges.len(), 3);
+        assert_eq!(hints, vec![1, 1, 2]);
+        assert_eq!(ranges[0], ranges[1]);
+    }
+}
+
 fn logical_handle<'a>(handle: &'a Handle, table_id: &mut i64) -> &'a Handle {
     match handle {
         Handle::Partition(partition) => {

@@ -226,9 +226,12 @@ pub trait TableAccess {
     /// read a SUPERSET of them (that is the ordinary answer for a shape it
     /// cannot encode); it must never read less.
     ///
-    /// `ranges` is over the single handle column, ascending and disjoint, in
-    /// [`crate::handle_range`]'s form. An EMPTY slice is the contradictory
-    /// `WHERE` no handle satisfies, and reads nothing.
+    /// `ranges` is over the single handle column, ascending in
+    /// [`crate::handle_range`]'s form. Ordinary range scans are disjoint, but
+    /// the Go `SetTableHandles` path intentionally permits equal point ranges
+    /// when a non-unique index names the same handle more than once. An EMPTY
+    /// slice is the contradictory `WHERE` no handle satisfies, and reads
+    /// nothing.
     fn accept_handle_ranges(&mut self, ranges: &[crate::kv_table::IndexRange]) -> bool {
         let _ = ranges;
         false

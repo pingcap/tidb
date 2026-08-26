@@ -1116,7 +1116,7 @@ production head `8e9579c4ce`. A final pre-push fetch then advanced upstream to
 `9b050a5ef0`; those two additional commits only add parser/statistics test-port
 sources and receipts. The implementation was rebased again as `0742af3dd7`,
 its documentation correction as `f9a4b8b24b`, and the receipt as
-`5a122492b2`; the post-rebase focused suites below were rerun. Following Go code
+`84451c6903`; the post-rebase focused suites below were rerun. Following Go code
 `pkg/distsql/request_builder.go:626-674`, the Rust table-lookup request now
 sorts handles without deduplicating them: duplicate handles from a non-unique
 index become duplicate point ranges with row-count hints `[1, 1, ...]`, while
