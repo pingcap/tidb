@@ -71,6 +71,35 @@ The source of truth for a behavioral fix is the complete owning Go package and i
 - [x] (2026-08-26) Rebuilt remote head `372c955e7ad47952d26f774a1df730acc94a7100` after the general crossbeam transaction-channel optimization and reran 20 alternating pairs. Plans, result hashes, row counts, and batch sums remain equal. Median Rust/Go times are q1 `11.296/10.732 ms` (`1.053x`), q2 `10.863/9.598 ms` (`1.132x`), flex `10.780/9.161 ms` (`1.177x`), swap `22.776/13.113 ms` (`1.737x`), and batch `7.783/6.444 ms` (`1.208x`); this improves the prior result but the strict performance gate remains open. Receipt: `/private/tmp/hbx-1g-20260825/bench-372c955-20pairs-20260826.json`.
 - [x] (2026-08-26) Fast-forwarded the latest remote empty-window/handle-only executor change `367fa87981` and pushed the one-line API arity correction as `03640ea3a8`. The clean release binary still produces the same four normalized plans and result hashes, with 100 rows per query and batch sum `5050.000000000000000000`. A clean five-pair refresh is q1 `0.985x`, q2 `1.134x`, flex `1.206x`, swap `1.841x`, and batch `1.296x`; the more stable 20-pair receipt at this head is `/private/tmp/hbx-1g-20260825/bench-03640-20pairs-20260826.json`, and the strict performance gate remains open.
 - [x] (2026-08-26) Tested lookup concurrency `8` and bounded residual read-ahead/handle-only projection as controlled A/B experiments. Neither produced a stable all-shape improvement; the former was runtime-only, and both experiments were reverted. The pushed source remains the default Go-shaped concurrency `5` with the demand gate intact.
+- [x] (2026-08-26) Pulled the current remote `hparser-integration` tip
+  `579500a361c694e582eaa261422716e9b93b8715`, whose commit message is
+  `rust: resync vendored client-rust to 71cc8d9`; the vendored client-rust
+  revision is now `71cc8d9fff13ce30cdf535229e524cec0ad30a01`. Rebuilt and
+  restarted the Rust endpoint on `127.0.0.1:14019`. The four hbx-web3
+  normalized plans, result hashes, and 100-row batch checks remain equal on
+  the 1G fixture. A fair 20-pair alternating receipt still has Rust/Go median
+  ratios q1 `1.114x`, q2 `1.142x`, flex `1.221x`, swap `1.634x`, and batch
+  `1.256x`; the one-concurrency performance gate remains open.
+- [x] (2026-08-26) Added a package-level `tidb-executor` remote handle-lookup
+  path that drains columnar coprocessor batches directly before materializing
+  rows, with a regression covering handle-order restoration and wire-row
+  accounting. The focused regression and existing access-path suite pass, but
+  the post-update 20-pair benchmark remains slower than Go for every shape, so
+  no performance pass is claimed.
+- [x] (2026-08-26) Re-ran the affected Rust regressions after the client-rust
+  resync: `tidb-executor` access-path (26 tests), columnar handle lookup (1),
+  `tidb-planner` pseudo point-range accumulation (1), and binary index-range
+  boundary (1) all pass. `git diff --check` also passes; the repository-wide
+  Rust format check still reports pre-existing formatting drift outside this
+  change.
+- [x] (2026-08-26) Continued from the Go reference by carrying
+  `RequestBuilder.SetTableHandles` row-count hints through the Rust
+  `tidb-executor`/`tidb-exec` remote lookup seam into
+  `set_key_ranges_with_hints`. A regression proves unordered duplicate handles
+  produce the Go-equivalent grouped ranges and hints `[1, 2]`. The 1G plan and
+  result comparison remains equal; a fresh 20-pair one-client run reports
+  Rust/Go medians q1 `1.104x`, q2 `1.134x`, flex `1.198x`, swap `1.541x`, and
+  100-row batch INSERT `1.245x`, so the performance gate remains open.
 - [x] (2026-08-18) Aligned q2's executable clustered-prefix lookup with Go's `pkg/distsql` record-range contract: DDL common-handle tables do not materialize a PRIMARY secondary index, so runtime range encoding now keys off `common_handle_offsets`; the new no-PRIMARY regression and the full q2 catalog fixture pass.
 - [x] (2026-08-18) Made q9 executable after plan parity by projecting a rebuilt composite index-lookup subtree back to the original pruned child schema by qualified column path. The live q9 result has 175 rows and matches Go's hash.
 - [x] (2026-08-18) Classified the TPC-H mismatches by owning Go package and added fail-before/pass-after regressions for each behavior cluster through q22. The current release source contains no query-specific plan substitution.
@@ -670,3 +699,50 @@ receipt at this head remains slower than Go for every shape; lookup concurrency
 8 and bounded residual read-ahead/handle-only projection A/B experiments were
 reverted after no stable all-shape gain. `make lint` remains unavailable because
 the environment has no `go` executable.
+
+Revision note, 2026-08-26 (latest upstream pull): fast-forwarded
+`hparser-integration` to `4d38e859c0296e2a8141dd69373379e80af29a18`, which
+includes the vendored `ngaut/client-rust@7de5822776dc1a28b4e32f14d211f6a2e4737d76`
+sync already present in the branch. The direct client-rust remote was observed
+at `71cc8d9fff13ce30cdf535229e524cec0ad30a01`, but that commit is not yet
+vendored by this TiDB head, so no unpinned client sync was applied. Rebuilt the release server with the
+machine's OpenSSL 1.1 path, restarted `127.0.0.1:14019`, and reran the 1G
+HBX fixture. The four plans/results and 20 pairs of 100-row inserts remain
+equal; receipt:
+`/private/tmp/hbx-1g-20260825/bench-origin-4d38-client-rust-20pairs-20260826.json`.
+Rust/Go median ratios are `1.113x/1.208x/1.258x/1.516x/1.261x` for q1/q2/
+flex/swap/batch, so the single-concurrency no-regression gate remains open.
+Focused `access_path`, long pseudo point-range cardinality, and binary index
+range tests pass. The full Ready gate remains unavailable because this machine
+has no Go executable.
+
+Revision note, 2026-08-26 (client-rust resync): confirmed the remote branch at
+`579500a361c694e582eaa261422716e9b93b8715` and fast-forwarded from `4d38e85`.
+This upstream commit resyncs vendored `ngaut/client-rust` to
+`71cc8d9fff13ce30cdf535229e524cec0ad30a01`. Rebuilt the release binary with
+the local OpenSSL 1.1 paths, restarted Rust on `127.0.0.1:14019`, and reran
+the 1G hbx-web3 comparison. The four normalized plans and result hashes are
+equal (q1 `0c488295...`, q2/flex `45f8be11...`, swap `bf2ce599...`); both
+100-row batch-insert checks report 100 rows and sum
+`5050.000000000000000000`. Receipts:
+`/private/tmp/hbx-1g-20260825/compare.json`,
+`/private/tmp/hbx-1g-20260825/bench-client-rust-71cc-columnar-20pairs-20260826.json`,
+and
+`/private/tmp/hbx-1g-20260825/bench-client-rust-71cc-alternating-20pairs-20260826.json`.
+The alternating medians are Rust/Go q1 `1.114x`, q2 `1.142x`, flex `1.221x`,
+swap `1.634x`, and batch `1.256x`; all exceed the no-regression threshold.
+The local columnar handle-drain optimization and focused regressions pass, but
+the strict performance gate remains open. This is a WIP validation state:
+`make lint`/Ready cannot run because the environment has no `go` executable,
+and the worktree changes have not been pushed.
+
+Revision note, 2026-08-26 (Go reference continuation): committed the remote
+handle lookup and request-hint transcreation as `94e2e6ba06` (`rust: align
+index lookup with Go code`), the binary `IN` range-key fast path as
+`c4b8cc3235` (`rust: align IN range keys with Go code`), and the pseudo
+cardinality accumulation as `866d7a36be` (`rust: preserve pseudo estimates
+from Go code`). Each commit body contains explicit `Go code:` source
+references. The new request metadata regression and affected crate tests pass;
+the release runtime still has plan/result parity but remains slower than Go in
+the one-client benchmark. The WIP state is retained because `make lint` cannot
+run without a Go executable and no performance pass or push is claimed.
