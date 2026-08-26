@@ -405,3 +405,5 @@ Revision note (2026-08-15): Initial plan created after selective import reduced 
 - [x] (2026-08-24) Playground restart resolution: after hours of continuous benchmarking, TiKV accumulated pessimistic lock residue and degraded region state causing 16-second lock timeouts and AlreadyExist assertion failures on BOTH Go and Rust. Full playground restart from persistent data resolved everything: Rust jumped to 202.06 QPS median (ratio 0.7820), Go recovered to 258.39. The code is correct; the degradation was purely environmental.
 
 - [x] (2026-08-24) Latest clean A/B receipt (post-restart, 4x150s): Go median 258.39, Rust median 202.06 QPS (ratio 0.7820) — the best clean receipt yet. Rust rounds clustered 196..206 with zero errors. This confirms all landed optimizations are working correctly and the remaining gap (~22%) is architectural rather than environmental.
+
+- [x] (2026-08-26) MILESTONE: ratio突破0.80。Clean A/B on latest HEAD (4x150s): Go median 260.73, Rust median 210.61 QPS, ratio 0.8078. Rust +298% since loop baseline (53 QPS). Remaining gap 1.24x concentrated in upd_stock_x1 and multi-region commit tail.
