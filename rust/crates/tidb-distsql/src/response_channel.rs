@@ -508,6 +508,7 @@ impl ResponseChannel<Vec<u8>> {
             time_zone,
             warnings,
             channels: Vec::new(),
+            reusable_chunks: Vec::new(),
             runtime_stats: SelectResultRuntimeStats::default(),
             runtime_stats_binding: None,
             result_metadata: None,
@@ -529,6 +530,10 @@ pub struct SelectResponseIter {
     time_zone: SessionTimeZone,
     warnings: WarningCollector,
     channels: Vec<SelectResponseChannel>,
+    /// Go `selectResult.respChunkDecoder` survives `fetchResp` calls. Keep the
+    /// empty intermediate chunk for each channel after that channel is
+    /// consumed, so a later response can decode into the same columns.
+    reusable_chunks: Vec<Option<DecodedChunk>>,
     runtime_stats: SelectResultRuntimeStats,
     runtime_stats_binding: Option<RuntimeStatsBinding>,
     result_metadata: Option<SelectResultMetadata>,
@@ -547,9 +552,15 @@ struct SelectResponseChannel {
     raw_encode_type: Option<i32>,
     chunks: Vec<ResponseChunk>,
     field_types: Vec<FieldType>,
+    /// Go `selectResult.respChunkDecoder`: keep one typed decoder per output
+    /// channel instead of cloning its field metadata for every response chunk.
+    codec: ChunkCodec,
     time_zone: SessionTimeZone,
     next_chunk_index: usize,
     decoded: Option<DecodedChannel>,
+    /// Go `Decoder`'s intermediate chunk, retained after a response is
+    /// consumed so the next TypeChunk can reuse its column allocations.
+    reusable_chunk: Option<DecodedChunk>,
 }
 
 #[derive(Debug)]
@@ -633,7 +644,12 @@ impl DecodedChannel {
                         return Ok(true);
                     }
                     if *next_row_index == 0 {
-                        *output = std::mem::take(chunk);
+                        // Go `ReuseIntermChk` swaps the decoder's intermediate
+                        // chunk with the caller's empty output. Keeping the
+                        // caller's typed columns here avoids an allocation on
+                        // the next response chunk while preserving the direct
+                        // transfer of a sufficiently large result.
+                        std::mem::swap(chunk, output);
                     } else {
                         output.append_range_from(chunk, *next_row_index, chunk.num_rows());
                         *next_row_index = chunk.num_rows();
@@ -651,28 +667,53 @@ impl DecodedChannel {
 }
 
 impl SelectResponseChannel {
+    fn recycle_decoded(&mut self) {
+        let Some(decoded) = self.decoded.take() else {
+            return;
+        };
+        if let DecodedChannel::TypeChunk { chunk, .. } = decoded {
+            self.reusable_chunk = Some(chunk);
+        }
+    }
+
+    fn decode_next_chunk(&mut self) -> Result<(), ResponseChannelError> {
+        let Some(chunk) = self.chunks.get(self.next_chunk_index) else {
+            return Ok(());
+        };
+        let reusable_chunk = self.reusable_chunk.take();
+        let decoded = decode_channel(
+            self.channel_index,
+            self.raw_encode_type,
+            chunk,
+            &self.field_types,
+            &self.time_zone,
+            &self.codec,
+            reusable_chunk,
+        )?;
+        self.next_chunk_index += 1;
+        self.decoded = Some(decoded);
+        Ok(())
+    }
+
     fn next_row(
         &mut self,
     ) -> Result<Option<super::channel_iter::ChannelRow<Vec<Datum>>>, ResponseChannelError> {
         loop {
-            if let Some(decoded) = &mut self.decoded {
-                if let Some(row) = decoded.next_row(self.channel_index, &self.field_types)? {
+            if self.decoded.is_some() {
+                if let Some(row) = self
+                    .decoded
+                    .as_mut()
+                    .expect("decoded channel is present")
+                    .next_row(self.channel_index, &self.field_types)?
+                {
                     return Ok(Some(row));
                 }
-                self.decoded = None;
+                self.recycle_decoded();
             }
-            let Some(chunk) = self.chunks.get(self.next_chunk_index) else {
+            if self.next_chunk_index == self.chunks.len() {
                 return Ok(None);
-            };
-            let decoded = decode_channel(
-                self.channel_index,
-                self.raw_encode_type,
-                chunk,
-                &self.field_types,
-                &self.time_zone,
-            )?;
-            self.next_chunk_index += 1;
-            self.decoded = Some(decoded);
+            }
+            self.decode_next_chunk()?;
         }
     }
 
@@ -689,28 +730,45 @@ impl SelectResponseChannel {
         required_rows: usize,
     ) -> Result<bool, ResponseChannelError> {
         loop {
-            if let Some(decoded) = &mut self.decoded {
-                if decoded.fill_chunk(output, required_rows)? {
+            if self.decoded.is_some() {
+                if self
+                    .decoded
+                    .as_mut()
+                    .expect("decoded channel is present")
+                    .fill_chunk(output, required_rows)?
+                {
                     return Ok(true);
                 }
-                self.decoded = None;
+                self.recycle_decoded();
             }
-            let Some(chunk) = self.chunks.get(self.next_chunk_index) else {
+            if self.next_chunk_index == self.chunks.len() {
                 return Ok(false);
-            };
-            self.next_chunk_index += 1;
-            self.decoded = Some(decode_channel(
-                self.channel_index,
-                self.raw_encode_type,
-                chunk,
-                &self.field_types,
-                &self.time_zone,
-            )?);
+            }
+            self.decode_next_chunk()?;
         }
     }
 }
 
 impl SelectResponseIter {
+    fn recycle_channel(&mut self, mut channel: SelectResponseChannel) {
+        channel.recycle_decoded();
+        if let Some(reusable_chunk) = self.reusable_chunks.get_mut(channel.channel_index) {
+            *reusable_chunk = channel.reusable_chunk.take();
+        }
+    }
+
+    fn pop_last_channel(&mut self) {
+        if let Some(channel) = self.channels.pop() {
+            self.recycle_channel(channel);
+        }
+    }
+
+    fn clear_channels(&mut self) {
+        while let Some(channel) = self.channels.pop() {
+            self.recycle_channel(channel);
+        }
+    }
+
     pub(crate) fn from_query_response(
         response: Box<dyn QueryResponse>,
         final_field_types: Vec<FieldType>,
@@ -732,6 +790,7 @@ impl SelectResponseIter {
             time_zone,
             warnings,
             channels: Vec::new(),
+            reusable_chunks: Vec::new(),
             runtime_stats: SelectResultRuntimeStats::default(),
             runtime_stats_binding,
             result_metadata: Some(result_metadata),
@@ -764,7 +823,7 @@ impl SelectResponseIter {
                 match channel.next_row()? {
                     Some(row) => return Ok(Some(SelectResultRow::new(row.channel_index, row.row))),
                     None => {
-                        self.channels.pop();
+                        self.pop_last_channel();
                     }
                 }
             }
@@ -855,7 +914,7 @@ impl SelectResponseIter {
                 if ready {
                     return Ok(output.take());
                 }
-                self.channels.pop();
+                self.pop_last_channel();
                 let output_is_empty = output_chunk.row.num_rows() == 0;
                 if output_is_empty {
                     output = None;
@@ -1055,31 +1114,41 @@ impl SelectResponseIter {
             );
         }
 
-        self.channels.clear();
-        for (channel_index, (output, field_types)) in response
-            .intermediate_outputs
-            .into_iter()
-            .zip(&self.intermediate_output_types)
-            .enumerate()
-        {
+        self.clear_channels();
+        let channel_count = self.intermediate_output_types.len() + 1;
+        if self.reusable_chunks.len() != channel_count {
+            self.reusable_chunks.resize_with(channel_count, || None);
+        }
+        for (channel_index, output) in response.intermediate_outputs.into_iter().enumerate() {
+            let field_types = self.intermediate_output_types[channel_index].clone();
+            let reusable_chunk = self.reusable_chunks[channel_index].take();
             self.channels.push(SelectResponseChannel {
                 channel_index,
                 raw_encode_type: output.encode_type,
                 chunks: output.chunks,
                 field_types: field_types.clone(),
+                codec: ChunkCodec::new(field_types),
                 time_zone: self.time_zone.clone(),
                 next_chunk_index: 0,
                 decoded: None,
+                reusable_chunk,
             });
         }
+        let final_field_types = self.final_field_types.clone();
+        let reusable_chunk = self
+            .reusable_chunks
+            .get_mut(self.intermediate_output_types.len())
+            .and_then(Option::take);
         self.channels.push(SelectResponseChannel {
             channel_index: self.intermediate_output_types.len(),
             raw_encode_type: response.encode_type,
             chunks: response.chunks,
-            field_types: self.final_field_types.clone(),
+            field_types: final_field_types.clone(),
+            codec: ChunkCodec::new(final_field_types),
             time_zone: self.time_zone.clone(),
             next_chunk_index: 0,
             decoded: None,
+            reusable_chunk,
         });
         Ok(())
     }
@@ -1091,6 +1160,8 @@ fn decode_channel(
     chunk: &ResponseChunk,
     field_types: &[FieldType],
     time_zone: &SessionTimeZone,
+    codec: &ChunkCodec,
+    reusable_chunk: Option<DecodedChunk>,
 ) -> Result<DecodedChannel, ResponseChannelError> {
     let raw_encode_type = raw_encode_type.unwrap_or(EncodeType::TypeDefault as i32);
     let encode_type = EncodeType::try_from(raw_encode_type).map_err(|_| {
@@ -1114,8 +1185,10 @@ fn decode_channel(
             )))
         }
         EncodeType::TypeChunk => {
-            let mut decoded = DecodedChunk::new_empty(field_types);
-            let _unconsumed_suffix = ChunkCodec::new(field_types.to_vec())
+            let mut decoded =
+                reusable_chunk.unwrap_or_else(|| DecodedChunk::new_empty(field_types));
+            decoded.reset();
+            let _unconsumed_suffix = codec
                 .try_decode_to_chunk(raw.rows_data, &mut decoded)
                 .map_err(|error| ResponseChannelError::RowDecode(error.to_string()))?;
             Ok(DecodedChannel::TypeChunk {
@@ -1152,4 +1225,51 @@ pub const fn unsupported_raw_tipb_response() -> ResponseChannelError {
 #[must_use]
 pub const fn unsupported_tikv_response_channel() -> ResponseChannelError {
     ResponseChannelError::unsupported_tikv_response_channel()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_datatype::FieldTypeCode;
+
+    /// Go `pkg/util/chunk/codec.go::ReuseIntermChk` swaps an empty caller
+    /// chunk with the decoder's sufficiently large intermediate chunk. This
+    /// keeps the caller's typed column allocation available for the next
+    /// response chunk while transferring the decoded rows without copying.
+    #[test]
+    fn typed_chunk_large_result_reuses_the_empty_output_chunk() {
+        let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
+        let mut source = DecodedChunk::new_with_capacity(&fields, 2);
+        source.append_int64(0, 11);
+        source.append_int64(0, 22);
+        let mut decoded = DecodedChannel::TypeChunk {
+            chunk: source,
+            next_row_index: 0,
+        };
+        let mut output = DecodedChunk::new_with_capacity(&fields, 1);
+
+        assert!(decoded.fill_chunk(&mut output, 1).expect("fill chunk"));
+        assert_eq!(output.num_rows(), 2);
+        assert_eq!(output.capacity(), 2);
+        assert_eq!(
+            output.get_row(0).get_datum(0, &fields[0]),
+            Datum::new_int(11)
+        );
+        assert_eq!(
+            output.get_row(1).get_datum(0, &fields[0]),
+            Datum::new_int(22)
+        );
+
+        match decoded {
+            DecodedChannel::TypeChunk {
+                chunk,
+                next_row_index,
+            } => {
+                assert_eq!(next_row_index, 0);
+                assert_eq!(chunk.num_rows(), 0);
+                assert_eq!(chunk.capacity(), 1);
+            }
+            DecodedChannel::Rows(_) => panic!("expected a typed chunk"),
+        }
+    }
 }
