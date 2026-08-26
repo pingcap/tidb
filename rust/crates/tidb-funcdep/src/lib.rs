@@ -67,8 +67,9 @@
 
 pub mod fd_graph;
 pub mod null_reject;
+pub mod tests_extract_fd;
 
-pub use fd_graph::{FdSet, OuterJoinOptions, find_common_equiv_classes};
+pub use fd_graph::{find_common_equiv_classes, FdSet, OuterJoinOptions};
 
 /// Go `intset.FastIntSet`: the column-id set every dependency edge is built
 /// from. Re-exported so a consumer needs only this crate to speak to the
