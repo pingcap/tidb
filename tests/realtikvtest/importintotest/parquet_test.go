@@ -37,6 +37,9 @@ var sparkLegacyDateContent []byte
 //go:embed spark-legacy-datetime.gz.parquet
 var sparkLegacyDateTimeContent []byte
 
+//go:embed logical-time-nanos.parquet
+var logicalTimeNanosContent []byte
+
 func (s *mockGCSSuite) TestImportParquet() {
 	// Each file contains 10 rows, we manually set the row count to 5 when we skip reading the file.
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/lightning/mydump/mockParquetRowCount", "return(5)")
@@ -104,6 +107,26 @@ func (s *mockGCSSuite) TestImportParquet() {
 			}
 		}
 	}
+}
+
+func (s *mockGCSSuite) TestImportParquetLogicalTimeNanos() {
+	tempDir := s.T().TempDir()
+	importPath := path.Join(tempDir, "logical-time-nanos.parquet")
+	s.NoError(os.WriteFile(importPath, logicalTimeNanosContent, 0o644))
+
+	s.tk.MustExec("USE test;")
+	s.tk.MustExec("DROP TABLE IF EXISTS t;")
+	s.tk.MustExec("CREATE TABLE t (id BIGINT, time_nanos TIME(6), timestamp_nanos DATETIME(6));")
+	s.tk.MustQuery(fmt.Sprintf("IMPORT INTO test.t FROM '%s' FORMAT 'parquet'", importPath))
+	// The Parquet columns use TIME(NANOS) and TIMESTAMP(NANOS). Values that are
+	// not exact microseconds verify that import converts the nanosecond units.
+	s.tk.MustQuery("SELECT id, time_nanos, timestamp_nanos FROM test.t ORDER BY id").Check(
+		testkit.RowsWithSep("|",
+			"1|00:00:00.000000|1969-12-31 23:59:59.999999",
+			"2|12:34:56.789123|1970-01-01 00:00:00.000000",
+			"3|23:59:59.999999|2020-10-29 09:27:52.356956",
+		),
+	)
 }
 
 func (s *mockGCSSuite) TestImportParquetWithSparkLegacyDates() {
