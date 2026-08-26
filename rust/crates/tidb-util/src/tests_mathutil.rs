@@ -171,3 +171,17 @@ fn rand_with_seed1_and_seed2() {
     assert_eq!(rng.get_seed1(), 532_000_198);
     assert_eq!(rng.get_seed2(), 689_000_330);
 }
+
+/// Go: pkg/util/mathutil/math_test.go TestStrLenOfUint64Fast (subtest RandomInput)
+#[test]
+fn str_len_of_uint64_fast_random_input() {
+    let mut state = 0x243F_6A88_85A3_08D3u64;
+    for _ in 0..1_000_000 {
+        // xorshift64* PRNG: deterministic stand-in for Go's math/rand.Uint64().
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        let num = state.wrapping_mul(0x2545_F491_4F6C_DD1D);
+        assert_eq!(str_len_of_uint64_fast(num), num.to_string().len());
+    }
+}
