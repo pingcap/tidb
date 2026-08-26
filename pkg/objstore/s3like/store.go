@@ -646,6 +646,9 @@ type presignableClient interface {
 
 // PresignFile implements storeapi.Storage interface.
 func (rs *Storage) PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error) {
+	if expire <= 0 {
+		return "", errors.New("presign expiration must be positive")
+	}
 	if pc, ok := rs.s3Cli.(presignableClient); ok {
 		return pc.PresignObject(ctx, fileName, expire)
 	}

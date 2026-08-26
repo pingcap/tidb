@@ -220,12 +220,13 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 	}, nil
 }
 
-// newPresignClient disables SDK logging for presign operations. The OSS SDK sends
-// presigning through its request pipeline and logs the signed raw query at debug
-// level, exposing the URL signature and temporary security token. Copying the
-// resolved config keeps logging enabled for normal OSS operations.
+// newPresignClient uses the public endpoint because presigned URLs may be consumed
+// outside the Alibaba Cloud VPC. Explicit custom endpoints are retained because
+// the SDK gives them precedence over endpoint flags. It also disables SDK logging
+// because the presign request pipeline otherwise logs credentials in the raw query.
 func newPresignClient(config *oss.Config, optFns ...func(*oss.Options)) *oss.Client {
 	presignConfig := config.Copy()
+	presignConfig.WithUseInternalEndpoint(false)
 	presignConfig.WithLogLevel(oss.LogOff)
 	return oss.NewClient(&presignConfig, optFns...)
 }

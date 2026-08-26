@@ -173,6 +173,23 @@ func TestClientPresignObject(t *testing.T) {
 	ctx := context.Background()
 	const presignedURL = "https://bucket.example.com/prefix/object?signature=test"
 
+	t.Run("public endpoint when data client uses internal endpoint", func(t *testing.T) {
+		config := oss.NewConfig().
+			WithRegion("cn-hangzhou").
+			WithCredentialsProvider(credentials.NewStaticCredentialsProvider("access-key-id", "access-key-secret", "")).
+			WithUseInternalEndpoint(true)
+		cli := &client{
+			presignSvc:   newPresignClient(config),
+			BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+		}
+
+		presignedURL, err := cli.PresignObject(ctx, "object", time.Hour)
+		require.NoError(t, err)
+		parsedURL, err := url.Parse(presignedURL)
+		require.NoError(t, err)
+		require.Equal(t, "bucket.oss-cn-hangzhou.aliyuncs.com", parsedURL.Host)
+	})
+
 	t.Run("success", func(t *testing.T) {
 		cli := &client{
 			presignSvc: &presignAPI{
@@ -220,36 +237,34 @@ func TestClientPresignObject(t *testing.T) {
 		cli := &client{
 			presignSvc: &presignAPI{
 				presign: func(context.Context, any, ...func(*oss.PresignOptions)) (*oss.PresignResult, error) {
-					require.FailNow(t, "Presign called for negative expiration")
+					require.FailNow(t, "Presign called for non-positive expiration")
 					return nil, nil
 				},
 			},
 			BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
 		}
+		storage := s3like.NewStorage(cli, cli.BucketPrefix, &backuppb.S3{}, nil)
 
-		url, err := cli.PresignObject(ctx, "object", -time.Second)
+		url, err := storage.PresignFile(ctx, "object", -time.Second)
 		require.Empty(t, url)
-		require.ErrorContains(t, err, "expiration must not be negative")
+		require.ErrorContains(t, err, "expiration must be positive")
 	})
 
 	t.Run("zero expiration", func(t *testing.T) {
 		cli := &client{
 			presignSvc: &presignAPI{
-				presign: func(_ context.Context, _ any, optFns ...func(*oss.PresignOptions)) (*oss.PresignResult, error) {
-					options := &oss.PresignOptions{}
-					for _, optFn := range optFns {
-						optFn(options)
-					}
-					require.Zero(t, options.Expires)
-					return &oss.PresignResult{URL: presignedURL}, nil
+				presign: func(context.Context, any, ...func(*oss.PresignOptions)) (*oss.PresignResult, error) {
+					require.FailNow(t, "Presign called for non-positive expiration")
+					return nil, nil
 				},
 			},
 			BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
 		}
+		storage := s3like.NewStorage(cli, cli.BucketPrefix, &backuppb.S3{}, nil)
 
-		url, err := cli.PresignObject(ctx, "object", 0)
-		require.NoError(t, err)
-		require.Equal(t, presignedURL, url)
+		url, err := storage.PresignFile(ctx, "object", 0)
+		require.Empty(t, url)
+		require.ErrorContains(t, err, "expiration must be positive")
 	})
 }
 

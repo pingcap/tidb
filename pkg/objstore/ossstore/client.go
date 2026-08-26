@@ -154,10 +154,14 @@ func (c *client) DeleteObject(ctx context.Context, name string) error {
 	return errors.Trace(err)
 }
 
+// PresignObject creates a presigned URL for the given object.
+// It implements the presignableClient interface used by s3like.Storage.
+// TODO: A URL signed with temporary credentials can expire before the requested
+// duration. credentials-go does not expose the cached credential expiration, so
+// this method cannot refresh early or report the effective lifetime. Make the OSS
+// credential path expiration-aware, then ensure its remaining lifetime covers
+// expire or return the effective expiration to the caller.
 func (c *client) PresignObject(ctx context.Context, name string, expire time.Duration) (string, error) {
-	if expire < 0 {
-		return "", errors.New("presign expiration must not be negative")
-	}
 	key := c.ObjectKey(name)
 	result, err := c.presignSvc.Presign(ctx, &oss.GetObjectRequest{
 		Bucket: oss.Ptr(c.Bucket),
