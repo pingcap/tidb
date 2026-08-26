@@ -3675,7 +3675,6 @@ fn apply_pushed_leaf_filters(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_join(
     join: &tidb_ast::Join,
     catalog: &Catalog,
@@ -3756,7 +3755,6 @@ pub(crate) fn build_semi_join(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn build_join_with_choice(
     join: &tidb_ast::Join,
     current_db: &str,
@@ -3772,11 +3770,32 @@ fn build_join_with_choice(
     scan_cap: Option<u64>,
 ) -> Result<(Box<dyn Executor>, FromScope, Delivered), DriverError> {
     let source_join = join;
-    let parsed_kind = kind_override.unwrap_or(match join.tp {
-        tidb_ast::JoinType::Cross => JoinKind::Inner,
-        tidb_ast::JoinType::Left => JoinKind::Left,
-        tidb_ast::JoinType::Right => JoinKind::Right,
-    });
+    // Save both leaf pushdown receipts and logical WHERE rewrites before any
+    // speculative physical alternative mutates them. Go's
+    // `OuterJoinToSemiJoin::canConvertAntiJoin` runs before physical search;
+    // this driver recognizes the same plan shape here, where the complete
+    // parent-column demand and written join node are available together.
+    let consumption_before = demand
+        .rows
+        .map(crate::driver::join_reorder::RowSource::filter_consumption_checkpoint);
+    let outer_anti_filter = kind_override
+        .is_none()
+        .then(|| {
+            demand
+                .rows?
+                .outer_join_to_anti_filter(join, demand.output_columns)
+        })
+        .flatten();
+    let parsed_kind = kind_override
+        .or_else(|| outer_anti_filter.map(|_| JoinKind::AntiSemi))
+        .unwrap_or(match join.tp {
+            tidb_ast::JoinType::Cross => JoinKind::Inner,
+            tidb_ast::JoinType::Left => JoinKind::Left,
+            tidb_ast::JoinType::Right => JoinKind::Right,
+        });
+    if let (Some(rows), Some(part)) = (demand.rows, outer_anti_filter) {
+        rows.mark_where_part_consumed(part);
+    }
     let left_outer_semi = parsed_kind == JoinKind::Left
         && matches!(
             join.right.as_ref(),
@@ -3794,9 +3813,6 @@ fn build_join_with_choice(
         kind,
         JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi
     );
-    let consumption_before = demand
-        .rows
-        .map(crate::driver::join_reorder::RowSource::filter_consumption_checkpoint);
     // `FROM a, b` parses as the single-relation wrapper AROUND the real join,
     // while `FROM a JOIN b ON ...` is the join node itself. Unwrapping here
     // keeps the two spellings one shape for the prune request below --

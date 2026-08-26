@@ -275,6 +275,24 @@ impl LeafDemand {
         }
     }
 
+    /// Whether this demand reads any column exposed by `visible`.
+    ///
+    /// Go's `generateProjectForConvertAntiJoin` needs the same fact before it
+    /// can omit the projection which restores NULL-valued inner columns. The
+    /// name-only form avoids inventing field types merely to ask that column
+    /// pruning question.
+    pub(crate) fn needs_any_named(&self, visible: &str, columns: &[String]) -> bool {
+        let visible = visible.to_ascii_lowercase();
+        if self.all || self.star_tables.contains(&visible) {
+            return !columns.is_empty();
+        }
+        let qualified = self.qualified.get(&visible);
+        columns.iter().any(|name| {
+            let name = name.to_ascii_lowercase();
+            self.unqualified.contains(&name) || qualified.is_some_and(|names| names.contains(&name))
+        })
+    }
+
     /// The offsets of `columns` this leaf must still produce, given that it is
     /// visible under the name `visible`.
     ///

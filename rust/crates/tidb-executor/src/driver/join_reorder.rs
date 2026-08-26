@@ -2530,7 +2530,11 @@ pub(crate) struct RowSource {
 #[derive(Default)]
 struct RowRuntimeState {
     consumed_filter_leaves: BTreeMap<usize, (Vec<Expr>, Vec<Expr>)>,
-    /// Bumped on every mutation of `consumed_filter_leaves`, so callers can
+    /// WHERE parts consumed by a logical rewrite rather than by one leaf.
+    /// The first such rewrite is Go's `OuterJoinToSemiJoin`: the `IS NULL`
+    /// selection disappears when its outer join becomes an anti-semi join.
+    consumed_where_parts: BTreeSet<usize>,
+    /// Bumped on every mutation of either consumption ledger, so callers can
     /// recognise "the ledger has not changed since I last looked" without
     /// snapshotting its contents. Restores count as mutations even when they
     /// write back equal contents, which only ever costs a cache miss.
@@ -3495,15 +3499,21 @@ impl RowPlan {
 }
 
 impl RowSource {
-    /// Saves the physical leaf-filter receipts around a speculative planning
-    /// pass. Go's `findBestTask` prices alternatives without committing any
-    /// one child's predicate pushdown; the driver mirrors that by restoring
-    /// this set before it builds the winning alternative.
-    pub(crate) fn filter_consumption_checkpoint(&self) -> BTreeMap<usize, (Vec<Expr>, Vec<Expr>)> {
-        self.state.borrow().consumed_filter_leaves.clone()
+    /// Saves physical leaf-filter receipts and logical WHERE rewrites around
+    /// a speculative planning pass. Go's `findBestTask` prices alternatives
+    /// without committing any one child rewrite; the driver mirrors that by
+    /// restoring both ledgers before it builds the winning alternative.
+    pub(crate) fn filter_consumption_checkpoint(
+        &self,
+    ) -> (BTreeMap<usize, (Vec<Expr>, Vec<Expr>)>, BTreeSet<usize>) {
+        let state = self.state.borrow();
+        (
+            state.consumed_filter_leaves.clone(),
+            state.consumed_where_parts.clone(),
+        )
     }
 
-    /// One number that changes whenever the leaf-filter ledger changes. A
+    /// One number that changes whenever either filter ledger changes. A
     /// speculative pass that needs "did the consumed/residual set move?"
     /// reads this instead of cloning the whole ledger.
     pub(crate) fn ledger_epoch(&self) -> u64 {
@@ -3514,11 +3524,104 @@ impl RowSource {
     /// [`Self::filter_consumption_checkpoint`].
     pub(crate) fn restore_filter_consumption(
         &self,
-        checkpoint: BTreeMap<usize, (Vec<Expr>, Vec<Expr>)>,
+        checkpoint: (BTreeMap<usize, (Vec<Expr>, Vec<Expr>)>, BTreeSet<usize>),
     ) {
+        let (consumed_filter_leaves, consumed_where_parts) = checkpoint;
         let mut state = self.state.borrow_mut();
-        if state.consumed_filter_leaves != checkpoint {
-            state.consumed_filter_leaves = checkpoint;
+        if state.consumed_filter_leaves != consumed_filter_leaves
+            || state.consumed_where_parts != consumed_where_parts
+        {
+            state.consumed_filter_leaves = consumed_filter_leaves;
+            state.consumed_where_parts = consumed_where_parts;
+            state.ledger_epoch += 1;
+        }
+    }
+
+    /// The safe no-projection subset of Go
+    /// `pkg/planner/core/rule/rule_outer_join_to_semi_join.go::canConvertAntiJoin`.
+    ///
+    /// The current node must be a LEFT join, the sole residual selection must
+    /// be `IS NULL` over an inner column participating in a normal equality
+    /// join condition, and no parent may read an inner output. The last check
+    /// is exactly the branch where Go's
+    /// `generateProjectForConvertAntiJoin` returns nil; queries which need its
+    /// typed NULL projection stay on the original outer-join path.
+    pub(crate) fn outer_join_to_anti_filter(
+        &self,
+        join: &Join,
+        output: Option<&super::leaf_demand::LeafDemand>,
+    ) -> Option<usize> {
+        if join.tp != JoinType::Left || join.natural || !join.using.is_empty() {
+            return None;
+        }
+        let right = join.right.as_ref()?;
+        let on = join.on.as_ref()?;
+        let output = output?;
+        let left_leaves = row_plan_node_for_source(&join.left, &self.leaves)?.leaf_set();
+        let inner_leaves = row_plan_node_for_source(right, &self.leaves)?.leaf_set();
+        if inner_leaves.is_empty()
+            || inner_leaves.iter().any(|leaf| {
+                let leaf = &self.leaves[*leaf];
+                output.needs_any_named(&leaf.visible, &leaf.columns)
+            })
+        {
+            return None;
+        }
+
+        let mut residuals = self
+            .where_parts
+            .iter()
+            .enumerate()
+            .filter(|(_, part)| matches!(part.class, WhereClass::Residual));
+        let (part, predicate) = residuals.next()?;
+        if residuals.next().is_some() {
+            return None;
+        }
+        let Expr::Is {
+            expr,
+            target: tidb_ast::IsTarget::Null,
+            not: false,
+        } = strip(&predicate.expr)
+        else {
+            return None;
+        };
+        let Expr::Column(path) = strip(expr) else {
+            return None;
+        };
+        let inner_column = self.resolve_output_path(path)?;
+        if !inner_leaves.contains(&inner_column.0) {
+            return None;
+        }
+
+        let mut conjuncts = Vec::new();
+        crate::plan_trace::collect_and(on, &mut conjuncts);
+        let null_rejected_by_join_key = conjuncts.into_iter().any(|condition| {
+            let Expr::Binary(BinaryOp::Eq, left, right) = strip(condition) else {
+                return false;
+            };
+            let (Expr::Column(left), Expr::Column(right)) = (strip(left), strip(right)) else {
+                return false;
+            };
+            let (Some(left), Some(right)) = (
+                self.resolve_output_path(left),
+                self.resolve_output_path(right),
+            ) else {
+                return false;
+            };
+            (left == inner_column && left_leaves.contains(&right.0))
+                || (right == inner_column && left_leaves.contains(&left.0))
+        });
+        null_rejected_by_join_key.then_some(part)
+    }
+
+    /// Marks the Selection represented by a converted anti-semi join. This is
+    /// part of the same speculative ledger as leaf pushdown receipts.
+    pub(crate) fn mark_where_part_consumed(&self, part: usize) {
+        if part >= self.where_parts.len() {
+            return;
+        }
+        let mut state = self.state.borrow_mut();
+        if state.consumed_where_parts.insert(part) {
             state.ledger_epoch += 1;
         }
     }
@@ -3763,13 +3866,19 @@ impl RowSource {
         let consumed = &state.consumed_filter_leaves;
         self.where_parts
             .iter()
-            .filter_map(|part| match &part.class {
-                WhereClass::Edge | WhereClass::JoinOther(_) => None,
-                WhereClass::Single(leaf) => consumed
-                    .get(leaf)
-                    .map_or(true, |(residuals, _)| residuals.contains(&part.expr))
-                    .then(|| part.expr.clone()),
-                WhereClass::Residual => Some(part.expr.clone()),
+            .enumerate()
+            .filter_map(|(part_index, part)| {
+                if state.consumed_where_parts.contains(&part_index) {
+                    return None;
+                }
+                match &part.class {
+                    WhereClass::Edge | WhereClass::JoinOther(_) => None,
+                    WhereClass::Single(leaf) => consumed
+                        .get(leaf)
+                        .map_or(true, |(residuals, _)| residuals.contains(&part.expr))
+                        .then(|| part.expr.clone()),
+                    WhereClass::Residual => Some(part.expr.clone()),
+                }
             })
             .reduce(|left, right| Expr::Binary(BinaryOp::LogicAnd, Box::new(left), Box::new(right)))
     }

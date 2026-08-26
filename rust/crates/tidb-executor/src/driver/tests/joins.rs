@@ -235,6 +235,119 @@ fn joins() {
     );
 }
 
+/// Go `pkg/planner/core/rule/rule_outer_join_to_semi_join.go` recognizes an
+/// inner join key tested by the sole remaining `IS NULL` selection. When no
+/// parent reads the null-extended columns, `generateProjectForConvertAntiJoin`
+/// returns nil and the physical search sees an ordinary anti-semi join.
+#[test]
+fn outer_join_inner_key_is_null_becomes_anti_semi_join() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE anti_l (id BIGINT, v BIGINT)", &mut catalog).unwrap();
+    crate::run_create_table_on("CREATE TABLE anti_r (id BIGINT, w BIGINT)", &mut catalog).unwrap();
+    crate::run_create_table_on("CREATE TABLE anti_d (id BIGINT)", &mut catalog).unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO anti_l VALUES (1,10),(2,20),(3,30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO anti_r VALUES (1,100),(3,300)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on("INSERT INTO anti_d VALUES (1),(2),(3)", &mut catalog, &ctx).unwrap();
+
+    let explain = |sql: &str, catalog: &Catalog| {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &stmt else {
+            panic!("not query")
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not select")
+        };
+        let (_, rows) =
+            explain_select_stmt(select, catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+        rows.iter()
+            .map(|row| {
+                row.iter()
+                    .map(|datum| match datum {
+                        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                        other => format!("{:?}", other),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\t")
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let direct = "SELECT anti_l.id FROM anti_l LEFT JOIN anti_r \
+        ON anti_l.id=anti_r.id WHERE anti_r.id IS NULL";
+    assert_eq!(
+        run_select_on(direct, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(2)]],
+    );
+    let plan = explain(direct, &catalog);
+    assert!(
+        plan.iter().any(|line| line.contains("anti semi join")),
+        "the outer join must enter semi-join physical search: {plan:#?}",
+    );
+    assert!(
+        !plan.iter().any(|line| {
+            line.contains("isnull(test.anti_r.id)") && !line.contains("not(isnull(")
+        }),
+        "the unnegated IS NULL selection is represented by the anti join: {plan:#?}",
+    );
+
+    // The same rule must fire below another join; TPC-DS q78 has this exact
+    // topology in each inlined CTE body.
+    let nested = "SELECT anti_l.id FROM \
+        (anti_l LEFT JOIN anti_r ON anti_l.id=anti_r.id) \
+        JOIN anti_d ON anti_d.id=anti_l.id WHERE anti_r.id IS NULL";
+    assert_eq!(
+        run_select_on(nested, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(2)]],
+    );
+    let nested_plan = explain(nested, &catalog);
+    assert!(
+        nested_plan
+            .iter()
+            .any(|line| line.contains("anti semi join")),
+        "a nested candidate must consume the parent Selection: {nested_plan:#?}",
+    );
+    assert!(
+        !nested_plan.iter().any(|line| {
+            line.contains("isnull(test.anti_r.id)") && !line.contains("not(isnull(")
+        }),
+        "the nested anti filter must leave no unnegated Selection: {nested_plan:#?}",
+    );
+
+    // This first port deliberately implements only Go's no-projection branch.
+    // Reading an inner column needs generateProjectForConvertAntiJoin to add a
+    // typed NULL, so it remains a left outer join until that branch is ported.
+    let inner_output = "SELECT anti_l.id, anti_r.w FROM anti_l LEFT JOIN anti_r \
+        ON anti_l.id=anti_r.id WHERE anti_r.id IS NULL";
+    assert_eq!(
+        run_select_on(inner_output, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(2), Datum::Null]],
+    );
+    let refused = explain(inner_output, &catalog);
+    assert!(
+        refused.iter().any(|line| line.contains("left outer join")),
+        "an inner output requires Go's NULL-restoring projection: {refused:#?}",
+    );
+    assert!(
+        refused
+            .iter()
+            .any(|line| line.contains("isnull(test.anti_r.id)")),
+        "the unconverted join must retain its Selection: {refused:#?}",
+    );
+}
+
 #[test]
 fn tpcc_check_five_keeps_only_the_cross_leaf_residual() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
