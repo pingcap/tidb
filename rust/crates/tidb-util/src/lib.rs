@@ -36,6 +36,8 @@ mod tests_fastrand;
 mod tests_mathutil;
 #[cfg(test)]
 mod tests_dbterror;
+#[cfg(test)]
+mod tests_intest;
 
 pub mod arena;
 pub mod backoff;
