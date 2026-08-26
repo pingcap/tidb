@@ -160,6 +160,17 @@ The source of truth for a behavioral fix is the complete owning Go package and i
   `/private/tmp/hbx-1g-20260825/bench-covering-20260826.json`. The latest
   20-pair Rust/Go median ratios are q1 `1.097x`, q2 `1.217x`, flex `1.209x`,
   swap `1.496x`, and batch `1.218x`; performance acceptance remains open.
+- [x] (2026-08-26) Pulled the actual remote `hparser-integration` tip
+  `35beb56bf0b397f824068a2be4cd3d694eb78480`, rebased the covering-index fix
+  as `4be390ada5` and its receipt update as `e1029141ee`, then rebuilt and
+  restarted Rust on `127.0.0.1:14019`. The four normalized plans/results
+  remain equal (q1 `0c488295...`, q2/flex `45f8be11...`, swap `bf2ce599...`),
+  and every 100-row batch check still reports the Go-equivalent decimal sum
+  `5050.000000000000000000`. Fresh 20-pair medians are Rust/Go q1 `1.112x`,
+  q2 `1.200x`, flex `1.180x`, swap `1.583x`, and batch `1.212x`; the strict
+  one-concurrency performance gate remains open. Receipts:
+  `/private/tmp/hbx-1g-20260825/compare-rebase-35beb-20260826.json` and
+  `/private/tmp/hbx-1g-20260825/bench-rebase-35beb-20260826.json`.
 - [x] (2026-08-18) Aligned q2's executable clustered-prefix lookup with Go's `pkg/distsql` record-range contract: DDL common-handle tables do not materialize a PRIMARY secondary index, so runtime range encoding now keys off `common_handle_offsets`; the new no-PRIMARY regression and the full q2 catalog fixture pass.
 - [x] (2026-08-18) Made q9 executable after plan parity by projecting a rebuilt composite index-lookup subtree back to the original pruned child schema by qualified column path. The live q9 result has 175 rows and matches Go's hash.
 - [x] (2026-08-18) Classified the TPC-H mismatches by owning Go package and added fail-before/pass-after regressions for each behavior cluster through q22. The current release source contains no query-specific plan substitution.
@@ -918,3 +929,17 @@ listed above. Current 20-pair medians are still Rust-slower (`1.097x`,
 `1.217x`, `1.209x`, `1.496x`, `1.218x` for q1/q2/flex/swap/batch), so the
 one-concurrency performance gate remains open. The docs receipt itself is
 pending this follow-up commit; no push or Ready claim is made.
+
+Revision note, 2026-08-26 (upstream `35beb` refresh): the first push attempt
+revealed that the remote branch had advanced beyond the stale local tracking
+ref. An explicit fetch of `refs/heads/hparser-integration` found
+`35beb56bf0b397f824068a2be4cd3d694eb78480`; the covering implementation and
+receipt commits were rebased cleanly as `4be390ada5` and `e1029141ee`. After a
+fresh release build and restart, the 1G receipts
+`/private/tmp/hbx-1g-20260825/compare-rebase-35beb-20260826.json` and
+`/private/tmp/hbx-1g-20260825/bench-rebase-35beb-20260826.json` retain exact
+plan/result parity and valid 100-row batch sums. The new median Rust/Go
+ratios are q1 `1.112x`, q2 `1.200x`, flex `1.180x`, swap `1.583x`, and batch
+`1.212x`; performance remains an open failure. Both rebased commits retain
+the required `Go code:` references; the branch is ready to push after this
+receipt update, while Ready validation remains unavailable without Go.
