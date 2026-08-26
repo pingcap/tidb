@@ -402,7 +402,6 @@ func clonePartitionDefinitions(defs []model.PartitionDefinition) []model.Partiti
 		for j := range defs[i].InValues {
 			cloned[i].InValues[j] = slices.Clone(defs[i].InValues[j])
 		}
-		cloned[i].StorageClassTransitions = slices.Clone(defs[i].StorageClassTransitions)
 	}
 	return cloned
 }

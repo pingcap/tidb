@@ -359,6 +359,7 @@ go_test(
         "//pkg/expression",
         "//pkg/expression/exprstatic",
         "//pkg/infoschema",
+        "//pkg/infoschema/context",
         "//pkg/infoschema/validatorapi",
         "//pkg/ingestor/errdef",
         "//pkg/ingestor/globalsort",

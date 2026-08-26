@@ -356,7 +356,7 @@ func checkStorageClassDef(def *model.StorageClassDef) error {
 
 func setStorageClassForTable(tbInfo *model.TableInfo, tier string, transitions []model.StorageClassTransitRule) {
 	tbInfo.StorageClassTier = tier
-	tbInfo.StorageClassTransitions = transitions
+	tbInfo.StorageClassTransitionRules = transitions
 	logutil.BgLogger().Info("storage class: set table storage class", zap.Int64("tableID", tbInfo.ID),
 		zap.String("tier", tier), zap.Any("transitions", transitions))
 }
@@ -380,7 +380,7 @@ func BuildStorageClassForTable(tbInfo *model.TableInfo, settings *model.StorageC
 
 func setStorageClassTierForPartition(tbInfo *model.TableInfo, part *model.PartitionDefinition, tier string, transitions []model.StorageClassTransitRule) {
 	part.StorageClassTier = tier
-	part.StorageClassTransitions = transitions
+	part.StorageClassTransitionRules = transitions
 	logutil.BgLogger().Info("storage class: set partition storage class",
 		zap.Int64("tableID", tbInfo.ID), zap.String("partitionName", part.Name.L),
 		zap.String("tier", tier), zap.Any("transitions", transitions))

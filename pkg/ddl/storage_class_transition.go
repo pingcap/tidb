@@ -162,11 +162,11 @@ func (m *storageClassTransitionManager) discover() (
 	pending := make(map[storageClassTransitionKey]*storageClassTransitionOperation)
 	for _, db := range latest.ListTablesWithSpecialAttribute(infoschemacontext.StorageClassAttribute) {
 		for _, tblInfo := range db.TableInfos {
-			if tblInfo.StorageClassTransitionStartTS != 0 {
-				schemaName := firstNonEmpty(tblInfo.StorageClassTransitionSchemaName, db.DBName.O)
-				tableName := firstNonEmpty(tblInfo.StorageClassTransitionTableName, tblInfo.Name.O)
+			if transition := tblInfo.StorageClassTransition; transition != nil && transition.StartTS != 0 {
+				schemaName := firstNonEmpty(transition.SchemaName, db.DBName.O)
+				tableName := firstNonEmpty(transition.TableName, tblInfo.Name.O)
 				key, err := addStorageClassTransitionTarget(active, schemaName, tableName, tblInfo, "", 0, tblInfo.ID,
-					tblInfo.StorageClassTransitionTarget, tblInfo.StorageClassTransitionStartTS)
+					transition.Target, transition.StartTS)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -174,14 +174,15 @@ func (m *storageClassTransitionManager) discover() (
 			}
 			if tblInfo.Partition != nil {
 				for _, partition := range tblInfo.Partition.Definitions {
-					if partition.StorageClassTransitionStartTS == 0 {
+					transition := partition.StorageClassTransition
+					if transition == nil || transition.StartTS == 0 {
 						continue
 					}
-					schemaName := firstNonEmpty(partition.StorageClassTransitionSchemaName, db.DBName.O)
-					tableName := firstNonEmpty(partition.StorageClassTransitionTableName, tblInfo.Name.O)
-					partitionName := firstNonEmpty(partition.StorageClassTransitionPartitionName, partition.Name.O)
+					schemaName := firstNonEmpty(transition.SchemaName, db.DBName.O)
+					tableName := firstNonEmpty(transition.TableName, tblInfo.Name.O)
+					partitionName := firstNonEmpty(transition.PartitionName, partition.Name.O)
 					key, err := addStorageClassTransitionTarget(active, schemaName, tableName, tblInfo, partitionName, partition.ID, partition.ID,
-						partition.StorageClassTransitionTarget, partition.StorageClassTransitionStartTS)
+						transition.Target, transition.StartTS)
 					if err != nil {
 						return nil, nil, errors.Trace(err)
 					}
@@ -749,18 +750,11 @@ func cleanupPendingStorageClassTransitionHistory(tblInfo *model.TableInfo, key s
 }
 
 func clearTableStorageClassTransition(tblInfo *model.TableInfo) {
-	tblInfo.StorageClassTransitionTarget = ""
-	tblInfo.StorageClassTransitionStartTS = 0
-	tblInfo.StorageClassTransitionSchemaName = ""
-	tblInfo.StorageClassTransitionTableName = ""
+	tblInfo.StorageClassTransition = nil
 }
 
 func clearPartitionStorageClassTransition(partition *model.PartitionDefinition) {
-	partition.StorageClassTransitionTarget = ""
-	partition.StorageClassTransitionStartTS = 0
-	partition.StorageClassTransitionSchemaName = ""
-	partition.StorageClassTransitionTableName = ""
-	partition.StorageClassTransitionPartitionName = ""
+	partition.StorageClassTransition = nil
 }
 
 func clearStorageClassTransitionMarker(tblInfo *model.TableInfo, physicalID int64) {

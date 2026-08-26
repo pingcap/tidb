@@ -17,6 +17,7 @@ package ddl
 import (
 	"testing"
 
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
@@ -119,15 +120,17 @@ func TestStorageClassTransitionSupersedesWholeOperation(t *testing.T) {
 		Partition: &model.PartitionInfo{Definitions: []model.PartitionDefinition{
 			{
 				ID: 11, Name: ast.NewCIStr("p0"), StorageClassTier: model.StorageClassTierIA,
-				StorageClassTransitionTarget: model.StorageClassTierIA, StorageClassTransitionStartTS: 1234,
-				StorageClassTransitionSchemaName: "test", StorageClassTransitionTableName: "orders",
-				StorageClassTransitionPartitionName: "p0",
+				StorageClassTransition: &model.StorageClassTransitionState{
+					Target: model.StorageClassTierIA, StartTS: 1234,
+					SchemaName: "test", TableName: "orders", PartitionName: "p0",
+				},
 			},
 			{
 				ID: 12, Name: ast.NewCIStr("p1"), StorageClassTier: model.StorageClassTierIA,
-				StorageClassTransitionTarget: model.StorageClassTierIA, StorageClassTransitionStartTS: 1234,
-				StorageClassTransitionSchemaName: "test", StorageClassTransitionTableName: "orders",
-				StorageClassTransitionPartitionName: "p1",
+				StorageClassTransition: &model.StorageClassTransitionState{
+					Target: model.StorageClassTierIA, StartTS: 1234,
+					SchemaName: "test", TableName: "orders", PartitionName: "p1",
+				},
 			},
 		}},
 	}
@@ -145,10 +148,10 @@ func TestStorageClassTransitionSupersedesWholeOperation(t *testing.T) {
 
 	p0 := tblInfo.Partition.Definitions[0]
 	p1 := tblInfo.Partition.Definitions[1]
-	require.Equal(t, model.StorageClassTierStandard, p0.StorageClassTransitionTarget)
-	require.Equal(t, model.StorageClassTierIA, p1.StorageClassTransitionTarget)
-	require.Equal(t, uint64(5678), p0.StorageClassTransitionStartTS)
-	require.Equal(t, uint64(5678), p1.StorageClassTransitionStartTS)
+	require.Equal(t, model.StorageClassTierStandard, p0.StorageClassTransition.Target)
+	require.Equal(t, model.StorageClassTierIA, p1.StorageClassTransition.Target)
+	require.Equal(t, uint64(5678), p0.StorageClassTransition.StartTS)
+	require.Equal(t, uint64(5678), p1.StorageClassTransition.StartTS)
 }
 
 func TestStorageClassTransitionTracksPartitionedTableParent(t *testing.T) {
@@ -168,23 +171,29 @@ func TestStorageClassTransitionTracksPartitionedTableParent(t *testing.T) {
 
 	updateStorageClassTransitionMarkers(tblInfo, old, 1234, "test", "orders")
 
-	require.Equal(t, uint64(1234), tblInfo.StorageClassTransitionStartTS)
-	require.Equal(t, model.StorageClassTierIA, tblInfo.StorageClassTransitionTarget)
+	require.True(t, infoschemacontext.StorageClassAttribute(tblInfo))
+	require.Equal(t, uint64(1234), tblInfo.StorageClassTransition.StartTS)
+	require.Equal(t, model.StorageClassTierIA, tblInfo.StorageClassTransition.Target)
 	for _, partition := range tblInfo.Partition.Definitions {
-		require.Equal(t, uint64(1234), partition.StorageClassTransitionStartTS)
-		require.Equal(t, model.StorageClassTierIA, partition.StorageClassTransitionTarget)
+		require.Equal(t, uint64(1234), partition.StorageClassTransition.StartTS)
+		require.Equal(t, model.StorageClassTierIA, partition.StorageClassTransition.Target)
 	}
+
+	tblInfo.StorageClassTransition = nil
+	tblInfo.Partition.Definitions[0].StorageClassTransition = nil
+	require.True(t, infoschemacontext.StorageClassAttribute(tblInfo))
+	tblInfo.Partition.Definitions[1].StorageClassTransition = nil
+	require.False(t, infoschemacontext.StorageClassAttribute(tblInfo))
 }
 
 func TestFinalizeStorageClassTransitionRejectsStaleObservation(t *testing.T) {
 	tblInfo := &model.TableInfo{
-		ID:                               10,
-		Name:                             ast.NewCIStr("orders"),
-		StorageClassTier:                 model.StorageClassTierStandard,
-		StorageClassTransitionTarget:     model.StorageClassTierStandard,
-		StorageClassTransitionStartTS:    5678,
-		StorageClassTransitionSchemaName: "test",
-		StorageClassTransitionTableName:  "orders",
+		ID:               10,
+		Name:             ast.NewCIStr("orders"),
+		StorageClassTier: model.StorageClassTierStandard,
+		StorageClassTransition: &model.StorageClassTransitionState{
+			Target: model.StorageClassTierStandard, StartTS: 5678, SchemaName: "test", TableName: "orders",
+		},
 	}
 	args := &model.FinishStorageClassTransitionArgs{
 		Action:            model.StorageClassTransitionActionFinalize,
@@ -197,16 +206,17 @@ func TestFinalizeStorageClassTransitionRejectsStaleObservation(t *testing.T) {
 
 	staleKey := storageClassTransitionKey{tableID: 10, target: model.StorageClassTierIA, startTS: 1234}
 	require.False(t, finalizeStorageClassTransition(tblInfo, staleKey, args))
-	require.Equal(t, uint64(5678), tblInfo.StorageClassTransitionStartTS)
-	require.Equal(t, model.StorageClassTierStandard, tblInfo.StorageClassTransitionTarget)
+	require.Equal(t, uint64(5678), tblInfo.StorageClassTransition.StartTS)
+	require.Equal(t, model.StorageClassTierStandard, tblInfo.StorageClassTransition.Target)
 	require.Empty(t, tblInfo.StorageClassTransitionPendingHistory)
 
 	args.Target = model.StorageClassTierStandard
 	args.StartTS = 5678
 	currentKey := storageClassTransitionKey{tableID: 10, target: model.StorageClassTierStandard, startTS: 5678}
 	require.True(t, finalizeStorageClassTransition(tblInfo, currentKey, args))
-	require.Zero(t, tblInfo.StorageClassTransitionStartTS)
+	require.Nil(t, tblInfo.StorageClassTransition)
 	require.Len(t, tblInfo.StorageClassTransitionPendingHistory, 1)
+	require.True(t, infoschemacontext.StorageClassAttribute(tblInfo))
 	history := tblInfo.StorageClassTransitionPendingHistory[0]
 	require.Equal(t, model.StorageClassTransitionStateCompleted, history.State)
 	require.Equal(t, uint64(3), history.TotalReplicas)
@@ -215,4 +225,5 @@ func TestFinalizeStorageClassTransitionRejectsStaleObservation(t *testing.T) {
 
 	require.True(t, cleanupPendingStorageClassTransitionHistory(tblInfo, currentKey))
 	require.Empty(t, tblInfo.StorageClassTransitionPendingHistory)
+	require.False(t, infoschemacontext.StorageClassAttribute(tblInfo))
 }

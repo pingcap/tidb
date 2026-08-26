@@ -149,26 +149,32 @@ type tableStorageClassTransitionState struct {
 
 func snapshotStorageClassTransitionState(tblInfo *model.TableInfo) tableStorageClassTransitionState {
 	state := tableStorageClassTransitionState{physical: make(map[int64]physicalStorageClassTransitionState)}
-	state.physical[tblInfo.ID] = physicalStorageClassTransitionState{
+	tableState := physicalStorageClassTransitionState{
 		physicalID: tblInfo.ID,
 		tier:       tblInfo.StorageClassTier,
-		target:     tblInfo.StorageClassTransitionTarget,
-		startTS:    tblInfo.StorageClassTransitionStartTS,
-		schemaName: tblInfo.StorageClassTransitionSchemaName,
-		tableName:  tblInfo.StorageClassTransitionTableName,
 	}
+	if transition := tblInfo.StorageClassTransition; transition != nil {
+		tableState.target = transition.Target
+		tableState.startTS = transition.StartTS
+		tableState.schemaName = transition.SchemaName
+		tableState.tableName = transition.TableName
+	}
+	state.physical[tblInfo.ID] = tableState
 	if tblInfo.Partition != nil {
 		for _, partition := range tblInfo.Partition.Definitions {
-			state.physical[partition.ID] = physicalStorageClassTransitionState{
-				physicalID:    partition.ID,
-				partitionID:   partition.ID,
-				partitionName: partition.StorageClassTransitionPartitionName,
-				tier:          partition.StorageClassTier,
-				target:        partition.StorageClassTransitionTarget,
-				startTS:       partition.StorageClassTransitionStartTS,
-				schemaName:    partition.StorageClassTransitionSchemaName,
-				tableName:     partition.StorageClassTransitionTableName,
+			partitionState := physicalStorageClassTransitionState{
+				physicalID:  partition.ID,
+				partitionID: partition.ID,
+				tier:        partition.StorageClassTier,
 			}
+			if transition := partition.StorageClassTransition; transition != nil {
+				partitionState.partitionName = transition.PartitionName
+				partitionState.target = transition.Target
+				partitionState.startTS = transition.StartTS
+				partitionState.schemaName = transition.SchemaName
+				partitionState.tableName = transition.TableName
+			}
+			state.physical[partition.ID] = partitionState
 		}
 	}
 	return state
@@ -318,11 +324,14 @@ func setStorageClassTransitionMarker(
 	startTS uint64,
 	schemaName, tableName string,
 ) {
+	transition := &model.StorageClassTransitionState{
+		Target:     target,
+		StartTS:    startTS,
+		SchemaName: schemaName,
+		TableName:  tableName,
+	}
 	if physicalID == tblInfo.ID {
-		tblInfo.StorageClassTransitionTarget = target
-		tblInfo.StorageClassTransitionStartTS = startTS
-		tblInfo.StorageClassTransitionSchemaName = schemaName
-		tblInfo.StorageClassTransitionTableName = tableName
+		tblInfo.StorageClassTransition = transition
 		return
 	}
 	if tblInfo.Partition == nil {
@@ -333,11 +342,8 @@ func setStorageClassTransitionMarker(
 		if partition.ID != physicalID {
 			continue
 		}
-		partition.StorageClassTransitionTarget = target
-		partition.StorageClassTransitionStartTS = startTS
-		partition.StorageClassTransitionSchemaName = schemaName
-		partition.StorageClassTransitionTableName = tableName
-		partition.StorageClassTransitionPartitionName = partition.Name.O
+		transition.PartitionName = partition.Name.O
+		partition.StorageClassTransition = transition
 		return
 	}
 }

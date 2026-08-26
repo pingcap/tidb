@@ -85,12 +85,12 @@ var AffinityAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
 // ListTablesWithSpecialAttribute. Transition markers must be retained by
 // infoschema v2 even after the table-level storage-class fields are empty.
 var StorageClassAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
-	if t.StorageClassTransitionStartTS != 0 || len(t.StorageClassTransitionPendingHistory) > 0 {
+	if (t.StorageClassTransition != nil && t.StorageClassTransition.StartTS != 0) || len(t.StorageClassTransitionPendingHistory) > 0 {
 		return true
 	}
 	if t.Partition != nil {
 		for _, def := range t.Partition.Definitions {
-			if def.StorageClassTransitionStartTS != 0 {
+			if def.StorageClassTransition != nil && def.StorageClassTransition.StartTS != 0 {
 				return true
 			}
 		}

@@ -15,6 +15,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -215,6 +216,17 @@ func TestTableInfoCloneStorageClassTransitionHistory(t *testing.T) {
 	require.Nil(t, (&TableInfo{}).Clone().StorageClassTransitionPendingHistory)
 
 	tblInfo := &TableInfo{
+		StorageClassTransitionRules: []StorageClassTransitRule{{Tier: StorageClassTierIA, AfterDays: 30}},
+		StorageClassTransition: &StorageClassTransitionState{
+			Target: StorageClassTierIA, StartTS: 1234, SchemaName: "test", TableName: "orders",
+		},
+		Partition: &PartitionInfo{Definitions: []PartitionDefinition{{
+			ID:                          1,
+			StorageClassTransitionRules: []StorageClassTransitRule{{Tier: StorageClassTierIA, AfterDays: 7}},
+			StorageClassTransition: &StorageClassTransitionState{
+				Target: StorageClassTierIA, StartTS: 1234, PartitionName: "p0",
+			},
+		}}},
 		StorageClassTransitionPendingHistory: []StorageClassTransitionHistory{{
 			Target: StorageClassTierIA,
 			Targets: []StorageClassTransitionTarget{{
@@ -224,11 +236,51 @@ func TestTableInfoCloneStorageClassTransitionHistory(t *testing.T) {
 	}
 
 	cloned := tblInfo.Clone()
+	cloned.StorageClassTransitionRules[0].Tier = StorageClassTierStandard
+	cloned.StorageClassTransition.Target = StorageClassTierStandard
+	cloned.Partition.Definitions[0].StorageClassTransitionRules[0].Tier = StorageClassTierStandard
+	cloned.Partition.Definitions[0].StorageClassTransition.Target = StorageClassTierStandard
 	cloned.StorageClassTransitionPendingHistory[0].Target = StorageClassTierStandard
 	cloned.StorageClassTransitionPendingHistory[0].Targets[0].PhysicalID = 2
 
+	require.Equal(t, StorageClassTierIA, tblInfo.StorageClassTransitionRules[0].Tier)
+	require.Equal(t, StorageClassTierIA, tblInfo.StorageClassTransition.Target)
+	require.Equal(t, StorageClassTierIA, tblInfo.Partition.Definitions[0].StorageClassTransitionRules[0].Tier)
+	require.Equal(t, StorageClassTierIA, tblInfo.Partition.Definitions[0].StorageClassTransition.Target)
 	require.Equal(t, StorageClassTierIA, tblInfo.StorageClassTransitionPendingHistory[0].Target)
 	require.Equal(t, int64(1), tblInfo.StorageClassTransitionPendingHistory[0].Targets[0].PhysicalID)
+
+	encoded, err := json.Marshal(tblInfo)
+	require.NoError(t, err)
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(encoded, &fields))
+	require.Contains(t, fields, "storage_class_transitions")
+	require.Contains(t, fields, "storage_class_transition")
+	require.NotContains(t, fields, "storage_class_transition_target")
+	require.JSONEq(t, `{"target":"IA","start_ts":1234,"schema_name":"test","table_name":"orders"}`,
+		string(fields["storage_class_transition"]))
+
+	var decoded TableInfo
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	require.Equal(t, tblInfo.StorageClassTransitionRules, decoded.StorageClassTransitionRules)
+	require.Equal(t, tblInfo.StorageClassTransition, decoded.StorageClassTransition)
+	require.Equal(t, tblInfo.Partition.Definitions[0].StorageClassTransition,
+		decoded.Partition.Definitions[0].StorageClassTransition)
+
+	partitionEncoded, err := json.Marshal(tblInfo.Partition.Definitions[0])
+	require.NoError(t, err)
+	var partitionFields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(partitionEncoded, &partitionFields))
+	require.JSONEq(t, `{"target":"IA","start_ts":1234,"schema_name":"","table_name":"","partition_name":"p0"}`,
+		string(partitionFields["storage_class_transition"]))
+	require.NotContains(t, partitionFields, "storage_class_transition_partition_name")
+
+	emptyEncoded, err := json.Marshal(&TableInfo{})
+	require.NoError(t, err)
+	var emptyFields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(emptyEncoded, &emptyFields))
+	require.NotContains(t, emptyFields, "storage_class_transition")
+	require.NotContains(t, emptyFields, "storage_class_transitions")
 }
 
 func TestTTLJobInterval(t *testing.T) {

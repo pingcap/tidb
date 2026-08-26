@@ -52,6 +52,29 @@ const (
 	StorageClassTransitionStateSuperseded = "SUPERSEDED"
 )
 
+// StorageClassTransitionState identifies one active explicit storage-class
+// transition. PartitionName is empty for a table-level transition.
+type StorageClassTransitionState struct {
+	// Target is the SQL-facing IA or STANDARD target.
+	Target string `json:"target"`
+	// StartTS is the operation identity allocated from TSO.
+	StartTS uint64 `json:"start_ts"`
+	// SchemaName and TableName are the SQL object names at operation start.
+	SchemaName string `json:"schema_name"`
+	TableName  string `json:"table_name"`
+	// PartitionName is the partition name at operation start.
+	PartitionName string `json:"partition_name,omitempty"`
+}
+
+// Clone clones an active storage-class transition.
+func (s *StorageClassTransitionState) Clone() *StorageClassTransitionState {
+	if s == nil {
+		return nil
+	}
+	cloned := *s
+	return &cloned
+}
+
 // StorageClassTransitionTarget identifies one physical table or partition in
 // a logical storage-class operation.
 type StorageClassTransitionTarget struct {
