@@ -1301,3 +1301,34 @@ gate remains open. The source commit message includes the literal `go 代码`
 requirement; this remains WIP because this checkout has no `go` executable,
 so Ready-profile `make lint` is unavailable and the full TPC-H catalog was
 not repeated.
+
+Revision note, 2026-08-27 (Go autocommit mutation hand-off): continued from
+the Go transaction boundary after the client-rust update. Go's autocommit
+committer consumes the statement `MemBuffer` while building its mutation set;
+Rust `commit_staged_buffer` now takes the shared `MutationBuffer` entries in
+key order and hands the owned row/index bytes to the optimistic mutation
+builder. Explicit transactions still use the cloning snapshot because their
+buffer remains live for rollback and later statements. The regression
+`taking_the_buffer_snapshot_moves_entries_without_changing_shape` covers key
+ordering, tombstones, and the required empty-after-handoff state.
+
+The focused Rust checks pass: `tidb-executor` cluster-storage tests 15/15,
+`tidb-exec` cluster-table-storage unit tests 3/3, and the aggregate
+cluster-session source contract tests 3/3. The release server was rebuilt
+from this worktree and remains on `127.0.0.1:14019`. On the deterministic 1
+GiB `hbx_web3_1g` fixture (1,048,576 rows × 1,024 bytes),
+`/private/tmp/hbx-1g-20260825/compare.json` still reports all four normalized
+plans and result hashes equal to Go; each query returns 100 rows with hashes
+`0c488295...`, `45f8be11...`, `45f8be11...`, and `bf2ce599...`. The 20-pair
+batch receipt `/private/tmp/hbx-1g-20260825/bench.json` remains semantically
+equal at 100 rows and sum `5050.000000000000000000` for every endpoint.
+
+The latest alternating medians are Go/Rust q1 `9.589/9.786 ms` (`1.021x`),
+q2 `8.464/9.298 ms` (`1.098x`), flex `8.175/9.536 ms` (`1.167x`), swap
+`14.600/19.396 ms` (`1.329x`), and batch `5.644/6.304 ms` (`1.117x`). The
+Go-reference and correctness gates are green, but Rust is still slower in
+each one-concurrency median, so the strict performance acceptance gate stays
+open. This remains WIP: the checkout has no `go` executable, therefore the
+Ready-profile `make lint`/Go unit gate cannot run, and the full TPC-H catalog
+was not repeated in this iteration. The resulting commit message includes
+the literal `go 代码` requirement and a `Go code:` source reference.

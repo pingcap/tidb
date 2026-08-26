@@ -400,6 +400,18 @@ impl MutationBuffer {
             .collect()
     }
 
+    /// Takes every staged entry in key order, leaving the buffer empty.
+    ///
+    /// Go's autocommit committer consumes the `MemBuffer` entries when it
+    /// builds the mutation set.  The session buffer has no other owner once
+    /// an autocommit statement reaches publication, so moving the map avoids
+    /// copying every row and index value a second time.  Callers that may
+    /// retain the buffer for a later statement must use [`Self::snapshot`]
+    /// instead.
+    pub fn take_snapshot(&self) -> Vec<(Key, Option<Vec<u8>>)> {
+        std::mem::take(&mut *self.lock()).into_iter().collect()
+    }
+
     /// What changed since `checkpoint`, as the `(before, after)` pair the
     /// pessimistic lock diff consumes: each side holds one entry per touched
     /// key -- the value the checkpoint would restore, and the value staged
@@ -1347,6 +1359,29 @@ mod tests {
         buffer.reset();
         assert!(buffer.is_empty());
         assert_eq!(store.get(&key(b"b")), Err(StorageError::NotFound));
+    }
+
+    /// Go's autocommit commit path consumes its MemBuffer entries. The Rust
+    /// hand-off must preserve both key order and tombstones while leaving all
+    /// cloned table handles empty, so publication does not clone each row a
+    /// second time.
+    #[test]
+    fn taking_the_buffer_snapshot_moves_entries_without_changing_shape() {
+        let buffer = MutationBuffer::new();
+        buffer.set(key(b"b"), b"value".to_vec());
+        buffer.delete(key(b"a"));
+        let entries = buffer.take_snapshot();
+        assert_eq!(
+            entries
+                .into_iter()
+                .map(|(key, value)| (key.as_bytes().to_vec(), value))
+                .collect::<Vec<_>>(),
+            vec![
+                (b"a".to_vec(), None),
+                (b"b".to_vec(), Some(b"value".to_vec())),
+            ]
+        );
+        assert!(buffer.is_empty());
     }
 
     #[test]

@@ -1632,6 +1632,17 @@ fn staged_mutations(
     buffer: &MutationBuffer,
 ) -> Result<(Vec<OptimisticMutation>, usize), OptimisticCoordinatorError> {
     let staged = buffer.snapshot();
+    staged_mutations_from_entries(buffer, staged)
+}
+
+/// Builds mutations from entries already detached from the session buffer.
+/// The autocommit path uses this ownership-preserving form so row and index
+/// bytes are handed to TiKV without a second clone; explicit transactions keep
+/// [`staged_mutations`] because their buffer remains live after each statement.
+fn staged_mutations_from_entries(
+    buffer: &MutationBuffer,
+    staged: Vec<(Key, Option<Vec<u8>>)>,
+) -> Result<(Vec<OptimisticMutation>, usize), OptimisticCoordinatorError> {
     // Keys an INSERT staged presumed absent (`kv.SetPresumeKeyNotExists`)
     // prewrite as Go's own lazy inserts do: `Op_Insert`, which TiKV rejects
     // when a committed version of the key turns out to exist. This is the
@@ -1704,7 +1715,11 @@ pub fn commit_staged_buffer<C: StoreWriteClient, L: StoreWriteLoader, P: StorePd
     timeout: Duration,
     commit_protocol: CommitProtocol,
 ) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {
-    let (mutations, planned_bytes) = staged_mutations(buffer).map_err(coordinator_sql_error)?;
+    // An autocommit buffer is no longer needed by the session after this
+    // boundary. Move its entries into the mutation set, matching Go's
+    // MemBuffer hand-off and avoiding a second copy of every inserted row.
+    let (mutations, planned_bytes) = staged_mutations_from_entries(buffer, buffer.take_snapshot())
+        .map_err(coordinator_sql_error)?;
     if mutations.is_empty() {
         return Ok(None);
     }

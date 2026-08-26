@@ -94,6 +94,10 @@ fn session_transactions_and_autocommit_commits_carry_it() {
             ),
         "commit_staged_buffer must apply the protocol to the autocommit transaction"
     );
+    assert!(
+        source.contains("staged_mutations_from_entries(buffer, buffer.take_snapshot())"),
+        "commit_staged_buffer must move the Go-shaped autocommit MemBuffer entries"
+    );
 }
 
 #[test]
