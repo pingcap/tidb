@@ -819,10 +819,19 @@ mod tests {
             strict_edge(&[2], &[6, 7]),
             strict_edge(&[1], &[4, 5, 8]),
         ];
+        // A -> ADEH
         assert_eq!(
             sorted(&fd.closure_of_strict(&ColSet::of([1]))),
             vec![1, 4, 5, 8]
         );
+        // Go's second assertion appends fe1..fe4 a SECOND time (duplicate
+        // edges), then closes {A,B}: AB -> ABCDEFGH.
+        fd.edges.extend([
+            strict_edge(&[1, 2], &[3, 4]),
+            strict_edge(&[1, 2], &[5, 6]),
+            strict_edge(&[2], &[6, 7]),
+            strict_edge(&[1], &[4, 5, 8]),
+        ]);
         assert_eq!(
             sorted(&fd.closure_of_strict(&ColSet::of([1, 2]))),
             vec![1, 2, 3, 4, 5, 6, 7, 8]
@@ -946,7 +955,14 @@ mod tests {
         fd.add_equivalence(ColSet::of([3]), ColSet::of([4]));
         assert_eq!(fd.edges.len(), 2);
         assert_eq!(fd.equivalence_cols().len(), 2);
+        assert!(fd.edges[0].strict && fd.edges[0].equiv);
+        assert_eq!(fd.edges[0].from.to_string(), "(1,2)");
+        assert_eq!(fd.edges[0].to.to_string(), "(1,2)");
+        assert_eq!(fd.equivalence_cols()[0].to_string(), "(1,2)");
+        assert!(fd.edges[1].strict && fd.edges[1].equiv);
         assert_eq!(fd.edges[1].from.to_string(), "(3,4)");
+        assert_eq!(fd.edges[1].to.to_string(), "(3,4)");
+        assert_eq!(fd.equivalence_cols()[1].to_string(), "(3,4)");
 
         fd.add_constants(ColSet::of([4, 5]));
         assert_eq!(fd.edges.len(), 3);
