@@ -2548,8 +2548,8 @@ impl Executor for IndexRangeSourceExec {
             // at its requested window instead of decoding a full 1,024-row
             // chunk that the parent will immediately discard.
             // A remote lookup with a table-side residual is already bounded
-            // by the driver's Go-shaped read-ahead hint (currently 3x the
-            // parent LIMIT window). Keep that first window intact so the
+            // by the driver's Go-shaped read-ahead hint (the parent LIMIT
+            // window, offset + count). Keep that first window intact so the
             // table workers can overlap the residual's remote reads. Local
             // cursors and index-covered filters retain the exact parent-cap
             // seed used by the in-memory tests.
