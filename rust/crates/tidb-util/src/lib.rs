@@ -128,3 +128,5 @@ mod tests_naming;
 mod tests_redact;
 #[cfg(test)]
 mod tests_slice;
+#[cfg(test)]
+mod tests_sqlescape;
