@@ -80,6 +80,36 @@ pub(crate) fn point_get_value(column: &FieldType, value: &Datum) -> Option<Datum
     }
 }
 
+/// Whether a parameter that fails its column conversion provably matches no
+/// stored value, so the statement's answer is the empty set without any
+/// storage read. Go serves such an EXECUTE from its re-optimized plan
+/// (`GetPlanFromPlanCache` misses into `generateNewPlan`,
+/// `pkg/planner/core/plan_cache.go`), and that fresh point/range plan reads
+/// nothing -- the empty set is the same observable answer, served without
+/// re-planning. A string longer than the column's character capacity can
+/// never compare equal to a stored value: PAD SPACE collations fold trailing
+/// spaces first, so those are discounted before the length test; a non-ASCII
+/// payload stays with the ordinary planner because byte length is not char
+/// length.
+pub(crate) fn names_no_rows(column: &FieldType, value: &Datum) -> bool {
+    let payload = match value {
+        Datum::String(string) => string.bytes(),
+        Datum::Bytes(bytes) => bytes,
+        _ => return false,
+    };
+    if column.eval_type() != tidb_datatype::EvalType::String {
+        return false;
+    }
+    if !payload.iter().all(u8::is_ascii) {
+        return false;
+    }
+    let mut significant = payload.len();
+    if tidb_datatype::is_pad_space_collation(column.collation().name()) {
+        significant -= payload.iter().rev().take_while(|byte| **byte == b' ').count();
+    }
+    column.flen() >= 0 && significant > column.flen() as usize
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +188,52 @@ mod tests {
     #[test]
     fn a_null_constant_is_never_a_point_key() {
         assert_eq!(point_get_value(&int_column(), &Datum::Null), None);
+    }
+
+    fn varchar_column(flen: i64) -> FieldType {
+        tidb_datatype::FieldTypeBuilder::new()
+            .with_code(FieldTypeCode::Varchar)
+            .flen_set(flen)
+            .charset_set("utf8mb4")
+            .collation_set("utf8mb4_bin")
+            .build()
+    }
+
+    #[test]
+    fn a_string_longer_than_the_column_names_no_rows() {
+        // The workload binds an 18-char id number to custno varchar(10): no
+        // stored value can compare equal, so the empty set is the answer.
+        assert!(names_no_rows(
+            &varchar_column(10),
+            &Datum::new_string("310110194401061214")
+        ));
+        assert!(!names_no_rows(&varchar_column(10), &Datum::new_string("1002041840")));
+    }
+
+    #[test]
+    fn trailing_spaces_fold_under_pad_space_collations() {
+        // utf8mb4_bin is PAD SPACE: 'stored' + spaces equals 'stored', so a
+        // payload whose significant part fits must still be read.
+        let value = format!("{}{}", "0123456789", " ".repeat(8));
+        assert!(!names_no_rows(&varchar_column(10), &Datum::new_string(value)));
+        let longer = format!("{}{}", "01234567890", " ".repeat(8));
+        assert!(names_no_rows(&varchar_column(10), &Datum::new_string(longer)));
+    }
+
+    #[test]
+    fn a_multibyte_payload_stays_with_the_planner() {
+        // Byte length is not char length outside ASCII, so no verdict.
+        assert!(!names_no_rows(
+            &varchar_column(1),
+            &Datum::new_string("你好")
+        ));
+    }
+
+    #[test]
+    fn non_string_domains_are_left_to_the_planner() {
+        // An integer that fails its conversion may still be a saturation or
+        // rounding question; only provable string overlength short-circuits.
+        assert!(!names_no_rows(&int_column(), &Datum::new_string("1")));
+        assert!(!names_no_rows(&int_column(), &Datum::Int(-1)));
     }
 }

@@ -46,7 +46,7 @@
 //! it. Keeping the two together is what keeps a costed path and a runnable
 //! path from drifting apart.
 
-use super::point_get_key::point_get_value;
+use super::point_get_key::{names_no_rows, point_get_value};
 use super::*;
 use crate::access_path::{IndexMergeKind, IndexMergeSourceExec};
 use crate::predicate_pushdown::ScanColumnComparison;
@@ -284,7 +284,22 @@ impl PreparedPointGetPlan {
                     residuals: Vec::new(),
                 });
             }
-            key_values.push(point_get_value(handle_type, value)?);
+            key_values.push(match point_get_value(handle_type, value) {
+                Some(value) => value,
+                None if names_no_rows(handle_type, value) => {
+                    // A parameter longer than the column's capacity compares
+                    // equal to no stored value: the empty set IS the answer,
+                    // the same observable result Go's re-optimized plan
+                    // produces, served without re-planning.
+                    return Some(PreparedPointGetExecution {
+                        plan: Arc::clone(self),
+                        handle: None,
+                        range_values: None,
+                        residuals: Vec::new(),
+                    });
+                }
+                None => return None,
+            });
         }
         let mut residuals = Vec::with_capacity(self.residuals.len());
         for (position, bound) in &self.residuals {
@@ -302,9 +317,20 @@ impl PreparedPointGetPlan {
                             residuals: Vec::new(),
                         });
                     }
-                    ResidualCheck::Equal(
-                        point_get_value(&self.output.columns[*position].1, value)?,
-                    )
+                    ResidualCheck::Equal(match point_get_value(&self.output.columns[*position].1, value) {
+                        Some(value) => value,
+                        None
+                            if names_no_rows(&self.output.columns[*position].1, value) =>
+                        {
+                            return Some(PreparedPointGetExecution {
+                                plan: Arc::clone(self),
+                                handle: None,
+                                range_values: None,
+                                residuals: Vec::new(),
+                            });
+                        }
+                        None => return None,
+                    })
                 }
             };
             residuals.push((*position, check));
