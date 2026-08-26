@@ -215,7 +215,8 @@ fn a_stored_primary_index_yields_the_same_ids() {
         prefix_lengths: vec![UNSPECIFIED_LENGTH],
         visible: true,
         global: false,
-    });
+        clustered_primary: true,
+    }, true);
 
     capture(&mut table, Arc::clone(&captured));
     let request = recorded(&captured);

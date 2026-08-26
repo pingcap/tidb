@@ -304,6 +304,25 @@ impl IndexRange {
                 .sum::<usize>()
     }
 
+    /// Whether every key of `self` sorts strictly before every key of
+    /// `next`, so an executor walking `self` and then `next` still produces
+    /// one total index order. Go never needs this question: its coprocessor
+    /// receives all ranges in one request and TiKV walks them contiguously.
+    /// This tier walks each [`IndexRange`] with its own cursor, one after
+    /// another, so the concatenation is the answer's order exactly when the
+    /// array is sorted this way.
+    #[must_use]
+    pub fn precedes_in_key_order(&self, next: &Self) -> bool {
+        compare_range_bounds(
+            &self.high,
+            &next.low,
+            self.high_exclusive,
+            next.low_exclusive,
+            false,
+            true,
+        ) == Ordering::Less
+    }
+
     /// Go `ranger.Range.IntersectRange` for already typed index bounds.
     ///
     /// A shorter tuple is a prefix constraint. Before comparing it with a

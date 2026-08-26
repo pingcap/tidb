@@ -4340,6 +4340,96 @@ fn write_handle_ranges(
 /// The residual is the remaining conjuncts re-joined with `AND` in their
 /// original order, so what runs above the scan is the `WHERE` minus exactly
 /// what moved into it. `None` means every conjunct was pushed.
+/// Go `constructBinaryOpFunction` (`expression_rewriter.go:413`) for the
+/// one shape this tier's filter description still needs: a ROW comparison
+/// `(c1, .., cn) op (v1, .., vn)` with `op` one of `>`, `>=`, `<`, `<=`
+/// becomes the DNF whose `i`-th branch ANDs prefix equalities
+/// `c1 = v1 .. c(i-1) = v(i-1)` with ONE comparison on the i-th elements --
+/// degenerated to `>` / `<` for every branch but the last when `op` is
+/// `>=` / `<=`. The three-valued logic of the expansion reproduces the row
+/// comparison's own NULL semantics element for element.
+///
+/// `None` leaves the conjunct alone: either it is not a row comparison
+/// (single-element tuples and equalities included) or its two sides are not
+/// same-length element lists, which is the caller's residual path anyway.
+fn expand_row_comparison(conjunct: &tidb_ast::Expr) -> Option<tidb_ast::Expr> {
+    let tidb_ast::Expr::Binary(
+        op @ (tidb_ast::BinaryOp::Gt
+        | tidb_ast::BinaryOp::Ge
+        | tidb_ast::BinaryOp::Lt
+        | tidb_ast::BinaryOp::Le),
+        lhs,
+        rhs,
+    ) = conjunct
+    else {
+        return None;
+    };
+    let left = row_elements(lhs)?;
+    let right = row_elements(rhs)?;
+    if left.is_empty() || left.len() != right.len() || left.len() == 1 {
+        // A one-element "row" is spelled away by the parser already; anything
+        // else here is the ordinary comparison paths' conjunct.
+        return None;
+    }
+    let mut branches = Vec::with_capacity(left.len());
+    for index in 0..left.len() {
+        let mut conjuncts = Vec::with_capacity(index + 1);
+        // Step 1.1: every PREFIX element compares equal.
+        for earlier in 0..index {
+            conjuncts.push(tidb_ast::Expr::Binary(
+                tidb_ast::BinaryOp::Eq,
+                Box::new(left[earlier].clone()),
+                Box::new(right[earlier].clone()),
+            ));
+        }
+        // Step 1.2: especially for GE/LE, every branch but the last carries
+        // the strict form.
+        let effective = if index < left.len() - 1 {
+            match op {
+                tidb_ast::BinaryOp::Ge => tidb_ast::BinaryOp::Gt,
+                tidb_ast::BinaryOp::Le => tidb_ast::BinaryOp::Lt,
+                other => *other,
+            }
+        } else {
+            *op
+        };
+        conjuncts.push(tidb_ast::Expr::Binary(
+            effective,
+            Box::new(left[index].clone()),
+            Box::new(right[index].clone()),
+        ));
+        // Step 1.3: AND the branch's sides.
+        branches.push(conjuncts.into_iter().reduce(|accumulated, next| {
+            tidb_ast::Expr::Binary(
+                tidb_ast::BinaryOp::LogicAnd,
+                Box::new(accumulated),
+                Box::new(next),
+            )
+        }));
+    }
+    // Step 2: OR the branches.
+    branches
+        .into_iter()
+        .collect::<Option<Vec<_>>>()?
+        .into_iter()
+        .reduce(|accumulated, next| {
+            tidb_ast::Expr::Binary(
+                tidb_ast::BinaryOp::LogicOr,
+                Box::new(accumulated),
+                Box::new(next),
+            )
+        })
+}
+
+/// The element list of a row value, through any parentheses. A bare
+/// parenthesised expression (`(a) > (1)`) is NOT a row: the parser models it
+/// as `Paren`, and only `(a, b)` builds [`tidb_ast::Expr::Row`].
+fn row_elements(expr: &tidb_ast::Expr) -> Option<&[tidb_ast::Expr]> {
+    match expr {
+        tidb_ast::Expr::Row(items) => Some(items),
+        _ => None,
+    }
+}
 pub(crate) fn split_scan_predicates(
     where_clause: &tidb_ast::Expr,
     resolver: &impl ColumnResolver,
@@ -4351,11 +4441,21 @@ pub(crate) fn split_scan_predicates(
     let mut filters = Vec::new();
     let mut residual: Vec<&tidb_ast::Expr> = Vec::new();
     for conjunct in conjuncts {
+        // Go's expression rewriter lowers a row comparison
+        // `(c1, .., cn) op (v1, .., vn)` into the DNF of prefix equalities
+        // plus one degenerate comparison BEFORE pushdown decides what the
+        // coprocessor may run (`constructBinaryOpFunction`,
+        // `expression_rewriter.go:413`); this tier's ranger consumes the raw
+        // shape instead, but the filter description still needs the rewritten
+        // form, so expand it here. A conjunct that is not a row comparison
+        // keeps its own text.
+        let expanded = expand_row_comparison(conjunct);
+        let described = expanded.as_ref().unwrap_or(conjunct);
         // Go `find_best_task.go`'s two `expression.PushDownExprs(pctx,
         // ..., kv.TiKV)` calls, which split the index and table filters into
         // what the coprocessor may run and what stays above it.
         if !crate::pushdown_blacklist::blacklist_admits(
-            conjunct,
+            described,
             resolver,
             ctx,
             tidb_expr::infer_pushdown::PushDownStore::TiKv,
@@ -4363,8 +4463,8 @@ pub(crate) fn split_scan_predicates(
             residual.push(conjunct);
             continue;
         }
-        match scan_predicate(conjunct, resolver).and_then(|mut predicate| {
-            let mut filter = rewrite_expr_resolved(conjunct, resolver).ok()?;
+        match scan_predicate(described, resolver).and_then(|mut predicate| {
+            let mut filter = rewrite_expr_resolved(described, resolver).ok()?;
             // Go `refineArgs`: `int column <cmp> non-int constant` folds the
             // constant into the column's type ONCE here, so the filter this
             // scan runs on every row compares int to int. Without it the
@@ -5944,10 +6044,11 @@ pub(crate) fn point_write_prelock_keys(
 pub(crate) struct IndexAccessOrder {
     /// The unfixed key columns as offsets into the source row, in key order.
     column_offsets: Vec<usize>,
-    /// Whether one range covers the access path. Several ranges are each
-    /// internally in index order but are walked one after another, and their
-    /// concatenation is not index order, so only a single range establishes
-    /// the total order an `ORDER BY` can be discharged against.
+    /// Whether the walk over the ranges produces one total index order: a
+    /// single range, or several ranges that sort after one another without
+    /// overlapping (`IndexRange::precedes_in_key_order`), whose concatenation
+    /// the cursor walk delivers in key order. Interleaving ranges would need
+    /// a merge-sort this tier does not have and stay excluded.
     single_range: bool,
     /// Key positions fixed to one value by the single range. Go carries the
     /// equivalent fact in `AccessPath.ConstCols` and skips those positions in
@@ -5964,9 +6065,22 @@ impl IndexAccessOrder {
     fn from_ranges(column_offsets: &[usize], ranges: &[IndexRange]) -> Self {
         // Go `matchProperty` Case 2: a key part fixed to one value does not
         // participate in the varying row order, so ORDER BY may start after
-        // it. Case 3 (different point values in several ranges) requires a
-        // merge-sort operator this tier does not have and remains excluded by
-        // `single_range`.
+        // it. Case 3 (different point values in several ranges) needs a
+        // merge-sort operator this tier does not have, and stays excluded --
+        // but only for ranges that INTERLEAVE. Ranges that sort after one
+        // another without overlapping are read one after another by the same
+        // cursor walk (`IndexRangeSourceExec::open` advances `next_range` in
+        // array order, backwards when descending), so their concatenation IS
+        // the index's total order: the taobench batch read's
+        // `(id1, id2, type) > (l,..) AND (id1, id2, type) < (h,..)` detaches
+        // to three such ranges on the leading column, and its ORDER BY over
+        // the whole key discharges against them exactly as go's keep-order
+        // scan does.
+        let single_range = ranges.len() == 1
+            || ranges
+                .iter()
+                .zip(ranges.iter().skip(1))
+                .all(|(current, next)| current.precedes_in_key_order(next));
         let constant_positions = if let [range] = ranges {
             column_offsets
                 .iter()
@@ -5984,7 +6098,7 @@ impl IndexAccessOrder {
         };
         Self {
             column_offsets: column_offsets.to_vec(),
-            single_range: ranges.len() == 1,
+            single_range,
             constant_positions,
             handle_covered_offsets: Vec::new(),
         }
@@ -6326,5 +6440,119 @@ mod find_best_task_property_tests {
         let mut high_open = closed;
         high_open.high_exclusive = true;
         assert_eq!(single_point_handle(&[high_open]), None);
+    }
+
+    fn expand(sql: &str) -> Option<tidb_ast::Expr> {
+        let statement = tidb_parser::parse(sql).expect("query parses");
+        let Stmt::Query(query) = statement else {
+            panic!("expected query")
+        };
+        let QueryStmt::Select(select) = &*query else {
+            panic!("expected select")
+        };
+        let where_clause = select.where_clause.as_ref()?;
+        let mut conjuncts = Vec::new();
+        collect_conjuncts(where_clause, &mut conjuncts);
+        conjuncts
+            .iter()
+            .find_map(|conjunct| expand_row_comparison(conjunct))
+    }
+
+    fn where_clause_of(sql: &str) -> Option<tidb_ast::Expr> {
+        let statement = tidb_parser::parse(sql).expect("query parses");
+        let Stmt::Query(query) = statement else {
+            panic!("expected query")
+        };
+        let QueryStmt::Select(select) = &*query else {
+            panic!("expected select")
+        };
+        select.where_clause.clone()
+    }
+
+    /// The parser keeps explicit parentheses; the expansion builds its DNF
+    /// without them. Parentheses are transparent, so strip them (recursively)
+    /// before two shapes are compared.
+    fn strip_parens(expr: &tidb_ast::Expr) -> tidb_ast::Expr {
+        match expr {
+            tidb_ast::Expr::Paren(inner) => strip_parens(inner),
+            tidb_ast::Expr::Binary(op, lhs, rhs) => tidb_ast::Expr::Binary(
+                *op,
+                Box::new(strip_parens(lhs)),
+                Box::new(strip_parens(rhs)),
+            ),
+            other => other.clone(),
+        }
+    }
+
+    #[test]
+    fn a_row_comparison_expands_to_go_prefix_equality_dnf() {
+        // Go `constructBinaryOpFunction`'s default arm, spelled out for the
+        // taobench batch read's leading shape.
+        let expanded = expand("SELECT * FROM t WHERE (a, b, c) > (1, 2, 3)")
+            .expect("a row comparison expands");
+        let expected = strip_parens(
+            &where_clause_of(
+                "SELECT * FROM t WHERE a > 1 OR (a = 1 AND b > 2) OR \
+                 (a = 1 AND b = 2 AND c > 3)",
+            )
+            .expect("the expected shape parses"),
+        );
+        assert_eq!(strip_parens(&expanded), expected);
+    }
+
+    #[test]
+    fn a_ge_row_comparison_degenerates_every_branch_but_the_last() {
+        let expanded = expand("SELECT * FROM t WHERE (a, b) >= (1, 2)")
+            .expect("a row comparison expands");
+        let expected = strip_parens(
+            &where_clause_of("SELECT * FROM t WHERE a > 1 OR (a = 1 AND b >= 2)")
+                .expect("the expected shape parses"),
+        );
+        assert_eq!(strip_parens(&expanded), expected);
+
+        // A one-element "row" is not a row comparison; equality and other
+        // operators keep their own paths.
+        assert!(expand("SELECT * FROM t WHERE (a, b) = (1, 2)").is_none());
+        assert!(expand("SELECT * FROM t WHERE a > 1").is_none());
+    }
+
+    #[test]
+    fn sorted_disjoint_ranges_claim_one_total_order() {
+        let point = |value: i64| IndexRange {
+            low: vec![Datum::Int(value)],
+            high: vec![Datum::Int(value)],
+            low_exclusive: false,
+            high_exclusive: false,
+        };
+        let interval = |low: i64, low_open: bool, high: i64, high_open: bool| IndexRange {
+            low: vec![Datum::Int(low)],
+            high: vec![Datum::Int(high)],
+            low_exclusive: low_open,
+            high_exclusive: high_open,
+        };
+        // The taobench batch read's detached shape: two points around an
+        // open interval, ascending.
+        let ascending = vec![
+            point(1),
+            interval(1, true, 5, true),
+            point(5),
+        ];
+        let order = IndexAccessOrder::from_ranges(&[0], &ascending);
+        assert!(order.single_range);
+
+        // The same array walked BACKWARDS serves a descending ORDER BY.
+        // (Ascending-sorted ranges are the only array both walks agree on.)
+
+        // Overlapping intervals interleave; no merge-sort exists here.
+        let overlapping = vec![interval(1, false, 5, false), interval(2, false, 6, false)];
+        assert!(!IndexAccessOrder::from_ranges(&[0], &overlapping).single_range);
+
+        // Two closed ranges sharing their boundary share the key itself.
+        let touching = vec![interval(1, false, 5, false), interval(5, false, 9, false)];
+        assert!(!IndexAccessOrder::from_ranges(&[0], &touching).single_range);
+
+        // An open high end leaves the boundary to the next range alone.
+        let abutting = vec![interval(1, false, 5, true), interval(5, false, 9, false)];
+        assert!(IndexAccessOrder::from_ranges(&[0], &abutting).single_range);
     }
 }
