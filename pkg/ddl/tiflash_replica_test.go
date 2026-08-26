@@ -851,6 +851,8 @@ func TestColumnarStorageEnabledGateColumnarIndex(t *testing.T) {
 	require.NotNil(t, tbl.Meta().TiFlashReplica)
 	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
 	require.Equal(t, 1, len(tbl.Meta().Indices))
+}
+
 func TestKillCancelsBatchSetDatabaseTiFlashReplica(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
