@@ -1452,3 +1452,37 @@ the strict one-client no-regression gate is still open, and the full Go/Ready
 profile cannot run because this checkout has no `go` executable. The next
 performance change must continue to cite the owning Go package and preserve
 the literal `go 代码` commit-message requirement.
+
+Revision note, 2026-08-27 (latest `hparser-integration` refresh): the explicit
+remote fetch now resolves `origin/hparser-integration` and the local worktree to
+`796401e7cff5c14ad1e3fa620147cf777d20f4bb` (`docs: record current Go parity
+receipt go 代码`), including the upstream client-rust resync, parser/AST source
+tests, and planner/property source test added immediately before this receipt.
+The release `tidb-server` was rebuilt from this exact tree; its startup banner
+reports the same commit. Go nightly remains on `127.0.0.1:14000`, Rust was run
+on `127.0.0.1:14019`, and both used the deterministic 1 GiB
+`hbx_web3_1g` fixture with lookup width 3 and four transport shards.
+
+The fresh comparison receipt
+`/private/tmp/hbx-1g-20260825/compare-796401e7cff-20260827.json` reports all
+four normalized plans and all four result hashes equal (`q1`, `q2`, `flex`,
+`swap`), with 100 rows per query; hashes remain q1 `0c488295...`, q2/flex
+`45f8be11...`, and swap `bf2ce599...`. The fresh alternating receipt
+`/private/tmp/hbx-1g-20260825/bench-796401e7cff-20260827.json` reports these
+20-pair medians: Go/Rust q1 `9.599/9.733 ms` (`1.014x`), q2 `8.493/9.092 ms`
+(`1.070x`), flex `7.629/9.572 ms` (`1.255x`), swap `14.390/17.898 ms`
+(`1.244x`), and 100-row batch insert `5.944/6.403 ms` (`1.077x`). Every
+batch still returns 100 rows with decimal sum `5050.000000000000000000` on
+both endpoints.
+
+The refreshed focused gates pass: the Go-shaped closed-point row-count
+regression is 1/1, the CMSketch source suite is 31/31, parser AST DDL and DML
+source suites are 31/31 and 21/21, respectively, and the release build
+succeeds with the pinned OpenSSL environment. The planner/property test is
+explicitly reported as 1 ignored parity gap because its Go
+`NeedMPPExchangeByEquivalence` surface is not yet implemented in Rust. The
+strict one-client performance no-regression gate remains open (Rust is still
+slower on the four workload medians); no Go executable, Ready-profile
+`make lint`, full Go unit suite, or complete hbx-web3/TPC-H catalog was
+available locally. Any subsequent fix must continue to cite its owning Go
+package and use a commit message containing the literal `go 代码`.
