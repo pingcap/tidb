@@ -1586,7 +1586,13 @@ impl KvTable {
         } else {
             handle_indices.clone()
         };
-        let handle_is_unsigned = if handle_only && self.common_handle_offsets.is_empty() {
+        // Even when predicates or TopN keep the complete index schema on the
+        // wire, the lookup worker consumes only the handle columns. Go's
+        // `extractTaskHandles` reads those handles from the response chunk
+        // before building the table task; do the same instead of forcing a
+        // row-at-a-time `Vec<Datum>` conversion for the discarded index
+        // columns.
+        let handle_is_unsigned = if self.common_handle_offsets.is_empty() {
             handle_indices
                 .first()
                 .and_then(|index| columns.get(*index))
@@ -4657,33 +4663,40 @@ mod remote_cursor_tests {
 
     #[test]
     fn integer_handle_cursor_reads_trailing_handle_column_from_chunk() {
-        let field_types = vec![
-            FieldType::new(tidb_datatype::FieldTypeCode::VarString),
-            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-        ];
-        let mut batch = Chunk::new_with_capacity(&field_types, 1);
-        batch.append_string(0, "indexed");
-        batch.append_int64(1, 42);
-        let mut cursor = RemoteIndexHandleCursor {
-            inner: Box::new(ChunkStream {
-                chunks: std::collections::VecDeque::from([batch]),
-                returned: 0,
-            }),
-            // TopN/index-side predicates consume the complete index schema;
-            // Go's getHandle reads the trailing handle slot rather than
-            // assuming the first datum is the handle.
-            handle_indices: vec![1],
-            projected_indices: None,
-            common_handle: false,
-            zone: tidb_datatype::SessionTimeZone::utc(),
-            use_new_collation: false,
-            noted_rows: 0,
-            handle_is_unsigned: Some(false),
-            handle_field_types: Vec::new(),
-            pending_chunk: None,
-            pending_chunk_row: 0,
+        let make_cursor = || {
+            let field_types = vec![
+                FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+                FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            ];
+            let mut batch = Chunk::new_with_capacity(&field_types, 1);
+            batch.append_string(0, "indexed");
+            batch.append_int64(1, 42);
+            RemoteIndexHandleCursor {
+                inner: Box::new(ChunkStream {
+                    chunks: std::collections::VecDeque::from([batch]),
+                    returned: 0,
+                }),
+                // TopN/index-side predicates consume the complete index
+                // schema; Go's getHandle reads the trailing handle slot
+                // rather than assuming the first datum is the handle.
+                handle_indices: vec![1],
+                projected_indices: None,
+                common_handle: false,
+                zone: tidb_datatype::SessionTimeZone::utc(),
+                use_new_collation: false,
+                noted_rows: 0,
+                handle_is_unsigned: Some(false),
+                handle_field_types: Vec::new(),
+                pending_chunk: None,
+                pending_chunk_row: 0,
+            }
         };
 
+        let mut cursor = make_cursor();
+        assert_eq!(cursor.next_handle().unwrap(), Some(TableHandle::Int(42)));
+        assert!(cursor.next_handle().unwrap().is_none());
+
+        let mut cursor = make_cursor();
         assert_eq!(cursor.next_handle_batch(1).unwrap(), Some(vec![TableHandle::Int(42)]));
         assert!(cursor.next_handle_batch(1).unwrap().is_none());
     }
