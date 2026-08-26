@@ -47,8 +47,9 @@ use tidb_txnkv::region::{
 };
 use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext};
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, OptimisticMutation, OptimisticTransactionState,
-    RealOptimisticTransaction, TransactionAttemptPhase, TransactionAttemptResult, TransactionCause,
+    detached_flush_failures, OptimisticCommitOutcome, OptimisticMutation,
+    OptimisticTransactionState, RealOptimisticTransaction, TransactionAttemptPhase,
+    TransactionAttemptResult, TransactionCause,
 };
 use tidb_txnkv::SharedReadRuntime;
 
@@ -533,15 +534,18 @@ fn flashback_prewrite_is_a_generic_region_cause_with_its_detail() {
 /// be regrouped after its region error.
 ///
 /// Source contract: a successful primary response makes the transaction
-/// committed. Unresolved secondary keys are reported on the receipt; they must
-/// never become rollback, cleanup failure, or undetermined, and cleanup must
-/// not run.
+/// committed. Go hands the failed secondary Commit to the spawned flush
+/// goroutine, whose errors only bump
+/// `metrics.SecondaryLockCleanupFailureCounterCommit` (`2pc.go`,
+/// `doActionOnGroupedBatches`); they must never become rollback, cleanup
+/// failure, or undetermined, and cleanup must not run.
 #[test]
 fn secondary_commit_regroup_failure_keeps_a_determinate_committed_outcome() {
     let service = ScriptedTikv::new(
         vec![CommandOutcome::Ok, CommandOutcome::Ok],
         // Primary batch commits; the secondary batch hits a region error whose
-        // recovery invalidates the region, and the regroup then finds no leader.
+        // recovery invalidates the region. The detached flush counts the
+        // failure instead of reporting it to the caller.
         vec![CommandOutcome::Ok, CommandOutcome::RecoveryInProgress],
         Vec::new(),
     );
@@ -549,6 +553,7 @@ fn secondary_commit_regroup_failure_keeps_a_determinate_committed_outcome() {
     let server = TestServer::start(service);
     let topology = SplitTopology::new(server.store_address());
     let transaction = transaction(&server, topology.clone());
+    let failures_before = detached_flush_failures();
 
     let outcome = transaction
         .commit(
@@ -562,49 +567,35 @@ fn secondary_commit_regroup_failure_keeps_a_determinate_committed_outcome() {
         panic!("a confirmed primary commit must stay Committed");
     };
 
-    // The secondary failure is reported with full physical identity.
-    assert_eq!(committed.secondary_failures.len(), 1);
-    let failure = &committed.secondary_failures[0];
-    assert_eq!(failure.keys, vec![SECONDARY_KEY.to_vec()]);
-    assert_eq!(failure.region.map(|region| region.id), Some(HIGH_REGION));
-    assert_eq!(
-        failure.address.as_deref(),
-        Some(server.store_address().as_str())
-    );
-    assert!(
-        failure.publication.is_some(),
-        "a decoded secondary response must retain its publication identity"
-    );
-    let TransactionCause::Region { detail } = &failure.cause else {
-        panic!(
-            "a failed regroup is a region cause, got {:?}",
-            failure.cause
+    // The secondary Commit ran on the detached flush thread, so its failure is
+    // invisible to the outcome and counted at the transport instead.
+    assert!(committed.secondary_failures.is_empty());
+    let deadline = Instant::now() + CALL_TIMEOUT;
+    while detached_flush_failures() == failures_before {
+        assert!(
+            Instant::now() < deadline,
+            "the detached secondary flush never recorded its failure"
         );
-    };
-    assert!(
-        detail.contains("secondary Commit regroup failed"),
-        "unexpected regroup detail: {detail}"
-    );
+        std::thread::sleep(Duration::from_millis(5));
+    }
 
-    // The primary is committed and no secondary was confirmed.
+    // The primary is committed; the secondary was published once (and only
+    // answered with a region error).
     let receipt = &committed.receipt;
     assert_eq!(receipt.start_ts, START_TS);
     assert!(receipt.commit_ts > START_TS);
     assert_eq!(receipt.primary_key, PRIMARY_KEY.to_vec());
     assert_eq!(receipt.primary_publications.len(), 1);
     assert!(receipt.secondary_publications.is_empty());
-    assert_eq!(receipt.secondary_attempt_publications.len(), 1);
-
     let secondary_attempts = receipt
         .attempt_history
         .iter()
         .filter(|attempt| attempt.phase == TransactionAttemptPhase::SecondaryCommit)
         .collect::<Vec<_>>();
-    assert_eq!(secondary_attempts.len(), 1);
-    assert!(matches!(
-        secondary_attempts[0].result,
-        TransactionAttemptResult::DefinitiveFailure(TransactionCause::Region { .. })
-    ));
+    assert!(
+        secondary_attempts.is_empty(),
+        "a detached secondary Commit leaves no coordinator attempt history"
+    );
 
     // A committed transaction never cleans up.
     let recorded = recorded.lock().unwrap();
@@ -629,8 +620,9 @@ fn secondary_commit_regroup_failure_keeps_a_determinate_committed_outcome() {
         .commits
         .iter()
         .all(|commit| commit.primary_key == PRIMARY_KEY.to_vec()));
-    // Exactly one reload proves the regroup consulted the invalidated region.
-    assert_eq!(topology.loads_for(HIGH_REGION), 2);
+    // The detached flush answers the region error without a recovery reload:
+    // the region was consulted once, at routing time.
+    assert_eq!(topology.loads_for(HIGH_REGION), 1);
     assert_eq!(topology.loads_for(LOW_REGION), 1);
 }
 

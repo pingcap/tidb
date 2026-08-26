@@ -487,7 +487,7 @@ where
             // the completed prewrite and a goroutine (`cleanWg.Add(1); go ...`)
             // flushes the secondary Commits. A client that cannot take over
             // falls through to the awaited path below.
-            if self.detach_async_commit_secondaries(&all_mutation_keys, &primary_key, min_commit_ts)
+            if self.detach_commit_secondaries(&all_mutation_keys, &primary_key, min_commit_ts, true)
             {
                 self.state
                     .transition(CoordinatorState::Committed)
@@ -577,13 +577,26 @@ where
                 .transition(CoordinatorState::SecondariesCommitting)
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
         }
-        let secondary_failures = self.commit_secondaries(
-            &secondary_keys,
-            &primary_key,
-            receipt.commit_ts,
-            false,
-            &mut receipt,
-        );
+        // Go `twoPhaseCommitter.doActionOnGroupedBatches` (`2pc.go`): the
+        // primary batch commits in the foreground, then a classic commit hands
+        // every secondary batch to `spawnWithStorePool` and answers the caller
+        // without awaiting them — their failures only bump
+        // `SecondaryLockCleanupFailureCounterCommit` because the committed
+        // primary has already decided the transaction. A client that cannot
+        // take ownership falls back to the awaited path below.
+        let secondary_failures =
+            if self.detach_commit_secondaries(&secondary_keys, &primary_key, receipt.commit_ts, false)
+            {
+                Vec::new()
+            } else {
+                self.commit_secondaries(
+                    &secondary_keys,
+                    &primary_key,
+                    receipt.commit_ts,
+                    false,
+                    &mut receipt,
+                )
+            };
         self.state
             .transition(CoordinatorState::Committed)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -848,22 +861,51 @@ where
         }
     }
 
-    /// Hands an async-commit transaction's secondary Commits to the transport
-    /// without awaiting them.
+    /// Hands a commit's secondary Commits to the transport without awaiting
+    /// them.
     ///
-    /// Go `twoPhaseCommitter.execute` (`2pc.go`) answers the caller at the
-    /// completed async-commit prewrite and lets a background goroutine run the
-    /// follow-up secondary Commits — they only materialize an already-made
-    /// decision, and any reader that meets an unflushed key resolves it through
-    /// the primary lock anyway. Returns `false` when this client cannot take
-    /// ownership or grouping fails up front; the caller then falls back to the
-    /// awaited [`Self::commit_secondaries`], whose failures stay observable in
-    /// the receipt.
-    fn detach_async_commit_secondaries(
+    /// Go `twoPhaseCommitter` answers the caller once the primary is decided
+    /// and lets a background goroutine run the follow-up secondary Commits —
+    /// they only materialize an already-made decision, and any reader that
+    /// meets an unflushed key resolves it through the primary lock anyway:
+    ///
+    /// ```go
+    /// // Already spawned a goroutine for async commit transaction.
+    /// if actionIsCommit && !actionCommit.retry && !c.isAsyncCommit() {
+    /// 	secondaryBo := retry.NewBackofferWithVars(c.store.Ctx(), CommitSecondaryMaxBackoff, c.txn.vars)
+    /// 	if c.store.IsClose() {
+    /// 		logutil.Logger(bo.GetCtx()).Warn("the store is closed",
+    /// 			zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", c.commitTS),
+    /// 			zap.Uint64("sessionID", c.sessionID))
+    /// 		return nil
+    /// 	}
+    /// 	err = c.txn.spawnWithStorePool(func() {
+    /// 		...
+    /// 		e := c.doActionOnBatches(secondaryBo, action, batchBuilder.allBatches())
+    /// 		if e != nil {
+    /// 			logutil.BgLogger().Debug("2PC async doActionOnBatches",
+    /// 				zap.Uint64("session", c.sessionID),
+    /// 				zap.Stringer("action type", action),
+    /// 				zap.Error(e))
+    /// 			metrics.SecondaryLockCleanupFailureCounterCommit.Inc()
+    /// 		}
+    /// 	})
+    /// ```
+    /// (`2pc.go`, `doActionOnGroupedBatches`: this arm covers BOTH the
+    /// async-commit protocol, whose decision was made at prewrite — there
+    /// `execute` answers at the completed prewrite with
+    /// `cleanWg.Add(1); go ...` flushing the follow-up Commits — and the
+    /// classic two-phase path, where the primary batch commits in the
+    /// foreground first and every other batch is spawned.) Returns `false`
+    /// when this client cannot take ownership or grouping fails up front; the
+    /// caller then falls back to the awaited [`Self::commit_secondaries`],
+    /// whose failures stay observable in the receipt.
+    fn detach_commit_secondaries(
         &mut self,
         keys: &[Vec<u8>],
         primary_key: &[u8],
         commit_ts: u64,
+        use_async_commit: bool,
     ) -> bool {
         if keys.is_empty() {
             return true;
@@ -887,7 +929,7 @@ where
                         KvrpcCommitRole::Secondary as i32
                     },
                     primary_key: primary_key.to_vec(),
-                    use_async_commit: true,
+                    use_async_commit,
                     ..KvrpcCommitRequest::default()
                 },
                 context: self.write_context(batch.context()),

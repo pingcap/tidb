@@ -24,8 +24,8 @@ mod state;
 mod ttl;
 
 pub use command_client::{
-    OwnedTransactionCommitRequest, PublishedCommand, TransactionCommandClient,
-    TransactionCommitRequest, TransactionPrewriteRequest,
+    detached_flush_failures, OwnedTransactionCommitRequest, PublishedCommand,
+    TransactionCommandClient, TransactionCommitRequest, TransactionPrewriteRequest,
 };
 pub use coordinator::{
     CommitProtocol, OptimisticCoordinatorError, PdLockTimestampSource,

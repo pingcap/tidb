@@ -52,6 +52,17 @@ const DETACHED_SECONDARY_COMMIT_BUDGET: Duration = Duration::from_millis(41_500)
 static DETACHED_FLUSH_FAILURES: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+/// Reads the detached secondary-flush failure counter.
+///
+/// Go counts the same events on
+/// `metrics.SecondaryLockCleanupFailureCounterCommit` (`2pc.go`, inside the
+/// goroutine `spawnWithStorePool` runs for a classic commit's secondaries):
+/// the committed primary has already decided the transaction, so these
+/// failures never reach the caller — they surface only as a metric.
+pub fn detached_flush_failures() -> u64 {
+    DETACHED_FLUSH_FAILURES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Outcome of one transaction command relative to the publication boundary.
 ///
 /// Publication is irrevocable: once a command is bound to a BatchCommands

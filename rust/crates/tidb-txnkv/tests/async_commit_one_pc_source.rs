@@ -420,6 +420,21 @@ fn commit(
     (outcome, calls)
 }
 
+fn wait_for_commits(recorded: &Arc<Mutex<Recorded>>, count: usize) {
+    // A classic two-phase commit hands its secondary Commit to the detached
+    // flush thread once the primary lands (`2pc.go`, `spawnWithStorePool`), so
+    // the caller must wait for that flush instead of assuming it landed before
+    // `commit` returned.
+    let deadline = Instant::now() + CALL_TIMEOUT;
+    while recorded.lock().unwrap().commits.len() < count {
+        assert!(
+            Instant::now() < deadline,
+            "the detached secondary flush never published its Commits"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 fn ok(min_commit_ts: u64) -> PrewriteAnswer {
     PrewriteAnswer {
         min_commit_ts,
@@ -512,12 +527,16 @@ fn a_multi_region_transaction_never_asks_for_one_pc() {
     assert_eq!(outcome.receipt().commit_ts, PD_COMMIT_TS);
     assert_eq!(timestamp_calls, 1, "normal 2PC takes exactly one commit TSO");
 
+    {
+        let recorded = recorded.lock().unwrap();
+        assert_eq!(recorded.prewrites.len(), 2);
+        assert!(
+            recorded.prewrites.iter().all(|request| !request.try_one_pc),
+            "a two-region transaction must not ask any batch for 1PC"
+        );
+    }
+    wait_for_commits(&recorded, 2);
     let recorded = recorded.lock().unwrap();
-    assert_eq!(recorded.prewrites.len(), 2);
-    assert!(
-        recorded.prewrites.iter().all(|request| !request.try_one_pc),
-        "a two-region transaction must not ask any batch for 1PC"
-    );
     assert_eq!(recorded.commits.len(), 2);
 }
 
@@ -542,6 +561,7 @@ fn txn_resource_group_is_attached_to_prewrite_and_commit_rpc_contexts() {
         .expect("the scripted two-phase commit completes");
     assert_eq!(outcome.state(), OptimisticTransactionState::Committed);
 
+    wait_for_commits(&recorded, 2);
     let recorded = recorded.lock().unwrap();
     assert_eq!(recorded.prewrites.len(), 2);
     assert_eq!(recorded.commits.len(), 2);
@@ -759,6 +779,7 @@ fn a_zero_min_commit_ts_from_any_batch_falls_back_to_normal_two_phase_commit() {
     assert_eq!(receipt.commit_ts, PD_COMMIT_TS);
     assert_eq!(timestamp_calls, 1);
 
+    wait_for_commits(&recorded, 2);
     let recorded = recorded.lock().unwrap();
     assert!(recorded
         .commits
@@ -839,10 +860,14 @@ fn a_transaction_permitted_neither_protocol_still_commits_in_two_phases() {
     );
     assert_eq!(timestamp_calls, 1);
 
+    {
+        let recorded = recorded.lock().unwrap();
+        assert!(recorded
+            .prewrites
+            .iter()
+            .all(|request| !request.use_async_commit && !request.try_one_pc));
+    }
+    wait_for_commits(&recorded, 2);
     let recorded = recorded.lock().unwrap();
-    assert!(recorded
-        .prewrites
-        .iter()
-        .all(|request| !request.use_async_commit && !request.try_one_pc));
     assert_eq!(recorded.commits.len(), 2);
 }
