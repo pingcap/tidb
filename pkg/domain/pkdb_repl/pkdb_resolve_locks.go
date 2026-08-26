@@ -175,15 +175,36 @@ func resolveLocksForWholeCluster(
 
 	handler := func(ctx context.Context, r tikvkv.KeyRange) (rangetask.TaskStat, error) {
 		scanLimit := uint32(tikv.GCScanLockLimit)
-		return tikv.ResolveLocksForRange(
-			ctx,
-			regionLockResolver,
-			safePoint,
-			r.StartKey,
-			r.EndKey,
-			tikv.NewGcResolveLockMaxBackoffer,
-			scanLimit,
-		)
+		// Bound retries at the handler level without changing the per-region
+		// backoffer lifecycle inside ResolveLocksForRange.
+		retryBo := tikv.NewGcResolveLockMaxBackoffer(ctx)
+		for {
+			// Keep the retry inside this task so a transient active lock does not
+			// cancel sibling tasks or restart the whole-cluster scan.
+			stat, err := tikv.ResolveLocksForRange(
+				ctx,
+				regionLockResolver,
+				safePoint,
+				r.StartKey,
+				r.EndKey,
+				tikv.NewGcResolveLockMaxBackoffer,
+				scanLimit,
+			)
+			if err == nil {
+				return stat, nil
+			}
+			if ctx.Err() != nil || !isRetryableResolveLocksError(err) {
+				return stat, err
+			}
+
+			logutil.Logger(ctx).Warn("resolve locks range failed, retrying",
+				zap.Uint64("safePoint", safePoint),
+				zap.Int("completedRegions", stat.CompletedRegions),
+				zap.Error(err))
+			if err := retryBo.Backoff(tikv.BoTxnLock(), err); err != nil {
+				return stat, err
+			}
+		}
 	}
 
 	runner := rangetask.NewRangeTaskRunner("pkdb-resolve-locks-runner", store, concurrency, handler)
@@ -202,4 +223,15 @@ func resolveLocksForWholeCluster(
 		zap.Int("regions", runner.CompletedRegions()),
 		zap.Duration("cost", time.Since(startTime)))
 	return nil
+}
+
+func isRetryableResolveLocksError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	// TiKV's KeyIsLocked is encoded as a kvrpcpb.KeyError{locked: ...};
+	// client-go wraps that response as "unexpected scanlock error". The
+	// internal KeyIsLocked name is not guaranteed to survive the RPC boundary.
+	return strings.Contains(message, "unexpected scanlock error")
 }
