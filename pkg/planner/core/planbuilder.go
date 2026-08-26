@@ -5293,8 +5293,8 @@ func (*userVariableChecker) Leave(ast.Node) bool {
 // Check for UserVariables
 func checkForUserVariables(in ast.Node) error {
 	v := &userVariableChecker{hasUserVariables: false}
-	ok := ast.Walk(in, v)
-	if !ok || v.hasUserVariables {
+	proceed := ast.Walk(in, v)
+	if !proceed || v.hasUserVariables {
 		return dbterror.ErrViewSelectVariable
 	}
 	return nil
