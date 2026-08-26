@@ -1864,7 +1864,8 @@ impl IndexRangeSourceExec {
                     pipeline.unemitted_handles.saturating_sub(job.handles.len() as u64);
             }
             let payload = if let Some(receiver) = job.receiver {
-                receiver
+                let wait_t0 = std::env::var_os("TIKV_QUERY_TRACE").is_some().then(std::time::Instant::now);
+                let payload = receiver
                     .recv()
                     .map_err(|_| {
                         ExecError::unsupported(
@@ -1873,7 +1874,16 @@ impl IndexRangeSourceExec {
                     })?
                     .map_err(|error| {
                         ExecError::unsupported(format!("remote table lookup failed: {error}"))
-                    })?
+                    })?;
+                if let Some(t0) = wait_t0 {
+                    eprintln!(
+                        "[XTRACE] lookup_emit n={} waited_ms={} queued_behind={}",
+                        job.handles.len(),
+                        t0.elapsed().as_millis(),
+                        self.lookup_pipeline.as_ref().map_or(0, |p| p.inflight.len()),
+                    );
+                }
+                payload
             } else {
                 job.ready
                     .expect("a job without a receiver carries its payload")
@@ -1967,6 +1977,9 @@ impl IndexRangeSourceExec {
             // lookup never ran for this shape.
             None
         };
+        if std::env::var_os("TIKV_QUERY_TRACE").is_some() {
+            eprintln!("[XTRACE] lookup_stage n={} remote={}", handles.len(), staged.is_some());
+        }
         let Some(staged) = staged else {
             return Ok(LookupBatchJob {
                 handles,
@@ -1974,6 +1987,13 @@ impl IndexRangeSourceExec {
                 ready: Some(Ok(LookupFetch::LocalFallback)),
             });
         };
+        if std::env::var_os("TIKV_QUERY_TRACE").is_some() {
+            eprintln!(
+                "[XTRACE] lookup_fetch n={} inline={}",
+                handles.len(),
+                handles.len() <= INDEX_LOOKUP_INLINE_HANDLES
+            );
+        }
         // A tiny handle list (a point select lands one or two) is fetched
         // right here on the calling worker: spawning a native thread for it
         // costs more -- jemalloc tcache init plus first stack touch -- than
@@ -2670,6 +2690,20 @@ impl Executor for IndexRangeSourceExec {
         // opening both would issue two full coprocessor requests. If the
         // aggregate shape is refused, retain the ordinary index stream for
         // the local partial fallback and the normal lookup path.
+        if std::env::var_os("TIKV_QUERY_TRACE").is_some() {
+            eprintln!(
+                "[XTRACE] phaseA_open index_id={} ranges={} lowered={} order_free={} covering={} desc={} dirty={} topn={} limit={:?}",
+                self.index_id,
+                self.ranges.len(),
+                lowered.len(),
+                order_free,
+                self.covering,
+                self.descending,
+                self.table.has_dirty_content(),
+                self.top_n.is_some(),
+                self.limit,
+            );
+        }
         if self.partial_remote.is_none() {
             self.remote_index = self
                 .table
@@ -3776,6 +3810,13 @@ impl IndexJoinLookupExec {
         let mut ranges = Vec::with_capacity(self.probes.len().saturating_sub(first_probe));
         while let Some((probe, bounds)) = self.next_probe_with_bounds() {
             ranges.push(self.probe_index_range(&probe, &bounds));
+        }
+        if std::env::var_os("TIKV_QUERY_TRACE").is_some() {
+            eprintln!(
+                "[XTRACE] join_inner_open index_id={} probe_ranges={}",
+                index_id,
+                ranges.len()
+            );
         }
         if ranges.is_empty() {
             return;

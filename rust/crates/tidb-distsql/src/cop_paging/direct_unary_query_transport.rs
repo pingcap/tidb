@@ -893,6 +893,17 @@ fn metadata_region_ranges(
 fn topology_from_locations(locations: Vec<RegionLocation>) -> Vec<RegionTaskTopology> {
     let mut topology = Vec::with_capacity(locations.len());
     for location in locations {
+        // Go's `buildCopTasks` splits every located region by its PD bucket
+        // metadata (`SplitKeyRangesByBuckets`), so one large hot region
+        // becomes many small cop tasks whose request ranges stay STABLE
+        // across replays -- which is also what makes them cacheable by the
+        // TiKV coprocessor cache and runnable concurrently. Dropping the
+        // bucket metadata here collapsed each region to ONE whole-range
+        // task, forcing row-paging to crawl it cursor-style instead.
+        let buckets = location.buckets.as_ref();
+        let (bucket_keys, buckets_version) = buckets
+            .map(|buckets| (buckets.keys.clone(), buckets.version))
+            .unwrap_or_default();
         topology.push(RegionTaskTopology {
             region_id: location.region.id,
             region_epoch: Some(RegionTaskEpoch {
@@ -902,6 +913,8 @@ fn topology_from_locations(locations: Vec<RegionLocation>) -> Vec<RegionTaskTopo
             peer: None,
             start_key: location.start_key,
             end_key: location.end_key,
+            bucket_keys,
+            buckets_version,
             ..RegionTaskTopology::default()
         });
     }
@@ -1285,7 +1298,15 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         attempt_id: u64,
     ) -> Result<(), DirectUnaryTransportError> {
         self.check_retry_active()?;
-        qtrace(self.trace_start, format_args!("dispatch task={} attempt={}", logical_task_id, attempt_id));
+        qtrace(self.trace_start, format_args!(
+            "dispatch task={} attempt={} page_size={}",
+            logical_task_id,
+            attempt_id,
+            self.runtime
+                .prepared_attempt(attempt_id)
+                .map(|p| p.request().paging_size)
+                .unwrap_or(0),
+        ));
         let prepared = self.runtime.prepared_attempt(attempt_id).cloned().ok_or(
             DirectUnaryTransportError::ResponseState("active attempt is not prepared"),
         )?;
