@@ -58,6 +58,20 @@ pub mod sorted_row_container;
 
 #[cfg(test)]
 mod chunk_identity_tests;
+#[cfg(test)]
+mod tests_alloc;
+#[cfg(test)]
+mod tests_chunk_util;
+#[cfg(test)]
+mod tests_codec;
+#[cfg(test)]
+mod tests_iterator;
+#[cfg(test)]
+mod tests_list;
+#[cfg(test)]
+mod tests_mutrow;
+#[cfg(test)]
+mod tests_pool;
 
 pub use column_slot::{ColumnHandle, ColumnRead, ColumnWrite};
 pub use column_view::{CellBytes, ColumnBytes};
