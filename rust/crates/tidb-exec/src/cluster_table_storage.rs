@@ -60,8 +60,21 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
+
+/// The request/reply transport for the transaction worker.
+///
+/// `std::sync::mpsc` allocates a fresh channel (two heap objects plus a
+/// mutex-protected queue) for EVERY reply, and the session thread and the
+/// transaction thread contend on that mutex once per statement RPC -- the
+/// profile's "kernel spin_unlock / futex wake" band. crossbeam's channels
+/// hand a message between threads without a shared lock on the hot path, and
+/// a zero-capacity (rendezvous) reply channel turns each answer into a direct
+/// producer-to-consumer handoff with no buffer at all: Go answers its RPCs
+/// through a gRPC HTTP/2 stream, one lock-free frame per message; this is the
+/// closest Rust equivalent for the in-process hop.
+use crossbeam_channel as cc;
 use std::time::Duration;
 
 use crate::multi_statement_transaction::TRANSACTION_END_TIMEOUT;
@@ -99,13 +112,13 @@ enum TransactionRequest {
         /// the retried executor at `forUpdateTS`). `None` is every ordinary
         /// read.
         read_ts: Option<u64>,
-        reply: Sender<Result<Option<Vec<u8>>, StorageError>>,
+        reply: cc::Sender<Result<Option<Vec<u8>>, StorageError>>,
     },
     BatchGet {
         keys: Vec<Vec<u8>>,
         /// See [`TransactionRequest::Get::read_ts`].
         read_ts: Option<u64>,
-        reply: Sender<Result<SnapshotPairs, StorageError>>,
+        reply: cc::Sender<Result<SnapshotPairs, StorageError>>,
     },
     Scan {
         start: Vec<u8>,
@@ -115,7 +128,7 @@ enum TransactionRequest {
         limit: Option<usize>,
         /// See [`TransactionRequest::Get::read_ts`].
         read_ts: Option<u64>,
-        reply: Sender<Result<SnapshotPairs, StorageError>>,
+        reply: cc::Sender<Result<SnapshotPairs, StorageError>>,
     },
     /// Acquires pessimistic locks on `keys` at the transaction's current
     /// `for_update_ts` -- Go's `KVTxn.LockKeys` for one DML statement's
@@ -132,7 +145,7 @@ enum TransactionRequest {
     LockKeys {
         keys: Vec<Vec<u8>>,
         return_values: bool,
-        reply: Sender<LockKeysOutcome>,
+        reply: cc::Sender<LockKeysOutcome>,
     },
     /// Releases the locks a FAILED statement accumulated across its retry
     /// rounds -- Go `OnPessimisticStmtEnd(isSuccessful=false)` ->
@@ -141,16 +154,16 @@ enum TransactionRequest {
     /// not block on a statement the client was told failed.
     ReleaseKeys {
         keys: Vec<Vec<u8>>,
-        reply: Sender<Result<(), StorageError>>,
+        reply: cc::Sender<Result<(), StorageError>>,
     },
     /// Publishes `mutations` at the transaction's original `start_ts` and ends
     /// the thread, whatever the outcome.
     Commit {
         mutations: Vec<OptimisticMutation>,
-        reply: Sender<Result<OptimisticCommitOutcome, String>>,
+        reply: cc::Sender<Result<OptimisticCommitOutcome, String>>,
     },
     Finish {
-        reply: Sender<Result<(), StorageError>>,
+        reply: cc::Sender<Result<(), StorageError>>,
     },
     /// Ends a read-only statement snapshot without putting its caller on the
     /// worker's cleanup path.
@@ -173,14 +186,14 @@ enum TransactionRequest {
 /// `join`; a statement that never reads storage keeps only its PD timestamp
 /// future and does not borrow a worker.
 struct TransactionThread {
-    requests: Option<Sender<TransactionRequest>>,
+    requests: Option<cc::Sender<TransactionRequest>>,
     start_ts: u64,
 }
 
 /// A transaction thread whose worker-local open result has not been waited for.
 struct PreparedTransactionThread {
-    requests: Option<Sender<TransactionRequest>>,
-    opened: Receiver<Result<u64, OptimisticCoordinatorError>>,
+    requests: Option<cc::Sender<TransactionRequest>>,
+    opened: std::sync::mpsc::Receiver<Result<u64, OptimisticCoordinatorError>>,
 }
 
 impl PreparedTransactionThread {
@@ -280,7 +293,7 @@ impl TransactionThread {
         name: &str,
         commit_protocol: CommitProtocol,
     ) -> Result<PreparedTransactionThread, OptimisticCoordinatorError> {
-        let (requests, incoming) = mpsc::channel::<TransactionRequest>();
+        let (requests, incoming) = cc::unbounded::<TransactionRequest>();
         let (opened, opened_reply) = mpsc::channel::<Result<u64, OptimisticCoordinatorError>>();
         let opener = Arc::clone(opener);
         PinnedThreadPool::shared()
@@ -367,7 +380,7 @@ impl TransactionThread {
         let Some(requests) = self.requests.take() else {
             return Ok(());
         };
-        let (reply, answer) = mpsc::channel();
+        let (reply, answer) = cc::bounded(0);
         match requests.send(TransactionRequest::Finish { reply }) {
             Ok(()) => answer.recv().unwrap_or(Ok(())),
             // The worker is already gone, which means it already finished the
@@ -396,7 +409,7 @@ impl TransactionThread {
             .requests
             .take()
             .ok_or_else(|| "the transaction is already finished".to_owned())?;
-        let (reply, answer) = mpsc::channel();
+        let (reply, answer) = cc::bounded(0);
         match requests.send(TransactionRequest::Commit { mutations, reply }) {
             Ok(()) => answer
                 .recv()
@@ -405,7 +418,7 @@ impl TransactionThread {
         }
     }
 
-    fn sender(&self) -> Result<Sender<TransactionRequest>, StorageError> {
+    fn sender(&self) -> Result<cc::Sender<TransactionRequest>, StorageError> {
         self.requests
             .as_ref()
             .cloned()
@@ -424,10 +437,12 @@ impl Drop for TransactionThread {
 
 /// Sends one request to a transaction's thread and waits for its answer.
 fn ask<T>(
-    requests: &Sender<TransactionRequest>,
-    request: impl FnOnce(Sender<Result<T, StorageError>>) -> TransactionRequest,
+    requests: &cc::Sender<TransactionRequest>,
+    request: impl FnOnce(cc::Sender<Result<T, StorageError>>) -> TransactionRequest,
 ) -> Result<T, StorageError> {
-    let (reply, answer) = mpsc::channel();
+    // Zero capacity: the worker's send completes only when this thread has
+    // picked the answer up, so no allocation backs the reply at all.
+    let (reply, answer) = cc::bounded(0);
     requests
         .send(request(reply))
         .map_err(|_| StorageError::Backend("the transaction thread is gone".to_owned()))?;
@@ -440,7 +455,7 @@ fn ask<T>(
 /// its last handle goes away.
 fn serve_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     mut transaction: RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>,
-    incoming: &Receiver<TransactionRequest>,
+    incoming: &cc::Receiver<TransactionRequest>,
     timeout: Duration,
 ) {
     while let Ok(request) = incoming.recv() {
@@ -576,7 +591,7 @@ pub enum LockKeysOutcome {
 fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     mut transaction: RealPessimisticTransaction<C, L, CapabilityTimestampSource<P>>,
     opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
-    incoming: &Receiver<TransactionRequest>,
+    incoming: &cc::Receiver<TransactionRequest>,
     timeout: Duration,
 ) {
     // Refreshes the primary lock's TTL from the first lock on; `None` until
@@ -853,9 +868,19 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
         // No absence presumption: DML locks target rows that exist (the
         // rewritten set); INSERT keeps its NotExist assertion at Prewrite.
         match if return_values {
-            transaction.acquire_locks_returning_values(&added, &BTreeSet::new(), LockWaitTime::session_lock_wait_timeout(), call)
+            transaction.acquire_locks_returning_values(
+                &added,
+                &BTreeSet::new(),
+                LockWaitTime::session_lock_wait_timeout(),
+                call,
+            )
         } else {
-            transaction.acquire_locks(&added, &BTreeSet::new(), LockWaitTime::session_lock_wait_timeout(), call)
+            transaction.acquire_locks(
+                &added,
+                &BTreeSet::new(),
+                LockWaitTime::session_lock_wait_timeout(),
+                call,
+            )
         } {
             Ok(acquired) => {
                 // Rows that rode back with the locks enter the cache now:
@@ -1293,7 +1318,7 @@ impl SessionTransaction {
         return_values: bool,
     ) -> Result<LockKeysOutcome, StorageError> {
         let requests = self.thread.sender()?;
-        let (reply, answer) = mpsc::channel();
+        let (reply, answer) = cc::bounded(0);
         requests
             .send(TransactionRequest::LockKeys {
                 keys,
@@ -1301,11 +1326,9 @@ impl SessionTransaction {
                 reply,
             })
             .map_err(|_| StorageError::Backend("the transaction thread is gone".to_owned()))?;
-        answer
-            .recv()
-            .map_err(|_| {
-                StorageError::Backend("the transaction thread stopped mid-lock".to_owned())
-            })
+        answer.recv().map_err(|_| {
+            StorageError::Backend("the transaction thread stopped mid-lock".to_owned())
+        })
     }
 
     /// Releases the locks a FAILED statement accumulated across its retry
@@ -1318,7 +1341,7 @@ impl SessionTransaction {
             return Ok(());
         }
         let requests = self.thread.sender()?;
-        let (reply, answer) = mpsc::channel();
+        let (reply, answer) = cc::bounded(0);
         requests
             .send(TransactionRequest::ReleaseKeys { keys, reply })
             .map_err(|_| StorageError::Backend("the transaction thread is gone".to_owned()))?;
@@ -1333,7 +1356,11 @@ impl SessionTransaction {
     /// suitable for the connection-local point-read cache; it is deliberately
     /// separate from [`Self::begin`] so a caller cannot accidentally publish
     /// through it.
-    pub fn begin_read_only_at_max_ts<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    pub fn begin_read_only_at_max_ts<
+        C: StoreWriteClient,
+        L: StoreWriteLoader,
+        P: StorePdCapability,
+    >(
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         timeout: Duration,
     ) -> Result<Self, OptimisticCoordinatorError> {
@@ -1450,7 +1477,7 @@ impl SessionTransaction {
 /// It carries no ownership of the transaction: dropping it is the end of the
 /// statement, and the transaction stays open for the next one.
 struct SessionSnapshot {
-    requests: Sender<TransactionRequest>,
+    requests: cc::Sender<TransactionRequest>,
     /// The timestamp the transaction opened at, which every statement of it
     /// reads at; a remote scan has to name it.
     start_ts: u64,
@@ -1523,9 +1550,11 @@ impl ClusterSnapshot for SessionSnapshot {
 fn classify(error: OptimisticCoordinatorError) -> StorageError {
     let message = error.to_string();
     let lowered = message.to_lowercase();
-    let retryable = ["region", "epoch", "lock", "leader", "stale", "budget", "deadline"]
-        .iter()
-        .any(|cause| lowered.contains(cause));
+    let retryable = [
+        "region", "epoch", "lock", "leader", "stale", "budget", "deadline",
+    ]
+    .iter()
+    .any(|cause| lowered.contains(cause));
     if retryable {
         StorageError::Retryable(message)
     } else {
@@ -1656,7 +1685,8 @@ fn engine_sql_error(detail: impl fmt::Display) -> LockSqlError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc::RecvTimeoutError;
+    use crossbeam_channel::RecvTimeoutError;
+    use std::sync::mpsc::RecvTimeoutError as StdRecvTimeoutError;
     use std::thread;
 
     /// The handle crosses threads even though the transaction it drives never
@@ -1676,7 +1706,7 @@ mod tests {
 
     #[test]
     fn dropping_a_statement_snapshot_does_not_wait_for_worker_cleanup() {
-        let (requests, incoming) = mpsc::channel();
+        let (requests, incoming) = cc::unbounded();
         let (dropped, drop_finished) = mpsc::channel();
         let dropper = thread::spawn(move || {
             drop(StatementSnapshot {
@@ -1698,8 +1728,10 @@ mod tests {
         };
         let returned_without_cleanup = match drop_finished.recv_timeout(Duration::from_millis(50)) {
             Ok(()) => true,
-            Err(RecvTimeoutError::Timeout) => false,
-            Err(RecvTimeoutError::Disconnected) => panic!("snapshot dropper stopped unexpectedly"),
+            Err(StdRecvTimeoutError::Timeout) => false,
+            Err(StdRecvTimeoutError::Disconnected) => {
+                panic!("snapshot dropper stopped unexpectedly")
+            }
         };
 
         if let Some(reply) = synchronous_reply {

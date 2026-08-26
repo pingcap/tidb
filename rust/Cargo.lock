@@ -2614,6 +2614,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "crossbeam-channel",
  "prost",
  "regex",
  "reqwest",
