@@ -150,16 +150,16 @@ func (m *storageClassTransitionManager) clear() {
 }
 
 func (m *storageClassTransitionManager) discover() (
-	map[storageClassTransitionKey]*storageClassTransitionOperation,
-	map[storageClassTransitionKey]*storageClassTransitionOperation,
-	error,
+	active map[storageClassTransitionKey]*storageClassTransitionOperation,
+	pending map[storageClassTransitionKey]*storageClassTransitionOperation,
+	err error,
 ) {
 	latest := m.ddl.infoCache.GetLatest()
 	if latest == nil {
 		return nil, nil, errors.New("information schema is not initialized")
 	}
-	active := make(map[storageClassTransitionKey]*storageClassTransitionOperation)
-	pending := make(map[storageClassTransitionKey]*storageClassTransitionOperation)
+	active = make(map[storageClassTransitionKey]*storageClassTransitionOperation)
+	pending = make(map[storageClassTransitionKey]*storageClassTransitionOperation)
 	for _, db := range latest.ListTablesWithSpecialAttribute(infoschemacontext.StorageClassAttribute) {
 		for _, tblInfo := range db.TableInfos {
 			if transition := tblInfo.StorageClassTransition; transition != nil && transition.StartTS != 0 {
@@ -439,7 +439,7 @@ func (m *storageClassTransitionManager) mergeObserved(operation *storageClassTra
 	operation.StatusValid = true
 }
 
-func (m *storageClassTransitionManager) recordHistory(ctx context.Context, sctx sessionctx.Context, operation *storageClassTransitionOperation) error {
+func recordStorageClassTransitionHistory(ctx context.Context, sctx sessionctx.Context, operation *storageClassTransitionOperation) error {
 	duration := operation.FinishTime.Sub(operation.StartTime)
 	if duration < 0 {
 		duration = 0
@@ -472,7 +472,8 @@ func (m *storageClassTransitionManager) recordHistory(ctx context.Context, sctx 
 	return errors.Trace(err)
 }
 
-func (m *storageClassTransitionManager) pruneHistory(ctx context.Context, sctx sessionctx.Context) error {
+func pruneStorageClassTransitionHistory(ctx context.Context, sctx sessionctx.Context) error {
+	//nolint:forbidigo
 	value, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBStorageClassTransitionHistorySize)
 	if err != nil {
 		return errors.Trace(err)
@@ -551,7 +552,7 @@ func (m *storageClassTransitionManager) poll(
 	historyChanged := false
 	for key, operation := range pending {
 		m.mergeObserved(operation)
-		if err := m.recordHistory(ctx, sctx, operation); err != nil {
+		if err := recordStorageClassTransitionHistory(ctx, sctx, operation); err != nil {
 			logutil.DDLLogger().Warn("record storage class transition history failed",
 				zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("target", key.target), zap.Error(err))
 			continue
@@ -570,7 +571,7 @@ func (m *storageClassTransitionManager) poll(
 	// appear active and complete a second time.
 	if storageClassTransitionNeedsHistoryPrune(len(pending), historyChanged, pruneHistory) && m.ddl.ownerManager.IsOwner() {
 		historyPruneAttempted = true
-		if err := m.pruneHistory(ctx, sctx); err != nil {
+		if err := pruneStorageClassTransitionHistory(ctx, sctx); err != nil {
 			logutil.DDLLogger().Warn("prune storage class transition history failed", zap.Error(err))
 		}
 	}
