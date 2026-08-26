@@ -171,20 +171,6 @@ func TestV2Basic(t *testing.T) {
 	require.NoError(t, err)
 	is.ts = ver.Ver
 
-	var iteratedIDs []int64
-	lastTableID, exhausted, err := is.IterateTableInfosFrom(context.Background(), schemaName, 0, func(table *model.TableInfo) bool {
-		iteratedIDs = append(iteratedIDs, table.ID)
-		return len(iteratedIDs) < 2
-	})
-	require.NoError(t, err)
-	require.False(t, exhausted)
-	lastTableID, exhausted, err = is.IterateTableInfosFrom(context.Background(), schemaName, lastTableID, func(table *model.TableInfo) bool {
-		iteratedIDs = append(iteratedIDs, table.ID)
-		return true
-	})
-	require.NoError(t, err)
-	require.True(t, exhausted)
-	require.NotZero(t, lastTableID)
 	allTableInfos, err := is.SchemaTableInfos(context.Background(), schemaName)
 	require.NoError(t, err)
 	expectedIDs := make([]int64, 0, len(allTableInfos))
@@ -192,7 +178,6 @@ func TestV2Basic(t *testing.T) {
 		expectedIDs = append(expectedIDs, table.ID)
 	}
 	require.Greater(t, len(expectedIDs), metadataScanBatchSize)
-	require.Equal(t, expectedIDs, iteratedIDs)
 
 	persistentIter, err := is.NewTableInfoIterator(context.Background(), schemaName, 0)
 	require.NoError(t, err)

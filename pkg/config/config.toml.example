@@ -241,31 +241,6 @@ record-db-qps = false
 # Record database name label if it is enabled.
 record-db-label = false
 
-[diagnostic-api]
-# Expose the read-only diagnostic dataset API on the status port. It is disabled by default.
-enabled = false
-
-# Require a verified client certificate. Disable only with equivalent network isolation.
-require-mtls = true
-
-# Field-whitelisted datasets that may be served when the API is enabled.
-datasets = ["schema.tables", "schema.columns", "schema.indexes", "schema.partitions", "binding.summary", "stats.health"]
-
-# Outbound redaction is independent from tidb_redact_log. strict-v1 is the production default.
-redaction-profile = "strict-v1"
-
-# strict-v1 requires a cluster-scoped secret file with at least 32 bytes and a public rotation ID.
-# redaction-key-file = "/var/run/secrets/tidb-diagnostics/name-hmac-key"
-# redaction-key-id = "diag-name-2026-08"
-
-# Source-side safety limits. Collection schedules belong to the cluster-local collector.
-max-concurrent-requests = 2
-default-page-size = 256
-max-page-size = 1000
-request-timeout = "10s"
-cursor-ttl = "5m"
-max-response-bytes = 4194304
-
 [performance]
 # Max CPUs to use, 0 use number of CPUs in the machine.
 max-procs = 0

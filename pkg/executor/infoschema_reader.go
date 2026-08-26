@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -1040,8 +1039,6 @@ const (
 	hugeMemTableBatchSize             = 1024
 	hugeMemTableRetainedCapacityLimit = 16 << 20
 	datumRowsTrackerFlushThreshold    = 64 << 10
-	infoSchemaScanStatsUserVar        = "tidb_diag_infoschema_scan_stats"
-	infoSchemaScanStatsResultUserVar  = "tidb_diag_infoschema_scan_stats_result"
 )
 
 type boundedDatumRows struct {
@@ -1055,7 +1052,6 @@ type boundedDatumRows struct {
 	payloadBytes      int64
 	ownedBytes        int64
 	reportedBytes     int64
-	stats             *kv.InfoSchemaScanAllocationStats
 }
 
 func newBoundedDatumRows(
@@ -1063,7 +1059,6 @@ func newBoundedDatumRows(
 	columns []*model.ColumnInfo,
 	tracker *memory.Tracker,
 	maxRetainedBytes int64,
-	stats ...*kv.InfoSchemaScanAllocationStats,
 ) *boundedDatumRows {
 	projection := make([]int, len(table.Columns))
 	for i := range projection {
@@ -1077,9 +1072,6 @@ func newBoundedDatumRows(
 		outputColumnCount: len(columns),
 		tracker:           tracker,
 		maxRetainedBytes:  maxRetainedBytes,
-	}
-	if len(stats) > 0 {
-		b.stats = stats[0]
 	}
 	b.adjustOwnedBytes(int64(cap(projection)) * size.SizeOfInt)
 	b.syncTracker()
@@ -1121,9 +1113,6 @@ func (b *boundedDatumRows) appendEmptyRow() []types.Datum {
 		oldCap := cap(b.slots)
 		b.slots = append(b.slots, nil)
 		if cap(b.slots) != oldCap {
-			if b.stats != nil {
-				b.stats.RowBufferAllocatedBytes += uint64(cap(b.slots)) * uint64(size.SizeOfSlice)
-			}
 			delta := int64(cap(b.slots)-oldCap) * size.SizeOfSlice
 			b.retainedBytes += delta
 			b.adjustOwnedBytes(delta)
@@ -1136,9 +1125,6 @@ func (b *boundedDatumRows) appendEmptyRow() []types.Datum {
 		row = make([]types.Datum, b.outputColumnCount)
 		b.slots[b.active] = row
 		newBytes := int64(cap(row)) * types.EmptyDatumSize
-		if b.stats != nil {
-			b.stats.RowBufferAllocatedBytes += uint64(newBytes)
-		}
 		delta := newBytes - oldBytes
 		b.retainedBytes += delta
 		b.adjustOwnedBytes(delta)
@@ -1147,9 +1133,6 @@ func (b *boundedDatumRows) appendEmptyRow() []types.Datum {
 		clear(row)
 	}
 	b.active++
-	if b.stats != nil {
-		b.stats.OutputRowCount++
-	}
 	return row
 }
 
@@ -1169,9 +1152,6 @@ func (b *boundedDatumRows) appendProjected(values ...any) {
 		payloadBytes := datum.EstimatedMemUsage() - types.EmptyDatumSize
 		b.payloadBytes += payloadBytes
 		b.adjustOwnedBytes(payloadBytes)
-		if b.stats != nil && payloadBytes > 0 {
-			b.stats.OutputDatumPayloadBytes += uint64(payloadBytes)
-		}
 	}
 }
 
@@ -1199,9 +1179,6 @@ func (r projectedDatumRow) account(datum *types.Datum) {
 	payloadBytes := datum.EstimatedMemUsage() - types.EmptyDatumSize
 	r.owner.payloadBytes += payloadBytes
 	r.owner.adjustOwnedBytes(payloadBytes)
-	if r.owner.stats != nil && payloadBytes > 0 {
-		r.owner.stats.OutputDatumPayloadBytes += uint64(payloadBytes)
-	}
 }
 
 func (r projectedDatumRow) setString(fullOffset int, value string) {
@@ -1427,9 +1404,6 @@ type hugeMemTableRetriever struct {
 	tableInfoIter      infoschema.TableInfoIterator
 	tableInfoIterBytes int64
 	columnTypeCache    map[infoSchemaFieldTypeKey]infoSchemaFieldTypeStrings
-	scanStats          *kv.InfoSchemaScanAllocationStats
-	scanStatsStartMem  runtime.MemStats
-	statsSessionVars   *variable.SessionVars
 	iterateTableItems  func(*infoschema.TableItem, func(infoschema.TableItem) bool) (infoschema.TableItem, bool, bool)
 	lastTableItem      *infoschema.TableItem
 }
@@ -1443,18 +1417,11 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	if !e.initialized {
 		e.is = sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 		e.dbs = e.baseExtractor().ListSchemas(e.is)
-		if infoSchemaScanStatsEnabled(sctx) {
-			e.scanStats = &kv.InfoSchemaScanAllocationStats{}
-			e.statsSessionVars = sctx.GetSessionVars()
-			e.statsSessionVars.UnsetUserVar(infoSchemaScanStatsResultUserVar)
-			runtime.ReadMemStats(&e.scanStatsStartMem)
-		}
 		e.rowBuffer = newBoundedDatumRows(
 			e.table,
 			e.columns,
 			e.memTracker,
 			hugeMemTableRetainedCapacityLimit,
-			e.scanStats,
 		)
 		if e.tableInfoBatch == nil {
 			e.tableInfoBatch = newBoundedTableInfoBatch(e.memTracker, hugeMemTableRetainedCapacityLimit)
@@ -1514,41 +1481,11 @@ func (e *hugeMemTableRetriever) close() error {
 	e.viewSchemaMap = nil
 	e.viewOutputNamesMap = nil
 	e.closeTableInfoIterator()
-	var statsErr error
-	if e.scanStats != nil && e.statsSessionVars != nil {
-		var endMem runtime.MemStats
-		runtime.ReadMemStats(&endMem)
-		e.scanStats.ProcessTotalAllocBytes = endMem.TotalAlloc - e.scanStatsStartMem.TotalAlloc
-		e.scanStats.ProcessMallocCount = endMem.Mallocs - e.scanStatsStartMem.Mallocs
-		e.scanStats.ProcessFreeCount = endMem.Frees - e.scanStatsStartMem.Frees
-		e.scanStats.ProcessHeapAllocDeltaBytes = int64(endMem.HeapAlloc) - int64(e.scanStatsStartMem.HeapAlloc)
-		payload, err := json.Marshal(e.scanStats)
-		if err != nil {
-			statsErr = errors.Trace(err)
-		} else {
-			e.statsSessionVars.SetStringUserVar(
-				infoSchemaScanStatsResultUserVar,
-				string(payload),
-				mysql.DefaultCollationName,
-			)
-		}
-	}
 	e.newTableInfoIter = nil
 	e.iterateTableItems = nil
 	e.lastTableItem = nil
 	e.columnTypeCache = nil
-	e.scanStats = nil
-	e.statsSessionVars = nil
-	return statsErr
-}
-
-func infoSchemaScanStatsEnabled(sctx sessionctx.Context) bool {
-	value, ok := sctx.GetSessionVars().GetUserVarVal(infoSchemaScanStatsUserVar)
-	if !ok || value.IsNull() {
-		return false
-	}
-	enabled, err := value.ToBool(sctx.GetSessionVars().StmtCtx.TypeCtx())
-	return err == nil && enabled != 0
+	return nil
 }
 
 func (e *hugeMemTableRetriever) syncTableInfoIteratorMemory() {
@@ -1613,7 +1550,7 @@ func (e *hugeMemTableRetriever) iterateTables(
 		schema := e.dbs[e.dbsIdx]
 		if e.newTableInfoIter != nil && !infoschema.IsSpecialDB(schema.L) {
 			if e.tableInfoIter == nil {
-				iter, err := e.newTableInfoIter(kv.WithInfoSchemaScanStats(ctx, e.scanStats), schema, 0)
+				iter, err := e.newTableInfoIter(ctx, schema, 0)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -1931,9 +1868,6 @@ func (e *hugeMemTableRetriever) setDataForColumnsWithOneTable(
 	var priv mysql.PrivilegeType
 	if checker != nil {
 		for _, p := range mysql.AllColumnPrivs {
-			if e.scanStats != nil {
-				e.scanStats.PrivilegeCheckCount++
-			}
 			if checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", p) {
 				hasPrivs = true
 				priv |= p

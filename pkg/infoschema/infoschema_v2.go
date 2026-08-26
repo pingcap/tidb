@@ -1163,7 +1163,6 @@ retry:
 // TableInfoIterator keeps one MetaKV scanner alive while table metadata is
 // consumed in multiple executor output batches.
 type TableInfoIterator interface {
-	Next(context.Context) (*model.TableInfo, error)
 	NextInto(context.Context, *model.TableInfo) (*model.TableInfo, error)
 	Close()
 }
@@ -1174,7 +1173,6 @@ type infoschemaV2TableInfoIterator struct {
 	dbID        int64
 	lastTableID int64
 	decodeMode  meta.TableInfoDecodeMode
-	stats       *kv.InfoSchemaScanAllocationStats
 	iter        *meta.TableInfoIterator
 	exhausted   bool
 }
@@ -1221,7 +1219,6 @@ func (is *infoschemaV2) newTableInfoIterator(
 		ts:          is.ts,
 		lastTableID: exclusiveStartTableID,
 		decodeMode:  decodeMode,
-		stats:       kv.InfoSchemaScanStatsFromContext(ctx),
 		exhausted:   !ok,
 	}
 	if !ok {
@@ -1242,15 +1239,11 @@ func (i *infoschemaV2TableInfoIterator) reopen(ctx context.Context) error {
 		snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 		snapshot.SetOption(kv.ScanBatchSize, metadataScanBatchSize)
 		snapshot.SetOption(kv.ScanResponseRetainedSize, metadataScanResponseRetainedSize)
-		if i.stats != nil {
-			snapshot.SetOption(kv.InfoSchemaScanStats, i.stats)
-		}
 		iter, err := meta.NewTableInfoIteratorFromSnapshotWithDecodeMode(
 			snapshot,
 			i.dbID,
 			i.lastTableID,
 			i.decodeMode,
-			i.stats,
 		)
 		if err == nil {
 			i.iter = iter
@@ -1270,10 +1263,6 @@ func (i *infoschemaV2TableInfoIterator) reopen(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-func (i *infoschemaV2TableInfoIterator) Next(ctx context.Context) (*model.TableInfo, error) {
-	return i.NextInto(ctx, &model.TableInfo{})
 }
 
 func (i *infoschemaV2TableInfoIterator) NextInto(ctx context.Context, destination *model.TableInfo) (*model.TableInfo, error) {
@@ -1322,36 +1311,6 @@ func (i *infoschemaV2TableInfoIterator) RetainedMemory() int64 {
 		return 0
 	}
 	return i.iter.RetainedMemory()
-}
-
-// IterateTableInfosFrom visits persistent table metadata in MetaKV strictly
-// after exclusiveStartTableID. It returns exhausted=false when visit stops.
-func (is *infoschemaV2) IterateTableInfosFrom(
-	ctx context.Context,
-	schema ast.CIStr,
-	exclusiveStartTableID int64,
-	visit func(*model.TableInfo) bool,
-) (lastTableID int64, exhausted bool, err error) {
-	iter, err := is.NewTableInfoIterator(ctx, schema, exclusiveStartTableID)
-	if err != nil {
-		return exclusiveStartTableID, false, err
-	}
-	defer iter.Close()
-
-	lastTableID = exclusiveStartTableID
-	for {
-		tableInfo, err := iter.Next(ctx)
-		if err != nil {
-			return lastTableID, false, err
-		}
-		if tableInfo == nil {
-			return lastTableID, true, nil
-		}
-		lastTableID = tableInfo.ID
-		if !visit(tableInfo) {
-			return lastTableID, false, nil
-		}
-	}
 }
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.

@@ -322,9 +322,6 @@ func (i *TableInfoIterator) cloneColumnsDecodeString(value string) string {
 	if value == "" {
 		return ""
 	}
-	if i.stats != nil {
-		i.stats.ColumnStringCloneAllocatedBytes += uint64(len(value))
-	}
 	return strings.Clone(value)
 }
 
@@ -336,9 +333,6 @@ func (i *TableInfoIterator) internColumnsDecodeString(value string) string {
 		if existing == value {
 			return existing
 		}
-	}
-	if i.stats != nil {
-		i.stats.ColumnStringCloneAllocatedBytes += uint64(len(value))
 	}
 	owned := strings.Clone(value)
 	if len(i.internedColumnStrings) < maxColumnsDecodeInternedStrings {

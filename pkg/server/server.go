@@ -151,7 +151,6 @@ type Server struct {
 	statusListener net.Listener
 	statusServer   atomic.Pointer[http.Server]
 	grpcServer     *grpc.Server
-	diagnosticAPI  *diagnosticAPIHandler
 	inShutdownMode *uatomic.Bool
 	health         *uatomic.Bool
 	forceShutdown  *uatomic.Bool

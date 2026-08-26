@@ -285,10 +285,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(FairLockingUsageCount)
 	prometheus.MustRegister(PessimisticLockKeysDuration)
 	prometheus.MustRegister(MemoryLimit)
-	prometheus.MustRegister(DiagnosticAPIRequestCounter)
-	prometheus.MustRegister(DiagnosticAPIRequestDuration)
-	prometheus.MustRegister(DiagnosticAPIResponseBytes)
-	prometheus.MustRegister(DiagnosticAPIActiveRequests)
 	prometheus.MustRegister(LogBackupCurrentLastRegionID)
 	prometheus.MustRegister(LogBackupCurrentLastRegionLeaderStoreID)
 

@@ -384,21 +384,13 @@ func TestMeta(t *testing.T) {
 		require.NoError(t, err)
 	}
 	{
-		var continued []*model.TableInfo
-		err := m.IterTablesFrom(1, tbInfo.ID, func(info *model.TableInfo) error {
-			continued = append(continued, info)
-			return nil
-		})
+		iter, err := m.NewTableInfoIteratorWithDecodeMode(1, tbInfo.ID, meta.TableInfoDecodeAll)
 		require.NoError(t, err)
-		require.Equal(t, []*model.TableInfo{tbInfo2}, continued)
-	}
-	{
-		iter, err := m.NewTableInfoIterator(1, tbInfo.ID)
-		require.NoError(t, err)
-		tableInfo, err := iter.Next(context.Background())
+		destination := &model.TableInfo{}
+		tableInfo, err := iter.NextInto(context.Background(), destination)
 		require.NoError(t, err)
 		require.Equal(t, tbInfo2, tableInfo)
-		tableInfo, err = iter.Next(context.Background())
+		tableInfo, err = iter.NextInto(context.Background(), destination)
 		require.NoError(t, err)
 		require.Nil(t, tableInfo)
 		iter.Close()
@@ -470,7 +462,7 @@ func TestMeta(t *testing.T) {
 		require.NoError(t, m.CreateTableOrView(1, richTable))
 		require.NoError(t, m.CreateTableOrView(1, sparseTable))
 
-		iter, err := m.NewTableInfoIterator(1, tbInfo2.ID)
+		iter, err := m.NewTableInfoIteratorWithDecodeMode(1, tbInfo2.ID, meta.TableInfoDecodeAll)
 		require.NoError(t, err)
 		destination := &model.TableInfo{}
 		decoded, err := iter.NextInto(context.Background(), destination)
@@ -498,12 +490,10 @@ func TestMeta(t *testing.T) {
 		require.Nil(t, decoded)
 		iter.Close()
 
-		stats := &kv.InfoSchemaScanAllocationStats{}
 		columnsIter, err := m.NewTableInfoIteratorWithDecodeMode(
 			1,
 			tbInfo2.ID,
 			meta.TableInfoDecodeColumns,
-			stats,
 		)
 		require.NoError(t, err)
 		columnsDestination := &model.TableInfo{}
@@ -532,12 +522,6 @@ func TestMeta(t *testing.T) {
 		require.Empty(t, decoded.Constraints)
 		require.Empty(t, decoded.ForeignKeys)
 		columnsIter.Close()
-		require.Equal(t, uint64(2), stats.TableInfoCount)
-		require.Equal(t, uint64(len(richTable.Columns)+len(sparseTable.Columns)), stats.ColumnInfoCount)
-		require.Equal(t, stats.TableInfoCount, stats.FastTableInfoDecodeCount+stats.FallbackTableInfoDecodeCount)
-		require.Positive(t, stats.TableInfoJSONBytes)
-		require.Positive(t, stats.HashDecodeAllocatedBytes)
-		require.Positive(t, stats.ColumnStringCloneAllocatedBytes)
 
 		require.NoError(t, m.DropTableOrView(1, richTable.ID))
 		require.NoError(t, m.DropTableOrView(1, sparseTable.ID))
@@ -908,14 +892,6 @@ func TestIterDatabases(t *testing.T) {
 	require.Len(t, names, 3)
 	sort.Strings(names)
 	require.Equal(t, []string{"db1", "db2", "db3"}, names)
-
-	var continued []string
-	err = m.IterDatabasesFrom(db1.ID, func(info *model.DBInfo) error {
-		continued = append(continued, info.Name.O)
-		return nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, []string{"db2", "db3"}, continued)
 
 	// Verify early stop behavior by returning a sentinel error from the callback
 	count := 0

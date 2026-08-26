@@ -81,20 +81,6 @@ const (
 	DefHost = "0.0.0.0"
 	// DefStatusHost is the default status host of TiDB
 	DefStatusHost = "0.0.0.0"
-	// DefDiagnosticAPIMaxConcurrentRequests is the default number of diagnostic pages TiDB serves concurrently.
-	DefDiagnosticAPIMaxConcurrentRequests = 2
-	// DefDiagnosticAPIDefaultPageSize is the default number of records in a diagnostic page.
-	DefDiagnosticAPIDefaultPageSize = 256
-	// DefDiagnosticAPIMaxPageSize is the maximum number of records in a diagnostic page.
-	DefDiagnosticAPIMaxPageSize = 1000
-	// DefDiagnosticAPIRequestTimeout bounds one diagnostic page read.
-	DefDiagnosticAPIRequestTimeout = "10s"
-	// DefDiagnosticAPICursorTTL bounds how long a stateless diagnostic snapshot can be resumed.
-	DefDiagnosticAPICursorTTL = "5m"
-	// DefDiagnosticAPIMaxResponseBytes is the maximum encoded size of one diagnostic page.
-	DefDiagnosticAPIMaxResponseBytes = 4 * 1024 * 1024
-	// DefDiagnosticAPIRedactionProfile is the default outbound diagnostic redaction policy.
-	DefDiagnosticAPIRedactionProfile = DiagnosticRedactionProfileStrict
 	// DefTableColumnCountLimit is limit of the number of columns in a table
 	DefTableColumnCountLimit = 1017
 	// DefMaxOfTableColumnCountLimit is maximum limitation of the number of columns in a table
@@ -256,7 +242,6 @@ type Config struct {
 	Instance                   Instance                `toml:"instance" json:"instance"`
 	Security                   Security                `toml:"security" json:"security"`
 	Status                     Status                  `toml:"status" json:"status"`
-	DiagnosticAPI              DiagnosticAPI           `toml:"diagnostic-api" json:"diagnostic-api"`
 	Performance                Performance             `toml:"performance" json:"performance"`
 	PreparedPlanCache          PreparedPlanCache       `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing                OpenTracing             `toml:"opentracing" json:"opentracing"`
@@ -881,116 +866,6 @@ type Status struct {
 	GRPCMaxSendMsgSize int `toml:"grpc-max-send-msg-size" json:"grpc-max-send-msg-size"`
 }
 
-// DiagnosticAPI controls the bounded read-only diagnostic API on the status port.
-type DiagnosticAPI struct {
-	Enabled               bool     `toml:"enabled" json:"enabled"`
-	RequireMTLS           bool     `toml:"require-mtls" json:"require-mtls"`
-	Datasets              []string `toml:"datasets" json:"datasets"`
-	RedactionProfile      string   `toml:"redaction-profile" json:"redaction-profile"`
-	RedactionKeyFile      string   `toml:"redaction-key-file" json:"redaction-key-file"`
-	RedactionKeyID        string   `toml:"redaction-key-id" json:"redaction-key-id"`
-	MaxConcurrentRequests uint     `toml:"max-concurrent-requests" json:"max-concurrent-requests"`
-	DefaultPageSize       uint     `toml:"default-page-size" json:"default-page-size"`
-	MaxPageSize           uint     `toml:"max-page-size" json:"max-page-size"`
-	RequestTimeout        string   `toml:"request-timeout" json:"request-timeout"`
-	CursorTTL             string   `toml:"cursor-ttl" json:"cursor-ttl"`
-	MaxResponseBytes      uint64   `toml:"max-response-bytes" json:"max-response-bytes"`
-}
-
-const (
-	// DiagnosticRedactionProfileStrict pseudonymizes metadata identifiers and omits user content.
-	DiagnosticRedactionProfileStrict = "strict-v1"
-	// DiagnosticRedactionProfileMetadataReadable preserves metadata identifiers after explicit authorization.
-	DiagnosticRedactionProfileMetadataReadable = "metadata-readable-v1"
-)
-
-var diagnosticRedactionKeyIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
-
-var supportedDiagnosticDatasets = map[string]struct{}{
-	"schema.tables":     {},
-	"schema.columns":    {},
-	"schema.indexes":    {},
-	"schema.partitions": {},
-	"binding.summary":   {},
-	"stats.health":      {},
-}
-
-// IsSupportedDiagnosticDataset reports whether name is a built-in field-whitelisted dataset.
-func IsSupportedDiagnosticDataset(name string) bool {
-	_, ok := supportedDiagnosticDatasets[name]
-	return ok
-}
-
-// IsSupportedDiagnosticRedactionProfile reports whether profile has fixed Diagnostic API semantics.
-func IsSupportedDiagnosticRedactionProfile(profile string) bool {
-	switch profile {
-	case DiagnosticRedactionProfileStrict, DiagnosticRedactionProfileMetadataReadable:
-		return true
-	default:
-		return false
-	}
-}
-
-func (c DiagnosticAPI) valid() error {
-	if !IsSupportedDiagnosticRedactionProfile(c.RedactionProfile) {
-		return fmt.Errorf("[diagnostic-api] unsupported redaction-profile %q", c.RedactionProfile)
-	}
-	if c.RedactionKeyID != "" && !diagnosticRedactionKeyIDPattern.MatchString(c.RedactionKeyID) {
-		return fmt.Errorf("[diagnostic-api] redaction-key-id must match %s", diagnosticRedactionKeyIDPattern.String())
-	}
-	switch c.RedactionProfile {
-	case DiagnosticRedactionProfileStrict:
-		if (c.RedactionKeyFile == "") != (c.RedactionKeyID == "") {
-			return fmt.Errorf("[diagnostic-api] strict-v1 requires redaction-key-file and redaction-key-id together")
-		}
-		if c.Enabled && c.RedactionKeyFile == "" {
-			return fmt.Errorf("[diagnostic-api] strict-v1 requires redaction-key-file and redaction-key-id when enabled")
-		}
-	case DiagnosticRedactionProfileMetadataReadable:
-		if c.RedactionKeyFile != "" || c.RedactionKeyID != "" {
-			return fmt.Errorf("[diagnostic-api] metadata-readable-v1 must not configure a redaction key")
-		}
-	}
-	if c.MaxConcurrentRequests == 0 || c.MaxConcurrentRequests > 32 {
-		return fmt.Errorf("[diagnostic-api] max-concurrent-requests must be between 1 and 32")
-	}
-	if c.DefaultPageSize == 0 {
-		return fmt.Errorf("[diagnostic-api] default-page-size must be greater than 0")
-	}
-	if c.MaxPageSize == 0 || c.MaxPageSize > 10000 {
-		return fmt.Errorf("[diagnostic-api] max-page-size must be between 1 and 10000")
-	}
-	if c.DefaultPageSize > c.MaxPageSize {
-		return fmt.Errorf("[diagnostic-api] default-page-size must not exceed max-page-size")
-	}
-	if c.MaxResponseBytes == 0 || c.MaxResponseBytes > 64*1024*1024 {
-		return fmt.Errorf("[diagnostic-api] max-response-bytes must be between 1 and 67108864")
-	}
-	for name, value := range map[string]string{
-		"request-timeout": c.RequestTimeout,
-		"cursor-ttl":      c.CursorTTL,
-	} {
-		duration, err := time.ParseDuration(value)
-		if err != nil || duration <= 0 {
-			return fmt.Errorf("[diagnostic-api] %s must be a positive duration", name)
-		}
-	}
-	if len(c.Datasets) == 0 {
-		return fmt.Errorf("[diagnostic-api] datasets must not be empty")
-	}
-	seen := make(map[string]struct{}, len(c.Datasets))
-	for _, dataset := range c.Datasets {
-		if !IsSupportedDiagnosticDataset(dataset) {
-			return fmt.Errorf("[diagnostic-api] unsupported dataset %q", dataset)
-		}
-		if _, ok := seen[dataset]; ok {
-			return fmt.Errorf("[diagnostic-api] duplicate dataset %q", dataset)
-		}
-		seen[dataset] = struct{}{}
-	}
-	return nil
-}
-
 // Performance is the performance section of the config.
 type Performance struct {
 	MaxProcs uint `toml:"max-procs" json:"max-procs"`
@@ -1365,25 +1240,6 @@ var defaultConf = Config{
 		GRPCConcurrentStreams: 1024,
 		GRPCInitialWindowSize: 2 * 1024 * 1024,
 		GRPCMaxSendMsgSize:    math.MaxInt32,
-	},
-	DiagnosticAPI: DiagnosticAPI{
-		Enabled:          false,
-		RequireMTLS:      true,
-		RedactionProfile: DefDiagnosticAPIRedactionProfile,
-		Datasets: []string{
-			"schema.tables",
-			"schema.columns",
-			"schema.indexes",
-			"schema.partitions",
-			"binding.summary",
-			"stats.health",
-		},
-		MaxConcurrentRequests: DefDiagnosticAPIMaxConcurrentRequests,
-		DefaultPageSize:       DefDiagnosticAPIDefaultPageSize,
-		MaxPageSize:           DefDiagnosticAPIMaxPageSize,
-		RequestTimeout:        DefDiagnosticAPIRequestTimeout,
-		CursorTTL:             DefDiagnosticAPICursorTTL,
-		MaxResponseBytes:      DefDiagnosticAPIMaxResponseBytes,
 	},
 	Performance: Performance{
 		MaxMemory:                         0,
@@ -1885,13 +1741,6 @@ func (c *Config) Valid() error {
 	}
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
-	}
-	if err := c.DiagnosticAPI.valid(); err != nil {
-		return err
-	}
-	if c.DiagnosticAPI.Enabled && c.DiagnosticAPI.RequireMTLS &&
-		(c.Security.ClusterSSLCA == "" || c.Security.ClusterSSLCert == "" || c.Security.ClusterSSLKey == "" || len(c.Security.ClusterVerifyCN) == 0) {
-		return fmt.Errorf("[diagnostic-api] require-mtls needs cluster-ssl-ca, cluster-ssl-cert, cluster-ssl-key, and cluster-verify-cn")
 	}
 	if len(c.ErrorMessageExtensions) > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")

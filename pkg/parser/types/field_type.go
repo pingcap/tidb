@@ -19,7 +19,6 @@ import (
 	"io"
 	"slices"
 	"strings"
-	"sync"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -740,18 +739,10 @@ type jsonFieldType struct {
 	Array            bool
 }
 
-var jsonFieldTypePool = sync.Pool{
-	New: func() any { return new(jsonFieldType) },
-}
-
 // UnmarshalJSON implements the json.Unmarshaler interface.
 func (ft *FieldType) UnmarshalJSON(data []byte) error {
-	r := jsonFieldTypePool.Get().(*jsonFieldType)
-	*r = jsonFieldType{
-		Elems:            ft.elems[:0],
-		ElemsIsBinaryLit: ft.elemsIsBinaryLit[:0],
-	}
-	err := json.Unmarshal(data, r)
+	var r jsonFieldType
+	err := json.Unmarshal(data, &r)
 	if err == nil {
 		ft.tp = r.Tp
 		ft.flag = r.Flag
@@ -763,8 +754,6 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 		ft.elemsIsBinaryLit = r.ElemsIsBinaryLit
 		ft.array = r.Array
 	}
-	*r = jsonFieldType{}
-	jsonFieldTypePool.Put(r)
 	return err
 }
 

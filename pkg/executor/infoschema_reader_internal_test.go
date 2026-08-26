@@ -16,11 +16,9 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -39,20 +37,12 @@ type mockTableInfoIterator struct {
 	closed        bool
 }
 
-func (i *mockTableInfoIterator) Next(context.Context) (*model.TableInfo, error) {
+func (i *mockTableInfoIterator) NextInto(_ context.Context, destination *model.TableInfo) (*model.TableInfo, error) {
 	if i.next >= len(i.tables) {
 		return nil, nil
 	}
 	table := i.tables[i.next]
 	i.next++
-	return table, nil
-}
-
-func (i *mockTableInfoIterator) NextInto(ctx context.Context, destination *model.TableInfo) (*model.TableInfo, error) {
-	table, err := i.Next(ctx)
-	if err != nil || table == nil {
-		return nil, err
-	}
 	if i.destinations != nil {
 		*i.destinations = append(*i.destinations, destination)
 	}
@@ -124,43 +114,6 @@ func TestBoundedDatumRows(t *testing.T) {
 
 		rows.close()
 		require.Zero(t, tracker.BytesConsumed())
-	})
-
-	t.Run("record allocation diagnostics", func(t *testing.T) {
-		tracker := memory.NewTracker(6, -1)
-		stats := &kv.InfoSchemaScanAllocationStats{}
-		rows := newBoundedDatumRows(tableInfo, outputColumns, tracker, 1<<20, stats)
-		rows.appendProjected("schema", 42, "table")
-		require.Equal(t, uint64(1), stats.OutputRowCount)
-		require.Positive(t, stats.OutputDatumPayloadBytes)
-		require.Positive(t, stats.RowBufferAllocatedBytes)
-
-		allocatedBytes := stats.RowBufferAllocatedBytes
-		rows.beginBatch()
-		rows.appendProjected("next", 84, "table")
-		require.Equal(t, uint64(2), stats.OutputRowCount)
-		require.Equal(t, allocatedBytes, stats.RowBufferAllocatedBytes)
-		rows.close()
-		require.Zero(t, tracker.BytesConsumed())
-	})
-
-	t.Run("publish diagnostics to the session", func(t *testing.T) {
-		sctx := defaultCtx()
-		require.False(t, infoSchemaScanStatsEnabled(sctx))
-		sctx.GetSessionVars().SetUserVarVal(infoSchemaScanStatsUserVar, types.NewIntDatum(1))
-		require.True(t, infoSchemaScanStatsEnabled(sctx))
-
-		stats := &kv.InfoSchemaScanAllocationStats{TableInfoCount: 3, OutputRowCount: 36}
-		retriever := &hugeMemTableRetriever{
-			scanStats:        stats,
-			statsSessionVars: sctx.GetSessionVars(),
-		}
-		require.NoError(t, retriever.close())
-		result, ok := sctx.GetSessionVars().GetUserVarVal(infoSchemaScanStatsResultUserVar)
-		require.True(t, ok)
-		var decoded kv.InfoSchemaScanAllocationStats
-		require.NoError(t, json.Unmarshal([]byte(result.GetString()), &decoded))
-		require.Equal(t, *stats, decoded)
 	})
 
 	t.Run("reuse table metadata only across batches", func(t *testing.T) {

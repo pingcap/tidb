@@ -1138,16 +1138,7 @@ func (m *Mutator) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 
 // IterDatabases iterates all the Databases at once, stop iterate when fn returns an error.
 func (m *Mutator) IterDatabases(fn func(info *model.DBInfo) error) error {
-	return m.IterDatabasesFrom(0, fn)
-}
-
-// IterDatabasesFrom iterates databases strictly after exclusiveStartDBID.
-func (m *Mutator) IterDatabasesFrom(exclusiveStartDBID int64, fn func(info *model.DBInfo) error) error {
-	var startField []byte
-	if exclusiveStartDBID != 0 {
-		startField = m.dbKey(exclusiveStartDBID)
-	}
-	err := m.txn.HGetIterFrom(mDBs, startField, func(r structure.HashPair) error {
+	err := m.txn.HGetIter(mDBs, func(r structure.HashPair) error {
 		dbInfo := &model.DBInfo{}
 		err := json.Unmarshal(r.Value, dbInfo)
 		if err != nil {
@@ -1160,7 +1151,29 @@ func (m *Mutator) IterDatabasesFrom(exclusiveStartDBID int64, fn func(info *mode
 
 // IterTables iterates all the table at once, in order to avoid oom.
 func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) error {
-	return m.IterTablesFrom(dbID, 0, fn)
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	err := m.txn.HGetIter(dbKey, func(r structure.HashPair) error {
+		// only handle table meta
+		tableKey := string(r.Field)
+		if !strings.HasPrefix(tableKey, mTablePrefix) {
+			return nil
+		}
+
+		tbInfo := &model.TableInfo{}
+		err := json.Unmarshal(r.Value, tbInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tbInfo.DBID = dbID
+
+		err = fn(tbInfo)
+		return errors.Trace(err)
+	})
+	return errors.Trace(err)
 }
 
 // TableInfoIterator decodes table metadata from one persistent MetaKV scanner.
@@ -1170,7 +1183,6 @@ type TableInfoIterator struct {
 	decodeMode            TableInfoDecodeMode
 	iter                  *structure.HashIterator
 	internedColumnStrings []string
-	stats                 *kv.InfoSchemaScanAllocationStats
 }
 
 // TableInfoDecodeMode controls how much of each TableInfo value is decoded.
@@ -1183,18 +1195,11 @@ const (
 	TableInfoDecodeColumns
 )
 
-// NewTableInfoIterator creates a table metadata iterator positioned strictly
-// after exclusiveStartTableID.
-func (m *Mutator) NewTableInfoIterator(dbID, exclusiveStartTableID int64) (*TableInfoIterator, error) {
-	return m.NewTableInfoIteratorWithDecodeMode(dbID, exclusiveStartTableID, TableInfoDecodeAll)
-}
-
 // NewTableInfoIteratorWithDecodeMode creates a table metadata iterator with a
 // projection-aware JSON decoder.
 func (m *Mutator) NewTableInfoIteratorWithDecodeMode(
 	dbID, exclusiveStartTableID int64,
 	decodeMode TableInfoDecodeMode,
-	stats ...*kv.InfoSchemaScanAllocationStats,
 ) (*TableInfoIterator, error) {
 	if decodeMode > TableInfoDecodeColumns {
 		return nil, errors.Errorf("unknown table info decode mode %d", decodeMode)
@@ -1208,20 +1213,11 @@ func (m *Mutator) NewTableInfoIteratorWithDecodeMode(
 	if exclusiveStartTableID != 0 {
 		startField = m.tableKey(exclusiveStartTableID)
 	}
-	iter, err := structure.NewHashIterator(m.txn, dbKey, startField, stats...)
+	iter, err := structure.NewHashIterator(m.txn, dbKey, startField)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result := &TableInfoIterator{dbID: dbID, decodeMode: decodeMode, iter: iter}
-	if len(stats) > 0 {
-		result.stats = stats[0]
-	}
-	return result, nil
-}
-
-// Next returns the next table or nil when the iterator is exhausted.
-func (i *TableInfoIterator) Next(ctx context.Context) (*model.TableInfo, error) {
-	return i.NextInto(ctx, &model.TableInfo{})
+	return &TableInfoIterator{dbID: dbID, decodeMode: decodeMode, iter: iter}, nil
 }
 
 // NextInto decodes the next table into destination or returns nil when the
@@ -1241,20 +1237,10 @@ func (i *TableInfoIterator) NextInto(ctx context.Context, destination *model.Tab
 		if isTable {
 			tableInfo = destination
 			data := i.iter.Value()
-			if i.stats != nil {
-				i.stats.TableInfoCount++
-				i.stats.TableInfoJSONBytes += uint64(len(data))
-			}
 			var err error
 			if i.decodeMode == TableInfoDecodeColumns {
 				if i.tryDecodeSimpleColumnsTableInfo(data, tableInfo) {
-					if i.stats != nil {
-						i.stats.FastTableInfoDecodeCount++
-					}
 				} else {
-					if i.stats != nil {
-						i.stats.FallbackTableInfoDecodeCount++
-					}
 					err = decodeColumnsTableInfo(data, tableInfo)
 				}
 			} else {
@@ -1263,9 +1249,6 @@ func (i *TableInfoIterator) NextInto(ctx context.Context, destination *model.Tab
 			}
 			if err != nil {
 				return nil, errors.Trace(err)
-			}
-			if i.stats != nil {
-				i.stats.ColumnInfoCount += uint64(len(tableInfo.Columns))
 			}
 			tableInfo.DBID = i.dbID
 		}
@@ -1384,37 +1367,6 @@ func (i *TableInfoIterator) RetainedMemory() int64 {
 		retainedMemory += i.iter.RetainedMemory()
 	}
 	return retainedMemory
-}
-
-// IterTablesFrom iterates tables strictly after exclusiveStartTableID.
-func (m *Mutator) IterTablesFrom(dbID, exclusiveStartTableID int64, fn func(info *model.TableInfo) error) error {
-	dbKey := m.dbKey(dbID)
-	if err := m.checkDBExists(dbKey); err != nil {
-		return errors.Trace(err)
-	}
-
-	var startField []byte
-	if exclusiveStartTableID != 0 {
-		startField = m.tableKey(exclusiveStartTableID)
-	}
-	err := m.txn.HGetIterFrom(dbKey, startField, func(r structure.HashPair) error {
-		// only handle table meta
-		tableKey := string(r.Field)
-		if !strings.HasPrefix(tableKey, mTablePrefix) {
-			return nil
-		}
-
-		tbInfo := &model.TableInfo{}
-		err := json.Unmarshal(r.Value, tbInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		tbInfo.DBID = dbID
-
-		err = fn(tbInfo)
-		return errors.Trace(err)
-	})
-	return errors.Trace(err)
 }
 
 func splitRangeInt64Max(n int64) [][]string {

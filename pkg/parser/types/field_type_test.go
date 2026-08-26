@@ -14,7 +14,6 @@
 package types_test
 
 import (
-	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -27,27 +26,6 @@ import (
 	. "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/stretchr/testify/require"
 )
-
-func TestFieldTypeJSONDecodeReuseDoesNotLeakState(t *testing.T) {
-	var ft FieldType
-	require.NoError(t, json.Unmarshal([]byte(`{
-		"Tp":247,"Flag":1,"Flen":8,"Decimal":0,
-		"Charset":"utf8mb4","Collate":"utf8mb4_bin",
-		"Elems":["a","b"],"ElemsIsBinaryLit":[false,true],"Array":true
-	}`), &ft))
-	require.Equal(t, byte(mysql.TypeJSON), ft.GetType())
-	require.Equal(t, []string{"a", "b"}, ft.GetElems())
-	require.True(t, ft.IsArray())
-
-	require.NoError(t, json.Unmarshal([]byte(`{
-		"Tp":3,"Flag":0,"Flen":11,"Decimal":0,
-		"Charset":"binary","Collate":"binary",
-		"Elems":[],"ElemsIsBinaryLit":[],"Array":false
-	}`), &ft))
-	require.Equal(t, byte(mysql.TypeLong), ft.GetType())
-	require.Empty(t, ft.GetElems())
-	require.False(t, ft.IsArray())
-}
 
 func TestFieldType(t *testing.T) {
 	ft := NewFieldType(mysql.TypeDuration)

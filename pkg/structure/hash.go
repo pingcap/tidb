@@ -169,17 +169,7 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 
 // HGetIter iterates all the fields and values in hash.
 func (t *TxStructure) HGetIter(key []byte, fn func(pair HashPair) error) error {
-	return t.hGetIterFrom(key, nil, fn)
-}
-
-// HGetIterFrom iterates the fields and values in a hash strictly after
-// exclusiveStartField. A nil or empty start field iterates from the beginning.
-func (t *TxStructure) HGetIterFrom(key, exclusiveStartField []byte, fn func(pair HashPair) error) error {
-	return t.hGetIterFrom(key, exclusiveStartField, fn)
-}
-
-func (t *TxStructure) hGetIterFrom(key, exclusiveStartField []byte, fn func(pair HashPair) error) error {
-	return t.iterateHashFrom(key, exclusiveStartField, func(field []byte, value []byte) error {
+	return t.IterateHash(key, func(field []byte, value []byte) error {
 		pair := HashPair{
 			Field: slices.Clone(field),
 			Value: slices.Clone(value),
@@ -197,7 +187,6 @@ type HashIterator struct {
 	iter   kv.Iterator
 	prefix []byte
 	field  []byte
-	stats  *kv.InfoSchemaScanAllocationStats
 	done   bool
 }
 
@@ -206,7 +195,6 @@ type HashIterator struct {
 func NewHashIterator(
 	t *TxStructure,
 	key, exclusiveStartField []byte,
-	stats ...*kv.InfoSchemaScanAllocationStats,
 ) (*HashIterator, error) {
 	dataPrefix := t.hashDataKeyPrefix(key)
 	iterStart := dataPrefix
@@ -223,9 +211,6 @@ func NewHashIterator(
 		iter:   iter,
 		prefix: dataPrefix,
 	}
-	if len(stats) > 0 {
-		hashIter.stats = stats[0]
-	}
 	if err := hashIter.updateCurrent(); err != nil {
 		iter.Close()
 		return nil, err
@@ -239,7 +224,7 @@ func (i *HashIterator) updateCurrent() error {
 		i.field = nil
 		return nil
 	}
-	_, field, err := i.t.decodeHashDataKeyWithStats(i.iter.Key(), i.stats)
+	_, field, err := i.t.decodeHashDataKey(i.iter.Key())
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -376,4 +376,4 @@ replace (
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/tikv/client-go/v2 => github.com/jiong-nba/client-go/v2 v2.0.0-20260826090042-c13b3fe52ed7
+replace github.com/tikv/client-go/v2 => github.com/jiong-nba/client-go/v2 v2.0.0-20260826115000-9796e6f3c6c0
