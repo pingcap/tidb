@@ -177,6 +177,16 @@ pub enum Candidate {
         desc: bool,
     },
     /// `PhysicalSelection`.
+    /// Go `PhysicalUnionAll`: one child per `UNION ALL` term.
+    ///
+    /// `getPlanCostVer24PhysicalUnionAll` (`plan_cost_ver2.go:975`) sums the
+    /// children's costs and divides by `UnionConcurrency`, and
+    /// `LogicalUnionAll.DeriveStats` (`logical_union_all.go:151`) sums their
+    /// row counts.
+    UnionAll {
+        /// The terms, in source order.
+        children: Vec<Candidate>,
+    },
     Selection {
         /// The single child.
         child: Box<Candidate>,
@@ -355,6 +365,7 @@ pub fn number_of_ranges(node: &Candidate) -> usize {
         Candidate::MergeJoin { left, right, .. } => {
             number_of_ranges(left) + number_of_ranges(right)
         }
+        Candidate::UnionAll { children } => children.iter().map(number_of_ranges).sum(),
     }
 }
 
@@ -446,6 +457,28 @@ pub fn evaluate_traced(
                 *index_id,
             );
             leaf(*rows, row_size, cost)
+        }
+        Candidate::UnionAll { children } => {
+            let children = children
+                .iter()
+                .map(|child| evaluate_traced(child, env, task, option))
+                .collect::<Vec<_>>();
+            let child_costs = children
+                .iter()
+                .map(|child| child.cost.clone())
+                .collect::<Vec<_>>();
+            // Go's union has no schema of its own beyond its first child's --
+            // `buildProjection4Union` gives every child a clone of it -- so
+            // the row width is that child's, and the row count is the sum.
+            let row_size = children.first().map_or(0.0, |child| child.row_size);
+            let rows = children.iter().map(|child| child.rows).sum();
+            let cost = ver2::union_all_cost(&child_costs, env.session.union_concurrency, false);
+            CostedNode {
+                rows,
+                row_size,
+                cost,
+                children,
+            }
         }
         Candidate::Selection {
             child,

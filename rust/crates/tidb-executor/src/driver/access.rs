@@ -1660,6 +1660,7 @@ pub(crate) fn commit_fast_path_source(
             return Ok(AccessPathCommit {
                 consumed_where: true,
                 logical_rows,
+                candidate: Some(contradiction_dual_candidate()),
                 ..AccessPathCommit::default()
             });
         }
@@ -1684,6 +1685,7 @@ pub(crate) fn commit_fast_path_source(
             return Ok(AccessPathCommit {
                 consumed_where: true,
                 logical_rows,
+                candidate: Some(contradiction_dual_candidate()),
                 ..AccessPathCommit::default()
             });
         }
@@ -3002,6 +3004,25 @@ fn null_scalar_comparison_contradiction(
             .into_iter()
             .any(|side| null_scalar_column(scope, side))
     })
+}
+
+/// The physical task a contradictory `WHERE` becomes.
+///
+/// Go's `PhysicalTableDual` has no children and no `GetPlanCostVer2` of its
+/// own, so it falls to `BasePhysicalPlan.GetPlanCostVer2`
+/// (`base_physical_plan.go:180`), whose childless branch is
+/// `NewZeroCostVer2` -- a real operator that costs nothing and produces no
+/// rows. Reporting it as an ABSENT task instead would leave any parent that
+/// prices its children (a `UNION ALL`, a join) unable to cost the side at
+/// all, which is how a dual branch silently withdrew a union from index-join
+/// costing.
+fn contradiction_dual_candidate() -> tidb_planner::candidate_cost::Candidate {
+    tidb_planner::candidate_cost::Candidate::Fixed {
+        rows: 0.0,
+        row_size: 0.0,
+        cost: 0.0,
+        num_ranges: 0,
+    }
 }
 
 /// Installs a zero-row [`TableDualExec`] for a contradictory `WHERE` and

@@ -1967,7 +1967,7 @@ fn derived_source_relation_with_delivery<'a>(
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
     required: &tidb_planner::physical_property::PhysicalProperty,
-    delivered: Option<&mut Delivered>,
+    mut delivered: Option<&mut Delivered>,
     deferred_exec: Option<&mut Option<Box<dyn Executor>>>,
 ) -> Result<DerivedSourceRelation<'a>, DriverError> {
     // Captured from Go: an alias-less derived table is ErrDerivedMustHaveAlias
@@ -1997,6 +1997,7 @@ fn derived_source_relation_with_delivery<'a>(
             ctx,
             trace.as_deref_mut(),
             deferred_exec,
+            delivered.as_deref_mut(),
         )?,
     };
     // A derived table is a named relation, so its columns must be uniquely

@@ -107,3 +107,40 @@ fn a_constant_false_where_plans_as_a_dual() {
         );
     }
 }
+
+/// A `UNION ALL` derived side is a PRICED child, so a join above it can
+/// compare an index join against a hash join.
+///
+/// Go's `PhysicalUnionAll` is costed from its children
+/// (`getPlanCostVer24PhysicalUnionAll`, `plan_cost_ver2.go:975`: the summed
+/// child costs over `UnionConcurrency`), and a `PhysicalTableDual` child is
+/// a real operator that costs ZERO -- it has no children, so it falls to
+/// `BasePhysicalPlan.GetPlanCostVer2`'s childless branch
+/// (`base_physical_plan.go:180`). A union that reported NO task at all left
+/// the join unable to price this side, and every index join above it was
+/// silently dropped from the comparison.
+#[test]
+fn a_union_all_side_can_drive_an_index_join() {
+    let mut session = Session::new();
+    session
+        .run("create table dim(id bigint primary key, name varchar(64))")
+        .unwrap();
+    session
+        .run("create table fact(k bigint unsigned not null, v bigint unsigned not null)")
+        .unwrap();
+    let plan = plan(
+        &mut session,
+        "explain select count(1) from (select coalesce(d.name, 'x') n, sum(u.v) s \
+         from (select k, 0 v from fact union all select k, v from fact) u \
+         left join dim d on u.k = d.id where v > 0 group by u.k, coalesce(d.name, 'x')) t",
+    )
+    .join("\n");
+    assert!(
+        plan.contains("IndexJoin") || plan.contains("IndexHashJoin"),
+        "the union side is priced, so the PK lookup on `dim` wins:\n{plan}"
+    );
+    assert!(
+        plan.contains("TableRangeScan"),
+        "the inner side is a handle range, not a full scan:\n{plan}"
+    );
+}

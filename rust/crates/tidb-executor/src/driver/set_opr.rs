@@ -379,7 +379,7 @@ pub(crate) fn run_set_opr_traced(
     ctx: &crate::StmtContext,
     trace: Option<&mut crate::plan_trace::PlanTrace>,
 ) -> Result<SelectMeta, DriverError> {
-    run_set_opr_traced_with_deferred(stmt, catalog, current_db, ctx, trace, None)
+    run_set_opr_traced_with_deferred(stmt, catalog, current_db, ctx, trace, None, None)
 }
 
 /// [`run_set_opr_traced`] with an optional runtime executor destination for a
@@ -393,6 +393,7 @@ pub(crate) fn run_set_opr_traced_with_deferred(
     ctx: &crate::StmtContext,
     mut trace: Option<&mut crate::plan_trace::PlanTrace>,
     mut deferred_exec: Option<&mut Option<Box<dyn Executor>>>,
+    mut delivered: Option<&mut super::from::Delivered>,
 ) -> Result<SelectMeta, DriverError> {
     // Keep set-operation consumers on the same Go
     // `computeCTEInlineFlag`/`buildDataSourceFromCTEMerge` path as SELECT.
@@ -432,12 +433,19 @@ pub(crate) fn run_set_opr_traced_with_deferred(
             let mut children = Vec::with_capacity(stmt.terms.len());
             let mut columns: Option<Vec<(String, FieldType)>> = None;
             let mut same_types = true;
+            // Go's `PhysicalUnionAll` is priced from its children
+            // (`getPlanCostVer24PhysicalUnionAll`, `plan_cost_ver2.go:975`),
+            // so a parent join that wants to cost THIS side needs every
+            // term's own physical task, not just its executor.
+            let mut term_candidates: Vec<Option<tidb_planner::candidate_cost::Candidate>> =
+                Vec::with_capacity(stmt.terms.len());
             for term in &stmt.terms {
                 let tidb_ast::SetOprTermBody::Select(select) = &term.body else {
                     same_types = false;
                     break;
                 };
                 let mut child_exec = None;
+                let mut term_delivered = super::from::Delivered::new();
                 let (term_columns, rows) = super::run_select_traced_with_delivery(
                     select,
                     catalog,
@@ -445,10 +453,11 @@ pub(crate) fn run_set_opr_traced_with_deferred(
                     ctx,
                     None,
                     &tidb_planner::physical_property::PhysicalProperty::default(),
-                    None,
+                    Some(&mut term_delivered),
                     Some(&mut child_exec),
                     false,
                 )?;
+                term_candidates.push(term_delivered.candidate.take());
                 if !rows.is_empty() {
                     same_types = false;
                     break;
@@ -490,6 +499,21 @@ pub(crate) fn run_set_opr_traced_with_deferred(
                         ExecutorMeta::new(schema, 6, INIT_CAP, MAX_CHUNK_SIZE),
                         children,
                     )));
+                    // One term without a physical task leaves the union
+                    // unpriceable, and a partial sum would understate it, so
+                    // the candidate is published only when EVERY term has one.
+                    if let Some(delivered) = delivered.as_deref_mut() {
+                        if let Some(terms) = term_candidates
+                            .into_iter()
+                            .collect::<Option<Vec<_>>>()
+                            .filter(|terms| !terms.is_empty())
+                        {
+                            delivered.candidate =
+                                Some(tidb_planner::candidate_cost::Candidate::UnionAll {
+                                    children: terms,
+                                });
+                        }
+                    }
                     return Ok((columns, Vec::new()));
                 }
             }
@@ -517,7 +541,12 @@ pub(crate) fn run_set_opr_traced_with_deferred(
         tidb_ast::SetOprTermBody::Nested(_) => false,
     });
     let mut terms: Vec<SelectMeta> = Vec::with_capacity(stmt.terms.len());
+    // As in the streaming arm above: a parent join costs this side from the
+    // terms' own physical tasks (`getPlanCostVer24PhysicalUnionAll`).
+    let mut materialized_candidates: Vec<Option<tidb_planner::candidate_cost::Candidate>> =
+        Vec::with_capacity(stmt.terms.len());
     for (index, term) in stmt.terms.iter().enumerate() {
+        let mut term_delivered = super::from::Delivered::new();
         let term_meta = run_set_opr_term(
             term,
             catalog,
@@ -526,7 +555,9 @@ pub(crate) fn run_set_opr_traced_with_deferred(
             trace.as_deref_mut(),
             set_membership_is_duplicate_agnostic
                 || distinct_terms.is_some_and(|count| index < count),
+            Some(&mut term_delivered),
         )?;
+        materialized_candidates.push(term_delivered.candidate.take());
         // Go raises ErrWrongNumberOfColumnsInSelect for a term whose width
         // differs.
         if let Some((first_columns, _)) = terms.first() {
@@ -535,6 +566,21 @@ pub(crate) fn run_set_opr_traced_with_deferred(
             }
         }
         terms.push(term_meta);
+    }
+    // Only a plain UNION ALL is `PhysicalUnionAll` in Go; a DISTINCT prefix
+    // puts an aggregation above the union and INTERSECT/EXCEPT are different
+    // operators, so neither is priced by this candidate.
+    if matches!(union_shape, Some(TracedSetOpr::UnionAll)) {
+        if let Some(delivered) = delivered.as_deref_mut() {
+            if let Some(children) = materialized_candidates
+                .into_iter()
+                .collect::<Option<Vec<_>>>()
+                .filter(|children| !children.is_empty())
+            {
+                delivered.candidate =
+                    Some(tidb_planner::candidate_cost::Candidate::UnionAll { children });
+            }
+        }
     }
     let (first_columns, _) = terms
         .first()
@@ -738,15 +784,18 @@ fn run_set_opr_term(
     ctx: &crate::StmtContext,
     trace: Option<&mut crate::plan_trace::PlanTrace>,
     parent_duplicate_agnostic: bool,
+    delivered: Option<&mut super::from::Delivered>,
 ) -> Result<SelectMeta, DriverError> {
     match &term.body {
-        tidb_ast::SetOprTermBody::Select(select) => run_select_traced(
+        tidb_ast::SetOprTermBody::Select(select) => super::run_select_traced_with_delivery(
             select,
             catalog,
             current_db,
             ctx,
             trace,
             &tidb_planner::physical_property::PhysicalProperty::default(),
+            delivered,
+            None,
             parent_duplicate_agnostic,
         ),
         tidb_ast::SetOprTermBody::Nested(nested) => {
