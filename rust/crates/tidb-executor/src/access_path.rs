@@ -3440,6 +3440,11 @@ impl IndexJoinLookupExec {
             &self.statement,
             false,
             None,
+            // Unordered: the join matches rows by value.
+            true,
+            // Handles only: this stream feeds the join's handle collection,
+            // which reads nothing else from the entries, and no predicate or
+            // TopN rides the index side here.
             true,
             true,
         ) {
@@ -4081,6 +4086,16 @@ impl IndexJoinLookupExec {
                         return Ok(None);
                     }
                     self.lookup_rows = self.window_rows(&handles)?;
+                    // A window every row of which is gone -- the index named
+                    // handles whose records no longer exist, and a range scan
+                    // answers exactly what exists -- contributes nothing;
+                    // collect the next handle batch instead of indexing an
+                    // empty window. The batch-get path could never return one
+                    // (it answers one slot per handle), so this arm never
+                    // needed the guard before.
+                    if self.lookup_rows.is_empty() {
+                        continue;
+                    }
                 }
                 let row = self.lookup_rows[self.lookup_row_at].take();
                 self.lookup_row_at += 1;
