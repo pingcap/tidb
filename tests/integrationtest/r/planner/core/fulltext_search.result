@@ -1,5 +1,11 @@
 drop table if exists articles;
-create table articles (id int primary key, title varchar(200), body text);
+create table articles (
+id int primary key,
+title varchar(200),
+body text,
+fulltext index idx_title(title),
+fulltext index idx_title_body(title, body)
+);
 insert into articles values
 (1, 'MySQL Tutorial', 'This tutorial provides a basic MySQL tutorial'),
 (2, 'How To Use MySQL Well', 'After you went through a MySQL tutorial'),

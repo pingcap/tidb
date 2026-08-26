@@ -1186,12 +1186,14 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 
 func isColumnCanDropWithIndex(colName string, indices []*model.IndexInfo) error {
 	for _, indexInfo := range indices {
-		if indexInfo.Primary || len(indexInfo.Columns) > 1 || indexInfo.VectorInfo != nil {
+		if indexInfo.Primary || len(indexInfo.Columns) > 1 || indexInfo.IsNonKVIndex() {
 			for _, col := range indexInfo.Columns {
 				if col.Name.L == colName {
 					errMsg := "with composite index covered or Primary Key covered now"
 					if indexInfo.VectorInfo != nil {
 						errMsg = "with Vector Key covered now"
+					} else if indexInfo.FullTextInfo != nil {
+						errMsg = "with FULLTEXT index covered now"
 					}
 					return dbterror.ErrCantDropColWithIndex.GenWithStack("can't drop column %s "+errMsg, colName)
 				}

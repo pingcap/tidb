@@ -243,6 +243,10 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		columns := getReplacedColumns(tblInfo, oldCol, args.Column)
 		allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 		for _, idx := range allIdxs {
+			if idx.FullTextInfo != nil {
+				job.State = model.JobStateCancelled
+				return ver, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("column is covered by a FULLTEXT index")
+			}
 			if err := checkIndexInModifiableColumns(columns, idx.Columns, idx.VectorInfo != nil); err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -1898,6 +1902,9 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		}
 		if !modified {
 			return
+		}
+		if indexInfo.FullTextInfo != nil {
+			return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("column is covered by a FULLTEXT index")
 		}
 		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, indexInfo.VectorInfo != nil)
 		if err != nil {

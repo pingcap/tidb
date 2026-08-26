@@ -2275,10 +2275,72 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST without tidb_enable_local_match_against")
 		return
 	}
-	er.matchAgainstToLocalBuiltin(v, numCols, stackLen)
+	indexInfo, err := er.resolveLocalFullTextIndex(numCols, stackLen)
+	if err != nil {
+		er.err = err
+		return
+	}
+	er.matchAgainstToLocalBuiltin(v, numCols, stackLen, indexInfo)
 }
 
-func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, numCols, stackLen int) {
+func (er *expressionRewriter) resolveLocalFullTextIndex(numCols, stackLen int) (*model.IndexInfo, error) {
+	nameStart := stackLen - numCols - 1
+	if nameStart < 0 || er.planCtx == nil || er.planCtx.builder == nil {
+		return nil, plannererrors.ErrFtMatchingKeyNotFound
+	}
+	first := er.ctxNameStk[nameStart]
+	if first == nil {
+		return nil, plannererrors.ErrFtMatchingKeyNotFound
+	}
+	dbName, tblName := first.DBName, first.OrigTblName
+	if tblName.L == "" {
+		tblName = first.TblName
+	}
+	if dbName.L == "" {
+		dbName = pmodel.NewCIStr(er.planCtx.builder.ctx.GetSessionVars().CurrentDB)
+	}
+	tblInfo, err := er.planCtx.builder.is.TableInfoByName(dbName, tblName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	columnNames := make([]string, numCols)
+	for i := range numCols {
+		name := er.ctxNameStk[nameStart+i]
+		if name == nil {
+			return nil, plannererrors.ErrFtMatchingKeyNotFound
+		}
+		nameTable := name.OrigTblName
+		if nameTable.L == "" {
+			nameTable = name.TblName
+		}
+		if nameTable.L != tblName.L || name.DBName.L != "" && name.DBName.L != dbName.L {
+			return nil, plannererrors.ErrFtMatchingKeyNotFound
+		}
+		colName := name.OrigColName
+		if colName.L == "" {
+			colName = name.ColName
+		}
+		columnNames[i] = colName.L
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic || idx.FullTextInfo == nil || len(idx.Columns) != len(columnNames) {
+			continue
+		}
+		matched := true
+		for i, col := range idx.Columns {
+			if col.Name.L != columnNames[i] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return idx, nil
+		}
+	}
+	return nil, plannererrors.ErrFtMatchingKeyNotFound
+}
+
+func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, numCols, stackLen int, indexInfo *model.IndexInfo) {
 	against := er.ctxStack[stackLen-1]
 	cols := er.ctxStack[stackLen-numCols-1 : stackLen-1]
 	args := make([]expression.Expression, 0, numCols+1)
@@ -2301,7 +2363,7 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 		return
 	}
 
-	config, err := fulltext.AnalyzerConfigFromSessionVars(er.planCtx.builder.ctx.GetSessionVars(), model.FullTextParserTypeStandardV1)
+	config, err := fulltext.AnalyzerConfigFromSessionVars(er.planCtx.builder.ctx.GetSessionVars(), indexInfo.FullTextInfo.ParserType)
 	if err != nil {
 		er.err = err
 		return
