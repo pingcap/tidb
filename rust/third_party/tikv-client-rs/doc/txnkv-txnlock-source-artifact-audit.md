@@ -22,12 +22,12 @@ There is no package `doc.go`, platform/build-tag variant, generated source or in
 | client-go surface | Rust behavior and integration decision |
 | --- | --- |
 | `ExtractLockFromKeyErr`, `ExtractLocksFromKeyErr`, `Lock`, `NewLock`, `IsPessimistic`, `IsShared`, formatting | Singular extraction preserves a shared wrapper; plural extraction expands holder locks in wire order. Exclusive locks are preserved, non-lock key errors remain typed errors, concrete shared-pessimistic holders use pessimistic rollback, and direct shared wrappers are rejected. Native `LockInfo` ownership avoids duplicating generated fields. |
-| `TxnStatus`, determined-status predicates and cache | `TransactionStatus` retains live/committed/rolled-back state, action, expiration, primary metadata, commit TS, and TTL. Only determined outcomes enter a source-sized 2,048-entry FIFO; duplicate equal outcomes are idempotent and conflicting final outcomes fail immediately. Cached async-commit outcomes bypass secondary recovery. |
-| `ResolveLocksWithOpts`, `ResolveLocks`, `ResolveLocksForRead`, `txnExpireTime` | The resolver checks every encountered transaction, handles txn-not-found expiry and pessimistic primary mismatch, recovers async commit or forced 2PC, returns the minimum non-negative remaining TTL, and classifies read-through versus ignorable transaction IDs. Snapshot contexts carry cumulative `resolved_locks` and `committed_locks` hints on retries. |
-| Ordinary and lite `ResolveLock` | The configured source default threshold of 512 selects exact-key lite cleanup; an already-checked lite primary is skipped. Multi-key lite cleanup is batched once per current region. Non-lite resolution deduplicates cleaned regions and enables TiKV-side async resolution only for NextGen read cleanup. Region, leader, transport, and key failures preserve retry/error ownership. |
-| Pessimistic and batch GC cleanup | Pessimistic locks use `PessimisticRollback` after status lookup, including shared-pessimistic holders and invalid-primary rollback. Batch GC forces status, recovers async commit, retains txn-file flags, suppresses empty batch RPCs, records cleaned regions, and sends the 20-second write execution limit. |
+| `TxnStatus`, determined-status predicates and cache | `TransactionStatus` retains live/committed/rolled-back state, action, expiration, commit TS, and TTL. The source-sized public `RESOLVED_CACHE_SIZE` is 2,048. A sidecar owned by the same mutex retains the async-commit primary `LockInfo`, including all secondaries, for every determined cached outcome; FIFO eviction removes both records atomically. Duplicate equal outcomes are idempotent and conflicting final outcomes fail immediately. A cache hit therefore skips `CheckSecondaryLocks` while still resolving the complete secondary-plus-primary set. |
+| `ResolveLocksWithOpts`, `ResolveLocks`, `ResolveLocksForRead`, `txnExpireTime` | The resolver checks every encountered transaction, handles txn-not-found expiry and pessimistic primary mismatch, recovers async commit or forced 2PC, returns the minimum non-negative remaining TTL, and classifies read-through versus ignorable transaction IDs. Snapshot contexts carry cumulative `resolved_locks` and `committed_locks` hints on retries. One resolved async transaction is cleaned only once per call even if several of its locks were encountered. |
+| Ordinary and lite `ResolveLock` | The configured source default threshold of 512 selects exact-key lite cleanup; explicit source `Lite` overrides that threshold for both synchronous and read cleanup, and an already-checked lite primary is skipped. Point Get sets explicit Lite at all four native point-request constructions while BatchGet and Scan do not. Multi-key lite cleanup is batched once per current region. Non-lite resolution deduplicates cleaned regions and enables TiKV-side async resolution only for NextGen read cleanup. Region, leader, transport, and key failures preserve retry/error ownership. |
+| Pessimistic and batch GC cleanup | A nonzero `CheckTxnStatus` TTL leaves a pessimistic lock live; only a finalized status sends `PessimisticRollback`. Exact-key cleanup remains the default. Source callers that set `PessimisticRegionResolve` send one keyless rollback per transaction/region and deduplicate subsequent locks in that region: split-region, ordinary prewrite, transaction-file split/prewrite, and normal/force pessimistic-lock conflicts. Pipelined flush and explicit rollback remain exact-key. Batch GC forces status, recovers async commit, retains txn-file flags, suppresses empty batch RPCs, records cleaned regions, and sends the 20-second write execution limit. |
 | Async-commit secondary checks and recovery | Secondary keys are grouped by region, checked concurrently, merged with missing-lock/commit-TS consistency checks, and fall back to forced 2PC for non-async locks. Recovery resolves the exact returned secondary-plus-primary key set per current region rather than broad whole-region scans. |
-| `asyncResolveTaskPool` and process semaphore | Every read cleanup, secondary check, outer async-commit cleanup, and per-region recovery task uses one process-wide 10,000-permit nonblocking pool. Saturation executes the same future inline and records the source fallback label. Running gauges begin only when tasks run and are balanced by cancellation-safe drop guards. Nested fanout reuses the same pool. |
+| `asyncResolveTaskPool` and process semaphore | Every read cleanup, secondary check, outer async-commit cleanup, and per-region recovery task uses one process-wide nonblocking pool whose public `ASYNC_RESOLVE_LOCK_SEMAPHORE_LIMIT` is 10,000. Saturation executes the same future inline and records the source fallback label. Running gauges begin only when tasks run and are balanced by cancellation-safe drop guards. Nested fanout reuses the same pool. |
 | `NewLockResolver`, `Close`, `KVStore` ownership | `ResolveLocksContext` is the shared resolver state carried by every transaction-client clone, snapshot, transaction, committer, and request plan. `TransactionClient::close` first cancels and joins resolver tasks, then closes shared transport. `LockResolver::close` is available to direct owners. This is the native owner counterpart of `KVStore.lockResolver` and `KVStore.Close`. |
 | Resolving-lock observer | Stable source tokens support record, update, done, and flattened snapshots. `ResolvingLocksGuard` spans the complete retry future and removes state on success, error, or Rust future cancellation. Snapshot, prewrite, pessimistic, transaction-file, split, and pipelined-flush owners share the client resolver; a dedicated pipelined regression proves lifetime and cancellation. |
 | Request context, metrics, detail, logging, tracing/failpoints | Resolver RPCs retain keyspace, request source, interceptor, resource-group, resource-control, RU details, txn-file state, and the source 20-second write duration. Action counters execute at physical-shard/retry boundaries; async gauges/fallbacks use every source label. Rust futures and deterministic hooks replace Go trace/context/failpoint plumbing without removing observable timing or error branches. |
@@ -36,21 +36,32 @@ The source `storage` interface maps to the existing `PdClient`, region cache, st
 
 The source resolver intentionally returns TTL and lock classification; the caller owns its retry class. Snapshot Get/BatchGet/Scan consume that output through the cumulative `txnLockFast` backoffer. Scanner/callback work remains charged to the separate completed `txnkv/txnsnapshot` receipt, not duplicated here. Transaction prewrite and pipelined callers use their source `txnLock` policy and share the resolver observer.
 
+## Re-audit corrections and red/green evidence
+
+The independent re-audit found four production divergences that the earlier receipt missed:
+
+1. A determined async-commit cache entry retained only commit/rollback status. On the second resolution of the same transaction, Rust skipped `CheckSecondaryLocks` but knew only the encountered key; the red cache port observed `[[secondary, primary], [secondary]]` instead of the source `[[secondary, primary], [secondary, primary]]`. Cached primary metadata now survives until the matching FIFO eviction.
+2. Rust had no `PessimisticRegionResolve` path and sent one keyed rollback for every encountered lock. The red regression observed `[[key2], [key3]]`; the source sends one empty-key request for the region. The context option, region deduplication, and every source-true consumer are now wired while source-false callers remain unchanged.
+3. Rust rolled back a pessimistic lock even when `CheckTxnStatus` returned a nonzero TTL. The red regression counted one rollback for a live lock; the source returns it as blocking and sends none. A complementary finalized-status test proves rollback still occurs exactly once.
+4. Point Get relied only on the global transaction-size threshold. The source sets `resolveLite=true` explicitly, so a large transaction must still clean only the encountered key. Forced Lite now reaches read and synchronous cleanup, with above-threshold regressions for both paths.
+
+The re-audit also restored source-public constants for the 2,048-entry cache and 10,000-task semaphore, with an ordinary downstream compilation/assertion gate. The five ordinary Go tests below are no longer represented by grouped Rust evidence: each has its own independently named Rust port.
+
 ## Original test and support mapping
 
 Mechanical enumeration finds five ordinary test declarations plus `TestMain`, and no benchmark or example:
 
 | Source declaration/support | Rust evidence |
 | --- | --- |
-| `TestExtractLocksFromKeyErrExpandsSharedLockHolders` | `source_key_error_lock_extraction_expands_shared_holders` |
-| `TestExtractLocksFromKeyErrPreservesExclusiveLock` | `source_key_error_lock_extraction_expands_shared_holders` exclusive branch |
-| `TestExtractLocksFromKeyErrReturnsKeyError` | `source_key_error_lock_extraction_expands_shared_holders` typed-error branch |
-| `TestLockResolverCache` | `source_cached_async_commit_status_skips_secondary_recovery` and `source_resolved_status_cache_is_fifo_and_bounded` |
-| `TestTryAsyncResolve` | `source_async_resolve_pool_releases_capacity_and_falls_back` and `source_read_cleanup_metrics_track_running_tasks_and_fallbacks`; these cover custom capacity, admission, saturation rejection/inline fallback, permit reuse, gauge balance, close cancellation/join, and post-close rejection |
+| `TestExtractLocksFromKeyErrExpandsSharedLockHolders` | `source_test_extract_locks_from_key_err_expands_shared_lock_holders`; preserves the source keys, holder transaction IDs 101/102, `PessimisticLock`/`Lock` types, and wire order |
+| `TestExtractLocksFromKeyErrPreservesExclusiveLock` | `source_test_extract_locks_from_key_err_preserves_exclusive_lock`; preserves the exact exclusive key and version 7 |
+| `TestExtractLocksFromKeyErrReturnsKeyError` | `source_test_extract_locks_from_key_err_returns_key_error`; uses the source `AlreadyExist` non-lock payload and requires an error |
+| `TestLockResolverCache` | `source_test_lock_resolver_cache`; performs the source first/second resolution sequence, proves one secondary-status lookup, and proves both cleanups contain secondary plus primary. Separate FIFO/conflict tests cover the cache implementation boundary. |
+| `TestTryAsyncResolve` | `source_test_try_async_resolve`; covers source capacity 5, admission, saturation rejection/inline fallback, permit reuse, gauge balance, close cancellation/join, post-close rejection, the public 10,000 limit, and default use of the process-global semaphore |
 | `TestMain` goleak harness | resolver close cancels and joins a deliberately blocked task; focused and full library suites finish with no retained resolver tasks |
 | `test_probe.go` | direct package-private cache/pool construction, exact action/gauge accessors, deterministic mock dispatch hooks, `ResolvingLock`, and source-named focused tests cover every exposed probe capability |
 
-Additional source-derived tests cover shared-wrapper misuse, resolving token lifetime, empty batch suppression, pessimistic rollback, region retries, lite thresholds and key scoping, detached read-through, per-region batching, NextGen async requests, TTL minima, committed/live status handling, async-commit recovery, resource/RU propagation, and pipelined observer ownership.
+Additional source-derived tests cover the shared-wrapper representation not asserted by the original tests, resolving token lifetime, empty batch suppression, live/finalized pessimistic status, exact-key and region-wide rollback, region retries, implicit/explicit lite thresholds and key scoping, detached read-through, per-region batching, NextGen async requests, TTL minima, committed/live status handling, duplicate async-lock encounters, cached async-commit recovery, resource/RU propagation, and pipelined observer ownership.
 
 ## Consumer and integration audit
 
@@ -68,16 +79,25 @@ Completed `config/retry`, `internal/client`, `internal/locate`, `internal/apicod
 
 Final validation on `nightly-2026-08-22` used the exact batch code:
 
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib transaction:: --quiet`: 201 passed.
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib --quiet`: 588 passed.
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features --quiet`: 588 passed.
-- `cargo +nightly-2026-08-22 check -p tikv-client --all-targets --all-features`: passed with the existing warning backlog.
-- `cargo +nightly-2026-08-22 clippy -p tikv-client --lib --all-features --message-format short`: passed with the existing warning backlog.
-- `cargo +nightly-2026-08-22 doc -p tikv-client --no-deps --all-features`: passed with the pre-existing `src/raw/client.rs` invalid-HTML warning.
-- `cargo +nightly-2026-08-22 test -p tikv-client --doc --all-features --quiet`: 50 passed.
+- `cargo +nightly-2026-08-22 test -p tikv-client --lib transaction::lock::tests:: --no-default-features --quiet`: 37 passed.
+- `cargo +nightly-2026-08-22 test -p tikv-client --lib transaction::lock::tests:: --all-features --quiet`: 37 passed.
+- `cargo +nightly-2026-08-22 test -p tikv-client --lib source_ --no-default-features --quiet`: 749 passed.
+- `cargo +nightly-2026-08-22 test -p tikv-client --lib source_ --all-features --quiet`: 746 passed.
+- `cargo +nightly-2026-08-22 test --workspace --lib --no-default-features --quiet`: the main crate passed 1,018 tests with one unrelated ignore; companion crates passed 2 and 32 tests.
+- `cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features --quiet`: 1,015 passed with one unrelated ignore.
+- `cargo +nightly-2026-08-22 test -p tikv-client --test public_injected_client_tests --no-default-features --quiet`: 3 passed.
+- `cargo +nightly-2026-08-22 check --workspace --all-targets --all-features`: passed.
+- `cargo +nightly-2026-08-22 clippy --workspace --all-targets --all-features -- -D warnings`: passed without exclusions.
+- `RUSTDOCFLAGS='-D warnings' cargo +nightly-2026-08-22 doc --workspace --all-features --no-deps --document-private-items`: passed.
+- `cargo +nightly-2026-08-22 test --doc --workspace --all-features --quiet`: 51 passed.
 - `cargo +nightly-2026-08-22 fmt --all -- --check` and `git diff --check`: passed.
 - Mechanical source audit: exactly six artifacts, 2,144 lines, six declarations including `TestMain`, no benchmark/example, and all hashes match the receipt.
 
+The pinned source itself also passed with the configured Go 1.25.12 toolchain:
+
+- `env GOCACHE=/private/tmp/client-go-txnlock-build-cache GOMODCACHE=/private/tmp/client-go-txnlock-module-cache /private/tmp/go1.25.12/bin/go test ./txnkv/txnlock -count=1`: passed.
+- `env GOCACHE=/private/tmp/client-go-txnlock-race-build-cache GOMODCACHE=/private/tmp/client-go-txnlock-module-cache /private/tmp/go1.25.12/bin/go test -race ./txnkv/txnlock -count=1`: passed; macOS emitted only its known malformed `LC_DYSYMTAB` linker warning.
+
 Package-local source tests require neither UniStore nor a live TiKV/PD cluster: the original cache test uses a nil store and the pool test uses in-process synchronization. Deterministic Rust PD/KV request mocks therefore cover the complete original local boundary; UniStore remains available for higher-level reusable integration tests when needed.
 
-The configured Go 1.25.12 toolchain subsequently passed the complete pinned local and race suites. End-to-end cluster behavior remains owned by the completed high-level integration and differential receipts.
+End-to-end cluster behavior remains owned by the completed high-level integration and differential receipts.

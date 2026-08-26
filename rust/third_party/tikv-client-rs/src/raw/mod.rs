@@ -27,6 +27,14 @@ mod requests;
 /// limit use the standard atomic `load`/`store` API.
 pub static MAX_RAW_KV_SCAN_LIMIT: AtomicU32 = AtomicU32::new(10_240);
 
+/// Maximum combined key/value bytes accumulated before starting another raw
+/// BatchPut request.
+///
+/// This is the ordinary-build Rust counterpart of client-go's
+/// `ConfigProbe.GetRawBatchPutSize` test/integration surface.
+#[doc(hidden)]
+pub const RAW_BATCH_PUT_SIZE: u64 = 16 * 1024;
+
 /// Aggregate checksum for the key/value pairs in a raw-key range.
 ///
 /// `crc64_xor` is the XOR of the per-pair CRC64 values. `total_bytes` includes

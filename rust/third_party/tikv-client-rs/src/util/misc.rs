@@ -139,12 +139,12 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    use chrono::{TimeZone, Utc};
+    use chrono::{FixedOffset, TimeZone, Utc};
 
     use super::*;
 
     #[test]
-    fn compatible_gc_time_matrix_matches_source() {
+    fn source_test_compatible_parse_gc_time() {
         let valid = [
             "20181218-19:53:37 +0800 CST",
             "20181218-19:53:37 +0800 MST",
@@ -158,7 +158,15 @@ mod tests {
         ];
         let expected = Utc.with_ymd_and_hms(2018, 12, 18, 11, 53, 37).unwrap();
         for value in valid {
-            assert_eq!(compatible_parse_gc_time(value).unwrap().to_utc(), expected);
+            let parsed = compatible_parse_gc_time(value).unwrap();
+            assert_eq!(parsed.to_utc(), expected);
+            assert_eq!(
+                parsed
+                    .with_timezone(&FixedOffset::east_opt(8 * 60 * 60).unwrap())
+                    .format("%Y%m%d-%H:%M:%S%.3f %z")
+                    .to_string(),
+                "20181218-19:53:37.000 +0800"
+            );
         }
         for value in [
             "",
@@ -175,18 +183,38 @@ mod tests {
     }
 
     #[test]
-    fn source_byte_and_range_helpers() {
+    fn source_uncovered_byte_helpers() {
         assert_eq!(format_bytes(1_024), "1024 Bytes");
         assert_eq!(format_bytes(1_025), "1.00 KB");
         assert_eq!(format_bytes(10_752), "10.5 KB");
         assert_eq!(format_bytes(1 << 20), "1024 KB");
         assert_eq!(format_bytes((1 << 20) + 1), "1.00 MB");
         assert_eq!(bytes_to_string(2 << 20), "2 MB");
-        assert_eq!(get_max_start_key(b"", b"a"), b"a");
-        assert_eq!(get_max_start_key(b"b", b"a"), b"b");
-        assert_eq!(get_min_end_key(b"", b"a"), b"a");
-        assert_eq!(get_min_end_key(b"a", b""), b"a");
-        assert_eq!(get_min_end_key(b"b", b"a"), b"a");
+    }
+
+    #[test]
+    fn source_test_get_max_start_key() {
+        for (left, right, expected) in [
+            (b"".as_slice(), b"".as_slice(), b"".as_slice()),
+            (b"".as_slice(), b"a".as_slice(), b"a".as_slice()),
+            (b"a".as_slice(), b"a".as_slice(), b"a".as_slice()),
+        ] {
+            assert_eq!(get_max_start_key(left, right), expected);
+            assert_eq!(get_max_start_key(right, left), expected);
+        }
+    }
+
+    #[test]
+    fn source_test_get_min_end_key() {
+        for (left, right, expected) in [
+            (b"".as_slice(), b"".as_slice(), b"".as_slice()),
+            (b"a".as_slice(), b"".as_slice(), b"a".as_slice()),
+            (b"a".as_slice(), b"a".as_slice(), b"a".as_slice()),
+            (b"a".as_slice(), b"b".as_slice(), b"a".as_slice()),
+        ] {
+            assert_eq!(get_min_end_key(left, right), expected);
+            assert_eq!(get_min_end_key(right, left), expected);
+        }
     }
 
     #[test]

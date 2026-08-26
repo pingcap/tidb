@@ -75,32 +75,48 @@ impl RateLimit {
 
 #[cfg(test)]
 mod tests {
+    use std::any::Any;
     use std::sync::Arc;
 
     use super::*;
 
+    fn panic_message(panic: Box<dyn Any + Send>) -> String {
+        panic
+            .downcast_ref::<&str>()
+            .map(|message| (*message).to_owned())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "non-string panic".to_owned())
+    }
+
     #[tokio::test]
-    async fn source_token_capacity_cancellation_and_redundant_put() {
+    async fn source_test_rate_limit() {
         let limiter = Arc::new(RateLimit::new(1));
         assert_eq!(limiter.capacity(), 1);
-        assert!(std::panic::catch_unwind(|| limiter.put_token()).is_err());
+        assert_eq!(
+            panic_message(std::panic::catch_unwind(|| limiter.put_token()).unwrap_err()),
+            "put a redundant token"
+        );
         let done = Cancellation::default();
         assert!(!limiter.get_token(&done).await);
-
-        let waiter = {
-            let limiter = limiter.clone();
-            let done = done.clone();
-            tokio::spawn(async move { limiter.get_token(&done).await })
-        };
-        tokio::task::yield_now().await;
         limiter.put_token();
-        assert!(!waiter.await.unwrap());
-        limiter.put_token();
+        assert_eq!(
+            panic_message(std::panic::catch_unwind(|| limiter.put_token()).unwrap_err()),
+            "put a redundant token"
+        );
 
         assert!(!limiter.get_token(&done).await);
         done.cancel();
         assert!(limiter.get_token(&done).await);
+
+        // The Go test sends one consumable value through `done`; a fresh
+        // native cancellation handle represents the post-consumption wait.
+        let next_done = Cancellation::default();
+        let waiter = {
+            let limiter = limiter.clone();
+            tokio::spawn(async move { limiter.get_token(&next_done).await })
+        };
+        tokio::task::yield_now().await;
         limiter.put_token();
-        assert!(std::panic::catch_unwind(|| limiter.put_token()).is_err());
+        assert!(!waiter.await.unwrap());
     }
 }

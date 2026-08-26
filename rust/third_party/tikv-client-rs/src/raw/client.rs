@@ -20,7 +20,6 @@ use crate::proto::kvrpcpb::{RawScanRequest, RawScanResponse};
 use crate::proto::metapb;
 use crate::raw::lowering::*;
 use crate::raw::MAX_RAW_KV_SCAN_LIMIT;
-use crate::request::CollectSingle;
 use crate::request::Dispatch;
 use crate::request::EncodeKeyspace;
 use crate::request::KeyMode;
@@ -31,6 +30,7 @@ use crate::request::PlanBuilder;
 use crate::request::TruncateKeyspace;
 use crate::request::{build_keyspace_name, keyspace_from_pd_meta, Keyspace};
 use crate::request::{plan, Collect};
+use crate::request::{CollectError, CollectSingle, ResponseWithShard};
 use crate::retry::{RetryBackoffer, BO_REGION_MISS};
 use crate::store::{HasRegionError, RegionStore};
 use crate::Backoff;
@@ -81,6 +81,23 @@ impl Drop for RawKvMetricTimer {
             RawKvMetric::Command(command) => crate::stats::observe_rawkv_command(command, duration),
             RawKvMetric::Checksum => crate::stats::observe_rawkv_checksum(duration),
         }
+    }
+}
+
+/// RawKV source methods return a server string directly. The shared request
+/// planner represents per-shard errors as vectors so transactional callers can
+/// retain every failure; collapse only one-error wrappers at this public RawKV
+/// boundary.
+fn normalize_raw_error(error: Error) -> Error {
+    match error {
+        Error::KvError { message } => Error::StringError(message),
+        Error::ExtractedErrors(mut errors) if errors.len() == 1 => {
+            normalize_raw_error(errors.pop().expect("one extracted error"))
+        }
+        Error::MultipleKeyErrors(mut errors) if errors.len() == 1 => {
+            normalize_raw_error(errors.pop().expect("one key error"))
+        }
+        error => error,
     }
 }
 
@@ -215,21 +232,36 @@ impl Client<PdRpcClient> {
 }
 
 impl<PdC: PdClient> Client<PdC> {
-    #[cfg(test)]
-    pub(super) fn from_test_rpc(
+    /// Construct a RawKV client over an injected PD/routing/KV owner.
+    ///
+    /// This is the Rust counterpart of client-go's ordinary-build
+    /// `ClientProbe` injection path. Embedded stores and downstream mock
+    /// packages can use it without enabling crate-internal test features.
+    #[doc(hidden)]
+    pub fn new_with_pd_client(
         rpc: Arc<PdC>,
+        cluster_id: u64,
         keyspace: Keyspace,
         keyspace_name: Option<String>,
     ) -> Self {
         Self {
             rpc,
-            cluster_id: 0,
+            cluster_id,
             cf: None,
             backoff: DEFAULT_REGION_BACKOFF,
             atomic: false,
             keyspace,
             keyspace_name,
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn from_test_rpc(
+        rpc: Arc<PdC>,
+        keyspace: Keyspace,
+        keyspace_name: Option<String>,
+    ) -> Self {
+        Self::new_with_pd_client(rpc, 0, keyspace, keyspace_name)
     }
 
     /// Return the PD cluster ID associated with this client.
@@ -464,7 +496,7 @@ impl<PdC: PdClient> Client<PdC> {
             .extract_error()
             .post_process_default()
             .plan();
-        plan.execute().await
+        plan.execute().await.map_err(normalize_raw_error)
     }
 
     /// Create a new 'batch get' request.
@@ -508,7 +540,8 @@ impl<PdC: PdClient> Client<PdC> {
             .plan();
         let values = plan
             .execute()
-            .await?
+            .await
+            .map_err(normalize_raw_error)?
             .into_iter()
             .map(|pair: KvPair| (pair.key().clone(), pair.value().clone()))
             .collect::<HashMap<_, _>>();
@@ -538,7 +571,7 @@ impl<PdC: PdClient> Client<PdC> {
             .retry_multi_region_with_retry_backoffer(self.retry_backoffer())
             .merge(Collect)
             .plan();
-        plan.execute().await
+        plan.execute().await.map_err(normalize_raw_error)
     }
 
     /// Create a new 'get key ttl' request.
@@ -572,7 +605,7 @@ impl<PdC: PdClient> Client<PdC> {
             .extract_error()
             .post_process_default()
             .plan();
-        plan.execute().await
+        plan.execute().await.map_err(normalize_raw_error)
     }
 
     /// Create a new 'put' request.
@@ -615,7 +648,7 @@ impl<PdC: PdClient> Client<PdC> {
             .merge(CollectSingle)
             .extract_error()
             .plan();
-        plan.execute().await?;
+        plan.execute().await.map_err(normalize_raw_error)?;
         Ok(())
     }
 
@@ -708,7 +741,7 @@ impl<PdC: PdClient> Client<PdC> {
             .retry_multi_region_with_retry_backoffer(self.retry_backoffer())
             .extract_error()
             .plan();
-        plan.execute().await?;
+        plan.execute().await.map_err(normalize_raw_error)?;
         Ok(())
     }
 
@@ -740,7 +773,7 @@ impl<PdC: PdClient> Client<PdC> {
             .merge(CollectSingle)
             .extract_error()
             .plan();
-        plan.execute().await?;
+        plan.execute().await.map_err(normalize_raw_error)?;
         Ok(())
     }
 
@@ -773,7 +806,7 @@ impl<PdC: PdClient> Client<PdC> {
             .retry_multi_region_with_retry_backoffer(self.retry_backoffer())
             .extract_error()
             .plan();
-        plan.execute().await?;
+        plan.execute().await.map_err(normalize_raw_error)?;
         Ok(())
     }
 
@@ -819,13 +852,31 @@ impl<PdC: PdClient> Client<PdC> {
             return Ok(());
         }
         let range = range.encode_keyspace(self.keyspace, KeyMode::Raw);
-        let request = new_raw_delete_range_request(range, self.cf.clone());
-        let plan = self
-            .max_execution_plan(request)
-            .retry_multi_region_with_retry_backoffer(self.retry_backoffer())
-            .extract_error()
-            .plan();
-        plan.execute().await?;
+        let (mut start_key, end_key) = range.into_keys();
+        while end_key.as_ref().is_none_or(|end| &start_key < end) {
+            let request = new_raw_delete_range_request(
+                (start_key.clone(), end_key.clone()).into(),
+                self.cf.clone(),
+            );
+            let mut responses = self
+                .max_execution_plan(request)
+                .preserve_shard()
+                .retry_multi_region_with_retry_backoffer(self.retry_backoffer())
+                .one_region(false)
+                .merge(CollectError)
+                .plan()
+                .execute()
+                .await
+                .map_err(normalize_raw_error)?;
+            let ResponseWithShard(_, (_, actual_end_key)) = responses
+                .pop()
+                .expect("a non-empty RawKV range has one boundary-region response");
+            debug_assert!(responses.is_empty());
+            if actual_end_key.is_empty() {
+                break;
+            }
+            start_key = actual_end_key.into();
+        }
         Ok(())
     }
 
@@ -838,13 +889,33 @@ impl<PdC: PdClient> Client<PdC> {
         let _metric = RawKvMetricTimer::checksum();
         debug!("invoking raw checksum request");
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Raw);
-        let request = new_raw_checksum_request(range);
-        self.plan(request)
-            .retry_multi_region_with_retry_backoffer(self.retry_backoffer())
-            .merge(Collect)
-            .plan()
-            .execute()
-            .await
+        let (mut start_key, end_key) = range.into_keys();
+        let mut checksum = crate::RawChecksum::default();
+        while end_key.as_ref().is_none_or(|end| &start_key < end) {
+            let request = new_raw_checksum_request((start_key.clone(), end_key.clone()).into());
+            let mut responses = self
+                .plan(request)
+                .preserve_shard()
+                .retry_multi_region_with_retry_backoffer(self.retry_backoffer())
+                .one_region(false)
+                .merge(CollectError)
+                .plan()
+                .execute()
+                .await
+                .map_err(normalize_raw_error)?;
+            let ResponseWithShard(response, (_, actual_end_key)) = responses
+                .pop()
+                .expect("a non-empty RawKV range has one boundary-region response");
+            debug_assert!(responses.is_empty());
+            checksum.crc64_xor ^= response.checksum;
+            checksum.total_kvs += response.total_kvs;
+            checksum.total_bytes += response.total_bytes;
+            if actual_end_key.is_empty() {
+                break;
+            }
+            start_key = actual_end_key.into();
+        }
+        Ok(checksum)
     }
 
     /// Create a new 'scan' request.
@@ -1074,7 +1145,7 @@ impl<PdC: PdClient> Client<PdC> {
             .extract_error()
             .post_process_default()
             .plan();
-        plan.execute().await
+        plan.execute().await.map_err(normalize_raw_error)
     }
 
     pub async fn coprocessor(
@@ -1182,7 +1253,11 @@ impl<PdC: PdClient> Client<PdC> {
                 .unwrap_or(Vec::new());
 
             if !kvs.is_empty() {
-                current_limit -= kvs.len() as u32;
+                // client-go relies on TiKV to enforce the request limit. If a
+                // malformed response contains more pairs, it returns every
+                // pair rather than panicking or truncating client-side.
+                current_limit =
+                    current_limit.saturating_sub(u32::try_from(kvs.len()).unwrap_or(u32::MAX));
                 result.append(&mut kvs);
             }
             if (!reverse && end_key.clone().is_some_and(|end| end <= next_key))
@@ -1198,9 +1273,6 @@ impl<PdC: PdClient> Client<PdC> {
                 current_key = next_key;
             }
         }
-
-        // limit is a soft limit, so we need check the number of results
-        result.truncate(limit as usize);
 
         Ok(result)
     }
@@ -2029,10 +2101,35 @@ mod tests {
             };
             assert!(matches!(
                 result,
-                Err(Error::MultipleKeyErrors(errors))
-                    if matches!(errors.as_slice(), [Error::KvError { message }] if message == error)
+                Err(Error::StringError(message)) if message == error
             ));
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_public_raw_error_text_matches_client_go() -> Result<()> {
+        let client =
+            Client::from_test_rpc(Arc::new(MockPdClient::default()), Keyspace::Disable, None);
+        assert_eq!(
+            client
+                .compare_and_swap(b"key".to_vec(), None, b"value".to_vec())
+                .await
+                .unwrap_err()
+                .to_string(),
+            "using CompareAndSwap without enable atomic mode"
+        );
+        assert_eq!(
+            client
+                .scan(
+                    Vec::<u8>::new()..,
+                    MAX_RAW_KV_SCAN_LIMIT.load(Ordering::Relaxed) + 1,
+                )
+                .await
+                .unwrap_err()
+                .to_string(),
+            "limit should be less than MaxRawKVScanLimit"
+        );
         Ok(())
     }
 

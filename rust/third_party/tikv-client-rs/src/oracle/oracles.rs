@@ -13,8 +13,9 @@ use tokio::sync::{mpsc, oneshot, Notify};
 use tokio::task::JoinHandle;
 
 use super::{
-    extract_physical, get_physical, get_time_from_timestamp, system_time_to_timestamp, Oracle,
-    OracleError, OracleOption, OracleResult, ReadTimestampValidator, TimestampFuture,
+    add_wrapping_nanoseconds, extract_physical, get_physical, get_time_from_timestamp,
+    system_time_to_timestamp, Oracle, OracleError, OracleOption, OracleResult,
+    ReadTimestampValidator, TimestampFuture,
 };
 
 /// Enables source-compatible validation of user-supplied read timestamps by
@@ -26,6 +27,7 @@ const ADAPTIVE_SHRINKING_PRESERVE: Duration = Duration::from_millis(100);
 const ADAPTIVE_BLOCK_RECOVER_THRESHOLD: Duration = Duration::from_millis(200);
 const ADAPTIVE_RECOVER_PER_SECOND: Duration = Duration::from_millis(20);
 const ADAPTIVE_DELAY_BEFORE_RECOVERING: Duration = Duration::from_secs(5 * 60);
+const SLOW_TIMESTAMP_FETCH: Duration = Duration::from_millis(30);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AdaptiveUpdateIntervalState {
@@ -145,6 +147,8 @@ pub struct InvalidUpdateIntervalError;
 pub enum PdOracleError {
     #[error("get low resolution timestamp fail, invalid txnScope = {0}")]
     InvalidLowResolutionScope(String),
+    #[error("get low resolution timestamp async fail, invalid txnScope = {0}")]
+    InvalidLowResolutionAsyncScope(String),
     #[error("get stale timestamp fail, txnScope: {0}")]
     MissingStaleScope(String),
     #[error("invalid prevSecond {0}")]
@@ -289,50 +293,67 @@ impl PdOracle {
     }
 
     async fn fetch_timestamp(&self) -> OracleResult<u64> {
+        let started = Instant::now();
         let (physical, logical) = self.state.source.get_timestamp().await?;
+        let elapsed = started.elapsed();
+        if elapsed > SLOW_TIMESTAMP_FETCH {
+            log::warn!("get timestamp too slow: {elapsed:?}");
+        }
         Ok(super::compose_timestamp(physical, logical))
     }
 
     async fn current_timestamp_for_validation(&self, option: OracleOption) -> OracleResult<u64> {
         let scope = Self::scope(&option).to_owned();
-        let flight = {
+        let (flight, sender) = {
             let mut flights = self.state.validation_flights.lock().await;
             if let Some(flight) = flights.get(&scope) {
-                flight.clone()
+                (flight.clone(), None)
             } else {
-                let oracle = self.clone();
-                let source_option = option.clone();
+                let id = self
+                    .state
+                    .next_validation_flight_id
+                    .fetch_add(1, Ordering::AcqRel);
+                let (sender, receiver) = oneshot::channel::<ValidationResult>();
                 let result = async move {
-                    crate::stats::increment_validate_read_ts_from_pd();
-                    let result = oracle
-                        .get_timestamp(&source_option)
+                    receiver
                         .await
-                        .map_err(|error| error.to_string());
-                    let _ = fail::eval("getCurrentTSForValidationBeforeReturn", |_| ());
-                    result
+                        .unwrap_or_else(|error| Err(error.to_string()))
                 }
                 .boxed()
                 .shared();
-                let flight = ValidationFlight {
-                    id: self
-                        .state
-                        .next_validation_flight_id
-                        .fetch_add(1, Ordering::AcqRel),
-                    result,
-                };
+                let flight = ValidationFlight { id, result };
                 flights.insert(scope.clone(), flight.clone());
-                flight
+                (flight, Some(sender))
             }
         };
-        let result = flight.result.clone().await;
-        let mut flights = self.state.validation_flights.lock().await;
-        if flights
-            .get(&scope)
-            .is_some_and(|current| current.id == flight.id)
-        {
-            flights.remove(&scope);
+        if let Some(sender) = sender {
+            let oracle = self.clone();
+            let source_option = option.clone();
+            let scope = scope.clone();
+            let flight_id = flight.id;
+            tokio::spawn(async move {
+                crate::stats::increment_validate_read_ts_from_pd();
+                let result = oracle
+                    .get_timestamp(&source_option)
+                    .await
+                    .map_err(|error| error.to_string());
+                let _ = fail::eval("getCurrentTSForValidationBeforeReturn", |_| ());
+                let mut flights = oracle.state.validation_flights.lock().await;
+                if flights
+                    .get(&scope)
+                    .is_some_and(|current| current.id == flight_id)
+                {
+                    flights.remove(&scope);
+                }
+                drop(flights);
+                let _ = sender.send(result);
+            });
         }
-        result.map_err(|error| Box::new(PdOracleError::Validation(error)) as OracleError)
+        flight
+            .result
+            .clone()
+            .await
+            .map_err(|error| Box::new(PdOracleError::Validation(error)) as OracleError)
     }
 
     fn stale_timestamp_from_last(last: LastTimestamp, previous_seconds: u64) -> OracleResult<u64> {
@@ -343,10 +364,11 @@ impl PdOracle {
                 previous_seconds,
             )));
         }
-        let elapsed_since_arrival = signed_duration_between(SystemTime::now(), last.arrival);
-        let stale_time = add_signed_millis(
+        let elapsed_since_arrival = signed_duration_nanoseconds(SystemTime::now(), last.arrival);
+        let stale_time = add_wrapping_nanoseconds(
             physical_time,
-            elapsed_since_arrival.wrapping_sub((previous_seconds as i64).wrapping_mul(1_000)),
+            elapsed_since_arrival
+                .wrapping_sub((previous_seconds as i64).wrapping_mul(1_000_000_000)),
         );
         Ok(system_time_to_timestamp(stale_time))
     }
@@ -373,22 +395,40 @@ impl PdOracle {
         let oracle = self.clone();
         let task = tokio::spawn(async move {
             let mut interval = oracle.adaptive_update_interval();
+            let mut deadline = tokio::time::Instant::now() + interval;
             loop {
                 if oracle.state.closed.load(Ordering::Acquire) {
                     return;
                 }
                 tokio::select! {
-                    _ = tokio::time::sleep(interval) => {
-                        interval = oracle.next_update_interval(SystemTime::now(), None);
-                        oracle.refresh_timestamps().await;
+                    _ = tokio::time::sleep_until(deadline) => {
+                        let now = SystemTime::now();
+                        let next_interval = oracle.next_update_interval(now, None);
+                        oracle.refresh_timestamps(now).await;
+                        if next_interval == interval {
+                            deadline += interval;
+                            let current = tokio::time::Instant::now();
+                            if deadline <= current {
+                                deadline = current + interval;
+                            }
+                        } else {
+                            interval = next_interval;
+                            deadline = tokio::time::Instant::now() + interval;
+                        }
                     }
                     required = shrink_receiver.recv() => {
                         let Some(required) = required else { return; };
                         let now = SystemTime::now();
-                        interval = oracle.next_update_interval(now, Some(required));
-                        let last_tick = oracle.state.adaptive_state.lock().unwrap().last_tick;
-                        if signed_duration_between(now, last_tick) >= interval.as_millis() as i64 {
-                            oracle.refresh_timestamps().await;
+                        let next_interval = oracle.next_update_interval(now, Some(required));
+                        if next_interval != interval {
+                            interval = next_interval;
+                            let last_tick = oracle.state.adaptive_state.lock().unwrap().last_tick;
+                            if signed_duration_nanoseconds(now, last_tick)
+                                >= interval.as_nanos().min(i64::MAX as u128) as i64
+                            {
+                                oracle.refresh_timestamps(SystemTime::now()).await;
+                            }
+                            deadline = tokio::time::Instant::now() + interval;
                         }
                     }
                     _ = oracle.state.close_notify.notified() => return,
@@ -398,7 +438,7 @@ impl PdOracle {
         *self.state.update_task.lock().unwrap() = Some(task);
     }
 
-    async fn refresh_timestamps(&self) {
+    async fn refresh_timestamps(&self, tick_time: SystemTime) {
         let scopes: Vec<String> = self
             .state
             .last_timestamps
@@ -412,7 +452,7 @@ impl PdOracle {
                 self.set_last_timestamp(timestamp, &scope);
             }
         }
-        self.state.adaptive_state.lock().unwrap().last_tick = SystemTime::now();
+        self.state.adaptive_state.lock().unwrap().last_tick = tick_time;
     }
 
     fn next_update_interval(
@@ -437,8 +477,10 @@ impl PdOracle {
                 .max(MIN_ADAPTIVE_UPDATE_INTERVAL)
         } else if current != configured
             && state.last_short_staleness_read.is_some_and(|last| {
-                signed_duration_between(now, last)
-                    < ADAPTIVE_DELAY_BEFORE_RECOVERING.as_millis() as i64
+                signed_duration_nanoseconds(now, last)
+                    < ADAPTIVE_DELAY_BEFORE_RECOVERING
+                        .as_nanos()
+                        .min(i64::MAX as u128) as i64
             })
         {
             state.state = AdaptiveUpdateIntervalState::Adapting;
@@ -447,12 +489,12 @@ impl PdOracle {
             state.state = AdaptiveUpdateIntervalState::Normal;
             current
         } else {
-            let elapsed_millis = signed_duration_between(now, state.last_tick).max(0) as u64;
-            let growth_millis = elapsed_millis
-                .saturating_mul(ADAPTIVE_RECOVER_PER_SECOND.as_millis() as u64)
-                / 1_000;
+            let elapsed_seconds =
+                signed_duration_nanoseconds(now, state.last_tick).max(0) as f64 / 1_000_000_000.0;
+            let growth_nanoseconds =
+                (elapsed_seconds * ADAPTIVE_RECOVER_PER_SECOND.as_nanos() as f64) as u64;
             let recovered = current
-                .saturating_add(Duration::from_millis(growth_millis))
+                .saturating_add(Duration::from_nanos(growth_nanoseconds))
                 .min(configured);
             state.state = if recovered == configured {
                 AdaptiveUpdateIntervalState::Normal
@@ -516,19 +558,39 @@ impl PdOracle {
 #[error("timestamp future was already waited")]
 struct TimestampFutureAlreadyWaited;
 
-struct PdFuture(Mutex<Option<oneshot::Receiver<OracleResult<u64>>>>);
+struct PdFuture(Mutex<Option<JoinHandle<OracleResult<u64>>>>);
+
+struct AbortTaskOnDrop<T>(Option<JoinHandle<T>>);
+
+impl<T> Drop for AbortTaskOnDrop<T> {
+    fn drop(&mut self) {
+        if let Some(task) = self.0.take() {
+            task.abort();
+        }
+    }
+}
+
+impl Drop for PdFuture {
+    fn drop(&mut self) {
+        if let Some(task) = self.0.lock().unwrap().take() {
+            task.abort();
+        }
+    }
+}
 
 #[async_trait]
 impl TimestampFuture for PdFuture {
     async fn wait(&self) -> OracleResult<u64> {
         let started = Instant::now();
-        let receiver = self
+        let task = self
             .0
             .lock()
             .unwrap()
             .take()
             .ok_or_else(|| Box::new(TimestampFutureAlreadyWaited) as OracleError)?;
-        let result = receiver.await;
+        let mut task = AbortTaskOnDrop(Some(task));
+        let result = task.0.as_mut().unwrap().await;
+        task.0.take();
         crate::stats::observe_tso_future_wait(started.elapsed());
         result.map_err(|error| {
             Box::new(PdOracleError::Validation(error.to_string())) as OracleError
@@ -611,13 +673,10 @@ impl Oracle for PdOracle {
     }
 
     fn get_timestamp_async(&self, option: &OracleOption) -> Box<dyn TimestampFuture> {
-        let (sender, receiver) = oneshot::channel();
         let oracle = self.clone();
         let option = option.clone();
-        tokio::spawn(async move {
-            let _ = sender.send(oracle.get_timestamp(&option).await);
-        });
-        Box::new(PdFuture(Mutex::new(Some(receiver))))
+        let task = tokio::spawn(async move { oracle.get_timestamp(&option).await });
+        Box::new(PdFuture(Mutex::new(Some(task))))
     }
 
     async fn get_low_resolution_timestamp(&self, option: &OracleOption) -> OracleResult<u64> {
@@ -638,9 +697,7 @@ impl Oracle for PdOracle {
             self.last_timestamp(Self::scope(option))
                 .map(|last| last.timestamp)
                 .ok_or_else(|| {
-                    Box::new(PdOracleError::InvalidLowResolutionScope(
-                        option.txn_scope.clone(),
-                    )) as OracleError
+                    PdOracleError::InvalidLowResolutionAsyncScope(option.txn_scope.clone())
                 }),
         ))
     }
@@ -715,19 +772,24 @@ impl Oracle for PdOracle {
     }
 
     async fn get_all_tso_keyspace_group_min_timestamp(&self) -> OracleResult<u64> {
+        let started = Instant::now();
         let (physical, logical) = self.state.source.get_min_timestamp().await?;
+        let elapsed = started.elapsed();
+        if elapsed > SLOW_TIMESTAMP_FETCH {
+            log::warn!("get minimum timestamp too slow: {elapsed:?}");
+        }
         Ok(super::compose_timestamp(physical, logical))
     }
 }
 
-struct LowResolutionFuture(OracleResult<u64>);
+struct LowResolutionFuture(Result<u64, PdOracleError>);
 
 #[async_trait]
 impl TimestampFuture for LowResolutionFuture {
     async fn wait(&self) -> OracleResult<u64> {
         match &self.0 {
             Ok(timestamp) => Ok(*timestamp),
-            Err(error) => Err(Box::new(PdOracleError::Validation(error.to_string()))),
+            Err(error) => Err(Box::new(error.clone())),
         }
     }
 }
@@ -910,7 +972,7 @@ impl Oracle for LocalOracle {
 #[derive(Debug, Default)]
 struct MockState {
     stopped: bool,
-    offset_milliseconds: i64,
+    offset_nanoseconds: i64,
     last_timestamp: u64,
 }
 
@@ -935,12 +997,17 @@ impl MockOracle {
 
     /// Add a signed millisecond offset to the mock clock.
     pub fn add_offset_milliseconds(&self, offset: i64) {
+        self.add_offset_nanoseconds(offset.wrapping_mul(1_000_000));
+    }
+
+    /// Add a signed nanosecond offset to the mock clock.
+    pub fn add_offset_nanoseconds(&self, offset: i64) {
         let mut state = self.state.write().unwrap();
-        state.offset_milliseconds = state.offset_milliseconds.wrapping_add(offset);
+        state.offset_nanoseconds = state.offset_nanoseconds.wrapping_add(offset);
     }
 
     fn now(state: &MockState) -> SystemTime {
-        add_signed_millis(SystemTime::now(), state.offset_milliseconds)
+        add_wrapping_nanoseconds(SystemTime::now(), state.offset_nanoseconds)
     }
 }
 
@@ -1021,9 +1088,8 @@ impl Oracle for MockOracle {
 
     fn until_expired(&self, lock_timestamp: u64, ttl: u64, _option: &OracleOption) -> i64 {
         let state = self.state.read().unwrap();
-        extract_physical(lock_timestamp)
-            .wrapping_add(ttl as i64)
-            .wrapping_sub(get_physical(Self::now(&state)))
+        let expiration = add_wrapping_millis(get_time_from_timestamp(lock_timestamp), ttl);
+        signed_duration_between(expiration, Self::now(&state))
     }
 
     fn close(&self) {}
@@ -1057,19 +1123,28 @@ fn add_signed_millis(time: SystemTime, milliseconds: i64) -> SystemTime {
 }
 
 fn add_wrapping_millis(time: SystemTime, milliseconds: u64) -> SystemTime {
-    add_signed_millis(time, milliseconds as i64)
+    add_wrapping_nanoseconds(time, (milliseconds as i64).wrapping_mul(1_000_000))
 }
 
 fn subtract_wrapping_seconds(time: SystemTime, seconds: u64) -> SystemTime {
-    let signed = (seconds as i64).wrapping_neg();
-    let milliseconds = signed.wrapping_mul(1_000);
-    add_signed_millis(time, milliseconds)
+    add_wrapping_nanoseconds(time, (seconds as i64).wrapping_mul(-1_000_000_000))
 }
 
 fn signed_duration_between(later: SystemTime, earlier: SystemTime) -> i64 {
+    signed_duration_nanoseconds(later, earlier) / 1_000_000
+}
+
+fn signed_duration_nanoseconds(later: SystemTime, earlier: SystemTime) -> i64 {
     match later.duration_since(earlier) {
-        Ok(duration) => duration.as_millis().min(i64::MAX as u128) as i64,
-        Err(error) => -(error.duration().as_millis().min(i64::MAX as u128) as i64),
+        Ok(duration) => duration.as_nanos().min(i64::MAX as u128) as i64,
+        Err(error) => {
+            let nanoseconds = error.duration().as_nanos();
+            if nanoseconds >= (i64::MAX as u128) + 1 {
+                i64::MIN
+            } else {
+                -(nanoseconds as i64)
+            }
+        }
     }
 }
 
@@ -1128,6 +1203,7 @@ mod tests {
     struct GatePdSource {
         logical: AtomicI64,
         calls: AtomicUsize,
+        completed: AtomicUsize,
         block: AtomicBool,
         release: Notify,
     }
@@ -1137,6 +1213,7 @@ mod tests {
             Self {
                 logical: AtomicI64::new(0),
                 calls: AtomicUsize::new(0),
+                completed: AtomicUsize::new(0),
                 block: AtomicBool::new(false),
                 release: Notify::new(),
             }
@@ -1154,6 +1231,7 @@ mod tests {
             if self.block.load(Ordering::Acquire) {
                 self.release.notified().await;
             }
+            self.completed.fetch_add(1, Ordering::AcqRel);
             Ok((1_700_000_000_000, logical))
         }
 
@@ -1170,8 +1248,23 @@ mod tests {
         }
     }
 
+    async fn wait_for_low_resolution_change(oracle: &PdOracle, check_frequency: Duration) {
+        let option = OracleOption::default();
+        let current = oracle.get_low_resolution_timestamp(&option).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                tokio::time::sleep(check_frequency).await;
+                if oracle.get_low_resolution_timestamp(&option).await.unwrap() > current {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+    }
+
     #[tokio::test]
-    async fn local_oracle_matches_original_timestamp_and_future_tests() {
+    async fn source_test_local_oracle() {
         let oracle = LocalOracle::new();
         let fixed = UNIX_EPOCH + Duration::from_millis(1_700_000_000_123);
         oracle.set_current_time(fixed);
@@ -1212,21 +1305,25 @@ mod tests {
     }
 
     #[test]
-    fn local_expiration_and_until_expired_match_boundary() {
+    fn source_test_is_expired() {
         let oracle = LocalOracle::new();
         let now = UNIX_EPOCH + Duration::from_millis(10_000);
         oracle.set_current_time(now);
-        let lock = system_time_to_timestamp(UNIX_EPOCH + Duration::from_millis(9_000));
-        assert!(!oracle.is_expired(lock, 1_001, &OracleOption::default()));
-        assert!(oracle.is_expired(lock, 1_000, &OracleOption::default()));
-        assert_eq!(
-            oracle.until_expired(lock, 1_001, &OracleOption::default()),
-            1
-        );
-        assert_eq!(
-            oracle.until_expired(lock, 1_000, &OracleOption::default()),
-            0
-        );
+        let lock = system_time_to_timestamp(now);
+        oracle.set_current_time(now + Duration::from_millis(10));
+        assert!(oracle.is_expired(lock, 5, &OracleOption::default()));
+        assert!(!oracle.is_expired(lock, 200, &OracleOption::default()));
+    }
+
+    #[test]
+    fn source_test_local_oracle_until_expired() {
+        let oracle = LocalOracle::new();
+        let start = UNIX_EPOCH + Duration::from_millis(10_000);
+        oracle.set_current_time(start);
+        let lock = system_time_to_timestamp(start);
+        oracle.set_current_time(start + Duration::from_millis(10));
+        assert_eq!(oracle.until_expired(lock, 6, &OracleOption::default()), -4);
+        assert_eq!(oracle.until_expired(lock, 14, &OracleOption::default()), 4);
     }
 
     #[tokio::test]
@@ -1243,8 +1340,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn source_uncovered_go_duration_overflow_matches_local_and_mock_oracles() {
+        let local = LocalOracle::new();
+        let fixed = UNIX_EPOCH + Duration::from_secs(10);
+        local.set_current_time(fixed);
+        let lock = system_time_to_timestamp(fixed);
+        assert!(local.is_expired(lock, i64::MAX as u64, &OracleOption::default()));
+
+        let stale = local
+            .get_stale_timestamp(super::super::GLOBAL_TXN_SCOPE, u64::MAX)
+            .await
+            .unwrap();
+        let stale_time = get_time_from_timestamp(stale);
+        assert!(
+            signed_duration_between(stale_time, SystemTime::now() + Duration::from_secs(1))
+                .unsigned_abs()
+                <= 100
+        );
+
+        let mock = MockOracle::new();
+        let lock = system_time_to_timestamp(SystemTime::now());
+        let remaining = mock.until_expired(lock, i64::MAX as u64, &OracleOption::default());
+        assert!((-5..=0).contains(&remaining), "remaining={remaining}");
+    }
+
+    #[tokio::test]
     async fn mock_oracle_stop_offset_and_monotonicity() {
         let oracle = MockOracle::new();
+        oracle.add_offset_nanoseconds(123);
+        oracle.add_offset_milliseconds(-2);
+        assert_eq!(oracle.state.read().unwrap().offset_nanoseconds, -1_999_877);
         let first = oracle
             .get_timestamp(&OracleOption::default())
             .await
@@ -1271,6 +1396,174 @@ mod tests {
             .is_err());
         oracle.enable();
         assert!(oracle.get_timestamp(&OracleOption::default()).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn source_test_pd_oracle_until_expired() {
+        let oracle = PdOracle::new(
+            Arc::new(TestPdSource::new(1_700_000_000_000)),
+            PdOracleOptions {
+                no_update_timestamp: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let start = SystemTime::now();
+        let start_timestamp = system_time_to_timestamp(start);
+        oracle.set_last_timestamp_for_test(start_timestamp, super::super::GLOBAL_TXN_SCOPE);
+        let lock_timestamp = system_time_to_timestamp(start + Duration::from_millis(10)) + 1;
+        assert_eq!(
+            oracle.until_expired(
+                lock_timestamp,
+                15,
+                &OracleOption {
+                    txn_scope: super::super::GLOBAL_TXN_SCOPE.to_owned(),
+                },
+            ),
+            25
+        );
+        oracle.close();
+    }
+
+    #[tokio::test]
+    async fn source_test_pd_oracle_get_stale_timestamp() {
+        let oracle = PdOracle::new(
+            Arc::new(TestPdSource::new(1_700_000_000_000)),
+            PdOracleOptions {
+                no_update_timestamp: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let start = SystemTime::now();
+        oracle.set_last_timestamp_for_test(
+            system_time_to_timestamp(start),
+            super::super::GLOBAL_TXN_SCOPE,
+        );
+        let timestamp = oracle
+            .get_stale_timestamp(super::super::GLOBAL_TXN_SCOPE, 10)
+            .await
+            .unwrap();
+        let expected = start - Duration::from_secs(10);
+        let observed = get_time_from_timestamp(timestamp);
+        assert!(
+            signed_duration_between(observed, expected).unsigned_abs()
+                <= Duration::from_secs(2).as_millis() as u64
+        );
+        for previous_seconds in [1_000_000_000_000, u64::MAX] {
+            let error = oracle
+                .get_stale_timestamp(super::super::GLOBAL_TXN_SCOPE, previous_seconds)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("invalid prevSecond"));
+        }
+        oracle.close();
+    }
+
+    #[tokio::test]
+    async fn source_test_pd_oracle_set_low_resolution_timestamp_update_interval() {
+        let oracle = PdOracle::new(
+            Arc::new(TestPdSource::new(1_700_000_000_000)),
+            PdOracleOptions {
+                update_interval: Duration::from_millis(50),
+                no_update_timestamp: true,
+            },
+        )
+        .await
+        .unwrap();
+        let option = OracleOption::default();
+        let low_resolution = oracle.get_low_resolution_timestamp(&option).await.unwrap();
+        let fresh = oracle.get_timestamp(&option).await.unwrap();
+        assert!(fresh > low_resolution);
+
+        oracle.start_low_resolution_timestamp_update_loop();
+        for update_interval in [
+            Duration::from_millis(50),
+            Duration::from_millis(150),
+            Duration::from_millis(500),
+        ] {
+            oracle
+                .set_low_resolution_timestamp_update_interval(update_interval)
+                .unwrap();
+            let started = Instant::now();
+            wait_for_low_resolution_change(&oracle, Duration::from_millis(10)).await;
+            wait_for_low_resolution_change(&oracle, Duration::from_millis(10)).await;
+            let elapsed = started.elapsed();
+            assert!(
+                elapsed > update_interval,
+                "{elapsed:?} <= {update_interval:?}"
+            );
+            assert!(
+                elapsed <= update_interval.saturating_mul(3),
+                "{elapsed:?} > 3 * {update_interval:?}"
+            );
+        }
+        oracle.close();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !oracle
+                .state
+                .update_task
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .is_finished()
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn source_test_non_future_stale_tso() {
+        let oracle = PdOracle::new(
+            Arc::new(TestPdSource::new(1_700_000_000_000)),
+            PdOracleOptions {
+                no_update_timestamp: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        oracle.set_last_timestamp_for_test(
+            system_time_to_timestamp(SystemTime::now()),
+            super::super::GLOBAL_TXN_SCOPE,
+        );
+        for iteration in 0..100 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let now = SystemTime::now();
+            let upper_bound = now + Duration::from_millis(5);
+            let updater = {
+                let oracle = oracle.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_micros(100)).await;
+                    oracle.set_last_timestamp_for_test(
+                        system_time_to_timestamp(now),
+                        super::super::GLOBAL_TXN_SCOPE,
+                    );
+                })
+            };
+            while !updater.is_finished() {
+                let timestamp = oracle
+                    .get_stale_timestamp(super::super::GLOBAL_TXN_SCOPE, 0)
+                    .await
+                    .unwrap();
+                let stale_time = get_time_from_timestamp(timestamp);
+                if now.elapsed().unwrap_or_default() < Duration::from_millis(1) {
+                    assert!(
+                        stale_time < upper_bound,
+                        "iteration {iteration}: {stale_time:?} >= {upper_bound:?}"
+                    );
+                }
+                tokio::task::yield_now().await;
+            }
+            updater.await.unwrap();
+        }
+        oracle.close();
     }
 
     #[tokio::test]
@@ -1328,6 +1621,217 @@ mod tests {
         assert!(oracle
             .set_low_resolution_timestamp_update_interval(Duration::ZERO)
             .is_err());
+        oracle.close();
+    }
+
+    #[tokio::test]
+    async fn source_test_adaptive_update_ts_interval() {
+        let oracle = PdOracle::new(
+            Arc::new(TestPdSource::new(1_700_000_000_000)),
+            PdOracleOptions {
+                update_interval: Duration::from_secs(2),
+                no_update_timestamp: true,
+            },
+        )
+        .await
+        .unwrap();
+        let mut now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let timestamp_before = |now: SystemTime, before: Duration| {
+            super::super::compose_timestamp(get_physical(now - before), 1)
+        };
+        let state = || oracle.state.adaptive_state.lock().unwrap().state;
+
+        now += Duration::from_secs(2);
+        assert_eq!(
+            oracle.next_update_interval(now, None),
+            Duration::from_secs(2)
+        );
+        now += Duration::from_secs(2);
+        assert_eq!(
+            oracle.next_update_interval(now, None),
+            Duration::from_secs(2)
+        );
+        assert_eq!(state(), AdaptiveUpdateIntervalState::Normal);
+
+        now += Duration::from_secs(1);
+        oracle.adjust_update_interval_for_staleness(
+            timestamp_before(now, Duration::from_secs(3)),
+            timestamp_before(now, Duration::ZERO),
+            now,
+        );
+        assert!(oracle.take_shrink_request_for_test().is_none());
+        assert_eq!(
+            oracle.next_update_interval(now, None),
+            Duration::from_secs(2)
+        );
+
+        now += Duration::from_secs(1);
+        oracle.adjust_update_interval_for_staleness(
+            timestamp_before(now, Duration::from_secs(1)),
+            timestamp_before(now, Duration::ZERO),
+            now,
+        );
+        assert_eq!(
+            oracle.take_shrink_request_for_test(),
+            Some(Duration::from_secs(1))
+        );
+        let mut expected = Duration::from_secs(1) - ADAPTIVE_SHRINKING_PRESERVE;
+        assert_eq!(
+            oracle.next_update_interval(now, Some(Duration::from_secs(1))),
+            expected
+        );
+        assert_eq!(state(), AdaptiveUpdateIntervalState::Adapting);
+        assert_eq!(
+            oracle
+                .state
+                .adaptive_state
+                .lock()
+                .unwrap()
+                .last_short_staleness_read,
+            Some(now)
+        );
+
+        now += ADAPTIVE_DELAY_BEFORE_RECOVERING / 2;
+        oracle.adjust_update_interval_for_staleness(
+            timestamp_before(now, Duration::from_secs(1)),
+            timestamp_before(now, Duration::ZERO),
+            now,
+        );
+        assert!(oracle.take_shrink_request_for_test().is_none());
+        assert_eq!(
+            oracle
+                .state
+                .adaptive_state
+                .lock()
+                .unwrap()
+                .last_short_staleness_read,
+            Some(now)
+        );
+
+        now += ADAPTIVE_DELAY_BEFORE_RECOVERING / 2 + Duration::from_secs(1);
+        oracle.state.adaptive_state.lock().unwrap().last_tick = now - Duration::from_secs(1);
+        assert_eq!(oracle.next_update_interval(now, None), expected);
+        assert_eq!(state(), AdaptiveUpdateIntervalState::Adapting);
+
+        now += ADAPTIVE_DELAY_BEFORE_RECOVERING / 2;
+        oracle.state.adaptive_state.lock().unwrap().last_tick = now - Duration::from_secs(1);
+        expected += ADAPTIVE_RECOVER_PER_SECOND;
+        assert_eq!(oracle.next_update_interval(now, None), expected);
+        assert_eq!(state(), AdaptiveUpdateIntervalState::Recovering);
+
+        oracle.state.adaptive_state.lock().unwrap().last_tick = now;
+        now += Duration::from_secs(2);
+        oracle.adjust_update_interval_for_staleness(
+            timestamp_before(
+                now,
+                expected + ADAPTIVE_BLOCK_RECOVER_THRESHOLD.saturating_mul(2),
+            ),
+            timestamp_before(now, Duration::ZERO),
+            now,
+        );
+        assert!(oracle.take_shrink_request_for_test().is_none());
+        expected += ADAPTIVE_RECOVER_PER_SECOND.saturating_mul(2);
+        assert_eq!(oracle.next_update_interval(now, None), expected);
+        assert_eq!(state(), AdaptiveUpdateIntervalState::Recovering);
+
+        oracle.state.adaptive_state.lock().unwrap().last_tick = now;
+        now += Duration::from_secs(1);
+        oracle.adjust_update_interval_for_staleness(
+            timestamp_before(now, expected + ADAPTIVE_BLOCK_RECOVER_THRESHOLD / 2),
+            timestamp_before(now, Duration::ZERO),
+            now,
+        );
+        assert!(oracle.take_shrink_request_for_test().is_none());
+        assert_eq!(oracle.next_update_interval(now, None), expected);
+        assert_eq!(state(), AdaptiveUpdateIntervalState::Adapting);
+        oracle.state.adaptive_state.lock().unwrap().last_tick = now;
+        now += Duration::from_secs(1);
+        assert_eq!(oracle.next_update_interval(now, None), expected);
+        assert_eq!(state(), AdaptiveUpdateIntervalState::Adapting);
+
+        now += ADAPTIVE_DELAY_BEFORE_RECOVERING;
+        oracle.state.adaptive_state.lock().unwrap().last_tick = now - Duration::from_secs(1);
+        expected += ADAPTIVE_RECOVER_PER_SECOND;
+        assert_eq!(oracle.next_update_interval(now, None), expected);
+        assert_eq!(state(), AdaptiveUpdateIntervalState::Recovering);
+
+        while expected < Duration::from_secs(2) {
+            oracle.state.adaptive_state.lock().unwrap().last_tick = now;
+            now += Duration::from_secs(1);
+            expected = expected
+                .saturating_add(ADAPTIVE_RECOVER_PER_SECOND)
+                .min(Duration::from_secs(2));
+            assert_eq!(oracle.next_update_interval(now, None), expected);
+            assert_eq!(
+                state(),
+                if expected == Duration::from_secs(2) {
+                    AdaptiveUpdateIntervalState::Normal
+                } else {
+                    AdaptiveUpdateIntervalState::Recovering
+                }
+            );
+        }
+
+        for configured in [Duration::from_secs(1), Duration::from_secs(2)] {
+            oracle
+                .set_low_resolution_timestamp_update_interval(configured)
+                .unwrap();
+            assert_eq!(oracle.adaptive_update_interval(), configured);
+            assert_eq!(oracle.next_update_interval(now, None), configured);
+        }
+
+        now += Duration::from_secs(1);
+        oracle.adjust_update_interval_for_staleness(
+            timestamp_before(now, Duration::from_secs(1)),
+            timestamp_before(now, Duration::ZERO),
+            now,
+        );
+        assert_eq!(
+            oracle.take_shrink_request_for_test(),
+            Some(Duration::from_secs(1))
+        );
+        expected = Duration::from_secs(1) - ADAPTIVE_SHRINKING_PRESERVE;
+        assert_eq!(
+            oracle.next_update_interval(now, Some(Duration::from_secs(1))),
+            expected
+        );
+        assert_eq!(state(), AdaptiveUpdateIntervalState::Adapting);
+        oracle
+            .set_low_resolution_timestamp_update_interval(Duration::from_secs(3))
+            .unwrap();
+        assert_eq!(oracle.adaptive_update_interval(), expected);
+        assert_eq!(oracle.next_update_interval(now, None), expected);
+        oracle
+            .set_low_resolution_timestamp_update_interval(Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(oracle.adaptive_update_interval(), expected);
+        assert_eq!(oracle.next_update_interval(now, None), expected);
+
+        oracle
+            .set_low_resolution_timestamp_update_interval(Duration::from_millis(800))
+            .unwrap();
+        assert_eq!(
+            oracle.adaptive_update_interval(),
+            Duration::from_millis(800)
+        );
+        assert_eq!(
+            oracle.next_update_interval(now, None),
+            Duration::from_millis(800)
+        );
+        assert_eq!(state(), AdaptiveUpdateIntervalState::Normal);
+
+        oracle
+            .set_low_resolution_timestamp_update_interval(MIN_ADAPTIVE_UPDATE_INTERVAL / 2)
+            .unwrap();
+        assert_eq!(
+            oracle.adaptive_update_interval(),
+            MIN_ADAPTIVE_UPDATE_INTERVAL / 2
+        );
+        assert_eq!(
+            oracle.next_update_interval(now, None),
+            MIN_ADAPTIVE_UPDATE_INTERVAL / 2
+        );
+        assert_eq!(state(), AdaptiveUpdateIntervalState::Unadjustable);
         oracle.close();
     }
 
@@ -1478,6 +1982,139 @@ mod tests {
 
     #[tokio::test]
     #[serial]
+    async fn source_test_validate_read_ts() {
+        ENABLE_TS_VALIDATION.store(true, Ordering::Release);
+        let source = Arc::new(TestPdSource::new(1_700_000_000_000));
+        let oracle = PdOracle::new(
+            source.clone(),
+            PdOracleOptions {
+                update_interval: Duration::from_secs(2),
+                no_update_timestamp: false,
+            },
+        )
+        .await
+        .unwrap();
+        let option = OracleOption {
+            txn_scope: super::super::GLOBAL_TXN_SCOPE.to_owned(),
+        };
+
+        assert!(oracle
+            .validate_read_timestamp(u64::MAX, true, &option)
+            .await
+            .is_err());
+        let timestamp = oracle.get_timestamp(&option).await.unwrap();
+        assert!(timestamp >= 1);
+        oracle
+            .validate_read_timestamp(1, true, &option)
+            .await
+            .unwrap();
+
+        let timestamp = oracle.get_timestamp(&option).await.unwrap();
+        oracle
+            .validate_read_timestamp(timestamp + 1, true, &option)
+            .await
+            .unwrap();
+        let timestamp = oracle.get_timestamp(&option).await.unwrap();
+        oracle
+            .validate_read_timestamp(timestamp + 2, true, &option)
+            .await
+            .unwrap();
+        let timestamp = oracle.get_timestamp(&option).await.unwrap();
+        assert!(oracle
+            .validate_read_timestamp(timestamp + 3, true, &option)
+            .await
+            .is_err());
+
+        let timestamp = oracle.get_timestamp(&option).await.unwrap();
+        source.logical.fetch_add(2, Ordering::AcqRel);
+        oracle
+            .validate_read_timestamp(timestamp + 3, true, &option)
+            .await
+            .unwrap();
+        oracle.close();
+        ENABLE_TS_VALIDATION.store(false, Ordering::Release);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn source_test_validate_read_ts_for_normal_read_do_not_affect_update_interval() {
+        ENABLE_TS_VALIDATION.store(true, Ordering::Release);
+        let oracle = PdOracle::new(
+            Arc::new(TestPdSource::new(1_700_000_000_000)),
+            PdOracleOptions {
+                update_interval: Duration::from_secs(2),
+                no_update_timestamp: true,
+            },
+        )
+        .await
+        .unwrap();
+        let option = OracleOption {
+            txn_scope: super::super::GLOBAL_TXN_SCOPE.to_owned(),
+        };
+        let timestamp = oracle.get_timestamp(&option).await.unwrap();
+        assert!(timestamp >= 1);
+
+        oracle
+            .validate_read_timestamp(timestamp, false, &option)
+            .await
+            .unwrap();
+        assert!(oracle.take_shrink_request_for_test().is_none());
+        oracle
+            .validate_read_timestamp(timestamp + 2, false, &option)
+            .await
+            .unwrap();
+        assert!(oracle.take_shrink_request_for_test().is_none());
+        assert!(oracle
+            .validate_read_timestamp(timestamp + 5, false, &option)
+            .await
+            .is_err());
+        assert!(oracle.take_shrink_request_for_test().is_none());
+        oracle
+            .validate_read_timestamp(timestamp + 5, false, &option)
+            .await
+            .unwrap();
+        assert!(oracle.take_shrink_request_for_test().is_none());
+        oracle.close();
+        ENABLE_TS_VALIDATION.store(false, Ordering::Release);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn source_test_set_last_ts_always_push_ts() {
+        let oracle = PdOracle::new(
+            Arc::new(TestPdSource::new(1_700_000_000_000)),
+            PdOracleOptions {
+                update_interval: Duration::from_secs(2),
+                no_update_timestamp: true,
+            },
+        )
+        .await
+        .unwrap();
+        let mut tasks = Vec::new();
+        for _ in 0..100 {
+            let oracle = oracle.clone();
+            tasks.push(tokio::spawn(async move {
+                let option = OracleOption {
+                    txn_scope: super::super::GLOBAL_TXN_SCOPE.to_owned(),
+                };
+                for _ in 0..1_000 {
+                    let timestamp = oracle.get_timestamp(&option).await.unwrap();
+                    let last = oracle
+                        .last_timestamp(super::super::GLOBAL_TXN_SCOPE)
+                        .unwrap()
+                        .timestamp;
+                    assert!(last >= timestamp);
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+        oracle.close();
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn pd_oracle_validation_and_refresh_worker() {
         ENABLE_TS_VALIDATION.store(true, Ordering::Release);
         let source = Arc::new(TestPdSource::new(1_700_000_000_000));
@@ -1544,6 +2181,93 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn source_test_validate_read_ts_for_stale_read_reusing_get_ts_result() {
+        let _scenario = fail::FailScenario::setup();
+        fail::cfg("validateReadTSRetryGetTS", "return(skip)").unwrap();
+        ENABLE_TS_VALIDATION.store(true, Ordering::Release);
+        let source = Arc::new(GatePdSource::new());
+        let oracle = PdOracle::new(
+            source.clone(),
+            PdOracleOptions {
+                update_interval: Duration::from_secs(2),
+                no_update_timestamp: true,
+            },
+        )
+        .await
+        .unwrap();
+        let base = super::super::compose_timestamp(1_700_000_000_000, 0);
+        let cancel_indices = [None, None, Some(0), Some(1)];
+
+        for (case_index, logical) in [100_u64, 200, 300, 400].into_iter().enumerate() {
+            source.block.store(true, Ordering::Release);
+            source
+                .logical
+                .store(i64::try_from(logical - 1).unwrap(), Ordering::Release);
+            let read_timestamps = [logical - 2, logical + 2, logical - 1, logical + 1, logical];
+            let expected_success = [true, false, true, false, true];
+            let mut tasks = read_timestamps
+                .into_iter()
+                .map(|read_timestamp| {
+                    let oracle = oracle.clone();
+                    tokio::spawn(async move {
+                        oracle
+                            .validate_read_timestamp(
+                                base + read_timestamp,
+                                true,
+                                &OracleOption {
+                                    txn_scope: super::super::GLOBAL_TXN_SCOPE.to_owned(),
+                                },
+                            )
+                            .await
+                    })
+                })
+                .map(Some)
+                .collect::<Vec<_>>();
+
+            let expected_calls = case_index + 2;
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while source.calls.load(Ordering::Acquire) != expected_calls {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            assert!(tasks.iter().flatten().all(|task| !task.is_finished()));
+
+            if let Some(cancel_index) = cancel_indices[case_index] {
+                let task = tasks[cancel_index].take().unwrap();
+                task.abort();
+                assert!(task.await.unwrap_err().is_cancelled());
+            }
+
+            source.block.store(false, Ordering::Release);
+            source.release.notify_waiters();
+            for (index, task) in tasks.into_iter().enumerate() {
+                let Some(task) = task else { continue };
+                let result = tokio::time::timeout(Duration::from_secs(1), task)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    result.is_ok(),
+                    expected_success[index],
+                    "case {case_index}, validation {index}: {result:?}"
+                );
+            }
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while !oracle.state.validation_flights.lock().await.is_empty() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+        oracle.close();
+        ENABLE_TS_VALIDATION.store(false, Ordering::Release);
     }
 
     #[tokio::test]
@@ -1643,7 +2367,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn pd_oracle_retries_when_a_shared_validation_tso_is_from_another_client() {
+    async fn source_test_validate_read_ts_from_different_source() {
         ENABLE_TS_VALIDATION.store(true, Ordering::Release);
         let source = Arc::new(GatePdSource::new());
         let oracle = PdOracle::new(
@@ -1753,5 +2477,142 @@ mod tests {
             newer
         );
         oracle.close();
+    }
+
+    #[tokio::test]
+    async fn source_uncovered_async_low_resolution_error_is_exact_and_work_is_cancellable() {
+        let source = Arc::new(GatePdSource::new());
+        let oracle = PdOracle::new(
+            source.clone(),
+            PdOracleOptions {
+                update_interval: Duration::from_secs(2),
+                no_update_timestamp: true,
+            },
+        )
+        .await
+        .unwrap();
+        let missing = OracleOption {
+            txn_scope: "missing".to_owned(),
+        };
+        assert_eq!(
+            oracle
+                .get_low_resolution_timestamp_async(&missing)
+                .wait()
+                .await
+                .unwrap_err()
+                .to_string(),
+            "get low resolution timestamp async fail, invalid txnScope = missing"
+        );
+
+        source.block.store(true, Ordering::Release);
+        let future = oracle.get_timestamp_async(&OracleOption::default());
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while source.calls.load(Ordering::Acquire) != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        drop(future);
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        source.block.store(false, Ordering::Release);
+        source.release.notify_waiters();
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(source.completed.load(Ordering::Acquire), 1);
+
+        source.block.store(true, Ordering::Release);
+        let future: Arc<dyn TimestampFuture> =
+            Arc::from(oracle.get_timestamp_async(&OracleOption::default()));
+        let waiter = {
+            let future = Arc::clone(&future);
+            tokio::spawn(async move { future.wait().await })
+        };
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while source.calls.load(Ordering::Acquire) != 3 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        waiter.abort();
+        assert!(waiter.await.unwrap_err().is_cancelled());
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        source.block.store(false, Ordering::Release);
+        source.release.notify_waiters();
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(source.completed.load(Ordering::Acquire), 1);
+        drop(future);
+        oracle.close();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn source_uncovered_cancelled_validation_still_finishes_and_cleans_singleflight() {
+        ENABLE_TS_VALIDATION.store(true, Ordering::Release);
+        let source = Arc::new(GatePdSource::new());
+        let oracle = PdOracle::new(
+            source.clone(),
+            PdOracleOptions {
+                update_interval: Duration::from_secs(2),
+                no_update_timestamp: true,
+            },
+        )
+        .await
+        .unwrap();
+        source.block.store(true, Ordering::Release);
+        let read_timestamp = oracle
+            .get_low_resolution_timestamp(&OracleOption::default())
+            .await
+            .unwrap()
+            + 1;
+        let waiter = {
+            let oracle = oracle.clone();
+            tokio::spawn(async move {
+                oracle
+                    .validate_read_timestamp(read_timestamp, false, &OracleOption::default())
+                    .await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while source.calls.load(Ordering::Acquire) != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        waiter.abort();
+        assert!(waiter.await.unwrap_err().is_cancelled());
+
+        source.block.store(false, Ordering::Release);
+        source.release.notify_waiters();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if source.completed.load(Ordering::Acquire) == 2
+                    && oracle.state.validation_flights.lock().await.is_empty()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            oracle
+                .get_low_resolution_timestamp(&OracleOption::default())
+                .await
+                .unwrap(),
+            read_timestamp
+        );
+        oracle.close();
+        ENABLE_TS_VALIDATION.store(false, Ordering::Release);
     }
 }

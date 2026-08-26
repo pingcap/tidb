@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::io::{BufReader, Cursor};
+use std::net::Ipv6Addr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -311,7 +312,14 @@ impl Default for TiKvClient {
 
 impl TiKvClient {
     pub fn grpc_keep_alive_timeout(&self) -> Duration {
-        Duration::from_secs_f64(self.grpc_keep_alive_timeout)
+        let nanos = self.grpc_keep_alive_timeout * 1_000_000_000.0;
+        if nanos.is_nan() || nanos <= 0.0 {
+            return Duration::ZERO;
+        }
+        if nanos >= i64::MAX as f64 {
+            return Duration::from_nanos(i64::MAX as u64);
+        }
+        Duration::from_nanos(nanos as u64)
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -326,7 +334,7 @@ impl TiKvClient {
                 self.grpc_compression_type
             )));
         }
-        if self.grpc_keep_alive_timeout < 0.05 {
+        if self.grpc_keep_alive_timeout.is_nan() || self.grpc_keep_alive_timeout < 0.05 {
             return Err(ConfigError(format!(
                 "grpc-keepalive-timeout should be at least 0.05, but got {:.6}",
                 self.grpc_keep_alive_timeout
@@ -402,12 +410,12 @@ pub fn store_global_config(config: impl Into<Arc<Config>>) {
     *GLOBAL_CONFIG.write().unwrap() = config.into();
 }
 
-pub fn update_global(update: impl FnOnce(&mut Config)) -> impl FnOnce() + Send + Sync + 'static {
+pub fn update_global(update: impl FnOnce(&mut Config)) -> impl Fn() + Send + Sync + 'static {
     let previous = get_global_config();
     let mut next = (*previous).clone();
     update(&mut next);
     store_global_config(next);
-    move || store_global_config(previous)
+    move || store_global_config(previous.clone())
 }
 
 pub fn get_txn_scope_from_config() -> String {
@@ -423,34 +431,52 @@ pub fn get_txn_scope_from_config() -> String {
 }
 
 pub fn parse_path(path: &str) -> Result<(Vec<String>, bool, String), ConfigError> {
-    let (scheme, rest) = path.split_once("://").unwrap_or(("", path));
-    if !scheme.eq_ignore_ascii_case("tikv") {
+    if path
+        .as_bytes()
+        .iter()
+        .any(|byte| *byte < b' ' || *byte == 0x7f)
+    {
+        return Err(ConfigError(
+            "net/url: invalid control character in URL".to_owned(),
+        ));
+    }
+    let (scheme, rest) = split_url_scheme(path)?.unwrap_or(("", path));
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "tikv" {
         return Err(ConfigError(format!(
             "Uri scheme expected [tikv] but found [{scheme}]"
         )));
     }
-    let (authority_and_path, query_and_fragment) = rest.split_once('?').unwrap_or((rest, ""));
-    let query = query_and_fragment.split('#').next().unwrap_or_default();
-    if query.as_bytes().iter().enumerate().any(|(index, byte)| {
-        *byte == b'%'
-            && (index + 2 >= query.len()
-                || !query.as_bytes()[index + 1].is_ascii_hexdigit()
-                || !query.as_bytes()[index + 2].is_ascii_hexdigit())
-    }) {
-        return Err(ConfigError("invalid URL escape in query".to_owned()));
+    let (without_fragment, fragment) = rest.split_once('#').unwrap_or((rest, ""));
+    let (authority_and_path, query) = without_fragment
+        .split_once('?')
+        .unwrap_or((without_fragment, ""));
+    let opaque = !authority_and_path.starts_with('/');
+    if (!opaque && has_invalid_percent_escape(authority_and_path.as_bytes()))
+        || has_invalid_percent_escape(fragment.as_bytes())
+    {
+        return Err(ConfigError("invalid URL escape".to_owned()));
     }
-    let authority = authority_and_path
-        .split(['/', '#'])
-        .next()
-        .unwrap_or_default()
-        .rsplit('@')
-        .next()
-        .unwrap_or_default();
+    let authority = match authority_and_path.strip_prefix("//") {
+        Some(hierarchical) => {
+            parse_url_authority(hierarchical.split('/').next().unwrap_or_default())?
+        }
+        None => String::new(),
+    };
     let mut disable_gc = false;
     let mut keyspace_name = String::new();
     let mut saw_disable_gc = false;
     let mut saw_keyspace_name = false;
-    for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+    for pair in query.split('&') {
+        // net/url.URL.Query silently drops malformed value pairs. In
+        // particular, a raw semicolon or a malformed percent escape does not
+        // invalidate the whole URL or any well-formed sibling pair.
+        if pair.is_empty() || pair.contains(';') || has_invalid_percent_escape(pair.as_bytes()) {
+            continue;
+        }
+        let Some((key, value)) = form_urlencoded::parse(pair.as_bytes()).next() else {
+            continue;
+        };
         match key.as_ref() {
             "keyspaceName" if !saw_keyspace_name => {
                 saw_keyspace_name = true;
@@ -476,6 +502,182 @@ pub fn parse_path(path: &str) -> Result<(Vec<String>, bool, String), ConfigError
         disable_gc,
         keyspace_name,
     ))
+}
+
+fn split_url_scheme(path: &str) -> Result<Option<(&str, &str)>, ConfigError> {
+    for (index, byte) in path.bytes().enumerate() {
+        match byte {
+            b'a'..=b'z' | b'A'..=b'Z' => {}
+            b'0'..=b'9' | b'+' | b'-' | b'.' if index != 0 => {}
+            b':' if index == 0 => {
+                return Err(ConfigError("missing protocol scheme".to_owned()));
+            }
+            b':' => return Ok(Some((&path[..index], &path[index + 1..]))),
+            _ => return Ok(None),
+        }
+    }
+    Ok(None)
+}
+
+fn has_invalid_percent_escape(value: &[u8]) -> bool {
+    value.iter().enumerate().any(|(index, byte)| {
+        *byte == b'%'
+            && (index + 2 >= value.len()
+                || !value[index + 1].is_ascii_hexdigit()
+                || !value[index + 2].is_ascii_hexdigit())
+    })
+}
+
+fn parse_url_authority(authority: &str) -> Result<String, ConfigError> {
+    let (userinfo, host) = authority
+        .rsplit_once('@')
+        .map_or((None, authority), |(userinfo, host)| (Some(userinfo), host));
+    let host = parse_url_host(host)?;
+    if let Some(userinfo) = userinfo {
+        if !valid_url_userinfo(userinfo) || has_invalid_percent_escape(userinfo.as_bytes()) {
+            return Err(ConfigError("net/url: invalid userinfo".to_owned()));
+        }
+    }
+    Ok(host)
+}
+
+fn valid_url_userinfo(userinfo: &str) -> bool {
+    userinfo.bytes().all(|byte| {
+        byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'-' | b'.'
+                    | b'_'
+                    | b':'
+                    | b'~'
+                    | b'!'
+                    | b'$'
+                    | b'&'
+                    | b'\''
+                    | b'('
+                    | b')'
+                    | b'*'
+                    | b'+'
+                    | b','
+                    | b';'
+                    | b'='
+                    | b'%'
+                    | b'@'
+            )
+    })
+}
+
+fn parse_url_host(host: &str) -> Result<String, ConfigError> {
+    match host.rfind('[') {
+        Some(index) if index > 0 => return Err(ConfigError("invalid IP-literal".to_owned())),
+        Some(_) => {
+            let Some(close) = host.rfind(']') else {
+                return Err(ConfigError("missing ']' in host".to_owned()));
+            };
+            let port = &host[close + 1..];
+            if !valid_optional_url_port(port) {
+                return Err(ConfigError(format!("invalid port {port:?} after host")));
+            }
+            let hostname = &host[1..close];
+            let decoded_hostname = match hostname.find("%25") {
+                Some(zone) => {
+                    let mut decoded = decode_url_host_component(&hostname[..zone], false)?;
+                    decoded.push_str(&decode_url_host_component(&hostname[zone..], true)?);
+                    decoded
+                }
+                None => decode_url_host_component(hostname, false)?,
+            };
+            let (address, zone) = decoded_hostname
+                .split_once('%')
+                .map_or((decoded_hostname.as_str(), None), |(address, zone)| {
+                    (address, Some(zone))
+                });
+            if zone.is_some_and(str::is_empty) {
+                return Err(ConfigError("invalid host: empty IPv6 zone".to_owned()));
+            }
+            if address.parse::<Ipv6Addr>().is_err() {
+                return Err(ConfigError("invalid host".to_owned()));
+            }
+            return Ok(format!("[{decoded_hostname}]{port}"));
+        }
+        None => {}
+    }
+
+    if let Some((_, port)) = host.rsplit_once(':') {
+        let port = &host[host.len() - port.len() - 1..];
+        if !valid_optional_url_port(port) {
+            return Err(ConfigError(format!("invalid port {port:?} after host")));
+        }
+    }
+    decode_url_host_component(host, false)
+}
+
+fn valid_optional_url_port(port: &str) -> bool {
+    port.is_empty()
+        || port
+            .strip_prefix(':')
+            .is_some_and(|port| port.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn decode_url_host_component(value: &str, zone: bool) -> Result<String, ConfigError> {
+    if has_invalid_percent_escape(value.as_bytes()) {
+        return Err(ConfigError("invalid URL escape".to_owned()));
+    }
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = char::from(bytes[index + 1]).to_digit(16).unwrap() as u8;
+            let low = char::from(bytes[index + 2]).to_digit(16).unwrap() as u8;
+            let byte = (high << 4) | low;
+            let percent = &value[index..index + 3];
+            if (!zone && byte.is_ascii() && percent != "%25")
+                || (zone && percent != "%25" && byte != b' ' && !valid_raw_url_host_byte(byte))
+            {
+                return Err(ConfigError(format!("invalid URL escape {percent:?}")));
+            }
+            decoded.push(byte);
+            index += 3;
+        } else {
+            if bytes[index].is_ascii() && !valid_raw_url_host_byte(bytes[index]) {
+                return Err(ConfigError(format!(
+                    "invalid character {:?} in host name",
+                    char::from(bytes[index])
+                )));
+            }
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    Ok(String::from_utf8_lossy(&decoded).into_owned())
+}
+
+fn valid_raw_url_host_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'$'
+                | b'&'
+                | b'\''
+                | b'('
+                | b')'
+                | b'*'
+                | b'+'
+                | b','
+                | b';'
+                | b'='
+                | b':'
+                | b'['
+                | b']'
+                | b'<'
+                | b'>'
+                | b'"'
+                | b'-'
+                | b'_'
+                | b'.'
+                | b'~'
+        )
 }
 
 pub fn update_tikv_ru_v2_from_exec_details_v2(
@@ -633,63 +835,117 @@ mod tests {
             "grpc-compression-type should be none or gzip, but got snappy"
         );
         client.grpc_compression_type = "gzip".to_owned();
-        client.grpc_keep_alive_timeout = 0.05;
         assert!(client.validate().is_ok());
-        client.grpc_keep_alive_timeout = 0.04;
+    }
+
+    #[test]
+    fn source_test_validate_grpc_keep_alive_timeout() {
+        let mut config = TiKvClient::default();
+        assert!(config.validate().is_ok());
+        assert_eq!(config.grpc_keep_alive_timeout(), Duration::from_secs(3));
+
+        config.grpc_keep_alive_timeout = 0.05;
+        assert!(config.validate().is_ok());
+        assert_eq!(config.grpc_keep_alive_timeout(), Duration::from_millis(50));
+
+        config.grpc_keep_alive_timeout = 0.04;
         assert_eq!(
-            client.validate().unwrap_err().to_string(),
+            config.validate().unwrap_err().to_string(),
             "grpc-keepalive-timeout should be at least 0.05, but got 0.040000"
-        );
-
-        let cases = [
-            (0, 4, "txn-chunk-max-size should be greater than 0"),
-            (
-                MAX_TXN_CHUNK_SIZE_IN_PARALLEL + 1,
-                4,
-                "txn-chunk-max-size should not exceed 4294967296, but got 4294967297",
-            ),
-            (
-                MAX_TXN_CHUNK_SIZE_IN_PARALLEL,
-                0,
-                "txn-chunk-writer-concurrency should be greater than 0",
-            ),
-        ];
-        for (size, concurrency, expected) in cases {
-            let mut client = TiKvClient::default();
-            client.txn_chunk_writer_addr = "127.0.0.1".to_owned();
-            client.txn_chunk_max_size = size;
-            client.txn_chunk_writer_concurrency = concurrency;
-            assert_eq!(client.validate().unwrap_err().to_string(), expected);
-        }
-        let mut disabled = TiKvClient::default();
-        disabled.txn_chunk_max_size = 0;
-        assert!(disabled.validate().is_ok());
-
-        let mut too_large = TiKvClient::default();
-        too_large.txn_chunk_writer_addr = "127.0.0.1".to_owned();
-        too_large.txn_chunk_max_size = i64::MAX as u64 + 1;
-        assert_eq!(
-            too_large.validate().unwrap_err().to_string(),
-            format!(
-                "txn-chunk-max-size should not exceed {}, but got {}",
-                i64::MAX,
-                i64::MAX as u64 + 1
-            )
-        );
-        too_large.txn_chunk_max_size = MAX_TXN_CHUNK_SIZE_IN_PARALLEL;
-        too_large.txn_chunk_writer_concurrency = i64::MAX as u64 + 1;
-        assert_eq!(
-            too_large.validate().unwrap_err().to_string(),
-            format!(
-                "txn-chunk-writer-concurrency should not exceed {}, but got {}",
-                i64::MAX,
-                i64::MAX as u64 + 1
-            )
         );
     }
 
     #[test]
-    fn parse_path_matches_original_cases_and_failures() {
+    fn source_test_validate_txn_file_config() {
+        let mut disabled = TiKvClient::default();
+        disabled.txn_chunk_max_size = 0;
+        assert!(disabled.validate().is_ok());
+
+        let max_int = isize::MAX as u64;
+        let cases: [(&str, Option<fn(&mut TiKvClient)>, Option<String>); 8] = [
+            ("default", None, None),
+            (
+                "zero chunk size",
+                Some(|config| config.txn_chunk_max_size = 0),
+                Some("txn-chunk-max-size should be greater than 0".to_owned()),
+            ),
+            (
+                "maximum chunk size",
+                Some(|config| {
+                    config.txn_chunk_max_size = MAX_TXN_CHUNK_SIZE_IN_PARALLEL;
+                }),
+                None,
+            ),
+            (
+                "chunk size exceeds parallel budget",
+                Some(|config| {
+                    config.txn_chunk_max_size = MAX_TXN_CHUNK_SIZE_IN_PARALLEL + 1;
+                }),
+                Some(format!(
+                    "txn-chunk-max-size should not exceed {}, but got {}",
+                    MAX_TXN_CHUNK_SIZE_IN_PARALLEL,
+                    MAX_TXN_CHUNK_SIZE_IN_PARALLEL + 1
+                )),
+            ),
+            (
+                "chunk size exceeds int",
+                Some(|config| config.txn_chunk_max_size = isize::MAX as u64 + 1),
+                Some(format!(
+                    "txn-chunk-max-size should not exceed {max_int}, but got {}",
+                    max_int + 1
+                )),
+            ),
+            (
+                "zero writer concurrency",
+                Some(|config| config.txn_chunk_writer_concurrency = 0),
+                Some("txn-chunk-writer-concurrency should be greater than 0".to_owned()),
+            ),
+            (
+                "maximum writer concurrency",
+                Some(|config| config.txn_chunk_writer_concurrency = isize::MAX as u64),
+                None,
+            ),
+            (
+                "writer concurrency exceeds int",
+                Some(|config| {
+                    config.txn_chunk_writer_concurrency = isize::MAX as u64 + 1;
+                }),
+                Some(format!(
+                    "txn-chunk-writer-concurrency should not exceed {max_int}, but got {}",
+                    max_int + 1
+                )),
+            ),
+        ];
+
+        for (name, configure, expected_error) in cases {
+            let mut config = TiKvClient::default();
+            if let Some(configure) = configure {
+                configure(&mut config);
+            }
+            match expected_error {
+                Some(expected_error) => {
+                    config.txn_chunk_writer_addr = "127.0.0.1".to_owned();
+                    assert_eq!(
+                        config.validate().unwrap_err().to_string(),
+                        expected_error,
+                        "source row {name}"
+                    );
+                }
+                None => assert!(config.validate().is_ok(), "source row {name}"),
+            }
+        }
+
+        // The two source success rows leave txn-file mode disabled. Exercise
+        // their effective enabled boundaries as well.
+        let mut enabled = TiKvClient::default();
+        enabled.txn_chunk_writer_addr = "127.0.0.1".to_owned();
+        enabled.txn_chunk_max_size = MAX_TXN_CHUNK_SIZE_IN_PARALLEL;
+        enabled.txn_chunk_writer_concurrency = max_int;
+        assert!(enabled.validate().is_ok());
+    }
+
+    #[test]
+    fn source_test_parse_path() {
         assert_eq!(
             parse_path("tikv://node1:2379,node2:2379").unwrap(),
             (
@@ -698,10 +954,15 @@ mod tests {
                 String::new()
             )
         );
+        assert!(parse_path("tikv://node1:2379").is_ok());
         assert_eq!(
             parse_path("tikv://node1:2379?disableGC=true&keyspaceName=DEFAULT").unwrap(),
             (vec!["node1:2379".to_owned()], true, "DEFAULT".to_owned())
         );
+    }
+
+    #[test]
+    fn parse_path_matches_net_url_query_error_suppression() {
         assert_eq!(
             parse_path(
                 "tikv://user@node1:2379?disableGC=true&disableGC=false&keyspaceName=a%20b#ignored"
@@ -720,16 +981,87 @@ mod tests {
             "disableGC flag should be true/false"
         );
         assert_eq!(
-            parse_path("tikv://node1:2379?keyspaceName=%zz")
-                .unwrap_err()
-                .to_string(),
-            "invalid URL escape in query"
+            parse_path("tikv://node1:2379?keyspaceName=%zz").unwrap(),
+            (vec!["node1:2379".to_owned()], false, String::new())
+        );
+        assert_eq!(
+            parse_path("tikv://node1:2379?keyspaceName=%zz&disableGC=true").unwrap(),
+            (vec!["node1:2379".to_owned()], true, String::new())
+        );
+        assert_eq!(
+            parse_path("tikv://node1:2379?keyspaceName=bad;value&disableGC=true").unwrap(),
+            (vec!["node1:2379".to_owned()], true, String::new())
+        );
+        assert!(parse_path("tikv://node1:2379?disableGC=1").is_err());
+        assert_eq!(
+            parse_path("tikv://node1:2379?disableGC=TrUe").unwrap(),
+            (vec!["node1:2379".to_owned()], true, String::new())
+        );
+        assert_eq!(
+            parse_path("tikv:node1:2379").unwrap(),
+            (vec![String::new()], false, String::new())
+        );
+        assert_eq!(
+            parse_path("tikv:opaque%zz?disableGC=true").unwrap(),
+            (vec![String::new()], true, String::new())
+        );
+        assert_eq!(
+            parse_path("tikv://node1:2379#fragment?disableGC=true&keyspaceName=wrong").unwrap(),
+            (vec!["node1:2379".to_owned()], false, String::new())
+        );
+        assert_eq!(
+            parse_path("tikv://[fe80::1%25eth0]:2379").unwrap(),
+            (vec!["[fe80::1%eth0]:2379".to_owned()], false, String::new())
+        );
+        assert!(parse_path("tikv://[fe80::1%25]:2379").is_err());
+        assert!(parse_path("tikv://[::1").is_err());
+        assert!(parse_path("tikv://[127.0.0.1]:2379").is_err());
+        assert!(parse_path("tikv://[::1]:2379,[::2]:2380").is_err());
+        assert!(parse_path("tikv://node:abc").is_err());
+        assert!(parse_path("tikv://node%zz:2379").is_err());
+        assert!(parse_path("tikv://node%2Fname:2379").is_err());
+        assert!(parse_path("tikv://bad user@node:2379").is_err());
+        assert!(parse_path("tikv://node1:2379\n").is_err());
+    }
+
+    #[test]
+    fn source_special_grpc_keep_alive_timeout_conversions_match_go() {
+        for timeout in [f64::NAN, f64::NEG_INFINITY] {
+            let mut client = TiKvClient::default();
+            client.grpc_keep_alive_timeout = timeout;
+            assert!(
+                client.validate().is_err(),
+                "timeout {timeout:?} was accepted"
+            );
+        }
+
+        let mut positive_infinity = TiKvClient::default();
+        positive_infinity.grpc_keep_alive_timeout = f64::INFINITY;
+        assert!(positive_infinity.validate().is_ok());
+        assert_eq!(
+            positive_infinity.grpc_keep_alive_timeout(),
+            Duration::from_nanos(i64::MAX as u64)
         );
     }
 
     #[test]
     #[serial]
-    fn global_update_scope_failpoint_and_restore() {
+    fn source_test_txn_scope_value() {
+        let original = get_global_config();
+        store_global_config(Config::default());
+        fail::cfg("injectTxnScope", "return(bj)").unwrap();
+        assert_eq!(get_txn_scope_from_config(), "bj");
+        fail::cfg("injectTxnScope", "return()").unwrap();
+        assert_eq!(get_txn_scope_from_config(), crate::oracle::GLOBAL_TXN_SCOPE);
+        fail::cfg("injectTxnScope", "return(global)").unwrap();
+        assert_eq!(get_txn_scope_from_config(), crate::oracle::GLOBAL_TXN_SCOPE);
+        fail::remove("injectTxnScope");
+        store_global_config(original);
+    }
+
+    #[test]
+    #[serial]
+    fn source_update_global_restore_is_reusable_and_preserves_identity() {
         let original = get_global_config();
         let restore = update_global(|config| config.txn_scope = "zone-a".to_owned());
         assert_eq!(get_txn_scope_from_config(), "zone-a");
@@ -737,16 +1069,17 @@ mod tests {
         restore();
         assert!(Arc::ptr_eq(&original, &get_global_config()));
 
-        fail::cfg("injectTxnScope", "return(zone-b)").unwrap();
-        assert_eq!(get_txn_scope_from_config(), "zone-b");
-        fail::cfg("injectTxnScope", "return()").unwrap();
-        assert_eq!(get_txn_scope_from_config(), crate::oracle::GLOBAL_TXN_SCOPE);
-        fail::remove("injectTxnScope");
+        store_global_config(Config {
+            txn_scope: "zone-b".to_owned(),
+            ..Config::default()
+        });
+        restore();
+        assert!(Arc::ptr_eq(&original, &get_global_config()));
     }
 
     #[test]
     #[serial]
-    fn updates_and_drains_ru_v2_exactly() {
+    fn source_test_update_tikv_ru_v2_from_exec_details_v2() {
         let original = get_global_config();
         store_global_config(Config::default());
         let details = &mut ExecDetailsV2 {
@@ -775,13 +1108,30 @@ mod tests {
         assert_eq!(
             drained
                 .executor_inputs
+                .as_ref()
                 .unwrap()
                 .tikv_coprocessor_executor_work_total_batch_selection,
             53
         );
+        assert_eq!(
+            drained
+                .executor_inputs
+                .as_ref()
+                .unwrap()
+                .tikv_coprocessor_executor_work_total_batch_top_n,
+            59
+        );
         assert_eq!(drained.write_rpc_count, 31);
         assert!(ru_details.drain_ru_v2().is_none());
+        store_global_config(original);
+    }
 
+    #[test]
+    #[serial]
+    fn source_test_update_tikv_ru_v2_patches_read_rpc_count_in_raw_ru_v2() {
+        let original = get_global_config();
+        store_global_config(Config::default());
+        let ru_details = RuDetails::new();
         let details = &mut ExecDetailsV2 {
             ru_v2: Some(Ruv2 {
                 storage_processed_keys_get: 7,
@@ -798,7 +1148,7 @@ mod tests {
     }
 
     #[test]
-    fn tls_material_validation_and_native_builder_integration() {
+    fn source_test_tls_config() {
         assert!(Security::default().to_tls_config().unwrap().is_none());
         let missing = Security::new("not-present.pem", "", "", Vec::new());
         assert!(missing

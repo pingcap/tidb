@@ -6,10 +6,10 @@
 //! ordered bounds, and iterator invalidation are retained without exposing
 //! unsafe nodes or arena addresses.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex, RwLock, Weak,
 };
 
 use crate::error::{EntryTooLargeError, KeyTooLargeError, StaticError, TransactionTooLargeError};
@@ -71,6 +71,8 @@ pub(crate) struct Art {
     memory_hook: Option<Arc<dyn Fn(u64) + Send + Sync>>,
     write_sequence: Arc<AtomicU64>,
     snapshot_sequence: Arc<AtomicU64>,
+    value_epoch: Arc<AtomicU64>,
+    snapshots: Mutex<Vec<Weak<RwLock<BTreeMap<Vec<u8>, SnapshotValue>>>>>,
 }
 
 impl Art {
@@ -80,6 +82,7 @@ impl Art {
             buffer_size_limit: u64::MAX,
             write_sequence: Arc::new(AtomicU64::new(0)),
             snapshot_sequence: Arc::new(AtomicU64::new(0)),
+            value_epoch: Arc::new(AtomicU64::new(0)),
             ..Self::default()
         }
     }
@@ -216,6 +219,7 @@ impl Art {
     }
 
     pub(crate) fn reset(&mut self) {
+        self.value_epoch.fetch_add(1, Ordering::AcqRel);
         self.entries.clear();
         self.handles.clear();
         self.undo.clear();
@@ -227,11 +231,23 @@ impl Art {
         self.last_key = None;
         self.snapshot_sequence.fetch_add(1, Ordering::Release);
         self.bump_write_sequence();
+        self.clear_snapshot_registry();
         self.notify_memory_change();
     }
 
     pub(crate) fn discard_values(&mut self) {
         self.values_discarded = true;
+        self.value_epoch.fetch_add(1, Ordering::AcqRel);
+        for entry in self.entries.values_mut() {
+            if entry.value.is_some() {
+                entry.value = Some(Vec::new());
+            }
+            entry.history = Vec::new();
+            entry.value_log_undo_index = None;
+        }
+        self.undo = Vec::new();
+        self.clear_snapshot_registry();
+        self.notify_memory_change();
     }
 
     pub(crate) fn set_entry_size_limit(&mut self, entry_limit: u64, buffer_limit: u64) {
@@ -292,6 +308,98 @@ impl Art {
         }
     }
 
+    fn stage_zero_snapshot_entries(&self) -> BTreeMap<Vec<u8>, SnapshotValue> {
+        let mut entries = self.entries.clone();
+        if let Some(stage) = self.stages.first() {
+            for undo in self.undo[stage.undo_start..].iter().rev() {
+                if let Some(entry) = entries.get_mut(&undo.key) {
+                    match &undo.old_value {
+                        Some(value) => {
+                            entry.value = value.clone();
+                            entry.history.truncate(undo.old_history_len);
+                            entry.value_log_undo_index = undo.old_value_log_undo_index;
+                            entry.deleted = undo.old_deleted;
+                        }
+                        None => {
+                            entries.remove(&undo.key);
+                        }
+                    }
+                }
+            }
+        }
+        entries
+            .iter()
+            .filter_map(|(key, entry)| {
+                (!entry.deleted)
+                    .then(|| {
+                        entry.value.as_ref().map(|value| {
+                            (
+                                key.clone(),
+                                SnapshotValue {
+                                    value: value.clone(),
+                                    version: entry.value_log_undo_index,
+                                },
+                            )
+                        })
+                    })
+                    .flatten()
+            })
+            .collect()
+    }
+
+    fn get_snapshot_entries(&self) -> SnapshotEntries {
+        let entries = Arc::new(RwLock::new(self.stage_zero_snapshot_entries()));
+        self.snapshots
+            .lock()
+            .expect("snapshot registry lock poisoned")
+            .push(Arc::downgrade(&entries));
+        entries
+    }
+
+    fn clear_snapshot_registry(&self) {
+        self.snapshots
+            .lock()
+            .expect("snapshot registry lock poisoned")
+            .clear();
+    }
+
+    fn sync_in_place_snapshot_entry(&self, key: &[u8], can_modify_value: bool) {
+        if self.is_staging() || !can_modify_value {
+            return;
+        }
+        let Some((value, version)) = self
+            .entries
+            .get(key)
+            .filter(|entry| !entry.deleted)
+            .and_then(|entry| {
+                entry
+                    .value
+                    .clone()
+                    .map(|value| (value, entry.value_log_undo_index))
+            })
+        else {
+            return;
+        };
+        let mut snapshots = self
+            .snapshots
+            .lock()
+            .expect("snapshot registry lock poisoned");
+        snapshots.retain(|snapshot| {
+            let Some(snapshot) = snapshot.upgrade() else {
+                return false;
+            };
+            if let Some(snapshot_value) = snapshot
+                .write()
+                .expect("snapshot entries lock poisoned")
+                .get_mut(key)
+                .filter(|snapshot_value| snapshot_value.version == version)
+            {
+                snapshot_value.value.clone_from(&value);
+            }
+            true
+        });
+    }
+
     fn entry_mut(&mut self, key: &[u8]) -> (&mut Entry, bool) {
         if self.last_key.as_deref() == Some(key) {
             self.cache_hits += 1;
@@ -340,7 +448,7 @@ impl Art {
         assert!(!self.values_discarded, "vlog is reset");
         if key.len() > MAX_KEY_LEN {
             return Err(Box::new(KeyTooLargeError {
-                key_size: key.len(),
+                key_size: key.len() as isize,
             }));
         }
         if let Some(value) = value {
@@ -386,8 +494,7 @@ impl Art {
                 })
             })
         });
-        let appended_value_log_index = if value.is_some() && self.is_staging() && !can_modify_value
-        {
+        let appended_value_log_index = if value.is_some() && !can_modify_value {
             self.undo.push(Undo {
                 key: key.to_vec(),
                 old_value: if existed { old_value } else { None },
@@ -430,10 +537,13 @@ impl Art {
         if persistent {
             self.dirty = true;
         }
+        self.sync_in_place_snapshot_entry(key, can_modify_value);
+        if self.size() as u64 > self.buffer_size_limit {
+            return Err(Box::new(TransactionTooLargeError {
+                size: self.size() as isize,
+            }));
+        }
         if value.is_some() {
-            if self.size() as u64 > self.buffer_size_limit {
-                return Err(Box::new(TransactionTooLargeError { size: self.size() }));
-            }
             self.notify_memory_change();
         }
         Ok(())
@@ -478,33 +588,18 @@ impl Art {
         key: &[u8],
         mut predicate: impl FnMut(&[u8]) -> bool,
     ) -> Result<Option<Vec<u8>>, StaticError> {
+        let values_discarded = self.values_discarded;
         let entry = self
             .entry(key)
             .filter(|entry| !entry.deleted && entry.value.is_some())
             .ok_or(StaticError::NotExist)?;
+        assert!(!values_discarded, "vlog is reset");
         Ok(entry
             .value
             .iter()
             .chain(entry.history.iter().rev().flatten())
             .find(|value| predicate(value))
             .cloned())
-    }
-
-    /// Native replacement for Go's iterator-borrowed `UpdateFlags`.
-    ///
-    /// Go can only invoke this on the iterator's current, live leaf. Rust
-    /// cannot retain that mutable map borrow in a safe iterator, so callers
-    /// pass the current key explicitly and an invalid/missing key panics.
-    pub(crate) fn update_flags(&mut self, key: &[u8], operations: &[FlagsOp]) {
-        let entry = self
-            .entries
-            .get_mut(key)
-            .filter(|entry| !entry.deleted)
-            .expect("ART iterator flag update requires a live key");
-        entry.flags = apply_flags_ops(entry.flags, operations);
-        if entry.flags.and_persistent().bits() != 0 {
-            self.dirty = true;
-        }
     }
 
     pub(crate) fn key_by_handle(&self, handle: ArtHandle) -> Option<&[u8]> {
@@ -546,14 +641,13 @@ impl Art {
         mut function: impl FnMut(&[u8], KeyFlags, &[u8]),
     ) {
         let stage = self.stages[handle - 1];
-        let keys: BTreeSet<&[u8]> = self.undo[stage.undo_start..]
-            .iter()
-            .map(|undo| undo.key.as_slice())
-            .collect();
-        for key in keys {
-            if let Some(entry) = self.entries.get(key).filter(|entry| !entry.deleted) {
-                if let Some(value) = entry.value.as_deref() {
-                    function(key, entry.flags, value);
+        for index in (stage.undo_start..self.undo.len()).rev() {
+            let undo = &self.undo[index];
+            if let Some(entry) = self.entries.get(&undo.key).filter(|entry| !entry.deleted) {
+                if entry.value_log_undo_index == Some(index) {
+                    if let Some(value) = entry.value.as_deref() {
+                        function(&undo.key, entry.flags, value);
+                    }
                 }
             }
         }
@@ -580,25 +674,19 @@ impl Art {
     }
 
     pub(crate) fn snapshot(&self) -> ArtSnapshot {
-        let mut entries = self.entries.clone();
-        if let Some(stage) = self.stages.first() {
-            for undo in self.undo[stage.undo_start..].iter().rev() {
-                if let Some(entry) = entries.get_mut(&undo.key) {
-                    match &undo.old_value {
-                        Some(value) => {
-                            entry.value = value.clone();
-                            entry.history.truncate(undo.old_history_len);
-                            entry.value_log_undo_index = undo.old_value_log_undo_index;
-                            entry.deleted = undo.old_deleted;
-                        }
-                        None => {
-                            entries.remove(&undo.key);
-                        }
-                    }
-                }
-            }
+        ArtSnapshot {
+            entries: self.get_snapshot_entries(),
+            value_epoch: self.value_epoch_token(),
         }
-        ArtSnapshot { entries }
+    }
+
+    fn value_epoch_token(&self) -> Option<ValueEpoch> {
+        (!self.values_discarded).then(|| {
+            (
+                self.value_epoch.clone(),
+                self.value_epoch.load(Ordering::Acquire),
+            )
+        })
     }
 
     /// Removes a record completely from the test buffer.
@@ -626,12 +714,21 @@ impl Art {
 }
 
 type IteratorItem = (Vec<u8>, Option<Vec<u8>>, KeyFlags, ArtHandle);
+type ValueEpoch = (Arc<AtomicU64>, u64);
+#[derive(Clone)]
+struct SnapshotValue {
+    value: Vec<u8>,
+    version: Option<usize>,
+}
+
+type SnapshotEntries = Arc<RwLock<BTreeMap<Vec<u8>, SnapshotValue>>>;
 
 pub(crate) struct ArtIterator {
     items: Vec<IteratorItem>,
     index: usize,
     expected_sequence: u64,
     write_sequence: Arc<AtomicU64>,
+    value_epoch: Option<ValueEpoch>,
 }
 
 impl ArtIterator {
@@ -665,6 +762,7 @@ impl ArtIterator {
             index: 0,
             expected_sequence: tree.write_sequence(),
             write_sequence: tree.write_sequence.clone(),
+            value_epoch: tree.value_epoch_token(),
         }
     }
 
@@ -686,7 +784,11 @@ impl ArtIterator {
     }
     pub(crate) fn value(&self) -> Option<&[u8]> {
         self.check_sequence();
-        self.items[self.index].1.as_deref()
+        let value = self.items[self.index].1.as_deref();
+        if value.is_some() {
+            assert_values_available(&self.value_epoch);
+        }
+        value
     }
     pub(crate) fn flags(&self) -> KeyFlags {
         self.check_sequence();
@@ -697,7 +799,8 @@ impl ArtIterator {
         self.items[self.index].3
     }
     pub(crate) fn has_value(&self) -> bool {
-        self.value().is_some()
+        self.check_sequence();
+        self.items[self.index].1.is_some()
     }
 
     pub(crate) fn next(&mut self) -> Result<(), &'static str> {
@@ -714,16 +817,21 @@ impl ArtIterator {
 
 #[derive(Clone)]
 pub(crate) struct ArtSnapshot {
-    entries: BTreeMap<Vec<u8>, Entry>,
+    entries: SnapshotEntries,
+    value_epoch: Option<ValueEpoch>,
 }
 
 impl ArtSnapshot {
     pub(crate) fn get(&self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
-        self.entries
+        let value = self
+            .entries
+            .read()
+            .expect("snapshot entries lock poisoned")
             .get(key)
-            .filter(|entry| !entry.deleted)
-            .and_then(|entry| entry.value.clone())
-            .ok_or(StaticError::NotExist)
+            .map(|value| value.value.clone())
+            .ok_or(StaticError::NotExist)?;
+        assert_values_available(&self.value_epoch);
+        Ok(value)
     }
 
     pub(crate) fn iter(
@@ -732,46 +840,78 @@ impl ArtSnapshot {
         upper: Option<&[u8]>,
         reverse: bool,
     ) -> SnapshotIterator {
-        let lower = lower.filter(|bound| !bound.is_empty());
-        let upper = upper.filter(|bound| !bound.is_empty());
-        let mut items: Vec<_> = self
-            .entries
-            .iter()
-            .filter(|(key, entry)| {
-                !entry.deleted
-                    && entry.value.is_some()
-                    && lower.is_none_or(|lower| key.as_slice() >= lower)
-                    && upper.is_none_or(|upper| key.as_slice() < upper)
-            })
-            .map(|(key, entry)| (key.clone(), entry.value.clone().unwrap()))
-            .collect();
-        if reverse {
-            items.reverse();
-        }
-        SnapshotIterator { items, index: 0 }
+        SnapshotIterator::new(
+            self.entries.clone(),
+            lower,
+            upper,
+            reverse,
+            self.value_epoch.clone(),
+        )
     }
 
     pub(crate) fn close(self) {}
 }
 
 pub(crate) struct SnapshotIterator {
-    items: Vec<(Vec<u8>, Vec<u8>)>,
+    entries: SnapshotEntries,
+    keys: Vec<Vec<u8>>,
     index: usize,
+    current_value: Vec<u8>,
+    value_epoch: Option<ValueEpoch>,
 }
 
 impl SnapshotIterator {
+    fn new(
+        entries: SnapshotEntries,
+        lower: Option<&[u8]>,
+        upper: Option<&[u8]>,
+        reverse: bool,
+        value_epoch: Option<ValueEpoch>,
+    ) -> Self {
+        let lower = lower.filter(|bound| !bound.is_empty());
+        let upper = upper.filter(|bound| !bound.is_empty());
+        let mut keys: Vec<_> = entries
+            .read()
+            .expect("snapshot entries lock poisoned")
+            .keys()
+            .filter(|key| {
+                lower.is_none_or(|lower| key.as_slice() >= lower)
+                    && upper.is_none_or(|upper| key.as_slice() < upper)
+            })
+            .cloned()
+            .collect();
+        if reverse {
+            keys.reverse();
+        }
+        Self {
+            entries,
+            keys,
+            index: 0,
+            current_value: Vec::new(),
+            value_epoch,
+        }
+    }
+
     pub(crate) fn valid(&self) -> bool {
-        self.index < self.items.len()
+        self.index < self.keys.len()
     }
     pub(crate) fn key(&self) -> &[u8] {
-        &self.items[self.index].0
+        &self.keys[self.index]
     }
-    pub(crate) fn value(&self) -> &[u8] {
-        &self.items[self.index].1
+    pub(crate) fn value(&mut self) -> &[u8] {
+        assert_values_available(&self.value_epoch);
+        self.current_value = self
+            .entries
+            .read()
+            .expect("snapshot entries lock poisoned")
+            .get(&self.keys[self.index])
+            .map(|value| value.value.clone())
+            .expect("snapshot iterator key disappeared from stage-zero view");
+        &self.current_value
     }
     pub(crate) fn next(&mut self) -> Result<(), &'static str> {
         if !self.valid() {
-            return Err("Art: iterator is finished");
+            return Ok(());
         }
         self.index += 1;
         Ok(())
@@ -780,12 +920,21 @@ impl SnapshotIterator {
     pub(crate) fn close(self) {}
 }
 
+fn assert_values_available(value_epoch: &Option<ValueEpoch>) {
+    let (epoch, expected) = value_epoch.as_ref().expect("vlog is reset");
+    assert_eq!(epoch.load(Ordering::Acquire), *expected, "vlog is reset");
+}
+
+#[cfg(test)]
+#[path = "art_source_tests.rs"]
+mod source_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn source_key_shapes_node_capacities_and_bounds_are_ordered() {
+    fn source_uncovered_combined_key_shapes_node_capacities_and_bounds_are_ordered() {
         let mut tree = Art::new();
         for i in 0..256u16 {
             let key = [i as u8];
@@ -815,7 +964,7 @@ mod tests {
     }
 
     #[test]
-    fn source_prefix_flags_handles_and_discard_contracts_hold() {
+    fn source_uncovered_combined_prefix_flags_handles_and_discard_contracts_hold() {
         let mut tree = Art::new();
         for key in [b"a".as_slice(), b"aa", b"aaa", &[1, 1, 1], &[1, 1, 2]] {
             tree.set(key, Some(key), &[]).unwrap();
@@ -828,12 +977,11 @@ mod tests {
         assert!(tree.flags(b"locked").unwrap().has_locked());
         assert!(!tree.flags(b"flag-only").unwrap().has_assertion_flags());
         assert!(tree.get(b"flag-only").is_err());
-        tree.update_flags(b"locked", &[FlagsOp::DelKeyLocked]);
+        tree.set(b"locked", None, &[FlagsOp::DelKeyLocked]).unwrap();
         assert!(!tree.flags(b"locked").unwrap().has_locked());
-        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            tree.update_flags(b"missing", &[FlagsOp::SetKeyLocked])
-        }))
-        .is_err());
+        tree.set(b"missing", None, &[FlagsOp::SetKeyLocked])
+            .unwrap();
+        assert!(tree.flags(b"missing").unwrap().has_locked());
         let handle = tree.iter_with_flags(None, None).handle();
         let key = tree.key_by_handle(handle).unwrap().to_vec();
         let value = tree.get(&key).unwrap();
@@ -854,7 +1002,7 @@ mod tests {
     }
 
     #[test]
-    fn staging_history_persistent_flags_and_handles_match_art() {
+    fn source_uncovered_staging_history_persistent_flags_and_handles_match_art() {
         let mut tree = Art::new();
         let stage = tree.staging();
         tree.set(b"ephemeral", Some(b"one"), &[]).unwrap();
@@ -906,7 +1054,7 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_iterators_invalidate_but_snapshots_remain_stable() {
+    fn source_uncovered_ordinary_iterators_invalidate_but_snapshots_remain_stable() {
         let mut tree = Art::new();
         tree.set(b"a", Some(b"one"), &[]).unwrap();
         let snapshot = tree.snapshot();
@@ -922,7 +1070,7 @@ mod tests {
     }
 
     #[test]
-    fn limits_hooks_cache_stage_inspection_and_reset_are_source_compatible() {
+    fn source_uncovered_limits_hooks_cache_stage_inspection_and_reset_are_source_compatible() {
         let mut tree = Art::new();
         let observed = Arc::new(AtomicU64::new(0));
         let result = observed.clone();
@@ -956,7 +1104,7 @@ mod tests {
     }
 
     #[test]
-    fn hundred_thousand_decimal_keys_and_long_common_prefixes_are_retrievable() {
+    fn source_uncovered_hundred_thousand_decimal_keys_and_long_common_prefixes_are_retrievable() {
         let mut tree = Art::new();
         for number in 0..100_000 {
             let key = format!("{number:010}").into_bytes();
@@ -978,7 +1126,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_iterators_are_stable_and_shareable_after_tree_writes() {
+    fn source_uncovered_snapshot_iterators_are_stable_and_shareable_after_tree_writes() {
         let mut tree = Art::new();
         for value in 0..48u8 {
             let key = [0, value];
@@ -993,7 +1141,8 @@ mod tests {
                 let mut iterator = snapshot.iter(None, None, false);
                 let mut count = 0;
                 while iterator.valid() {
-                    assert_eq!(iterator.key(), iterator.value());
+                    let key = iterator.key().to_vec();
+                    assert_eq!(key, iterator.value());
                     iterator.next().unwrap();
                     count += 1;
                 }
@@ -1003,5 +1152,83 @@ mod tests {
         for join in joins {
             assert_eq!(join.join().unwrap(), 48);
         }
+    }
+
+    #[test]
+    fn source_uncovered_discard_values_releases_storage_and_invalidates_value_readers() {
+        let mut tree = Art::new();
+        let observed = Arc::new(AtomicU64::new(0));
+        let hook_observed = observed.clone();
+        tree.set_memory_footprint_change_hook(Arc::new(move |memory| {
+            hook_observed.store(memory, Ordering::Release);
+        }));
+        tree.set(b"key", Some(b"first value"), &[]).unwrap();
+        tree.set(b"key", Some(b"replacement value"), &[]).unwrap();
+        let iterator = tree.iter(None, None);
+        let snapshot = tree.snapshot();
+        let before = tree.memory_footprint();
+
+        tree.discard_values();
+
+        assert!(tree.memory_footprint() < before);
+        assert_eq!(observed.load(Ordering::Acquire), tree.memory_footprint());
+        assert!(tree.undo.is_empty());
+        assert!(tree.entries.values().all(|entry| {
+            entry
+                .value
+                .as_ref()
+                .is_none_or(|value| value.capacity() == 0)
+                && entry.history.capacity() == 0
+        }));
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tree.select_value_history(b"key", |_| true)
+        }))
+        .is_err());
+        assert!(std::panic::catch_unwind(|| iterator.value()).is_err());
+        assert!(std::panic::catch_unwind(|| snapshot.get(b"key")).is_err());
+    }
+
+    #[test]
+    fn source_uncovered_inspect_stage_follows_reverse_value_log_order() {
+        let mut tree = Art::new();
+        let stage = tree.staging();
+        tree.set(b"b", Some(b"first"), &[]).unwrap();
+        tree.set(b"a", Some(b"second"), &[]).unwrap();
+        tree.set(b"c", Some(b"third"), &[]).unwrap();
+        tree.set(b"a", Some(b"SECOND"), &[]).unwrap();
+        tree.set(b"b", Some(b"replacement"), &[]).unwrap();
+
+        let mut inspected = Vec::new();
+        tree.inspect_stage(stage, |key, _, value| {
+            inspected.push((key.to_vec(), value.to_vec()));
+        });
+        assert_eq!(
+            inspected,
+            [
+                (b"b".to_vec(), b"replacement".to_vec()),
+                (b"c".to_vec(), b"third".to_vec()),
+                (b"a".to_vec(), b"SECOND".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn source_uncovered_flags_only_set_enforces_total_buffer_limit() {
+        let mut tree = Art::new();
+        tree.set_entry_size_limit(u64::MAX, 1);
+        let error = tree.set(b"ab", None, &[FlagsOp::SetKeyLocked]).unwrap_err();
+        assert!(error.downcast_ref::<TransactionTooLargeError>().is_some());
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree.size(), 2);
+    }
+
+    #[test]
+    fn source_uncovered_finished_snapshot_iterator_next_is_idempotent() {
+        let mut tree = Art::new();
+        tree.set(b"a", Some(b"value"), &[]).unwrap();
+        let mut iterator = tree.snapshot().iter(None, None, false);
+        iterator.next().unwrap();
+        assert!(!iterator.valid());
+        assert!(iterator.next().is_ok());
     }
 }

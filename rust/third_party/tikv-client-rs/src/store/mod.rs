@@ -33,7 +33,7 @@ pub use self::errors::HasRegionErrors;
 pub use self::errors::RegionErrorResponse;
 pub(crate) use self::request::network_response_size;
 pub use self::request::Request;
-pub(crate) use self::request::{exec_details_v2, exec_details_v2_mut};
+pub(crate) use self::request::{exec_details_v2, exec_details_v2_mut, region_error_ref};
 #[allow(unused_imports)]
 pub use self::request::{
     get_default_request_origin, set_default_request_origin, BatchCoprocessorStreamRequest,

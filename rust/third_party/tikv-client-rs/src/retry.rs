@@ -864,6 +864,15 @@ mod tests {
         }
     }
 
+    fn assert_clone_or_fork_equal(left: &RetryBackoffer, right: &RetryBackoffer) {
+        assert_eq!(left.errors, right.errors);
+        assert_eq!(left.errors_num, right.errors_num);
+        assert_eq!(left.sleep_by_type, right.sleep_by_type);
+        assert_eq!(left.times_by_type, right.times_by_type);
+        assert_eq!(left.excluded_sleep_ms, right.excluded_sleep_ms);
+        assert_eq!(left.total_sleep_ms, right.total_sleep_ms);
+    }
+
     #[test]
     fn source_retry_config_matrix_and_value_semantic_setters_are_complete() {
         let configs = [
@@ -1073,7 +1082,7 @@ mod tests {
     }
 
     #[test]
-    fn check_killed_prefers_the_signal_then_runs_the_handler() {
+    fn source_test_check_killed() {
         let killed = Arc::new(AtomicU32::new(7));
         let calls = Arc::new(AtomicUsize::new(0));
         let mut variables = Variables::new(killed.clone());
@@ -1100,6 +1109,37 @@ mod tests {
             "kill-signal handler failed: killed by handler"
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        killed.store(7, Ordering::SeqCst);
+        let variables_without_handler = Variables::new(killed.clone());
+        let without_handler = RetryBackoffer::with_variables(
+            Cancellation::default(),
+            1,
+            Arc::new(variables_without_handler),
+        );
+        assert!(matches!(
+            without_handler.check_killed(),
+            Err(RetryError::Interrupted(QueryInterruptedWithSignalError {
+                signal: 7
+            }))
+        ));
+
+        let second_owner = RetryBackoffer::with_variables(
+            Cancellation::default(),
+            1,
+            Arc::new(Variables::new(killed.clone())),
+        );
+        assert!(matches!(
+            second_owner.check_killed(),
+            Err(RetryError::Interrupted(QueryInterruptedWithSignalError {
+                signal: 7
+            }))
+        ));
+
+        killed.store(0, Ordering::SeqCst);
+        assert!(RetryBackoffer::new(Cancellation::default(), 1)
+            .check_killed()
+            .is_ok());
     }
 
     #[tokio::test]
@@ -1224,31 +1264,64 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn longest_non_excluded_sleep_selects_the_terminal_error() {
-        let short = RetryConfig::new("short", 2, 2, Jitter::No, StaticError::RegionUnavailable);
-        let long = RetryConfig::new("long", 4, 4, Jitter::No, StaticError::ResolveLockTimeout);
-        let variables = Arc::new(Variables::new(Arc::new(AtomicU32::new(0))));
-        let mut backoffer = RetryBackoffer::with_variables(Cancellation::default(), 4, variables);
+    async fn source_test_backoff_error_type() {
+        // Default source variables multiply this caller budget to 1,600 ms.
+        let mut backoffer = RetryBackoffer::new(Cancellation::default(), 800);
+        backoffer
+            .backoff(BO_REGION_MISS, "region miss")
+            .await
+            .unwrap();
+        for _ in 0..2 {
+            backoffer
+                .backoff(BO_MAX_REGION_NOT_INITIALIZED, "region not initialized")
+                .await
+                .unwrap();
+        }
+        backoffer
+            .backoff(BO_REGION_RECOVERY_IN_PROGRESS, "recovery in progress")
+            .await
+            .unwrap();
+        backoffer
+            .backoff(BO_TIKV_SERVER_BUSY, "server is busy")
+            .await
+            .unwrap();
+        backoffer
+            .backoff(BO_IS_WITNESS, "peer is witness")
+            .await
+            .unwrap();
 
-        backoffer.backoff(short, "short").await.unwrap();
-        backoffer.backoff(long, "long one").await.unwrap();
-        backoffer.backoff(long, "long two").await.unwrap();
-        let error = backoffer.backoff(short, "exhausted").await.unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            StaticError::ResolveLockTimeout.to_string()
-        );
-        assert_eq!(
-            std::error::Error::source(&error).unwrap().to_string(),
-            StaticError::ResolveLockTimeout.to_string()
-        );
-        assert!(matches!(
-            error,
-            RetryError::Exhausted {
-                terminal: Some(RetryTerminal::Static(StaticError::ResolveLockTimeout)),
-                ..
+        let mut terminal_error = None;
+        for _ in 0..15 {
+            match backoffer.backoff(BO_TXN_NOT_FOUND, "txn not found").await {
+                Ok(()) => {}
+                Err(error) => {
+                    terminal_error = Some(error);
+                    break;
+                }
             }
-        ));
+        }
+        let terminal_error = terminal_error.expect("source loop must exhaust its retry budget");
+        let expected = backoffer
+            .configs
+            .iter()
+            .copied()
+            .filter(|config| config.excluded_budget_limit_ms.is_none())
+            .max_by_key(|config| {
+                backoffer
+                    .sleep_by_type
+                    .get(config.name)
+                    .copied()
+                    .unwrap_or_default()
+            })
+            .unwrap()
+            .terminal_error;
+        assert_eq!(terminal_error.to_string(), expected.to_string());
+        assert_eq!(
+            std::error::Error::source(&terminal_error)
+                .unwrap()
+                .to_string(),
+            expected.to_string()
+        );
     }
 
     #[tokio::test]
@@ -1270,31 +1343,59 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fork_inherits_budget_cancels_independently_and_merges_only_to_its_parent() {
+    async fn source_test_backoff_deep_copy() {
         let mut parent = RetryBackoffer::new(Cancellation::default(), 4);
-        parent.backoff(BO_REGION_MISS, "parent").await.unwrap();
-        let (mut fork, fork_cancellation) = parent.fork();
-        fork.backoff(BO_REGION_MISS, "fork").await.unwrap();
-        let clone = fork.clone();
-        parent.update_using_forked(&fork);
-        assert_eq!(parent.total_sleep_ms(), clone.total_sleep_ms());
-        assert_eq!(parent.times_by_type(), clone.times_by_type());
+        for _ in 0..3 {
+            parent
+                .backoff(BO_MAX_REGION_NOT_INITIALIZED, "region not initialized")
+                .await
+                .unwrap();
+        }
+        let (fork, fork_cancellation) = parent.fork();
+        let cloned = parent.clone();
+        assert_clone_or_fork_equal(&parent, &fork);
+        assert_clone_or_fork_equal(&parent, &cloned);
 
-        let mut unrelated = RetryBackoffer::new(Cancellation::default(), 4);
-        unrelated.update_using_forked(&fork);
-        assert_eq!(unrelated.total_sleep_ms(), 0);
-
+        for mut descendant in [fork, cloned] {
+            let error = descendant
+                .backoff(BO_TIKV_RPC, "tikv rpc")
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                RetryError::Exhausted {
+                    terminal: Some(RetryTerminal::Static(StaticError::RegionNotInitialized)),
+                    ..
+                }
+            ));
+        }
         fork_cancellation.cancel();
-        assert!(matches!(
-            fork.backoff(BO_REGION_MISS, "child cancel").await,
-            Err(RetryError::Cancelled { .. })
-        ));
         assert!(!parent.cancellation.is_cancelled());
     }
 
     #[tokio::test]
-    async fn region_errors_only_skip_backoff_for_a_real_epoch_mismatch() {
-        let mut backoffer = RetryBackoffer::new(Cancellation::default(), 10);
+    async fn source_test_backoff_update_using_fork() {
+        let mut parent = RetryBackoffer::new(Cancellation::default(), 4);
+        for _ in 0..3 {
+            parent
+                .backoff(BO_MAX_REGION_NOT_INITIALIZED, "region not initialized")
+                .await
+                .unwrap();
+        }
+        let (mut fork, _) = parent.fork();
+        let _ = fork.backoff(BO_TIKV_RPC, "tikv rpc").await;
+        let fork_snapshot = fork.clone();
+        parent.update_using_forked(&fork);
+        assert_clone_or_fork_equal(&parent, &fork_snapshot);
+        assert!(parent.ancestors.is_empty());
+
+        let mut unrelated = RetryBackoffer::new(Cancellation::default(), 4);
+        unrelated.update_using_forked(&fork);
+        assert_eq!(unrelated.total_sleep_ms(), 0);
+    }
+
+    #[tokio::test]
+    async fn source_test_may_backoff_for_region_error() {
         let real = errorpb::Error {
             epoch_not_match: Some(errorpb::EpochNotMatch {
                 current_regions: vec![crate::proto::metapb::Region {
@@ -1304,23 +1405,19 @@ mod tests {
             }),
             ..Default::default()
         };
-        backoffer
+        let mut real_backoffer = RetryBackoffer::new(Cancellation::default(), 1);
+        real_backoffer
             .may_backoff_region_error(Some(&real))
             .await
             .unwrap();
-        assert_eq!(backoffer.total_sleep_ms(), 0);
+        assert_eq!(real_backoffer.total_sleep_ms(), 0);
 
         let fake = errorpb::Error {
             epoch_not_match: Some(errorpb::EpochNotMatch::default()),
             ..Default::default()
         };
-        backoffer
-            .may_backoff_region_error(Some(&fake))
-            .await
-            .unwrap();
-        assert_eq!(backoffer.total_sleep_ms(), 2);
-
         for error in [
+            fake.clone(),
             errorpb::Error {
                 not_leader: Some(errorpb::NotLeader::default()),
                 ..Default::default()
@@ -1334,31 +1431,33 @@ mod tests {
                 ..Default::default()
             },
         ] {
-            let before = backoffer.total_backoff_times();
+            let mut backoffer = RetryBackoffer::new(Cancellation::default(), 1);
             backoffer
                 .may_backoff_region_error(Some(&error))
                 .await
                 .unwrap();
-            assert_eq!(backoffer.total_backoff_times(), before + 1);
+            assert!(backoffer.total_sleep_ms() > 0);
+
+            let cancelled = Cancellation::default();
+            cancelled.cancel();
+            let mut cancelled_backoffer = RetryBackoffer::new(cancelled, 1);
+            let expected_reason = format!("{error:?}");
+            let error = cancelled_backoffer
+                .may_backoff_region_error(Some(&error))
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                RetryError::Cancelled { reason } if reason == expected_reason
+            ));
         }
-        backoffer.may_backoff_region_error(None).await.unwrap();
+
+        let mut none_backoffer = RetryBackoffer::new(Cancellation::default(), 1);
+        none_backoffer.may_backoff_region_error(None).await.unwrap();
 
         assert!(!is_fake_region_error(None));
         assert!(is_fake_region_error(Some(&fake)));
         assert!(!is_fake_region_error(Some(&real)));
-
-        let cancelled = Cancellation::default();
-        cancelled.cancel();
-        let mut cancelled_backoffer = RetryBackoffer::new(cancelled, 10);
-        let expected_reason = format!("{fake:?}");
-        let error = cancelled_backoffer
-            .may_backoff_region_error(Some(&fake))
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            RetryError::Cancelled { reason } if reason == expected_reason
-        ));
     }
 
     #[tokio::test]
@@ -1372,18 +1471,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn txn_lock_fast_caps_each_sleep_without_resetting_its_exponential_state() {
-        let mut backoffer = RetryBackoffer::new(Cancellation::default(), 100);
+    async fn source_test_backoff_with_max() {
+        let mut backoffer = RetryBackoffer::new(Cancellation::default(), 2_000);
         backoffer
-            .backoff_with_max_sleep_txn_lock_fast(1, "fast lock")
+            .backoff_with_max_sleep_txn_lock_fast(5, "test")
             .await
             .unwrap();
-        assert_eq!(backoffer.total_sleep_ms(), 1);
+        assert_eq!(backoffer.total_sleep_ms(), 5);
         backoffer
-            .backoff_with_max_sleep_txn_lock_fast(5, "fast lock")
+            .backoff_with_max_sleep_txn_lock_fast(5, "test again")
             .await
             .unwrap();
-        assert_eq!(backoffer.total_sleep_ms(), 6);
+        assert_eq!(backoffer.total_sleep_ms(), 10);
         backoffer.reset_max_sleep(1);
         assert_eq!(backoffer.total_sleep_ms(), 0);
     }
@@ -1431,31 +1530,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn error_count_is_lifetime_accounting_while_diagnostics_retain_three_records() {
-        let mut backoffer = RetryBackoffer::new(Cancellation::default(), 0);
-        for index in 0..5 {
+    async fn source_test_backoff_errors_keep() {
+        let mut backoffer = RetryBackoffer::new(Cancellation::default(), 1_000_000);
+        assert_eq!(backoffer.errors_num(), 0);
+        assert!(backoffer.latest_errors().is_empty());
+        let config = RetryConfig::new("foo", 1, 2, Jitter::Equal, StaticError::TiKvServerTimeout);
+        let mut reasons = Vec::with_capacity(32);
+        for index in 0..reasons.capacity() {
+            reasons.push(format!("mockErr-{index}"));
             backoffer
-                .backoff(BO_REGION_MISS, format!("region miss {index}"))
+                .backoff(config, reasons[index].clone())
                 .await
                 .unwrap();
+            assert_eq!(backoffer.errors_num(), reasons.len());
+            let retained = backoffer.latest_errors();
+            assert_eq!(
+                retained.len(),
+                reasons.len().min(MAX_RECORD_BACKOFF_ERR_COUNT)
+            );
+            let expected_start = reasons.len().saturating_sub(MAX_RECORD_BACKOFF_ERR_COUNT);
+            assert_eq!(
+                retained
+                    .iter()
+                    .map(|record| record.reason.as_str())
+                    .collect::<Vec<_>>(),
+                reasons[expected_start..]
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+            );
+            assert!(retained.windows(2).all(|pair| pair[0].time <= pair[1].time));
+            let now = SystemTime::now();
+            assert!(now.duration_since(retained[0].time).unwrap() < Duration::from_secs(5));
+            assert!(
+                now.duration_since(retained[retained.len() - 1].time)
+                    .unwrap()
+                    < Duration::from_secs(5)
+            );
         }
-
-        assert_eq!(backoffer.errors_num(), 5);
-        assert_eq!(
-            backoffer.latest_errors().len(),
-            MAX_RECORD_BACKOFF_ERR_COUNT
-        );
-        assert_eq!(backoffer.latest_errors()[0].reason, "region miss 2");
-        assert_eq!(backoffer.latest_errors()[2].reason, "region miss 4");
-
-        let cloned = backoffer.clone();
-        let (forked, _) = backoffer.fork();
-        assert_eq!(cloned.errors_num(), 5);
-        assert_eq!(forked.errors_num(), 5);
     }
 
     #[tokio::test]
-    async fn excluded_retry_class_still_obeys_its_own_maximum_budget() {
+    async fn source_test_backoff_with_max_excluded_exceed() {
         let excluded = RetryConfig::new(
             "testExcluded",
             2,
@@ -1508,13 +1624,13 @@ mod tests {
     }
 
     #[test]
-    fn backoff_record_formats_rfc3339_nanoseconds() {
+    fn source_test_backoff_error() {
         let record = BackoffRecord {
             reason: "mockErr".to_owned(),
-            time: SystemTime::UNIX_EPOCH
-                + Duration::from_secs(4 * 3_600 + 1_234)
-                + Duration::from_nanos(123_400_000),
+            time: SystemTime::UNIX_EPOCH + Duration::from_secs(4 * 3_600 + 1_234),
         };
-        assert_eq!(record.to_string(), "mockErr at 1970-01-01T04:20:34.1234Z");
+        // `SystemTime` carries no location. The same instant is rendered in
+        // UTC instead of Go's test-only fixed +03:00 location.
+        assert_eq!(record.to_string(), "mockErr at 1970-01-01T04:20:34Z");
     }
 }

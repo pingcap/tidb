@@ -1,10 +1,10 @@
 # `internal/apicodec` source-artifact audit
 
-This is the atomic completion receipt for client-go package `internal/apicodec`, pinned at commit `52c1e76cec993571493c81de442bcbef90cdc106`. The Rust implementation is integrated into the `tikv-client` crate and is validated with `nightly-2026-08-22`.
+This is the independently reopened atomic completion receipt for client-go package `internal/apicodec`, pinned at commit `52c1e76cec993571493c81de442bcbef90cdc106`. The Rust implementation is integrated into the `tikv-client` crate and is validated with `nightly-2026-08-22`. The re-audit reran the exact Go package, inventoried every test declaration again, and replaced the older grouped test mapping with independently named Rust ports.
 
 ## Complete source inventory
 
-`git ls-tree -r --name-only 52c1e76cec993571493c81de442bcbef90cdc106 internal/apicodec` contains exactly seven files:
+`git ls-tree -r --name-only 52c1e76cec993571493c81de442bcbef90cdc106 internal/apicodec` contains exactly seven files and 2,703 lines:
 
 | Source artifact | SHA-256 | Rust owner |
 | --- | --- | --- |
@@ -52,34 +52,50 @@ Client-go pins `github.com/pingcap/kvproto` at commit `059694ae4472276644613accc
 | Region/key/MVCC helper transforms | KeyNotInRegion key/range, EpochNotMatch sibling filtering, all KeyError key-bearing variants, shared-lock holders, nested MVCC info, locks, pairs, mutations, Cop ranges, region infos, table regions, TiFlash store tasks, wait entries, and split regions are represented. Empty optional lock keys remain empty instead of becoming a prefix. |
 | Bucket transforms | V1 decodes every region key. V2 suppresses only first/last out-of-keyspace edges, removes duplicate empty starts, and preserves source interior filtering. BucketVersionNotMatch keys remain physical in region errors because neither source response switch decodes them; direct bucket responses use `decode_bucket_keys`. |
 
-The Rust command boundary is intentionally compile-time typed. Client-go's `TestEncodeUnknownRequest` proves an unhandled dynamic command is context-only and otherwise unchanged; Rust has no user-constructible unknown command wrapper. The source-enumerated 53-route compile test plus StoreSafeTS/context and stream tests prove the equivalent boundary without inventing a dynamic escape hatch.
+The Rust command boundary is intentionally compile-time typed. Client-go's `TestEncodeUnknownRequest` proves an unhandled dynamic command is context-only and otherwise unchanged; Rust has no user-constructible unknown command wrapper. The 54-route typed compile test plus StoreSafeTS/context and stream tests prove the equivalent boundary without inventing a dynamic escape hatch.
 
 ## Test/support mapping
 
-Every original test is represented:
+All 17 assertion-bearing Go tests now have independently named Rust ports. The Rust tests retain the source table rows and nested response fields at the native typed-request boundary instead of treating older grouped regressions as sufficient evidence:
 
-- `TestParseKeyspaceID`, `TestDecodeKey`, and `TestCodecListUtilityFunctions` map to `api_key_utilities_match_v1_and_v2_source_contracts`, version tests, the exact constant tests, and malformed/unsupported input cases.
-- `TestEncodeUnknownRequest` maps to the complete typed route matrix and `store_safe_ts_keeps_its_contextless_api_v2_key_range_shape`; unknown dynamic commands are unconstructible in the Rust API.
-- Empty `TestV1DecodeBucketKey` is superseded by `bucket_key_decoders_preserve_v1_and_apply_v2_edge_suppression` and V1 raw/txn region tests.
-- `TestCodecV2/TestEncodeRequest` maps to request lowering/transform tests in `src/request/keyspace.rs`, `src/raw/requests.rs`, `src/transaction/requests.rs`, and `src/store/request.rs`, including the complete source command list.
-- `TestEncodeV2KeyRanges` maps to point/bounded/unbounded/reverse range tables and Cop/TiFlash task tests.
-- `TestNewCodecV2`, `TestNewCodecV2RejectsKeyspaceIdentity`, and `TestNewCodecV2RejectsNilMeta` map to uint24/mode/end-prefix tests and PD metadata identity/absence tests. Rust's numeric constructor makes a nil metadata pointer impossible; the PD adapter owns optional metadata validation.
-- `TestDecodeEpochNotMatch` and `TestDecodeKeyError` map to sibling clipping/filtering and the complete nested key-error/lock/MVCC field tests.
-- `TestDecodeResponseHotPathCommands` and `TestDecodeResponseSecondWaveCommands` map to the raw and transaction decoder suites, Cop/TiFlash/stream tests, plus the V1 exact-matrix regression.
-- `TestDecodeMvccInfoPreservesEmptyLockKeys`, `TestGetKeyspaceID`, `TestEncodeMPPRequest`, and `TestDecodeBucketKeys` map directly to empty-field, metadata-state/identity, MPP TaskMeta, and bucket-edge regressions.
+| client-go test | Rust port |
+| --- | --- |
+| `TestParseKeyspaceID` | `request::keyspace::tests::source_test_parse_keyspace_id` |
+| `TestDecodeKey` | `request::keyspace::tests::source_test_decode_key` |
+| `TestEncodeUnknownRequest` | `transaction::requests::tests::source_test_encode_unknown_request` |
+| `TestCodecListUtilityFunctions` | `request::keyspace::tests::source_test_codec_list_utility_functions` |
+| `TestEncodeRequest` | `store::request::tests::source_test_encode_request` |
+| `TestEncodeV2KeyRanges` | `request::keyspace::tests::source_test_encode_v2_key_ranges` |
+| `TestNewCodecV2` | `request::keyspace::tests::source_test_new_codec_v2` |
+| `TestNewCodecV2RejectsKeyspaceIdentity` | `request::keyspace::tests::source_test_new_codec_v2_rejects_keyspace_identity` |
+| `TestNewCodecV2RejectsNilMeta` | `request::keyspace::tests::source_test_new_codec_v2_rejects_nil_meta` |
+| `TestDecodeEpochNotMatch` | `request::keyspace::tests::source_test_decode_epoch_not_match` |
+| `TestDecodeKeyError` | `request::keyspace::tests::source_test_decode_key_error` |
+| `TestDecodeResponseHotPathCommands` | `transaction::requests::tests::source_test_decode_response_hot_path_commands` |
+| `TestDecodeResponseSecondWaveCommands` | `transaction::requests::tests::source_test_decode_response_second_wave_commands` |
+| `TestDecodeMvccInfoPreservesEmptyLockKeys` | `request::keyspace::tests::source_test_decode_mvcc_info_preserves_empty_lock_keys` |
+| `TestGetKeyspaceID` | `request::keyspace::tests::source_test_get_keyspace_id` |
+| `TestEncodeMPPRequest` | `request::keyspace::tests::source_test_encode_mpp_request` |
+| `TestDecodeBucketKeys` | `request::keyspace::tests::source_test_decode_bucket_keys` |
+
+`TestCodecV2` is only the testify suite runner; every assertion executes through the individually mapped suite methods above. `TestV1DecodeBucketKey` has an empty body at the pin, so it has no assertions to transcreate; the stronger Rust V1 bucket and region tests remain supplementary coverage. Go's invalid numeric `Mode(99)` and nil metadata pointer are unconstructible through the Rust enum/numeric constructor; the corresponding ports prove those type boundaries and exercise the native metadata adapter's identity handling without inventing a nullable public constructor.
 
 Additional production-derived tests cover exact V1 null-oneof stamping, canonical keyspace-name retention across clones, API V3 context isolation and generated schema availability, malformed-region-key classification through wrapped errors, maximum-ID end-prefix carry, shared lock wrappers, empty logical lock keys, malformed optional secondaries, transactional/raw response precedence, deprecated Cleanup/legacy GC, pipelined/flashback commands, physical/MVCC/observer/wait/split commands, and ordinary/TiFlash coprocessor transforms.
 
 ## Consumer inventory and ownership
 
-Every pinned source importer was inspected and assigned without promoting its package:
+All 14 pinned direct source-importer files were inspected and assigned without promoting their packages:
 
 - `internal/client/client.go` owns transport-time `EncodeRequest`/`DecodeResponse`; the complete Rust transport package consumes typed context and stream transforms.
-- `internal/locate/pd_codec.go`, `region_cache.go`, and locate tests own PD boundary coding and special non-retry treatment of `IsDecodeError`. Rust's `src/pd/codec.rs` uses the complete codecs and typed decode errors; retry policy is now covered by the complete `internal/locate` receipt.
+- `internal/locate/pd_codec.go`, `region_cache.go`, `region_cache_test.go`, `region_request3_test.go`, `region_request_state_test.go`, `region_request_test.go`, and `replica_selector_test.go` own PD boundary coding and special non-retry treatment of `IsDecodeError`. Rust's `src/pd/codec.rs` uses the complete codecs and typed decode errors; retry policy is now covered by the complete `internal/locate` receipt.
 - `tikv/{client,compatible_txn_safe_point_loader,region,test_util}.go` own public aliases, construction, safe-point prefixing, and test factories. Their broader high-level behavior remains on the root `tikv` row.
-- `txnkv/transaction/txn_file.go` uses only the numeric ID for chunk-writer metadata; the separate completed transaction receipt retains that integration claim.
+- `txnkv/transaction/txn_file.go` and `txn_file_test.go` use the numeric ID for chunk-writer metadata and its test construction; the separate completed transaction receipt retains that integration claim.
 - RawKV, transaction, snapshot, and lock request implementations consume the codec through the typed Rust request boundary even though client-go reaches them indirectly through `tikv.Client`. Their complete algorithms remain on their own ledger rows.
 
-## Completion gates
+## Re-audit result and completion evidence
 
-The package is complete when focused keyspace/request tests pass in default and all-feature modes; complete default and all-feature library suites pass; all targets compile with all features; rustdoc, rustfmt, generated-input identity, and diff checks pass; and the ledger records exact results. No live TiKV/PD cluster is required to prove deterministic byte/protobuf transforms. Final API-v1/API-v2 differential validation remains mandatory for the owning high-level packages.
+The independently ported source cases found no additional production divergence: the implementation already preserves the exact six-region epoch clipping table, all five nested key-error forms, both response-command tables, empty MVCC lock keys, MPP metadata/ranges, and all three bucket-edge tables. The previous receipt was behaviorally correct but its grouped test evidence was not sufficient for the repository's current one-to-one test-port standard.
+
+The exact Go package passes both ordinary and race-enabled execution with Go 1.25.12. On `nightly-2026-08-22`, all 17 independently named Rust ports pass with no default features and all features; the complete source-derived filters pass 794/794 and 791/791; the no-default workspace passes 1,041 active main-library tests plus one unrelated ignore and every companion/doctest target; the all-feature library passes 1,038 active tests plus the same ignore; strict all-target/all-feature check, Clippy with warnings denied, private rustdoc with warnings denied, and all 51 doctests pass. Rustfmt, exact source-inventory/test-declaration/importer reconciliation, and whitespace checks are final commit gates.
+
+No live TiKV/PD cluster is required to prove deterministic byte/protobuf transforms. Final API-v1/API-v2 differential validation remains mandatory for the owning high-level packages.

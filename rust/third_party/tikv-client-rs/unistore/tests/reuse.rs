@@ -1,8 +1,23 @@
 // Copyright 2026 TiKV Project Authors. Licensed under Apache-2.0.
 
 use unistore::{
-    AssertionLevel, IsolationLevel, MockEngine, Mutation, MvccStore, PrewriteRequest, TxnMutation,
+    AssertionLevel, DeadlockDetector, DeadlockError, IsolationLevel, MockEngine, Mutation,
+    MvccStore, PrewriteRequest, TxnMutation,
 };
+
+#[test]
+fn deadlock_detector_is_reusable_outside_the_crate() {
+    let detector = DeadlockDetector::new();
+    detector.detect(1, 2, 11).unwrap();
+    detector.detect(1, 3, 12).unwrap();
+    assert_eq!(
+        detector.detect(2, 1, 21),
+        Err(DeadlockError { key_hash: 11 })
+    );
+    detector.clean_up_wait_for(1, 2, 11);
+    detector.clean_up(1);
+    detector.expire(2);
+}
 
 #[test]
 fn committed_version_facade_is_reusable_outside_the_crate() {

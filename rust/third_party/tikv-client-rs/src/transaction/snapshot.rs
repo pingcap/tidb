@@ -79,7 +79,12 @@ impl<'a, PdC: PdClient> SnapshotIterator<'a, PdC> {
     }
 
     async fn refill(&mut self) -> Result<()> {
-        if !self.valid || !self.buffered.is_empty() {
+        if !self.valid {
+            return Err(crate::Error::StringError(
+                "scanner iterator is invalid".to_owned(),
+            ));
+        }
+        if !self.buffered.is_empty() {
             return Ok(());
         }
         if self.exhausted {
@@ -315,7 +320,7 @@ impl<PdC: PdClient> Snapshot<PdC> {
         resource_group_tagger: Option<crate::SnapshotResourceGroupTagger>,
     ) {
         self.transaction
-            .set_resource_group_tagger(resource_group_tagger);
+            .set_snapshot_resource_group_tagger(resource_group_tagger);
     }
 
     /// Set the transaction and replica-read scope used by subsequent Get and
@@ -470,6 +475,19 @@ impl<PdC: PdClient> Snapshot<PdC> {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
         self.transaction.batch_get_from_buffer(keys).await
+    }
+
+    /// Read values from the pipelined transaction buffer tier with point-read
+    /// options. `ReturnCommitTs` is accepted but ignored because these values
+    /// are not committed, matching client-go `BatchGetWithTier`.
+    pub async fn batch_get_from_buffer_with_options(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+        options: &[GetOption],
+    ) -> Result<impl Iterator<Item = KvPair>> {
+        self.transaction
+            .batch_get_from_buffer_with_options(keys, options)
+            .await
     }
 
     /// Create and prefetch a stateful forward scanner, matching client-go

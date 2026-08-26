@@ -8,14 +8,14 @@ static IN_TEST: AtomicBool = AtomicBool::new(cfg!(feature = "internal-tests"));
 
 /// Returns whether internal-test-specific behavior is enabled.
 pub fn in_test() -> bool {
-    IN_TEST.load(Ordering::Relaxed)
+    IN_TEST.load(Ordering::SeqCst)
 }
 
 /// Changes whether internal-test-specific behavior is enabled.
 ///
 /// This matches client-go's mutable `InTest` variable while avoiding a data race in Rust tests.
 pub fn set_in_test(enabled: bool) {
-    IN_TEST.store(enabled, Ordering::Relaxed);
+    IN_TEST.store(enabled, Ordering::SeqCst);
 }
 
 #[cfg(test)]

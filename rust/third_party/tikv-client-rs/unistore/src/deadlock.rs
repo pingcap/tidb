@@ -1,6 +1,8 @@
-// Copyright 2026 TiKV Project Authors. Licensed under Apache-2.0.
-
-//! Synchronized wait-for graph used by the mock TiKV transaction engine.
+//! Synchronized wait-for graph used by the in-process transaction engine.
+//!
+//! This is a direct transcreation of client-go's
+//! `internal/mockstore/deadlock` package. Keeping the detector in the reusable
+//! crate ensures every protocol adapter observes the same graph semantics.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -14,8 +16,8 @@ struct TransactionKeyHash {
 
 /// The key hash associated with the edge which closes a deadlock cycle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct DeadlockError {
-    pub(crate) key_hash: u64,
+pub struct DeadlockError {
+    pub key_hash: u64,
 }
 
 impl fmt::Display for DeadlockError {
@@ -28,27 +30,27 @@ impl std::error::Error for DeadlockError {}
 
 /// Detects cycles in a transaction wait-for graph.
 #[derive(Default)]
-pub(crate) struct Detector {
+pub struct DeadlockDetector {
     wait_for: Mutex<HashMap<u64, Vec<TransactionKeyHash>>>,
 }
 
-impl Detector {
-    pub(crate) fn new() -> Self {
+impl DeadlockDetector {
+    /// Creates an empty detector.
+    pub fn new() -> Self {
         Self::default()
     }
 
-    /// Detect an edge before registering it.
+    /// Detects and, when accepted, registers one wait-for edge.
     ///
-    /// A rejected edge is not inserted. On a cycle, the returned key hash is
-    /// taken from the existing edge which reaches `source_transaction`, exactly
-    /// as in client-go.
-    pub(crate) fn detect(
+    /// Exact `(wait_for_transaction, key_hash)` duplicates collapse. Different
+    /// key hashes remain distinct, matching client-go's transaction list.
+    pub fn detect(
         &self,
         source_transaction: u64,
         wait_for_transaction: u64,
         key_hash: u64,
     ) -> Result<(), DeadlockError> {
-        let mut wait_for = self.wait_for.lock().unwrap();
+        let mut wait_for = self.wait_for.lock().expect("deadlock graph lock poisoned");
         Self::detect_from(&wait_for, source_transaction, wait_for_transaction)?;
         Self::register(
             &mut wait_for,
@@ -94,23 +96,21 @@ impl Detector {
         }
     }
 
-    /// Remove every outbound wait-for edge for one transaction.
-    pub(crate) fn clean_up(&self, transaction: u64) {
-        self.wait_for.lock().unwrap().remove(&transaction);
+    /// Removes every outbound wait-for edge for one transaction.
+    pub fn clean_up(&self, transaction: u64) {
+        self.wait_for
+            .lock()
+            .expect("deadlock graph lock poisoned")
+            .remove(&transaction);
     }
 
-    /// Remove the first matching wait-for edge and its now-empty transaction.
-    pub(crate) fn clean_up_wait_for(
-        &self,
-        transaction: u64,
-        wait_for_transaction: u64,
-        key_hash: u64,
-    ) {
+    /// Removes the first exact wait-for edge and its now-empty transaction.
+    pub fn clean_up_wait_for(&self, transaction: u64, wait_for_transaction: u64, key_hash: u64) {
         let edge = TransactionKeyHash {
             transaction: wait_for_transaction,
             key_hash,
         };
-        let mut wait_for = self.wait_for.lock().unwrap();
+        let mut wait_for = self.wait_for.lock().expect("deadlock graph lock poisoned");
         let remove_transaction = if let Some(edges) = wait_for.get_mut(&transaction) {
             if let Some(index) = edges.iter().position(|candidate| *candidate == edge) {
                 edges.remove(index);
@@ -124,11 +124,12 @@ impl Detector {
         }
     }
 
-    /// Remove transaction entries whose timestamp is below `minimum_ts`.
-    pub(crate) fn expire(&self, minimum_ts: u64) {
+    /// Removes transaction entries whose timestamp is strictly below
+    /// `minimum_ts`.
+    pub fn expire(&self, minimum_ts: u64) {
         self.wait_for
             .lock()
-            .unwrap()
+            .expect("deadlock graph lock poisoned")
             .retain(|transaction, _| *transaction >= minimum_ts);
     }
 
@@ -136,14 +137,17 @@ impl Detector {
     fn edge_count(&self, transaction: u64) -> Option<usize> {
         self.wait_for
             .lock()
-            .unwrap()
+            .expect("deadlock graph lock poisoned")
             .get(&transaction)
             .map(Vec::len)
     }
 
     #[cfg(test)]
     fn transaction_count(&self) -> usize {
-        self.wait_for.lock().unwrap().len()
+        self.wait_for
+            .lock()
+            .expect("deadlock graph lock poisoned")
+            .len()
     }
 }
 
@@ -153,8 +157,8 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn original_deadlock_cleanup_deduplication_and_expiry_scenario() {
-        let detector = Detector::new();
+    fn source_test_deadlock() {
+        let detector = DeadlockDetector::new();
         assert_eq!(detector.detect(1, 2, 100), Ok(()));
         assert_eq!(detector.detect(2, 3, 200), Ok(()));
         assert_eq!(
@@ -187,8 +191,22 @@ mod tests {
     }
 
     #[test]
+    fn multiple_wait_edges_are_retained_in_registration_order() {
+        let detector = DeadlockDetector::new();
+        detector.detect(1, 2, 11).unwrap();
+        detector.detect(1, 3, 12).unwrap();
+
+        assert_eq!(detector.edge_count(1), Some(2));
+        assert_eq!(
+            detector.detect(2, 1, 21),
+            Err(DeadlockError { key_hash: 11 })
+        );
+        assert_eq!(detector.edge_count(2), None);
+    }
+
+    #[test]
     fn concurrent_registration_is_synchronized_and_exact_duplicates_collapse() {
-        let detector = Arc::new(Detector::new());
+        let detector = Arc::new(DeadlockDetector::new());
         let threads = (0..8)
             .map(|_| {
                 let detector = detector.clone();
@@ -211,17 +229,8 @@ mod tests {
     }
 
     #[test]
-    fn direct_cycles_and_the_source_self_edge_quirk_match_client_go() {
-        let detector = Detector::new();
-        detector.detect(1, 2, 11).unwrap();
-        assert_eq!(
-            detector.detect(2, 1, 22),
-            Err(DeadlockError { key_hash: 11 })
-        );
-        assert_eq!(detector.edge_count(2), None);
-
-        // The source checks outgoing edges before adding a new edge. Therefore
-        // the first self-edge is accepted and a repeated one reports its hash.
+    fn first_self_edge_is_accepted_and_the_second_reports_its_hash() {
+        let detector = DeadlockDetector::new();
         detector.detect(9, 9, 99).unwrap();
         assert_eq!(
             detector.detect(9, 9, 100),

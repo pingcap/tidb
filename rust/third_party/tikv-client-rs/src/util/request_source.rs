@@ -156,7 +156,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn source_get_and_build_matrix_matches_go() {
+    fn source_test_get_request_source() {
         let mut source = RequestSource {
             internal: true,
             source_type: "test".to_owned(),
@@ -173,7 +173,10 @@ mod tests {
         assert_eq!(source.get_request_source(), "external_unknown_lightning");
         source.source_type = "lightning".to_owned();
         assert_eq!(source.get_request_source(), "external_lightning");
+    }
 
+    #[test]
+    fn source_test_build_request_source() {
         assert_eq!(
             build_request_source(true, "test", "lightning"),
             "internal_test_lightning"
@@ -191,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_context_values_preserve_source_and_resource_group() {
+    fn source_uncovered_typed_context_values_preserve_source_and_resource_group() {
         let base = TraceContext::new();
         assert_eq!(request_source_from_context(&base), SOURCE_UNKNOWN);
         assert_eq!(resource_group_name_from_context(&base), "");

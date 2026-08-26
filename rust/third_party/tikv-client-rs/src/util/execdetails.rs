@@ -1205,7 +1205,7 @@ mod tests {
     }
 
     #[test]
-    fn ru_details_drain_ru_v2() {
+    fn source_test_ru_details_drain_ru_v2() {
         let details = RuDetails::new();
         details.add_ru_v2(Some(&Ruv2 {
             read_rpc_count: 1,
@@ -1243,7 +1243,7 @@ mod tests {
     }
 
     #[test]
-    fn ru_details_clone_and_merge_raw_ru_v2() {
+    fn source_test_ru_details_clone_and_merge_raw_ru_v2() {
         let original = RuDetails::new();
         original.add_ru_v2(Some(&Ruv2 {
             read_rpc_count: 1,
@@ -1271,6 +1271,13 @@ mod tests {
         let clone_raw = cloned.drain_ru_v2().unwrap();
         assert_eq!(clone_raw.read_rpc_count, 1);
         assert_eq!(clone_raw.write_rpc_count, 3);
+        assert_eq!(
+            clone_raw
+                .executor_inputs
+                .unwrap()
+                .tikv_coprocessor_executor_work_total_batch_index_scan,
+            2
+        );
 
         let left = RuDetails::new();
         left.add_ru_v2(Some(&Ruv2 {
@@ -1322,7 +1329,7 @@ mod tests {
     }
 
     #[test]
-    fn pool_task_details_string_uses_average_times() {
+    fn source_test_pool_task_details_string_uses_average_times() {
         assert_eq!(
             full_pool_details().to_string(),
             "{tasks:2, poll_count:{total:8, avg:4, max:5, min:3}, dispatch_count:{total:6, max:4, min:2}, task_wall_time:{total:20ms, avg:10ms, max:12ms, min:8ms}, queue_wait:{total:12ms, avg:2ms, max:4ms, min:1ms}, wake_wait:{total:8ms, avg:2ms, max:3ms, min:1ms}, fair_queue:{enabled:true, waited_task_slices:{total:18, avg:3, max:5, min:2}}, poll_cpu:{total:8ms, avg:1ms, max:2ms, min:500µs}, poll_wall:{total:12ms, avg:1.5ms, max:3ms, min:750µs}}"
@@ -1330,7 +1337,7 @@ mod tests {
     }
 
     #[test]
-    fn pool_task_details_string_omits_zero_times() {
+    fn source_test_pool_task_details_string_omits_zero_times() {
         let details = PoolTaskDetails {
             task_count: 1,
             poll_count: 2,
@@ -1348,7 +1355,7 @@ mod tests {
     }
 
     #[test]
-    fn pool_task_details_string_omits_average_with_no_samples() {
+    fn source_test_pool_task_details_string_omits_average_with_no_samples() {
         let details = PoolTaskDetails {
             task_count: 1,
             total_queue_wait_time: millis(2),
@@ -1396,7 +1403,7 @@ mod tests {
     }
 
     #[test]
-    fn pool_task_details_merge_from_pb_and_merge() {
+    fn source_test_pool_task_details_merge_from_pb_and_merge() {
         let mut first = pool_pb(
             5,
             3,
@@ -1467,21 +1474,38 @@ mod tests {
         let mut other = PoolTaskDetails::default();
         other.merge_from_pb(Some(&third));
         details.merge(&other);
-        assert_eq!(details.task_count, 3);
-        assert_eq!(details.poll_count, 15);
-        assert_eq!(details.max_poll_count, 8);
-        assert_eq!(details.min_poll_count, 2);
-        assert_eq!(details.dispatch_count, 8);
-        assert_eq!(details.total_wall_time, millis(30));
-        assert_eq!(details.task_wall_time_sample_count, 2);
-        assert_eq!(details.total_queue_wait_time, millis(20));
-        assert_eq!(details.total_wake_wait_time, millis(10));
-        assert_eq!(details.fair_queue_sample_count, 7);
-        assert_eq!(details.total_fair_queue_waited_task_slices, 17);
-        assert_eq!(details.poll_cpu_time, millis(15));
-        assert_eq!(details.min_poll_cpu_time, Duration::from_micros(300));
-        assert_eq!(details.poll_wall_time, millis(21));
-        assert_eq!(details.min_poll_wall_time, Duration::from_micros(700));
+        assert_eq!(
+            details,
+            PoolTaskDetails {
+                task_count: 3,
+                poll_count: 15,
+                max_poll_count: 8,
+                min_poll_count: 2,
+                dispatch_count: 8,
+                max_dispatch_count: 4,
+                min_dispatch_count: 1,
+                total_wall_time: millis(30),
+                task_wall_time_sample_count: 2,
+                max_task_wall_time: millis(20),
+                min_task_wall_time: millis(10),
+                total_queue_wait_time: millis(20),
+                max_queue_wait_time: millis(5),
+                min_queue_wait_time: millis(1),
+                total_wake_wait_time: millis(10),
+                max_wake_wait_time: millis(4),
+                min_wake_wait_time: millis(1),
+                fair_queue_sample_count: 7,
+                total_fair_queue_waited_task_slices: 17,
+                max_fair_queue_waited_task_slices: 5,
+                min_fair_queue_waited_task_slices: 0,
+                poll_cpu_time: millis(15),
+                max_poll_cpu_time: millis(3),
+                min_poll_cpu_time: Duration::from_micros(300),
+                poll_wall_time: millis(21),
+                max_poll_wall_time: millis(5),
+                min_poll_wall_time: Duration::from_micros(700),
+            }
+        );
     }
 
     fn merge_sequentially_and_aggregate(
@@ -1501,7 +1525,7 @@ mod tests {
     }
 
     #[test]
-    fn pool_task_details_merge_minimum_presence() {
+    fn source_test_pool_task_details_merge_minimum_presence() {
         let first = pool_pb(2, 1, 3, (0, 0, 0), (0, 0, 0), None, (1, 1, 0), (2, 2, 0));
         let second = pool_pb(
             3,
@@ -1549,7 +1573,7 @@ mod tests {
     }
 
     #[test]
-    fn pool_task_details_string_formats_fractional_count_averages() {
+    fn source_test_pool_task_details_string_formats_fractional_count_averages() {
         let details = PoolTaskDetails {
             task_count: 3,
             poll_count: 8,
@@ -1570,7 +1594,7 @@ mod tests {
     }
 
     #[test]
-    fn pool_task_details_string_keeps_zero_fair_queue_wait() {
+    fn source_test_pool_task_details_string_keeps_zero_fair_queue_wait() {
         let details = PoolTaskDetails {
             task_count: 1,
             poll_count: 2,
@@ -1589,7 +1613,7 @@ mod tests {
     }
 
     #[test]
-    fn pool_task_details_empty_and_clone() {
+    fn source_test_pool_task_details_empty_and_clone() {
         let mut details = PoolTaskDetails::default();
         details.merge_from_pb(None);
         assert!(details.is_empty());
@@ -1609,7 +1633,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_detail_merge_from_v2_includes_ia_fields() {
+    fn source_test_scan_detail_merge_from_scan_detail_v2_includes_ia_fields() {
         let pb = kvrpcpb::ScanDetailV2 {
             processed_versions: 10,
             processed_versions_size: 20,
@@ -1670,7 +1694,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_detail_merge_includes_ia_fields() {
+    fn source_test_scan_detail_merge_includes_ia_fields() {
         let mut left = ScanDetail {
             ia_cache_hit_count: 1,
             ia_remote_read_segment_count: 2,
@@ -1745,7 +1769,7 @@ mod tests {
     }
 
     #[test]
-    fn lock_keys_details_merge() {
+    fn source_test_lock_keys_details_merge() {
         let mut left = lock_details_a();
         left.merge(&lock_details_b());
         assert_eq!(left.total_time, millis(30));
@@ -1766,7 +1790,7 @@ mod tests {
     }
 
     #[test]
-    fn lock_keys_details_merge_slowest_not_replaced() {
+    fn source_test_lock_keys_details_merge_slowest_not_replaced() {
         let mut left = LockKeysDetails::default();
         left.detail.slowest_request_total_time = millis(10);
         left.detail.slowest_region = 1;
@@ -1782,7 +1806,7 @@ mod tests {
     }
 
     #[test]
-    fn lock_keys_details_clone_is_deep() {
+    fn source_test_lock_keys_details_clone() {
         let original = lock_details_a();
         let mut cloned = original.clone();
         assert_eq!(original, cloned);
@@ -1865,7 +1889,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_details_merge() {
+    fn source_test_commit_details_merge() {
         let mut left = commit_details_a();
         left.merge(&commit_details_b());
         assert_eq!(left.get_commit_ts_time, millis(22));
@@ -1891,7 +1915,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_details_merge_slowest_not_replaced() {
+    fn source_test_commit_details_merge_slowest_not_replaced() {
         let mut left = CommitDetails::default();
         left.detail.slowest_prewrite.request_total_time = millis(10);
         left.detail.slowest_prewrite.region = 1;
@@ -1908,7 +1932,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_details_clone_is_deep() {
+    fn source_test_commit_details_clone() {
         let mut original = commit_details_a();
         original.prewrite_request_num = 9;
         let mut cloned = original.clone();
@@ -1927,7 +1951,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_detail_merge() {
+    fn source_test_scan_detail_merge() {
         let mut left = ScanDetail {
             total_keys: 100,
             processed_keys: 50,
@@ -1989,14 +2013,14 @@ mod tests {
     }
 
     #[test]
-    fn write_detail_merge() {
+    fn source_test_write_detail_merge() {
         let mut left = full_write_detail(1);
         left.merge(&full_write_detail(1));
         assert_eq!(left, full_write_detail(2));
     }
 
     #[test]
-    fn time_detail_merge() {
+    fn source_test_time_detail_merge() {
         let mut left = TimeDetail {
             process_time: millis(10),
             suspend_time: millis(2),
@@ -2025,7 +2049,7 @@ mod tests {
     }
 
     #[test]
-    fn time_detail_merge_absence_and_string() {
+    fn source_test_time_detail() {
         let mut detail = TimeDetail {
             kv_read_wall_time: millis(2),
             total_rpc_wall_time: millis(3),
@@ -2035,8 +2059,6 @@ mod tests {
             detail.to_string(),
             "time_detail: {total_kv_read_wall_time: 2ms, tikv_wall_time: 3ms}"
         );
-        detail.merge_from_pb(None, None);
-        assert_eq!(detail.kv_read_wall_time, millis(2));
         detail = TimeDetail {
             process_time: millis(2),
             suspend_time: millis(3),
@@ -2053,7 +2075,27 @@ mod tests {
     }
 
     #[test]
-    fn ru_details_update_tiflash() {
+    fn source_test_time_detail_merge_nil() {
+        let mut detail = TimeDetail {
+            process_time: millis(10),
+            ..Default::default()
+        };
+        detail.merge(&TimeDetail::default());
+        assert_eq!(detail.process_time, millis(10));
+    }
+
+    #[test]
+    fn source_uncovered_time_detail_merge_from_pb_none() {
+        let mut detail = TimeDetail {
+            kv_read_wall_time: millis(2),
+            ..Default::default()
+        };
+        detail.merge_from_pb(None, None);
+        assert_eq!(detail.kv_read_wall_time, millis(2));
+    }
+
+    #[test]
+    fn source_test_ru_details_update_tiflash() {
         let details = RuDetails::new();
         details.update(
             &Consumption {
@@ -2076,7 +2118,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_context_keys_do_not_collide() {
+    fn source_uncovered_typed_context_keys_do_not_collide() {
         let base = TraceContext::new();
         let commit = Arc::new(Mutex::new(CommitDetails::default()));
         let lock = Arc::new(Mutex::new(LockKeysDetails::default()));

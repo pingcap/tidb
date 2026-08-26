@@ -27,21 +27,23 @@ There is no `doc.go`, build-tag/platform variant, generated source/input owned b
 | Scan-detail bytes | Legacy builds use processed-version bytes. `nextgen` uses `max(total, processed)`, preserving compatibility when an older TiKV reports processed greater than total. Data length is used when Cop details are absent. |
 | KV CPU | Exact precedence is V2 nanoseconds, V2 legacy milliseconds, legacy response milliseconds, then zero. Nested batch task CPU is accumulated independently. |
 | Response interface | Public getters expose read bytes, KV CPU, response size, and source's always-true `Succeed`. `Default` represents a nil or unsupported response and supports the source txn-file adapter boundary. |
-| Controller/dispatch integration | The native async `ResourceGroupController` is selected only for a non-empty group, enabled/installed controller, non-background request, and non-bypass request. Admission runs before user RPC interceptors, updates RU details, installs penalty and only-unset priority, and prevents transport on failure. A successful physical response is settled once and updates RU details; transport failure is not settled. Shard/retry clones retain controller, group, route, predicted-byte, and RU state. |
+| Controller/dispatch integration | The native async `ResourceGroupController` is selected only for a non-empty group, enabled/installed controller, non-background request, and non-bypass request. Admission runs before user RPC interceptors, updates RU details, installs penalty and only-unset priority, and prevents transport on failure. A successful physical response is settled once and updates RU details; transport failure is not settled. Shard/retry clones retain controller, group, route, predicted-byte, and RU state. Txn-file bulk admission uses discounted MemDB bytes and voter count; a post-commit settlement failure preserves the committed result, emits the source `TxnFileErrorAccounting` metric, and logs the error. |
 
 Client-go carries route fields in one dynamic `tikvrpc.Request`; client-rust owns them in `Dispatch` because its protobuf requests are statically typed. Combining those fields immediately before controller selection is the native equivalent and ensures every physical shard/retry is charged for its actual selected route. The PD controller's token algorithms remain supplied by the application/PD dependency and are not transcreated into this internal accounting package.
 
 ## Test/support mapping
 
-All five source tests are represented:
+All five source tests are independently named and executable in Rust:
 
-- `TestMakeRequestInfo`: non-write, Prewrite, Commit, bypass, store IDs, missing peer, and byte totals run in `original_request_info_matrix`.
-- `TestMakeRequestInfoPredictedReadBytes`: routed read selection covers nonzero and zero hints, while writes prove the hint remains zero.
-- `TestMakeRequestInfoIsCop`: Cop and CopStream are true; Get, BatchGet, and Scan are false. BatchCop's source-false paging identity is additionally covered.
-- `TestResponseInfoReadBytes`: legacy/NextGen scan bytes and NextGen processed-greater-than-total compatibility are covered in both Cargo feature states.
-- `TestResponseInfoBatchedTasks`: the exact top-level plus three nested-task byte/CPU table is reproduced.
+- `TestMakeRequestInfo` → `source_test_make_request_info`: the exact BatchGet, Prewrite, Commit, bypass, store-ID, nil-peer, and write-byte assertions are preserved.
+- `TestMakeRequestInfoPredictedReadBytes` → `source_test_make_request_info_predicted_read_bytes`: native route selection carries the source 256-KiB hint and the zero default only for reads.
+- `TestMakeRequestInfoIsCop` → `source_test_make_request_info_is_cop`: Cop and CopStream are true; Get, BatchGet, and Scan are false. A separate production-derived test proves BatchCop's source-false paging identity while retaining analyze bypass.
+- `TestResponseInfoReadBytes` → `source_test_response_info_read_bytes`: legacy uses processed bytes, NextGen uses total bytes, and the NextGen compatibility row selects processed bytes when it is larger.
+- `TestResponseInfoBatchedTasks` → `source_test_response_info_batched_tasks`: the exact top-level plus three nested-task byte/CPU table is reproduced.
 
 Additional production-derived coverage checks the full transaction/raw write command matrix, the narrow request-size matrix, all access-location outcomes, internal/analyze/background selection, CopStream dispatch downcasting and first-response accounting, transactional Get/BatchGet/Scan response accounting, legacy CPU fallback, public constructors/getters, controller ordering, penalty/priority mutation, RU accumulation, global enable/install policy, and no settlement after transport failure.
+
+The re-audit also added a direct consumer regression for client-go's txn-file accounting-failure side effect. Before the fix, a failed post-commit controller settlement left `TiKVTxnFileErrorCounter{type="accounting"}` unchanged (`0` rather than `1`). Rust now increments the counter exactly once while retaining the already committed transaction, matching `txn_file.go`.
 
 ## Consumer inventory
 
@@ -49,10 +51,33 @@ Every pinned source consumer was inspected:
 
 - `internal/client/client_interceptor.go`, `client_async.go`, and `client.go` map to the physical `Dispatch` admission/settlement boundary, streaming wrappers, RU-v2 bypass, and the already complete `internal/client` transport package.
 - `internal/client/client_interceptor_test.go` bypass/admission/error/response behavior maps to the package and transaction dispatch tests listed above.
-- `txnkv/transaction/txn_file.go` consumes precomputed `RequestInfo` and empty `ResponseInfo`. Rust exposes both native forms, while the txn-file protocol itself remains owned by the separate completed `txnkv/transaction` receipt.
+- `txnkv/transaction/txn_file.go` consumes precomputed `RequestInfo` and empty `ResponseInfo`. Rust exposes both native forms, preserves discounted byte/voter/leader inputs, ignores a post-commit settlement error, and now emits the source accounting-error metric. The txn-file protocol itself remains owned by the separate completed `txnkv/transaction` receipt.
 
 No other pinned Go production or test file imports this package. Downstream transaction/txn-file completion is not implied by this receipt.
 
 ## Completion gates
 
-The package is complete when focused tests pass with and without `nextgen`, the default and all-feature library suites pass, all targets compile with all features, public rustdoc builds, rustfmt and diff checks pass, and the ledger records exact results. No live cluster is required: all package-owned outputs are deterministic request/response accounting and dispatch ordering over typed mock transport. The final cross-client TiKV/PD matrix will still validate consumer-level RU behavior.
+Final validation on `nightly-2026-08-22` used the exact package code:
+
+- `cargo +nightly-2026-08-22 test -p tikv-client --lib resource_control::test:: --no-default-features --quiet`: 13 passed.
+- `cargo +nightly-2026-08-22 test -p tikv-client --lib resource_control::test:: --all-features --quiet`: 13 passed.
+- `cargo +nightly-2026-08-22 test -p tikv-client --lib source_txn_file_commit_survives_resource_accounting_response_error --no-default-features --quiet`: 1 passed.
+- The same consumer regression with `--all-features`: 1 passed.
+- `cargo +nightly-2026-08-22 test -p tikv-client --lib source_ --no-default-features --quiet`: 752 passed.
+- `cargo +nightly-2026-08-22 test -p tikv-client --lib source_ --all-features --quiet`: 749 passed.
+- `cargo +nightly-2026-08-22 test --workspace --lib --no-default-features --quiet`: the main crate passed 1,021 tests with one unrelated ignore; companion crates passed 2 and 32 tests.
+- `cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features --quiet`: 1,018 passed with one unrelated ignore.
+- `cargo +nightly-2026-08-22 check --workspace --all-targets --all-features`: passed.
+- `cargo +nightly-2026-08-22 clippy --workspace --all-targets --all-features -- -D warnings`: passed without exclusions.
+- `RUSTDOCFLAGS='-D warnings' cargo +nightly-2026-08-22 doc --workspace --all-features --no-deps --document-private-items`: passed.
+- `cargo +nightly-2026-08-22 test --doc --workspace --all-features --quiet`: 51 passed.
+- `cargo +nightly-2026-08-22 fmt --all -- --check` and `git diff --check`: passed.
+
+The pinned Go 1.25.12 package passed all four source configurations:
+
+- `go test ./internal/resourcecontrol -count=1`.
+- `go test -tags nextgen ./internal/resourcecontrol -count=1`.
+- `go test -race ./internal/resourcecontrol -count=1`.
+- `go test -race -tags nextgen ./internal/resourcecontrol -count=1`.
+
+The race runs emitted only the known macOS malformed `LC_DYSYMTAB` linker warning. Mechanical reconciliation finds exactly two artifacts/511 lines, five Go declarations, five independently named Rust ports, no benchmark/example/support harness, and five direct Go importer files. No live cluster is required: package-owned outputs are deterministic request/response accounting and dispatch ordering over typed mock transport; high-level RU behavior remains covered by the completed integration matrix.

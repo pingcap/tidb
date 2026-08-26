@@ -199,7 +199,6 @@ has_str_error!(kvrpcpb::RawBatchDeleteResponse);
 has_str_error!(kvrpcpb::RawDeleteRangeResponse);
 has_str_error!(kvrpcpb::RawCasResponse);
 has_str_error!(kvrpcpb::RawCoprocessorResponse);
-has_str_error!(kvrpcpb::RawChecksumResponse);
 has_str_error!(kvrpcpb::ImportResponse);
 has_str_error!(kvrpcpb::DeleteRangeResponse);
 has_str_error!(kvrpcpb::PrepareFlashbackToVersionResponse);
@@ -231,13 +230,25 @@ impl HasKeyErrors for kvrpcpb::BatchGetResponse {
 
 impl HasKeyErrors for kvrpcpb::RawBatchGetResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
-        extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take()))
+        // Pinned client-go builds its positional value map without reading
+        // the legacy per-pair error field.
+        None
     }
 }
 
 impl HasKeyErrors for kvrpcpb::RawScanResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
-        extract_errors(self.kvs.iter_mut().map(|pair| pair.error.take()))
+        // Pinned client-go appends raw scan keys and values without reading
+        // the legacy per-pair error field.
+        None
+    }
+}
+
+impl HasKeyErrors for kvrpcpb::RawChecksumResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
+        // Pinned client-go aggregates checksum fields without reading the
+        // response's legacy string-error field.
+        None
     }
 }
 

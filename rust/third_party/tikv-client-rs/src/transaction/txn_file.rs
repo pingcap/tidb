@@ -530,6 +530,8 @@ pub(crate) async fn build_txn_chunks(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -592,21 +594,40 @@ mod tests {
 
     #[test]
     fn source_chunk_slice_sort_and_dedup_preserves_ranges() {
-        let mut chunks = TxnChunkSlice::default();
-        for id in [7, 1, 5, 1, 2, 7] {
-            chunks.push(
-                id,
-                TxnChunkRange::new(
-                    format!("k{id:04}").into_bytes(),
-                    format!("k{id:04}_end").into_bytes(),
-                    id + 1,
-                ),
-            );
-        }
-        chunks.sort_and_dedup();
-        assert_eq!(chunks.chunk_ids, [1, 2, 5, 7]);
-        for (index, id) in chunks.chunk_ids.iter().enumerate() {
-            assert_eq!(chunks.chunk_ranges[index].entries, id + 1);
+        let mut random = StdRng::seed_from_u64(1);
+        for _ in 0..100 {
+            let len = random.gen_range(0..10);
+            let ids = (0..len)
+                .map(|_| random.gen_range(0..(len + len / 2 + 1)) as u64)
+                .collect::<Vec<_>>();
+            let mut expected = ids.clone();
+            expected.sort_unstable();
+            expected.dedup();
+
+            let mut chunks = TxnChunkSlice::default();
+            for id in ids {
+                chunks.push(
+                    id,
+                    TxnChunkRange::new(
+                        format!("k{id:04}").into_bytes(),
+                        format!("k{id:04}_end").into_bytes(),
+                        id + 1,
+                    ),
+                );
+            }
+            chunks.sort_and_dedup();
+            assert_eq!(chunks.chunk_ids, expected);
+            for (index, id) in expected.iter().enumerate() {
+                assert_eq!(
+                    chunks.chunk_ranges[index].smallest,
+                    format!("k{id:04}").as_bytes()
+                );
+                assert_eq!(
+                    chunks.chunk_ranges[index].biggest,
+                    format!("k{id:04}_end").as_bytes()
+                );
+                assert_eq!(chunks.chunk_ranges[index].entries, id + 1);
+            }
         }
     }
 
@@ -631,25 +652,104 @@ mod tests {
 
     #[test]
     fn source_request_source_whitelist() {
-        let external = RequestSource::default();
-        assert!(request_source_allows_txn_file(&external, &[]));
-        let internal = RequestSource {
-            internal: true,
-            source_type: "ddl_modify_column".to_owned(),
-            explicit_source_type: String::new(),
-        };
-        assert!(request_source_allows_txn_file(
-            &internal,
-            &["ddl_modify_column".to_owned()]
-        ));
-        assert!(!request_source_allows_txn_file(
-            &internal,
-            &["ddl_alter_partition".to_owned()]
-        ));
+        let cases = [
+            (RequestSource::default(), Vec::new(), true),
+            (
+                RequestSource {
+                    internal: true,
+                    source_type: "ddl_modify_column".to_owned(),
+                    explicit_source_type: String::new(),
+                },
+                vec!["ddl_modify_column".to_owned()],
+                true,
+            ),
+            (
+                RequestSource {
+                    internal: true,
+                    source_type: "ddl_modify_column".to_owned(),
+                    explicit_source_type: String::new(),
+                },
+                vec![
+                    "ddl_alter_partition".to_owned(),
+                    "ddl_modify_column".to_owned(),
+                ],
+                true,
+            ),
+            (
+                RequestSource {
+                    internal: true,
+                    source_type: "ddl_modify_column".to_owned(),
+                    explicit_source_type: String::new(),
+                },
+                Vec::new(),
+                false,
+            ),
+            (
+                RequestSource {
+                    internal: true,
+                    source_type: "ddl_modify_column".to_owned(),
+                    explicit_source_type: String::new(),
+                },
+                vec!["ddl_alter_partition".to_owned()],
+                false,
+            ),
+        ];
+        for (source, whitelist, expected) in cases {
+            assert_eq!(
+                request_source_allows_txn_file(&source, &whitelist),
+                expected,
+                "source={source:?}, whitelist={whitelist:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn source_close_idle_connections_closes_the_shared_idle_socket() {
+        close_txn_file_idle_connections();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut received = Vec::new();
+            while !received.windows(4).any(|part| part == b"\r\n\r\n") {
+                let mut part = [0_u8; 1024];
+                let read = stream.read(&mut part).await.unwrap();
+                assert!(read > 0);
+                received.extend_from_slice(&part[..read]);
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            let mut byte = [0_u8; 1];
+            stream.read(&mut byte).await.unwrap()
+        });
+        let client = shared_http_client().unwrap();
+        client
+            .get(format!("http://{address}"))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        drop(client);
+
+        close_txn_file_idle_connections();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), server)
+                .await
+                .expect("idle HTTP connection was not closed")
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
-    fn close_before_http_client_initialization_is_safe() {
+    fn source_close_idle_connections_before_initialization_is_safe() {
+        close_txn_file_idle_connections();
         close_txn_file_idle_connections();
     }
 
@@ -669,93 +769,135 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut received = Vec::new();
-            let (header_end, content_length) = loop {
-                let mut part = [0_u8; 1024];
-                let read = stream.read(&mut part).await.unwrap();
-                assert!(read > 0);
-                received.extend_from_slice(&part[..read]);
-                if let Some(header_end) = received.windows(4).position(|part| part == b"\r\n\r\n") {
-                    let header_end = header_end + 4;
-                    let headers = std::str::from_utf8(&received[..header_end]).unwrap();
-                    let content_length = headers
-                        .lines()
-                        .find_map(|line| {
-                            let (name, value) = line.split_once(':')?;
-                            name.eq_ignore_ascii_case("content-length")
-                                .then(|| value.trim().parse::<usize>())
-                        })
-                        .unwrap()
-                        .unwrap();
-                    break (header_end, content_length);
+            let mut requests = Vec::new();
+            for chunk_id in 1..=3 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut received = Vec::new();
+                let (header_end, content_length) = loop {
+                    let mut part = [0_u8; 1024];
+                    let read = stream.read(&mut part).await.unwrap();
+                    assert!(read > 0);
+                    received.extend_from_slice(&part[..read]);
+                    if let Some(header_end) =
+                        received.windows(4).position(|part| part == b"\r\n\r\n")
+                    {
+                        let header_end = header_end + 4;
+                        let headers = std::str::from_utf8(&received[..header_end]).unwrap();
+                        let content_length = headers
+                            .lines()
+                            .find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>())
+                            })
+                            .unwrap()
+                            .unwrap();
+                        break (header_end, content_length);
+                    }
+                };
+                while received.len() < header_end + content_length {
+                    let mut part = [0_u8; 1024];
+                    let read = stream.read(&mut part).await.unwrap();
+                    assert!(read > 0);
+                    received.extend_from_slice(&part[..read]);
                 }
-            };
-            while received.len() < header_end + content_length {
-                let mut part = [0_u8; 1024];
-                let read = stream.read(&mut part).await.unwrap();
-                assert!(read > 0);
-                received.extend_from_slice(&part[..read]);
+                let body = format!("{{\"chunk_id\":{chunk_id}}}");
+                stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                requests.push((
+                    String::from_utf8(received[..header_end].to_vec()).unwrap(),
+                    received[header_end..header_end + content_length].to_vec(),
+                ));
             }
-            stream
-                .write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"chunk_id\":42}",
-                )
-                .await
-                .unwrap();
-            (
-                String::from_utf8(received[..header_end].to_vec()).unwrap(),
-                received[header_end..header_end + content_length].to_vec(),
-            )
+            requests
         });
         let restore = crate::config::update_global(|config| {
             config.tikv_client.txn_chunk_writer_addr = address.to_string();
-            config.tikv_client.txn_chunk_writer_concurrency = 1;
-            config.tikv_client.txn_chunk_max_size = 1024;
+            config.tikv_client.txn_chunk_writer_concurrency = 4;
+            config.tikv_client.txn_chunk_max_size = 50;
         });
-        let mutations = vec![
-            mutation("a", kvrpcpb::Op::Put),
-            mutation("b", kvrpcpb::Op::Del),
+        let operations = [
+            kvrpcpb::Op::Put,
+            kvrpcpb::Op::Del,
+            kvrpcpb::Op::Insert,
+            kvrpcpb::Op::Lock,
+            kvrpcpb::Op::CheckNotExists,
+            kvrpcpb::Op::Put,
+            kvrpcpb::Op::Del,
+            kvrpcpb::Op::Insert,
+            kvrpcpb::Op::Lock,
         ];
+        let mutations = operations
+            .iter()
+            .enumerate()
+            .map(|(index, operation)| kvrpcpb::Mutation {
+                op: *operation as i32,
+                key: format!("k{index:02}").into_bytes(),
+                value: format!("v{index:02}").into_bytes(),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
         let chunks = build_txn_chunks(&mutations, Keyspace::Disable, Cancellation::default())
             .await
             .unwrap();
         restore();
         close_txn_file_idle_connections();
 
-        assert_eq!(chunks.chunk_ids, [42]);
-        assert_eq!(chunks.chunk_ranges[0].entries, 2);
-        assert_eq!(chunks.chunk_ranges[0].smallest, b"a");
-        assert_eq!(chunks.chunk_ranges[0].biggest, b"b");
-        let (headers, payload) = server.await.unwrap();
-        assert!(headers.starts_with(&format!(
-            "POST /txn_chunk?keyspace_id={} HTTP/1.1\r\n",
-            crate::request::NULL_KEYSPACE_ID
-        )));
-        assert!(headers
-            .to_ascii_lowercase()
-            .contains("content-type: application/octet-stream"));
-        let (serialized, checksum) = payload.split_at(payload.len() - 4);
+        assert_eq!(chunks.len(), 3);
+        assert!(chunks.chunk_ranges.iter().all(|range| range.entries == 3));
         assert_eq!(
-            u32::from_le_bytes(checksum.try_into().unwrap()),
-            crc32fast::hash(serialized)
+            chunks
+                .chunk_ranges
+                .iter()
+                .map(|range| range.entries)
+                .sum::<u64>(),
+            operations.len() as u64
         );
-
-        let mut cursor = 0;
-        for expected in &mutations {
-            let key_len =
-                u16::from_le_bytes(serialized[cursor..cursor + 2].try_into().unwrap()) as usize;
-            cursor += 2;
-            assert_eq!(&serialized[cursor..cursor + key_len], expected.key);
-            cursor += key_len;
-            assert_eq!(serialized[cursor], expected.op as u8);
-            cursor += 1;
-            let value_len =
-                u32::from_le_bytes(serialized[cursor..cursor + 4].try_into().unwrap()) as usize;
-            cursor += 4;
-            assert_eq!(&serialized[cursor..cursor + value_len], expected.value);
-            cursor += value_len;
+        let requests = server.await.unwrap();
+        let mut operations_seen = std::collections::BTreeSet::new();
+        let mut entry_count = 0;
+        for (headers, payload) in requests {
+            assert!(headers.starts_with(&format!(
+                "POST /txn_chunk?keyspace_id={} HTTP/1.1\r\n",
+                crate::request::NULL_KEYSPACE_ID
+            )));
+            assert!(headers
+                .to_ascii_lowercase()
+                .contains("content-type: application/octet-stream"));
+            let (serialized, checksum) = payload.split_at(payload.len() - 4);
+            assert_eq!(
+                u32::from_le_bytes(checksum.try_into().unwrap()),
+                crc32fast::hash(serialized)
+            );
+            let mut cursor = 0;
+            while cursor < serialized.len() {
+                let key_len =
+                    u16::from_le_bytes(serialized[cursor..cursor + 2].try_into().unwrap()) as usize;
+                cursor += 2 + key_len;
+                operations_seen.insert(serialized[cursor]);
+                cursor += 1;
+                let value_len =
+                    u32::from_le_bytes(serialized[cursor..cursor + 4].try_into().unwrap()) as usize;
+                cursor += 4 + value_len;
+                entry_count += 1;
+            }
+            assert_eq!(cursor, serialized.len());
         }
-        assert_eq!(cursor, serialized.len());
+        assert_eq!(entry_count, operations.len());
+        assert_eq!(
+            operations_seen,
+            operations
+                .iter()
+                .map(|operation| *operation as u8)
+                .collect::<std::collections::BTreeSet<_>>()
+        );
     }
 }

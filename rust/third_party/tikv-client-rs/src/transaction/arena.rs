@@ -464,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn original_large_value_growth_cases() {
+    fn source_test_big_value() {
         let mut value_log = MemdbValueLog::default();
         value_log.append_value(ArenaAddress::new(0, 0), NULL_ADDRESS, &vec![0; 80 << 20]);
         assert_eq!(value_log.arena().block_size(), MAX_BLOCK_SIZE);
@@ -490,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    fn original_value_larger_than_current_block_case() {
+    fn source_test_value_larger_than_block() {
         let mut value_log = MemdbValueLog::default();
         value_log.append_value(ArenaAddress::new(0, 0), NULL_ADDRESS, &[0]);
         value_log.append_value(ArenaAddress::new(0, 1), NULL_ADDRESS, &vec![0; 4096]);

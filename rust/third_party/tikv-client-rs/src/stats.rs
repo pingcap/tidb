@@ -172,6 +172,7 @@ static TIKV_RPC_NET_LATENCY: ClientObserverVec = ClientObserverVec("TiKVRPCNetLa
 static TIKV_LOCK_RESOLVER_ACTIONS: ClientCounterVec = ClientCounterVec("TiKVLockResolverCounter");
 static TIKV_LOCK_RESOLVER_ASYNC_RUNNING_TASKS: ClientGaugeVec =
     ClientGaugeVec("TiKVLockResolverAsyncRunningTasks");
+static TIKV_TXN_FILE_ERROR_COUNTER: ClientCounterVec = ClientCounterVec("TiKVTxnFileErrorCounter");
 static TIKV_BATCH_REQUEST_STAGE_DURATION: ClientObserverVec =
     ClientObserverVec("TiKVBatchRequestStageDuration");
 static TIKV_BATCH_STREAM_RECV_LOOP_DURATION: ClientObserverVec =
@@ -402,6 +403,10 @@ pub(crate) fn increment_async_batch_get(result: &'static str) {
     TIKV_ASYNC_BATCH_GET_COUNTER
         .with_label_values(&[result])
         .inc();
+}
+
+pub(crate) fn increment_txn_file_error(kind: &'static str) {
+    TIKV_TXN_FILE_ERROR_COUNTER.with_label_values(&[kind]).inc();
 }
 
 #[cfg(test)]

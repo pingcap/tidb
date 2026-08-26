@@ -1,16 +1,18 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::cmp;
+use std::collections::BTreeMap;
 use std::iter;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use futures::stream::BoxStream;
 use futures::stream::{self};
 use futures::StreamExt;
 
-use super::transaction::TXN_COMMIT_BATCH_SIZE;
 use crate::collect_single;
 use crate::common::Error::PessimisticLockError;
+use crate::kv::TXN_COMMIT_BATCH_SIZE;
 use crate::pd::PdClient;
 use crate::proto::kvrpcpb::Action;
 use crate::proto::kvrpcpb::LockInfo;
@@ -240,7 +242,9 @@ impl Process<kvrpcpb::GetResponse> for DefaultProcessor {
 
     fn process(&self, input: Result<kvrpcpb::GetResponse>) -> Result<Self::Out> {
         let input = input?;
-        Ok(if input.not_found {
+        // client-go's KVSnapshot.Get treats an empty ValueEntry as absent in
+        // addition to TiKV's explicit not_found bit.
+        Ok(if input.not_found || input.value.is_empty() {
             None
         } else {
             Some(input.value)
@@ -558,23 +562,82 @@ impl_txn_v2_response!(
 );
 
 impl Shardable for kvrpcpb::PrewriteRequest {
-    type Shard = Vec<kvrpcpb::Mutation>;
+    // The protobuf stores pessimistic actions and for-update constraints in
+    // arrays parallel to `mutations`. Keep that metadata attached while keys
+    // are sorted, grouped by region, and split into physical request batches.
+    // The final element is the source `TxnSize`: the number of mutations in
+    // the region, or `MaxUint64` when an already-sent batch is re-sharded.
+    type Shard = (Vec<kvrpcpb::Mutation>, Vec<i32>, Vec<Option<u64>>, u64);
 
     fn shards(
         &self,
         pd_client: &Arc<impl PdClient>,
     ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
+        let pessimistic_actions = self
+            .mutations
+            .iter()
+            .enumerate()
+            .map(|(index, mutation)| {
+                (
+                    mutation.key.clone(),
+                    self.pessimistic_actions
+                        .get(index)
+                        .copied()
+                        .unwrap_or(PessimisticAction::SkipPessimisticCheck as i32),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let for_update_ts_constraints = self
+            .for_update_ts_constraints
+            .iter()
+            .filter_map(|constraint| {
+                self.mutations
+                    .get(constraint.index as usize)
+                    .map(|mutation| (mutation.key.clone(), constraint.expected_for_update_ts))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let retry = self
+            .context
+            .as_ref()
+            .is_some_and(|context| context.is_retry_request);
         let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
+        let batch_size = TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed);
 
         region_stream_for_keys(mutations.into_iter(), pd_client.clone())
-            .flat_map(|result| match result {
-                Ok((mutations, region)) => stream::iter(kvrpcpb::PrewriteRequest::batches(
-                    mutations,
-                    TXN_COMMIT_BATCH_SIZE,
-                ))
-                .map(move |batch| Ok((batch, region.clone())))
-                .boxed(),
+            .flat_map(move |result| match result {
+                Ok((mutations, region)) => {
+                    let region_txn_size = if retry {
+                        u64::MAX
+                    } else {
+                        mutations.len() as u64
+                    };
+                    let pessimistic_actions = pessimistic_actions.clone();
+                    let for_update_ts_constraints = for_update_ts_constraints.clone();
+                    stream::iter(kvrpcpb::PrewriteRequest::batches(mutations, batch_size))
+                        .map(move |batch| {
+                            let actions = batch
+                                .iter()
+                                .map(|mutation| {
+                                    pessimistic_actions
+                                        .get(&mutation.key)
+                                        .copied()
+                                        .unwrap_or(PessimisticAction::SkipPessimisticCheck as i32)
+                                })
+                                .collect();
+                            let constraints = batch
+                                .iter()
+                                .map(|mutation| {
+                                    for_update_ts_constraints.get(&mutation.key).copied()
+                                })
+                                .collect();
+                            Ok((
+                                (batch, actions, constraints, region_txn_size),
+                                region.clone(),
+                            ))
+                        })
+                        .boxed()
+                }
                 Err(e) => stream::iter(Err(e)).boxed(),
             })
             .boxed()
@@ -582,21 +645,35 @@ impl Shardable for kvrpcpb::PrewriteRequest {
 
     fn apply_shard(&mut self, shard: Self::Shard) {
         let full_txn_size = self.txn_size;
-        let has_primary = shard
+        let (mutations, pessimistic_actions, constraints, region_txn_size) = shard;
+        let has_primary = mutations
             .iter()
             .any(|mutation| mutation.key == self.primary_lock);
         // Only need to set secondary keys if we're sending the primary key.
-        if self.use_async_commit && !has_primary {
+        if !self.use_async_commit || !has_primary {
             self.secondaries = vec![];
         }
 
         // Only if there is only one request to send
-        if self.try_one_pc && (!has_primary || shard.len() as u64 != full_txn_size) {
+        if self.try_one_pc && (!has_primary || mutations.len() as u64 != full_txn_size) {
             self.try_one_pc = false;
         }
 
-        self.txn_size = shard.len() as u64;
-        self.mutations = shard;
+        self.txn_size = region_txn_size;
+        self.mutations = mutations;
+        self.pessimistic_actions = pessimistic_actions;
+        self.for_update_ts_constraints = constraints
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, expected_for_update_ts)| {
+                expected_for_update_ts.map(|expected_for_update_ts| {
+                    kvrpcpb::prewrite_request::ForUpdateTsConstraint {
+                        index: index as u32,
+                        expected_for_update_ts,
+                    }
+                })
+            })
+            .collect();
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
@@ -653,11 +730,12 @@ impl Shardable for kvrpcpb::CommitRequest {
     ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
         let mut keys = self.keys.clone();
         keys.sort();
+        let batch_size = TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed);
 
         region_stream_for_keys(keys.into_iter(), pd_client.clone())
-            .flat_map(|result| match result {
+            .flat_map(move |result| match result {
                 Ok((keys, region)) => {
-                    stream::iter(kvrpcpb::CommitRequest::batches(keys, TXN_COMMIT_BATCH_SIZE))
+                    stream::iter(kvrpcpb::CommitRequest::batches(keys, batch_size))
                         .map(move |batch| Ok((batch, region.clone())))
                         .boxed()
                 }
@@ -667,6 +745,13 @@ impl Shardable for kvrpcpb::CommitRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard) {
+        if !self.primary_key.is_empty() {
+            self.commit_role = if shard.iter().any(|key| key == &self.primary_key) {
+                kvrpcpb::CommitRole::Primary
+            } else {
+                kvrpcpb::CommitRole::Secondary
+            } as i32;
+        }
         self.keys = shard;
     }
 
@@ -711,7 +796,48 @@ impl_txn_v2_response!(
     }
 );
 
-shardable_keys!(kvrpcpb::BatchRollbackRequest);
+impl Shardable for kvrpcpb::BatchRollbackRequest {
+    type Shard = Vec<Vec<u8>>;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
+        let mut keys = self.keys.clone();
+        keys.sort();
+        let batch_size = TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed);
+        region_stream_for_keys(keys.into_iter(), pd_client.clone())
+            .flat_map(move |result| match result {
+                Ok((keys, region)) => {
+                    stream::iter(kvrpcpb::BatchRollbackRequest::batches(keys, batch_size))
+                        .map(move |batch| Ok((batch, region.clone())))
+                        .boxed()
+                }
+                Err(error) => stream::iter(Err(error)).boxed(),
+            })
+            .boxed()
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard) {
+        self.keys = shard;
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.request_region())?;
+        self.set_replica_read(store.is_replica_read());
+        self.set_stale_read(store.stale_read);
+        self.set_busy_threshold_ms(store.busy_threshold_ms);
+        Ok(())
+    }
+}
+
+impl Batchable for kvrpcpb::BatchRollbackRequest {
+    type Item = Vec<u8>;
+
+    fn item_size(item: &Self::Item) -> u64 {
+        item.len() as u64
+    }
+}
 
 pub fn new_pessimistic_rollback_request(
     keys: Vec<Vec<u8>>,
@@ -737,7 +863,48 @@ impl_txn_v2_response!(
     }
 );
 
-shardable_keys!(kvrpcpb::PessimisticRollbackRequest);
+impl Shardable for kvrpcpb::PessimisticRollbackRequest {
+    type Shard = Vec<Vec<u8>>;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
+        let mut keys = self.keys.clone();
+        keys.sort();
+        let batch_size = TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed);
+        region_stream_for_keys(keys.into_iter(), pd_client.clone())
+            .flat_map(move |result| match result {
+                Ok((keys, region)) => stream::iter(kvrpcpb::PessimisticRollbackRequest::batches(
+                    keys, batch_size,
+                ))
+                .map(move |batch| Ok((batch, region.clone())))
+                .boxed(),
+                Err(error) => stream::iter(Err(error)).boxed(),
+            })
+            .boxed()
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard) {
+        self.keys = shard;
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.request_region())?;
+        self.set_replica_read(store.is_replica_read());
+        self.set_stale_read(store.stale_read);
+        self.set_busy_threshold_ms(store.busy_threshold_ms);
+        Ok(())
+    }
+}
+
+impl Batchable for kvrpcpb::PessimisticRollbackRequest {
+    type Item = Vec<u8>;
+
+    fn item_size(item: &Self::Item) -> u64 {
+        item.len() as u64
+    }
+}
 
 pub fn new_pessimistic_lock_request(
     mutations: Vec<kvrpcpb::Mutation>,
@@ -775,7 +942,10 @@ impl_txn_v2_response!(
 );
 
 impl Shardable for kvrpcpb::PessimisticLockRequest {
-    type Shard = Vec<kvrpcpb::Mutation>;
+    // Preserve the wake-up protocol alongside each region's mutations. The
+    // response merger must reject ForceLock's `results` field in normal mode,
+    // matching client-go's two distinct response handlers.
+    type Shard = (Vec<kvrpcpb::Mutation>, i32);
 
     fn shards(
         &self,
@@ -783,11 +953,24 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
     ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
         let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
+        let wake_up_mode = self.wake_up_mode;
+        let batch_size = TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed);
         region_stream_for_keys(mutations.into_iter(), pd_client.clone())
+            .flat_map(move |result| match result {
+                Ok((mutations, region)) => stream::iter(
+                    kvrpcpb::PessimisticLockRequest::batches(mutations, batch_size)
+                        .into_iter()
+                        .map(move |batch| Ok(((batch, wake_up_mode), region.clone()))),
+                )
+                .boxed(),
+                Err(error) => stream::iter(Err(error)).boxed(),
+            })
+            .boxed()
     }
 
     fn apply_shard(&mut self, shard: Self::Shard) {
-        self.mutations = shard;
+        self.mutations = shard.0;
+        self.wake_up_mode = shard.1;
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
@@ -795,6 +978,14 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
         self.set_replica_read(store.is_replica_read());
         self.set_stale_read(store.stale_read);
         Ok(())
+    }
+}
+
+impl Batchable for kvrpcpb::PessimisticLockRequest {
+    type Item = kvrpcpb::Mutation;
+
+    fn item_size(item: &Self::Item) -> u64 {
+        item.key.len() as u64
     }
 }
 
@@ -808,7 +999,9 @@ pub(crate) struct PessimisticLockOutput {
 }
 
 fn collect_pessimistic_lock(
-    input: Vec<Result<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>>,
+    input: Vec<
+        Result<ResponseWithShard<kvrpcpb::PessimisticLockResponse, (Vec<kvrpcpb::Mutation>, i32)>>,
+    >,
 ) -> Result<PessimisticLockOutput> {
     if input.iter().any(Result::is_err) {
         let (success, mut errors): (Vec<_>, Vec<_>) = input.into_iter().partition(Result::is_ok);
@@ -816,7 +1009,7 @@ fn collect_pessimistic_lock(
         let success_keys = success
             .into_iter()
             .map(Result::unwrap)
-            .flat_map(|ResponseWithShard(_resp, mutations)| {
+            .flat_map(|ResponseWithShard(_resp, (mutations, _wake_up_mode))| {
                 mutations.into_iter().map(|mutation| mutation.key)
             })
             .collect();
@@ -829,10 +1022,31 @@ fn collect_pessimistic_lock(
     let mut pairs = Vec::new();
     let mut returned_values = Vec::new();
     let mut max_locked_with_conflict_ts = 0;
-    for ResponseWithShard(response, mutations) in input.into_iter().map(Result::unwrap) {
+    for ResponseWithShard(response, (mutations, wake_up_mode)) in
+        input.into_iter().map(Result::unwrap)
+    {
+        let wake_up_mode = kvrpcpb::PessimisticLockWakeUpMode::try_from(wake_up_mode)
+            .unwrap_or(kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeNormal);
+        if wake_up_mode == kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeNormal
+            && !response.results.is_empty()
+        {
+            return Err(Error::StringError(
+                "Pessimistic lock response corrupted".to_owned(),
+            ));
+        }
+        if wake_up_mode == kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeForceLock
+            && (mutations.len() != 1 || response.results.len() != 1)
+        {
+            return Err(Error::StringError(
+                "Pessimistic lock response corrupted".to_owned(),
+            ));
+        }
         if !response.results.is_empty() {
             assert_eq!(response.results.len(), mutations.len());
             for (mutation, result) in mutations.into_iter().zip(response.results) {
+                if result.r#type == kvrpcpb::PessimisticLockKeyResultType::LockResultFailed as i32 {
+                    return Err(Error::PessimisticLockRetry);
+                }
                 max_locked_with_conflict_ts =
                     max_locked_with_conflict_ts.max(result.locked_with_conflict_ts);
                 returned_values.push((
@@ -889,7 +1103,7 @@ fn collect_pessimistic_lock(
 
 // PessimisticLockResponse preserves request order in both the legacy
 // values/not_founds representation and ForceLock's per-key results.
-impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>
+impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, (Vec<kvrpcpb::Mutation>, i32)>>
     for CollectWithShard
 {
     type Out = Vec<KvPair>;
@@ -897,14 +1111,16 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
     fn merge(
         &self,
         input: Vec<
-            Result<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>,
+            Result<
+                ResponseWithShard<kvrpcpb::PessimisticLockResponse, (Vec<kvrpcpb::Mutation>, i32)>,
+            >,
         >,
     ) -> Result<Self::Out> {
         collect_pessimistic_lock(input).map(|output| output.pairs)
     }
 }
 
-impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>
+impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, (Vec<kvrpcpb::Mutation>, i32)>>
     for CollectPessimisticLock
 {
     type Out = PessimisticLockOutput;
@@ -912,7 +1128,9 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
     fn merge(
         &self,
         input: Vec<
-            Result<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>,
+            Result<
+                ResponseWithShard<kvrpcpb::PessimisticLockResponse, (Vec<kvrpcpb::Mutation>, i32)>,
+            >,
         >,
     ) -> Result<Self::Out> {
         collect_pessimistic_lock(input)
@@ -1673,7 +1891,17 @@ impl Shardable for kvrpcpb::FlushRequest {
     ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
         let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
+        let batch_size = TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed);
         region_stream_for_keys(mutations.into_iter(), pd_client.clone())
+            .flat_map(move |result| match result {
+                Ok((mutations, region)) => {
+                    stream::iter(kvrpcpb::FlushRequest::batches(mutations, batch_size))
+                        .map(move |batch| Ok((batch, region.clone())))
+                        .boxed()
+                }
+                Err(error) => stream::iter(Err(error)).boxed(),
+            })
+            .boxed()
     }
 
     fn apply_shard(&mut self, shard: Self::Shard) {
@@ -1685,6 +1913,14 @@ impl Shardable for kvrpcpb::FlushRequest {
         self.set_replica_read(store.is_replica_read());
         self.set_stale_read(store.stale_read);
         Ok(())
+    }
+}
+
+impl Batchable for kvrpcpb::FlushRequest {
+    type Item = kvrpcpb::Mutation;
+
+    fn item_size(item: &Self::Item) -> u64 {
+        (item.key.len() + item.value.len()) as u64
     }
 }
 
@@ -2104,12 +2340,14 @@ impl Merge<kvrpcpb::BroadcastTxnStatusResponse> for Collect {
 #[cfg(test)]
 mod tests {
     use super::{
-        new_prewrite_request, SecondaryLocksStatus, TransactionStatus, TransactionStatusKind,
+        new_prewrite_request, CollectPessimisticLock, SecondaryLocksStatus, TransactionStatus,
+        TransactionStatusKind,
     };
     use crate::common::Error::PessimisticLockError;
     use crate::common::Error::ResolveLockError;
     use crate::proto::errorpb;
     use crate::proto::kvrpcpb;
+    use crate::proto::kvrpcpb::prewrite_request::PessimisticAction;
     use crate::request::plan::Merge;
     use crate::request::Collect;
     use crate::request::CollectWithShard;
@@ -2121,6 +2359,7 @@ mod tests {
     use crate::KvPair;
     use crate::Timestamp;
     use crate::TimestampExt;
+    use futures::StreamExt;
     use std::any::Any;
     use std::sync::Arc;
     use std::sync::Mutex;
@@ -2191,6 +2430,55 @@ mod tests {
         let mut sizes = batch_sizes.lock().unwrap().clone();
         sizes.sort_unstable();
         assert_eq!(sizes, [1, 5120]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn source_cleanup_actions_use_shared_commit_batch_size() -> crate::Result<()> {
+        struct AtomicRestore(&'static std::sync::atomic::AtomicU64, u64);
+        impl Drop for AtomicRestore {
+            fn drop(&mut self) {
+                self.0.store(self.1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+
+        let old_batch_size =
+            crate::kv::TXN_COMMIT_BATCH_SIZE.swap(1, std::sync::atomic::Ordering::SeqCst);
+        let _restore = AtomicRestore(&crate::kv::TXN_COMMIT_BATCH_SIZE, old_batch_size);
+        let pd_client = Arc::new(crate::mock::MockPdClient::default());
+        let keys = vec![b"bb".to_vec(), b"aa".to_vec()];
+
+        let rollback = super::new_batch_rollback_request(keys.clone(), 1);
+        let rollback_shards = rollback
+            .shards(&pd_client)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<crate::Result<Vec<_>>>()?;
+        assert_eq!(
+            rollback_shards
+                .into_iter()
+                .map(|(keys, _)| keys)
+                .collect::<Vec<_>>(),
+            vec![vec![b"aa".to_vec()], vec![b"bb".to_vec()]]
+        );
+
+        let pessimistic_rollback = super::new_pessimistic_rollback_request(keys, 1, 2);
+        let pessimistic_rollback_shards = pessimistic_rollback
+            .shards(&pd_client)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<crate::Result<Vec<_>>>()?;
+        assert_eq!(
+            pessimistic_rollback_shards
+                .into_iter()
+                .map(|(keys, _)| keys)
+                .collect::<Vec<_>>(),
+            vec![vec![b"aa".to_vec()], vec![b"bb".to_vec()]]
+        );
+
         Ok(())
     }
 
@@ -2306,7 +2594,7 @@ mod tests {
     }
 
     #[test]
-    fn source_prewrite_txn_size_tracks_the_physical_request_shard() {
+    fn source_prewrite_txn_size_tracks_the_region_and_parallel_metadata_tracks_the_batch() {
         let mut request = new_prewrite_request(
             vec![
                 kvrpcpb::Mutation {
@@ -2322,16 +2610,118 @@ mod tests {
             1,
             10,
         );
+        request.pessimistic_actions = vec![
+            PessimisticAction::DoConstraintCheck as i32,
+            PessimisticAction::DoPessimisticCheck as i32,
+        ];
+        request.for_update_ts_constraints =
+            vec![kvrpcpb::prewrite_request::ForUpdateTsConstraint {
+                index: 1,
+                expected_for_update_ts: 9,
+            }];
+        request.secondaries = vec![b"b".to_vec()];
         assert_eq!(request.txn_size, 2);
 
         <kvrpcpb::PrewriteRequest as Shardable>::apply_shard(
             &mut request,
-            vec![kvrpcpb::Mutation {
-                key: b"b".to_vec(),
-                ..Default::default()
-            }],
+            (
+                vec![kvrpcpb::Mutation {
+                    key: b"b".to_vec(),
+                    ..Default::default()
+                }],
+                vec![PessimisticAction::DoPessimisticCheck as i32],
+                vec![Some(9)],
+                2,
+            ),
         );
-        assert_eq!(request.txn_size, 1);
+        assert_eq!(request.txn_size, 2);
+        assert_eq!(
+            request.pessimistic_actions,
+            [PessimisticAction::DoPessimisticCheck as i32]
+        );
+        assert_eq!(
+            request.for_update_ts_constraints,
+            [kvrpcpb::prewrite_request::ForUpdateTsConstraint {
+                index: 0,
+                expected_for_update_ts: 9,
+            }]
+        );
+        assert!(request.secondaries.is_empty());
+    }
+
+    #[test]
+    fn source_normal_pessimistic_lock_rejects_force_lock_results() {
+        let result = CollectPessimisticLock.merge(vec![Ok(ResponseWithShard(
+            kvrpcpb::PessimisticLockResponse {
+                results: vec![kvrpcpb::PessimisticLockKeyResult::default()],
+                ..Default::default()
+            },
+            (
+                vec![kvrpcpb::Mutation {
+                    key: b"key".to_vec(),
+                    ..Default::default()
+                }],
+                kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeNormal as i32,
+            ),
+        ))]);
+
+        assert!(matches!(
+            result,
+            Err(crate::Error::StringError(message))
+                if message == "Pessimistic lock response corrupted"
+        ));
+    }
+
+    #[test]
+    fn source_force_pessimistic_lock_requires_one_success_result() {
+        let shard = || {
+            (
+                vec![kvrpcpb::Mutation {
+                    key: b"key".to_vec(),
+                    ..Default::default()
+                }],
+                kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeForceLock as i32,
+            )
+        };
+        let missing = CollectPessimisticLock.merge(vec![Ok(ResponseWithShard(
+            kvrpcpb::PessimisticLockResponse::default(),
+            shard(),
+        ))]);
+        assert!(matches!(
+            missing,
+            Err(crate::Error::StringError(message))
+                if message == "Pessimistic lock response corrupted"
+        ));
+
+        let failed = CollectPessimisticLock.merge(vec![Ok(ResponseWithShard(
+            kvrpcpb::PessimisticLockResponse {
+                results: vec![kvrpcpb::PessimisticLockKeyResult {
+                    r#type: kvrpcpb::PessimisticLockKeyResultType::LockResultFailed as i32,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            shard(),
+        ))]);
+        assert!(matches!(failed, Err(crate::Error::PessimisticLockRetry)));
+    }
+
+    #[test]
+    fn source_commit_shards_mark_primary_and_secondary_roles() {
+        let mut primary = super::new_commit_request(vec![b"a".to_vec(), b"b".to_vec()], 1, 2);
+        primary.primary_key = b"a".to_vec();
+        primary.use_async_commit = true;
+        let mut secondary = primary.clone();
+
+        <kvrpcpb::CommitRequest as Shardable>::apply_shard(&mut primary, vec![b"a".to_vec()]);
+        <kvrpcpb::CommitRequest as Shardable>::apply_shard(&mut secondary, vec![b"b".to_vec()]);
+
+        assert_eq!(primary.commit_role, kvrpcpb::CommitRole::Primary as i32);
+        assert_eq!(secondary.commit_role, kvrpcpb::CommitRole::Secondary as i32);
+        assert_eq!(primary.primary_key, b"a");
+        assert_eq!(secondary.primary_key, b"a");
+        assert!(primary.use_async_commit);
+        assert!(secondary.use_async_commit);
     }
 
     #[test]
@@ -2447,8 +2837,19 @@ mod tests {
     }
 
     #[test]
-    fn api_v2_decoder_covers_pipelined_and_flashback_commands() {
+    fn source_test_decode_response_hot_path_commands() {
         let codec = ApiV2Codec::new(KeyMode::Txn, 7).unwrap();
+
+        let (region_start, region_end) = codec.encode_region_range(b"range-start", b"range-end");
+        let region_error = errorpb::Error {
+            key_not_in_region: Some(errorpb::KeyNotInRegion {
+                key: codec.encode_key(b"region-key"),
+                start_key: region_start,
+                end_key: region_end,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
 
         let flush_request = super::new_flush_request(
             vec![kvrpcpb::Mutation {
@@ -2471,11 +2872,10 @@ mod tests {
         );
 
         let mut flush_response = kvrpcpb::FlushResponse {
+            region_error: Some(region_error.clone()),
             errors: vec![kvrpcpb::KeyError {
-                locked: Some(kvrpcpb::LockInfo {
-                    key: codec.encode_key(b"flush-locked"),
-                    primary_lock: codec.encode_key(b"flush-primary"),
-                    ..Default::default()
+                txn_lock_not_found: Some(kvrpcpb::TxnLockNotFound {
+                    key: codec.encode_key(b"lock-key"),
                 }),
                 ..Default::default()
             }],
@@ -2484,9 +2884,22 @@ mod tests {
         flush_request
             .decode_response(&mut flush_response, Some(&codec))
             .unwrap();
-        let flush_lock = flush_response.errors[0].locked.as_ref().unwrap();
-        assert_eq!(flush_lock.key, b"flush-locked");
-        assert_eq!(flush_lock.primary_lock, b"flush-primary");
+        assert_eq!(
+            flush_response.errors[0]
+                .txn_lock_not_found
+                .as_ref()
+                .unwrap()
+                .key,
+            b"lock-key"
+        );
+        let decoded_region = flush_response
+            .region_error
+            .unwrap()
+            .key_not_in_region
+            .unwrap();
+        assert_eq!(decoded_region.key, b"region-key");
+        assert_eq!(decoded_region.start_key, b"range-start");
+        assert_eq!(decoded_region.end_key, b"range-end");
 
         let buffer_batch_get_request =
             super::new_buffer_batch_get_request(vec![codec.encode_key(b"buffer-key")], 15);
@@ -2495,9 +2908,22 @@ mod tests {
             vec![codec.encode_key(b"buffer-key")]
         );
         let mut buffer_batch_get_response = kvrpcpb::BufferBatchGetResponse {
+            region_error: Some(region_error),
+            error: Some(kvrpcpb::KeyError {
+                txn_lock_not_found: Some(kvrpcpb::TxnLockNotFound {
+                    key: codec.encode_key(b"response-lock"),
+                }),
+                ..Default::default()
+            }),
             pairs: vec![kvrpcpb::KvPair {
-                key: codec.encode_key(b"buffer-key"),
+                key: codec.encode_key(b"pair-key"),
                 value: b"value".to_vec(),
+                error: Some(kvrpcpb::KeyError {
+                    txn_lock_not_found: Some(kvrpcpb::TxnLockNotFound {
+                        key: codec.encode_key(b"pair-lock"),
+                    }),
+                    ..Default::default()
+                }),
                 ..Default::default()
             }],
             ..Default::default()
@@ -2505,7 +2931,27 @@ mod tests {
         buffer_batch_get_request
             .decode_response(&mut buffer_batch_get_response, Some(&codec))
             .unwrap();
-        assert_eq!(buffer_batch_get_response.pairs[0].key, b"buffer-key");
+        assert_eq!(buffer_batch_get_response.pairs[0].key, b"pair-key");
+        assert_eq!(
+            buffer_batch_get_response
+                .error
+                .unwrap()
+                .txn_lock_not_found
+                .unwrap()
+                .key,
+            b"response-lock"
+        );
+        assert_eq!(
+            buffer_batch_get_response.pairs[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .txn_lock_not_found
+                .as_ref()
+                .unwrap()
+                .key,
+            b"pair-lock"
+        );
 
         let (start_key, end_key) = codec.encode_region_range(b"start", b"end");
         let region_error = errorpb::Error {
@@ -2702,13 +3148,15 @@ mod tests {
     }
 
     #[test]
-    fn store_safe_ts_keeps_its_contextless_api_v2_key_range_shape() {
+    fn source_test_encode_unknown_request() {
         let codec = ApiV2Codec::new(KeyMode::Txn, 7).unwrap();
         let key_range = codec.encode_key_range(&kvrpcpb::KeyRange {
             start_key: b"safe-start".to_vec(),
             end_key: b"safe-end".to_vec(),
         });
         let mut request = super::new_store_safe_ts_request(Some(key_range));
+        request.set_api_version(kvrpcpb::ApiVersion::V1);
+        assert_eq!(request.label(), "store_safe_ts");
         request.set_api_version(kvrpcpb::ApiVersion::V2);
 
         assert_eq!(request.label(), "store_safe_ts");
@@ -2719,6 +3167,147 @@ mod tests {
                 end_key: codec.encode_key(b"safe-end"),
             }
         );
+    }
+
+    #[test]
+    fn source_test_decode_response_second_wave_commands() {
+        let codec = ApiV2Codec::new(KeyMode::Txn, 7).unwrap();
+        let make_region_error = || {
+            let (start_key, end_key) = codec.encode_region_range(b"range-start", b"range-end");
+            errorpb::Error {
+                key_not_in_region: Some(errorpb::KeyNotInRegion {
+                    key: codec.encode_key(b"region-key"),
+                    start_key,
+                    end_key,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }
+        };
+        let assert_region_error = |error: errorpb::Error| {
+            let error = error.key_not_in_region.unwrap();
+            assert_eq!(error.key, b"region-key");
+            assert_eq!(error.start_key, b"range-start");
+            assert_eq!(error.end_key, b"range-end");
+        };
+
+        let observer_request = super::new_check_lock_observer_request(0);
+        let mut observer_response = kvrpcpb::CheckLockObserverResponse {
+            locks: vec![kvrpcpb::LockInfo {
+                key: codec.encode_key(b"observer-key"),
+                primary_lock: codec.encode_key(b"observer-primary"),
+                secondaries: vec![codec.encode_key(b"observer-secondary")],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        observer_request
+            .decode_response(&mut observer_response, Some(&codec))
+            .unwrap();
+        let observer = &observer_response.locks[0];
+        assert_eq!(observer.key, b"observer-key");
+        assert_eq!(observer.primary_lock, b"observer-primary");
+        assert_eq!(observer.secondaries, [b"observer-secondary"]);
+
+        let wait_request = super::new_get_lock_wait_info_request();
+        let mut wait_response = kvrpcpb::GetLockWaitInfoResponse {
+            region_error: Some(make_region_error()),
+            entries: vec![crate::proto::deadlock::WaitForEntry {
+                key: codec.encode_key(b"wait-key"),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        wait_request
+            .decode_response(&mut wait_response, Some(&codec))
+            .unwrap();
+        assert_region_error(wait_response.region_error.unwrap());
+        assert_eq!(wait_response.entries[0].key, b"wait-key");
+
+        let mvcc_start_request = super::new_mvcc_get_by_start_ts_request(0);
+        let mut mvcc_start_response = kvrpcpb::MvccGetByStartTsResponse {
+            region_error: Some(make_region_error()),
+            key: codec.encode_key(b"mvcc-key"),
+            info: Some(kvrpcpb::MvccInfo {
+                lock: Some(kvrpcpb::MvccLock {
+                    primary: codec.encode_key(b"mvcc-primary"),
+                    secondaries: vec![
+                        codec.encode_key(b"mvcc-secondary-1"),
+                        codec.encode_key(b"mvcc-secondary-2"),
+                    ],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        mvcc_start_request
+            .decode_response(&mut mvcc_start_response, Some(&codec))
+            .unwrap();
+        assert_region_error(mvcc_start_response.region_error.unwrap());
+        assert_eq!(mvcc_start_response.key, b"mvcc-key");
+        let mvcc_start_lock = mvcc_start_response.info.unwrap().lock.unwrap();
+        assert_eq!(mvcc_start_lock.primary, b"mvcc-primary");
+        assert_eq!(
+            mvcc_start_lock.secondaries,
+            [b"mvcc-secondary-1", b"mvcc-secondary-2"]
+        );
+
+        let mvcc_key_request = super::new_mvcc_get_by_key_request(codec.encode_key(b"request-key"));
+        let mut mvcc_key_response = kvrpcpb::MvccGetByKeyResponse {
+            region_error: Some(make_region_error()),
+            info: Some(kvrpcpb::MvccInfo {
+                lock: Some(kvrpcpb::MvccLock {
+                    primary: codec.encode_key(b"mvcc-by-key-primary"),
+                    secondaries: vec![
+                        codec.encode_key(b"mvcc-by-key-secondary-1"),
+                        codec.encode_key(b"mvcc-by-key-secondary-2"),
+                    ],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        mvcc_key_request
+            .decode_response(&mut mvcc_key_response, Some(&codec))
+            .unwrap();
+        assert_region_error(mvcc_key_response.region_error.unwrap());
+        let mvcc_key_lock = mvcc_key_response.info.unwrap().lock.unwrap();
+        assert_eq!(mvcc_key_lock.primary, b"mvcc-by-key-primary");
+        assert_eq!(
+            mvcc_key_lock.secondaries,
+            [b"mvcc-by-key-secondary-1", b"mvcc-by-key-secondary-2"]
+        );
+
+        let flashback_request = super::new_flashback_to_version_request(vec![], vec![], 0, 0, 0);
+        let mut flashback_response = kvrpcpb::FlashbackToVersionResponse {
+            region_error: Some(make_region_error()),
+            ..Default::default()
+        };
+        flashback_request
+            .decode_response(&mut flashback_response, Some(&codec))
+            .unwrap();
+        assert_region_error(flashback_response.region_error.unwrap());
+
+        let prepare_request = super::new_prepare_flashback_to_version_request(vec![], vec![], 0, 0);
+        let mut prepare_response = kvrpcpb::PrepareFlashbackToVersionResponse {
+            region_error: Some(make_region_error()),
+            ..Default::default()
+        };
+        prepare_request
+            .decode_response(&mut prepare_response, Some(&codec))
+            .unwrap();
+        assert_region_error(prepare_response.region_error.unwrap());
+
+        // Compact cursors are TiFlash RowKeyValue cursors and stay physical.
+        let response = kvrpcpb::CompactResponse {
+            compacted_start_key: b"compacted-start".to_vec(),
+            compacted_end_key: b"compacted-end".to_vec(),
+            ..Default::default()
+        };
+        assert_eq!(response.compacted_start_key, b"compacted-start");
+        assert_eq!(response.compacted_end_key, b"compacted-end");
     }
 
     #[test]
@@ -2998,11 +3587,14 @@ mod tests {
                 values: vec![value1.to_vec()],
                 ..Default::default()
             },
-            vec![kvrpcpb::Mutation {
-                op: kvrpcpb::Op::PessimisticLock.into(),
-                key: key1.to_vec(),
-                ..Default::default()
-            }],
+            (
+                vec![kvrpcpb::Mutation {
+                    op: kvrpcpb::Op::PessimisticLock.into(),
+                    key: key1.to_vec(),
+                    ..Default::default()
+                }],
+                kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeNormal as i32,
+            ),
         );
 
         let resp_empty_value = ResponseWithShard(
@@ -3010,11 +3602,14 @@ mod tests {
                 values: vec![value_empty.to_vec()],
                 ..Default::default()
             },
-            vec![kvrpcpb::Mutation {
-                op: kvrpcpb::Op::PessimisticLock.into(),
-                key: key2.to_vec(),
-                ..Default::default()
-            }],
+            (
+                vec![kvrpcpb::Mutation {
+                    op: kvrpcpb::Op::PessimisticLock.into(),
+                    key: key2.to_vec(),
+                    ..Default::default()
+                }],
+                kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeNormal as i32,
+            ),
         );
 
         let resp_not_found = ResponseWithShard(
@@ -3023,18 +3618,21 @@ mod tests {
                 not_founds: vec![true, false],
                 ..Default::default()
             },
-            vec![
-                kvrpcpb::Mutation {
-                    op: kvrpcpb::Op::PessimisticLock.into(),
-                    key: key3.to_vec(),
-                    ..Default::default()
-                },
-                kvrpcpb::Mutation {
-                    op: kvrpcpb::Op::PessimisticLock.into(),
-                    key: key4.to_vec(),
-                    ..Default::default()
-                },
-            ],
+            (
+                vec![
+                    kvrpcpb::Mutation {
+                        op: kvrpcpb::Op::PessimisticLock.into(),
+                        key: key3.to_vec(),
+                        ..Default::default()
+                    },
+                    kvrpcpb::Mutation {
+                        op: kvrpcpb::Op::PessimisticLock.into(),
+                        key: key4.to_vec(),
+                        ..Default::default()
+                    },
+                ],
+                kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeNormal as i32,
+            ),
         );
 
         let merger = CollectWithShard {};

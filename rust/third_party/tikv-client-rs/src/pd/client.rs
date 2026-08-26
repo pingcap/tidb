@@ -1662,6 +1662,9 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         if self.kv_client_closed.swap(true, Ordering::AcqRel) {
             return;
         }
+        // Match `tikv.KVStore.Close`: stop every region-cache background task
+        // before retiring the TiKV clients those tasks may still access.
+        self.region_cache.close_background_task().await;
         let _lifecycle = self.kv_client_lifecycle.lock().await;
         let retired = self
             .kv_client_cache
@@ -1673,7 +1676,6 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         for client in retired {
             client.close();
         }
-        self.region_cache.close_background_task().await;
     }
 }
 
@@ -1775,7 +1777,7 @@ fn make_key_range(start_key: Vec<u8>, end_key: Vec<u8>) -> kvrpcpb::KeyRange {
 
 #[cfg(test)]
 pub mod test {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
 
     use async_trait::async_trait;
@@ -2346,6 +2348,84 @@ pub mod test {
             client.kv_client("store-a").await,
             Err(crate::Error::StringError(message)) if message == "rpc client is closed"
         ));
+    }
+
+    #[tokio::test]
+    async fn source_test_kv_store_close_check_region_cache_closed_before_pd_close() {
+        #[derive(Clone)]
+        struct OrderCheckingClient {
+            cache_closed: Arc<AtomicBool>,
+            closes: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl KvClient for OrderCheckingClient {
+            async fn dispatch(&self, _request: &dyn Request) -> Result<Box<dyn std::any::Any>> {
+                unreachable!("this close-order test never dispatches")
+            }
+
+            fn close(&self) {
+                assert!(
+                    self.cache_closed.load(Ordering::SeqCst),
+                    "region cache must be closed before retiring TiKV clients"
+                );
+                self.closes.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        #[derive(Clone)]
+        struct OrderCheckingConnect {
+            cache_closed: Arc<AtomicBool>,
+            closes: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl KvConnect for OrderCheckingConnect {
+            type KvClient = OrderCheckingClient;
+
+            async fn connect(&self, _address: &str) -> Result<Self::KvClient> {
+                Ok(OrderCheckingClient {
+                    cache_closed: self.cache_closed.clone(),
+                    closes: self.closes.clone(),
+                })
+            }
+        }
+
+        let cache_closed = Arc::new(AtomicBool::new(false));
+        let closes = Arc::new(AtomicUsize::new(0));
+        let connect_cache_closed = cache_closed.clone();
+        let connect_closes = closes.clone();
+        let client = PdRpcClient::new(
+            Config::default(),
+            move |_| OrderCheckingConnect {
+                cache_closed: connect_cache_closed.clone(),
+                closes: connect_closes.clone(),
+            },
+            |sm| async move {
+                Ok(RetryClient::new_with_cluster(
+                    sm,
+                    Config::default().timeout,
+                    MockCluster,
+                ))
+            },
+            false,
+        )
+        .await
+        .unwrap();
+
+        let background_cache_closed = cache_closed.clone();
+        assert!(client
+            .region_cache
+            .spawn_background_task(move |cancellation| async move {
+                cancellation.cancelled().await;
+                background_cache_closed.store(true, Ordering::SeqCst);
+            }));
+        client.kv_client("store-a").await.unwrap();
+
+        client.close().await;
+
+        assert!(cache_closed.load(Ordering::SeqCst));
+        assert_eq!(closes.load(Ordering::SeqCst), 1);
     }
 
     #[test]

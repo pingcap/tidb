@@ -5,6 +5,7 @@ use std::sync::Arc;
 use futures::stream::BoxStream;
 
 use super::plan::PreserveShard;
+use super::plan::ValidateSnapshotVisibility;
 use crate::kv::ReplicaReadConfig;
 use crate::locate::ReplicaSelectorState;
 use crate::pd::PdClient;
@@ -139,6 +140,17 @@ macro_rules! impl_inner_shardable {
         fn disable_stale_read_after_lock(&mut self) -> bool {
             self.inner.disable_stale_read_after_lock()
         }
+
+        fn lock_retry_region(&self) -> Option<RegionWithLeader> {
+            self.inner.lock_retry_region()
+        }
+
+        fn transaction_batch_trace(
+            &self,
+            region_id: u64,
+        ) -> Option<$crate::trace::TransactionBatchTrace> {
+            self.inner.transaction_batch_trace(region_id)
+        }
     };
 }
 
@@ -244,6 +256,20 @@ pub trait Shardable {
     /// leader read. Plans without replica-routing state retain a no-op.
     fn disable_stale_read_after_lock(&mut self) -> bool {
         false
+    }
+
+    /// Region metadata used to rebuild a direct leader route after a stale
+    /// read encounters a lock.
+    fn lock_retry_region(&self) -> Option<RegionWithLeader> {
+        None
+    }
+
+    #[doc(hidden)]
+    fn transaction_batch_trace(
+        &self,
+        _region_id: u64,
+    ) -> Option<crate::trace::TransactionBatchTrace> {
+        None
     }
 
     /// Bind snapshot region and lock retries to one source Backoffer owner.
@@ -364,14 +390,39 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
 
     fn apply_shard(&mut self, shard: Self::Shard) {
         self.request.apply_shard(shard);
+        let identity = self
+            .request_shard_identity
+            .as_ref()
+            .map(|identity| identity(&self.request));
+        if identity != self.decorated_shard_identity {
+            if let Some(decorate) = &self.request_shard_decorator {
+                decorate(&mut self.request);
+            }
+        }
+        self.decorated_shard_identity = identity;
+        self.refresh_snapshot_replica_read_adjustment();
     }
 
     fn clone_then_apply_shard(&self, shard: Self::Shard) -> Self
     where
         Self: Sized + Clone,
     {
-        Dispatch {
-            request: self.request.clone_then_apply_shard(shard),
+        let mut request = self.request.clone_then_apply_shard(shard);
+        let decorated_shard_identity = self
+            .request_shard_identity
+            .as_ref()
+            .map(|identity| identity(&request));
+        if decorated_shard_identity != self.decorated_shard_identity {
+            if let Some(decorate) = &self.request_shard_decorator {
+                decorate(&mut request);
+            }
+        }
+        let mut dispatch = Dispatch {
+            request,
+            request_shard_decorator: self.request_shard_decorator.clone(),
+            request_shard_identity: self.request_shard_identity.clone(),
+            decorated_shard_identity,
+            request_preparer: self.request_preparer.clone(),
             kv_client: self.kv_client.clone(),
             request_timeout: self.request_timeout,
             retry_request_timeout: self.retry_request_timeout,
@@ -379,6 +430,9 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
             target: self.target.clone(),
             forwarded_host: self.forwarded_host.clone(),
             replica_read_config: self.replica_read_config.clone(),
+            snapshot_replica_read_base_config: self.snapshot_replica_read_base_config.clone(),
+            snapshot_replica_read_adjuster: self.snapshot_replica_read_adjuster.clone(),
+            region_with_leader: self.region_with_leader.clone(),
             replica_selector_state: self.replica_selector_state.clone(),
             store_health: self.store_health.clone(),
             record_client_side_slow_score: self.record_client_side_slow_score,
@@ -396,15 +450,19 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
             request_replica_read: self.request_replica_read,
             interceptor: self.interceptor.clone(),
             execution_details_trace_handler: self.execution_details_trace_handler.clone(),
+            trace_context: self.trace_context.clone(),
             network_traffic_details: self.network_traffic_details.clone(),
             network_stale_read: self.network_stale_read,
             resource_control: self.resource_control.clone(),
             response_codec: self.response_codec,
             v1_response_codec: self.v1_response_codec,
-        }
+        };
+        dispatch.refresh_snapshot_replica_read_adjustment();
+        dispatch
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.region_with_leader = Some(store.region_with_leader.clone());
         self.kv_client = Some(store.client.clone());
         self.target = store.target.clone();
         self.forwarded_host = store.forwarded_host.clone();
@@ -432,6 +490,43 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
             self.request
                 .set_buckets_version(store.region_with_leader.buckets_version())
         })
+    }
+
+    fn transaction_batch_trace(
+        &self,
+        region_id: u64,
+    ) -> Option<crate::trace::TransactionBatchTrace> {
+        if let Some(request) = self
+            .request
+            .as_any()
+            .downcast_ref::<crate::proto::kvrpcpb::PrewriteRequest>()
+        {
+            let is_primary = request
+                .mutations
+                .iter()
+                .any(|mutation| mutation.key == request.primary_lock);
+            return Some(crate::trace::TransactionBatchTrace {
+                context: self.trace_context.clone(),
+                kind: crate::trace::TransactionBatchKind::Prewrite,
+                start_ts: request.start_version,
+                commit_ts: 0,
+                region_id,
+                is_primary,
+                key_count: request.mutations.len(),
+            });
+        }
+        self.request
+            .as_any()
+            .downcast_ref::<crate::proto::kvrpcpb::CommitRequest>()
+            .map(|request| crate::trace::TransactionBatchTrace {
+                context: self.trace_context.clone(),
+                kind: crate::trace::TransactionBatchKind::Commit,
+                start_ts: request.start_version,
+                commit_ts: request.commit_version,
+                region_id,
+                is_primary: request.keys.iter().any(|key| key == &request.primary_key),
+                key_count: request.keys.len(),
+            })
     }
 
     fn replica_read_config(&self) -> ReplicaReadConfig {
@@ -557,6 +652,10 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         true
     }
 
+    fn lock_retry_region(&self) -> Option<RegionWithLeader> {
+        self.region_with_leader.clone()
+    }
+
     fn retry_only_lock_keys(&mut self, locks: &[crate::proto::kvrpcpb::LockInfo]) -> bool {
         let keys = locks
             .iter()
@@ -565,11 +664,13 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         let request = &mut self.request as &mut dyn std::any::Any;
         if let Some(request) = request.downcast_mut::<crate::proto::kvrpcpb::BatchGetRequest>() {
             request.keys = keys;
+            self.refresh_snapshot_replica_read_adjustment();
             true
         } else if let Some(request) =
             request.downcast_mut::<crate::proto::kvrpcpb::BufferBatchGetRequest>()
         {
             request.keys = keys;
+            self.refresh_snapshot_replica_read_adjustment();
             true
         } else {
             false
@@ -677,6 +778,16 @@ impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
         owner: Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
     ) {
         self.inner.set_snapshot_retry_owner(owner);
+    }
+}
+
+impl<P: Plan + Shardable> Shardable for ValidateSnapshotVisibility<P> {
+    impl_inner_shardable!();
+}
+
+impl<P: Plan + NextBatch> NextBatch for ValidateSnapshotVisibility<P> {
+    fn next_batch(&mut self, range: (Vec<u8>, Vec<u8>)) {
+        self.inner.next_batch(range);
     }
 }
 
@@ -886,6 +997,7 @@ mod test {
     use crate::region::RegionWithLeader;
     use crate::request::plan::Dispatch;
     use crate::store::RegionStore;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
     #[test]
@@ -911,6 +1023,10 @@ mod test {
     fn source_lock_on_stale_read_retries_a_threshold_free_leader() {
         let mut dispatch = Dispatch {
             request: kvrpcpb::GetRequest::default(),
+            request_shard_decorator: None,
+            request_shard_identity: None,
+            decorated_shard_identity: None,
+            request_preparer: None,
             kv_client: None,
             request_timeout: None,
             retry_request_timeout: None,
@@ -923,6 +1039,9 @@ mod test {
                 busy_threshold_ms: 50,
                 ..Default::default()
             },
+            snapshot_replica_read_base_config: None,
+            snapshot_replica_read_adjuster: None,
+            region_with_leader: None,
             replica_selector_state: ReplicaSelectorState::default(),
             store_health: None,
             record_client_side_slow_score: false,
@@ -940,6 +1059,7 @@ mod test {
             request_replica_read: false,
             interceptor: None,
             execution_details_trace_handler: None,
+            trace_context: crate::trace::TraceContext::new(),
             network_traffic_details: None,
             network_stale_read: false,
             resource_control: None,
@@ -980,6 +1100,10 @@ mod test {
             .with_restored_suspect_leader();
         let mut dispatch = Dispatch {
             request: kvrpcpb::GetRequest::default(),
+            request_shard_decorator: None,
+            request_shard_identity: None,
+            decorated_shard_identity: None,
+            request_preparer: None,
             kv_client: None,
             request_timeout: None,
             retry_request_timeout: None,
@@ -987,6 +1111,9 @@ mod test {
             target: String::new(),
             forwarded_host: String::new(),
             replica_read_config: ReplicaReadConfig::default(),
+            snapshot_replica_read_base_config: None,
+            snapshot_replica_read_adjuster: None,
+            region_with_leader: None,
             replica_selector_state: ReplicaSelectorState::default(),
             store_health: None,
             record_client_side_slow_score: false,
@@ -1004,6 +1131,7 @@ mod test {
             request_replica_read: false,
             interceptor: None,
             execution_details_trace_handler: None,
+            trace_context: crate::trace::TraceContext::new(),
             network_traffic_details: None,
             network_stale_read: false,
             resource_control: None,
@@ -1027,6 +1155,101 @@ mod test {
             &store.store_token_count
         ));
         assert!(dispatch.replica_selector_state.is_leader_selectable(2));
+    }
+
+    #[test]
+    fn source_shard_decorator_runs_once_per_physical_identity() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_calls = Arc::clone(&calls);
+        let mut dispatch = Dispatch {
+            request: kvrpcpb::GetRequest::default(),
+            request_shard_decorator: Some(Arc::new(move |request| {
+                let call = captured_calls.fetch_add(1, Ordering::SeqCst) + 1;
+                request
+                    .context
+                    .get_or_insert_with(kvrpcpb::Context::default)
+                    .resource_group_tag = vec![call as u8];
+            })),
+            request_shard_identity: Some(Arc::new(|request| vec![request.key.clone()])),
+            decorated_shard_identity: None,
+            request_preparer: None,
+            kv_client: None,
+            request_timeout: None,
+            retry_request_timeout: None,
+            read_timestamp_validation: None,
+            target: String::new(),
+            forwarded_host: String::new(),
+            replica_read_config: ReplicaReadConfig::default(),
+            snapshot_replica_read_base_config: None,
+            snapshot_replica_read_adjuster: None,
+            region_with_leader: None,
+            replica_selector_state: ReplicaSelectorState::default(),
+            store_health: None,
+            record_client_side_slow_score: false,
+            physical_endpoint_type: crate::store::EndpointType::TiKv,
+            resource_control_replica_number: 1,
+            resource_control_access_location: AccessLocationType::Unknown,
+            predicted_read_bytes: 0,
+            ru_details: None,
+            store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
+            store_token_store_id: 0,
+            region_request_runtime_stats: None,
+            logical_peer_id: None,
+            logical_store_id: None,
+            request_stale_read: false,
+            request_replica_read: false,
+            interceptor: None,
+            execution_details_trace_handler: None,
+            trace_context: crate::trace::TraceContext::new(),
+            network_traffic_details: None,
+            network_stale_read: false,
+            resource_control: None,
+            response_codec: None,
+            v1_response_codec: None,
+        };
+
+        dispatch.apply_shard(vec![vec![1]]);
+        assert_eq!(
+            dispatch
+                .request
+                .context
+                .as_ref()
+                .unwrap()
+                .resource_group_tag,
+            [1]
+        );
+        dispatch.apply_shard(vec![vec![1]]);
+        assert_eq!(
+            dispatch
+                .request
+                .context
+                .as_ref()
+                .unwrap()
+                .resource_group_tag,
+            [1]
+        );
+
+        let same_batch_retry = dispatch.clone_then_apply_shard(vec![vec![1]]);
+        assert_eq!(
+            same_batch_retry
+                .request
+                .context
+                .as_ref()
+                .unwrap()
+                .resource_group_tag,
+            [1]
+        );
+        let split_batch = dispatch.clone_then_apply_shard(vec![vec![20]]);
+        assert_eq!(
+            split_batch
+                .request
+                .context
+                .as_ref()
+                .unwrap()
+                .resource_group_tag,
+            [2]
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]

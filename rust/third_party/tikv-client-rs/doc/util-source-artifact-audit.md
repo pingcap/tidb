@@ -16,10 +16,10 @@ The package contains exactly 13 Go artifacts and 3,478 lines: eight production f
 | `rate_limit.go` | 73 | `37f9a143a212e8cd25edd911b33d3ad960f23ab520d2efe49b3bc43bb1ec5abe` | `src/util/rate_limit.rs` |
 | `request_source.go` | 190 | `584a1879d137339adad74a92b35917c844104ed3ebe61142266530347dcd4c7c` | `src/util/request_source.rs` and transaction/snapshot call sites |
 | `ts_set.go` | 74 | `a3969d914b4aec481e0f8918ee48d252f9479d44f1cf02c205e1ca6d413ceb86` | `src/util/ts_set.rs` and snapshot read-lock context |
-| `execdetails_test.go` | 972 | `be1f527187e1f1dee4d4e1503eb176b4718ed6b636fd9c1d99b51d41b6c87322` | 23 source scenarios in `src/util/execdetails.rs` |
-| `misc_test.go` | 140 | `72b530fa37b3acfa50dec945738fd368bcb043e24999be0f627e969e7e79e52d` | GC-time, time-detail, and range-helper tests in `misc.rs`/`execdetails.rs` |
-| `rate_limit_test.go` | 70 | `0cd0b82982be5680f72d63a938d7d4d6c63826c1d961c3edfa6058fd3c4e0bd7` | cancellation/blocking/redundant-token test in `rate_limit.rs` |
-| `request_source_test.go` | 95 | `5eeb8d4595fb229475320cf62b60a07a31f3ef137c174e8c6071a41409704a3c` | complete source/build matrix in `request_source.rs` |
+| `execdetails_test.go` | 972 | `be1f527187e1f1dee4d4e1503eb176b4718ed6b636fd9c1d99b51d41b6c87322` | 23 independently named `source_test_*` ports in `src/util/execdetails.rs` |
+| `misc_test.go` | 140 | `72b530fa37b3acfa50dec945738fd368bcb043e24999be0f627e969e7e79e52d` | four independently named ports in `misc.rs`/`execdetails.rs` |
+| `rate_limit_test.go` | 70 | `0cd0b82982be5680f72d63a938d7d4d6c63826c1d961c3edfa6058fd3c4e0bd7` | independently named cancellation/blocking/redundant-token port in `rate_limit.rs` |
+| `request_source_test.go` | 95 | `5eeb8d4595fb229475320cf62b60a07a31f3ef137c174e8c6071a41409704a3c` | two independently named source/build ports in `request_source.rs` |
 | `main_test.go` | 25 | `40d5549f5ecd71526173d7943a9808e6a168b117d3706f793aadb1ce0daf285` | all native helper tasks are scoped and joined; full library suites are the leak/lifecycle gate |
 
 There is no `doc.go`, benchmark, example test, fixture, package metadata/`OWNERS`, generated input/output, package-local build file, Go build tag, platform variant, or non-Go artifact in this package.
@@ -50,6 +50,43 @@ There is no `doc.go`, benchmark, example test, fixture, package metadata/`OWNERS
 
 The four ordinary source test files declare exactly 30 tests: 23 execution-detail tests, four miscellaneous tests, one rate-limit test, and two request-source tests. Their complete assertion matrices are transcreated, including RU-v2 nested executor counters, pool-task zero minima, sequential-versus-aggregate equivalence, every slowest-request branch, deep-copy independence, IA scan fields, all write/time fields, GC timestamp valid/invalid cases, and blocked-token cancellation. Additional native tests cover the four production files that had no source tests: explicit DNS routing, failpoint prefix/gate, PD wait scoping/delegation, and timestamp-set concurrency semantics.
 
+The declaration-level mapping is exact:
+
+| Original declaration | Rust port |
+| --- | --- |
+| `TestRUDetailsDrainRUV2` | `source_test_ru_details_drain_ru_v2` |
+| `TestRUDetailsCloneAndMergeRawRUV2` | `source_test_ru_details_clone_and_merge_raw_ru_v2` |
+| `TestPoolTaskDetailsStringUsesAverageTimes` | `source_test_pool_task_details_string_uses_average_times` |
+| `TestPoolTaskDetailsStringOmitsZeroTimes` | `source_test_pool_task_details_string_omits_zero_times` |
+| `TestPoolTaskDetailsStringOmitsAverageWithNoSamples` | `source_test_pool_task_details_string_omits_average_with_no_samples` |
+| `TestPoolTaskDetailsMergeFromPBAndMerge` | `source_test_pool_task_details_merge_from_pb_and_merge` |
+| `TestPoolTaskDetailsMergeMinimumPresence` | `source_test_pool_task_details_merge_minimum_presence` |
+| `TestPoolTaskDetailsStringFormatsFractionalCountAverages` | `source_test_pool_task_details_string_formats_fractional_count_averages` |
+| `TestPoolTaskDetailsStringKeepsZeroFairQueueWait` | `source_test_pool_task_details_string_keeps_zero_fair_queue_wait` |
+| `TestPoolTaskDetailsEmptyAndClone` | `source_test_pool_task_details_empty_and_clone` |
+| `TestScanDetailMergeFromScanDetailV2IncludesIAFields` | `source_test_scan_detail_merge_from_scan_detail_v2_includes_ia_fields` |
+| `TestScanDetailMergeIncludesIAFields` | `source_test_scan_detail_merge_includes_ia_fields` |
+| `TestLockKeysDetailsMerge` | `source_test_lock_keys_details_merge` |
+| `TestLockKeysDetailsMergeSlowestNotReplaced` | `source_test_lock_keys_details_merge_slowest_not_replaced` |
+| `TestLockKeysDetailsClone` | `source_test_lock_keys_details_clone` |
+| `TestCommitDetailsMerge` | `source_test_commit_details_merge` |
+| `TestCommitDetailsMergeSlowestNotReplaced` | `source_test_commit_details_merge_slowest_not_replaced` |
+| `TestCommitDetailsClone` | `source_test_commit_details_clone` |
+| `TestScanDetailMerge` | `source_test_scan_detail_merge` |
+| `TestWriteDetailMerge` | `source_test_write_detail_merge` |
+| `TestTimeDetailMerge` | `source_test_time_detail_merge` |
+| `TestTimeDetailMergeNil` | `source_test_time_detail_merge_nil` |
+| `TestRUDetailsUpdateTiFlash` | `source_test_ru_details_update_tiflash` |
+| `TestCompatibleParseGCTime` | `source_test_compatible_parse_gc_time` |
+| `TestTimeDetail` | `source_test_time_detail` |
+| `TestGetMaxStartKey` | `source_test_get_max_start_key` |
+| `TestGetMinEndKey` | `source_test_get_min_end_key` |
+| `TestRateLimit` | `source_test_rate_limit` |
+| `TestGetRequestSource` | `source_test_get_request_source` |
+| `TestBuildRequestSource` | `source_test_build_request_source` |
+
+The assertion-level re-audit expanded earlier grouped evidence that was too weak for an atomic test-port claim. The clone path now rechecks nested RU executor data; the second pool-task merge compares every field; GC parsing verifies the exact `+0800` formatted result for every valid row; both range-helper tables execute every row in both argument orders; and the rate-limit test checks the exact panic text and source operation order. Go nil receivers map to non-null Rust values plus explicit absence/default tests. Go's one consumable `done` send maps to a fresh native cancellation handle after the cancellation assertion; production callers close their exit channel, for which Rust's persistent cancellation is exact.
+
 The source `TestMain` uses goleak. No Rust utility starts an unowned worker: the DNS test joins both UDP and TCP tasks, the PD decorator is taskless, token waiters are caller-owned futures, and every task-local scope ends with its future. Complete default/all-feature library suites therefore serve as the package lifecycle gate.
 
 ## Direct consumers
@@ -61,3 +98,14 @@ Completed consumers are `config`/`config/retry`, `error`, `internal/client`, `in
 ## Validation contract
 
 Package completion requires both feature configurations of the focused and full library suites, all-target compilation, Clippy, rustdoc/doctests, rustfmt/diff checks, exact source identity/hashes/line counts, exact 58-importer/symbol reconciliation, and leak-free completion on `nightly-2026-08-22-aarch64-apple-darwin`. No live TiKV or PD cluster is required: DNS and PD interception use deterministic loopback/in-memory fakes, and all remaining behavior is local aggregation or context propagation.
+
+The completion run passes exact Go 1.25.12 `go test ./util`, all 72 focused
+Rust utility tests, 174 source-derived tests in each feature configuration,
+the no-default workspace suite (1,008 active library tests, one intentional
+ignore, every external/crate target, and 51 doctests), and the all-feature
+library suite (1,005 active tests and one intentional ignore). Workspace
+all-target/all-feature check, Clippy with warnings denied, private-item rustdoc,
+all-feature doctests, rustfmt, source hashes/line counts, declaration matching,
+58-importer reconciliation, and whitespace checks also pass. The extracted Go
+toolchain has no `runtime/race`, so `go test -race ./util` cannot link locally;
+the complete Rust concurrency and lifecycle suites remain green.

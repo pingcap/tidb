@@ -8,6 +8,9 @@
 //!
 //! **Warning:** It is not advisable to use both raw and transactional functionality in the same keyspace.
 
+pub use buffer::{
+    BatchBufferGetter, BatchSnapshotBufferGetter, BufferBatchGetter, BufferSnapshotBatchGetter,
+};
 pub use client::Client;
 pub use client::ProtoLockInfo;
 pub(crate) use lock::HasLocks;
@@ -47,7 +50,21 @@ pub use transaction::SnapshotResourceGroupTagger;
 pub use transaction::Transaction;
 pub use transaction::TransactionOptions;
 pub use transaction::TransactionResourceGroupTagger;
+pub use transaction::COMMIT_MAX_BACKOFF;
+#[doc(hidden)]
+pub use transaction::DEFAULT_LOCK_TTL;
+pub use transaction::MANAGED_LOCK_TTL;
+pub use transaction::MAX_PIPELINED_TXN_TTL;
 pub use transaction::MAX_TXN_TIME_USE;
+#[doc(hidden)]
+pub use transaction::PESSIMISTIC_LOCK_MAX_BACKOFF;
+pub use transaction::PREWRITE_MAX_BACKOFF;
+#[doc(hidden)]
+pub use transaction::PRE_SPLIT_DETECT_THRESHOLD;
+#[doc(hidden)]
+pub use transaction::PRE_SPLIT_SIZE_THRESHOLD;
+#[doc(hidden)]
+pub use transaction::TTL_FACTOR;
 
 #[allow(dead_code)]
 mod art;
@@ -72,8 +89,11 @@ pub use lock::LockResolver;
 pub(crate) use lock::ReadLockContext;
 pub use lock::ResolveLocksContext;
 pub use lock::ResolveLocksOptions;
+pub(crate) use lock::ResolveLocksResult;
 pub use lock::ResolvingLock;
 pub(crate) use lock::ResolvingLocksGuard;
+pub use lock::ASYNC_RESOLVE_LOCK_SEMAPHORE_LIMIT;
+pub use lock::RESOLVED_CACHE_SIZE;
 pub use requests::{TransactionStatus, TransactionStatusKind};
 #[doc(hidden)]
 pub mod arena;

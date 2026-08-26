@@ -274,14 +274,18 @@ mod parity_tests {
     use super::*;
 
     #[test]
-    fn next_prefix_next_and_compare_match_client_go() {
+    fn source_test_prefix_next_key() {
+        for all_ff in [vec![0xff], vec![0xff, 0xff], vec![0xff; 4]] {
+            assert_eq!(prefix_next_key(&all_ff), Vec::<u8>::new());
+        }
+    }
+
+    #[test]
+    fn next_key_prefix_carry_and_compare_match_client_go() {
         assert_eq!(next_key(b"row"), b"row\0");
         assert_eq!(prefix_next_key(b"row"), b"rox");
         assert_eq!(prefix_next_key(&[0x12, 0xff]), vec![0x13, 0]);
         assert_eq!(prefix_next_key(&[]), Vec::<u8>::new());
-        for all_ff in [vec![0xff], vec![0xff, 0xff], vec![0xff; 4]] {
-            assert_eq!(prefix_next_key(&all_ff), Vec::<u8>::new());
-        }
         assert_eq!(cmp_key(b"a", b"b"), -1);
         assert_eq!(cmp_key(b"b", b"b"), 0);
         assert_eq!(cmp_key(b"c", b"b"), 1);

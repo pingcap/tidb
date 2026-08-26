@@ -5,8 +5,9 @@
 //! safely; this module retains the observable value-log, staging, flag, and
 //! snapshot semantics rather than the allocator representation.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use crate::error::{EntryTooLargeError, KeyTooLargeError, StaticError, TransactionTooLargeError};
 use crate::kv::{apply_flags_ops, FlagsOp, KeyFlags};
@@ -58,10 +59,12 @@ pub(crate) struct Rbt {
     logical_size: usize,
     dirty: bool,
     values_discarded: bool,
+    value_epoch: Arc<AtomicU64>,
     last_key: Option<Vec<u8>>,
     cache_hits: u64,
     cache_misses: u64,
     memory_hook: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+    snapshots: Mutex<Vec<Weak<RwLock<BTreeMap<Vec<u8>, SnapshotValue>>>>>,
 }
 
 impl Rbt {
@@ -160,6 +163,7 @@ impl Rbt {
     }
 
     pub(crate) fn reset(&mut self) {
+        self.value_epoch.fetch_add(1, Ordering::AcqRel);
         self.entries.clear();
         self.handles.clear();
         self.undo.clear();
@@ -169,11 +173,23 @@ impl Rbt {
         self.dirty = false;
         self.values_discarded = false;
         self.last_key = None;
+        self.clear_snapshot_registry();
         self.notify_memory_change();
     }
 
     pub(crate) fn discard_values(&mut self) {
         self.values_discarded = true;
+        self.value_epoch.fetch_add(1, Ordering::AcqRel);
+        for entry in self.entries.values_mut() {
+            if entry.value.is_some() {
+                entry.value = Some(Vec::new());
+            }
+            entry.history = Vec::new();
+            entry.value_log_undo_index = None;
+        }
+        self.undo = Vec::new();
+        self.clear_snapshot_registry();
+        self.notify_memory_change();
     }
 
     pub(crate) fn set_entry_size_limit(&mut self, entry_limit: u64, buffer_limit: u64) {
@@ -217,6 +233,88 @@ impl Rbt {
         if let Some(hook) = &self.memory_hook {
             hook(self.memory_footprint());
         }
+    }
+
+    fn stage_zero_snapshot_entries(&self) -> BTreeMap<Vec<u8>, SnapshotValue> {
+        let mut entries = self.entries.clone();
+        if let Some(stage) = self.stages.first() {
+            for undo in self.undo[stage.undo_start..].iter().rev() {
+                match &undo.old_value {
+                    Some(value) => {
+                        if let Some(entry) = entries.get_mut(&undo.key) {
+                            entry.value = value.clone();
+                            entry.history.truncate(undo.old_history_len);
+                            entry.value_log_undo_index = undo.old_value_log_undo_index;
+                        }
+                    }
+                    None => {
+                        entries.remove(&undo.key);
+                    }
+                }
+            }
+        }
+        entries
+            .iter()
+            .filter_map(|(key, entry)| {
+                entry.value.as_ref().map(|value| {
+                    (
+                        key.clone(),
+                        SnapshotValue {
+                            value: value.clone(),
+                            version: entry.value_log_undo_index,
+                        },
+                    )
+                })
+            })
+            .collect()
+    }
+
+    fn get_snapshot_entries(&self) -> SnapshotEntries {
+        let entries = Arc::new(RwLock::new(self.stage_zero_snapshot_entries()));
+        self.snapshots
+            .lock()
+            .expect("snapshot registry lock poisoned")
+            .push(Arc::downgrade(&entries));
+        entries
+    }
+
+    fn clear_snapshot_registry(&self) {
+        self.snapshots
+            .lock()
+            .expect("snapshot registry lock poisoned")
+            .clear();
+    }
+
+    fn sync_in_place_snapshot_entry(&self, key: &[u8], can_modify_value: bool) {
+        if self.is_staging() || !can_modify_value {
+            return;
+        }
+        let Some((value, version)) = self.entries.get(key).and_then(|entry| {
+            entry
+                .value
+                .clone()
+                .map(|value| (value, entry.value_log_undo_index))
+        }) else {
+            return;
+        };
+        let mut snapshots = self
+            .snapshots
+            .lock()
+            .expect("snapshot registry lock poisoned");
+        snapshots.retain(|snapshot| {
+            let Some(snapshot) = snapshot.upgrade() else {
+                return false;
+            };
+            if let Some(snapshot_value) = snapshot
+                .write()
+                .expect("snapshot entries lock poisoned")
+                .get_mut(key)
+                .filter(|snapshot_value| snapshot_value.version == version)
+            {
+                snapshot_value.value.clone_from(&value);
+            }
+            true
+        });
     }
 
     fn entry_mut(&mut self, key: &[u8]) -> (&mut Entry, bool) {
@@ -267,7 +365,7 @@ impl Rbt {
         assert!(!self.values_discarded, "vlog is reset");
         if key.len() > MAX_KEY_LEN {
             return Err(Box::new(KeyTooLargeError {
-                key_size: key.len(),
+                key_size: key.len() as isize,
             }));
         }
         if let Some(value) = value {
@@ -290,7 +388,6 @@ impl Rbt {
             .entries
             .get(key)
             .and_then(|entry| entry.value_log_undo_index);
-        let staging = self.is_staging();
         let stage_start = self.stages.last().map(|stage| stage.undo_start);
         let can_modify_value = value.is_some_and(|value| {
             self.entries.get(key).is_some_and(|entry| {
@@ -305,7 +402,7 @@ impl Rbt {
                 })
             })
         });
-        let appended_value_log_index = if value.is_some() && staging && !can_modify_value {
+        let appended_value_log_index = if value.is_some() && !can_modify_value {
             self.undo.push(Undo {
                 key: key.to_vec(),
                 old_value: if existed_before { old } else { None },
@@ -338,9 +435,12 @@ impl Rbt {
         if persistent_flags {
             self.dirty = true;
         }
+        self.sync_in_place_snapshot_entry(key, can_modify_value);
         if value.is_some() {
             if self.size() as u64 > self.buffer_size_limit {
-                return Err(Box::new(TransactionTooLargeError { size: self.size() }));
+                return Err(Box::new(TransactionTooLargeError {
+                    size: self.size() as isize,
+                }));
             }
             self.notify_memory_change();
         }
@@ -359,7 +459,12 @@ impl Rbt {
         key: &[u8],
         mut predicate: impl FnMut(&[u8]) -> bool,
     ) -> Result<Option<Vec<u8>>, StaticError> {
+        let values_discarded = self.values_discarded;
         let entry = self.entry(key).ok_or(StaticError::NotExist)?;
+        if entry.value.is_none() {
+            return Err(StaticError::NotExist);
+        }
+        assert!(!values_discarded, "vlog is reset");
         let mut values = entry
             .value
             .iter()
@@ -378,15 +483,10 @@ impl Rbt {
     /// `RBTIterator.UpdateFlags` without tying a Rust iterator's lifetime to a
     /// mutable map borrow.
     pub(crate) fn update_flags(&mut self, key: &[u8], operations: &[FlagsOp]) {
-        let persistent_flags;
-        {
-            let (entry, _) = self.entry_mut(key);
-            entry.flags = apply_flags_ops(entry.flags, operations);
-            persistent_flags = entry.flags.and_persistent().bits() != 0;
-        }
-        if persistent_flags {
-            self.dirty = true;
-        }
+        // The parent adapter deliberately ignores the only possible error
+        // (an oversized key), exactly like client-go's UpdateFlags wrapper.
+        // Going through `set` also retains its dirty and discarded-vlog guards.
+        let _ = self.set(key, None, operations);
     }
 
     pub(crate) fn remove_from_buffer(&mut self, key: &[u8]) {
@@ -438,14 +538,16 @@ impl Rbt {
         mut function: impl FnMut(&[u8], KeyFlags, &[u8]),
     ) {
         let stage = self.stages[handle - 1];
-        let keys: BTreeSet<&[u8]> = self.undo[stage.undo_start..]
-            .iter()
-            .map(|undo| undo.key.as_slice())
-            .collect();
-        for key in keys {
-            if let Some(entry) = self.entries.get(key) {
-                if let Some(value) = entry.value.as_deref() {
-                    function(key, entry.flags, value);
+        for index in (stage.undo_start..self.undo.len()).rev() {
+            let undo = &self.undo[index];
+            if let Some(entry) = self.entries.get(&undo.key) {
+                // Source walks the value log backwards and skips obsolete
+                // records. `value_log_undo_index` identifies the record that
+                // still backs the current value.
+                if entry.value_log_undo_index == Some(index) {
+                    if let Some(value) = entry.value.as_deref() {
+                        function(&undo.key, entry.flags, value);
+                    }
                 }
             }
         }
@@ -472,34 +574,38 @@ impl Rbt {
     }
 
     pub(crate) fn snapshot(&self) -> RbtSnapshot {
-        let mut entries = self.entries.clone();
-        if let Some(stage) = self.stages.first() {
-            for undo in self.undo[stage.undo_start..].iter().rev() {
-                match &undo.old_value {
-                    Some(value) => {
-                        if let Some(entry) = entries.get_mut(&undo.key) {
-                            entry.value = value.clone();
-                            entry.history.truncate(undo.old_history_len);
-                            entry.value_log_undo_index = undo.old_value_log_undo_index;
-                        }
-                    }
-                    None => {
-                        entries.remove(&undo.key);
-                    }
-                }
-            }
+        RbtSnapshot {
+            entries: self.get_snapshot_entries(),
+            value_epoch: self.value_epoch_token(),
         }
-        RbtSnapshot { entries }
+    }
+
+    fn value_epoch_token(&self) -> Option<ValueEpoch> {
+        (!self.values_discarded).then(|| {
+            (
+                self.value_epoch.clone(),
+                self.value_epoch.load(Ordering::Acquire),
+            )
+        })
     }
 }
 
 /// Ordered iterator with copied keys/values. A live Go iterator is invalidated
 /// by writes; this native iterator instead preserves a stable traversal view.
 type IteratorItem = (Vec<u8>, Option<Vec<u8>>, KeyFlags, RbtHandle);
+type ValueEpoch = (Arc<AtomicU64>, u64);
+#[derive(Clone)]
+struct SnapshotValue {
+    value: Vec<u8>,
+    version: Option<usize>,
+}
+
+type SnapshotEntries = Arc<RwLock<BTreeMap<Vec<u8>, SnapshotValue>>>;
 
 pub(crate) struct RbtIterator {
     items: Vec<IteratorItem>,
     index: usize,
+    value_epoch: Option<ValueEpoch>,
 }
 
 impl RbtIterator {
@@ -510,8 +616,33 @@ impl RbtIterator {
         reverse: bool,
         include_flags: bool,
     ) -> Self {
-        let mut items: Vec<_> = db
-            .entries
+        Self::from_entries(
+            &db.entries,
+            lower,
+            upper,
+            reverse,
+            include_flags,
+            db.value_epoch_token(),
+        )
+    }
+
+    fn from_entries(
+        entries: &BTreeMap<Vec<u8>, Entry>,
+        mut lower: Option<&[u8]>,
+        mut upper: Option<&[u8]>,
+        reverse: bool,
+        include_flags: bool,
+        value_epoch: Option<ValueEpoch>,
+    ) -> Self {
+        // client-go uses len(start) == 0 for the seek endpoint: an explicit
+        // empty forward start or reverse upper key is therefore unbounded.
+        if !reverse && lower.is_some_and(<[u8]>::is_empty) {
+            lower = None;
+        }
+        if reverse && upper.is_some_and(<[u8]>::is_empty) {
+            upper = None;
+        }
+        let mut items: Vec<_> = entries
             .iter()
             .filter(|(key, entry)| {
                 lower.is_none_or(|lower| key.as_slice() >= lower)
@@ -523,7 +654,11 @@ impl RbtIterator {
         if reverse {
             items.reverse();
         }
-        Self { items, index: 0 }
+        Self {
+            items,
+            index: 0,
+            value_epoch,
+        }
     }
 
     pub(crate) fn valid(&self) -> bool {
@@ -535,6 +670,7 @@ impl RbtIterator {
     }
 
     pub(crate) fn value(&self) -> Option<&[u8]> {
+        assert_values_available(&self.value_epoch);
         self.items[self.index].1.as_deref()
     }
 
@@ -547,7 +683,7 @@ impl RbtIterator {
     }
 
     pub(crate) fn has_value(&self) -> bool {
-        self.value().is_some()
+        self.items[self.index].1.is_some()
     }
 
     pub(crate) fn next(&mut self) {
@@ -557,27 +693,30 @@ impl RbtIterator {
 
 #[derive(Clone)]
 pub(crate) struct RbtSnapshot {
-    entries: BTreeMap<Vec<u8>, Entry>,
+    entries: SnapshotEntries,
+    value_epoch: Option<ValueEpoch>,
 }
 
 impl RbtSnapshot {
     pub(crate) fn get(&self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
-        self.entries
+        let value = self
+            .entries
+            .read()
+            .expect("snapshot entries lock poisoned")
             .get(key)
-            .and_then(|entry| entry.value.clone())
-            .ok_or(StaticError::NotExist)
+            .map(|value| value.value.clone())
+            .ok_or(StaticError::NotExist)?;
+        assert_values_available(&self.value_epoch);
+        Ok(value)
     }
 
-    pub(crate) fn iter(&self, start: Option<&[u8]>, end: Option<&[u8]>) -> RbtIterator {
-        RbtIterator::new(
-            &Rbt {
-                entries: self.entries.clone(),
-                ..Rbt::new()
-            },
+    pub(crate) fn iter(&self, start: Option<&[u8]>, end: Option<&[u8]>) -> RbtSnapshotIterator {
+        RbtSnapshotIterator::new(
+            self.entries.clone(),
             start,
             end,
             false,
-            false,
+            self.value_epoch.clone(),
         )
     }
 
@@ -585,18 +724,92 @@ impl RbtSnapshot {
         &self,
         start_exclusive: Option<&[u8]>,
         lower_bound: Option<&[u8]>,
-    ) -> RbtIterator {
-        RbtIterator::new(
-            &Rbt {
-                entries: self.entries.clone(),
-                ..Rbt::new()
-            },
+    ) -> RbtSnapshotIterator {
+        RbtSnapshotIterator::new(
+            self.entries.clone(),
             lower_bound,
             start_exclusive,
             true,
-            false,
+            self.value_epoch.clone(),
         )
     }
+}
+
+pub(crate) struct RbtSnapshotIterator {
+    entries: SnapshotEntries,
+    keys: Vec<Vec<u8>>,
+    index: usize,
+    current_value: Vec<u8>,
+    value_epoch: Option<ValueEpoch>,
+}
+
+impl RbtSnapshotIterator {
+    fn new(
+        entries: SnapshotEntries,
+        mut lower: Option<&[u8]>,
+        mut upper: Option<&[u8]>,
+        reverse: bool,
+        value_epoch: Option<ValueEpoch>,
+    ) -> Self {
+        if !reverse && lower.is_some_and(<[u8]>::is_empty) {
+            lower = None;
+        }
+        if reverse && upper.is_some_and(<[u8]>::is_empty) {
+            upper = None;
+        }
+        let mut keys: Vec<_> = entries
+            .read()
+            .expect("snapshot entries lock poisoned")
+            .keys()
+            .filter(|key| {
+                lower.is_none_or(|lower| key.as_slice() >= lower)
+                    && upper.is_none_or(|upper| key.as_slice() < upper)
+            })
+            .cloned()
+            .collect();
+        if reverse {
+            keys.reverse();
+        }
+        Self {
+            entries,
+            keys,
+            index: 0,
+            current_value: Vec::new(),
+            value_epoch,
+        }
+    }
+
+    pub(crate) fn valid(&self) -> bool {
+        self.index < self.keys.len()
+    }
+
+    pub(crate) fn key(&self) -> &[u8] {
+        &self.keys[self.index]
+    }
+
+    pub(crate) fn value(&mut self) -> &[u8] {
+        assert_values_available(&self.value_epoch);
+        self.current_value = self
+            .entries
+            .read()
+            .expect("snapshot entries lock poisoned")
+            .get(&self.keys[self.index])
+            .map(|value| value.value.clone())
+            .expect("snapshot iterator key disappeared from stage-zero view");
+        &self.current_value
+    }
+
+    pub(crate) fn next(&mut self) -> Result<(), &'static str> {
+        if self.valid() {
+            self.index += 1;
+        }
+        Ok(())
+    }
+}
+
+fn assert_values_available(value_epoch: &Option<ValueEpoch>) {
+    let (epoch, expected) = value_epoch.as_ref().expect("vlog is reset");
+    assert_eq!(epoch.load(Ordering::Acquire), *expected, "vlog is reset");
 }
 
 #[cfg(test)]
@@ -608,7 +821,7 @@ mod tests {
     }
 
     #[test]
-    fn original_discard_staging_and_iterator_cases() {
+    fn source_test_discard() {
         let mut db = Rbt::new();
         let base = db.staging();
         for number in 0..10_000 {
@@ -637,15 +850,38 @@ mod tests {
             iterator.next();
         }
         assert!(!iterator.valid());
+        let mut iterator = db.iter_reverse(None, None);
+        for number in (0..10_000).rev() {
+            assert!(iterator.valid());
+            assert_eq!(iterator.key(), key(number));
+            assert_eq!(iterator.value().unwrap(), key(number));
+            iterator.next();
+        }
+        assert!(!iterator.valid());
         db.cleanup(base);
         assert_eq!(db.len(), 0);
+        for number in 0..10_000 {
+            assert!(db.get(&key(number)).is_err());
+        }
+        assert!(!db.iter(None, None).valid());
+        assert!(!db.iter_reverse(None, None).valid());
+        assert!(!db.iter(Some(&[0xff]), None).valid());
     }
 
     #[test]
-    fn flags_remain_non_rollbackable_but_only_persistent_flags_keep_new_keys() {
+    fn source_test_empty_db() {
+        let mut db = Rbt::new();
+        assert!(db.get(&[0]).is_err());
+        assert!(!db.iter(None, None).valid());
+        assert!(!db.iter_reverse(None, None).valid());
+        assert!(!db.iter(Some(&[0xff]), None).valid());
+    }
+
+    #[test]
+    fn source_test_flags() {
         let mut db = Rbt::new();
         let stage = db.staging();
-        for number in 0..100 {
+        for number in 0..10_000 {
             let key = key(number);
             let operations = if number % 2 == 0 {
                 vec![FlagsOp::SetPresumeKeyNotExists, FlagsOp::SetKeyLocked]
@@ -655,8 +891,9 @@ mod tests {
             db.set(&key, Some(&key), &operations).unwrap();
         }
         db.cleanup(stage);
-        assert_eq!(db.len(), 50);
-        for number in 0..100 {
+        assert_eq!(db.len(), 5_000);
+        assert_eq!(db.size(), 20_000);
+        for number in 0..10_000 {
             let key = key(number);
             assert!(db.get(&key).is_err());
             if number % 2 == 0 {
@@ -667,9 +904,20 @@ mod tests {
                 assert!(db.flags(&key).is_err());
             }
         }
-        assert_eq!(db.len(), 50);
+        assert_eq!(db.len(), 5_000);
+        assert!(!db.iter(None, None).valid());
+        let mut flags_iterator = db.iter_with_flags(None, None);
+        let mut flags_count = 0;
+        while flags_iterator.valid() {
+            let number = u32::from_be_bytes(flags_iterator.key().try_into().unwrap());
+            assert_eq!(number % 2, 0);
+            flags_count += 1;
+            flags_iterator.next();
+        }
+        assert_eq!(flags_count, 5_000);
+
         let mut without_locked = Vec::new();
-        for number in 0..100 {
+        for number in 0..10_000 {
             let key = key(number);
             db.set(&key, None, &[FlagsOp::DelKeyLocked]).unwrap();
             without_locked.push(key);
@@ -678,11 +926,12 @@ mod tests {
             assert!(db.get(&key).is_err());
             assert!(!db.flags(&key).unwrap().has_locked());
         }
-        assert_eq!(db.len(), 100);
+        assert_eq!(db.len(), 10_000);
     }
 
     #[test]
-    fn snapshots_histories_limits_handles_and_flag_iterator_match_source_contracts() {
+    fn source_uncovered_snapshots_histories_limits_handles_and_flag_iterator_match_source_contracts(
+    ) {
         let mut db = Rbt::new();
         db.set(b"a", Some(b"one"), &[]).unwrap();
         let snapshot = db.snapshot();
@@ -724,7 +973,7 @@ mod tests {
     }
 
     #[test]
-    fn bounds_reverse_memory_hook_discard_and_cache_stats_are_observable() {
+    fn source_uncovered_bounds_reverse_memory_hook_discard_and_cache_stats_are_observable() {
         let mut db = Rbt::new();
         let observed = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let hook_observed = observed.clone();
@@ -748,18 +997,59 @@ mod tests {
         let _ = db.get(b"a");
         assert!(db.cache_hit_count() > 0);
         assert!(db.cache_miss_count() > 0);
-        let handle = db.iter(None, None).handle();
+        db.update_flags(b"flags-only", &[FlagsOp::SetKeyLocked]);
+        assert_eq!(
+            db.select_value_history(b"flags-only", |_| true),
+            Err(StaticError::NotExist)
+        );
+        db.set(b"b", Some(b"longer replacement"), &[]).unwrap();
+        let iterator_before_discard = db.iter(None, None);
+        let handle = iterator_before_discard.handle();
+        let snapshot_before_discard = db.snapshot();
         let size_before_discard = db.size();
+        let memory_before_discard = db.memory_footprint();
         db.discard_values();
         assert_eq!(db.size(), size_before_discard);
-        assert!(db.iter(None, None).valid());
+        assert!(db.memory_footprint() < memory_before_discard);
+        assert_eq!(
+            observed.load(std::sync::atomic::Ordering::Acquire),
+            db.memory_footprint()
+        );
+        assert!(db.undo.is_empty());
+        assert!(db.entries.values().all(|entry| {
+            entry
+                .value
+                .as_ref()
+                .is_none_or(|value| value.capacity() == 0)
+                && entry.history.capacity() == 0
+        }));
+        let iterator_after_discard = db.iter(None, None);
+        assert!(iterator_after_discard.valid());
         assert!(db.value_by_handle(handle).is_none());
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| db.get(b"a")));
         assert!(panic.is_err());
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            db.select_value_history(b"b", |_| true)
+        }));
+        assert!(panic.is_err());
+        let panic = std::panic::catch_unwind(|| iterator_before_discard.value());
+        assert!(panic.is_err());
+        let panic = std::panic::catch_unwind(|| iterator_after_discard.value());
+        assert!(panic.is_err());
+        let panic = std::panic::catch_unwind(|| snapshot_before_discard.get(b"a"));
+        assert!(panic.is_err());
+        assert_eq!(
+            snapshot_before_discard.get(b"flags-only"),
+            Err(StaticError::NotExist)
+        );
+        assert_eq!(
+            snapshot_before_discard.get(b"missing"),
+            Err(StaticError::NotExist)
+        );
     }
 
     #[test]
-    fn equal_sized_writes_only_retain_history_when_the_value_log_appends() {
+    fn source_uncovered_equal_sized_writes_only_retain_history_when_the_value_log_appends() {
         let mut db = Rbt::new();
         db.set(b"history", Some(b"one"), &[]).unwrap();
         db.set(b"history", Some(b"two"), &[]).unwrap();
@@ -777,7 +1067,8 @@ mod tests {
     }
 
     #[test]
-    fn checkpoints_stage_inspection_and_native_flag_updates_preserve_source_semantics() {
+    fn source_uncovered_checkpoints_stage_inspection_and_native_flag_updates_preserve_source_semantics(
+    ) {
         let mut db = Rbt::new();
         let first = db.staging();
         db.set(b"a", Some(b"one"), &[]).unwrap();
@@ -812,7 +1103,8 @@ mod tests {
     }
 
     #[test]
-    fn empty_bounds_handles_tombstones_and_snapshot_reverse_are_source_compatible() {
+    fn source_uncovered_empty_bounds_handles_tombstones_and_snapshot_reverse_are_source_compatible()
+    {
         let mut db = Rbt::new();
         assert!(db.get(&[0]).is_err());
         assert!(!db.iter(None, None).valid());
@@ -830,11 +1122,69 @@ mod tests {
         let mut reverse = snapshot.iter_reverse(None, Some(b"a"));
         assert!(reverse.valid());
         assert_eq!(reverse.key(), b"b");
-        reverse.next();
+        reverse.next().unwrap();
         assert_eq!(reverse.key(), b"a");
 
         let too_large_key = vec![0; MAX_KEY_LEN + 1];
         let error = db.set(&too_large_key, Some(b"x"), &[]).unwrap_err();
         assert!(error.downcast_ref::<KeyTooLargeError>().is_some());
+    }
+
+    #[test]
+    fn source_uncovered_update_flags_uses_set_without_value_guards() {
+        let mut db = Rbt::new();
+        db.update_flags(b"ordinary", &[FlagsOp::SetPresumeKeyNotExists]);
+        assert!(db.dirty());
+
+        let oversized = vec![0; MAX_KEY_LEN + 1];
+        db.update_flags(&oversized, &[FlagsOp::SetKeyLocked]);
+        assert!(db.flags(&oversized).is_err());
+
+        db.discard_values();
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            db.update_flags(b"after-discard", &[FlagsOp::SetKeyLocked]);
+        }));
+        assert!(panic.is_err());
+    }
+
+    #[test]
+    fn source_uncovered_reverse_empty_key_is_unbounded() {
+        let mut db = Rbt::new();
+        db.set(b"a", Some(b"1"), &[]).unwrap();
+        db.set(b"b", Some(b"2"), &[]).unwrap();
+
+        let reverse = db.iter_reverse(Some(b""), None);
+        assert!(reverse.valid());
+        assert_eq!(reverse.key(), b"b");
+        let reverse_flags = db.iter_reverse_with_flags(Some(b""));
+        assert!(reverse_flags.valid());
+        assert_eq!(reverse_flags.key(), b"b");
+        let snapshot_reverse = db.snapshot().iter_reverse(Some(b""), None);
+        assert!(snapshot_reverse.valid());
+        assert_eq!(snapshot_reverse.key(), b"b");
+    }
+
+    #[test]
+    fn source_uncovered_inspect_stage_follows_reverse_value_log_order() {
+        let mut db = Rbt::new();
+        let stage = db.staging();
+        db.set(b"b", Some(b"first"), &[]).unwrap();
+        db.set(b"a", Some(b"second"), &[]).unwrap();
+        db.set(b"c", Some(b"third"), &[]).unwrap();
+        db.set(b"a", Some(b"SECOND"), &[]).unwrap();
+        db.set(b"b", Some(b"replacement"), &[]).unwrap();
+
+        let mut inspected = Vec::new();
+        db.inspect_stage(stage, |key, _, value| {
+            inspected.push((key.to_vec(), value.to_vec()));
+        });
+        assert_eq!(
+            inspected,
+            [
+                (b"b".to_vec(), b"replacement".to_vec()),
+                (b"c".to_vec(), b"third".to_vec()),
+                (b"a".to_vec(), b"SECOND".to_vec()),
+            ]
+        );
     }
 }

@@ -141,13 +141,13 @@ pub(crate) fn format_key_for_log(key: &[u8]) -> String {
 }
 
 /// client-go's `txnlock.ResolvedCacheSize`.
-const RESOLVED_CACHE_SIZE: usize = 2048;
+pub const RESOLVED_CACHE_SIZE: usize = 2048;
 /// client-go `internal/client.MaxWriteExecutionTime`.
 const LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION: Duration = Duration::from_secs(20);
 /// client-go's process-wide `AsyncResolveLockSemaphoreLimit`.
-const ASYNC_READ_RESOLVE_LOCK_LIMIT: usize = 10_000;
+pub const ASYNC_RESOLVE_LOCK_SEMAPHORE_LIMIT: usize = 10_000;
 static ASYNC_READ_RESOLVE_LOCKS: LazyLock<Arc<Semaphore>> =
-    LazyLock::new(|| Arc::new(Semaphore::new(ASYNC_READ_RESOLVE_LOCK_LIMIT)));
+    LazyLock::new(|| Arc::new(Semaphore::new(ASYNC_RESOLVE_LOCK_SEMAPHORE_LIMIT)));
 
 #[derive(Clone)]
 struct AsyncResolveTaskPool {
@@ -254,6 +254,7 @@ impl Drop for AsyncResolveTaskCompletion {
 #[derive(Default)]
 struct ResolvedStatusCache {
     statuses: HashMap<u64, Arc<TransactionStatus>>,
+    async_commit_primaries: HashMap<u64, kvrpcpb::LockInfo>,
     insertion_order: VecDeque<u64>,
 }
 
@@ -470,6 +471,107 @@ async fn resolve_locks_with_context_inner(
     context: ResolveLocksContext,
     read_lock_context: Option<&ReadLockContext>,
 ) -> Result<ResolveLocksResult> {
+    if locks.is_empty() {
+        return resolve_locks_with_context_body(
+            locks,
+            timestamp,
+            pd_client,
+            keyspace,
+            keyspace_name,
+            context,
+            read_lock_context,
+        )
+        .await;
+    }
+
+    let trace_context = context.trace_context.clone();
+    let caller_start_ts = timestamp.version();
+    let lock_count = locks.len();
+    let for_read = read_lock_context.is_some();
+    let lite = context.force_lite
+        || locks.iter().all(|lock| {
+            lock.txn_size < get_global_config().tikv_client.resolve_lock_lite_threshold
+        });
+    let before_read_locks = read_lock_context.map(ReadLockContext::snapshot);
+    if crate::trace::is_category_enabled(crate::trace::Category::TransactionLockResolve) {
+        crate::trace::trace_event(
+            &trace_context,
+            crate::trace::Category::TransactionLockResolve,
+            "resolve_locks.start",
+            &[
+                crate::trace::TraceField::new("callerStartTS", caller_start_ts),
+                crate::trace::TraceField::new("lockCount", lock_count),
+                crate::trace::TraceField::new("forRead", for_read),
+                crate::trace::TraceField::new("lite", lite),
+            ],
+        );
+    }
+
+    let result = crate::trace::with_trace_context(
+        trace_context.clone(),
+        resolve_locks_with_context_body(
+            locks,
+            timestamp,
+            pd_client,
+            keyspace,
+            keyspace_name,
+            context,
+            read_lock_context,
+        ),
+    )
+    .await;
+    if crate::trace::is_category_enabled(crate::trace::Category::TransactionLockResolve) {
+        let (ignored_locks, accessible_locks) = match (before_read_locks, read_lock_context) {
+            (Some((before_resolved, before_committed)), Some(read_lock_context)) => {
+                let (after_resolved, after_committed) = read_lock_context.snapshot();
+                let before_resolved = before_resolved.into_iter().collect::<HashSet<_>>();
+                let before_committed = before_committed.into_iter().collect::<HashSet<_>>();
+                (
+                    after_resolved
+                        .into_iter()
+                        .filter(|txn| !before_resolved.contains(txn))
+                        .count(),
+                    after_committed
+                        .into_iter()
+                        .filter(|txn| !before_committed.contains(txn))
+                        .count(),
+                )
+            }
+            _ => (0, 0),
+        };
+        let mut fields = vec![
+            crate::trace::TraceField::new("callerStartTS", caller_start_ts),
+            crate::trace::TraceField::new("lockCount", lock_count),
+            crate::trace::TraceField::new(
+                "ttl",
+                result.as_ref().map_or(0, |result| result.ms_before_expired),
+            ),
+            crate::trace::TraceField::new("ignoredLocks", ignored_locks),
+            crate::trace::TraceField::new("accessibleLocks", accessible_locks),
+        ];
+        if let Err(error) = &result {
+            fields.push(crate::trace::TraceField::new("error", error.to_string()));
+        }
+        crate::trace::trace_event(
+            &trace_context,
+            crate::trace::Category::TransactionLockResolve,
+            "resolve_locks.finish",
+            &fields,
+        );
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn resolve_locks_with_context_body(
+    locks: Vec<kvrpcpb::LockInfo>,
+    timestamp: Timestamp,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    context: ResolveLocksContext,
+    read_lock_context: Option<&ReadLockContext>,
+) -> Result<ResolveLocksResult> {
     debug!("resolving locks");
     stats::increment_lock_resolver_action("resolve");
     reject_shared_locks(&locks)?;
@@ -485,12 +587,16 @@ async fn resolve_locks_with_context_inner(
 
     let mut live_locks = Vec::new();
     let mut ms_before_expired = None;
+    let pessimistic_region_resolve = context.pessimistic_region_resolve;
+    let force_lite = context.force_lite;
     let mut lock_resolver = LockResolver::new(context);
     let mut read_lite_cleanups = HashMap::new();
 
     // records the commit version of each primary lock (representing the status of the transaction)
     let mut commit_versions: HashMap<u64, u64> = HashMap::new();
     let mut clean_regions: HashMap<u64, HashSet<RegionVerId>> = HashMap::new();
+    let mut pessimistic_clean_regions: HashMap<u64, HashSet<RegionVerId>> = HashMap::new();
+    let mut fully_resolved_async_txns = HashSet::new();
     // We must check txn status for *all* locks, not only TTL-expired ones.
     //
     // TTL only indicates whether a lock is *possibly* orphaned; it does not mean the transaction
@@ -502,6 +608,9 @@ async fn resolve_locks_with_context_inner(
     // This matches the client-go `LockResolver.ResolveLocksWithOpts` flow: query txn status for
     // each encountered lock, then resolve immediately when the status is final.
     for lock in locks {
+        if fully_resolved_async_txns.contains(&lock.lock_version) {
+            continue;
+        }
         let region_ver_id = pd_client
             .region_for_key(&lock.key.clone().into())
             .await?
@@ -531,16 +640,81 @@ async fn resolve_locks_with_context_inner(
                         keyspace_name,
                     )
                     .await?;
+                let cached_async_primary = if status.is_status_determined() {
+                    lock_resolver
+                        .ctx
+                        .get_resolved_async_commit_primary(lock.lock_version)
+                        .await
+                } else {
+                    None
+                };
+                if let Some(primary_lock) = cached_async_primary {
+                    stats::increment_lock_resolver_action("expired");
+                    stats::increment_lock_resolver_action("resolve_async_commit");
+                    let commit_version = status.commit_ts();
+                    let mut keys = primary_lock.secondaries;
+                    keys.push(lock.primary_lock.clone());
+                    if let Some(read_lock_context) = read_lock_context {
+                        schedule_read_async_commit_cleanup(
+                            &lock,
+                            commit_version,
+                            keys,
+                            pd_client.clone(),
+                            keyspace,
+                            keyspace_name,
+                            &lock_resolver.ctx,
+                        )
+                        .await;
+                        record_read_lock_status(
+                            read_lock_context,
+                            lock.lock_version,
+                            commit_version,
+                            caller_start_ts,
+                            status.action,
+                        );
+                    } else {
+                        commit_versions.insert(lock.lock_version, commit_version);
+                        schedule_grouped_read_cleanup(
+                            keys,
+                            lock.primary_lock.clone(),
+                            false,
+                            lock.lock_version,
+                            commit_version,
+                            lock.is_txn_file,
+                            pd_client.clone(),
+                            keyspace,
+                            keyspace_name.map(ToOwned::to_owned),
+                            lock_resolver.ctx.rpc_interceptor.clone(),
+                            lock_resolver.ctx.resource_group_name.clone(),
+                            lock_resolver.ctx.resource_control.clone(),
+                            lock_resolver.ctx.ru_details.clone(),
+                            lock_resolver.ctx.async_resolve_pool.clone(),
+                            OPTIMISTIC_BACKOFF,
+                            true,
+                            false,
+                            "resolve_async_commit_region",
+                            "async_resolve_async_commit_region_fallback",
+                        )
+                        .await?;
+                    }
+                    fully_resolved_async_txns.insert(lock.lock_version);
+                    continue;
+                }
+
                 let async_primary = match &status.kind {
                     TransactionStatusKind::Locked(_, lock_info)
                         if lock_info.use_async_commit && status.is_expired =>
                     {
-                        Some((lock_info.secondaries.clone(), lock_info.min_commit_ts))
+                        Some((
+                            lock_info.secondaries.clone(),
+                            lock_info.min_commit_ts,
+                            lock_info.clone(),
+                        ))
                     }
                     _ => None,
                 };
 
-                if let Some((secondary_keys, primary_min_commit_ts)) = async_primary {
+                if let Some((secondary_keys, primary_min_commit_ts, primary_lock)) = async_primary {
                     stats::increment_lock_resolver_action("expired");
                     stats::increment_lock_resolver_action("resolve_async_commit");
                     let mut secondary_status = lock_resolver
@@ -568,7 +742,11 @@ async fn resolve_locks_with_context_inner(
                         let determined_status = Arc::new(determined_status);
                         lock_resolver
                             .ctx
-                            .save_resolved(lock.lock_version, determined_status)
+                            .save_resolved_with_async_commit_primary(
+                                lock.lock_version,
+                                determined_status,
+                                Some(primary_lock),
+                            )
                             .await;
 
                         if let Some(read_lock_context) = read_lock_context {
@@ -591,6 +769,7 @@ async fn resolve_locks_with_context_inner(
                                 caller_start_ts,
                                 status.action,
                             );
+                            fully_resolved_async_txns.insert(lock.lock_version);
                             continue;
                         }
 
@@ -617,6 +796,7 @@ async fn resolve_locks_with_context_inner(
                             "async_resolve_async_commit_region_fallback",
                         )
                         .await?;
+                        fully_resolved_async_txns.insert(lock.lock_version);
                         continue;
                     }
 
@@ -637,20 +817,37 @@ async fn resolve_locks_with_context_inner(
                 }
 
                 if is_pessimistic_lock(&lock) {
-                    lock_resolver
-                        .resolve_pessimistic_lock(pd_client.clone(), keyspace, keyspace_name, &lock)
-                        .await?;
-                    if let TransactionStatusKind::Locked(_, lock_info) = &status.kind {
-                        live_locks.push(lock_info.clone());
+                    if let TransactionStatusKind::Locked(ttl, lock_info) = &status.kind {
+                        // client-go treats a nonzero CheckTxnStatus TTL as
+                        // live here. TiKV owns expiry/rollback for ordinary
+                        // pessimistic locks; only async-commit locks use the
+                        // separate client-side expiry path above.
+                        stats::increment_lock_resolver_action("not_expired");
                         update_ms_before_expired(
                             &mut ms_before_expired,
                             lock_until_expired_ms(
                                 lock.lock_version,
-                                lock.lock_ttl,
+                                *ttl,
                                 Timestamp::from_version(current_ts),
                             ),
                         );
+                        live_locks.push(lock_info.clone());
+                        continue;
                     }
+                    stats::increment_lock_resolver_action("expired");
+                    let cleaned_regions = pessimistic_clean_regions
+                        .entry(lock.lock_version)
+                        .or_default();
+                    lock_resolver
+                        .resolve_pessimistic_lock(
+                            pd_client.clone(),
+                            keyspace,
+                            keyspace_name,
+                            &lock,
+                            pessimistic_region_resolve,
+                            cleaned_regions,
+                        )
+                        .await?;
                     continue;
                 }
                 match &status.kind {
@@ -666,6 +863,7 @@ async fn resolve_locks_with_context_inner(
                                 keyspace,
                                 keyspace_name,
                                 &lock_resolver.ctx,
+                                force_lite,
                             )
                             .await;
                             record_read_lock_status(
@@ -691,6 +889,7 @@ async fn resolve_locks_with_context_inner(
                                 keyspace,
                                 keyspace_name,
                                 &lock_resolver.ctx,
+                                force_lite,
                             )
                             .await;
                             read_lock_context.add_resolved(lock.lock_version);
@@ -736,6 +935,7 @@ async fn resolve_locks_with_context_inner(
                     keyspace,
                     keyspace_name,
                     &lock_resolver.ctx,
+                    force_lite,
                 )
                 .await;
                 record_read_lock_status(
@@ -747,8 +947,8 @@ async fn resolve_locks_with_context_inner(
                 );
                 continue;
             }
-            let resolve_lite =
-                lock.txn_size < get_global_config().tikv_client.resolve_lock_lite_threshold;
+            let resolve_lite = force_lite
+                || lock.txn_size < get_global_config().tikv_client.resolve_lock_lite_threshold;
             if resolve_lite && lock.key == lock.primary_lock {
                 continue;
             }
@@ -758,6 +958,7 @@ async fn resolve_locks_with_context_inner(
                 commit_version,
                 lock.is_txn_file,
                 lock.txn_size,
+                force_lite,
                 pd_client.clone(),
                 keyspace,
                 keyspace_name,
@@ -812,8 +1013,9 @@ async fn schedule_or_collect_read_lite_cleanup(
     keyspace: Keyspace,
     keyspace_name: Option<&str>,
     context: &ResolveLocksContext,
+    force_lite: bool,
 ) {
-    if lock.txn_size < get_global_config().tikv_client.resolve_lock_lite_threshold {
+    if force_lite || lock.txn_size < get_global_config().tikv_client.resolve_lock_lite_threshold {
         let cleanup = cleanups
             .entry(lock.lock_version)
             .or_insert_with(|| ReadLiteCleanup {
@@ -1296,6 +1498,7 @@ async fn resolve_lock_with_retry(
     commit_version: u64,
     is_txn_file: bool,
     txn_size: u64,
+    force_lite: bool,
     pd_client: Arc<impl PdClient>,
     keyspace: Keyspace,
     keyspace_name: Option<&str>,
@@ -1311,6 +1514,7 @@ async fn resolve_lock_with_retry(
         commit_version,
         is_txn_file,
         txn_size,
+        force_lite,
         pd_client,
         keyspace,
         keyspace_name,
@@ -1346,6 +1550,7 @@ async fn resolve_lock_with_retry_for_read_cleanup(
         commit_version,
         is_txn_file,
         txn_size,
+        false,
         pd_client,
         keyspace,
         keyspace_name,
@@ -1366,6 +1571,7 @@ async fn resolve_lock_with_retry_inner(
     commit_version: u64,
     is_txn_file: bool,
     txn_size: u64,
+    force_lite: bool,
     pd_client: Arc<impl PdClient>,
     keyspace: Keyspace,
     keyspace_name: Option<&str>,
@@ -1385,7 +1591,8 @@ async fn resolve_lock_with_retry_inner(
         let ver_id = store.region_with_leader.ver_id();
         let mut request =
             requests::new_resolve_lock_request(start_version, commit_version, is_txn_file);
-        let resolve_lite = txn_size < get_global_config().tikv_client.resolve_lock_lite_threshold;
+        let resolve_lite =
+            force_lite || txn_size < get_global_config().tikv_client.resolve_lock_lite_threshold;
         stats::increment_lock_resolver_action("query_resolve_locks");
         if resolve_lite {
             stats::increment_lock_resolver_action("query_resolve_lock_lite");
@@ -1486,6 +1693,9 @@ pub struct ResolveLocksContext {
     pub(crate) resource_group_name: Option<String>,
     pub(crate) resource_control: Option<ResourceGroupControllerHandle>,
     pub(crate) ru_details: Option<Arc<crate::RuDetails>>,
+    pub(crate) trace_context: crate::trace::TraceContext,
+    pub(crate) pessimistic_region_resolve: bool,
+    pub(crate) force_lite: bool,
     async_resolve_pool: AsyncResolveTaskPool,
 }
 
@@ -1499,6 +1709,9 @@ impl Default for ResolveLocksContext {
             resource_group_name: None,
             resource_control: None,
             ru_details: None,
+            trace_context: crate::trace::current_trace_context(),
+            pessimistic_region_resolve: false,
+            force_lite: false,
             async_resolve_pool: AsyncResolveTaskPool::new(ASYNC_READ_RESOLVE_LOCKS.clone()),
         }
     }
@@ -1572,6 +1785,15 @@ impl ResolveLocksContext {
 
     pub async fn get_resolved(&self, txn_id: u64) -> Option<Arc<TransactionStatus>> {
         self.resolved.lock().await.statuses.get(&txn_id).cloned()
+    }
+
+    async fn get_resolved_async_commit_primary(&self, txn_id: u64) -> Option<kvrpcpb::LockInfo> {
+        self.resolved
+            .lock()
+            .await
+            .async_commit_primaries
+            .get(&txn_id)
+            .cloned()
     }
 
     /// Record a source transaction beginning a lock-resolution attempt and
@@ -1670,6 +1892,16 @@ impl ResolveLocksContext {
     }
 
     pub async fn save_resolved(&mut self, txn_id: u64, txn_status: Arc<TransactionStatus>) {
+        self.save_resolved_with_async_commit_primary(txn_id, txn_status, None)
+            .await;
+    }
+
+    async fn save_resolved_with_async_commit_primary(
+        &self,
+        txn_id: u64,
+        txn_status: Arc<TransactionStatus>,
+        async_commit_primary: Option<kvrpcpb::LockInfo>,
+    ) {
         assert!(
             txn_status.is_cacheable(),
             "only determined transaction statuses may enter the resolved cache"
@@ -1683,6 +1915,9 @@ impl ResolveLocksContext {
             return;
         }
         cache.statuses.insert(txn_id, txn_status);
+        if let Some(primary) = async_commit_primary {
+            cache.async_commit_primaries.insert(txn_id, primary);
+        }
         cache.insertion_order.push_back(txn_id);
         if cache.statuses.len() > RESOLVED_CACHE_SIZE {
             let oldest = cache
@@ -1690,6 +1925,7 @@ impl ResolveLocksContext {
                 .pop_front()
                 .expect("nonempty status cache has an insertion order");
             cache.statuses.remove(&oldest);
+            cache.async_commit_primaries.remove(&oldest);
         }
     }
 
@@ -1817,11 +2053,26 @@ impl LockResolver {
         keyspace: Keyspace,
         keyspace_name: Option<&str>,
         lock: &kvrpcpb::LockInfo,
+        region_resolve: bool,
+        cleaned_regions: &mut HashSet<RegionVerId>,
     ) -> Result<()> {
         stats::increment_lock_resolver_action("query_resolve_locks");
         if lock.key == lock.primary_lock {
             return Ok(());
         }
+        let cleaned_region = if region_resolve {
+            let current_region = pd_client
+                .clone()
+                .region_for_key(&lock.key.clone().into())
+                .await?
+                .ver_id();
+            if cleaned_regions.contains(&current_region) {
+                return Ok(());
+            }
+            Some(current_region)
+        } else {
+            None
+        };
         let for_update_ts = if lock.lock_for_update_ts == 0 {
             u64::MAX
         } else {
@@ -1839,10 +2090,19 @@ impl LockResolver {
             .resource_control_option(self.ctx.resource_control.clone())
             .ru_details_option(self.ctx.ru_details.clone())
             .max_execution_duration(LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION)
+            .prepare_request(move |request| {
+                if region_resolve {
+                    request.keys.clear();
+                }
+                Ok(())
+            })
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .plan();
         plan.execute().await?;
+        if let Some(cleaned_region) = cleaned_region {
+            cleaned_regions.insert(cleaned_region);
+        }
         Ok(())
     }
 
@@ -1898,8 +2158,15 @@ impl LockResolver {
             // their status check with PessimisticRollback. They must not be
             // included in the ordinary batch ResolveLock transaction list.
             if is_pessimistic_lock(&l) {
-                self.resolve_pessimistic_lock(pd_client.clone(), keyspace, keyspace_name, &l)
-                    .await?;
+                self.resolve_pessimistic_lock(
+                    pd_client.clone(),
+                    keyspace,
+                    keyspace_name,
+                    &l,
+                    false,
+                    &mut HashSet::new(),
+                )
+                .await?;
                 continue;
             }
 
@@ -1910,6 +2177,15 @@ impl LockResolver {
                     Some((lock_info.secondaries.clone(), lock_info.min_commit_ts))
                 }
                 _ => None,
+            };
+            let async_primary = match async_primary {
+                Some(primary) => Some(primary),
+                None => self
+                    .ctx
+                    .get_resolved_async_commit_primary(txn_id)
+                    .await
+                    .filter(|primary| primary.use_async_commit)
+                    .map(|primary| (primary.secondaries, primary.min_commit_ts)),
             };
             if let Some((secondary_keys, primary_min_commit_ts)) = async_primary {
                 let mut secondary_status = self
@@ -2331,6 +2607,7 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
+    use std::sync::Mutex as StdMutex;
     use std::time::Duration;
 
     use fail::FailScenario;
@@ -2342,6 +2619,15 @@ mod tests {
     use crate::proto::errorpb;
     use crate::{RequestWaitResult, ResourceControlRequestInfo, ResourceGroupController};
     use crate::{ResponseWaitResult, Result};
+
+    struct ResetTraceHandlers;
+
+    impl Drop for ResetTraceHandlers {
+        fn drop(&mut self) {
+            crate::trace::set_trace_event_handler(None);
+            crate::trace::set_category_enabled_handler(None);
+        }
+    }
 
     struct ResolverResourceController(Arc<AtomicUsize>);
 
@@ -2421,16 +2707,135 @@ mod tests {
         assert!(is_pessimistic_lock(&by_op));
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn source_trace_lock_resolution_emits_start_and_error_finish_events() {
+        crate::trace::set_category_enabled_handler(Some(Arc::new(|category| {
+            category == crate::trace::Category::TransactionLockResolve
+        })));
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        crate::trace::set_trace_event_handler(Some(Arc::new(
+            move |context, category, name, fields| {
+                if context.trace_id() != Some(b"lock-trace") {
+                    return;
+                }
+                captured.lock().unwrap().push((
+                    category,
+                    name.to_owned(),
+                    fields.iter().any(|field| field.name == "error"),
+                ));
+            },
+        )));
+        let _reset = ResetTraceHandlers;
+
+        let mut context = ResolveLocksContext::default();
+        context.trace_context =
+            crate::trace::TraceContext::new().with_trace_id(b"lock-trace".to_vec());
+        let result = resolve_locks_with_context_result(
+            vec![kvrpcpb::LockInfo {
+                lock_type: kvrpcpb::Op::SharedLock as i32,
+                ..Default::default()
+            }],
+            Timestamp::from_version(42),
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            None,
+            context,
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(
+            events.lock().unwrap().as_slice(),
+            &[
+                (
+                    crate::trace::Category::TransactionLockResolve,
+                    "resolve_locks.start".to_owned(),
+                    false,
+                ),
+                (
+                    crate::trace::Category::TransactionLockResolve,
+                    "resolve_locks.finish".to_owned(),
+                    true,
+                ),
+            ]
+        );
+    }
+
     #[test]
-    fn source_key_error_lock_extraction_expands_shared_holders() {
+    fn source_test_extract_locks_from_key_err_expands_shared_lock_holders() {
         let first = kvrpcpb::LockInfo {
-            key: b"key-1".to_vec(),
-            lock_version: 7,
+            key: b"shared-key".to_vec(),
+            lock_version: 101,
+            lock_type: kvrpcpb::Op::PessimisticLock as i32,
             ..Default::default()
         };
         let second = kvrpcpb::LockInfo {
-            key: b"key-2".to_vec(),
-            lock_version: 8,
+            key: b"shared-key".to_vec(),
+            lock_version: 102,
+            lock_type: kvrpcpb::Op::Lock as i32,
+            ..Default::default()
+        };
+        let shared_error = kvrpcpb::KeyError {
+            locked: Some(kvrpcpb::LockInfo {
+                key: b"shared-key".to_vec(),
+                lock_type: kvrpcpb::Op::SharedLock as i32,
+                shared_lock_infos: vec![first.clone(), second.clone()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let locks = extract_locks_from_key_error(&shared_error).unwrap();
+        assert_eq!(locks.len(), 2);
+        assert_eq!(locks[0].lock_version, 101);
+        assert_eq!(locks[0].lock_type, kvrpcpb::Op::PessimisticLock as i32);
+        assert_eq!(locks[1].lock_version, 102);
+        assert_eq!(locks[1].lock_type, kvrpcpb::Op::Lock as i32);
+    }
+
+    #[test]
+    fn source_test_extract_locks_from_key_err_preserves_exclusive_lock() {
+        let exclusive = kvrpcpb::KeyError {
+            locked: Some(kvrpcpb::LockInfo {
+                key: b"key".to_vec(),
+                lock_version: 7,
+                lock_type: kvrpcpb::Op::Lock as i32,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let locks = extract_locks_from_key_error(&exclusive).unwrap();
+        assert_eq!(locks.len(), 1);
+        assert_eq!(locks[0].lock_version, 7);
+    }
+
+    #[test]
+    fn source_test_extract_locks_from_key_err_returns_key_error() {
+        let key_error = kvrpcpb::KeyError {
+            already_exist: Some(kvrpcpb::AlreadyExist {
+                key: b"key".to_vec(),
+            }),
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            extract_locks_from_key_error(&key_error),
+            Err(Error::KeyError(_))
+        ));
+    }
+
+    #[test]
+    fn source_uncovered_extract_lock_preserves_shared_wrapper() {
+        let first = kvrpcpb::LockInfo {
+            key: b"shared-key".to_vec(),
+            lock_version: 101,
+            ..Default::default()
+        };
+        let second = kvrpcpb::LockInfo {
+            key: b"shared-key".to_vec(),
+            lock_version: 102,
             ..Default::default()
         };
         let shared_error = kvrpcpb::KeyError {
@@ -2446,26 +2851,8 @@ mod tests {
             extract_lock_from_key_error(&shared_error)
                 .unwrap()
                 .shared_lock_infos,
-            [first.clone(), second.clone()]
-        );
-        assert_eq!(
-            extract_locks_from_key_error(&shared_error).unwrap(),
             [first, second]
         );
-
-        let exclusive = kvrpcpb::KeyError {
-            locked: Some(kvrpcpb::LockInfo {
-                key: b"key".to_vec(),
-                lock_version: 9,
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert_eq!(extract_locks_from_key_error(&exclusive).unwrap().len(), 1);
-        assert!(matches!(
-            extract_locks_from_key_error(&kvrpcpb::KeyError::default()),
-            Err(Error::KeyError(_))
-        ));
     }
 
     #[tokio::test]
@@ -2517,59 +2904,96 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_cached_async_commit_status_skips_secondary_recovery() {
+    async fn source_test_lock_resolver_cache() {
         let check_requests = Arc::new(AtomicUsize::new(0));
-        let resolve_requests = Arc::new(AtomicUsize::new(0));
+        let secondary_requests = Arc::new(AtomicUsize::new(0));
+        let resolved_key_sets = Arc::new(StdMutex::new(Vec::new()));
         let checks = check_requests.clone();
-        let resolves = resolve_requests.clone();
+        let secondary_checks = secondary_requests.clone();
+        let resolved_keys = resolved_key_sets.clone();
+        let start_ts = Timestamp {
+            physical: 1,
+            logical: 0,
+            ..Default::default()
+        }
+        .version();
         let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |request: &dyn Any| {
-                if request.is::<kvrpcpb::CheckTxnStatusRequest>()
-                    || request.is::<kvrpcpb::CheckSecondaryLocksRequest>()
-                {
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
                     checks.fetch_add(1, Ordering::SeqCst);
-                    panic!("a determined cached status must bypass status recovery");
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        lock_ttl: 1,
+                        lock_info: Some(kvrpcpb::LockInfo {
+                            key: b"primary".to_vec(),
+                            primary_lock: b"primary".to_vec(),
+                            lock_version: start_ts,
+                            use_async_commit: true,
+                            min_commit_ts: start_ts + 1,
+                            secondaries: vec![b"secondary".to_vec()],
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
                 }
-                if request.is::<kvrpcpb::ResolveLockRequest>() {
-                    resolves.fetch_add(1, Ordering::SeqCst);
+                if request.is::<kvrpcpb::CheckSecondaryLocksRequest>() {
+                    secondary_checks.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::new(kvrpcpb::CheckSecondaryLocksResponse {
+                        locks: vec![kvrpcpb::LockInfo {
+                            key: b"secondary".to_vec(),
+                            lock_version: start_ts,
+                            use_async_commit: true,
+                            min_commit_ts: start_ts + 1,
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::ResolveLockRequest>() {
+                    resolved_keys.lock().unwrap().push(request.keys.clone());
                     return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
                 }
-                panic!("unexpected request type while using the resolver cache");
+                panic!("unexpected request type while populating the resolver cache");
             },
         )));
-        let mut context = ResolveLocksContext::default();
-        context
-            .save_resolved(
-                1,
-                Arc::new(TransactionStatus {
-                    kind: TransactionStatusKind::Committed(Timestamp::from_version(10)),
-                    action: kvrpcpb::Action::NoAction,
-                    is_expired: false,
-                }),
+        client.set_timestamp(Timestamp {
+            physical: 100,
+            logical: 0,
+            ..Default::default()
+        });
+        let context = ResolveLocksContext::default();
+        let encountered = kvrpcpb::LockInfo {
+            key: b"secondary".to_vec(),
+            primary_lock: b"primary".to_vec(),
+            lock_version: start_ts,
+            lock_ttl: 1,
+            use_async_commit: true,
+            min_commit_ts: start_ts + 1,
+            ..Default::default()
+        };
+
+        for _ in 0..2 {
+            assert!(resolve_locks_with_context(
+                vec![encountered.clone()],
+                Timestamp::from_version(start_ts + 2),
+                client.clone(),
+                Keyspace::Disable,
+                None,
+                context.clone(),
             )
-            .await;
+            .await
+            .unwrap()
+            .is_empty());
+        }
 
-        let result = resolve_locks_with_context(
-            vec![kvrpcpb::LockInfo {
-                key: b"secondary".to_vec(),
-                primary_lock: b"primary".to_vec(),
-                lock_version: 1,
-                use_async_commit: true,
-                min_commit_ts: 2,
-                ..Default::default()
-            }],
-            Timestamp::from_version(5),
-            client,
-            Keyspace::Disable,
-            None,
-            context,
-        )
-        .await
-        .unwrap();
-
-        assert!(result.is_empty());
-        assert_eq!(check_requests.load(Ordering::SeqCst), 0);
-        assert_eq!(resolve_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(check_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(secondary_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            resolved_key_sets.lock().unwrap().as_slice(),
+            &[
+                vec![b"secondary".to_vec(), b"primary".to_vec()],
+                vec![b"secondary".to_vec(), b"primary".to_vec()],
+            ]
+        );
     }
 
     #[tokio::test]
@@ -2760,6 +3184,7 @@ mod tests {
             2,
             false,
             u64::MAX,
+            false,
             client.clone(),
             keyspace,
             None,
@@ -2786,6 +3211,7 @@ mod tests {
             4,
             false,
             u64::MAX,
+            false,
             client,
             keyspace,
             None,
@@ -2817,6 +3243,7 @@ mod tests {
             2,
             false,
             get_global_config().tikv_client.resolve_lock_lite_threshold - 1,
+            false,
             client,
             Keyspace::Disable,
             None,
@@ -2848,6 +3275,7 @@ mod tests {
             2,
             false,
             get_global_config().tikv_client.resolve_lock_lite_threshold,
+            false,
             client,
             Keyspace::Disable,
             None,
@@ -2859,6 +3287,107 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn source_uncovered_point_read_forces_lite_cleanup_above_threshold() {
+        let cleanup_sent = Arc::new(tokio::sync::Notify::new());
+        let cleanup_sent_by_hook = cleanup_sent.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if req.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                let request = req
+                    .downcast_ref::<kvrpcpb::ResolveLockRequest>()
+                    .expect("point-read cleanup sends ResolveLock");
+                assert_eq!(request.keys, [vec![2]]);
+                cleanup_sent_by_hook.notify_one();
+                Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>)
+            },
+        )));
+        client.set_timestamp(Timestamp {
+            physical: 100,
+            logical: 0,
+            ..Default::default()
+        });
+        let mut context = ResolveLocksContext::default();
+        context.force_lite = true;
+        let read_locks = ReadLockContext::default();
+        let lock = kvrpcpb::LockInfo {
+            key: vec![2],
+            primary_lock: vec![1],
+            lock_version: 1,
+            txn_size: get_global_config().tikv_client.resolve_lock_lite_threshold,
+            ..Default::default()
+        };
+
+        assert!(resolve_locks_for_read_with_context(
+            vec![lock],
+            Timestamp::from_version(3),
+            client,
+            Keyspace::Disable,
+            None,
+            context,
+            &read_locks,
+        )
+        .await
+        .unwrap()
+        .is_empty());
+        tokio::time::timeout(Duration::from_secs(1), cleanup_sent.notified())
+            .await
+            .expect("forced-lite point-read cleanup should be dispatched");
+    }
+
+    #[tokio::test]
+    async fn source_uncovered_explicit_lite_overrides_threshold_for_sync_cleanup() {
+        let resolve_count = Arc::new(AtomicUsize::new(0));
+        let resolves = resolve_count.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                let request = request
+                    .downcast_ref::<kvrpcpb::ResolveLockRequest>()
+                    .expect("explicit-lite cleanup sends ResolveLock");
+                assert_eq!(request.keys, [vec![2]]);
+                resolves.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>)
+            },
+        )));
+        client.set_timestamp(Timestamp {
+            physical: 100,
+            logical: 0,
+            ..Default::default()
+        });
+        let mut context = ResolveLocksContext::default();
+        context.force_lite = true;
+
+        assert!(resolve_locks_with_context(
+            vec![kvrpcpb::LockInfo {
+                key: vec![2],
+                primary_lock: vec![1],
+                lock_version: 1,
+                txn_size: get_global_config().tikv_client.resolve_lock_lite_threshold,
+                ..Default::default()
+            }],
+            Timestamp::from_version(3),
+            client,
+            Keyspace::Disable,
+            None,
+            context,
+        )
+        .await
+        .unwrap()
+        .is_empty());
+        assert_eq!(resolve_count.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -3114,7 +3643,13 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn source_async_resolve_pool_releases_capacity_and_falls_back() {
+    async fn source_test_try_async_resolve() {
+        assert_eq!(ASYNC_RESOLVE_LOCK_SEMAPHORE_LIMIT, 10_000);
+        let default_context = ResolveLocksContext::default();
+        assert!(Arc::ptr_eq(
+            &default_context.async_resolve_pool.inner.semaphore,
+            &ASYNC_READ_RESOLVE_LOCKS,
+        ));
         const TEST_TASK_KIND: &str = "source_pool_test";
         const TEST_FALLBACK_ACTION: &str = "source_pool_test_fallback";
         let semaphore = Arc::new(Semaphore::new(5));
@@ -3464,8 +3999,15 @@ mod tests {
             lock_ttl: 1,
             ..Default::default()
         };
+        let second_encountered_lock = kvrpcpb::LockInfo {
+            key: vec![2],
+            primary_lock: vec![1],
+            lock_version: start_ts,
+            lock_ttl: 1,
+            ..Default::default()
+        };
         let live_locks = resolve_locks_with_context(
-            vec![lock],
+            vec![lock, second_encountered_lock],
             Timestamp::default(),
             client,
             Keyspace::Disable,
@@ -3691,6 +4233,177 @@ mod tests {
         .unwrap()
         .is_empty());
         assert_eq!(rollback_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn source_uncovered_pessimistic_region_resolve_rolls_back_region_once() {
+        let status_count = Arc::new(AtomicUsize::new(0));
+        let rollback_keys = Arc::new(StdMutex::new(Vec::new()));
+        let statuses = status_count.clone();
+        let rollbacks = rollback_keys.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    statuses.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::<kvrpcpb::CheckTxnStatusResponse>::default() as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::PessimisticRollbackRequest>()
+                {
+                    rollbacks.lock().unwrap().push(request.keys.clone());
+                    return Ok(
+                        Box::<kvrpcpb::PessimisticRollbackResponse>::default() as Box<dyn Any>
+                    );
+                }
+                panic!("unexpected request while region-resolving pessimistic locks");
+            },
+        )));
+        client.set_timestamp(Timestamp {
+            physical: 100,
+            logical: 0,
+            ..Default::default()
+        });
+        let mut context = ResolveLocksContext::default();
+        context.pessimistic_region_resolve = true;
+        let lock = |key| kvrpcpb::LockInfo {
+            key: vec![key],
+            primary_lock: vec![1],
+            lock_version: 1,
+            lock_type: kvrpcpb::Op::PessimisticLock as i32,
+            ..Default::default()
+        };
+
+        assert!(resolve_locks_with_context(
+            vec![lock(2), lock(3)],
+            Timestamp::default(),
+            client,
+            Keyspace::Disable,
+            None,
+            context,
+        )
+        .await
+        .unwrap()
+        .is_empty());
+
+        assert_eq!(status_count.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            rollback_keys.lock().unwrap().as_slice(),
+            &[Vec::<Vec<u8>>::new()]
+        );
+    }
+
+    #[tokio::test]
+    async fn source_uncovered_live_pessimistic_lock_is_not_rolled_back() {
+        let rollback_count = Arc::new(AtomicUsize::new(0));
+        let rollbacks = rollback_count.clone();
+        let start_ts = Timestamp {
+            physical: 99,
+            logical: 0,
+            ..Default::default()
+        }
+        .version();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        lock_ttl: 5_000,
+                        lock_info: Some(kvrpcpb::LockInfo {
+                            key: vec![1],
+                            primary_lock: vec![1],
+                            lock_version: start_ts,
+                            lock_ttl: 5_000,
+                            lock_type: kvrpcpb::Op::PessimisticLock as i32,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::PessimisticRollbackRequest>() {
+                    rollbacks.fetch_add(1, Ordering::SeqCst);
+                    return Ok(
+                        Box::<kvrpcpb::PessimisticRollbackResponse>::default() as Box<dyn Any>
+                    );
+                }
+                panic!("unexpected request while checking a live pessimistic lock");
+            },
+        )));
+        client.set_timestamp(Timestamp {
+            physical: 100,
+            logical: 0,
+            ..Default::default()
+        });
+        let result = resolve_locks_with_context_result(
+            vec![kvrpcpb::LockInfo {
+                key: vec![2],
+                primary_lock: vec![1],
+                lock_version: start_ts,
+                lock_ttl: 5_000,
+                lock_type: kvrpcpb::Op::PessimisticLock as i32,
+                ..Default::default()
+            }],
+            Timestamp::default(),
+            client,
+            Keyspace::Disable,
+            None,
+            ResolveLocksContext::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(rollback_count.load(Ordering::SeqCst), 0);
+        assert_eq!(result.live_locks.len(), 1);
+        assert!(result.ms_before_expired > 0);
+    }
+
+    #[tokio::test]
+    async fn source_uncovered_finalized_pessimistic_lock_is_rolled_back_and_removed() {
+        let rollback_count = Arc::new(AtomicUsize::new(0));
+        let rollbacks = rollback_count.clone();
+        let start_ts = Timestamp {
+            physical: 1,
+            logical: 0,
+            ..Default::default()
+        }
+        .version();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::<kvrpcpb::CheckTxnStatusResponse>::default() as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::PessimisticRollbackRequest>() {
+                    rollbacks.fetch_add(1, Ordering::SeqCst);
+                    return Ok(
+                        Box::<kvrpcpb::PessimisticRollbackResponse>::default() as Box<dyn Any>
+                    );
+                }
+                panic!("unexpected request while resolving a finalized pessimistic lock");
+            },
+        )));
+        client.set_timestamp(Timestamp {
+            physical: 100,
+            logical: 0,
+            ..Default::default()
+        });
+        let result = resolve_locks_with_context_result(
+            vec![kvrpcpb::LockInfo {
+                key: vec![2],
+                primary_lock: vec![1],
+                lock_version: start_ts,
+                lock_ttl: 1,
+                lock_type: kvrpcpb::Op::PessimisticLock as i32,
+                ..Default::default()
+            }],
+            Timestamp::default(),
+            client,
+            Keyspace::Disable,
+            None,
+            ResolveLocksContext::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(rollback_count.load(Ordering::SeqCst), 1);
+        assert!(result.live_locks.is_empty());
+        assert_eq!(result.ms_before_expired, 0);
     }
 
     #[tokio::test]

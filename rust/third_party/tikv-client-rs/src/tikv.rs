@@ -97,6 +97,10 @@ pub const MODE_RAW: Mode = KeyMode::Raw;
 pub const MODE_TXN: Mode = KeyMode::Txn;
 pub const NULLSPACE_ID: KeyspaceId = NULL_KEYSPACE_ID;
 
+fn split_region_key_batches(keys: Vec<Vec<u8>>) -> Vec<Vec<Vec<u8>>> {
+    crate::request::key_batches(keys, SPLIT_BATCH_REGION_LIMIT as isize)
+}
+
 /// client-go's `WithDefaultPipelinedTxn` values.
 pub const fn default_pipelined_txn_options() -> PipelinedTxnOptions {
     PipelinedTxnOptions {
@@ -477,9 +481,9 @@ impl TxnSafePointCache {
         let (safe_point, updated) = *self.state.read().expect("safe-point cache lock poisoned");
         let elapsed = now.duration_since(updated).unwrap_or_default();
         if elapsed > GC_STATE_CACHE_INTERVAL - GC_CPU_TIME_INACCURACY_BOUND {
-            return Err(crate::error::PdServerTimeoutError {
-                message: "start timestamp may fall behind safe point".to_owned(),
-            }
+            return Err(crate::error::new_pd_server_timeout(
+                "start timestamp may fall behind safe point",
+            )
             .into());
         }
         if start_timestamp < safe_point {
@@ -516,10 +520,7 @@ impl SafeTsState {
         if safe_ts == u64::MAX {
             return;
         }
-        let previous = self.stores.get(&store_id).copied().unwrap_or(0);
-        if safe_ts >= previous {
-            self.stores.insert(store_id, safe_ts);
-        }
+        self.stores.insert(store_id, safe_ts);
     }
 
     fn set_scope(&mut self, scope: &str, safe_ts: u64) {
@@ -1020,6 +1021,27 @@ fn classify_split_response(
     ))
 }
 
+fn scatter_wait_completed(response: &crate::proto::pdpb::GetOperatorResponse) -> Result<bool> {
+    if response.desc.as_slice() != b"scatter-region"
+        || response.status != crate::proto::pdpb::OperatorStatus::Running as i32
+    {
+        return Ok(true);
+    }
+    if let Some(error) = response
+        .header
+        .as_ref()
+        .and_then(|header| header.error.as_ref())
+    {
+        return Err(Error::StringError(
+            crate::error::PdError {
+                error: error.clone(),
+            }
+            .to_string(),
+        ));
+    }
+    Ok(false)
+}
+
 struct SplitBatchOutcome {
     region_ids: Vec<u64>,
     retry_keys: Vec<Vec<u8>>,
@@ -1068,6 +1090,32 @@ impl SplitBatchOutcome {
     }
 }
 
+async fn retry_split_after_lock_resolution(
+    result: crate::transaction::ResolveLocksResult,
+    lock_count: usize,
+    batch: Vec<Vec<u8>>,
+    retry: &mut Backoffer,
+) -> SplitBatchOutcome {
+    if result.ms_before_expired > 0 {
+        let max_sleep_ms = u64::try_from(result.ms_before_expired).unwrap_or(u64::MAX);
+        if let Err(error) = retry
+            .backoff_with_config_and_max_sleep(
+                BO_TXN_LOCK,
+                Some(max_sleep_ms),
+                format!("split region lockedKeys: {lock_count}"),
+            )
+            .await
+        {
+            return SplitBatchOutcome::error(retry_error(error));
+        }
+    }
+    SplitBatchOutcome {
+        region_ids: Vec::new(),
+        retry_keys: batch,
+        error: None,
+    }
+}
+
 fn retry_error(error: crate::retry::RetryError) -> Error {
     match error {
         crate::retry::RetryError::Interrupted(error) => error.into(),
@@ -1079,10 +1127,7 @@ fn retry_error(error: crate::retry::RetryError) -> Error {
         crate::retry::RetryError::Exhausted {
             terminal: Some(crate::retry::RetryTerminal::PdServerTimeout),
             ..
-        } => crate::error::PdServerTimeoutError {
-            message: String::new(),
-        }
-        .into(),
+        } => crate::error::new_pd_server_timeout(String::new()).into(),
         error => Error::StringError(error.to_string()),
     }
 }
@@ -1269,8 +1314,8 @@ impl KvStore {
             }
             let mut batches = Vec::new();
             for (_, (store, keys)) in groups {
-                for batch in keys.chunks(SPLIT_BATCH_REGION_LIMIT) {
-                    batches.push((store.clone(), batch.to_vec()));
+                for batch in split_region_key_batches(keys) {
+                    batches.push((store.clone(), batch));
                 }
             }
             let mut outcomes = Vec::with_capacity(batches.len());
@@ -1361,23 +1406,22 @@ impl KvStore {
                     error: None,
                 }
             }
-            Ok(SplitResponseAction::ResolveLocks(locks)) => match self
-                .inner
-                .resolve_locks(
-                    locks,
-                    Timestamp::from_version(u64::MAX),
-                    Backoff::equal_jitter_backoff(100, 2_000, 60),
-                )
-                .await
-            {
-                Ok(live_locks) if live_locks.is_empty() => SplitBatchOutcome {
-                    region_ids: Vec::new(),
-                    retry_keys: batch,
-                    error: None,
-                },
-                Ok(live_locks) => SplitBatchOutcome::error(Error::ResolveLockError(live_locks)),
-                Err(error) => SplitBatchOutcome::error(error),
-            },
+            Ok(SplitResponseAction::ResolveLocks(locks)) => {
+                let lock_count = locks.len();
+                match self
+                    .inner
+                    .resolve_locks_once_with_pessimistic_region(
+                        locks,
+                        Timestamp::from_version(u64::MAX),
+                    )
+                    .await
+                {
+                    Ok(result) => {
+                        retry_split_after_lock_resolution(result, lock_count, batch, retry).await
+                    }
+                    Err(error) => SplitBatchOutcome::error(error),
+                }
+            }
             Ok(SplitResponseAction::Complete(region_ids)) => {
                 let mut error = None;
                 if options.scatter {
@@ -1442,21 +1486,18 @@ impl KvStore {
         let deadline = tokio::time::Instant::now() + Duration::from_millis(budget);
         let mut retry = Backoff::equal_jitter_backoff(100, 2_000, u32::MAX);
         loop {
-            match self.inner.pd_client().get_operator(region_id).await {
-                Ok(response)
-                    if response.desc.as_slice() != b"scatter-region"
-                        || response.status
-                            != crate::proto::pdpb::OperatorStatus::Running as i32 =>
-                {
-                    return Ok(())
+            if let Ok(response) = self.inner.pd_client().get_operator(region_id).await {
+                match scatter_wait_completed(&response) {
+                    Ok(true) => return Ok(()),
+                    Ok(false) => {}
+                    Err(error) => return Err(error),
                 }
-                Ok(_) | Err(_) => {}
             }
             let delay = retry.next_delay_duration().unwrap_or_default();
             if tokio::time::Instant::now() + delay >= deadline {
-                return Err(crate::error::PdServerTimeoutError {
-                    message: format!("wait scatter region {region_id} timeout"),
-                }
+                return Err(crate::error::new_pd_server_timeout(format!(
+                    "wait scatter region {region_id} timeout"
+                ))
                 .into());
             }
             tokio::time::sleep(delay).await;
@@ -1904,7 +1945,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn constructor_failure_closes_the_partial_client_owner() {
+    async fn source_test_error_halfway_in_new_kv_store() {
         let closed = Arc::new(AtomicBool::new(false));
         let result = finish_store_construction(
             MockConstructionOwner(closed.clone()),
@@ -1962,7 +2003,7 @@ mod tests {
     }
 
     #[test]
-    fn split_regions_preserves_legacy_key_error_behavior() {
+    fn source_test_split_regions_preserves_legacy_key_error_behavior() {
         let response = kvrpcpb::SplitRegionResponse {
             errors: vec![kvrpcpb::KeyError {
                 locked: Some(kvrpcpb::LockInfo {
@@ -1982,7 +2023,16 @@ mod tests {
     }
 
     #[test]
-    fn split_txn_file_regions_resolves_locks_and_retries() {
+    fn source_uncovered_internal_kvrpc_split_region_consumer_keeps_2049_boundary() {
+        let keys = (0_u32..2_050)
+            .map(|index| index.to_be_bytes().to_vec())
+            .collect::<Vec<_>>();
+        let batches = split_region_key_batches(keys);
+        assert_eq!(batches.iter().map(Vec::len).collect::<Vec<_>>(), [2_049, 1]);
+    }
+
+    #[test]
+    fn source_test_split_txn_file_regions_resolves_lock_and_retries() {
         let response = kvrpcpb::SplitRegionResponse {
             errors: vec![kvrpcpb::KeyError {
                 locked: Some(kvrpcpb::LockInfo {
@@ -2002,14 +2052,38 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn source_split_lock_wait_uses_parent_retry_cancellation() {
+        let cancellation = Cancellation::default();
+        cancellation.cancel();
+        let mut retry = Backoffer::new(cancellation, 20_000);
+        let batch = vec![b"k".to_vec()];
+        let outcome = retry_split_after_lock_resolution(
+            crate::transaction::ResolveLocksResult {
+                live_locks: vec![kvrpcpb::LockInfo {
+                    key: b"k".to_vec(),
+                    ..Default::default()
+                }],
+                ms_before_expired: 10,
+            },
+            1,
+            batch,
+            &mut retry,
+        )
+        .await;
+
+        assert!(outcome.error.is_some());
+        assert!(outcome.retry_keys.is_empty());
+    }
+
     #[test]
-    fn split_txn_file_regions_never_scatters() {
+    fn source_test_split_txn_file_regions_splits_without_scattering() {
         assert!(!std::hint::black_box(TXN_FILE_SPLIT_OPTIONS).scatter);
         assert_eq!(TXN_FILE_SPLIT_OPTIONS.mode, SplitRegionMode::ResolveLocks);
     }
 
     #[test]
-    fn split_key_errors_expand_shared_lock_holders() {
+    fn source_test_handle_split_region_key_errors_expands_shared_lock_holders() {
         let response = kvrpcpb::SplitRegionResponse {
             errors: vec![kvrpcpb::KeyError {
                 locked: Some(kvrpcpb::LockInfo {
@@ -2086,6 +2160,25 @@ mod tests {
     }
 
     #[test]
+    fn source_wait_scatter_region_finish_returns_running_header_error() {
+        let response = crate::proto::pdpb::GetOperatorResponse {
+            header: Some(crate::proto::pdpb::ResponseHeader {
+                error: Some(crate::proto::pdpb::Error {
+                    r#type: crate::proto::pdpb::ErrorType::Unknown as i32,
+                    message: "operator failed".to_owned(),
+                }),
+                ..Default::default()
+            }),
+            desc: b"scatter-region".to_vec(),
+            status: crate::proto::pdpb::OperatorStatus::Running as i32,
+            ..Default::default()
+        };
+
+        let error = scatter_wait_completed(&response).unwrap_err();
+        assert!(error.to_string().contains("operator failed"));
+    }
+
+    #[test]
     fn visibility_rejects_stale_cache_and_old_transactions() {
         let now = SystemTime::now();
         let cache = TxnSafePointCache::new(100, now);
@@ -2112,8 +2205,6 @@ mod tests {
         assert_eq!(state.scopes["missing"], 0);
         state.update_scope_from_stores("zeros", &[2]);
         assert_eq!(state.scopes["zeros"], 0);
-        state.set_store(1, 90);
-        assert_eq!(state.stores[&1], 100, "safe TS is monotonic");
         state.set_store(1, u64::MAX);
         assert_eq!(state.stores[&1], 100);
         state.set_scope("drop", 100);
@@ -2124,8 +2215,16 @@ mod tests {
         assert_eq!(state.scopes["pd"], 100, "PD global scope is monotonic");
     }
 
+    #[test]
+    fn source_test_probe_set_safe_ts_overwrites_lower_value() {
+        let mut state = SafeTsState::default();
+        state.set_store(1, 100);
+        state.set_store(1, 90);
+        assert_eq!(state.stores[&1], 90);
+    }
+
     #[tokio::test]
-    async fn min_safe_ts_from_stores() {
+    async fn source_test_min_safe_ts_from_stores() {
         let tikv = safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 100);
         let tiflash = safe_ts_store(2, "z2", crate::store::EndpointType::TiFlash, 80);
         let fixtures = [tikv, tiflash];
@@ -2144,27 +2243,56 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn min_safe_ts_from_stores_with_all_zeros() {
+    async fn source_safe_ts_updater_still_skips_regression() {
+        let fixtures = [safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 90)];
+        let state = RwLock::new(SafeTsState::default());
+        state.write().unwrap().set_store(1, 100);
+
+        refresh_safe_ts_state(&state, &[fixtures[0].store.clone()], None)
+            .await
+            .unwrap();
+
+        assert_eq!(state.read().unwrap().stores[&1], 100);
+    }
+
+    #[tokio::test]
+    async fn source_test_min_safe_ts_from_stores_with_all_zeros() {
         let fixtures = [
             safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 0),
             safe_ts_store(2, "z2", crate::store::EndpointType::TiFlash, 0),
         ];
+        let _first_state = refresh_fixture(&fixtures, None).await;
         let state = refresh_fixture(&fixtures, None).await;
         assert_eq!(state.scopes[oracle::GLOBAL_TXN_SCOPE], 0);
+        assert_eq!(
+            fixtures
+                .iter()
+                .map(|fixture| fixture.safe_ts_requests.load(AtomicOrdering::SeqCst))
+                .sum::<usize>(),
+            4
+        );
     }
 
     #[tokio::test]
-    async fn min_safe_ts_from_stores_with_some_zeros() {
+    async fn source_test_min_safe_ts_from_stores_with_some_zeros() {
         let fixtures = [
             safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 100),
             safe_ts_store(2, "z2", crate::store::EndpointType::TiFlash, 0),
         ];
+        let _first_state = refresh_fixture(&fixtures, None).await;
         let state = refresh_fixture(&fixtures, None).await;
         assert_eq!(state.scopes[oracle::GLOBAL_TXN_SCOPE], 100);
+        assert_eq!(
+            fixtures
+                .iter()
+                .map(|fixture| fixture.safe_ts_requests.load(AtomicOrdering::SeqCst))
+                .sum::<usize>(),
+            4
+        );
     }
 
     #[tokio::test]
-    async fn min_safe_ts_from_pd() {
+    async fn source_test_min_safe_ts_from_pd() {
         let fixtures = [
             safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 100),
             safe_ts_store(2, "z2", crate::store::EndpointType::TiFlash, 80),
@@ -2183,7 +2311,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn min_safe_ts_from_pd_by_stores() {
+    async fn source_test_min_safe_ts_from_pd_by_stores() {
         let fixtures = [
             safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 100),
             safe_ts_store(2, "z2", crate::store::EndpointType::TiFlash, 80),
@@ -2202,7 +2330,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn min_safe_ts_from_mixed_sources_uses_store_fallback_for_zero() {
+    async fn source_test_min_safe_ts_from_mixed1() {
         let fixtures = [
             safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 100),
             safe_ts_store(2, "z2", crate::store::EndpointType::TiFlash, 80),
@@ -2223,7 +2351,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn min_safe_ts_from_mixed_sources_uses_store_fallback_for_max() {
+    async fn source_test_min_safe_ts_from_mixed2() {
         let fixtures = [
             safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 100),
             safe_ts_store(2, "z2", crate::store::EndpointType::TiFlash, 80),

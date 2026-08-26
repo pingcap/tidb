@@ -11,7 +11,7 @@ use crate::region::RegionWithLeader;
 use crate::request::Keyspace;
 use crate::{Error, KvPair, Result};
 
-use super::{Client, MAX_RAW_KV_SCAN_LIMIT};
+use super::{Client, MAX_RAW_KV_SCAN_LIMIT, RAW_BATCH_PUT_SIZE};
 
 #[derive(Clone, Debug)]
 struct Entry {
@@ -278,7 +278,15 @@ impl StatefulRawStore {
                 {
                     continue;
                 }
-                let mut pair = key.clone();
+                let checksum_key =
+                    if request.context.as_ref().is_some_and(|context| {
+                        context.api_version == kvrpcpb::ApiVersion::V2 as i32
+                    }) {
+                        key.get(4..).expect("API V2 raw key prefix").to_vec()
+                    } else {
+                        key.clone()
+                    };
+                let mut pair = checksum_key;
                 pair.extend_from_slice(&entry.value);
                 response.checksum ^= crc64_ecma(&pair);
                 response.total_kvs += 1;
@@ -324,24 +332,33 @@ fn region(bounds: &RegionBounds, store_id: u64) -> RegionWithLeader {
     region
 }
 
-fn stateful_client() -> (Client<MockPdClient>, Arc<StatefulRawStore>) {
-    let regions = vec![
-        RegionBounds {
-            id: 1,
-            start: Vec::new(),
-            end: b"k3".to_vec(),
-        },
-        RegionBounds {
-            id: 2,
-            start: b"k3".to_vec(),
-            end: b"k6".to_vec(),
-        },
-        RegionBounds {
-            id: 3,
-            start: b"k6".to_vec(),
-            end: Vec::new(),
-        },
-    ];
+fn source_regions() -> Vec<RegionBounds> {
+    regions_with_splits(&[b"k3", b"k6"])
+}
+
+fn regions_with_splits(split_keys: &[&[u8]]) -> Vec<RegionBounds> {
+    let mut start = Vec::new();
+    let mut regions = Vec::with_capacity(split_keys.len() + 1);
+    for (index, split_key) in split_keys.iter().enumerate() {
+        regions.push(RegionBounds {
+            id: index as u64 + 1,
+            start: start.clone(),
+            end: split_key.to_vec(),
+        });
+        start = split_key.to_vec();
+    }
+    regions.push(RegionBounds {
+        id: regions.len() as u64 + 1,
+        start,
+        end: Vec::new(),
+    });
+    regions
+}
+
+fn stateful_client_with(
+    regions: Vec<RegionBounds>,
+    keyspace: Keyspace,
+) -> (Client<MockPdClient>, Arc<StatefulRawStore>) {
     let state = Arc::new(StatefulRawStore::new(regions.clone()));
     let dispatch_state = state.clone();
     let kv_client =
@@ -355,9 +372,181 @@ fn stateful_client() -> (Client<MockPdClient>, Arc<StatefulRawStore>) {
             .collect(),
     );
     (
-        Client::from_test_rpc(Arc::new(pd_client), Keyspace::Disable, None),
+        Client::from_test_rpc(
+            Arc::new(pd_client),
+            keyspace,
+            matches!(keyspace, Keyspace::Enable { .. }).then(|| "DEFAULT".to_owned()),
+        ),
         state,
     )
+}
+
+fn stateful_client() -> (Client<MockPdClient>, Arc<StatefulRawStore>) {
+    stateful_client_with(source_regions(), Keyspace::Disable)
+}
+
+#[tokio::test]
+async fn source_delete_range_walks_regions_in_order_and_stops_at_the_first_error() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let recorded_calls = calls.clone();
+    let kv_client = MockKvClient::with_dispatch_hook(move |request| {
+        let request = request
+            .downcast_ref::<kvrpcpb::RawDeleteRangeRequest>()
+            .expect("delete-range request");
+        let region_id = request.context.as_ref().expect("request context").region_id;
+        recorded_calls.lock().unwrap().push(region_id);
+        Ok(Box::new(kvrpcpb::RawDeleteRangeResponse {
+            error: (region_id == 2)
+                .then_some("delete range failed".to_owned())
+                .unwrap_or_default(),
+            ..Default::default()
+        }))
+    });
+    let regions = source_regions();
+    let pd_client = MockPdClient::with_client_and_regions(
+        kv_client,
+        regions
+            .iter()
+            .enumerate()
+            .map(|(index, bounds)| region(bounds, index as u64 + 41))
+            .collect(),
+    );
+    let client = Client::from_test_rpc(Arc::new(pd_client), Keyspace::Disable, None);
+
+    let error = client
+        .delete_range(b"a".to_vec()..b"z".to_vec())
+        .await
+        .unwrap_err();
+
+    assert_eq!(*calls.lock().unwrap(), vec![1, 2]);
+    assert_eq!(error.to_string(), "delete range failed");
+}
+
+#[tokio::test]
+async fn source_checksum_walks_regions_in_order_and_ignores_response_error_text() -> Result<()> {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let recorded_calls = calls.clone();
+    let kv_client = MockKvClient::with_dispatch_hook(move |request| {
+        let request = request
+            .downcast_ref::<kvrpcpb::RawChecksumRequest>()
+            .expect("checksum request");
+        let region_id = request.context.as_ref().expect("request context").region_id;
+        recorded_calls.lock().unwrap().push(region_id);
+        Ok(Box::new(kvrpcpb::RawChecksumResponse {
+            checksum: region_id,
+            total_kvs: 1,
+            total_bytes: region_id,
+            // Pinned client-go never reads RawChecksumResponse.Error.
+            error: "ignored by client-go".to_owned(),
+            ..Default::default()
+        }))
+    });
+    let regions = source_regions();
+    let pd_client = MockPdClient::with_client_and_regions(
+        kv_client,
+        regions
+            .iter()
+            .enumerate()
+            .map(|(index, bounds)| region(bounds, index as u64 + 41))
+            .collect(),
+    );
+    let client = Client::from_test_rpc(Arc::new(pd_client), Keyspace::Disable, None);
+
+    let checksum = client.checksum(b"a".to_vec()..b"z".to_vec()).await?;
+
+    assert_eq!(checksum.crc64_xor, 1 ^ 2 ^ 3);
+    assert_eq!(checksum.total_kvs, 3);
+    assert_eq!(checksum.total_bytes, 1 + 2 + 3);
+    assert_eq!(*calls.lock().unwrap(), vec![1, 2, 3]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_batch_get_and_scan_ignore_legacy_pair_errors() -> Result<()> {
+    let kv_client = MockKvClient::with_dispatch_hook(move |request| {
+        if let Some(request) = request.downcast_ref::<kvrpcpb::RawBatchGetRequest>() {
+            return Ok(Box::new(kvrpcpb::RawBatchGetResponse {
+                pairs: vec![kvrpcpb::KvPair {
+                    key: request.keys[0].clone(),
+                    value: b"batch-value".to_vec(),
+                    error: Some(kvrpcpb::KeyError {
+                        abort: "ignored by client-go RawBatchGet".to_owned(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }));
+        }
+        let request = request
+            .downcast_ref::<kvrpcpb::RawScanRequest>()
+            .expect("raw scan request");
+        Ok(Box::new(kvrpcpb::RawScanResponse {
+            kvs: vec![kvrpcpb::KvPair {
+                key: request.start_key.clone(),
+                value: b"scan-value".to_vec(),
+                error: Some(kvrpcpb::KeyError {
+                    abort: "ignored by client-go RawScan".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }))
+    });
+    let client = Client::from_test_rpc(
+        Arc::new(MockPdClient::new(kv_client)),
+        Keyspace::Disable,
+        None,
+    );
+
+    assert_eq!(
+        client.batch_get([b"batch-key".to_vec()]).await?,
+        vec![Some(b"batch-value".to_vec())]
+    );
+    assert_eq!(
+        pairs_bytes(client.scan(b"scan-key".to_vec()..b"z".to_vec(), 1).await?),
+        vec![(b"scan-key".to_vec(), b"scan-value".to_vec())]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_scan_treats_the_request_limit_as_server_enforced() -> Result<()> {
+    let kv_client = MockKvClient::with_dispatch_hook(move |request| {
+        let request = request
+            .downcast_ref::<kvrpcpb::RawScanRequest>()
+            .expect("raw scan request");
+        assert_eq!(request.limit, 1);
+        Ok(Box::new(kvrpcpb::RawScanResponse {
+            // client-go appends the complete response and does not truncate a
+            // malformed server response that exceeds the requested limit.
+            kvs: vec![
+                kvrpcpb::KvPair {
+                    key: b"a".to_vec(),
+                    value: b"1".to_vec(),
+                    ..Default::default()
+                },
+                kvrpcpb::KvPair {
+                    key: b"b".to_vec(),
+                    value: b"2".to_vec(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }))
+    });
+    let client = Client::from_test_rpc(
+        Arc::new(MockPdClient::new(kv_client)),
+        Keyspace::Disable,
+        None,
+    );
+
+    assert_eq!(
+        pairs_bytes(client.scan(b"a".to_vec()..b"z".to_vec(), 1).await?),
+        expected_pairs(&[("a", "1"), ("b", "2")])
+    );
+    Ok(())
 }
 
 fn pairs_bytes(pairs: Vec<KvPair>) -> Vec<(Vec<u8>, Vec<u8>)> {
@@ -365,6 +554,544 @@ fn pairs_bytes(pairs: Vec<KvPair>) -> Vec<(Vec<u8>, Vec<u8>)> {
         .into_iter()
         .map(|pair| (pair.0.into(), pair.1))
         .collect()
+}
+
+fn expected_pairs(pairs: &[(&str, &str)]) -> Vec<(Vec<u8>, Vec<u8>)> {
+    pairs
+        .iter()
+        .map(|(key, value)| (key.as_bytes().to_vec(), value.as_bytes().to_vec()))
+        .collect()
+}
+
+fn owned_pairs(pairs: &[(&str, &str)]) -> Vec<(Vec<u8>, Vec<u8>)> {
+    expected_pairs(pairs)
+}
+
+async fn assert_source_scan_tables(client: &Client<MockPdClient>) -> Result<()> {
+    assert_eq!(
+        pairs_bytes(client.scan(Vec::<u8>::new().., 1).await?),
+        expected_pairs(&[("k1", "v1")])
+    );
+    assert_eq!(
+        pairs_bytes(client.scan(b"k1".to_vec().., 2).await?),
+        expected_pairs(&[("k1", "v1"), ("k3", "v3")])
+    );
+    assert_eq!(
+        pairs_bytes(client.scan(Vec::<u8>::new().., 10).await?),
+        expected_pairs(&[("k1", "v1"), ("k3", "v3"), ("k5", "v5"), ("k7", "v7")])
+    );
+    assert_eq!(
+        pairs_bytes(client.scan(b"k2".to_vec().., 2).await?),
+        expected_pairs(&[("k3", "v3"), ("k5", "v5")])
+    );
+    assert_eq!(
+        pairs_bytes(client.scan(b"k2".to_vec().., 3).await?),
+        expected_pairs(&[("k3", "v3"), ("k5", "v5"), ("k7", "v7")])
+    );
+    assert!(client
+        .scan(Vec::<u8>::new()..b"k1".to_vec(), 1)
+        .await?
+        .is_empty());
+    assert_eq!(
+        pairs_bytes(client.scan(b"k1".to_vec()..b"k3".to_vec(), 2).await?),
+        expected_pairs(&[("k1", "v1")])
+    );
+    assert_eq!(
+        pairs_bytes(client.scan(b"k1".to_vec()..b"k5".to_vec(), 10).await?),
+        expected_pairs(&[("k1", "v1"), ("k3", "v3")])
+    );
+    assert_eq!(
+        pairs_bytes(client.scan(b"k1".to_vec()..b"k5\0".to_vec(), 10).await?),
+        expected_pairs(&[("k1", "v1"), ("k3", "v3"), ("k5", "v5")])
+    );
+    assert!(client
+        .scan(b"k5\0".to_vec()..b"k5\0\0".to_vec(), 10)
+        .await?
+        .is_empty());
+
+    assert!(client
+        .scan_reverse(Vec::<u8>::new().., 10)
+        .await?
+        .is_empty());
+    assert_eq!(
+        pairs_bytes(
+            client
+                .scan_reverse(Vec::<u8>::new()..b"z".to_vec(), 1)
+                .await?
+        ),
+        expected_pairs(&[("k7", "v7")])
+    );
+    assert_eq!(
+        pairs_bytes(
+            client
+                .scan_reverse(Vec::<u8>::new()..b"z".to_vec(), 2)
+                .await?
+        ),
+        expected_pairs(&[("k7", "v7"), ("k5", "v5")])
+    );
+    assert_eq!(
+        pairs_bytes(
+            client
+                .scan_reverse(Vec::<u8>::new()..b"z".to_vec(), 10)
+                .await?
+        ),
+        expected_pairs(&[("k7", "v7"), ("k5", "v5"), ("k3", "v3"), ("k1", "v1")])
+    );
+    assert_eq!(
+        pairs_bytes(
+            client
+                .scan_reverse(Vec::<u8>::new()..b"k2".to_vec(), 10)
+                .await?
+        ),
+        expected_pairs(&[("k1", "v1")])
+    );
+    assert_eq!(
+        pairs_bytes(
+            client
+                .scan_reverse(Vec::<u8>::new()..b"k6".to_vec(), 2)
+                .await?
+        ),
+        expected_pairs(&[("k5", "v5"), ("k3", "v3")])
+    );
+    assert_eq!(
+        pairs_bytes(
+            client
+                .scan_reverse(Vec::<u8>::new()..b"k5".to_vec(), 1)
+                .await?
+        ),
+        expected_pairs(&[("k3", "v3")])
+    );
+    assert_eq!(
+        pairs_bytes(
+            client
+                .scan_reverse(Vec::<u8>::new()..b"k5\0".to_vec(), 1)
+                .await?
+        ),
+        expected_pairs(&[("k5", "v5")])
+    );
+    assert_eq!(
+        pairs_bytes(
+            client
+                .scan_reverse(Vec::<u8>::new()..b"k6".to_vec(), 3)
+                .await?
+        ),
+        expected_pairs(&[("k5", "v5"), ("k3", "v3"), ("k1", "v1")])
+    );
+    assert_eq!(
+        pairs_bytes(
+            client
+                .scan_reverse(b"k3".to_vec()..b"z".to_vec(), 10)
+                .await?
+        ),
+        expected_pairs(&[("k7", "v7"), ("k5", "v5"), ("k3", "v3")])
+    );
+    assert_eq!(
+        pairs_bytes(
+            client
+                .scan_reverse(b"k3\0".to_vec()..b"k7".to_vec(), 10)
+                .await?
+        ),
+        expected_pairs(&[("k5", "v5")])
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_package_column_family_client_and_option_cases() -> Result<()> {
+    let (mut client, _) = stateful_client();
+    client.set_column_family("cf1");
+    client
+        .put(b"test_key_cf1".to_vec(), b"test_value_cf1".to_vec())
+        .await?;
+    client.set_column_family("cf2");
+    client
+        .put(b"test_key_cf2".to_vec(), b"test_value_cf2".to_vec())
+        .await?;
+
+    client.set_column_family("cf1");
+    assert_eq!(
+        client.get(b"test_key_cf1".to_vec()).await?,
+        Some(b"test_value_cf1".to_vec())
+    );
+    assert_eq!(client.get(b"test_key_cf2".to_vec()).await?, None);
+    client.set_column_family("cf2");
+    assert_eq!(
+        client.get(b"test_key_cf2".to_vec()).await?,
+        Some(b"test_value_cf2".to_vec())
+    );
+    assert_eq!(client.get(b"test_key_cf1".to_vec()).await?, None);
+    client.set_column_family("");
+    assert_eq!(client.get(b"test_key_cf1".to_vec()).await?, None);
+    assert_eq!(client.get(b"test_key_cf2".to_vec()).await?, None);
+
+    let cf1 = client.with_cf_name("cf1");
+    let cf2 = client.with_cf_name("cf2");
+    assert_eq!(
+        cf1.get(b"test_key_cf1".to_vec()).await?,
+        Some(b"test_value_cf1".to_vec())
+    );
+    assert_eq!(cf1.get(b"test_key_cf2".to_vec()).await?, None);
+    assert_eq!(
+        cf2.get(b"test_key_cf2".to_vec()).await?,
+        Some(b"test_value_cf2".to_vec())
+    );
+    assert_eq!(cf2.get(b"test_key_cf1".to_vec()).await?, None);
+    cf1.delete(b"test_key_cf1".to_vec()).await?;
+    cf2.delete(b"test_key_cf2".to_vec()).await?;
+    assert_eq!(cf1.get(b"test_key_cf1".to_vec()).await?, None);
+    assert_eq!(cf2.get(b"test_key_cf2".to_vec()).await?, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_package_scan_and_reverse_tables_hold_across_region_splits() -> Result<()> {
+    let topologies = [
+        Vec::<Vec<u8>>::new(),
+        vec![b"k2".to_vec()],
+        vec![b"k2".to_vec(), b"k5".to_vec()],
+    ];
+    for split_keys in topologies {
+        let split_refs = split_keys.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let (client, _) = stateful_client_with(regions_with_splits(&split_refs), Keyspace::Disable);
+        client
+            .batch_put(owned_pairs(&[
+                ("k1", "v1"),
+                ("k3", "v3"),
+                ("k5", "v5"),
+                ("k7", "v7"),
+            ]))
+            .await?;
+        assert_source_scan_tables(&client).await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_package_batch_and_compare_and_swap_cases() -> Result<()> {
+    let (client, _) = stateful_client();
+    let cf = client.with_cf_name("test_cf");
+    let pairs = [
+        ("db", "TiDB"),
+        ("key2", "value2"),
+        ("key1", "value1"),
+        ("key3", "value3"),
+        ("kv", "TiKV"),
+    ];
+    cf.batch_put(owned_pairs(&pairs)).await?;
+    assert_eq!(
+        cf.batch_get(pairs.iter().map(|(key, _)| key.as_bytes().to_vec()))
+            .await?,
+        pairs
+            .iter()
+            .map(|(_, value)| Some(value.as_bytes().to_vec()))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        cf.scan_keys_reverse(Vec::<u8>::new()..b"key3".to_vec(), 10)
+            .await?,
+        vec![
+            b"key2".to_vec().into(),
+            b"key1".to_vec().into(),
+            b"db".to_vec().into(),
+        ]
+    );
+    cf.batch_delete(pairs.iter().map(|(key, _)| key.as_bytes().to_vec()))
+        .await?;
+    assert_eq!(cf.get(b"db".to_vec()).await?, None);
+
+    let mut cas = client.with_cf_name("my_cf");
+    cas.put(b"kv".to_vec(), b"TiDB".to_vec()).await?;
+    assert_eq!(
+        cas.compare_and_swap(b"kv".to_vec(), Some(b"TiDB".to_vec()), b"TiKV".to_vec(),)
+            .await
+            .unwrap_err()
+            .to_string(),
+        "using CompareAndSwap without enable atomic mode"
+    );
+    cas.set_atomic_for_cas(true);
+    assert_eq!(
+        cas.compare_and_swap(b"kv".to_vec(), Some(b"TiKV".to_vec()), b"TiKV".to_vec(),)
+            .await?,
+        (Some(b"TiDB".to_vec()), false)
+    );
+    assert_eq!(
+        cas.compare_and_swap(b"kv".to_vec(), Some(b"TiDB".to_vec()), b"TiKV".to_vec(),)
+            .await?,
+        (Some(b"TiDB".to_vec()), true)
+    );
+    assert_eq!(cas.get(b"kv".to_vec()).await?, Some(b"TiKV".to_vec()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_package_delete_range_table_and_unbounded_multiregion_case() -> Result<()> {
+    let (client, _) =
+        stateful_client_with(regions_with_splits(&[b"b", b"c", b"d"]), Keyspace::Disable);
+    let mut expected = BTreeMap::new();
+    for prefix in b'a'..=b'd' {
+        for suffix in b'0'..=b'9' {
+            let key = vec![prefix, suffix];
+            let value = vec![b'v', prefix, suffix];
+            expected.insert(key, value);
+        }
+    }
+    client
+        .batch_put(
+            expected
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        )
+        .await?;
+
+    let cases = [
+        (b"b".to_vec(), b"c0".to_vec()),
+        (b"c11".to_vec(), b"c12".to_vec()),
+        (b"d0".to_vec(), b"d0".to_vec()),
+        (b"c5".to_vec(), b"d5".to_vec()),
+        (b"a".to_vec(), b"z".to_vec()),
+    ];
+    for (start, end) in cases {
+        client.delete_range(start.clone()..end.clone()).await?;
+        expected.retain(|key, _| key < &start || key >= &end);
+        assert_eq!(
+            pairs_bytes(client.scan(Vec::<u8>::new().., 100).await?),
+            expected
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    client
+        .batch_put(owned_pairs(&[
+            ("db", "TiDB"),
+            ("key2", "value2"),
+            ("key1", "value1"),
+            ("key4", "value4"),
+            ("kv", "TiKV"),
+        ]))
+        .await?;
+    assert_eq!(client.scan(Vec::<u8>::new().., 10).await?.len(), 5);
+    client.delete_range(Vec::<u8>::new()..).await?;
+    assert!(client.scan(Vec::<u8>::new().., 10).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_package_checksum_exact_pair_crc_count_and_bytes() -> Result<()> {
+    let (client, _) = stateful_client();
+    let pairs = [
+        ("db", "TiDB"),
+        ("key2", "value2"),
+        ("key1", "value1"),
+        ("key4", "value4"),
+        ("key3", "value3"),
+        ("kv", "TiKV"),
+    ];
+    client.batch_put(owned_pairs(&pairs)).await?;
+    let expected_crc = pairs.iter().fold(0, |checksum, (key, value)| {
+        let mut pair = key.as_bytes().to_vec();
+        pair.extend_from_slice(value.as_bytes());
+        checksum ^ crc64_ecma(&pair)
+    });
+    let checksum = client.checksum(b"db".to_vec()..).await?;
+    assert_eq!(checksum.crc64_xor, expected_crc);
+    assert_eq!(checksum.total_kvs, pairs.len() as u64);
+    assert_eq!(
+        checksum.total_bytes,
+        pairs
+            .iter()
+            .map(|(key, value)| (key.len() + value.len()) as u64)
+            .sum::<u64>()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_mock_api_raw_batch_exceeds_four_payload_windows() -> Result<()> {
+    let (client, state) = stateful_client();
+    let mut pairs = Vec::new();
+    let mut size = 0_usize;
+    let mut index = 0_usize;
+    while size / (RAW_BATCH_PUT_SIZE as usize) < 4 {
+        let key = format!("key{index}");
+        let value = format!("value{index}");
+        size += key.len() + value.len();
+        assert_eq!(client.get(key.as_bytes().to_vec()).await?, None);
+        pairs.push((key.into_bytes(), value.into_bytes()));
+        index += 1;
+    }
+    let before_put = state.dispatches();
+    client.batch_put(pairs.clone()).await?;
+    assert!(state.dispatches() - before_put >= 4);
+    assert_eq!(
+        client
+            .batch_get(pairs.iter().map(|(key, _)| key.clone()))
+            .await?,
+        pairs
+            .iter()
+            .map(|(_, value)| Some(value.clone()))
+            .collect::<Vec<_>>()
+    );
+    client
+        .batch_delete(pairs.iter().map(|(key, _)| key.clone()))
+        .await?;
+    assert!(client
+        .batch_get(pairs.iter().map(|(key, _)| key.clone()))
+        .await?
+        .into_iter()
+        .all(|value| value.is_none()));
+    Ok(())
+}
+
+fn scale_pairs(count: usize) -> Vec<(Vec<u8>, Vec<u8>)> {
+    (0..count)
+        .map(|index| {
+            (
+                format!("key@{index}").into_bytes(),
+                format!("value@{index}").into_bytes(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn source_live_api_scan_and_delete_range_scale_cases() -> Result<()> {
+    const SOURCE_SCALE: usize = 20_480;
+    let regions = regions_with_splits(&[b"key@2", b"key@5"]);
+
+    let (scan_client, _) = stateful_client_with(regions.clone(), Keyspace::Disable);
+    let pairs = scale_pairs(SOURCE_SCALE);
+    scan_client.batch_put(pairs.clone()).await?;
+    let scanned = scan_client
+        .scan(
+            Vec::<u8>::new()..,
+            MAX_RAW_KV_SCAN_LIMIT.load(Ordering::Relaxed),
+        )
+        .await?;
+    assert_eq!(scanned.len(), 10_240);
+    for pair in scanned {
+        let key: &[u8] = pair.key().as_ref();
+        assert!(key.starts_with(b"key@"));
+        assert!(pair.value().starts_with(b"value@"));
+    }
+
+    let (delete_client, _) = stateful_client_with(regions, Keyspace::Disable);
+    delete_client.batch_put(pairs).await?;
+    delete_client.delete_range(Vec::<u8>::new()..).await?;
+    for key in [b"key@0".as_slice(), b"key@1", b"key@2"] {
+        assert_eq!(delete_client.get(key.to_vec()).await?, None);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_live_api_ttl_uses_remaining_seconds_and_expires() -> Result<()> {
+    let (client, state) = stateful_client();
+    state.set_now(100);
+    client
+        .put_with_ttl(b"key".to_vec(), b"value".to_vec(), 2)
+        .await?;
+    state.set_now(101);
+    assert_eq!(client.get_key_ttl_secs(b"key".to_vec()).await?, Some(1));
+    state.set_now(102);
+    assert_eq!(client.get(b"key".to_vec()).await?, None);
+    assert_eq!(client.get_key_ttl_secs(b"key".to_vec()).await?, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_live_api_empty_value_matrix_distinguishes_missing_everywhere() -> Result<()> {
+    let (client, _) = stateful_client();
+    let mut atomic = client.clone();
+    atomic.set_atomic_for_cas(true);
+
+    assert_eq!(client.get(b"key".to_vec()).await?, None);
+    client.put(b"key".to_vec(), Vec::new()).await?;
+    assert_eq!(client.get(b"key".to_vec()).await?, Some(Vec::new()));
+    assert_eq!(
+        client
+            .batch_get([b"key".to_vec(), b"key1".to_vec()])
+            .await?,
+        vec![Some(Vec::new()), None]
+    );
+    assert_eq!(
+        pairs_bytes(client.scan(b"key".to_vec()..b"keyz".to_vec(), 10).await?),
+        vec![(b"key".to_vec(), Vec::new())]
+    );
+    assert_eq!(
+        pairs_bytes(
+            client
+                .scan_reverse(b"key".to_vec()..b"keyz".to_vec(), 10)
+                .await?
+        ),
+        vec![(b"key".to_vec(), Vec::new())]
+    );
+
+    client.delete(b"key".to_vec()).await?;
+    assert_eq!(
+        client
+            .batch_get([b"key".to_vec(), b"key1".to_vec()])
+            .await?,
+        vec![None, None]
+    );
+    assert!(client
+        .scan(b"key".to_vec()..b"keyz".to_vec(), 10)
+        .await?
+        .is_empty());
+    assert!(client
+        .scan_reverse(b"key".to_vec()..b"keyz".to_vec(), 10)
+        .await?
+        .is_empty());
+
+    client.batch_put([(b"key".to_vec(), Vec::new())]).await?;
+    assert_eq!(client.get(b"key".to_vec()).await?, Some(Vec::new()));
+    client.delete(b"key".to_vec()).await?;
+    assert_eq!(
+        atomic
+            .compare_and_swap(b"key".to_vec(), None, Vec::new())
+            .await?,
+        (None, true)
+    );
+    assert_eq!(client.get(b"key".to_vec()).await?, Some(Vec::new()));
+    assert_eq!(
+        atomic
+            .compare_and_swap(b"key".to_vec(), Some(Vec::new()), b"val".to_vec())
+            .await?,
+        (Some(Vec::new()), true)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_live_api_checksum_scale_counts_v1_and_v2_key_bytes() -> Result<()> {
+    const SOURCE_SCALE: usize = 20_480;
+    let pairs = scale_pairs(SOURCE_SCALE);
+    for keyspace in [Keyspace::Disable, Keyspace::Enable { keyspace_id: 7 }] {
+        let (client, _) = stateful_client_with(regions_with_splits(&[]), keyspace);
+        client.batch_put(pairs.clone()).await?;
+        let checksum = client.checksum(Vec::<u8>::new()..).await?;
+        let expected_crc = pairs.iter().fold(0_u64, |checksum, (key, value)| {
+            let mut pair = key.clone();
+            pair.extend_from_slice(value);
+            checksum ^ crc64_ecma(&pair)
+        });
+        let prefix_bytes = if matches!(keyspace, Keyspace::Enable { .. }) {
+            4
+        } else {
+            0
+        };
+        assert_eq!(checksum.crc64_xor, expected_crc);
+        assert_eq!(checksum.total_kvs, SOURCE_SCALE as u64);
+        assert_eq!(
+            checksum.total_bytes,
+            pairs
+                .iter()
+                .map(|(key, value)| (key.len() + value.len() + prefix_bytes) as u64)
+                .sum::<u64>()
+        );
+    }
+    Ok(())
 }
 
 #[tokio::test]

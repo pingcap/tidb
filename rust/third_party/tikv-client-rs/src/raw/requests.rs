@@ -43,7 +43,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tonic::transport::Channel;
 
-const RAW_KV_REQUEST_BATCH_SIZE: u64 = 16 * 1024; // 16 KB
+const RAW_KV_REQUEST_BATCH_SIZE: u64 = super::RAW_BATCH_PUT_SIZE;
 const RAW_KV_REQUEST_KEY_BATCH_LIMIT: isize = 512;
 
 macro_rules! impl_raw_v2_response {
@@ -814,6 +814,10 @@ impl Request for RawCoprocessorRequest {
         self.inner.as_any()
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self.inner.as_any_mut()
+    }
+
     fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()> {
         self.inner.set_leader(leader)
     }
@@ -840,6 +844,10 @@ impl Request for RawCoprocessorRequest {
 
     fn set_priority(&mut self, priority: kvrpcpb::CommandPri) {
         self.inner.set_priority(priority);
+    }
+
+    fn set_priority_value(&mut self, priority: i32) {
+        self.inner.set_priority_value(priority);
     }
 }
 

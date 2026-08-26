@@ -184,14 +184,21 @@ pub fn system_time_to_lower_limit_start_timestamp(
     now: SystemTime,
     max_transaction_time_ms: i64,
 ) -> u64 {
-    let offset = Duration::from_millis(max_transaction_time_ms.unsigned_abs());
-    let lower_limit = if max_transaction_time_ms >= 0 {
-        now.checked_sub(offset)
-    } else {
-        now.checked_add(offset)
-    }
-    .expect("timestamp is outside the range supported by SystemTime");
+    let nanoseconds = max_transaction_time_ms
+        .wrapping_neg()
+        .wrapping_mul(1_000_000);
+    let lower_limit = add_wrapping_nanoseconds(now, nanoseconds);
     system_time_to_timestamp(lower_limit)
+}
+
+pub(crate) fn add_wrapping_nanoseconds(time: SystemTime, nanoseconds: i64) -> SystemTime {
+    let offset = Duration::from_nanos(nanoseconds.unsigned_abs());
+    if nanoseconds >= 0 {
+        time.checked_add(offset)
+    } else {
+        time.checked_sub(offset)
+    }
+    .expect("timestamp is outside the range supported by SystemTime")
 }
 
 fn duration_as_nanoseconds(duration: Duration) -> i128 {
@@ -254,6 +261,17 @@ mod tests {
         assert_eq!(
             system_time_to_lower_limit_start_timestamp(now, -1),
             system_time_to_timestamp(UNIX_EPOCH + Duration::from_micros(1_500))
+        );
+
+        // Go first converts the signed millisecond count to `time.Duration`.
+        // Its nanosecond multiplication wraps before `time.Time.Add` runs.
+        assert_eq!(
+            system_time_to_lower_limit_start_timestamp(now, i64::MAX),
+            system_time_to_timestamp(now + Duration::from_millis(1))
+        );
+        assert_eq!(
+            system_time_to_lower_limit_start_timestamp(now, i64::MIN),
+            system_time_to_timestamp(now)
         );
     }
 

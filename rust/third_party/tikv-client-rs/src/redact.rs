@@ -12,12 +12,20 @@ static REDACT_LOG_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// Returns whether log redaction is enabled.
 pub fn need_redact() -> bool {
-    REDACT_LOG_ENABLED.load(Ordering::Relaxed)
+    REDACT_LOG_ENABLED.load(Ordering::SeqCst)
 }
 
 /// Enables or disables global log redaction.
 pub fn set_redact_log_enabled(enabled: bool) {
-    REDACT_LOG_ENABLED.store(enabled, Ordering::Relaxed);
+    REDACT_LOG_ENABLED.store(enabled, Ordering::SeqCst);
+}
+
+/// Sets redaction from client-go's process-wide string mode.
+///
+/// The source disables redaction only for the empty string and `OFF`; `ON`,
+/// `MARKER`, and future non-empty modes all redact keys.
+pub fn set_redact_log_mode(mode: &str) {
+    set_redact_log_enabled(!mode.is_empty() && mode != "OFF");
 }
 
 /// Formats a key as uppercase hexadecimal, or as `?` when redaction is enabled.
@@ -32,6 +40,15 @@ pub fn key(key: &[u8]) -> String {
 /// Returns [`key`] as bytes.
 pub fn key_bytes(data: &[u8]) -> Vec<u8> {
     key(data).into_bytes()
+}
+
+/// Returns the same bytes without copying.
+///
+/// Go's exported `String` helper performs an unsafe zero-copy conversion to a
+/// Go string, whose contents may be arbitrary bytes. A borrowed byte slice is
+/// the safe Rust representation that preserves both properties.
+pub const fn string(data: &[u8]) -> &[u8] {
+    data
 }
 
 /// Redacts every key field covered by client-go's `RedactKeyErrIfNecessary`.
@@ -107,14 +124,28 @@ mod tests {
     #[test]
     #[serial]
     fn key_rendering_follows_the_global_mode() {
-        set_redact_log_enabled(false);
+        set_redact_log_mode("");
         assert_eq!(key(&[0xab, 0xcd, 1]), "ABCD01");
         assert_eq!(key_bytes(&[0xab, 0xcd, 1]), b"ABCD01");
 
-        set_redact_log_enabled(true);
+        set_redact_log_mode("OFF");
+        assert!(!need_redact());
+
+        set_redact_log_mode("MARKER");
         let _reset = DisableRedaction;
         assert_eq!(key(b"secret"), "?");
         assert_eq!(key_bytes(b"secret"), b"?");
+
+        set_redact_log_mode("future-mode");
+        assert!(need_redact());
+    }
+
+    #[test]
+    fn source_string_is_a_zero_copy_arbitrary_byte_view() {
+        let data = [0xff, 0, b'a'];
+        let view = string(&data);
+        assert_eq!(view, data);
+        assert_eq!(view.as_ptr(), data.as_ptr());
     }
 
     #[test]

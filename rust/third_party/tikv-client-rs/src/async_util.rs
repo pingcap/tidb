@@ -393,8 +393,19 @@ mod tests {
         }
     }
 
+    fn recording_callback(
+        executor: Arc<MockExecutor>,
+    ) -> (Callback<i32, String>, Arc<Mutex<Vec<i32>>>) {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let captured = output.clone();
+        let callback = Callback::new(Some(executor), move |value, _| {
+            captured.lock().unwrap().push(value);
+        });
+        (callback, output)
+    }
+
     #[test]
-    fn callback_injects_in_reverse_order() {
+    fn source_test_inject_order() {
         let output = Arc::new(Mutex::new(Vec::new()));
         let captured = output.clone();
         let callback = Callback::<Vec<i32>, String>::new(None, move |values, error| {
@@ -418,45 +429,40 @@ mod tests {
     }
 
     #[test]
-    fn callback_is_fulfilled_once_for_every_call_order() {
+    fn source_test_fulfill_once_invoke_twice() {
         let executor = Arc::new(MockExecutor::default());
-
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let captured = output.clone();
-        let callback = Callback::<i32, String>::new(Some(executor.clone()), move |value, _| {
-            captured.lock().unwrap().push(value);
-        });
+        let (callback, output) = recording_callback(executor);
         callback.invoke(1, None);
         callback.invoke(2, None);
         assert_eq!(*output.lock().unwrap(), [1]);
+    }
 
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let captured = output.clone();
-        let callback = Callback::<i32, String>::new(Some(executor.clone()), move |value, _| {
-            captured.lock().unwrap().push(value);
-        });
+    #[test]
+    fn source_test_fulfill_once_schedule_twice() {
+        let executor = Arc::new(MockExecutor::default());
+        let (callback, output) = recording_callback(executor.clone());
         callback.schedule(1, None);
         callback.schedule(2, None);
         assert_eq!(executor.len(), 1);
         assert!(output.lock().unwrap().is_empty());
         executor.run_one();
         assert_eq!(*output.lock().unwrap(), [1]);
+    }
 
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let captured = output.clone();
-        let callback = Callback::<i32, String>::new(Some(executor.clone()), move |value, _| {
-            captured.lock().unwrap().push(value);
-        });
+    #[test]
+    fn source_test_fulfill_once_invoke_schedule() {
+        let executor = Arc::new(MockExecutor::default());
+        let (callback, output) = recording_callback(executor.clone());
         callback.invoke(1, None);
         callback.schedule(2, None);
         assert_eq!(executor.len(), 0);
         assert_eq!(*output.lock().unwrap(), [1]);
+    }
 
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let captured = output.clone();
-        let callback = Callback::<i32, String>::new(Some(executor.clone()), move |value, _| {
-            captured.lock().unwrap().push(value);
-        });
+    #[test]
+    fn source_test_fulfill_once_schedule_invoke() {
+        let executor = Arc::new(MockExecutor::default());
+        let (callback, output) = recording_callback(executor.clone());
         callback.schedule(1, None);
         callback.invoke(2, None);
         assert_eq!(executor.len(), 1);
@@ -466,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    fn runloop_spawn_uses_default_thread_or_custom_pool() {
+    fn source_test_go() {
         let loop_ = RunLoop::new();
         let value = Arc::new(AtomicU32::new(0));
         let captured = value.clone();
@@ -490,19 +496,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runloop_waits_and_executes_appended_tasks() {
+    async fn source_test_exec_wait() {
         let loop_ = Arc::new(RunLoop::new());
         let output = Arc::new(Mutex::new(Vec::new()));
-        let producer_loop = loop_.clone();
-        let producer_output = output.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(1));
-            producer_loop.append(vec![Box::new(move || {
-                producer_output.lock().unwrap().push(1)
-            })]);
-        });
+        let executing_loop = loop_.clone();
+        let handle =
+            tokio::spawn(async move { executing_loop.execute(&Cancellation::default()).await });
+        while loop_.state() != State::Waiting {
+            tokio::task::yield_now().await;
+        }
+        let task_output = output.clone();
+        loop_.append(vec![Box::new(move || task_output.lock().unwrap().push(1))]);
 
-        let (count, result) = loop_.execute(&Cancellation::default()).await;
+        let (count, result) = handle.await.unwrap();
         result.unwrap();
         assert_eq!(count, 1);
         assert_eq!(loop_.state(), State::Idle);
@@ -511,7 +517,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runloop_includes_tasks_appended_while_running() {
+    async fn source_test_exec_once() {
         let loop_ = Arc::new(RunLoop::new());
         let output = Arc::new(Mutex::new(Vec::new()));
         let nested_loop = loop_.clone();
@@ -531,7 +537,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runloop_leaves_later_tasks_for_the_next_execute() {
+    async fn source_test_exec_twice() {
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
         let loop_ = Arc::new(RunLoop::new());
         let output = Arc::new(Mutex::new(Vec::new()));
         let producer_loop = loop_.clone();
@@ -540,7 +547,7 @@ mod tests {
         loop_.append(vec![Box::new(move || {
             let producer_loop = producer_loop.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(1));
+                release_receiver.recv().unwrap();
                 producer_loop.append(vec![Box::new(move || {
                     second_output.lock().unwrap().push(2)
                 })]);
@@ -550,12 +557,13 @@ mod tests {
 
         assert_eq!(loop_.execute(&Cancellation::default()).await, (1, Ok(())));
         assert_eq!(*output.lock().unwrap(), [1]);
+        release_sender.send(()).unwrap();
         assert_eq!(loop_.execute(&Cancellation::default()).await, (1, Ok(())));
         assert_eq!(*output.lock().unwrap(), [1, 2]);
     }
 
     #[tokio::test]
-    async fn cancellation_preserves_unexecuted_tasks() {
+    async fn source_test_exec_cancel_while_running() {
         let loop_ = Arc::new(RunLoop::new());
         let cancellation = Cancellation::default();
         let output = Arc::new(Mutex::new(Vec::new()));
@@ -580,7 +588,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancellation_wakes_a_waiting_runloop() {
+    async fn source_test_exec_cancel_while_waiting() {
         let loop_ = Arc::new(RunLoop::new());
         let cancellation = Cancellation::default();
         let cancel_from_thread = cancellation.clone();
@@ -598,7 +606,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn parent_cancellation_wakes_all_child_waiters() {
+    async fn source_uncovered_parent_cancellation_wakes_all_child_waiters() {
         let parent = Cancellation::default();
         let first = parent.child();
         let second = parent.child();
@@ -616,7 +624,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn concurrent_execute_is_rejected() {
+    async fn source_test_exec_concurrent() {
         let loop_ = Arc::new(RunLoop::new());
         let release = Arc::new(Notify::new());
         let entered = Arc::new(Notify::new());
@@ -637,5 +645,29 @@ mod tests {
         );
         release.notify_one();
         assert_eq!(handle.await.unwrap(), (1, Ok(())));
+    }
+
+    #[test]
+    fn source_uncovered_public_surfaces_are_preserved() {
+        let executor = Arc::new(MockExecutor::default());
+        let expected: Arc<dyn Executor> = executor.clone();
+        let callback = Callback::<(), String>::new(Some(executor), |_, _| {});
+        assert!(Arc::ptr_eq(&callback.executor().unwrap(), &expected));
+
+        let loop_ = RunLoop::new();
+        loop_.append(Vec::new());
+        assert_eq!(loop_.state(), State::Idle);
+        assert_eq!(loop_.num_runnable(), 0);
+        assert_eq!(
+            RunLoopError::AlreadyExecuting.to_string(),
+            "runloop: already executing"
+        );
+        assert_eq!(RunLoopError::Cancelled.to_string(), "runloop: cancelled");
+
+        let parent = Cancellation::default();
+        let child = parent.child();
+        child.cancel();
+        assert!(child.is_cancelled());
+        assert!(!parent.is_cancelled());
     }
 }

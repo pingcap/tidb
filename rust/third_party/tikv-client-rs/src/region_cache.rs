@@ -2259,6 +2259,19 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         need_region_has_leader: bool,
         backoffer: &mut RetryBackoffer,
     ) -> Result<Vec<RegionWithLeader>> {
+        let trace_context = crate::trace::current_trace_context();
+        let trace_enabled = crate::trace::is_category_enabled(crate::trace::Category::RegionCache);
+        if trace_enabled {
+            crate::trace::trace_event(
+                &trace_context,
+                crate::trace::Category::RegionCache,
+                "region_cache.batch_locate.start",
+                &[
+                    crate::trace::TraceField::new("rangeCount", ranges.len()),
+                    crate::trace::TraceField::new("ranges", ranges.clone()),
+                ],
+            );
+        }
         let mut uncached_ranges = Vec::with_capacity(ranges.len());
         let mut cached_regions = Vec::with_capacity(ranges.len());
         let mut last_region: Option<RegionWithLeader> = None;
@@ -2316,11 +2329,37 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             }
         }
 
+        if trace_enabled {
+            crate::trace::trace_event(
+                &trace_context,
+                crate::trace::Category::RegionCache,
+                "region_cache.batch_locate.cache_summary",
+                &[
+                    crate::trace::TraceField::new("cachedRegionCount", cached_regions.len()),
+                    crate::trace::TraceField::new("uncachedRangeCount", uncached_ranges.len()),
+                    crate::trace::TraceField::new("cachedRegions", cached_regions.clone()),
+                    crate::trace::TraceField::new("uncachedRanges", uncached_ranges.clone()),
+                ],
+            );
+        }
+
         let size_hint = cached_regions.len() + uncached_ranges.len();
         let mut merger = BatchLocateRegionMerger::new(cached_regions, size_hint);
         while !uncached_ranges.is_empty() {
             let range_count = uncached_ranges.len().min(MAX_RANGES_PER_BATCH);
             let to_send = &uncached_ranges[..range_count];
+            if trace_enabled {
+                crate::trace::trace_event(
+                    &trace_context,
+                    crate::trace::Category::RegionCache,
+                    "region_cache.batch_locate.pd_request",
+                    &[
+                        crate::trace::TraceField::new("rangeCount", to_send.len()),
+                        crate::trace::TraceField::new("limit", DEFAULT_REGIONS_PER_BATCH),
+                        crate::trace::TraceField::new("ranges", to_send.to_vec()),
+                    ],
+                );
+            }
             let regions = self
                 .batch_load_regions_with_key_ranges(
                     to_send.to_vec(),
@@ -2330,6 +2369,17 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     backoffer,
                 )
                 .await?;
+            if trace_enabled {
+                crate::trace::trace_event(
+                    &trace_context,
+                    crate::trace::Category::RegionCache,
+                    "region_cache.batch_locate.pd_response",
+                    &[
+                        crate::trace::TraceField::new("regionCount", regions.len()),
+                        crate::trace::TraceField::new("regions", regions.clone()),
+                    ],
+                );
+            }
             let Some(last) = regions.last() else {
                 return Err(Error::StringError(
                     "BatchLoadRegionsWithKeyRanges returned no regions".to_owned(),
@@ -2341,7 +2391,19 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             }
             uncached_ranges = ranges_after_key(uncached_ranges, &split_key);
         }
-        Ok(merger.build())
+        let result = merger.build();
+        if trace_enabled {
+            crate::trace::trace_event(
+                &trace_context,
+                crate::trace::Category::RegionCache,
+                "region_cache.batch_locate.merged",
+                &[
+                    crate::trace::TraceField::new("locationCount", result.len()),
+                    crate::trace::TraceField::new("locations", result.clone()),
+                ],
+            );
+        }
+        Ok(result)
     }
 
     /// Force read through (query from PD) and update cache
@@ -3802,6 +3864,15 @@ mod test {
     use crate::store::EndpointType;
     use crate::Key;
     use crate::Result;
+
+    struct ResetTraceHandlers;
+
+    impl Drop for ResetTraceHandlers {
+        fn drop(&mut self) {
+            crate::trace::set_trace_event_handler(None);
+            crate::trace::set_category_enabled_handler(None);
+        }
+    }
 
     #[derive(Default)]
     struct MockRetryClient {
@@ -6742,6 +6813,50 @@ mod test {
             .await?;
         assert_eq!(region_ids(&located), vec![2, 3, 4, 6, 7]);
         assert_eq!(client.batch_scan_count.load(SeqCst), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn source_trace_batch_locate_emits_cache_lifecycle() -> Result<()> {
+        crate::trace::set_category_enabled_handler(Some(Arc::new(|category| {
+            category == crate::trace::Category::RegionCache
+        })));
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        crate::trace::set_trace_event_handler(Some(Arc::new(move |context, category, name, _| {
+            if context.trace_id() == Some(b"region-trace") {
+                captured.lock().unwrap().push((category, name.to_owned()));
+            }
+        })));
+        let _reset = ResetTraceHandlers;
+
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        cache.add_region(region_with_leader(1, b"", b"")).await;
+        let mut backoffer = RetryBackoffer::noop(Cancellation::default());
+        let located = crate::trace::with_trace_context(
+            crate::trace::TraceContext::new().with_trace_id(b"region-trace".to_vec()),
+            cache.batch_locate_key_ranges(vec![key_range(b"a", b"z")], false, true, &mut backoffer),
+        )
+        .await?;
+        assert_eq!(region_ids(&located), vec![1]);
+        assert_eq!(
+            events.lock().unwrap().as_slice(),
+            &[
+                (
+                    crate::trace::Category::RegionCache,
+                    "region_cache.batch_locate.start".to_owned(),
+                ),
+                (
+                    crate::trace::Category::RegionCache,
+                    "region_cache.batch_locate.cache_summary".to_owned(),
+                ),
+                (
+                    crate::trace::Category::RegionCache,
+                    "region_cache.batch_locate.merged".to_owned(),
+                ),
+            ]
+        );
         Ok(())
     }
 

@@ -190,6 +190,7 @@ fn to_driver_flags(flags: TikvKeyFlags) -> KeyFlags {
 pub struct TikvMemBufferIterator {
     inner: Box<dyn TikvKvIterator>,
     current_key: Key,
+    current_value: Vec<u8>,
 }
 
 impl TikvMemBufferIterator {
@@ -197,14 +198,26 @@ impl TikvMemBufferIterator {
         let mut iterator = Self {
             inner,
             current_key: Key::from(Vec::new()),
+            current_value: Vec::new(),
         };
-        iterator.refresh_key();
+        iterator.refresh_position();
         iterator
     }
 
-    fn refresh_key(&mut self) {
+    /// Materialises the entry at the current position.
+    ///
+    /// The key was always copied here, because upstream lends `&[u8]` and
+    /// this surface owes a typed [`Key`]. The value is copied for a second
+    /// reason: upstream's `KvIterator::value` takes `&mut self` (its
+    /// arena-backed iterators resolve the value handle on demand), while Go
+    /// `kv.Iterator.Value()` -- which [`KvIterator`] ports -- is a plain
+    /// read of the current position. Resolving once per position keeps that
+    /// signature honest and costs one copy per entry rather than one per
+    /// `value()` call.
+    fn refresh_position(&mut self) {
         if self.inner.valid() {
             self.current_key = Key::from(self.inner.key().to_vec());
+            self.current_value = self.inner.value().to_vec();
         }
     }
 }
@@ -221,14 +234,14 @@ impl KvIterator for TikvMemBufferIterator {
     }
 
     fn value(&self) -> &[u8] {
-        self.inner.value()
+        &self.current_value
     }
 
     fn next(&mut self) -> Result<(), Self::Error> {
         self.inner
             .next()
             .map_err(|message| TikvMemBufferError::Backend(message.to_owned()))?;
-        self.refresh_key();
+        self.refresh_position();
         Ok(())
     }
 

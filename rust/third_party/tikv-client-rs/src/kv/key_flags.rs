@@ -226,8 +226,34 @@ mod tests {
 
     #[test]
     fn every_flag_operation_matches_its_inverse_or_single_effect() {
-        assert_eq!(FlagsOp::SetPresumeKeyNotExists as u32, 1);
-        assert_eq!(FlagsOp::SetKeyLockedInExclusiveMode as u32, 1 << 21);
+        let all_operations = [
+            FlagsOp::SetPresumeKeyNotExists,
+            FlagsOp::DelPresumeKeyNotExists,
+            FlagsOp::SetKeyLocked,
+            FlagsOp::DelKeyLocked,
+            FlagsOp::SetNeedLocked,
+            FlagsOp::DelNeedLocked,
+            FlagsOp::SetKeyLockedValueExists,
+            FlagsOp::SetKeyLockedValueNotExists,
+            FlagsOp::DelNeedCheckExists,
+            FlagsOp::SetPrewriteOnly,
+            FlagsOp::SetIgnoredIn2Pc,
+            FlagsOp::SetReadable,
+            FlagsOp::SetNewlyInserted,
+            FlagsOp::SetAssertExist,
+            FlagsOp::SetAssertNotExist,
+            FlagsOp::SetAssertUnknown,
+            FlagsOp::SetAssertNone,
+            FlagsOp::SetNeedConstraintCheckInPrewrite,
+            FlagsOp::DelNeedConstraintCheckInPrewrite,
+            FlagsOp::SetPreviousPresumeKeyNotExists,
+            FlagsOp::SetKeyLockedInShareMode,
+            FlagsOp::SetKeyLockedInExclusiveMode,
+        ];
+        for (index, operation) in all_operations.into_iter().enumerate() {
+            assert_eq!(operation as u32, 1 << index);
+        }
+
         let flags = apply_flags_ops(
             KeyFlags::default(),
             &[
@@ -262,5 +288,26 @@ mod tests {
         assert!(!flags.has_locked());
         assert!(!flags.has_locked_in_share_mode());
         assert!(flags.has_presume_key_not_exists());
+
+        let flags = apply_flags_ops(
+            flags,
+            &[
+                FlagsOp::SetNeedConstraintCheckInPrewrite,
+                FlagsOp::SetKeyLockedValueNotExists,
+                FlagsOp::DelNeedCheckExists,
+            ],
+        );
+        assert!(!flags.has_locked_value_exists());
+        assert!(!flags.has_need_constraint_check_in_prewrite());
+        assert!(!flags.has_need_check_exists());
+
+        let flags = apply_flags_ops(
+            flags,
+            &[
+                FlagsOp::SetNeedConstraintCheckInPrewrite,
+                FlagsOp::DelNeedConstraintCheckInPrewrite,
+            ],
+        );
+        assert!(!flags.has_need_constraint_check_in_prewrite());
     }
 }

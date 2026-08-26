@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use super::plan::CountLockResolverAction;
 use super::plan::PreserveShard;
+use super::plan::ValidateSnapshotVisibility;
 use super::Keyspace;
 use crate::backoff::Backoff;
 use crate::interceptor::RpcInterceptorChain;
@@ -76,6 +77,10 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
             pd_client,
             plan: Dispatch {
                 request,
+                request_shard_decorator: None,
+                request_shard_identity: None,
+                decorated_shard_identity: None,
+                request_preparer: None,
                 kv_client: None,
                 request_timeout: None,
                 retry_request_timeout: None,
@@ -83,6 +88,9 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 target: String::new(),
                 forwarded_host: String::new(),
                 replica_read_config: ReplicaReadConfig::default(),
+                snapshot_replica_read_base_config: None,
+                snapshot_replica_read_adjuster: None,
+                region_with_leader: None,
                 replica_selector_state: crate::locate::ReplicaSelectorState::default(),
                 store_health: None,
                 record_client_side_slow_score: false,
@@ -101,6 +109,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 interceptor: None,
                 execution_details_trace_handler:
                     crate::trace::current_execution_details_trace_handler(),
+                trace_context: crate::trace::current_trace_context(),
                 network_traffic_details: crate::traffic::current_network_traffic_details(),
                 network_stale_read: false,
                 resource_control: None,
@@ -118,7 +127,30 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
 
     /// Set the TiKV command priority carried by every shard and retry of this request.
     pub fn priority(mut self, priority: Priority) -> Self {
-        self.plan.request.set_priority(priority.into());
+        self.plan.request.set_priority_value(priority.to_pb());
+        self
+    }
+
+    /// Recompute request fields whose source semantics are tied to the exact
+    /// physical send rather than logical request construction.
+    pub(crate) fn prepare_request<F>(mut self, prepare: F) -> Self
+    where
+        F: Fn(&mut Req) -> Result<()> + Send + Sync + 'static,
+    {
+        self.plan.request_preparer = Some(Arc::new(prepare));
+        self
+    }
+
+    /// Decorate each physical region/batch request exactly once, after its
+    /// shard has been selected. This matches source request construction for
+    /// fields such as a resource-group tag derived from that batch's keys.
+    pub(crate) fn decorate_shard_request<I, F>(mut self, identity: I, decorate: F) -> Self
+    where
+        I: Fn(&Req) -> Vec<Vec<u8>> + Send + Sync + 'static,
+        F: Fn(&mut Req) + Send + Sync + 'static,
+    {
+        self.plan.request_shard_decorator = Some(Arc::new(decorate));
+        self.plan.request_shard_identity = Some(Arc::new(identity));
         self
     }
 
@@ -167,6 +199,19 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
         let config = config.for_source_build();
         self.plan.network_stale_read = config.stale_read;
         self.plan.replica_read_config = config;
+        self
+    }
+
+    /// Apply client-go's snapshot BatchGet replica adjustment after each
+    /// physical region shard is known, rather than to the logical key set.
+    pub(crate) fn snapshot_replica_read_adjuster(
+        mut self,
+        adjuster: Option<crate::ReplicaReadAdjuster>,
+    ) -> Self {
+        self.plan.snapshot_replica_read_base_config = adjuster
+            .as_ref()
+            .map(|_| self.plan.replica_read_config.clone());
+        self.plan.snapshot_replica_read_adjuster = adjuster;
         self
     }
 
@@ -227,6 +272,33 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 option: crate::oracle::OracleOption { txn_scope },
             });
         self
+    }
+
+    /// Check source snapshot visibility after a successful physical response.
+    /// Scanner plans place this wrapper inside lock resolution so a stale
+    /// snapshot fails before resolving a response-level lock.
+    pub(crate) fn validate_snapshot_visibility(
+        self,
+        validator: Option<Arc<dyn crate::SnapshotVisibilityValidator>>,
+        read_timestamp: u64,
+    ) -> PlanBuilder<PdC, ValidateSnapshotVisibility<Dispatch<Req>>, NoTarget>
+    where
+        Req::Response: HasRegionError,
+    {
+        PlanBuilder {
+            pd_client: self.pd_client,
+            plan: ValidateSnapshotVisibility {
+                inner: self.plan,
+                validator,
+                read_timestamp,
+            },
+            keyspace_name: self.keyspace_name,
+            rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
+            phantom: PhantomData,
+        }
     }
 
     /// Set the API V2 keyspace name carried by every clone and shard of this request.
@@ -400,6 +472,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                     resolve_locks_context.resource_group_name = self.resource_group_name.clone();
                     resolve_locks_context.resource_control = self.resource_control.clone();
                     resolve_locks_context.ru_details = self.ru_details.clone();
+                    resolve_locks_context.trace_context = crate::trace::current_trace_context();
                     resolve_locks_context
                 },
                 read_lock_context: None,
@@ -417,6 +490,25 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
             ru_details: self.ru_details,
             phantom: PhantomData,
         }
+    }
+
+    /// Resolve pessimistic conflicts with client-go's region-wide rollback
+    /// option. The option is scoped to this plan's context clone, so snapshot
+    /// and ordinary resolver callers that share the underlying state retain
+    /// their exact-key behavior.
+    pub(crate) fn resolve_lock_with_context_and_pessimistic_region(
+        self,
+        timestamp: Timestamp,
+        backoff: Backoff,
+        keyspace: Keyspace,
+        mut resolve_locks_context: ResolveLocksContext,
+    ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
+    where
+        P: Shardable,
+        P::Result: HasLocks,
+    {
+        resolve_locks_context.pessimistic_region_resolve = true;
+        self.resolve_lock_with_context(timestamp, backoff, keyspace, resolve_locks_context)
     }
 
     /// Resolve locks encountered by a snapshot read. Unlike a mutation,
@@ -437,6 +529,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         P: Shardable,
         P::Result: HasLocks,
     {
+        resolve_locks_context.trace_context = crate::trace::current_trace_context();
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: ResolveLock {
@@ -477,23 +570,22 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         }
     }
 
-    /// Resolve only a response-level snapshot lock. Pair-level errors remain
-    /// attached for the scanner to recover with key-local point reads.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn resolve_response_lock_for_read(
+    /// Resolve only a response-level scanner lock with client-go's ordinary
+    /// `LockResolver.ResolveLocks` path. Pair-level errors remain attached for
+    /// key-local point reads, which separately use read-through resolution.
+    pub(crate) fn resolve_response_lock_for_scan(
         self,
         timestamp: Timestamp,
         backoff: Backoff,
         keyspace: Keyspace,
-        read_lock_context: ReadLockContext,
         mut resolve_locks_context: ResolveLocksContext,
-        snapshot_runtime_stats: Option<Arc<crate::SnapshotRuntimeStats>>,
         snapshot_variables: Arc<crate::Variables>,
     ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
     where
         P: Shardable,
         P::Result: HasLocks,
     {
+        resolve_locks_context.trace_context = crate::trace::current_trace_context();
         resolve_locks_context.rpc_interceptor = self.rpc_interceptor.clone();
         resolve_locks_context.resource_group_name = self.resource_group_name.clone();
         resolve_locks_context.resource_control = self.resource_control.clone();
@@ -512,12 +604,9 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 resource_control: self.resource_control.clone(),
                 ru_details: self.ru_details.clone(),
                 resolve_locks_context,
-                read_lock_context: Some(read_lock_context),
-                snapshot_lock_backoff: Some(SnapshotLockBackoff::new(
-                    snapshot_runtime_stats.clone(),
-                    snapshot_variables,
-                )),
-                snapshot_runtime_stats,
+                read_lock_context: None,
+                snapshot_lock_backoff: Some(SnapshotLockBackoff::new(None, snapshot_variables)),
+                snapshot_runtime_stats: None,
                 response_locks_only: true,
                 prewrite_lock_conflict: None,
                 max_timestamp_point_get: false,
@@ -544,6 +633,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         P::Result: HasLocks + HasNextBatch + HasRegionError + HasKeyErrors,
     {
         let mut ctx = ctx;
+        ctx.trace_context = crate::trace::current_trace_context();
         if ctx.ru_details.is_none() {
             ctx.ru_details = self.ru_details.clone();
         }
@@ -668,9 +758,27 @@ where
     P::Result: HasLocks,
     Ph: PlanBuilderPhase,
 {
+    /// Bind mutation lock waits to the same cumulative client-go Backoffer
+    /// owner used by the enclosing region retries.
+    pub(crate) fn source_retry_owner(
+        mut self,
+        owner: Arc<tokio::sync::Mutex<RetryBackoffer>>,
+    ) -> Self {
+        self.plan.snapshot_lock_backoff =
+            Some(crate::request::plan::SnapshotLockBackoff::with_owner(owner));
+        self
+    }
+
     /// Apply client-go's latest-version autocommit point-get lock rule.
     pub(crate) fn max_timestamp_point_get(mut self, enabled: bool) -> Self {
         self.plan.max_timestamp_point_get = enabled;
+        self
+    }
+
+    /// Point Get uses client-go's explicit `resolveLite=true` behavior even
+    /// when the lock advertises a transaction size above the global threshold.
+    pub(crate) fn force_lite_lock_resolution(mut self) -> Self {
+        self.plan.resolve_locks_context.force_lite = true;
         self
     }
 
@@ -750,6 +858,74 @@ where
         self.make_retry_multi_region(backoff, false)
     }
 
+    /// Share one client-go cumulative Backoffer across mutation region retries
+    /// and the nested lock-resolution plan.
+    pub(crate) fn retry_multi_region_with_source_retry_owner(
+        mut self,
+        legacy_backoff: Backoff,
+        owner: Arc<tokio::sync::Mutex<RetryBackoffer>>,
+    ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, SnapshotRegionBackoff>, Targetted> {
+        if owner
+            .try_lock()
+            .expect("source retry owner must be idle while building a request plan")
+            .total_sleep_ms()
+            > 0
+        {
+            self.plan.mark_retry_request();
+        }
+        self.plan.set_snapshot_retry_owner(Arc::clone(&owner));
+        self.make_retry_multi_region(
+            SnapshotRegionBackoff::with_owner(legacy_backoff, owner),
+            false,
+        )
+    }
+
+    /// Preserve per-shard pessimistic-lock results while sharing the source
+    /// cumulative retry owner across region retries and lock waits.
+    pub(crate) fn retry_multi_region_preserve_results_with_source_retry_owner(
+        mut self,
+        legacy_backoff: Backoff,
+        owner: Arc<tokio::sync::Mutex<RetryBackoffer>>,
+    ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, SnapshotRegionBackoff>, Targetted> {
+        if owner
+            .try_lock()
+            .expect("source retry owner must be idle while building a request plan")
+            .total_sleep_ms()
+            > 0
+        {
+            self.plan.mark_retry_request();
+        }
+        self.plan.set_snapshot_retry_owner(Arc::clone(&owner));
+        self.make_retry_multi_region(
+            SnapshotRegionBackoff::with_owner(legacy_backoff, owner),
+            true,
+        )
+    }
+
+    /// Share one client-go cumulative Backoffer across mutation region and
+    /// lock retries while retaining the caller's source concurrency limit.
+    pub(crate) fn retry_multi_region_with_source_retry_owner_and_concurrency(
+        mut self,
+        legacy_backoff: Backoff,
+        owner: Arc<tokio::sync::Mutex<RetryBackoffer>>,
+        concurrency: usize,
+    ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, SnapshotRegionBackoff>, Targetted> {
+        if owner
+            .try_lock()
+            .expect("source retry owner must be idle while building a request plan")
+            .total_sleep_ms()
+            > 0
+        {
+            self.plan.mark_retry_request();
+        }
+        self.plan.set_snapshot_retry_owner(Arc::clone(&owner));
+        self.make_retry_multi_region_with_concurrency(
+            SnapshotRegionBackoff::with_owner(legacy_backoff, owner),
+            false,
+            concurrency,
+        )
+    }
+
     fn make_retry_multi_region<R: RegionRetryState>(
         self,
         backoff: R,
@@ -778,6 +954,7 @@ where
                 concurrency: concurrency.max(1),
                 one_region: None,
                 snapshot_region_scope: None,
+                snapshot_async_batch_get: false,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -805,6 +982,12 @@ where
     /// Record the source snapshot's initial distinct-region count.
     pub(crate) fn observe_snapshot_regions(mut self, internal: bool) -> Self {
         self.plan.snapshot_region_scope = Some(internal);
+        self
+    }
+
+    /// Enable client-go's callback-path-only BatchGet result counters.
+    pub(crate) fn async_batch_get_metrics(mut self, enabled: bool) -> Self {
+        self.plan.snapshot_async_batch_get = enabled;
         self
     }
 }
@@ -1041,6 +1224,21 @@ mod tests {
     }
 
     #[test]
+    fn source_priority_preserves_an_unknown_protobuf_value() {
+        let builder = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .priority(Priority::from_i32(99));
+
+        let request = builder.plan.request;
+        let cloned = request.clone();
+        assert_eq!(request.context.as_ref().unwrap().priority, 99);
+        assert_eq!(cloned.context.as_ref().unwrap().priority, 99);
+    }
+
+    #[test]
     fn source_snapshot_read_timeout_sets_transport_and_tikv_deadlines() {
         let timeout = Duration::from_millis(17);
         let builder = PlanBuilder::new(
@@ -1201,6 +1399,33 @@ mod tests {
             builder.plan.ru_details.as_ref().unwrap(),
             &details
         ));
+    }
+
+    #[test]
+    fn source_lock_resolution_options_are_scoped_to_the_plan_context_clone() {
+        let shared = ResolveLocksContext::default();
+        let builder = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .resolve_lock_with_context_and_pessimistic_region(
+            Timestamp::default(),
+            Backoff::no_jitter_backoff(0, 0, 1),
+            Keyspace::Disable,
+            shared.clone(),
+        )
+        .force_lite_lock_resolution();
+
+        assert!(
+            builder
+                .plan
+                .resolve_locks_context
+                .pessimistic_region_resolve
+        );
+        assert!(builder.plan.resolve_locks_context.force_lite);
+        assert!(!shared.pessimistic_region_resolve);
+        assert!(!shared.force_lite);
     }
 
     #[test]

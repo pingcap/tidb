@@ -8,7 +8,7 @@ use std::convert::Infallible;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock, Weak};
 use std::task::{Context, Poll};
 
@@ -43,7 +43,6 @@ pub(crate) type MetadataChecker = Arc<
 pub(crate) struct MockServerCore {
     batch_handler: RwLock<Option<BatchCommandsHandler>>,
     metadata_checker: RwLock<Option<MetadataChecker>>,
-    feedback_sequence: AtomicU64,
 }
 
 /// Transport-backed counterpart to client-go's internal `MockServer`.
@@ -121,7 +120,7 @@ impl MockServer {
             running.store(false, Ordering::Release);
             result
         });
-        self.address = Some(bound_address);
+        self.address = Some(SocketAddr::from(([127, 0, 0, 1], bound_address.port())));
         self.shutdown = Some(shutdown);
         self.task = Some(task);
         self.running.store(true, Ordering::Release);
@@ -448,16 +447,16 @@ impl tonic::server::StreamingService<tikvpb::BatchCommandsRequest> for MockBatch
         Box::pin(async move {
             core.check_metadata(request.metadata())?;
             let responses: RpcStream<_> = Box::pin(futures::stream::unfold(
-                (Some(request.into_inner()), core),
-                |(requests, core)| async move {
+                (Some(request.into_inner()), core, 1_u64),
+                |(requests, core, mut feedback_sequence)| async move {
                     let mut requests = requests?;
                     match requests.message().await {
                         Ok(Some(request)) => {
-                            let response = core.batch_commands(request);
-                            Some((response, (Some(requests), core)))
+                            let response = core.batch_commands(request, &mut feedback_sequence);
+                            Some((response, (Some(requests), core, feedback_sequence)))
                         }
                         Ok(None) => None,
-                        Err(status) => Some((Err(status), (None, core))),
+                        Err(status) => Some((Err(status), (None, core, feedback_sequence))),
                     }
                 },
             ));
@@ -471,7 +470,6 @@ impl Default for MockServerCore {
         Self {
             batch_handler: RwLock::new(None),
             metadata_checker: RwLock::new(None),
-            feedback_sequence: AtomicU64::new(1),
         }
     }
 }
@@ -499,11 +497,13 @@ impl MockServerCore {
     pub(crate) fn batch_commands(
         &self,
         request: tikvpb::BatchCommandsRequest,
+        feedback_sequence: &mut u64,
     ) -> std::result::Result<tikvpb::BatchCommandsResponse, tonic::Status> {
         if let Some(handler) = self.batch_handler.read().unwrap().clone() {
             return handler(request);
         }
-        let feedback_sequence = self.feedback_sequence.fetch_add(1, Ordering::Relaxed);
+        let current_feedback_sequence = *feedback_sequence;
+        *feedback_sequence = feedback_sequence.wrapping_add(1);
         Ok(tikvpb::BatchCommandsResponse {
             responses: request
                 .request_ids
@@ -517,7 +517,7 @@ impl MockServerCore {
             request_ids: request.request_ids,
             health_feedback: Some(kvrpcpb::HealthFeedback {
                 store_id: 1,
-                feedback_seq_no: feedback_sequence,
+                feedback_seq_no: current_feedback_sequence,
                 slow_score: 1,
                 ..Default::default()
             }),
@@ -550,17 +550,27 @@ mod tests {
     #[test]
     fn source_default_batch_response_echoes_ids_and_increments_feedback() {
         let server = MockServerCore::default();
+        let mut feedback_sequence = 1;
         let first = server
-            .batch_commands(tikvpb::BatchCommandsRequest {
-                request_ids: vec![4, 9],
-                ..Default::default()
-            })
+            .batch_commands(
+                tikvpb::BatchCommandsRequest {
+                    request_ids: vec![4, 9],
+                    ..Default::default()
+                },
+                &mut feedback_sequence,
+            )
             .unwrap();
         assert_eq!(first.request_ids, [4, 9]);
         assert_eq!(first.responses.len(), 2);
-        assert_eq!(first.health_feedback.unwrap().feedback_seq_no, 1);
+        let feedback = first.health_feedback.unwrap();
+        assert_eq!(feedback.store_id, 1);
+        assert_eq!(feedback.feedback_seq_no, 1);
+        assert_eq!(feedback.slow_score, 1);
         let second = server
-            .batch_commands(tikvpb::BatchCommandsRequest::default())
+            .batch_commands(
+                tikvpb::BatchCommandsRequest::default(),
+                &mut feedback_sequence,
+            )
             .unwrap();
         assert_eq!(second.health_feedback.unwrap().feedback_seq_no, 2);
     }
@@ -568,6 +578,7 @@ mod tests {
     #[test]
     fn source_batch_handler_replaces_default_response() {
         let server = MockServerCore::default();
+        let mut feedback_sequence = 1;
         server.set_batch_commands_handler(Some(Arc::new(|request| {
             Ok(tikvpb::BatchCommandsResponse {
                 request_ids: request.request_ids,
@@ -576,14 +587,18 @@ mod tests {
             })
         })));
         let response = server
-            .batch_commands(tikvpb::BatchCommandsRequest {
-                request_ids: vec![7],
-                ..Default::default()
-            })
+            .batch_commands(
+                tikvpb::BatchCommandsRequest {
+                    request_ids: vec![7],
+                    ..Default::default()
+                },
+                &mut feedback_sequence,
+            )
             .unwrap();
         assert_eq!(response.request_ids, [7]);
         assert_eq!(response.transport_layer_load, 42);
         assert!(response.health_feedback.is_none());
+        assert_eq!(feedback_sequence, 1);
     }
 
     #[test]
@@ -710,6 +725,49 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(error.code(), tonic::Code::PermissionDenied);
+        server.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn source_uncovered_feedback_sequence_restarts_for_each_batch_stream() {
+        let (mut server, _) = start_mock_tikv_service().await.unwrap();
+        let mut client = client_for(&server).await;
+        let mut sequences = Vec::new();
+        for request_id in [1, 2] {
+            let request = tikvpb::BatchCommandsRequest {
+                request_ids: vec![request_id],
+                ..Default::default()
+            };
+            let mut responses = client
+                .batch_commands(futures::stream::iter([request]))
+                .await
+                .unwrap()
+                .into_inner();
+            sequences.push(
+                responses
+                    .message()
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .health_feedback
+                    .unwrap()
+                    .feedback_seq_no,
+            );
+        }
+        assert_eq!(sequences, [1, 1]);
+        server.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn source_uncovered_addr_always_advertises_loopback() {
+        let mut server = MockServer::default();
+        let port = server.start("0.0.0.0:0").await.unwrap();
+        assert_eq!(
+            server.addr().as_deref(),
+            Some(format!("127.0.0.1:{port}").as_str())
+        );
+        let mut client = client_for(&server).await;
+        client.kv_get(kvrpcpb::GetRequest::default()).await.unwrap();
         server.stop().await.unwrap();
     }
 

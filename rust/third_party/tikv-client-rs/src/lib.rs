@@ -125,7 +125,6 @@
 #![allow(clippy::field_reassign_with_default)]
 #![allow(clippy::result_large_err)]
 
-#[doc(hidden)]
 pub mod async_util;
 pub mod backoff;
 pub mod error;
@@ -210,8 +209,8 @@ pub use util::RuDetails;
 pub use crate::backoff::Backoff;
 #[doc(inline)]
 pub use crate::interceptor::{
-    chain_rpc_interceptors, new_rpc_interceptor, RpcDispatchResult, RpcInterceptor,
-    RpcInterceptorChain, RpcInterceptorHandle, RpcNext,
+    chain_rpc_interceptors, new_rpc_interceptor, MockInterceptorManager, RpcDispatchResult,
+    RpcInterceptor, RpcInterceptorChain, RpcInterceptorHandle, RpcNext,
 };
 #[doc(inline)]
 pub use crate::kv::codec;
@@ -331,6 +330,10 @@ pub use crate::transaction::Transaction;
 #[doc(inline)]
 pub use crate::transaction::TransactionOptions;
 pub use crate::transaction::TransactionResourceGroupTagger;
+pub use crate::transaction::COMMIT_MAX_BACKOFF;
+pub use crate::transaction::MANAGED_LOCK_TTL;
+pub use crate::transaction::MAX_PIPELINED_TXN_TTL;
+pub use crate::transaction::PREWRITE_MAX_BACKOFF;
 pub use crate::transaction::{
     build_txn_file_max_backoff_ms, close_txn_file_idle_connections, is_request_source_use_txn_file,
     set_build_txn_file_max_backoff_ms,

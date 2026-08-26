@@ -7,9 +7,11 @@
 //! separately maintained `pkg/store/mockstore/unistore` server is not claimed
 //! by this native crate boundary.
 
+mod deadlock;
 mod mock;
 mod mvcc;
 
+pub use deadlock::{DeadlockDetector, DeadlockError};
 pub use mock::{
     Action, Assertion, AssertionLevel, IsolationLevel, LockInfo, LockRecord, MockEngine, MockError,
     MvccInfo, MvccValue, MvccWrite, Op, Pair, PessimisticAction, PessimisticLockKeyResult,

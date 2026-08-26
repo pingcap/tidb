@@ -7,7 +7,6 @@
 
 #[doc(hidden)]
 pub mod cluster;
-pub(crate) mod deadlock;
 pub mod mocktikv;
 
 use std::any::Any;
@@ -23,6 +22,7 @@ use crate::pd::RetryClient;
 use crate::proto::keyspacepb;
 use crate::proto::metapb::RegionEpoch;
 use crate::proto::metapb::{self};
+use crate::proto::pdpb;
 use crate::region::RegionId;
 use crate::region::RegionVerId;
 use crate::region::RegionWithLeader;
@@ -102,6 +102,12 @@ pub struct MockPdClient {
     regions: Arc<Mutex<Option<Vec<RegionWithLeader>>>>,
     #[new(default)]
     split_region_keys: Arc<Mutex<Vec<Vec<Vec<u8>>>>>,
+    #[new(default)]
+    split_region_ids: Arc<Mutex<Vec<u64>>>,
+    #[new(default)]
+    scattered_region_ids: Arc<Mutex<Vec<Vec<u64>>>>,
+    #[new(default)]
+    operator_region_ids: Arc<Mutex<Vec<u64>>>,
 }
 
 #[async_trait]
@@ -143,6 +149,9 @@ impl MockPdClient {
             loaded_keyspaces: Arc::default(),
             regions: Arc::default(),
             split_region_keys: Arc::default(),
+            split_region_ids: Arc::default(),
+            scattered_region_ids: Arc::default(),
+            operator_region_ids: Arc::default(),
         }
     }
 
@@ -245,6 +254,18 @@ impl MockPdClient {
     pub(crate) fn split_region_keys(&self) -> Vec<Vec<Vec<u8>>> {
         self.split_region_keys.lock().unwrap().clone()
     }
+
+    pub(crate) fn set_split_region_ids(&self, region_ids: Vec<u64>) {
+        *self.split_region_ids.lock().unwrap() = region_ids;
+    }
+
+    pub(crate) fn scattered_region_ids(&self) -> Vec<Vec<u64>> {
+        self.scattered_region_ids.lock().unwrap().clone()
+    }
+
+    pub(crate) fn operator_region_ids(&self) -> Vec<u64> {
+        self.operator_region_ids.lock().unwrap().clone()
+    }
 }
 
 #[async_trait]
@@ -253,6 +274,36 @@ impl PdClient for MockPdClient {
 
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
         Ok(RegionStore::new(region, Arc::new(self.client.clone())))
+    }
+
+    async fn map_region_to_store_with_replica(
+        self: Arc<Self>,
+        region: RegionWithLeader,
+        config: crate::ReplicaReadConfig,
+        _selector_state: crate::locate::ReplicaSelectorState,
+        _is_read_request: bool,
+    ) -> Result<RegionStore> {
+        if config.stale_read
+            || matches!(
+                config.read_type,
+                crate::ReplicaReadType::Follower | crate::ReplicaReadType::Mixed
+            )
+        {
+            let leader_id = region.leader.as_ref().map(|peer| peer.id);
+            if let Some(follower) = region
+                .region
+                .peers
+                .iter()
+                .find(|peer| Some(peer.id) != leader_id)
+                .cloned()
+            {
+                return Ok(RegionStore::new(region, Arc::new(self.client.clone()))
+                    .with_target_peer(follower)
+                    .with_stale_read(config.stale_read)
+                    .with_busy_threshold(config.busy_threshold_ms));
+            }
+        }
+        self.map_region_to_store(region).await
     }
 
     async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
@@ -332,7 +383,24 @@ impl PdClient for MockPdClient {
         _retry_limit: u64,
     ) -> Result<Vec<u64>> {
         self.split_region_keys.lock().unwrap().push(split_keys);
-        Ok(Vec::new())
+        Ok(self.split_region_ids.lock().unwrap().clone())
+    }
+
+    async fn scatter_regions(
+        self: Arc<Self>,
+        region_ids: Vec<u64>,
+        _group: Option<String>,
+    ) -> Result<pdpb::ScatterRegionResponse> {
+        self.scattered_region_ids.lock().unwrap().push(region_ids);
+        Ok(pdpb::ScatterRegionResponse::default())
+    }
+
+    async fn get_operator(self: Arc<Self>, region_id: u64) -> Result<pdpb::GetOperatorResponse> {
+        self.operator_region_ids.lock().unwrap().push(region_id);
+        Ok(pdpb::GetOperatorResponse {
+            status: pdpb::OperatorStatus::Success as i32,
+            ..Default::default()
+        })
     }
 
     async fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> Result<bool> {

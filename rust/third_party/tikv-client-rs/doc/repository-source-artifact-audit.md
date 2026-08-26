@@ -333,15 +333,18 @@ All commands use `nightly-2026-08-22` unless they invoke the pinned Go 1.25.12
 toolchain:
 
 ```text
-make unit-test
-# no-default workspace: 757 passed/1 configured skip
-# all-feature library: 750 passed/1 configured skip
+cargo test --workspace --no-default-features --quiet
+# tikv-client library: 1,001 passed/1 intentional ignore;
+# all workspace, external-consumer, and doctests passed
+
+cargo test -p tikv-client --lib --all-features --quiet
+# 998 passed/1 intentional ignore
 
 cargo test --no-default-features --test public_injected_client_tests
 # 1 external ordinary-build injected-client test passed
 
 cargo test -p unistore
-# 22 unit + 2 external-consumer tests passed
+# 32 unit + 3 external-consumer tests passed
 
 cargo check --workspace --all-targets --all-features
 cargo clippy --workspace --all-targets --all-features --message-format=short -- -D warnings

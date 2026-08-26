@@ -2464,8 +2464,8 @@ mod tests {
                 // for response headers before publishing that envelope.
                 let first_request = requests.message().await?;
                 let responses: BatchResponseStream = Box::pin(futures::stream::unfold(
-                    (Some(requests), false, first_request),
-                    move |(requests, complete, buffered_request)| {
+                    (Some(requests), false, first_request, 1_u64),
+                    move |(requests, complete, buffered_request, mut feedback_sequence)| {
                         let core = core.clone();
                         let client_send_times = client_send_times.clone();
                         async move {
@@ -2478,7 +2478,10 @@ mod tests {
                                 None => match requests.message().await {
                                     Ok(request) => request,
                                     Err(status) => {
-                                        return Some((Err(status), (None, true, None)));
+                                        return Some((
+                                            Err(status),
+                                            (None, true, None, feedback_sequence),
+                                        ));
                                     }
                                 },
                             };
@@ -2527,10 +2530,13 @@ mod tests {
                                     Some(tikvpb::batch_commands_response::response::Cmd::Empty(_))
                                 )
                                     }) {
-                                        core.batch_commands(tikvpb::BatchCommandsRequest {
-                                            request_ids: request.request_ids,
-                                            ..Default::default()
-                                        })
+                                        core.batch_commands(
+                                            tikvpb::BatchCommandsRequest {
+                                                request_ids: request.request_ids,
+                                                ..Default::default()
+                                            },
+                                            &mut feedback_sequence,
+                                        )
                                     } else {
                                         Ok(tikvpb::BatchCommandsResponse {
                                             request_ids: request.request_ids,
@@ -2538,7 +2544,15 @@ mod tests {
                                             ..Default::default()
                                         })
                                     };
-                                    Some((response, (Some(requests), close_after_response, None)))
+                                    Some((
+                                        response,
+                                        (
+                                            Some(requests),
+                                            close_after_response,
+                                            None,
+                                            feedback_sequence,
+                                        ),
+                                    ))
                                 }
                                 None => None,
                             }

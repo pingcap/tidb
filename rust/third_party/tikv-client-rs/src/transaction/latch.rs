@@ -294,6 +294,11 @@ impl LatchesScheduler {
         self.state.lock().unwrap().closed = true;
     }
 
+    #[cfg(test)]
+    pub(crate) fn is_closed(&self) -> bool {
+        self.state.lock().unwrap().closed
+    }
+
     fn cancel_lock(&self, lock: &SharedLock) {
         let mut state = self.state.lock().unwrap();
         state.latches.cancel(lock);
@@ -413,6 +418,8 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{Duration, UNIX_EPOCH};
 
+    use rand::Rng;
+
     use super::*;
     use crate::oracle::system_time_to_timestamp;
 
@@ -429,7 +436,7 @@ mod tests {
     }
 
     #[test]
-    fn original_wakeup_and_stale_scenario() {
+    fn source_test_wake_up() {
         let mut latches = Latches::new(256);
         let (_, lock_a) = lock_state(&mut latches, &[b"a", b"b", b"c"]);
         let (start_b, lock_b) = lock_state(&mut latches, &[b"d", b"e", b"a", b"c"]);
@@ -450,7 +457,21 @@ mod tests {
     }
 
     #[test]
-    fn original_first_acquire_stale_and_recycle_scenarios() {
+    fn source_test_first_acquire_failed_with_stale() {
+        let mut latches = Latches::new(256);
+        let (_, first) = lock_state(&mut latches, &[b"a", b"b", b"c"]);
+        let (waiting_start, waiting) = lock_state(&mut latches, &[b"a", b"b", b"c"]);
+        assert_eq!(latches.acquire(&first), AcquireResult::Success);
+        let commit_timestamp = next_timestamp();
+        first.lock().unwrap().commit_timestamp = commit_timestamp;
+        latches.release(&first);
+        assert!(commit_timestamp > waiting_start);
+        assert_eq!(latches.acquire(&waiting), AcquireResult::Stale);
+        latches.release(&waiting);
+    }
+
+    #[test]
+    fn source_test_recycle() {
         let mut latches = Latches::new(8);
         let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let start = system_time_to_timestamp(now);
@@ -459,9 +480,7 @@ mod tests {
         assert_eq!(latches.acquire(&first), AcquireResult::Success);
         assert_eq!(latches.acquire(&waiting), AcquireResult::Locked);
         first.lock().unwrap().commit_timestamp = start + 1;
-        let wakeups = latches.release(&first);
-        assert_eq!(wakeups.len(), 1);
-        assert_eq!(latches.acquire(&waiting), AcquireResult::Stale);
+        latches.release(&first);
         latches.release(&waiting);
 
         let later = latches.new_lock(start + 3, vec![b"b".to_vec(), b"c".to_vec()]);
@@ -476,31 +495,58 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn scheduler_serializes_concurrent_transactions() {
+    async fn source_test_with_concurrency() {
         let scheduler = LatchesScheduler::new(7);
+        let (sender, receiver) = tokio::sync::mpsc::channel::<Vec<Vec<u8>>>(100);
+        let receiver = Arc::new(tokio::sync::Mutex::new(receiver));
         let mut tasks = Vec::new();
-        for worker in 0..10_u8 {
+        for _ in 0..10 {
             let scheduler = scheduler.clone();
+            let receiver = receiver.clone();
             tasks.push(tokio::spawn(async move {
-                for sequence in 0..100_u8 {
-                    let first = vec![b'a' + (worker % 4)];
-                    let second = vec![b'a' + (sequence % 8)];
-                    let keys = if first == second {
-                        vec![first]
-                    } else {
-                        vec![first, second]
+                loop {
+                    let transaction = {
+                        let mut receiver = receiver.lock().await;
+                        receiver.recv().await
                     };
-                    let start = next_timestamp();
-                    let guard = scheduler.lock(start, keys).await;
+                    let Some(transaction) = transaction else {
+                        return;
+                    };
+                    let guard = scheduler.lock(next_timestamp(), transaction).await;
                     if !guard.is_stale() {
                         guard.set_commit_timestamp(next_timestamp());
                     }
                 }
             }));
         }
+        let transactions = {
+            let mut rng = rand::thread_rng();
+            (0..999)
+                .map(|_| source_generate(&mut rng))
+                .collect::<Vec<_>>()
+        };
+        for transaction in transactions {
+            sender.send(transaction).await.unwrap();
+        }
+        drop(sender);
         for task in tasks {
             task.await.unwrap();
         }
+        scheduler.close();
+    }
+
+    fn source_generate(rng: &mut impl Rng) -> Vec<Vec<u8>> {
+        let table = b"abcdefgh";
+        let mut result = Vec::with_capacity(5);
+        for chance in [100, 60, 40, 20] {
+            if rng.gen_range(0..100) < chance {
+                let key = vec![table[rng.gen_range(0..table.len())]];
+                if !result.contains(&key) {
+                    result.push(key);
+                }
+            }
+        }
+        result
     }
 
     #[tokio::test]

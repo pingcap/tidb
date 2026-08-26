@@ -35,7 +35,9 @@ use crate::transaction::lowering::new_scan_lock_request;
 use crate::transaction::lowering::new_unsafe_destroy_range_request;
 use crate::transaction::range_task::{RangeTaskHandler, Runner, TaskStat};
 use crate::transaction::resolve_locks_with_context;
+use crate::transaction::resolve_locks_with_context_result;
 use crate::transaction::ResolveLocksContext;
+use crate::transaction::ResolveLocksResult;
 use crate::transaction::Snapshot;
 use crate::transaction::Transaction;
 use crate::transaction::TransactionOptions;
@@ -93,6 +95,9 @@ pub struct Client {
     keyspace_name: Option<String>,
     latches: Option<Arc<LatchesScheduler>>,
     lock_resolver_context: ResolveLocksContext,
+    enable_async_batch_get: bool,
+    enable_async_commit: bool,
+    enable_one_pc: bool,
 }
 
 impl Clone for Client {
@@ -104,6 +109,9 @@ impl Clone for Client {
             keyspace_name: self.keyspace_name.clone(),
             latches: self.latches.clone(),
             lock_resolver_context: self.lock_resolver_context.clone(),
+            enable_async_batch_get: self.enable_async_batch_get,
+            enable_async_commit: self.enable_async_commit,
+            enable_one_pc: self.enable_one_pc,
         }
     }
 }
@@ -169,12 +177,19 @@ impl Client {
         Self::new_with_config(pd_endpoints, Config::default()).await
     }
 
+    /// Returns whether client-side transaction latches were enabled when this
+    /// client was constructed.
+    pub fn is_latch_enabled(&self) -> bool {
+        self.latches.is_some()
+    }
+
     /// Close the client-owned lock resolver and transport workers.
     ///
     /// The resolver is shared by cloned clients and transactions. Closing any
     /// owner therefore cancels and joins its detached lock-cleanup tasks before
     /// retiring the shared TiKV/PD transport, matching client-go `KVStore.Close`.
     pub async fn close(self) -> Result<()> {
+        close_transaction_latches(&self.latches);
         self.lock_resolver_context.close().await;
         self.pd.close().await;
         Ok(())
@@ -244,6 +259,9 @@ impl Client {
             keyspace_name,
             latches,
             lock_resolver_context: ResolveLocksContext::default(),
+            enable_async_batch_get: config.enable_async_batch_get,
+            enable_async_commit: config.enable_async_commit,
+            enable_one_pc: config.enable_1pc,
         })
     }
 
@@ -278,6 +296,9 @@ impl Client {
             keyspace_name: None,
             latches,
             lock_resolver_context: ResolveLocksContext::default(),
+            enable_async_batch_get: config.enable_async_batch_get,
+            enable_async_commit: config.enable_async_commit,
+            enable_one_pc: config.enable_1pc,
         })
     }
 
@@ -501,19 +522,69 @@ impl Client {
         &self,
         locks: Vec<ProtoLockInfo>,
         timestamp: Timestamp,
+        backoff: Backoff,
+    ) -> Result<Vec<ProtoLockInfo>> {
+        self.resolve_locks_inner(locks, timestamp, backoff, false)
+            .await
+    }
+
+    /// Source split-region and transaction-file callers request one
+    /// pessimistic rollback per affected region instead of one per key.
+    pub(crate) async fn resolve_locks_with_pessimistic_region(
+        &self,
+        locks: Vec<ProtoLockInfo>,
+        timestamp: Timestamp,
+        backoff: Backoff,
+    ) -> Result<Vec<ProtoLockInfo>> {
+        self.resolve_locks_inner(locks, timestamp, backoff, true)
+            .await
+    }
+
+    /// Runs one source `ResolveLocksWithOpts` pass for root split-region
+    /// callers. The caller owns the cumulative retry budget and uses the
+    /// returned minimum TTL to cap its next lock backoff.
+    pub(crate) async fn resolve_locks_once_with_pessimistic_region(
+        &self,
+        locks: Vec<ProtoLockInfo>,
+        timestamp: Timestamp,
+    ) -> Result<ResolveLocksResult> {
+        use crate::request::TruncateKeyspace;
+
+        let mut lock_resolver_context = self.lock_resolver_context.clone();
+        lock_resolver_context.pessimistic_region_resolve = true;
+        let mut result = resolve_locks_with_context_result(
+            locks.encode_keyspace(self.keyspace, KeyMode::Txn),
+            timestamp,
+            self.pd.clone(),
+            self.keyspace,
+            self.keyspace_name.as_deref(),
+            lock_resolver_context,
+        )
+        .await?;
+        result.live_locks = result.live_locks.truncate_keyspace(self.keyspace);
+        Ok(result)
+    }
+
+    async fn resolve_locks_inner(
+        &self,
+        locks: Vec<ProtoLockInfo>,
+        timestamp: Timestamp,
         mut backoff: Backoff,
+        pessimistic_region_resolve: bool,
     ) -> Result<Vec<ProtoLockInfo>> {
         use crate::request::TruncateKeyspace;
 
         let mut live_locks = locks;
         loop {
+            let mut lock_resolver_context = self.lock_resolver_context.clone();
+            lock_resolver_context.pessimistic_region_resolve = pessimistic_region_resolve;
             let resolved_locks = resolve_locks_with_context(
                 live_locks.encode_keyspace(self.keyspace, KeyMode::Txn),
                 timestamp.clone(),
                 self.pd.clone(),
                 self.keyspace,
                 self.keyspace_name.as_deref(),
-                self.lock_resolver_context.clone(),
+                lock_resolver_context,
             )
             .await?;
             live_locks = resolved_locks.truncate_keyspace(self.keyspace);
@@ -628,6 +699,8 @@ impl Client {
     }
 
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
+        let options =
+            options.with_config_commit_defaults(self.enable_async_commit, self.enable_one_pc);
         let mut transaction = Transaction::new_with_latches_and_keyspace_name(
             timestamp,
             self.pd.clone(),
@@ -638,6 +711,7 @@ impl Client {
         );
         transaction.set_lock_resolver_context(self.lock_resolver_context.clone());
         transaction.set_read_timestamp_validator(self.read_timestamp_validator.clone());
+        transaction.set_enable_async_batch_get(self.enable_async_batch_get);
         transaction
     }
 
@@ -784,6 +858,12 @@ fn transaction_latches(config: &Config) -> Result<Option<Arc<LatchesScheduler>>>
     Ok(Some(LatchesScheduler::new(latches.capacity)))
 }
 
+fn close_transaction_latches(latches: &Option<Arc<LatchesScheduler>>) {
+    if let Some(latches) = latches {
+        latches.close();
+    }
+}
+
 #[cfg(test)]
 mod latch_config_tests {
     use super::*;
@@ -801,6 +881,14 @@ mod latch_config_tests {
 
         let valid = Config::default().with_txn_local_latches(7);
         assert!(transaction_latches(&valid).unwrap().is_some());
+    }
+
+    #[test]
+    fn source_store_close_closes_shared_transaction_latches() {
+        let latches = transaction_latches(&Config::default().with_txn_local_latches(7)).unwrap();
+        let retained = latches.as_ref().unwrap().clone();
+        close_transaction_latches(&latches);
+        assert!(retained.is_closed());
     }
 
     #[test]

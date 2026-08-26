@@ -4,7 +4,7 @@
 //! `internal/mockstore/mocktikv` package. Protocol-specific protobuf conversion
 //! remains in the consuming client crate so this storage engine stays reusable.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::fs;
 use std::ops::Bound;
@@ -13,6 +13,8 @@ use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::DeadlockDetector;
 
 const SHORT_VALUE_MAX_LEN: usize = 64;
 const MAX_MARSHALLED_SLICE: usize = 10 * 1024 * 1024;
@@ -380,7 +382,7 @@ impl Entry {
 struct State {
     entries: BTreeMap<Vec<u8>, Entry>,
     raw_cfs: HashMap<String, BTreeMap<Vec<u8>, Vec<u8>>>,
-    waits_for: HashMap<u64, (u64, u64)>,
+    deadlock_detector: DeadlockDetector,
     closed: bool,
 }
 
@@ -680,54 +682,66 @@ impl MockEngine {
 
     pub fn commit(&self, keys: &[Vec<u8>], start_ts: u64, commit_ts: u64) -> Result<(), MockError> {
         let mut state = self.state.write().expect("mock engine lock poisoned");
-        let original = state.entries.clone();
-        for key in keys {
-            if let Err(error) = commit_key(&mut state, key, start_ts, commit_ts) {
-                state.entries = original;
-                return Err(error);
+        let result = (|| {
+            let original = state.entries.clone();
+            for key in keys {
+                if let Err(error) = commit_key(&mut state, key, start_ts, commit_ts) {
+                    state.entries = original;
+                    return Err(error);
+                }
             }
-        }
-        state.waits_for.remove(&start_ts);
-        Ok(())
+            Ok(())
+        })();
+        state.deadlock_detector.clean_up(start_ts);
+        result
     }
 
     pub fn rollback(&self, keys: &[Vec<u8>], start_ts: u64) -> Result<(), MockError> {
         let mut state = self.state.write().expect("mock engine lock poisoned");
-        let original = state.entries.clone();
-        for key in keys {
-            if let Err(error) = rollback_key(&mut state, key, start_ts) {
-                state.entries = original;
-                return Err(error);
+        let result = (|| {
+            let original = state.entries.clone();
+            for key in keys {
+                if let Err(error) = rollback_key(&mut state, key, start_ts) {
+                    state.entries = original;
+                    return Err(error);
+                }
             }
-        }
-        state.waits_for.remove(&start_ts);
-        Ok(())
+            Ok(())
+        })();
+        state.deadlock_detector.clean_up(start_ts);
+        result
     }
 
     pub fn cleanup(&self, key: &[u8], start_ts: u64, current_ts: u64) -> Result<(), MockError> {
         let mut state = self.state.write().expect("mock engine lock poisoned");
-        if let Some(lock) = state.entries.get(key).and_then(|entry| entry.lock.clone()) {
-            if lock.start_ts == start_ts {
-                if physical(lock.start_ts).saturating_add(lock.ttl) < physical(current_ts) {
-                    return rollback_key(&mut state, key, start_ts);
+        let result = (|| {
+            if let Some(lock) = state.entries.get(key).and_then(|entry| entry.lock.clone()) {
+                if lock.start_ts == start_ts {
+                    if current_ts == 0
+                        || physical(lock.start_ts).saturating_add(lock.ttl) < physical(current_ts)
+                    {
+                        return rollback_key(&mut state, key, start_ts);
+                    }
+                    return Err(lock_error(key, &lock));
                 }
-                return Err(lock_error(key, &lock));
             }
-        }
-        if let Some(write) = state
-            .entries
-            .get(key)
-            .and_then(|entry| entry.txn_write(start_ts))
-        {
-            return if write.write_type == WriteType::Rollback {
-                Ok(())
-            } else {
-                Err(MockError::AlreadyCommitted {
-                    commit_ts: write.commit_ts,
-                })
-            };
-        }
-        rollback_key(&mut state, key, start_ts)
+            if let Some(write) = state
+                .entries
+                .get(key)
+                .and_then(|entry| entry.txn_write(start_ts))
+            {
+                return if write.write_type == WriteType::Rollback {
+                    Ok(())
+                } else {
+                    Err(MockError::AlreadyCommitted {
+                        commit_ts: write.commit_ts,
+                    })
+                };
+            }
+            rollback_key(&mut state, key, start_ts)
+        })();
+        state.deadlock_detector.clean_up(start_ts);
+        result
     }
 
     pub fn check_txn_status(
@@ -868,7 +882,6 @@ impl MockEngine {
                 commit_key(&mut state, &key, start_ts, commit_ts)?;
             }
         }
-        state.waits_for.remove(&start_ts);
         Ok(())
     }
 
@@ -895,7 +908,6 @@ impl MockEngine {
             } else {
                 commit_key(&mut state, &key, start_ts, commit_ts)?;
             }
-            state.waits_for.remove(&start_ts);
         }
         Ok(())
     }
@@ -1324,14 +1336,15 @@ fn pessimistic_lock_mutation(
     {
         if lock.start_ts != request.start_ts {
             let key_hash = farmhash::fingerprint64(&mutation.key);
-            state
-                .waits_for
-                .insert(request.start_ts, (lock.start_ts, key_hash));
-            if let Some(deadlock_key_hash) = deadlock_cycle(&state.waits_for, request.start_ts) {
+            if let Err(error) =
+                state
+                    .deadlock_detector
+                    .detect(request.start_ts, lock.start_ts, key_hash)
+            {
                 return Err(MockError::Deadlock {
                     lock_ts: lock.start_ts,
                     lock_key: mutation.key.clone(),
-                    deadlock_key_hash,
+                    deadlock_key_hash: error.key_hash,
                 });
             }
             return Err(lock_error(&mutation.key, &lock));
@@ -1536,19 +1549,6 @@ fn write_rollback(state: &mut State, key: &[u8], start_ts: u64) {
     }
 }
 
-fn deadlock_cycle(waits_for: &HashMap<u64, (u64, u64)>, start: u64) -> Option<u64> {
-    let mut current = start;
-    let mut seen = HashSet::new();
-    while seen.insert(current) {
-        let (next, key_hash) = waits_for.get(&current).copied()?;
-        if next == start {
-            return Some(key_hash);
-        }
-        current = next;
-    }
-    None
-}
-
 fn range_bounds<'a>(start: &'a [u8], end: &'a [u8]) -> (Bound<&'a [u8]>, Bound<&'a [u8]>) {
     (
         Bound::Included(start),
@@ -1698,6 +1698,31 @@ mod tests {
         engine
             .get(key, ts, IsolationLevel::SnapshotIsolation, &[])
             .map(|value| value.map(|value| value.0))
+    }
+
+    fn pessimistic_lock(
+        engine: &MockEngine,
+        key: &[u8],
+        start_ts: u64,
+        for_update_ts: u64,
+    ) -> Option<MockError> {
+        engine
+            .pessimistic_lock(&PessimisticLockRequest {
+                mutations: vec![TxnMutation {
+                    op: Op::PessimisticLock,
+                    key: key.to_vec(),
+                    value: Vec::new(),
+                    assertion: Assertion::None,
+                }],
+                primary: key.to_vec(),
+                start_ts,
+                for_update_ts,
+                ..Default::default()
+            })
+            .0
+            .into_iter()
+            .next()
+            .expect("one mutation has one result")
     }
 
     fn assert_scan(
@@ -2427,6 +2452,138 @@ mod tests {
             lock(&engine, b"a", 20, 22).0[0],
             Some(MockError::Deadlock { .. })
         ));
+    }
+
+    #[test]
+    fn source_deadlock_detector_retains_multiple_wait_edges_in_the_live_engine() {
+        let engine = MockEngine::new();
+        assert_eq!(pessimistic_lock(&engine, b"a", 20, 20), None);
+        assert_eq!(pessimistic_lock(&engine, b"b", 30, 30), None);
+        assert_eq!(pessimistic_lock(&engine, b"c", 10, 10), None);
+
+        assert!(matches!(
+            pessimistic_lock(&engine, b"a", 10, 21),
+            Some(MockError::Locked { start_ts: 20, .. })
+        ));
+        assert!(matches!(
+            pessimistic_lock(&engine, b"b", 10, 31),
+            Some(MockError::Locked { start_ts: 30, .. })
+        ));
+        assert_eq!(
+            pessimistic_lock(&engine, b"c", 20, 22),
+            Some(MockError::Deadlock {
+                lock_ts: 10,
+                lock_key: b"c".to_vec(),
+                deadlock_key_hash: farmhash::fingerprint64(b"a"),
+            })
+        );
+    }
+
+    #[test]
+    fn source_commit_cleans_deadlock_edges_even_when_commit_fails() {
+        let engine = MockEngine::new();
+        assert_eq!(pessimistic_lock(&engine, b"a", 20, 20), None);
+        assert_eq!(pessimistic_lock(&engine, b"c", 10, 10), None);
+        assert!(matches!(
+            pessimistic_lock(&engine, b"a", 10, 21),
+            Some(MockError::Locked { .. })
+        ));
+
+        assert!(matches!(
+            engine.commit(&[b"missing".to_vec()], 10, 30),
+            Err(MockError::Retryable(_))
+        ));
+        assert!(matches!(
+            pessimistic_lock(&engine, b"c", 20, 22),
+            Some(MockError::Locked { .. })
+        ));
+    }
+
+    #[test]
+    fn source_rollback_cleans_deadlock_edges_even_when_rollback_fails() {
+        let engine = MockEngine::new();
+        put(&engine, b"committed", b"value", 10, 11);
+        assert_eq!(pessimistic_lock(&engine, b"a", 20, 20), None);
+        assert_eq!(pessimistic_lock(&engine, b"c", 10, 12), None);
+        assert!(matches!(
+            pessimistic_lock(&engine, b"a", 10, 21),
+            Some(MockError::Locked { .. })
+        ));
+
+        assert!(matches!(
+            engine.rollback(&[b"committed".to_vec()], 10),
+            Err(MockError::AlreadyCommitted { commit_ts: 11 })
+        ));
+        assert!(matches!(
+            pessimistic_lock(&engine, b"c", 20, 22),
+            Some(MockError::Locked { .. })
+        ));
+    }
+
+    #[test]
+    fn source_cleanup_cleans_deadlock_edges_even_when_the_lock_is_live() {
+        let engine = MockEngine::new();
+        assert_eq!(pessimistic_lock(&engine, b"a", 20, 20), None);
+        assert_eq!(pessimistic_lock(&engine, b"c", 10, 10), None);
+        assert!(matches!(
+            pessimistic_lock(&engine, b"a", 10, 21),
+            Some(MockError::Locked { .. })
+        ));
+
+        assert!(matches!(
+            engine.cleanup(b"c", 10, 10),
+            Err(MockError::Locked { .. })
+        ));
+        assert!(matches!(
+            pessimistic_lock(&engine, b"c", 20, 22),
+            Some(MockError::Locked { .. })
+        ));
+    }
+
+    #[test]
+    fn source_cleanup_zero_current_ts_unconditionally_rolls_back_the_lock() {
+        let engine = MockEngine::new();
+        assert_eq!(
+            prewrite(&engine, &[(b"key", b"value")], b"key", 10, u64::MAX),
+            vec![None]
+        );
+
+        engine.cleanup(b"key", 10, 0).unwrap();
+        assert_eq!(get(&engine, b"key", u64::MAX).unwrap(), None);
+        assert!(matches!(
+            engine.commit(&[b"key".to_vec()], 10, 20),
+            Err(MockError::Retryable(_))
+        ));
+    }
+
+    #[test]
+    fn source_range_resolve_does_not_clean_transaction_deadlock_edges() {
+        for batch in [false, true] {
+            let engine = MockEngine::new();
+            assert_eq!(pessimistic_lock(&engine, b"a", 20, 20), None);
+            assert_eq!(pessimistic_lock(&engine, b"c", 10, 10), None);
+            assert_eq!(pessimistic_lock(&engine, b"d", 10, 11), None);
+            assert!(matches!(
+                pessimistic_lock(&engine, b"a", 10, 21),
+                Some(MockError::Locked { .. })
+            ));
+
+            if batch {
+                engine
+                    .batch_resolve_lock(b"c", b"d", &HashMap::from([(10, 0)]))
+                    .unwrap();
+            } else {
+                engine.resolve_lock(b"c", b"d", 10, 0).unwrap();
+            }
+            assert_eq!(
+                pessimistic_lock(&engine, b"d", 20, 22),
+                Some(MockError::Deadlock {
+                    lock_ts: 10,
+                    lock_key: b"d".to_vec(),
+                    deadlock_key_hash: farmhash::fingerprint64(b"a"),
+                })
+            );
+        }
     }
 
     #[test]

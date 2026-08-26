@@ -105,7 +105,10 @@ fn decode_order_bytes<'a>(input: &'a [u8], output: &mut Vec<u8>, desc: bool) -> 
             (ENC_MARKER - marker) as usize
         };
         if pad_count > ENC_GROUP_SIZE {
-            return Err(codec_error("invalid marker byte"));
+            return Err(codec_error(&format!(
+                "invalid marker byte, group bytes {}",
+                quoted_bytes(&input[offset..offset + ENC_GROUP_SIZE + 1])
+            )));
         }
 
         let real_group_size = ENC_GROUP_SIZE - pad_count;
@@ -122,7 +125,10 @@ fn decode_order_bytes<'a>(input: &'a [u8], output: &mut Vec<u8>, desc: bool) -> 
                 .iter()
                 .any(|byte| *byte != expected_pad)
             {
-                return Err(codec_error("invalid padding byte"));
+                return Err(codec_error(&format!(
+                    "invalid padding byte, group bytes {}",
+                    quoted_bytes(&input[offset - ENC_GROUP_SIZE - 1..offset])
+                )));
             }
             return Ok(&input[offset..]);
         }
@@ -408,6 +414,24 @@ fn codec_error(message: &str) -> Error {
     }
 }
 
+fn quoted_bytes(bytes: &[u8]) -> String {
+    let mut quoted = String::with_capacity(bytes.len() + 2);
+    quoted.push('"');
+    for byte in bytes {
+        match *byte {
+            b'\\' => quoted.push_str("\\\\"),
+            b'"' => quoted.push_str("\\\""),
+            b'\n' => quoted.push_str("\\n"),
+            b'\r' => quoted.push_str("\\r"),
+            b'\t' => quoted.push_str("\\t"),
+            0x20..=0x7e => quoted.push(char::from(*byte)),
+            byte => quoted.push_str(&format!("\\x{byte:02x}")),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
 #[cfg(test)]
 pub mod test {
     use super::*;
@@ -505,9 +529,15 @@ pub mod test {
 
         let mut output = Vec::new();
         assert!(decode_bytes(&[], &mut output).is_err());
-        assert!(decode_bytes(&[0; 9], &mut output).is_err());
+        let marker_error = decode_bytes(&[0; 9], &mut output).unwrap_err();
+        assert!(marker_error.to_string().contains(
+            "invalid marker byte, group bytes \"\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\""
+        ));
         let mut invalid_padding = vec![1, 2, 3, 9, 0, 0, 0, 0, 250];
-        assert!(decode_bytes(&invalid_padding, &mut output).is_err());
+        let padding_error = decode_bytes(&invalid_padding, &mut output).unwrap_err();
+        assert!(padding_error.to_string().contains(
+            "invalid padding byte, group bytes \"\\x01\\x02\\x03\\t\\x00\\x00\\x00\\x00\\xfa\""
+        ));
 
         invalid_padding = vec![!1, !2, !3, 0, 0xff, 0xff, 0xff, 0xff, 5];
         assert!(decode_bytes_desc(&invalid_padding, &mut output).is_err());

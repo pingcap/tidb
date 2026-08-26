@@ -1,8 +1,12 @@
 //! Client-go compatible error values and key-error extraction.
 
+use std::backtrace::Backtrace;
 use std::error::Error as StdError;
 use std::fmt;
 use std::time::SystemTime;
+
+use prost::{Message, Name};
+use prost_reflect::{DynamicMessage, Kind, MapKey, ReflectMessage, Value};
 
 use crate::proto::{kvrpcpb, pdpb};
 
@@ -123,7 +127,7 @@ pub struct DeadlockError {
 
 impl fmt::Display for DeadlockError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&deadlock_text(&self.deadlock))
+        formatter.write_str(&protobuf_text(&self.deadlock))
     }
 }
 
@@ -136,7 +140,7 @@ pub struct PdError {
 
 impl fmt::Display for PdError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&pd_error_text(&self.error))
+        formatter.write_str(&protobuf_text(&self.error))
     }
 }
 
@@ -150,10 +154,7 @@ pub struct KeyExistsError {
 
 impl fmt::Display for KeyExistsError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.already_exist.key.is_empty() {
-            return Ok(());
-        }
-        write!(formatter, "key:{}", protobuf_bytes(&self.already_exist.key))
+        formatter.write_str(&protobuf_text(&self.already_exist))
     }
 }
 
@@ -169,7 +170,7 @@ impl fmt::Display for WriteConflictError {
         write!(
             formatter,
             "write conflict {{ {} }}",
-            write_conflict_text(&self.conflict)
+            protobuf_text(&self.conflict)
         )
     }
 }
@@ -231,10 +232,17 @@ macro_rules! scalar_error {
 }
 
 scalar_error!(RetryableError, message: String, "{}");
-scalar_error!(TransactionTooLargeError, size: usize, "txn too large, size: {}.");
-scalar_error!(KeyTooLargeError, key_size: usize, "key size too large, size: {}.");
+scalar_error!(TransactionTooLargeError, size: isize, "txn too large, size: {}.");
+scalar_error!(KeyTooLargeError, key_size: isize, "key size too large, size: {}.");
 scalar_error!(PdServerTimeoutError, message: String, "{}");
 scalar_error!(TokenLimitError, store_id: u64, "Store token is up to the limit, store id = {}.");
+
+/// Create the source-compatible PD server timeout error.
+pub fn new_pd_server_timeout(message: impl Into<String>) -> PdServerTimeoutError {
+    PdServerTimeoutError {
+        message: message.into(),
+    }
+}
 
 #[derive(Debug)]
 pub struct EntryTooLargeError {
@@ -309,7 +317,7 @@ impl fmt::Display for AssertionFailedError {
         write!(
             formatter,
             "assertion failed {{ {} }}",
-            assertion_failed_text(&self.assertion_failed)
+            protobuf_text(&self.assertion_failed)
         )
     }
 }
@@ -376,9 +384,9 @@ pub fn extract_key_error(key_error: &mut kvrpcpb::KeyError) -> BoxError {
     if fail::eval("mockRetryableErrorResp", |value| {
         value
             .as_deref()
-            .unwrap_or("false")
+            .expect("mockRetryableErrorResp must return a bool")
             .parse::<bool>()
-            .unwrap_or(false)
+            .expect("mockRetryableErrorResp must return a bool")
     })
     .unwrap_or(false)
     {
@@ -414,7 +422,10 @@ pub fn extract_key_error(key_error: &mut kvrpcpb::KeyError) -> BoxError {
             not_found.start_ts
         )));
     }
-    Box::new(MessageError(format!("unexpected KeyError: {key_error:?}")))
+    Box::new(MessageError(format!(
+        "unexpected KeyError: {}",
+        protobuf_text(key_error)
+    )))
 }
 
 pub fn is_not_found(error: &(dyn StdError + 'static)) -> bool {
@@ -422,7 +433,14 @@ pub fn is_not_found(error: &(dyn StdError + 'static)) -> bool {
 }
 
 pub fn is_error_undetermined(error: &(dyn StdError + 'static)) -> bool {
-    has_static_error(error, StaticError::ResultUndetermined)
+    error_chain(error).any(|error| {
+        error.downcast_ref::<StaticError>() == Some(&StaticError::ResultUndetermined)
+            || error.downcast_ref::<crate::Error>().is_some_and(|error| {
+                any_native_error(error, |error| {
+                    matches!(error, crate::Error::UndeterminedError(_))
+                })
+            })
+    })
 }
 
 pub fn is_error_commit_timestamp_lag(error: &(dyn StdError + 'static)) -> bool {
@@ -430,21 +448,54 @@ pub fn is_error_commit_timestamp_lag(error: &(dyn StdError + 'static)) -> bool {
 }
 
 pub fn is_key_exists(error: &(dyn StdError + 'static)) -> bool {
-    error_chain(error).any(|error| error.is::<KeyExistsError>())
+    error_chain(error).any(|error| {
+        error.is::<KeyExistsError>()
+            || error.downcast_ref::<crate::Error>().is_some_and(|error| {
+                any_native_error(error, |error| matches!(error, crate::Error::KeyExists(_)))
+            })
+    })
 }
 
 pub fn is_write_conflict(error: &(dyn StdError + 'static)) -> bool {
     error_chain(error).any(|error| {
         error.is::<WriteConflictError>()
-            || matches!(
-                error.downcast_ref::<crate::Error>(),
-                Some(crate::Error::WriteConflict(_))
-            )
+            || error.downcast_ref::<crate::Error>().is_some_and(|error| {
+                any_native_error(error, |error| {
+                    matches!(error, crate::Error::WriteConflict(_))
+                })
+            })
     })
 }
 
 fn has_static_error(error: &(dyn StdError + 'static), expected: StaticError) -> bool {
-    error_chain(error).any(|error| error.downcast_ref::<StaticError>() == Some(&expected))
+    error_chain(error).any(|error| {
+        error.downcast_ref::<StaticError>() == Some(&expected)
+            || error.downcast_ref::<crate::Error>().is_some_and(|error| {
+                any_native_error(error, |error| match error {
+                    crate::Error::Static(actual) => *actual == expected,
+                    crate::Error::CommitTimestampLag { source, .. } => *source == expected,
+                    _ => false,
+                })
+            })
+    })
+}
+
+fn any_native_error(
+    mut error: &crate::Error,
+    mut predicate: impl FnMut(&crate::Error) -> bool,
+) -> bool {
+    loop {
+        if predicate(error) {
+            return true;
+        }
+        error = match error {
+            crate::Error::Connection { source, .. }
+            | crate::Error::UndeterminedError(source)
+            | crate::Error::ApiCodecDecode(source) => source,
+            crate::Error::PessimisticLockError { inner, .. } => inner,
+            _ => return false,
+        };
+    }
 }
 
 fn error_chain<'a>(error: &'a (dyn StdError + 'static)) -> ErrorChain<'a> {
@@ -466,7 +517,10 @@ impl<'a> Iterator for ErrorChain<'a> {
 /// Log an error when one is present.
 pub fn log(error: Option<&(dyn StdError + 'static)>) {
     if let Some(error) = error {
-        log::error!("encountered error: {error}");
+        log::error!(
+            "encountered error: {error}; stack:\n{}",
+            Backtrace::force_capture()
+        );
     }
 }
 
@@ -502,98 +556,104 @@ fn redact_debug_info(debug_info: &mut kvrpcpb::DebugInfo) {
     }
 }
 
-fn write_conflict_text(conflict: &kvrpcpb::WriteConflict) -> String {
-    let mut fields = Vec::new();
-    push_proto_u64(&mut fields, "start_ts", conflict.start_ts);
-    push_proto_u64(&mut fields, "conflict_ts", conflict.conflict_ts);
-    push_proto_bytes(&mut fields, "key", &conflict.key);
-    push_proto_bytes(&mut fields, "primary", &conflict.primary);
-    push_proto_u64(
-        &mut fields,
-        "conflict_commit_ts",
-        conflict.conflict_commit_ts,
-    );
-    if conflict.reason != 0 {
-        let reason = kvrpcpb::write_conflict::Reason::try_from(conflict.reason)
-            .map(|reason| reason.as_str_name().to_owned())
-            .unwrap_or_else(|_| conflict.reason.to_string());
-        fields.push(format!("reason:{reason}"));
-    }
-    fields.join(" ")
+fn protobuf_text<M>(message: &M) -> String
+where
+    M: Message + Name,
+{
+    let full_name = M::full_name();
+    let descriptor = crate::logutil::protobuf_descriptors()
+        .get_message_by_name(&full_name)
+        .unwrap_or_else(|| panic!("protobuf descriptor missing for {full_name}"));
+    let message = DynamicMessage::decode(descriptor, message.encode_to_vec().as_slice())
+        .unwrap_or_else(|error| panic!("cannot reflect {full_name}: {error}"));
+    let mut output = String::new();
+    append_protobuf_message(&mut output, &message);
+    output
 }
 
-fn assertion_failed_text(assertion: &kvrpcpb::AssertionFailed) -> String {
-    let mut fields = Vec::new();
-    push_proto_u64(&mut fields, "start_ts", assertion.start_ts);
-    push_proto_bytes(&mut fields, "key", &assertion.key);
-    if assertion.assertion != 0 {
-        let value = kvrpcpb::Assertion::try_from(assertion.assertion)
-            .map(|value| value.as_str_name().to_owned())
-            .unwrap_or_else(|_| assertion.assertion.to_string());
-        fields.push(format!("assertion:{value}"));
-    }
-    push_proto_u64(
-        &mut fields,
-        "existing_start_ts",
-        assertion.existing_start_ts,
-    );
-    push_proto_u64(
-        &mut fields,
-        "existing_commit_ts",
-        assertion.existing_commit_ts,
-    );
-    fields.join(" ")
-}
-
-fn deadlock_text(deadlock: &kvrpcpb::Deadlock) -> String {
-    let mut fields = Vec::new();
-    push_proto_u64(&mut fields, "lock_ts", deadlock.lock_ts);
-    push_proto_bytes(&mut fields, "lock_key", &deadlock.lock_key);
-    push_proto_u64(&mut fields, "deadlock_key_hash", deadlock.deadlock_key_hash);
-    for entry in &deadlock.wait_chain {
-        fields.push(format!("wait_chain:<{} >", wait_for_entry_text(entry)));
-    }
-    push_proto_bytes(&mut fields, "deadlock_key", &deadlock.deadlock_key);
-    fields.join(" ")
-}
-
-fn wait_for_entry_text(entry: &crate::proto::deadlock::WaitForEntry) -> String {
-    let mut fields = Vec::new();
-    push_proto_u64(&mut fields, "txn", entry.txn);
-    push_proto_u64(&mut fields, "wait_for_txn", entry.wait_for_txn);
-    push_proto_u64(&mut fields, "key_hash", entry.key_hash);
-    push_proto_bytes(&mut fields, "key", &entry.key);
-    push_proto_bytes(&mut fields, "resource_group_tag", &entry.resource_group_tag);
-    push_proto_u64(&mut fields, "wait_time", entry.wait_time);
-    fields.join(" ")
-}
-
-fn pd_error_text(error: &pdpb::Error) -> String {
-    let mut fields = Vec::new();
-    if error.r#type != 0 {
-        let value = pdpb::ErrorType::try_from(error.r#type)
-            .map(|value| value.as_str_name().to_owned())
-            .unwrap_or_else(|_| error.r#type.to_string());
-        fields.push(format!("type:{value}"));
-    }
-    if !error.message.is_empty() {
-        fields.push(format!(
-            "message:{}",
-            protobuf_bytes(error.message.as_bytes())
-        ));
-    }
-    fields.join(" ")
-}
-
-fn push_proto_u64(fields: &mut Vec<String>, name: &str, value: u64) {
-    if value != 0 {
-        fields.push(format!("{name}:{value}"));
+fn append_protobuf_message(output: &mut String, message: &DynamicMessage) {
+    let mut fields: Vec<_> = message.descriptor().fields().collect();
+    fields.sort_by_key(|field| field.number());
+    for field in fields {
+        let value = message.get_field(&field);
+        match value.as_ref() {
+            Value::List(values) => {
+                for value in values {
+                    append_protobuf_field(output, field.name(), value, &field.kind());
+                }
+            }
+            Value::Map(values) => {
+                let Kind::Message(entry) = field.kind() else {
+                    unreachable!("protobuf map field is backed by a map-entry message")
+                };
+                let key_kind = entry.map_entry_key_field().kind();
+                let value_kind = entry.map_entry_value_field().kind();
+                let mut values: Vec<_> = values.iter().collect();
+                values.sort_by_key(|(key, _)| MapKey::clone(key));
+                for (key, value) in values {
+                    output.push_str(field.name());
+                    output.push_str(":<key:");
+                    append_map_key(output, key, &key_kind);
+                    output.push_str(" value:");
+                    append_protobuf_value(output, value, &value_kind);
+                    output.push_str(" > ");
+                }
+            }
+            value if message.has_field(&field) => {
+                append_protobuf_field(output, field.name(), value, &field.kind());
+            }
+            _ => {}
+        }
     }
 }
 
-fn push_proto_bytes(fields: &mut Vec<String>, name: &str, value: &[u8]) {
-    if !value.is_empty() {
-        fields.push(format!("{name}:{}", protobuf_bytes(value)));
+fn append_protobuf_field(output: &mut String, name: &str, value: &Value, kind: &Kind) {
+    output.push_str(name);
+    output.push(':');
+    append_protobuf_value(output, value, kind);
+    output.push(' ');
+}
+
+fn append_protobuf_value(output: &mut String, value: &Value, kind: &Kind) {
+    match value {
+        Value::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
+        Value::I32(value) => output.push_str(&value.to_string()),
+        Value::I64(value) => output.push_str(&value.to_string()),
+        Value::U32(value) => output.push_str(&value.to_string()),
+        Value::U64(value) => output.push_str(&value.to_string()),
+        Value::F32(value) => output.push_str(&value.to_string()),
+        Value::F64(value) => output.push_str(&value.to_string()),
+        Value::String(value) => output.push_str(&protobuf_bytes(value.as_bytes())),
+        Value::Bytes(value) => output.push_str(&protobuf_bytes(value)),
+        Value::EnumNumber(value) => match kind {
+            Kind::Enum(descriptor) => match descriptor.get_value(*value) {
+                Some(value) => output.push_str(value.name()),
+                None => output.push_str(&value.to_string()),
+            },
+            _ => output.push_str(&value.to_string()),
+        },
+        Value::Message(value) => {
+            output.push('<');
+            append_protobuf_message(output, value);
+            output.push('>');
+        }
+        Value::List(_) | Value::Map(_) => {
+            unreachable!("repeated values are emitted by append_protobuf_message")
+        }
+    }
+}
+
+fn append_map_key(output: &mut String, key: &MapKey, kind: &Kind) {
+    match key {
+        MapKey::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
+        MapKey::I32(value) => output.push_str(&value.to_string()),
+        MapKey::I64(value) => output.push_str(&value.to_string()),
+        MapKey::U32(value) => output.push_str(&value.to_string()),
+        MapKey::U64(value) => output.push_str(&value.to_string()),
+        MapKey::String(value) => {
+            debug_assert!(matches!(kind, Kind::String));
+            output.push_str(&protobuf_bytes(value.as_bytes()));
+        }
     }
 }
 
@@ -607,7 +667,7 @@ fn protobuf_bytes(value: &[u8]) -> String {
             b'\r' => result.push_str("\\r"),
             b'\t' => result.push_str("\\t"),
             0x20..=0x7e => result.push(*byte as char),
-            value => result.push_str(&format!("\\x{value:02x}")),
+            value => result.push_str(&format!("\\{value:03o}")),
         }
     }
     result.push('"');
@@ -865,7 +925,11 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn static_and_structured_errors_preserve_source_text() {
+        crate::redact::set_redact_log_enabled(false);
+        let _reset = DisableRedaction;
+        assert_eq!(MISMATCH_CLUSTER_ID, "mismatch cluster id");
         let all = [
             (ERR_BODY_MISSING, "response body is missing"),
             (ERR_TIDB_SHUTTING_DOWN, "tidb server shutting down"),
@@ -921,6 +985,10 @@ mod tests {
             "txn too large, size: 42."
         );
         assert_eq!(
+            TransactionTooLargeError { size: -1 }.to_string(),
+            "txn too large, size: -1."
+        );
+        assert_eq!(
             EntryTooLargeError {
                 limit: 10,
                 size: 11
@@ -931,6 +999,29 @@ mod tests {
         assert_eq!(
             WriteConflictInLatchError { start_timestamp: 7 }.to_string(),
             "write conflict in latch,startTS: 7"
+        );
+        assert_eq!(
+            RetryableError {
+                message: "retry".to_owned()
+            }
+            .to_string(),
+            "retry"
+        );
+        assert_eq!(
+            KeyTooLargeError { key_size: 12 }.to_string(),
+            "key size too large, size: 12."
+        );
+        assert_eq!(
+            KeyTooLargeError { key_size: -1 }.to_string(),
+            "key size too large, size: -1."
+        );
+        assert_eq!(
+            new_pd_server_timeout("pd timeout").to_string(),
+            "pd timeout"
+        );
+        assert_eq!(
+            TokenLimitError { store_id: 13 }.to_string(),
+            "Store token is up to the limit, store id = 13."
         );
         assert!(is_not_found(&ERR_NOT_EXIST));
         assert!(is_error_undetermined(&ERR_RESULT_UNDETERMINED));
@@ -943,7 +1034,7 @@ mod tests {
             value: b"value".to_vec(),
         };
         assert!(is_key_exists(&key_exists));
-        assert_eq!(key_exists.to_string(), r#"key:"key""#);
+        assert_eq!(key_exists.to_string(), "key:\"key\" ");
 
         let conflict = WriteConflictError {
             conflict: kvrpcpb::WriteConflict {
@@ -957,7 +1048,7 @@ mod tests {
         };
         assert_eq!(
             conflict.to_string(),
-            r#"write conflict { start_ts:1 conflict_ts:2 key:"key" conflict_commit_ts:3 reason:Optimistic }"#
+            "write conflict { start_ts:1 conflict_ts:2 key:\"key\" conflict_commit_ts:3 reason:Optimistic  }"
         );
 
         #[allow(deprecated)]
@@ -973,6 +1064,172 @@ mod tests {
             format_system_time(SystemTime::UNIX_EPOCH - std::time::Duration::from_nanos(1)),
             "1969-12-31 23:59:59.999999999 +0000 UTC"
         );
+        assert_eq!(
+            TransactionAbortedByGcError {
+                transaction_start_timestamp: 1,
+                transaction_start_time: SystemTime::UNIX_EPOCH,
+                transaction_safe_point: 2,
+                transaction_safe_point_time: SystemTime::UNIX_EPOCH
+                    + std::time::Duration::from_nanos(120_000_000),
+            }
+            .to_string(),
+            "GC life time is shorter than transaction duration, transaction start ts is 1 (1970-01-01 00:00:00 +0000 UTC), txn safe point is 2 (1970-01-01 00:00:00.12 +0000 UTC)"
+        );
+        assert_eq!(
+            LockOnlyIfExistsNoReturnValueError {
+                start_timestamp: 1,
+                for_update_timestamp: 2,
+                lock_key: b"k".to_vec(),
+            }
+            .to_string(),
+            "LockOnlyIfExists is set for Lock Context, but ReturnValues is not set, StartTs is {1}, ForUpdateTs is {2}, one of lock keys is {6B}."
+        );
+        assert_eq!(
+            LockOnlyIfExistsNoPrimaryKeyError {
+                start_timestamp: 1,
+                for_update_timestamp: 2,
+                lock_key: b"k".to_vec(),
+            }
+            .to_string(),
+            "LockOnlyIfExists is set for Lock Context, but primary key of current transaction is not set, StartTs is {1}, ForUpdateTs is {2}, one of lock keys is {6B}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn source_uncovered_protobuf_wrappers_and_fallback_match_gogo_text() {
+        crate::redact::set_redact_log_enabled(false);
+        let _reset = DisableRedaction;
+        let wait = crate::proto::deadlock::WaitForEntry {
+            txn: 1,
+            wait_for_txn: 2,
+            key_hash: 3,
+            key: b"k".to_vec(),
+            resource_group_tag: b"r".to_vec(),
+            wait_time: 4,
+        };
+        let deadlock = kvrpcpb::Deadlock {
+            lock_ts: 5,
+            lock_key: b"l".to_vec(),
+            deadlock_key_hash: 6,
+            wait_chain: vec![wait],
+            deadlock_key: b"d".to_vec(),
+        };
+        assert_eq!(
+            DeadlockError {
+                deadlock: deadlock.clone(),
+                is_retryable: true,
+            }
+            .to_string(),
+            "lock_ts:5 lock_key:\"l\" deadlock_key_hash:6 wait_chain:<txn:1 wait_for_txn:2 key_hash:3 key:\"k\" resource_group_tag:\"r\" wait_time:4 > deadlock_key:\"d\" "
+        );
+        assert_eq!(
+            PdError {
+                error: pdpb::Error {
+                    r#type: pdpb::ErrorType::Unknown as i32,
+                    message: "bad".to_owned(),
+                },
+            }
+            .to_string(),
+            "type:UNKNOWN message:\"bad\" "
+        );
+        assert_eq!(
+            PdError {
+                error: pdpb::Error {
+                    message: "é\n\u{2028}".to_owned(),
+                    ..Default::default()
+                },
+            }
+            .to_string(),
+            "message:\"\\303\\251\\n\\342\\200\\250\" "
+        );
+        assert_eq!(
+            KeyExistsError {
+                already_exist: kvrpcpb::AlreadyExist {
+                    key: vec![0, 1, 7, 8, 11, 12, 31, 127, 255, b'\\', b'\"', b'\n', b'\r', b'\t'],
+                },
+                value: Vec::new(),
+            }
+            .to_string(),
+            "key:\"\\000\\001\\007\\010\\013\\014\\037\\177\\377\\\\\\\"\\n\\r\\t\" "
+        );
+        assert_eq!(
+            AssertionFailedError {
+                assertion_failed: kvrpcpb::AssertionFailed {
+                    start_ts: 7,
+                    key: b"a".to_vec(),
+                    assertion: kvrpcpb::Assertion::Exist as i32,
+                    existing_start_ts: 8,
+                    existing_commit_ts: 9,
+                },
+            }
+            .to_string(),
+            "assertion failed { start_ts:7 key:\"a\" assertion:Exist existing_start_ts:8 existing_commit_ts:9  }"
+        );
+
+        let mut key_error = kvrpcpb::KeyError {
+            locked: Some(kvrpcpb::LockInfo {
+                primary_lock: b"p".to_vec(),
+                lock_version: 10,
+                key: b"k".to_vec(),
+                lock_ttl: 11,
+                ..Default::default()
+            }),
+            already_exist: Some(kvrpcpb::AlreadyExist { key: b"e".to_vec() }),
+            deadlock: Some(deadlock),
+            commit_ts_expired: Some(kvrpcpb::CommitTsExpired {
+                start_ts: 12,
+                attempted_commit_ts: 13,
+                key: b"c".to_vec(),
+                min_commit_ts: 14,
+            }),
+            primary_mismatch: Some(kvrpcpb::PrimaryMismatch {
+                lock_info: Some(kvrpcpb::LockInfo {
+                    primary_lock: b"m".to_vec(),
+                    ..Default::default()
+                }),
+            }),
+            txn_lock_not_found: Some(kvrpcpb::TxnLockNotFound { key: b"n".to_vec() }),
+            debug_info: Some(kvrpcpb::DebugInfo {
+                mvcc_info: vec![kvrpcpb::MvccDebugInfo {
+                    key: b"g".to_vec(),
+                    ..Default::default()
+                }],
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_key_error(&mut key_error).to_string(),
+            "unexpected KeyError: locked:<primary_lock:\"p\" lock_version:10 key:\"k\" lock_ttl:11 > already_exist:<key:\"e\" > deadlock:<lock_ts:5 lock_key:\"l\" deadlock_key_hash:6 wait_chain:<txn:1 wait_for_txn:2 key_hash:3 key:\"k\" resource_group_tag:\"r\" wait_time:4 > deadlock_key:\"d\" > commit_ts_expired:<start_ts:12 attempted_commit_ts:13 key:\"c\" min_commit_ts:14 > primary_mismatch:<lock_info:<primary_lock:\"m\" > > txn_lock_not_found:<key:\"n\" > debug_info:<mvcc_info:<key:\"g\" > > "
+        );
+    }
+
+    #[test]
+    fn source_uncovered_predicates_recognize_native_error_wrappers() {
+        let not_found = crate::Error::from(ERR_NOT_EXIST);
+        assert!(is_not_found(&not_found));
+
+        let undetermined = crate::Error::UndeterminedError(Box::new(crate::Error::StringError(
+            "transport closed".to_owned(),
+        )));
+        assert!(is_error_undetermined(&undetermined));
+
+        let commit_timestamp_lag = crate::Error::CommitTimestampLag {
+            message: "commit wait failed".to_owned(),
+            source: ERR_COMMIT_TS_LAG,
+        };
+        assert!(is_error_commit_timestamp_lag(&commit_timestamp_lag));
+
+        let key_exists = crate::Error::from(KeyExistsError {
+            already_exist: kvrpcpb::AlreadyExist { key: b"k".to_vec() },
+            value: b"v".to_vec(),
+        });
+        assert!(is_key_exists(&key_exists));
+
+        let write_conflict = crate::Error::from(WriteConflictError {
+            conflict: kvrpcpb::WriteConflict::default(),
+        });
+        assert!(is_write_conflict(&write_conflict));
     }
 
     #[test]
@@ -1043,9 +1300,10 @@ mod tests {
         }
 
         let mut unexpected = kvrpcpb::KeyError::default();
-        assert!(extract_key_error(&mut unexpected)
-            .to_string()
-            .starts_with("unexpected KeyError:"));
+        assert_eq!(
+            extract_key_error(&mut unexpected).to_string(),
+            "unexpected KeyError: "
+        );
 
         let before = crate::stats::write_conflict_count();
         let _ = new_write_conflict_with_args(
@@ -1076,7 +1334,75 @@ mod tests {
 
     #[test]
     #[serial]
-    fn original_debug_info_json_and_redaction_scenario() {
+    #[should_panic(expected = "mockRetryableErrorResp must return a bool")]
+    fn source_uncovered_failpoint_rejects_non_boolean_values() {
+        let _scenario = fail::FailScenario::setup();
+        fail::cfg("mockRetryableErrorResp", "return(not-a-bool)").unwrap();
+        let mut key_error = kvrpcpb::KeyError::default();
+        let _ = extract_key_error(&mut key_error);
+    }
+
+    #[test]
+    #[serial]
+    fn source_uncovered_debug_info_json_covers_complete_schema() {
+        crate::redact::set_redact_log_enabled(false);
+        let _reset = DisableRedaction;
+        let debug_info = kvrpcpb::DebugInfo {
+            mvcc_info: vec![kvrpcpb::MvccDebugInfo {
+                key: vec![19],
+                mvcc: Some(kvrpcpb::MvccInfo {
+                    lock: Some(kvrpcpb::MvccLock {
+                        r#type: kvrpcpb::Op::Del as i32,
+                        start_ts: 1,
+                        primary: vec![1],
+                        short_value: vec![2],
+                        ttl: 3,
+                        for_update_ts: 4,
+                        txn_size: 5,
+                        use_async_commit: true,
+                        secondaries: vec![vec![6], Vec::new()],
+                        rollback_ts: vec![7, 8],
+                        last_change_ts: 9,
+                        versions_to_last_change: 10,
+                    }),
+                    writes: vec![kvrpcpb::MvccWrite {
+                        r#type: kvrpcpb::Op::Insert as i32,
+                        start_ts: 11,
+                        commit_ts: 12,
+                        short_value: vec![13],
+                        has_overlapped_rollback: true,
+                        has_gc_fence: true,
+                        gc_fence: 14,
+                        last_change_ts: 15,
+                        versions_to_last_change: 16,
+                    }],
+                    values: vec![kvrpcpb::MvccValue {
+                        start_ts: 17,
+                        value: vec![18],
+                    }],
+                }),
+            }],
+        };
+        let error = kvrpcpb::KeyError {
+            debug_info: Some(debug_info.clone()),
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_debug_info_string(&error),
+            r#"{"mvcc_info":[{"key":"Ew==","mvcc":{"lock":{"type":1,"start_ts":1,"primary":"AQ==","short_value":"Ag==","ttl":3,"for_update_ts":4,"txn_size":5,"use_async_commit":true,"secondaries":["Bg==",""],"rollback_ts":[7,8],"last_change_ts":9,"versions_to_last_change":10},"writes":[{"type":4,"start_ts":11,"commit_ts":12,"short_value":"DQ==","has_overlapped_rollback":true,"has_gc_fence":true,"gc_fence":14,"last_change_ts":15,"versions_to_last_change":16}],"values":[{"start_ts":17,"value":"Eg=="}]}}]}"#
+        );
+
+        crate::redact::set_redact_log_enabled(true);
+        assert_eq!(
+            extract_debug_info_string(&error),
+            r#"{"mvcc_info":[{"key":"Pw==","mvcc":{"lock":{"type":1,"start_ts":1,"primary":"Pw==","short_value":"Pw==","ttl":3,"for_update_ts":4,"txn_size":5,"use_async_commit":true,"secondaries":["Pw==","Pw=="],"rollback_ts":[7,8],"last_change_ts":9,"versions_to_last_change":10},"writes":[{"type":4,"start_ts":11,"commit_ts":12,"short_value":"Pw==","has_overlapped_rollback":true,"has_gc_fence":true,"gc_fence":14,"last_change_ts":15,"versions_to_last_change":16}],"values":[{"start_ts":17,"value":"Pw=="}]}}]}"#
+        );
+        assert_eq!(error.debug_info, Some(debug_info));
+    }
+
+    #[test]
+    #[serial]
+    fn source_test_extract_debug_info_str_from_key_err() {
         crate::redact::set_redact_log_enabled(false);
         let _reset = DisableRedaction;
         assert_eq!(

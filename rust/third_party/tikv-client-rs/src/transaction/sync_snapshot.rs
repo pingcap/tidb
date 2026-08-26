@@ -43,7 +43,12 @@ impl<'a, PdC: PdClient> SyncSnapshotIterator<'a, PdC> {
     }
 
     fn refill(&mut self) -> Result<()> {
-        if !self.valid || !self.buffered.is_empty() {
+        if !self.valid {
+            return Err(crate::Error::StringError(
+                "scanner iterator is invalid".to_owned(),
+            ));
+        }
+        if !self.buffered.is_empty() {
             return Ok(());
         }
         if self.exhausted {
@@ -88,6 +93,15 @@ impl<'a, PdC: PdClient> SyncSnapshotIterator<'a, PdC> {
 impl<PdC: PdClient> SyncSnapshot<PdC> {
     pub(crate) fn new(inner: Snapshot<PdC>, runtime: Arc<tokio::runtime::Runtime>) -> Self {
         Self { inner, runtime }
+    }
+
+    /// Reset the read timestamp for subsequent snapshot operations.
+    ///
+    /// This is the blocking counterpart of client-go
+    /// `KVSnapshot.SetSnapshotTS`; cached reads and timestamp-scoped resolved
+    /// lock hints are discarded by the wrapped snapshot.
+    pub fn set_snapshot_timestamp(&mut self, timestamp: crate::Timestamp) {
+        self.inner.set_snapshot_timestamp(timestamp);
     }
 
     /// Set the priority for subsequent read requests.
@@ -350,6 +364,19 @@ impl<PdC: PdClient> SyncSnapshot<PdC> {
         safe_block_on(&self.runtime, self.inner.batch_get_from_buffer(keys))
     }
 
+    /// Read values from the pipelined transaction buffer tier with point-read
+    /// options. Commit-timestamp requests are ignored for uncommitted values.
+    pub fn batch_get_from_buffer_with_options(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+        options: &[GetOption],
+    ) -> Result<impl Iterator<Item = KvPair>> {
+        safe_block_on(
+            &self.runtime,
+            self.inner.batch_get_from_buffer_with_options(keys, options),
+        )
+    }
+
     /// Create and prefetch a blocking stateful forward scanner.
     pub fn iter(&mut self, range: impl Into<BoundRange>) -> Result<SyncSnapshotIterator<'_, PdC>> {
         let mut iterator = SyncSnapshotIterator::new(self, range.into(), false);
@@ -417,6 +444,38 @@ mod tests {
     use crate::{KvPair, Snapshot, Timestamp, Transaction, TransactionOptions};
 
     #[test]
+    fn source_sync_snapshot_reset_uses_the_new_read_timestamp() {
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                let request = request
+                    .downcast_ref::<kvrpcpb::GetRequest>()
+                    .expect("snapshot reset test dispatches a point get");
+                assert_eq!(request.version, 2);
+                Ok(Box::new(kvrpcpb::GetResponse {
+                    not_found: true,
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap(),
+        );
+        let mut snapshot = SyncSnapshot::new(Snapshot::new(transaction), runtime);
+
+        snapshot.set_snapshot_timestamp(Timestamp::from_version(2));
+        assert_eq!(snapshot.get(b"key".to_vec()).unwrap(), None);
+    }
+
+    #[test]
     fn sync_scanner_uses_pair_local_point_read_recovery() {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let captured_requests = Arc::clone(&requests);
@@ -462,7 +521,7 @@ mod tests {
             TransactionOptions::new_optimistic().read_only(),
             Keyspace::Disable,
         );
-        transaction.set_snapshot_scan_batch_size(2);
+        transaction.set_snapshot_scan_batch_size(3);
         let runtime = Arc::new(
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -476,9 +535,10 @@ mod tests {
             iterator.next().unwrap(),
             Some(KvPair(b"a".to_vec().into(), b"a-value".to_vec()))
         );
+        iterator.close();
         assert_eq!(
-            iterator.next().unwrap(),
-            Some(KvPair(b"b".to_vec().into(), b"b-value".to_vec()))
+            iterator.next().unwrap_err().to_string(),
+            "scanner iterator is invalid"
         );
         assert_eq!(*requests.lock().unwrap(), ["scan", "get"]);
     }

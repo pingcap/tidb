@@ -2032,4 +2032,394 @@ mod tests {
         let out = vec![malformed].truncate_keyspace(keyspace);
         assert_eq!(out[0].secondaries, vec![vec![], vec![b's']]);
     }
+
+    #[test]
+    fn source_test_parse_keyspace_id() {
+        assert_eq!(
+            parse_keyspace_id(b"x\x01\x02\x03\x01\x02\x03").unwrap(),
+            0x010203
+        );
+        assert_eq!(
+            parse_keyspace_id(b"r\x01\x02\x03\x01\x02\x03\x04").unwrap(),
+            0x010203
+        );
+        assert!(parse_keyspace_id(b"t\0\0").is_err());
+        assert!(parse_keyspace_id(b"t\0\0\x01\x01\x02\x03").is_err());
+    }
+
+    #[test]
+    fn source_test_decode_key() {
+        assert_eq!(
+            decode_api_key(b"r\x01\x02\x03\x01\x02\x03\x04", kvrpcpb::ApiVersion::V2).unwrap(),
+            (Some([b'r', 1, 2, 3]), vec![1, 2, 3, 4])
+        );
+        assert_eq!(
+            decode_api_key(b"x\x01\x02\x03\x01\x02\x03\x04", kvrpcpb::ApiVersion::V2).unwrap(),
+            (Some([b'x', 1, 2, 3]), vec![1, 2, 3, 4])
+        );
+        assert_eq!(
+            decode_api_key(b"t\x01\x02\x03\x01\x02\x03\x04", kvrpcpb::ApiVersion::V1).unwrap(),
+            (None, b"t\x01\x02\x03\x01\x02\x03\x04".to_vec())
+        );
+        assert!(decode_api_key(b"t\x01\x02\x03\x01\x02\x03\x04", kvrpcpb::ApiVersion::V2).is_err());
+    }
+
+    #[test]
+    fn source_test_codec_list_utility_functions() {
+        assert!(api_v2_prefixes().windows(2).all(|pair| pair[0] <= pair[1]));
+        assert!(api_v1_excluded_prefixes()
+            .windows(2)
+            .all(|pair| pair[0] <= pair[1]));
+    }
+
+    #[test]
+    fn source_test_encode_v2_key_ranges() {
+        let codec = ApiV2Codec::new(KeyMode::Raw, 0x010203).unwrap();
+        let prefix = b"r\x01\x02\x03";
+        let end = b"r\x01\x02\x04";
+        let ranges = [
+            kvrpcpb::KeyRange::default(),
+            kvrpcpb::KeyRange {
+                end_key: b"z".to_vec(),
+                ..Default::default()
+            },
+            kvrpcpb::KeyRange {
+                start_key: b"a".to_vec(),
+                ..Default::default()
+            },
+            kvrpcpb::KeyRange {
+                start_key: b"a".to_vec(),
+                end_key: b"z".to_vec(),
+            },
+        ];
+        assert_eq!(
+            codec.encode_key_ranges(&ranges),
+            [
+                kvrpcpb::KeyRange {
+                    start_key: prefix.to_vec(),
+                    end_key: end.to_vec(),
+                },
+                kvrpcpb::KeyRange {
+                    start_key: prefix.to_vec(),
+                    end_key: [prefix.as_slice(), b"z"].concat(),
+                },
+                kvrpcpb::KeyRange {
+                    start_key: [prefix.as_slice(), b"a"].concat(),
+                    end_key: end.to_vec(),
+                },
+                kvrpcpb::KeyRange {
+                    start_key: [prefix.as_slice(), b"a"].concat(),
+                    end_key: [prefix.as_slice(), b"z"].concat(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn source_test_new_codec_v2() {
+        assert!(ApiV2Codec::new(KeyMode::Raw, u32::MAX).is_err());
+        for (mode, id, prefix, end) in [
+            (
+                KeyMode::Raw,
+                (1 << 24) - 2,
+                [b'r', 0xff, 0xff, 0xfe],
+                [b'r', 0xff, 0xff, 0xff],
+            ),
+            (
+                KeyMode::Txn,
+                (1 << 8) - 1,
+                [b'x', 0, 0, 0xff],
+                [b'x', 0, 1, 0],
+            ),
+            (
+                KeyMode::Txn,
+                (1 << 16) - 1,
+                [b'x', 0, 0xff, 0xff],
+                [b'x', 1, 0, 0],
+            ),
+            (
+                KeyMode::Raw,
+                (1 << 24) - 1,
+                [b'r', 0xff, 0xff, 0xff],
+                [b's', 0, 0, 0],
+            ),
+        ] {
+            let codec = ApiV2Codec::new(mode, id).unwrap();
+            assert_eq!(codec.keyspace_id(), id);
+            assert_eq!(codec.prefix(), prefix);
+            assert_eq!(codec.end_key(), end);
+        }
+        // Rust's `KeyMode` makes client-go's invalid numeric mode impossible.
+    }
+
+    #[test]
+    fn source_test_new_codec_v2_rejects_keyspace_identity() {
+        source_v2_codec_rejects_api_v3_keyspace_identity();
+    }
+
+    #[test]
+    fn source_test_new_codec_v2_rejects_nil_meta() {
+        // The native constructor requires a numeric ID, so a nil metadata
+        // pointer is unrepresentable rather than silently becoming ID zero.
+        let constructor: fn(KeyMode, u32) -> crate::Result<ApiV2Codec> = ApiV2Codec::new;
+        assert_eq!(constructor(KeyMode::Txn, 0).unwrap().keyspace_id(), 0);
+    }
+
+    #[test]
+    fn source_test_decode_epoch_not_match() {
+        use crate::proto::{errorpb, metapb};
+
+        let codec = ApiV2Codec::new(KeyMode::Raw, 0x010203).unwrap();
+        let before = ApiV2Codec::new(KeyMode::Raw, 0x010202)
+            .unwrap()
+            .encode_key(b"");
+        let prefix = codec.encode_key(b"");
+        let inside_left = codec.encode_key(b"left");
+        let inside_right = codec.encode_key(b"right");
+        let end = codec.end_key().to_vec();
+        let after = ApiV2Codec::new(KeyMode::Raw, 0x010204)
+            .unwrap()
+            .encode_key(b"");
+        let region_range = |id, start: &[u8], end: &[u8]| metapb::Region {
+            id,
+            start_key: {
+                let mut encoded = Vec::new();
+                crate::kv::codec::encode_bytes(&mut encoded, start);
+                encoded
+            },
+            end_key: {
+                let mut encoded = Vec::new();
+                crate::kv::codec::encode_bytes(&mut encoded, end);
+                encoded
+            },
+            ..Default::default()
+        };
+        let mut error = errorpb::Error {
+            epoch_not_match: Some(errorpb::EpochNotMatch {
+                current_regions: vec![
+                    region_range(1, &prefix, &end),
+                    region_range(2, &before, &after),
+                    region_range(3, &before, &inside_left),
+                    region_range(4, &inside_left, &inside_right),
+                    region_range(5, &before, &prefix),
+                    region_range(6, &end, &after),
+                ],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        codec.decode_region_error(&mut error).unwrap();
+        let regions = error.epoch_not_match.unwrap().current_regions;
+        assert_eq!(
+            regions.iter().map(|region| region.id).collect::<Vec<_>>(),
+            [1, 2, 3, 4]
+        );
+        assert_eq!(
+            (
+                regions[0].start_key.as_slice(),
+                regions[0].end_key.as_slice()
+            ),
+            (b"".as_slice(), b"".as_slice())
+        );
+        assert_eq!(
+            (
+                regions[1].start_key.as_slice(),
+                regions[1].end_key.as_slice()
+            ),
+            (b"".as_slice(), b"".as_slice())
+        );
+        assert_eq!(
+            (
+                regions[2].start_key.as_slice(),
+                regions[2].end_key.as_slice()
+            ),
+            (b"".as_slice(), b"left".as_slice())
+        );
+        assert_eq!(
+            (
+                regions[3].start_key.as_slice(),
+                regions[3].end_key.as_slice()
+            ),
+            (b"left".as_slice(), b"right".as_slice())
+        );
+    }
+
+    #[test]
+    fn source_test_decode_key_error() {
+        use crate::proto::{deadlock, kvrpcpb};
+
+        let codec = ApiV2Codec::new(KeyMode::Raw, 0x010203).unwrap();
+        let key = |value: &[u8]| codec.encode_key(value);
+        let mut error = kvrpcpb::KeyError {
+            txn_lock_not_found: Some(kvrpcpb::TxnLockNotFound { key: key(b"key1") }),
+            locked: Some(kvrpcpb::LockInfo {
+                key: key(b"outer-key"),
+                primary_lock: key(b"outer-primary"),
+                secondaries: vec![key(b"outer-secondary")],
+                shared_lock_infos: vec![kvrpcpb::LockInfo {
+                    key: key(b"inner-key"),
+                    primary_lock: key(b"inner-primary"),
+                    secondaries: vec![key(b"inner-secondary")],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            primary_mismatch: Some(kvrpcpb::PrimaryMismatch {
+                lock_info: Some(kvrpcpb::LockInfo {
+                    key: key(b"mismatch-key"),
+                    primary_lock: key(b"mismatch-primary"),
+                    secondaries: vec![key(b"mismatch-secondary")],
+                    ..Default::default()
+                }),
+            }),
+            deadlock: Some(kvrpcpb::Deadlock {
+                lock_key: key(b"lock-key"),
+                deadlock_key: key(b"deadlock-key"),
+                wait_chain: vec![deadlock::WaitForEntry {
+                    key: key(b"wait-key"),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            debug_info: Some(kvrpcpb::DebugInfo {
+                mvcc_info: vec![kvrpcpb::MvccDebugInfo {
+                    key: key(b"key1"),
+                    mvcc: Some(kvrpcpb::MvccInfo {
+                        lock: Some(kvrpcpb::MvccLock {
+                            primary: key(b"debug-primary"),
+                            secondaries: vec![key(b"debug-secondary-1"), key(b"debug-secondary-2")],
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        codec.decode_key_error(&mut error).unwrap();
+        assert_eq!(error.txn_lock_not_found.unwrap().key, b"key1");
+        let outer = error.locked.unwrap();
+        assert_eq!(
+            (outer.key.as_slice(), outer.primary_lock.as_slice()),
+            (b"outer-key".as_slice(), b"outer-primary".as_slice())
+        );
+        assert_eq!(outer.secondaries, [b"outer-secondary"]);
+        assert_eq!(outer.shared_lock_infos[0].key, b"inner-key");
+        assert_eq!(
+            error
+                .primary_mismatch
+                .unwrap()
+                .lock_info
+                .unwrap()
+                .primary_lock,
+            b"mismatch-primary"
+        );
+        assert_eq!(error.deadlock.unwrap().wait_chain[0].key, b"wait-key");
+        let debug = error.debug_info.unwrap().mvcc_info.remove(0);
+        assert_eq!(debug.key, b"key1");
+        assert_eq!(
+            debug.mvcc.unwrap().lock.unwrap().secondaries,
+            [b"debug-secondary-1", b"debug-secondary-2"]
+        );
+    }
+
+    #[test]
+    fn source_test_decode_mvcc_info_preserves_empty_lock_keys() {
+        let codec = ApiV2Codec::new(KeyMode::Raw, 0x010203).unwrap();
+        let mut info = kvrpcpb::MvccInfo {
+            lock: Some(kvrpcpb::MvccLock {
+                primary: Vec::new(),
+                secondaries: vec![Vec::new(), codec.encode_key(b"mvcc-secondary")],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        codec.decode_mvcc_info(&mut info).unwrap();
+        let lock = info.lock.unwrap();
+        assert!(lock.primary.is_empty());
+        assert_eq!(lock.secondaries, [Vec::new(), b"mvcc-secondary".to_vec()]);
+    }
+
+    #[test]
+    fn source_test_get_keyspace_id() {
+        let codec = ApiV2Codec::new(KeyMode::Raw, 0x010203).unwrap();
+        assert_eq!(codec.keyspace_id(), 0x010203);
+        source_get_keyspace_id_rejects_non_enabled_and_v3_metadata();
+    }
+
+    #[test]
+    fn source_test_encode_mpp_request() {
+        use crate::proto::{coprocessor, mpp};
+
+        let codec = ApiV2Codec::new(KeyMode::Raw, 0x010203).unwrap();
+        let request = mpp::DispatchTaskRequest {
+            meta: Some(mpp::TaskMeta::default()),
+            regions: vec![coprocessor::RegionInfo {
+                ranges: vec![coprocessor::KeyRange {
+                    start: b"a".to_vec(),
+                    end: b"b".to_vec(),
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let encoded = codec.encode_mpp_dispatch_task_request(&request);
+        let meta = encoded.meta.unwrap();
+        assert_eq!(meta.api_version, kvrpcpb::ApiVersion::V2 as i32);
+        assert_eq!(
+            meta.keyspace,
+            Some(mpp::task_meta::Keyspace::KeyspaceId(0x010203))
+        );
+        assert_eq!(encoded.regions[0].ranges[0].start, codec.encode_key(b"a"));
+        assert_eq!(encoded.regions[0].ranges[0].end, codec.encode_key(b"b"));
+    }
+
+    #[test]
+    fn source_test_decode_bucket_keys() {
+        let codec = ApiV2Codec::new(KeyMode::Raw, 0x010203).unwrap();
+        let previous = ApiV2Codec::new(KeyMode::Raw, 0x010202).unwrap().prefix();
+        let end = codec.end_key();
+        let mem = |physical: Vec<u8>| {
+            let mut encoded = Vec::new();
+            crate::kv::codec::encode_bytes(&mut encoded, &physical);
+            encoded
+        };
+        let joined = |prefix: &[u8], suffix: &[u8]| [prefix, suffix].concat();
+        let expected = [
+            Vec::new(),
+            b"a".to_vec(),
+            b"b".to_vec(),
+            b"c".to_vec(),
+            Vec::new(),
+        ];
+
+        let before = [b"a", b"b", b"c"].map(|suffix| mem(joined(&previous, suffix)));
+        let inside = [b"a", b"b", b"c"].map(|suffix| codec.encode_region_key(suffix));
+        let after = [b"".as_slice(), b"a", b"b", b"c"].map(|suffix| mem(joined(&end, suffix)));
+        let first = before
+            .clone()
+            .into_iter()
+            .chain(inside.clone())
+            .chain(after)
+            .collect::<Vec<_>>();
+        assert_eq!(codec.decode_bucket_keys(&first).unwrap(), expected);
+
+        let second = before
+            .clone()
+            .into_iter()
+            .chain(std::iter::once(codec.encode_region_key(b"")))
+            .chain(inside.clone())
+            .chain(std::iter::once(Vec::new()))
+            .collect::<Vec<_>>();
+        assert_eq!(codec.decode_bucket_keys(&second).unwrap(), expected);
+
+        let third = std::iter::once(Vec::new())
+            .chain(before)
+            .chain(std::iter::once(codec.encode_region_key(b"")))
+            .chain(inside)
+            .chain(std::iter::once(Vec::new()))
+            .collect::<Vec<_>>();
+        assert_eq!(codec.decode_bucket_keys(&third).unwrap(), expected);
+    }
 }

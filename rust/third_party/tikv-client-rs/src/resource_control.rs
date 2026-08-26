@@ -453,7 +453,45 @@ mod test {
     }
 
     #[test]
-    fn source_response_info_accounts_for_cop_tasks() {
+    fn source_test_response_info_read_bytes() {
+        let response = coprocessor::Response {
+            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
+                    total_versions_size: 100,
+                    processed_versions_size: 80,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let info = ResponseInfo::from_response(Response::Cop(&response));
+        assert_eq!(
+            info.read_bytes(),
+            if cfg!(feature = "nextgen") { 100 } else { 80 }
+        );
+
+        if cfg!(feature = "nextgen") {
+            let compatibility = coprocessor::Response {
+                exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                    scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
+                        total_versions_size: 80,
+                        processed_versions_size: 100,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            assert_eq!(
+                ResponseInfo::from_response(Response::Cop(&compatibility)).read_bytes(),
+                100
+            );
+        }
+    }
+
+    #[test]
+    fn source_test_response_info_batched_tasks() {
         let response = coprocessor::Response {
             exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
                 scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
@@ -515,7 +553,25 @@ mod test {
         assert_eq!(info.read_bytes, expected);
         assert_eq!(info.kv_cpu, Duration::from_nanos(1_300));
         assert_eq!(info.response_size, response.encoded_len() as u64);
+    }
 
+    #[test]
+    fn source_response_info_accounts_for_cop_streams() {
+        let response = coprocessor::Response {
+            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
+                    processed_versions_size: 80,
+                    total_versions_size: 100,
+                    ..Default::default()
+                }),
+                time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
+                    process_wall_time_ns: 1_000,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
         let stream = ResponseInfo::from_response(Response::CopStream(Some(&response)));
         assert_eq!(
             stream.read_bytes(),
@@ -533,24 +589,6 @@ mod test {
             ResponseInfo::from_response(Response::CopStream(None)),
             ResponseInfo::default()
         );
-
-        if cfg!(feature = "nextgen") {
-            let compatibility = coprocessor::Response {
-                exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
-                    scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
-                        processed_versions_size: 100,
-                        total_versions_size: 80,
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            };
-            assert_eq!(
-                ResponseInfo::from_response(Response::Cop(&compatibility)).read_bytes(),
-                100
-            );
-        }
     }
 
     #[test]
@@ -635,7 +673,7 @@ mod test {
     }
 
     #[test]
-    fn original_request_info_matrix() {
+    fn source_test_make_request_info() {
         let read = kvrpcpb::BatchGetRequest {
             context: Some(kvrpcpb::Context {
                 peer: Some(crate::proto::metapb::Peer {
@@ -706,6 +744,42 @@ mod test {
             RequestInfo::from_store_request(&raw_delete).request_size(),
             0
         );
+    }
+
+    #[test]
+    fn source_test_make_request_info_predicted_read_bytes() {
+        let request = kvrpcpb::BatchGetRequest {
+            context: Some(kvrpcpb::Context {
+                peer: Some(crate::proto::metapb::Peer {
+                    store_id: 7,
+                    ..Default::default()
+                }),
+                resource_control_context: Some(kvrpcpb::ResourceControlContext {
+                    resource_group_name: "rg".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let controller: ResourceGroupControllerHandle = Arc::new(NoopController::default());
+
+        let info = select(
+            &controller,
+            &request,
+            0,
+            AccessLocationType::Unknown,
+            256 * 1024,
+        )
+        .unwrap()
+        .request;
+        assert!(!info.is_write());
+        assert_eq!(info.predicted_read_bytes(), 256 * 1024);
+
+        let info_without_hint = select(&controller, &request, 0, AccessLocationType::Unknown, 0)
+            .unwrap()
+            .request;
+        assert_eq!(info_without_hint.predicted_read_bytes(), 0);
     }
 
     #[test]
@@ -852,7 +926,7 @@ mod test {
     }
 
     #[test]
-    fn original_is_cop_request_matrix() {
+    fn source_test_make_request_info_is_cop() {
         let cop = coprocessor::Request::default();
         assert!(RequestInfo::from_store_request(&cop).is_cop());
         assert!(RequestInfo::from_store_request(&CoprocessorStreamRequest::new(cop)).is_cop());

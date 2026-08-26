@@ -448,6 +448,25 @@ lazy_static! {
 
 tokio::task_local! {
     static GRPC_OPEN_TRACING_ENABLED: bool;
+    static ACTIVE_TRACE_CONTEXT: TraceContext;
+}
+
+/// Run an asynchronous client operation with an active trace context.
+///
+/// This is Rust's task-local counterpart to passing client-go's
+/// `context.Context` through a request. Request plans capture the context so
+/// it survives region fan-out into independently spawned tasks.
+pub async fn with_trace_context<F>(context: TraceContext, future: F) -> F::Output
+where
+    F: Future,
+{
+    ACTIVE_TRACE_CONTEXT.scope(context, future).await
+}
+
+pub(crate) fn current_trace_context() -> TraceContext {
+    ACTIVE_TRACE_CONTEXT
+        .try_with(TraceContext::clone)
+        .unwrap_or_default()
 }
 
 /// Replace the event handler; `None` restores the no-op implementation.
@@ -520,6 +539,68 @@ pub fn immediate_logging_enabled(context: &TraceContext) -> bool {
     trace_control_flags(context).has(TraceControlFlags::IMMEDIATE_LOG)
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum TransactionBatchKind {
+    Prewrite,
+    Commit,
+}
+
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct TransactionBatchTrace {
+    pub(crate) context: TraceContext,
+    pub(crate) kind: TransactionBatchKind,
+    pub(crate) start_ts: u64,
+    pub(crate) commit_ts: u64,
+    pub(crate) region_id: u64,
+    pub(crate) is_primary: bool,
+    pub(crate) key_count: usize,
+}
+
+impl TransactionBatchTrace {
+    pub(crate) fn emit_start(&self) {
+        if !is_category_enabled(Category::TransactionTwoPhaseCommit) {
+            return;
+        }
+        let mut fields = vec![TraceField::new("startTS", self.start_ts)];
+        if matches!(self.kind, TransactionBatchKind::Commit) {
+            fields.push(TraceField::new("commitTS", self.commit_ts));
+        }
+        fields.extend([
+            TraceField::new("regionID", self.region_id),
+            TraceField::new("isPrimary", self.is_primary),
+            TraceField::new("keyCount", self.key_count),
+        ]);
+        trace_event(
+            &self.context,
+            Category::TransactionTwoPhaseCommit,
+            match self.kind {
+                TransactionBatchKind::Prewrite => "prewrite.batch.start",
+                TransactionBatchKind::Commit => "commit.batch.start",
+            },
+            &fields,
+        );
+    }
+
+    pub(crate) fn emit_result(&self, success: bool) {
+        if !is_category_enabled(Category::TransactionTwoPhaseCommit) {
+            return;
+        }
+        trace_event(
+            &self.context,
+            Category::TransactionTwoPhaseCommit,
+            match self.kind {
+                TransactionBatchKind::Prewrite => "prewrite.batch.result",
+                TransactionBatchKind::Commit => "commit.batch.result",
+            },
+            &[
+                TraceField::new("regionID", self.region_id),
+                TraceField::new("success", success),
+            ],
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -534,26 +615,77 @@ mod tests {
     }
 
     #[test]
-    fn trace_control_flag_values_and_operations_match_client_go() {
-        assert_eq!(TraceControlFlags::IMMEDIATE_LOG.0, 1 << 0);
-        assert_eq!(TraceControlFlags::TIKV_CATEGORY_REQUEST.0, 1 << 1);
-        assert_eq!(TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS.0, 1 << 2);
-        assert_eq!(TraceControlFlags::TIKV_CATEGORY_READ_DETAILS.0, 1 << 3);
+    fn source_test_trace_control_flags_has() {
+        let flags = TraceControlFlags::IMMEDIATE_LOG | TraceControlFlags::TIKV_CATEGORY_REQUEST;
+        assert!(flags.has(TraceControlFlags::IMMEDIATE_LOG));
+        assert!(flags.has(TraceControlFlags::TIKV_CATEGORY_REQUEST));
+        assert!(!flags.has(TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS));
+        assert!(!flags.has(TraceControlFlags::TIKV_CATEGORY_READ_DETAILS));
+        assert!(!TraceControlFlags::default().has(TraceControlFlags::IMMEDIATE_LOG));
+    }
 
-        let empty = TraceControlFlags::default();
-        assert!(!empty.has(TraceControlFlags::IMMEDIATE_LOG));
-        let flags = empty
+    #[test]
+    fn source_test_trace_control_flags_with() {
+        let mut flags = TraceControlFlags::default();
+        flags = flags.with(TraceControlFlags::IMMEDIATE_LOG);
+        assert!(flags.has(TraceControlFlags::IMMEDIATE_LOG));
+        assert!(!flags.has(TraceControlFlags::TIKV_CATEGORY_REQUEST));
+        flags = flags.with(TraceControlFlags::TIKV_CATEGORY_REQUEST);
+        assert!(flags.has(TraceControlFlags::IMMEDIATE_LOG));
+        assert!(flags.has(TraceControlFlags::TIKV_CATEGORY_REQUEST));
+        flags = flags.with(TraceControlFlags::IMMEDIATE_LOG);
+        assert!(flags.has(TraceControlFlags::IMMEDIATE_LOG));
+    }
+
+    #[test]
+    fn source_test_trace_control_flags_combined_operations() {
+        let flags = TraceControlFlags::default()
             .with(TraceControlFlags::IMMEDIATE_LOG)
             .with(TraceControlFlags::TIKV_CATEGORY_REQUEST)
             .with(TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS)
             .with(TraceControlFlags::TIKV_CATEGORY_READ_DETAILS);
-        assert_eq!(flags.0, 0b1111);
-        assert_eq!(flags.with(TraceControlFlags::IMMEDIATE_LOG), flags);
+        assert!(flags.has(TraceControlFlags::IMMEDIATE_LOG));
+        assert!(flags.has(TraceControlFlags::TIKV_CATEGORY_REQUEST));
+        assert!(flags.has(TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS));
+        assert!(flags.has(TraceControlFlags::TIKV_CATEGORY_READ_DETAILS));
+    }
+
+    #[test]
+    fn source_test_trace_control_flags_bit_values() {
+        assert_eq!(TraceControlFlags::IMMEDIATE_LOG, TraceControlFlags(1 << 0));
+        assert_eq!(
+            TraceControlFlags::TIKV_CATEGORY_REQUEST,
+            TraceControlFlags(1 << 1)
+        );
+        assert_eq!(
+            TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS,
+            TraceControlFlags(1 << 2)
+        );
+        assert_eq!(
+            TraceControlFlags::TIKV_CATEGORY_READ_DETAILS,
+            TraceControlFlags(1 << 3)
+        );
+        assert_ne!(
+            TraceControlFlags::IMMEDIATE_LOG,
+            TraceControlFlags::TIKV_CATEGORY_REQUEST
+        );
+        assert_ne!(
+            TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS,
+            TraceControlFlags::TIKV_CATEGORY_READ_DETAILS
+        );
+        assert_eq!(
+            (TraceControlFlags::IMMEDIATE_LOG
+                | TraceControlFlags::TIKV_CATEGORY_REQUEST
+                | TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS
+                | TraceControlFlags::TIKV_CATEGORY_READ_DETAILS)
+                .0,
+            0b1111
+        );
     }
 
     #[test]
     #[serial]
-    fn extractor_defaults_custom_context_values_and_reset_match_source() {
+    fn source_test_trace_control_extractor() {
         reset_handlers();
         let context = TraceContext::new();
         assert_eq!(
@@ -565,6 +697,10 @@ mod tests {
         set_trace_control_extractor(Some(Arc::new(|_| {
             TraceControlFlags::IMMEDIATE_LOG | TraceControlFlags::TIKV_CATEGORY_REQUEST
         })));
+        let flags = trace_control_flags(&context);
+        assert!(flags.has(TraceControlFlags::IMMEDIATE_LOG));
+        assert!(flags.has(TraceControlFlags::TIKV_CATEGORY_REQUEST));
+        assert!(!flags.has(TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS));
         assert!(immediate_logging_enabled(&context));
 
         struct FlagsKey;
@@ -580,7 +716,12 @@ mod tests {
                 | TraceControlFlags::TIKV_CATEGORY_READ_DETAILS,
         );
         assert!(trace_control_flags(&detailed).has(TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS));
+        assert!(trace_control_flags(&detailed).has(TraceControlFlags::TIKV_CATEGORY_READ_DETAILS));
+        assert!(!trace_control_flags(&detailed).has(TraceControlFlags::IMMEDIATE_LOG));
         assert!(!immediate_logging_enabled(&detailed));
+
+        let immediate = context.with_value::<FlagsKey, _>(TraceControlFlags::IMMEDIATE_LOG);
+        assert!(immediate_logging_enabled(&immediate));
 
         set_trace_control_extractor(None);
         assert_eq!(
@@ -592,7 +733,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn event_and_category_handlers_are_independent_and_resettable() {
+    fn source_test_trace_event_func() {
         reset_handlers();
         let called = Arc::new(AtomicBool::new(false));
         let observed = called.clone();
@@ -612,27 +753,35 @@ mod tests {
         );
         assert!(called.load(Ordering::SeqCst));
 
-        assert!(!is_category_enabled(Category::TransactionTwoPhaseCommit));
-        set_category_enabled_handler(Some(Arc::new(|category| {
-            category == Category::TransactionTwoPhaseCommit
-        })));
-        assert!(is_category_enabled(Category::TransactionTwoPhaseCommit));
-        assert!(!is_category_enabled(Category::TransactionLockResolve));
-
         called.store(false, Ordering::SeqCst);
         set_trace_event_handler(None);
         trace_event(
             &TraceContext::new(),
             Category::TransactionTwoPhaseCommit,
             "test",
-            &[],
+            &[TraceField::new("key", "value")],
         );
         assert!(!called.load(Ordering::SeqCst));
         reset_handlers();
     }
 
     #[test]
-    fn trace_ids_are_absent_in_root_contexts_and_override_in_derived_contexts() {
+    #[serial]
+    fn source_test_is_category_enabled_func() {
+        reset_handlers();
+        assert!(!is_category_enabled(Category::TransactionTwoPhaseCommit));
+        set_category_enabled_handler(Some(Arc::new(|category| {
+            category == Category::TransactionTwoPhaseCommit
+        })));
+        assert!(is_category_enabled(Category::TransactionTwoPhaseCommit));
+        assert!(!is_category_enabled(Category::TransactionLockResolve));
+        set_category_enabled_handler(None);
+        assert!(!is_category_enabled(Category::TransactionTwoPhaseCommit));
+        reset_handlers();
+    }
+
+    #[test]
+    fn source_test_trace_id_context() {
         let context = TraceContext::new();
         assert_eq!(context.trace_id(), None);
         let first = context.with_trace_id(vec![1, 2, 3, 4, 5]);
@@ -640,6 +789,30 @@ mod tests {
         let second = first.with_trace_id(vec![6, 7, 8, 9, 10]);
         assert_eq!(second.trace_id(), Some(&[6, 7, 8, 9, 10][..]));
         assert_eq!(first.trace_id(), Some(&[1, 2, 3, 4, 5][..]));
+    }
+
+    #[tokio::test]
+    async fn task_local_trace_context_is_nested_and_restored() {
+        struct Marker;
+
+        assert_eq!(current_trace_context().trace_id(), None);
+        let outer = TraceContext::new()
+            .with_trace_id(vec![1])
+            .with_value::<Marker, _>("outer");
+        with_trace_context(outer, async {
+            assert_eq!(current_trace_context().trace_id(), Some(&[1][..]));
+            assert_eq!(
+                current_trace_context().value::<Marker, &str>(),
+                Some(&"outer")
+            );
+            with_trace_context(TraceContext::new().with_trace_id(vec![2]), async {
+                assert_eq!(current_trace_context().trace_id(), Some(&[2][..]));
+            })
+            .await;
+            assert_eq!(current_trace_context().trace_id(), Some(&[1][..]));
+        })
+        .await;
+        assert_eq!(current_trace_context().trace_id(), None);
     }
 
     fn timing_millis(span: &ExecutionDetailSpan) -> Vec<(&'static str, u128, u128, bool)> {

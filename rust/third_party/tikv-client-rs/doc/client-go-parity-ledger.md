@@ -8,50 +8,50 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 
 | Go package | Initial Rust owner | Status | Receipt / dependency note |
 | --- | --- | --- | --- |
-| `config` | `src/config.rs`, `src/config/client_go.rs`, client constructors | complete | Receipt below; all defaults, nested sections, validation, global snapshot/restore, path parsing, TLS material behavior, RU-v2 accounting, and both `nextgen` build selections are covered. |
-| `config/retry` | `src/retry.rs`, `src/async_util.rs`, `src/kv/variables.rs`, `src/request/plan.rs`, `src/stats.rs` | complete | Complete package receipt below and full artifact/symbol/test/consumer mapping in [`config-retry-source-artifact-audit.md`](config-retry-source-artifact-audit.md). Both production files, the original test file, goleak harness, all 17 retry classes, every state/error/cancellation/fork branch, native context/error decisions, metrics/runtime-stat boundaries, and validation gates are accounted for. Each unfinished caller loop remains explicitly owned by its own package row. |
-| `error` | `src/error.rs`, `src/common/errors.rs`, `src/stats.rs` | complete | Receipt below; every singleton and typed wrapper, predicates, constructors, extraction precedence/failpoint/redaction, protobuf text/debug JSON, logging, and write-conflict metric side effect are covered. |
-| `internal/apicodec` | `src/{common/errors,request/keyspace,request/mod,request/plan_builder,store/request,raw/client,raw/requests,transaction/{lock,requests,transaction}}.rs`, directly required proto/generated inputs | complete | Complete package receipt below and full seven-artifact/schema/symbol/test/consumer mapping in [`internal-apicodec-source-artifact-audit.md`](internal-apicodec-source-artifact-audit.md). V1/V2 byte, region, request, response, context, error, bucket, MPP/Compact, API V3 rejection, typed decode-error, and exact unsupported-command behavior are covered. Each high-level routing/raw/transaction consumer retains its own package status. |
+| `config` | `src/config.rs`, `src/config/client_go.rs`, client constructors | complete | Re-audited atomic receipt: [`config-source-artifact-audit.md`](config-source-artifact-audit.md). All ten top-level artifacts/1,141 lines, every production surface, all seven ordinary tests plus `TestMain`, both build variants, and 68 direct importers are assigned. Differential fixes cover `net/url` malformed-pair/fragment/opaque/authority behavior, Go duration saturation, reusable global restore, and previously dormant async-commit/1PC transaction defaults. The child package `config/retry` retains its own receipt. |
+| `config/retry` | `src/retry.rs`, `src/async_util.rs`, `src/kv/variables.rs`, `src/request/plan.rs`, `src/stats.rs` | complete | Independently re-audited atomic receipt: [`config-retry-source-artifact-audit.md`](config-retry-source-artifact-audit.md). All four artifacts/1,020 lines, every production surface, all 17 retry classes, all nine ordinary Go tests as independently named Rust ports, `TestMain`, and all 43 direct importers are assigned. The re-audit found no production divergence but corrected grouped test evidence by restoring omitted kill-handler branches, all region-error cancellation cases, the exact 32-error retention workload, and independent clone/fork/update execution. Exact Go normal/race suites, 21 focused Rust tests per configuration, 778/775 source-derived tests, complete workspace/library matrices, strict check/Clippy/private rustdoc, and 51 doctests pass. |
+| `error` | `src/error.rs`, `src/common/errors.rs`, `src/stats.rs`, typed consumers | complete | Re-audited atomic receipt: [`error-source-artifact-audit.md`](error-source-artifact-audit.md). Both artifacts/497 lines, the sole original test, all 58 direct importers, every public symbol/branch, and native wrapper integration are assigned. Differential fixes restore signed Go-`int` sizes, the public PD-timeout constructor, exact descriptor-driven gogo text/fallback, failpoint type assertions, wrapper-aware predicates, and stack-bearing logs. |
+| `internal/apicodec` | `src/{common/errors,request/keyspace,request/mod,request/plan_builder,store/request,raw/client,raw/requests,transaction/{lock,requests,transaction}}.rs`, directly required proto/generated inputs | complete | Independently re-audited atomic receipt: [`internal-apicodec-source-artifact-audit.md`](internal-apicodec-source-artifact-audit.md). All seven artifacts/2,703 lines, eight required pinned protocol inputs, every production surface, all 17 assertion-bearing Go tests as independently named Rust ports, the suite-runner/empty-test dispositions, and all 14 direct importers are assigned. The stronger one-to-one ports found no additional production divergence and replace the older grouped test evidence. Exact Go normal/race suites, 794/791 source-derived Rust tests, complete 1,041/1,038 active main-library matrices plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests pass. Each high-level routing/raw/transaction consumer retains its own package status. |
 | `internal/client` | `src/store`, `src/pd`, transport | complete | Atomic re-audit receipt: [`internal-client-source-artifact-audit.md`](internal-client-source-artifact-audit.md). The immutable 19-artifact/6,924-line inventory, all 51 original test declarations, typed command/API-codec integration, native Tonic/Prost decisions, newly exposed lifecycle fixes, and full validation gates are accounted for. Proxy selection remains correctly owned by the separate complete `internal/locate` row. |
-| `internal/client/mockserver` | `src/store/mockserver.rs`, generated Tonic server bindings | complete | Receipt below. The source's narrow test-server RPC and lifecycle surface is transcreated as test-only Rust support, independently reusable by the parent `internal/client` transport tests. |
-| `internal/kvrpc` | `src/request/shard.rs`, `src/raw/requests.rs` | complete | Receipt below; size/count boundaries, aligned payloads, region association, and typed result mapping are covered. |
-| `internal/latch` | `src/transaction/latch.rs`, transaction client/commit | complete | Receipt below; hashing, sizing, ordered acquisition, stale detection, wakeup/recycle/close behavior, async cancellation safety, configuration, and optimistic-commit integration are covered. |
+| `internal/client/mockserver` | `src/store/mockserver.rs`, generated Tonic server bindings | complete | Re-audited atomic receipt: [`internal-client-mockserver-source-artifact-audit.md`](internal-client-mockserver-source-artifact-audit.md). The sole 196-line artifact, no-test/support boundary, all methods, and all five direct consumers are assigned. Differential fixes restore per-stream feedback numbering and source loopback address advertisement. |
+| `internal/kvrpc` | `src/request/shard.rs`, `src/raw/requests.rs`, root split consumer | complete | Re-audited atomic receipt: [`internal-kvrpc-source-artifact-audit.md`](internal-kvrpc-source-artifact-audit.md). The sole 82-line artifact, no-test/support boundary, all four production surfaces, and both direct importers are assigned. The differential corrects root split-region batching from 2,048/2 to source-exact 2,049/1. |
+| `internal/latch` | `src/transaction/latch.rs`, transaction client/commit | complete | Re-audited atomic receipt: [`internal-latch-source-artifact-audit.md`](internal-latch-source-artifact-audit.md). All five artifacts/758 lines, all four ordinary tests plus `TestMain`, and all four direct importers are assigned. The differential fixes shared-scheduler shutdown during client close; source ports retain the exact 10-worker/999-transaction stress shape. |
 | `internal/locate` | `src/region.rs`, `src/region_cache.rs`, `src/pd`, `src/request`, `src/store`, `src/traffic.rs` | complete | Complete package receipt below and full 17-artifact/production-symbol/147-test/dependency/consumer mapping in [`internal-locate-source-artifact-audit.md`](internal-locate-source-artifact-audit.md). Region coding and indexes, TTL/GC/refresh, store discovery/liveness/health, replica and proxy selection, sender retry/error precedence, runtime diagnostics, network accounting, configurable PD region-meta circuit breaking, native async ownership, and validation gates are accounted for. Raw, snapshot, transaction, root `tikv`, and other consumers retain independent statuses. |
 | `internal/logutil` | public-but-hidden `src/logutil.rs`, Rust `log` call sites, generated protobuf descriptors/type names | complete | Atomic receipt: [`internal-logutil-source-artifact-audit.md`](internal-logutil-source-artifact-audit.md). All three production files (237 lines), every exported/mutable surface, all 44 direct importers, and the no-test/no-support inventory are assigned. The 977 generated `prost::Name` implementations and complete 1,029-message descriptor pool give `Hex` generic recursive schema reflection and byte redaction instead of a lossy `Debug` substitute; typed logger/span contexts preserve fallback, event, formatted-event, tag, and testing-assertion behavior. |
-| `internal/mockstore/cluster` | `src/mock/cluster.rs` | complete | Receipt below; all interface methods, protobuf shapes, nullable results, signed counts, and ownership boundaries are covered. |
-| `internal/mockstore/deadlock` | `src/mock/deadlock.rs` | complete | Receipt below; synchronized detection, source-exact cycle hash, deduplication, cleanup, expiry, and all original tests are covered. |
+| `internal/mockstore/cluster` | public test-support `src/mock/cluster.rs` trait plus concrete mocktikv implementation | complete | Re-audited atomic receipt: [`internal-mockstore-cluster-source-artifact-audit.md`](internal-mockstore-cluster-source-artifact-audit.md). The sole 65-line source artifact, all nine interface methods, no-test/support boundary, both direct importers, concrete implementation, and ordinary-build alias are assigned. |
+| `internal/mockstore/deadlock` | reusable `unistore/src/deadlock.rs` plus live `MockEngine` integration | complete | Re-audited atomic receipt: [`internal-mockstore-deadlock-source-artifact-audit.md`](internal-mockstore-deadlock-source-artifact-audit.md). All three artifacts/257 lines, `TestDeadlock`, `TestMain`, and the sole source importer are assigned. The audit removes the test-only duplicate and fixes live multiple-edge retention plus source-exact terminal/range-resolve cleanup behavior. |
 | `internal/mockstore/mocktikv` | hidden `src/mock/mocktikv`, reusable `unistore` engine crate, mock stream adapters | complete | Atomic receipt: [`internal-mockstore-mocktikv-source-artifact-audit.md`](internal-mockstore-mocktikv-source-artifact-audit.md). Runtime remediation now sets transactional `GetResponse.not_found` exactly as real TiKV/client-go require. Both the adapter matrix and an external `Transaction<MockPdClient>` regression prove an absent key decodes as `None`; the reusable engine and all other inventoried behavior remain assigned. |
-| `internal/resourcecontrol` | `src/resource_control.rs`, `src/request/{plan,plan_builder}.rs`, `src/store/{mod,request}.rs`, transaction request contexts / resource-manager proto | complete | Complete package receipt below and full artifact/symbol/consumer mapping in [`internal-resourcecontrol-source-artifact-audit.md`](internal-resourcecontrol-source-artifact-audit.md). Both production/test files, both legacy/NextGen variants, exact request/response accounting matrices, stream paths, bypass, routing inputs, controller ordering, RU updates, public native interfaces, and validation gates are covered. The external PD controller algorithm and downstream txn-file protocol retain separate ownership. |
+| `internal/resourcecontrol` | `src/resource_control.rs`, `src/request/{plan,plan_builder}.rs`, `src/store/{mod,request}.rs`, `src/{stats,transaction/transaction}.rs`, resource-manager proto | complete | Re-audited atomic receipt: [`internal-resourcecontrol-source-artifact-audit.md`](internal-resourcecontrol-source-artifact-audit.md). Both artifacts/511 lines, all five independently named Go test ports, all five direct importers, legacy/NextGen variants, exact request/response accounting matrices, stream paths, bypass, routing inputs, controller ordering, RU updates, and public native interfaces are assigned. A red/green consumer regression restored the missing `TxnFileErrorAccounting` metric while preserving committed txn-file results after settlement failure. Exact Go normal/race tests pass in both legacy and NextGen modes; final Rust gates pass 13 focused tests per mode, 752/749 source-derived tests, strict check/Clippy/private rustdoc, and 51 doctests. The external PD controller algorithm and broader txn-file protocol retain separate ownership. |
 | `internal/unionstore` | `src/transaction/unionstore.rs` plus native ART/RBT/arena adapters | complete | Receipt below; all eight production files and six source test/support/benchmark artifacts are accounted for. Public transaction consumption remains on the separate `txnkv/transaction` row. |
-| `internal/unionstore/arena` | `src/transaction/arena.rs` | complete | Receipt below; block allocation, addresses, checkpoints, hooks, value-log history/revert/inspection, and all original tests are covered. |
-| `internal/unionstore/art` | `src/transaction/art.rs` | complete | Receipt below; all nine source/test artifacts are covered by a safe ordered-map/value-log mapping, with the parent unionstore integration retained on its own row. |
-| `internal/unionstore/rbt` | `src/transaction/rbt.rs` | complete | Receipt below; all five source/test artifacts are covered by a safe ordered-map/value-log mapping, with the parent unionstore integration retained on its own row. |
+| `internal/unionstore/arena` | public `src/transaction/arena.rs` plus safe ART/RBT integration decision | complete | Re-audited atomic receipt: [`internal-unionstore-arena-source-artifact-audit.md`](internal-unionstore-arena-source-artifact-audit.md). Both artifacts/508 lines, all allocator/address/checkpoint/hook/value-log behavior, both original tests, and all 16 unionstore importers are assigned. The receipt explicitly distinguishes the complete reusable arena from Rust ART/RBT's safe `BTreeMap` representation. |
+| `internal/unionstore/art` | `src/transaction/art.rs`, `src/transaction/art_source_tests.rs`, `src/transaction/unionstore.rs` adapter | complete | Re-audited atomic receipt: [`internal-unionstore-art-source-artifact-audit.md`](internal-unionstore-art-source-artifact-audit.md). All nine artifacts/3,474 lines, all 35 original tests plus the benchmark contract, every production surface, and the sole direct parent importer are assigned. Five red-then-green fixes restore discard release/invalidation, append-order stage inspection, flags-only buffer limits, idempotent snapshot completion, and ignored adapter flag-update errors. |
+| `internal/unionstore/rbt` | `src/transaction/rbt.rs`, `src/transaction/unionstore.rs` adapter | complete | Re-audited atomic receipt: [`internal-unionstore-rbt-source-artifact-audit.md`](internal-unionstore-rbt-source-artifact-audit.md). All five artifacts/1,661 lines, all three original unit tests, every production surface, and the sole direct parent importer are assigned. Five red-then-green fixes restore source `UpdateFlags` guards, empty reverse bounds, reverse value-log stage inspection, value-log storage release/invalidation, and flags-only history errors. |
 | `kvproto` (native crate) | independent `tikv-client-kvproto` workspace crate; `tikv_client::proto` re-export | complete | Atomic receipt: [`kvproto-crate-completion-audit.md`](kvproto-crate-completion-audit.md). All 45 crate artifacts, 56 generator inputs, 41 generated protocol modules, descriptor set, three direct integration edges, and downstream type-identity gate are assigned. The crate is the single generated-type owner shared by direct consumers and `tikv-client`. |
-| `unistore` (native crate) | independent `unistore` workspace crate | complete | Atomic receipt: [`unistore-crate-completion-audit.md`](unistore-crate-completion-audit.md). All five crate artifacts/2,788 lines, 70 public type/function declaration points, 22 internal tests, two external-consumer tests, dependencies, and native consumers are assigned. Its source-mapped engine belongs to the complete client-go mocktikv receipt. |
+| `unistore` (native crate) | independent `unistore` workspace crate | complete | Re-audited atomic receipt: [`unistore-crate-completion-audit.md`](unistore-crate-completion-audit.md). All six crate artifacts/3,203 lines, 80 public declaration points, 32 unit tests, three external-consumer tests, dependencies, and native consumers are assigned. The single reusable deadlock graph now serves the live source-mapped engine. |
 | `TiDB/pkg/store/mockstore/unistore` | no Rust parity claim | not-applicable | This separate TiDB server package is outside the pinned client-go source and the user-requested client parity goal. The native crate deliberately does not claim a partial transcreation of its SQL/RPC/schema/coprocessor inventory. |
-| `kv` | `src/kv`, root exports | complete | Receipt below; all five production files, three test/support files, key flags, lock/get metadata, variables, atomics, and read/location modes are covered. |
+| `kv` | public `src/kv`, root exports, and typed consumers | complete | Re-audited atomic receipt: [`kv-source-artifact-audit.md`](kv-source-artifact-audit.md). All eight artifacts/995 lines, every production surface, all four ordinary tests plus `TestMain`, and all 69 direct importers are assigned. The formerly combined option/value test is replaced by source-named case-level ports; source-uncovered gates execute all 22 flag operations and every foundational state branch. |
 | `metrics` | public `src/metrics.rs`, `src/metrics/shortcuts.rs`, process-wide integration in `src/stats.rs` | complete | Atomic receipt: [`metrics-source-artifact-audit.md`](metrics-source-artifact-audit.md). Both production files (1,726 lines), all 98 declarations/97 constructed and registered collectors, all 151 declarations/149 initialized shortcuts, exact names/help/labels/buckets/subsystems/const labels, native no-quantile summaries, initialization/registration, commit counters, read SLI, and the 15-vector stale-store lifecycle are covered. Mechanical source reconciliation reports zero metadata/order mismatches; all 34 importers are assigned. `rawkv`, root `tikv`, and integration update sites retain their own rows and are not promoted. |
-| `oracle` | `src/oracle.rs`, `src/timestamp.rs` | complete | Receipt below; complete interface/future/validator surface, exact timestamp helpers, global scope, noop behavior, and typed source errors are covered. |
-| `oracle/oracles` | `src/oracle/oracles.rs`, PD timestamp adapter | complete | Receipt below; local/mock/PD timestamp allocation, cache, refresh/adaptation, stale reads, validation singleflight/retry/cancellation, external/min timestamps, metrics, source test hooks, and native task-leak coverage are complete. |
-| `rawkv` | public `src/raw`, plus native keyspace/request/region/metrics owners | complete | Atomic receipt: [`rawkv-source-artifact-audit.md`](rawkv-source-artifact-audit.md). All eight package/external-test/config artifacts (2,743 lines), 27 suite scenarios, probe surfaces, exact production behavior, and three direct external importers are assigned. Stateful three-region tests cover the complete mock/optional-live API matrix; V1 unbounded scans, terminal boundaries, duplicate BatchPut keys, mutable scan limits, and every high-level metric are source-exact. Root `tikv` and `internal/mockstore/mocktikv` retain independent incomplete claims. |
+| `oracle` | public `src/oracle.rs` interface/helper owner | complete | Re-audited atomic receipt: [`oracle-source-artifact-audit.md`](oracle-source-artifact-audit.md). The sole 157-line artifact, all 48 importers, every contract/helper/error branch, exact Go-duration overflow, and no-source-test disposition are assigned. |
+| `oracle/oracles` | `src/oracle/oracles.rs`, typed PD timestamp adapter and lifecycle tasks | complete | Re-audited atomic receipt: [`oracle-oracles-source-artifact-audit.md`](oracle-oracles-source-artifact-audit.md). All eight artifacts/2,063 lines, 13 ordinary tests plus `TestMain`, four direct concrete-package importers, and local/mock/PD allocation, refresh, validation, cancellation, and shutdown behavior are assigned. |
+| `rawkv` | public `src/raw`, plus native keyspace/request/region/metrics owners | complete | Atomic re-audit: [`rawkv-source-artifact-audit.md`](rawkv-source-artifact-audit.md). All eight package/external-test/config artifacts (2,743 lines), all 31 executable test declarations, every setup/probe/config hook, all production methods, and three direct external importers are assigned. The ordinary-build injected constructor and batch-size probe are public; deterministic ports execute every source suite assertion, including both 20,480-pair live cases. Differential regressions close sequential DeleteRange/Checksum ownership, source-ignored legacy response errors, exact public errors, and malformed over-limit scan behavior. Root `tikv` and `internal/mockstore/mocktikv` retain independent receipts. |
 | `testutils` | ordinary-build public `src/testutils.rs` facade over `src/mock/{cluster,mocktikv}` | complete | Atomic receipt: [`testutils-source-artifact-audit.md`](testutils-source-artifact-audit.md). The sole 61-line production artifact, all 12 aliases/functions, no-test/no-support inventory, source-derived conformance test, and all 14 direct consumers are assigned. The facade reuses the complete concrete mocktikv implementation without `internal-tests`; no-feature downstream gates implement its coprocessor handler and commit/read a transaction over its factory topology. It does not promote its integration-suite consumers. |
-| `tikv` | public `src/tikv.rs` facade plus native `src/{pd,region_cache,request,store,transaction,stats}.rs` owners | complete | Atomic receipt: [`tikv-source-artifact-audit.md`](tikv-source-artifact-audit.md). All 17 root artifacts (3,895 lines), every production facade/worker/control path, all 12 suite methods plus lifecycle/goleak contracts, typed support probes, exact metric update sites, and 35 direct importers are assigned. Visibility and compatible etcd loading, safe-TS aggregation, null-keyspace transaction-safe-point GC plus legacy GC-safe-point update, all-TiKV unsafe destruction, source-shaped split/scatter retry, close ordering, transaction options, and reusable union-store exports are covered. The public facade also makes every required injected-client signature nameable, including `Store`; an ordinary downstream crate implements `KvClient`/`PdClient` without `internal-tests`. Production control-plane calls use only mock/loopback validation; root `txnkv`, external integration tests, and final live-cluster differential gates retain independent statuses. |
+| `tikv` | public `src/tikv.rs` facade plus native `src/{pd,region_cache,request,store,transaction,stats}.rs` owners | complete | Independently re-audited atomic receipt: [`tikv-source-artifact-audit.md`](tikv-source-artifact-audit.md). All 17 root artifacts/3,895 lines, every production facade/worker/control path, all 12 suite methods as independently named Rust tests, the independently named lifecycle test, the suite/goleak harness dispositions, typed support probes, exact metric update sites, and all 35 direct importers are assigned. Red/green regressions corrected region-cache-before-client close ordering, primitive safe-TS probe overwrite semantics without weakening updater monotonicity, immediate running-scatter header errors, and transaction-file split lock waits on the operation's shared TTL-capped retry owner. Exact Go normal/race suites, 29 focused Rust tests in both configurations, 769/766 source-derived tests, complete workspace/library matrices, strict check/Clippy/private rustdoc, and 51 doctests pass. Production control-plane calls use mock/loopback validation here; root `txnkv`, external integration tests, and the already completed live-cluster differential gate retain independent receipts. |
 | `tikvrpc` | `src/store/{command,endpoint,errors,request}.rs`, `src/lib.rs` exports, request plans/routing, generated protocol bindings | complete | Complete package receipt below and full six-artifact/protocol/symbol/test/consumer mapping in [`tikvrpc-source-artifact-audit.md`](tikvrpc-source-artifact-audit.md). Every command, route, context, batch, unary/debug/stream, size/detail/error, endpoint, origin, start-TS, tagger, timeout/close, original-test, generated-list, and 74-consumer boundary is accounted for. Typed payloads and owned snapshots replace Go's unchecked dynamic wrapper and revision race without weakening behavior; unfinished high-level consumers retain their own rows. |
-| `tikvrpc/interceptor` | `src/interceptor.rs`, transaction/snapshot dispatch plans | complete | Receipt below; native async wrappers preserve ordered onion execution, duplicate-name replacement, chain flattening, transaction/snapshot set/add APIs, and physical-RPC dispatch integration. |
-| `trace` | `src/trace.rs` | complete | Receipt below; flags, categories, independently replaceable global hooks, typed contexts/fields, trace IDs, defaults, resets, and all original tests are covered. |
+| `tikvrpc/interceptor` | public `src/interceptor.rs`, transaction/snapshot dispatch plans, downstream API gate | complete | Re-audited atomic receipt: [`tikvrpc-interceptor-source-artifact-audit.md`](tikvrpc-interceptor-source-artifact-audit.md). All three artifacts/335 lines, `TestInterceptor`, `TestMain`, every production symbol, and all seven direct importers are assigned. Rust publishes the source mock manager; downstream implementors need only name/wrap and can skip, call once, or repeatedly call the shared continuation like client-go. Exact commit/read propagation and all chain branches are executable. |
+| `trace` | public `src/trace.rs` plus request, region-cache, 2PC, and lock-resolver consumers | complete | Re-audited atomic receipt: [`trace-source-artifact-audit.md`](trace-source-artifact-audit.md). All four artifacts/424 lines, all eight original tests, and all five direct importers are assigned. Trace scope now reaches wire IDs/control flags and the exact KV/cache/prewrite/commit/lock event boundaries. |
 | `txnkv` | public `src/txnkv.rs` facade, embedded `src/tikv.rs` store, and complete native `src/transaction` owners | complete | Atomic receipt: [`txnkv-source-artifact-audit.md`](txnkv-source-artifact-audit.md). All seven package-level artifacts (308 lines), five production/export files, compile-only external test, `OWNERS`, every option/constructor/timestamp/close branch, every alias/constant, and all 17 direct consumers are assigned. V1/V2 keyspace construction, compatible safe-point namespacing, global configuration, embedded store ownership, txn-file idle-pool cleanup, parsed locks, transaction statuses, snapshots, transactions, priorities, and isolation levels are covered. Live example/integration execution remains on the final differential gate. |
 | `txnkv/rangetask` | `src/transaction/range_task.rs`, `src/transaction/client.rs`, `src/transaction/requests.rs`, `src/stats.rs` | complete | Complete package receipt below and full artifact/symbol/consumer mapping in [`txnkv-rangetask-source-artifact-audit.md`](txnkv-rangetask-source-artifact-audit.md). Both production files and the complete external integration-test matrix are accounted for; the reusable public runner, stateful DeleteRange task, idiomatic client entrypoints, retries, metrics, logging, cancellation, and validation gates are covered. Downstream GC, split/scatter, and pipelined transaction algorithms retain their own package rows. |
-| `txnkv/transaction` | `src/transaction/{transaction,txn_file,client,requests,lowering,buffer,unionstore}.rs`, request/error/PD integration | complete | Atomic 16-artifact/11,766-line receipt: [`txnkv-transaction-source-artifact-audit.md`](txnkv-transaction-source-artifact-audit.md). `Transaction` now exposes and commits the same staged `MemDb`: local reads/scans, tombstones, assertions, constraint and lock flags, staging cleanup/release, length/size/memory hooks, filters, and 2PC mutation traversal have one source of truth. Pipelined mode rotates that exact MemDB into bounded background generations and implements direct `GetMemBuffer` point/batch snapshot reads, one-RPC remote-miss coalescing, BufferBatchGet/cache invalidation, first-primary/range ownership, typed flush errors, throttling, cancellation, TTL/status lifecycle, commit, and rollback. The remaining `entry_map` is snapshot/lock-return cache only. API-v2 keeps MemDB keys and flushed range bounds logical, then encodes Flush/Commit/BufferBatchGet dispatch exactly once. External mocktikv testing proves direct staged writes commit without a drain; a no-feature downstream gate proves ordinary injected-client construction is implementable. |
-| `txnkv/txnlock` | `src/transaction/lock.rs`, `src/transaction/{client,requests,transaction}.rs`, `src/request/plan.rs`, `src/stats.rs` | complete | Atomic receipt: [`txnkv-txnlock-source-artifact-audit.md`](txnkv-txnlock-source-artifact-audit.md). All two production and four test/support artifacts (2,144 lines), five ordinary tests plus `TestMain`, production symbols, direct consumers, lifecycle owners, and validation gates are assigned. The shared client resolver now owns a cancel-and-join bounded pool for read cleanup, secondary checks, and exact per-region async-commit recovery; physical-shard metrics, pipelined observer lifetime, determined FIFO cache, read hints, lite/pessimistic/GC paths, NextGen async requests, resource context, and owner shutdown match the pin. Snapshot retry-class consumption remains explicitly owned by the separate `txnkv/txnsnapshot` receipt. |
-| `txnkv/txnsnapshot` | `src/transaction/{snapshot,sync_snapshot,snapshot_stats,transaction,buffer,requests}.rs`, `src/request/{plan,plan_builder,shard}.rs`, request context and metrics | complete | Atomic receipt: [`txnkv-txnsnapshot-source-artifact-audit.md`](txnkv-txnsnapshot-source-artifact-audit.md). All four production files and the support probe (five artifacts/2,317 lines), every production/probe surface, ten direct importers, two indirect probe consumers, and the complete external snapshot/failure/scan/pipelined/split matrices are assigned. Get, BatchGet, BufferBatchGet, one-boundary-region scanners, response-versus-pair lock handling, latest point-lock omission, cache/commit-TS/10-GiB behavior, exact options/context/request source, cumulative retry ownership, async future fanout, runtime/read-pool details, metrics/SLI, and post-response visibility call sites match the pin. Root `tikv` retains the concrete GC visibility provider and live integration gates; no other row is promoted. |
-| `txnkv/txnutil` | Rust priority type plus transaction request contexts | complete | Receipt below; normal/low/high wire values, defaults, mutable async/sync transaction and snapshot APIs, read/write propagation, retry/shard preservation, and normal heartbeat behavior are covered. |
-| `util` | shared public `src/util`, plus native tracing/traffic/PD/transaction integrations | complete | Atomic receipt: [`util-source-artifact-audit.md`](util-source-artifact-audit.md). All 13 artifacts/3,478 lines, 30 original tests plus `TestMain`, exported/context/concurrency surfaces, and 58 direct importers are assigned. Custom DNS uses the configured server; execution/RU/pool/scan/write/time details, failpoints, recovery, request identity, rate limiting, timestamp sets, and intercepted PD waits preserve source behavior without promoting incomplete callers. |
-| `util/async` | `src/async_util.rs` | complete | Receipt below; callback and run-loop behavior plus every original test scenario are covered. |
-| `util/codec` | `src/kv/codec.rs`, root `codec` re-export | complete | Receipt below; all byte and number codec operations, ordering, append/leftover, boundary, and malformed-input behavior are covered. |
+| `txnkv/transaction` | `src/transaction/{transaction,txn_file,client,requests,lowering,buffer,unionstore}.rs`, request/error/PD integration | complete | Atomic 16-artifact/11,766-line receipt: [`txnkv-transaction-source-artifact-audit.md`](txnkv-transaction-source-artifact-audit.md). All 33 original Go test declarations are ported at case level, including every named subtest, table row, randomized round, and assertion. `Transaction` exposes and commits one authoritative staged `MemDb`; pipelined mode rotates that same store through bounded generations, direct remote reads, typed flush/status/TTL lifecycles, commit, and rollback. API-v2 retains logical keys and lowers them exactly once. Large 2PC groups use source-exact split, per-region scatter, operator wait, and post-wait cache invalidation with public process-wide thresholds. External mocktikv and ordinary-build gates prove direct staged commits, missing-value semantics, injected construction, public protocol identity, and nameable transaction controls. |
+| `txnkv/txnlock` | `src/transaction/lock.rs`, `src/transaction/{client,requests,transaction}.rs`, `src/request/{plan,plan_builder}.rs`, `src/{stats,tikv}.rs` | complete | Re-audited atomic receipt: [`txnkv-txnlock-source-artifact-audit.md`](txnkv-txnlock-source-artifact-audit.md). All two production and four test/support artifacts (2,144 lines), five independently named ordinary test ports plus `TestMain`, production symbols, direct consumers, lifecycle owners, and validation gates are assigned. Red/green differential tests corrected cached async-primary metadata loss, missing region-wide pessimistic rollback, rollback of live pessimistic locks, and missing explicit-Lite point cleanup. Source-public cache/semaphore constants, exact consumer option scoping, duplicate async cleanup suppression, bounded pool ownership, read hints, GC, NextGen async requests, resource context, and shutdown now match the pin. Exact Go normal/race suites and final 37-test focused Rust matrices pass. Snapshot retry-class consumption remains owned by `txnkv/txnsnapshot`. |
+| `txnkv/txnsnapshot` | `src/transaction/{snapshot,sync_snapshot,snapshot_stats,transaction,buffer,requests,client}.rs`, `src/request/{plan,plan_builder,shard}.rs`, request context and metrics | complete | Re-audited atomic receipt: [`txnkv-txnsnapshot-source-artifact-audit.md`](txnkv-txnsnapshot-source-artifact-audit.md). All five source artifacts/2,317 lines, every production/probe surface, ten direct importers, two indirect probe consumers, and all 40 external `Test*` declarations are assigned at case level, including explicit zero-case/skip dispositions. Executable ports include the exact 1/256/257/768-row scan matrix and 123/456 region splits, the 5×30 shared-snapshot workload, response/pair lock distinctions, callback enabled/disabled behavior, and existing/missing multi-region values. The re-audit fixed eager multi-region scan row loss (691/768 before the fix), wait-all snapshot fanout/error/fork ownership, one-shard no-fork behavior, post-lock physical route reselection, and the previously dormant async-BatchGet configuration. Root `tikv` retains the concrete GC visibility provider and live integration gates; no other row is promoted. |
+| `txnkv/txnutil` | Rust integer-backed priority type plus transaction request contexts | complete | Re-audited atomic receipt: [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#txnkvtxnutil). Its sole 34-line artifact and all three direct importers are assigned. Known and future protobuf numeric values survive public construction, request cloning/sharding/retry, and transaction read/write dispatch; heartbeat remains source-normal. The package has no Go tests/support. |
+| `util` | shared public `src/util`, plus native tracing/traffic/PD/transaction integrations | complete | Re-audited atomic receipt: [`util-source-artifact-audit.md`](util-source-artifact-audit.md). All 13 artifacts/3,478 lines, all 30 original tests plus `TestMain`, exported/context/concurrency surfaces, and 58 direct importers are assigned. Every test now has an independently named port and assertion-level mapping; strengthened clone, pool-task, GC-time, range, and rate-limit gates close the former grouped-evidence weakness. Custom DNS, execution/RU/pool/scan/write/time details, failpoints, recovery, request identity, rate limiting, timestamp sets, and intercepted PD waits preserve source behavior without promoting callers. |
+| `util/async` | public `src/async_util.rs`, `src/lib.rs`, downstream API gate | complete | Re-audited atomic receipt: [`util-async-source-artifact-audit.md`](util-async-source-artifact-audit.md). All four artifacts/495 lines, all 12 executable source cases, every production surface, and all 17 direct importers are assigned. Each named Go subtest is independently executable in Rust; deterministic synchronization replaces timing sleeps, and the module is now ordinarily documented/public like the Go package. |
+| `util/codec` | `src/kv/codec.rs`, root `codec` re-export | complete | Re-audited atomic receipt: [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#utilcodec). Both production artifacts/500 lines and five direct importers are assigned. Every byte/fixed/varint/comparable operation, boundary, ordering, append/leftover, malformed branch, and source group-byte error detail is covered. The package has no Go tests/support. |
 | `util/collectors` | public `src/util/collectors.rs`, generated channelz client/server/messages | complete | Atomic receipt: [`util-collectors-source-artifact-audit.md`](util-collectors-source-artifact-audit.md). Both source artifacts (1,189 lines), all six original tests, all metric descriptors/options/graph branches/address and timestamp rules/error counters, and the exact grpc-go v1.82.1 channelz schema are covered. A dedicated async RPC worker keeps every Prometheus scrape synchronous, concurrent, live, and uncached; the prior runtime blocker is removed without weakening source behavior. |
-| `util/intest` | `src/intest.rs`, Cargo `internal-tests` feature | complete | Receipt below; both build variants and mutable runtime override behavior are implemented and validated. |
-| `util/israce` | `src/israce.rs`, Cargo `race-tests` feature | complete | Receipt below; both race-enabled and non-race build variants are implemented and validated. |
-| `util/redact` | `src/redact.rs` | complete | Receipt below; helper behavior is complete. Consumer call-site integration remains required by each owning package. |
+| `util/intest` | `src/intest.rs`, Cargo `internal-tests` feature | complete | Re-audited atomic receipt: [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#utilintest). Both 20-line build variants, all seven direct source files, sequentially consistent mutable state, ordinary/all-feature initialization, and external visibility are assigned. There are no Go tests/support; consumer instrumentation decisions stay tested by their owning packages. |
+| `util/israce` | `src/israce.rs`, Cargo `race-tests` feature | complete | Re-audited atomic receipt: [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#utilisrace). Both 20-line race variants and the sole test-only importer are assigned; ordinary/all-feature downstream gates cover both values. There are no Go tests/support. |
+| `util/redact` | `src/redact.rs` | complete | Re-audited atomic receipt: [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#utilredact). Its sole 141-line artifact and all 20 direct files are assigned. Mode semantics, uppercase key forms, zero-copy arbitrary bytes, every protobuf key-error field, disabled no-op, and external API use are covered. There are no Go tests/support. |
 
 ## Complete repository/non-package artifact receipt
 
@@ -69,25 +69,31 @@ Rust now preserves V1 raw identity and transactional memcomparable region keys; 
 
 The required `keyspacepb`, `kvrpcpb`, and `mpp` schemas were updated from the pinned kvproto checkout and regenerated. Namespace/LookupKeyspace, V3 metadata/context/Compact/MPP identities, and pinned execution-detail fields are compile-tested. Other unrelated kvproto inputs remain on the final generated-artifact gate; this package receipt does not overclaim the whole generated root.
 
+The 2026-08-26 independent re-audit reopened the exact seven-artifact/2,703-line package boundary, reran the original Go suite and race suite with Go 1.25.12, and replaced grouped test references with one independently named Rust port for each of the 17 assertion-bearing Go tests. `TestCodecV2` is only the testify suite runner, while `TestV1DecodeBucketKey` is empty at the source pin. The stronger cases found no additional production divergence; they directly replay the exact constructor/range, six-region epoch, nested key-error, response-command, empty-MVCC, MPP, and three bucket-edge tables.
+
 Validation on `nightly-2026-08-22`:
 
-    cargo +nightly-2026-08-22 test -p tikv-client request::keyspace::tests --lib
-    # 27 passed; 0 failed
+    go test ./internal/apicodec -count=1
+    go test -race ./internal/apicodec -count=1
+    # passed
 
-    cargo +nightly-2026-08-22 test -p tikv-client request::keyspace::tests --lib --all-features
-    # 27 passed; 0 failed
+    cargo +nightly-2026-08-22 test --quiet --lib --no-default-features source_
+    # 794 passed; 0 failed
 
-    cargo +nightly-2026-08-22 test -p tikv-client --lib --quiet
-    # 534 passed; 0 failed
+    cargo +nightly-2026-08-22 test --quiet --lib --all-features source_
+    # 791 passed; 0 failed
 
-    cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features --quiet
-    # 534 passed; 0 failed
+    cargo +nightly-2026-08-22 test --quiet --workspace --no-default-features
+    # main library: 1,041 passed; 0 failed; 1 ignored; all companion and doctest targets passed
 
-    cargo +nightly-2026-08-22 check -p tikv-client --all-targets --all-features
-    # passed with the existing warning backlog
+    cargo +nightly-2026-08-22 test --quiet --lib --all-features
+    # 1,038 passed; 0 failed; 1 ignored
 
-    cargo +nightly-2026-08-22 doc -p tikv-client --all-features --no-deps
-    # passed with two pre-existing unrelated rustdoc warnings
+    cargo +nightly-2026-08-22 check --workspace --all-targets --all-features
+    cargo +nightly-2026-08-22 clippy --workspace --all-targets --all-features -- -D warnings
+    RUSTDOCFLAGS=-Dwarnings cargo +nightly-2026-08-22 doc --workspace --all-features --no-deps --document-private-items
+    cargo +nightly-2026-08-22 test --doc --all-features
+    # passed; 51 doctests
 
     cargo +nightly-2026-08-22 fmt --all -- --check
     git diff --check
@@ -311,6 +317,8 @@ Strict all-feature Clippy was attempted but remains blocked by the repository's 
 
 ## Complete package receipt: `internal/client/mockserver`
 
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in [`internal-client-mockserver-source-artifact-audit.md`](internal-client-mockserver-source-artifact-audit.md). That receipt owns the immutable one-artifact/196-line inventory, no-test/support boundary, all five direct importers, exact Go 1.25.12 compilation, both runtime differential corrections, and final pinned-nightly validation.
+
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
 The complete source inventory is the production/test-support file `internal/client/mockserver/mock_tikv_service.go`. It has no colocated Go tests, `doc.go`, build or platform variant, fixture, generated input/output, or package-specific build artifact. Its consumers are the `internal/client` test files, especially the unary-forwarding, async, BatchCommands, health-feedback, and restart tests; those consumers remain on the parent `internal/client` receipt and are not implied complete by this helper receipt.
@@ -332,25 +340,19 @@ No real TiKV/PD cluster is required: this package owns only deterministic in-pro
 
 ## Complete package receipt: `tikvrpc/interceptor`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete inventory is production `tikvrpc/interceptor/interceptor.go`, behavioral tests `interceptor_test.go`, and goleak harness `main_test.go`. There is no `doc.go`, platform/build-tag variant, generated input/output, fixture, or package-specific build file. `integration_tests/interceptor_test.go` and `internal/client/client_interceptor.go` were audited as consumers: client-go binds an interceptor to a transaction/snapshot context and invokes it around each synchronous physical transport request.
-
-Rust maps this to `src/interceptor.rs`, `src/request/plan.rs`, `src/request/plan_builder.rs`, `src/request/shard.rs`, `src/store/mod.rs`, `src/pd/client.rs`, and transaction/snapshot APIs. `RpcInterceptor` receives the resolved store address, immutable request, and one-shot async continuation, so it can run code before/after, replace a response, or suppress dispatch. `RpcInterceptorChain` flattens linked chains, replaces duplicate names, and builds source-equivalent onion order. `Transaction`, `Snapshot`, `SyncTransaction`, and `SyncSnapshot` expose replacement and additive configuration; plan metadata keeps the chain through shards, retries, 2PC, heartbeat, rollback, and lock resolution. The Go context helper has no literal Rust equivalent; per-transaction plan state is the native scope with the same source consumer behavior.
-
-The native unit tests prove duplicate replacement and onion entry/exit ordering, and a mock transaction commit proves one interceptor sees exactly Prewrite and Commit, matching client-go's integration assertion. There are no spawned interceptor tasks, so Go's goleak harness maps to Rust's ordinary awaited-future ownership. Real-network routing supplies a true address through PD; deterministic mock targets are intentionally empty.
-
-Validation on `nightly-2026-08-22`:
-
-    cargo +nightly-2026-08-22 test -p tikv-client interceptor --lib --all-features --quiet
-    # 2 passed; 0 failed
-
-    cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features --quiet
-    # 225 passed; 0 failed
-
-No real cluster is required for this package-owned decorator behavior. The broader connection lifecycle, batching, resource-control integration, and transport fault behavior remain separate `internal/client` / `tikvrpc` claims.
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in
+[`tikvrpc-interceptor-source-artifact-audit.md`](tikvrpc-interceptor-source-artifact-audit.md).
+That receipt owns the immutable three-artifact/335-line inventory, the original
+test and goleak harness, all seven direct importers, exact Go and race execution,
+both public API corrections, the transaction commit/read consumer port, and
+final pinned-nightly validation.
 
 ## Complete package receipt: `txnkv/txnutil`
+
+> Superseded by the 2026-08-26 package-atomic re-audit in
+> [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#txnkvtxnutil).
+> That receipt corrects this historical record's closed-enum assumption and
+> owns the current inventory, tests, integration decisions, and gates.
 
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
@@ -385,6 +387,9 @@ Validation on Rust 1.93.0:
 No real-cluster test was required for this package: the user-visible contract is the `kvrpcpb.Context.priority` value sent by planned requests, and the tests capture that exact generated protobuf request after normal planning. The test also proves the client-go nuance that a transaction heartbeat remains `Normal` after the transaction changes to `High`.
 
 ## Complete package receipt: `util/codec`
+
+> Superseded by the 2026-08-26 package-atomic re-audit in
+> [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#utilcodec).
 
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
@@ -422,6 +427,9 @@ No real-cluster test is applicable because this package is a deterministic byte 
 
 ## Complete package receipt: `util/israce`
 
+> Superseded by the 2026-08-26 package-atomic re-audit in
+> [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#utilisrace).
+
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
 The complete production/build inventory is `util/israce/israce.go`, selected by Go's `race` build tag and defining `RaceEnabled = true`, and `util/israce/norace.go`, selected by `!race` and defining `RaceEnabled = false` (20 lines each). There is no `doc.go`, colocated test, generated input/output, fixture, or package-specific build file. The only source-of-truth consumer is `internal/locate/replica_selector_test.go`, which skips a race-sensitive test when the constant is true; the similarly named checks in client-go integration tests import TiDB's separate israce package and are not part of this package's consumer inventory.
@@ -458,6 +466,9 @@ No real-cluster validation applies; the full package contract is a compile-time 
 
 ## Complete package receipt: `util/intest`
 
+> Superseded by the 2026-08-26 package-atomic re-audit in
+> [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#utilintest).
+
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
 The complete production/build inventory is `util/intest/in_unittest.go`, selected by the `intest` build tag and initializing mutable `InTest = true`, and `util/intest/not_in_unittest.go`, selected by `!intest` and initializing it to false (20 lines each). There is no `doc.go`, colocated test, generated input/output, fixture, or package-specific build file. Consumers were inventoried in `tikv/kv.go`, `txnkv/transaction/txn.go`, `txnkv/txnlock/lock_resolver.go`, `txnkv/txnsnapshot/snapshot.go`, `internal/apicodec/codec_v2.go`, and their integration/test support. Those packages retain separate ledger statuses and will account for each gated behavior in their own receipts.
@@ -491,6 +502,9 @@ Validation on Rust 1.93.0:
 No real-cluster validation applies; the complete package contract is build-time initialization plus a mutable test-state flag. Consumer-specific assertions remain attached to their owning package receipts rather than being claimed here.
 
 ## Complete package receipt: `util/redact`
+
+> Superseded by the 2026-08-26 package-atomic re-audit in
+> [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#utilredact).
 
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
@@ -529,42 +543,16 @@ The redaction tests are serialized because the source contract is process-global
 
 ## Complete package receipt: `util/async`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete inventory is production files `util/async/core.go` (83 lines) and `util/async/runloop.go` (158 lines), plus original tests `util/async/core_test.go` (90 lines) and `util/async/runloop_test.go` (164 lines). There is no `doc.go`, build/platform variant, generated input/output, fixture, or package-specific build file. Consumers were inventoried in `internal/client`, `internal/locate`, `internal/mockstore/mocktikv`, `tikv` test support, `txnkv/transaction` test support, and `txnkv/txnsnapshot`. Those packages retain separate integration receipts because Rust's normal transport paths primarily use native futures rather than callbacks.
-
-Rust implementation and integration files are:
-
-- `src/async_util.rs`: `Pool` and `Executor` traits; owned tasks; cloneable exactly-once generic callbacks; reverse-order injected actions; immediate and scheduled fulfillment; run-loop state and queue; optional custom pool; cancellation token; and typed execution errors.
-- `src/lib.rs`: hidden public `async_util` module, using a Rust-safe name because `async` is a language keyword.
-
-The native API uses `Option<E>` for Go's nullable error and a `Cancellation` token for `context.Context` cancellation. `RunLoop::execute` returns both the task count and a result so cancellation and concurrent-execution errors preserve Go's `n, err` contract. Unexecuted tasks return to the front of the queue in source order, tasks appended during execution run in a later batch within the same call, an initially empty loop waits, and only one caller may execute a loop.
-
-All original scenarios are represented: reverse injection order; invoke/invoke, schedule/schedule, invoke/schedule, and schedule/invoke exactly-once combinations; default asynchronous spawning and custom pool dispatch; initial wait/wakeup; nested append; delayed work left for a second execution; cancellation while running and waiting; and concurrent execution rejection.
-
-Validation on Rust 1.93.0:
-
-    cargo test async_util
-    # 9 passed; 0 failed
-
-    cargo test --lib
-    # 94 passed; 0 failed
-
-    cargo test --doc
-    # 49 passed; 0 failed
-
-    cargo clippy --all-targets --all-features -- -D warnings
-    # passed
-
-    cargo fmt --all -- --check
-    # passed
-
-    git diff --check
-    # passed
-
-No real-cluster test applies to this in-process scheduling package. Consumer packages must still account for whether their Rust-native future paths make callback adaptation unnecessary or integrate this bridge explicitly.
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in
+[`util-async-source-artifact-audit.md`](util-async-source-artifact-audit.md).
+That receipt owns the immutable four-artifact/495-line inventory, all 12
+executable source cases, all 17 direct importers, exact Go and race execution,
+the public-module correction, ordinary downstream API gate, and final
+pinned-nightly validation.
 
 ## Complete package receipt: `internal/kvrpc`
+
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in [`internal-kvrpc-source-artifact-audit.md`](internal-kvrpc-source-artifact-audit.md). That receipt owns the immutable one-artifact/82-line inventory, no-test/support boundary, both direct importers, exact Go 1.25.12 compilation, the split-region consumer correction, and final pinned-nightly validation.
 
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
@@ -610,185 +598,37 @@ No real-cluster validation is required for the package primitive because tests i
 
 ## Complete package receipt: `internal/mockstore/cluster`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete production inventory is `internal/mockstore/cluster/cluster.go` (65 lines). It defines only the `Cluster` interface and has no `doc.go`, colocated Go test, build/platform variant, generated input/output, fixture, or package-specific build file. Direct consumers are the compile-time implementation assertion in `internal/mockstore/mocktikv/cluster.go` and the public test-support alias in `testutils/mockstore.go`; interface-typed integration fixtures use that alias in the raw, 2PC, async-commit, assertion, delete-range, pipelined-memory-buffer, range-task, and split suites. Concrete cluster state, algorithms, and bootstrap helpers belong to the separate `internal/mockstore/mocktikv` and `testutils` ledger rows and are not claimed here.
-
-Rust implementation and integration files are:
-
-- `src/mock/cluster.rs`: internal test-support `Cluster` trait with every source method: ID allocation; region/leader/bucket/down-peer lookup; store enumeration; scheduled transaction delay; encoded and raw splitting; evenly split key ranges; and store addition/removal.
-- `src/mock.rs`: includes the interface in the existing test-only mock subsystem, preserving client-rust's established ownership boundary.
-
-Go pointer results map to `Option` for region, leader, buckets, and raw-split region, while Go slices map to owned or borrowed Rust slices/vectors according to call ownership. The Go `int` split count remains `isize`, including negative values, rather than being narrowed to an unsigned Rust type. Variadic store labels map to an owned vector. The trait takes shared references because concrete simulators may use interior synchronization, matching the source implementation's concurrent test usage. It remains object-safe so fixtures can hold a dynamic cluster control surface like a Go interface.
-
-Validation on Rust 1.93.0:
-
-    cargo test cluster_interface_is_object_safe_and_complete
-    # 1 passed; 0 failed
-
-    cargo test --lib
-    # 98 passed; 0 failed
-
-    cargo test --doc
-    # 49 passed; 0 failed
-
-    cargo clippy --all-targets --all-features -- -D warnings
-    # passed
-
-    cargo fmt --all -- --check
-    # passed
-
-    git diff --check
-    # passed
-
-No real-cluster validation applies to an interface-only test-support package. Its conformance test invokes all nine methods through `dyn Cluster`, proving the complete method surface and object safety. Observable simulator behavior will require mock-store tests before the `internal/mockstore/mocktikv` row can become complete.
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in
+[`internal-mockstore-cluster-source-artifact-audit.md`](internal-mockstore-cluster-source-artifact-audit.md).
+That receipt owns the immutable one-artifact/65-line inventory, all nine
+interface methods, no-test/support boundary, both direct importers, concrete
+mocktikv implementation, ordinary-build alias, exact Go 1.25.12 compilation,
+and final pinned-nightly validation.
 
 ## Complete package receipt: `kv`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete production inventory is `kv/key.go` (88 lines), `kv/keyflags.go` (279 lines), `kv/kv.go` (264 lines), `kv/store_vars.go` (102 lines), and `kv/variables.go` (92 lines). Original test/support inventory is `kv/key_test.go` (54 lines), `kv/kv_test.go` (91 lines), and `kv/main_test.go` (25 lines). There is no `doc.go`, build/platform variant, generated input/output, fixture, or package-specific build file. Repository consumers were inventoried across retry configuration, `tikvrpc`, region routing, snapshots, transaction locking and buffering, mock stores, metrics, and integration tests; their behavioral adoption remains on those owning ledger rows.
-
-Rust implementation and integration files are:
-
-- `src/kv/key.rs`: next-key, prefix-next, three-way comparison, half-open `KeyRange`, and the existing owned byte-key contract.
-- `src/kv/key_flags.rs`: all fourteen source bits, persistent-mask behavior, every query method, all twenty-two ordered flag operations, and the source's fixed power-of-two public operation values.
-- `src/kv/types.rs`: pessimistic-lock returned values and context, wait sentinels/defaulting, synchronized result collection and iteration, resource tag/deadlock callbacks, typed observability boundary, value entries and native size accounting, get/batch-get options, and async getter interfaces.
-- `src/kv/store_vars.rs`: mutable process-wide store and commit-batch atomics; leader/follower/mixed/learner/prefer-leader modes; exact names, follower classification, byte values, and unknown-value round trips; and access-location modes.
-- `src/kv/variables.rs`: shared kill signal, optional higher-priority kill handler, transaction-file controls, source defaults, and default shared variables.
-- `src/kv/mod.rs` and `src/lib.rs`: public package and idiomatic root exports.
-
-Rust uses `Vec<u8>` map keys rather than Go's byte-preserving `string` conversion, `Arc<AtomicU32>` rather than raw shared pointers, and one mutex around the returned-value map rather than a separately exposed map and lock. Go's zero `time.Time` maps to `None`; constructors store `Some(SystemTime)`. The `util.LockKeysDetails` field is represented by an object-safe `LockStatistics` marker with `Any` access so this package can carry typed statistics while their structure and merge behavior remain owned by the `util` ledger row. `ErrDeadlock`'s protobuf and retry flag are represented together by `DeadlockError`; final error classification remains on the `error` row. Rust futures provide request cancellation, so getter traits do not duplicate Go's `context.Context` argument.
-
-All original assertions are represented: all-`0xFF` prefix-next keys become empty; get and batch-get options default off and enable commit timestamps; empty/non-empty value-entry cases match; and the leak-check support file is non-applicable because this package starts no task or thread and the complete Rust unit suite terminates normally. Added source-branch tests cover next-key and comparison, every flag implication/inverse, persistent flags, lock-context defaults and result filtering, replica/access byte values and names, process atomics, and variable defaults/shared kill state.
-
-Validation on Rust 1.93.0:
-
-    cargo test 'kv::'
-    # 12 passed; 0 failed (7 kv-package parity tests plus 5 already-receipted codec tests)
-
-    cargo test --lib
-    # 105 passed; 0 failed
-
-    cargo test --doc
-    # 49 passed; 0 failed
-
-    cargo clippy --all-targets --all-features -- -D warnings
-    # passed
-
-    cargo fmt --all -- --check
-    # passed
-
-    git diff --check
-    # passed
-
-No real-cluster validation is required for this foundational type/state package: its own observable contracts are deterministic values, transitions, defaults, formatting, atomics, and synchronized collection behavior. Replica routing, lock protocol requests, statistics merging, kill handling during retries, and snapshot commit timestamps remain mandatory integration gates for their respective consumer packages. The host has no Go toolchain, so original Go tests could not be executed locally; their complete source assertions were transcreated and augmented in Rust.
+The earlier combined-test receipt is superseded by the 2026-08-26 atomic re-audit in [`kv-source-artifact-audit.md`](kv-source-artifact-audit.md). That receipt owns the immutable eight-artifact/995-line inventory, all four ordinary tests plus `TestMain`, all 69 direct importers, exact Go 1.25.12 execution, native representation decisions, source-uncovered branch gates, and final pinned-nightly validation.
 
 ## Complete package receipt: `internal/unionstore/arena`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete inventory is production file `internal/unionstore/arena/arena.go` (429 lines) and original test file `internal/unionstore/arena/arena_test.go` (79 lines). There is no `doc.go`, build/platform variant, generated input/output, external fixture, or package-specific build file. Consumers are the ART, red-black-tree, and union-store memory buffers; those packages retain their own ledger rows and must integrate this primitive before claiming completion.
-
-Rust implementation and integration files are:
-
-- `src/transaction/arena.rs`: block arena, little-endian address/header encoding, compact key handles, checkpoints, truncation/reset, memory hooks, value-log append/read/history/snapshot selection, rollback traversal, current-version inspection, and generic node/database traits.
-- `src/transaction/mod.rs`: hidden public native module ownership for future transaction-buffer implementations.
-- `src/kv/key_flags.rs`: the completed source-compatible metadata type consumed by value-log inspection.
-
-The Rust API uses stable block indexes and offsets rather than raw pointers, borrowed slices for arena reads, `Arc` callbacks for memory changes, and traits with borrowed node data for value-log callbacks. It preserves source details that are easy to miss: eight-byte aligned node allocation; an allocation limit of 128 MiB including value-log headers; growth to the first power of two strictly greater than the requested size then capping at 128 MiB; null classification when either address half is `u32::MAX`; truncation capacity recomputed from used lengths rather than retained buffer allocations; no hook during enlargement/truncation but a hook after append crosses a block and after reset; zero-length tombstones; end-of-record value addresses; old-value chain selection; rollback without implicit truncation; and inspection that skips superseded versions.
-
-Both original tests are transcreated with their exact 80 MiB, 127 MiB, 4 KiB, 3,000-byte, and over-limit cases. Additional tests cover address round trips and compact handles, little-endian header traversal, alignment, capacity/truncation, empty checkpoints, tombstones, snapshot history, current-version filtering, rollback callbacks, hook counts, reset, and checkpoint ordering.
-
-Validation on Rust 1.93.0:
-
-    cargo test transaction::arena
-    # 4 passed; 0 failed
-
-    cargo test --lib
-    # 109 passed; 0 failed
-
-    cargo test --doc
-    # 49 passed; 0 failed
-
-    cargo clippy --all-targets --all-features -- -D warnings
-    # passed
-
-    cargo fmt --all -- --check
-    # passed
-
-    git diff --check
-    # passed
-
-No real-cluster validation applies because this package is deterministic in-process memory storage with no I/O. The host has no Go toolchain, so the original Go tests could not be executed locally; their exact cases and panic boundary run in Rust. Integration with each concrete union-store index remains on `internal/unionstore/art`, `internal/unionstore/rbt`, and `internal/unionstore`.
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in [`internal-unionstore-arena-source-artifact-audit.md`](internal-unionstore-arena-source-artifact-audit.md). That receipt owns the immutable two-artifact/508-line inventory, both original tests, all 16 importers, exact Go 1.25.12 execution, the safe ART/RBT representation decision, and final pinned-nightly validation.
 
 ## Complete package receipt: `internal/mockstore/deadlock`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete inventory is production file `internal/mockstore/deadlock/deadlock.go` (151 lines), behavioral test `internal/mockstore/deadlock/deadlock_test.go` (81 lines), and leak-check harness `internal/mockstore/deadlock/main_test.go` (25 lines). There is no `doc.go`, build/platform variant, generated input/output, external fixture, or package-specific build file. Its only non-package consumer is `internal/mockstore/mocktikv/mvcc_leveldb.go`; wiring the detector into a concrete mock MVCC store remains on that package's ledger row.
-
-Rust implementation and integration files are `src/mock/deadlock.rs`, containing the mutex-protected wait-for graph and tests, and `src/mock.rs`, registering it in existing test support. A native `Result<(), DeadlockError>` represents Go's nullable error. Detection traverses existing outgoing edges while holding the same graph lock, returns the key hash from the existing edge that reaches the source transaction, and registers only accepted edges. Exact transaction/key-hash duplicates collapse while different hashes remain distinct; rejected cycle-closing edges are never inserted; cleanup removes outbound edges only; single-edge cleanup removes the first exact pair and deletes an empty list; and expiry removes map keys strictly below the threshold.
-
-The original complete scenario is transcreated, including the indirect cycle returning `deadlock(200)`, cycle break, same/different-hash behavior, both cleanup forms, and strict expiry boundaries. Added tests cover direct cycles, the pinned source's unusual acceptance of a first self-edge followed by rejection using its existing hash, absent cleanup, and synchronized concurrent duplicate registration. The concurrency test joins every spawned thread, providing the native equivalent of the source leak harness; production code starts no background work.
-
-Validation on Rust 1.93.0:
-
-    cargo test mock::deadlock
-    # 3 passed; 0 failed
-
-    cargo test --lib
-    # 112 passed; 0 failed
-
-    cargo test --doc
-    # 49 passed; 0 failed
-
-    cargo clippy --all-targets --all-features -- -D warnings
-    # passed
-
-    cargo fmt --all -- --check
-    # passed
-
-    git diff --check
-    # passed
-
-No real-cluster validation applies to this deterministic mock-only graph. The host has no Go toolchain, so the original Go test could not run locally; all of its assertions execute in Rust. End-to-end deadlock response behavior remains on `internal/mockstore/mocktikv` and transaction-lock consumer rows.
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in
+[`internal-mockstore-deadlock-source-artifact-audit.md`](internal-mockstore-deadlock-source-artifact-audit.md).
+That receipt owns the immutable three-artifact/257-line inventory, the complete
+`TestDeadlock` port, `TestMain`, the sole source importer, exact Go 1.25.12 and
+race execution, the shared UniStore detector, five live-engine differential
+regressions, and final pinned-nightly validation.
 
 ## Complete package receipt: `trace`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete inventory is production files `trace/flags.go` (48 lines) and `trace/trace.go` (150 lines), plus original tests `trace/flags_test.go` (82 lines) and `trace/trace_test.go` (144 lines). There is no `doc.go`, build/platform variant, generated input/output, external fixture, package-specific build file, or leak harness. Consumers were inventoried in region request/cache handling, transaction prewrite/commit, and lock resolution. Those packages remain responsible for attaching trace IDs/control flags to generated request contexts and emitting their complete event sets.
-
-Rust implementation is the public `src/trace.rs` module registered by `src/lib.rs`. It provides exact control bits 0 through 3; idempotent `has`/`with` and bitwise combination; the four source category discriminants; type-preserving structured fields; immutable type-keyed context derivation; nested trace-ID override; and three independently replaceable process-wide handlers for events, category enablement, and control extraction. Handler locks are released before callbacks run, allowing callbacks to reconfigure tracing without deadlock while preserving the source's atomic replacement semantics.
-
-Rust `TraceContext` is the native counterpart of Go `context.Context`: marker types key arbitrary `Send + Sync` values, derivation leaves parents unchanged, and trace IDs are safely owned. `TraceField` stores an arbitrary typed payload behind `Any` rather than narrowing zap fields to strings. `None` handler registration maps to Go's nil registration. Defaults exactly follow implementation and tests: event is no-op, all client categories are disabled, and TiKV request-category control is enabled. This also preserves the pinned source's implementation despite a stale comment claiming the nil extractor returns zero.
-
-All original scenarios are covered: exact non-overlapping bit values; empty, fluent, combined, and idempotent flag operations; default/custom/context-sensitive/reset extractors; immediate-logging convenience behavior; event invocation and nil reset; independent category checks and reset; absent, attached, and nested trace IDs. Global-state tests are serialized.
-
-Validation on Rust 1.93.0:
-
-    cargo test 'trace::tests'
-    # 4 passed; 0 failed
-
-    cargo test --lib
-    # 116 passed; 0 failed
-
-    cargo test --doc
-    # 49 passed; 0 failed
-
-    cargo clippy --all-targets --all-features -- -D warnings
-    # passed
-
-    cargo fmt --all -- --check
-    # passed
-
-    git diff --check
-    # passed
-
-No real-cluster validation applies to this callback/context package. Its generated-request and event-emission effects require consumer integration and remain on `internal/locate`, `txnkv/transaction`, and `txnkv/txnlock`. The host has no Go toolchain, so original Go tests could not run locally; their complete assertions execute in Rust.
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in [`trace-source-artifact-audit.md`](trace-source-artifact-audit.md). That receipt owns the immutable four-artifact/424-line inventory, all eight original tests, all five direct importers, exact Go 1.25.12 execution, complete wire/event integration, and final pinned-nightly validation.
 
 ## Complete package receipt: `oracle`
+
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in [`oracle-source-artifact-audit.md`](oracle-source-artifact-audit.md). That receipt owns the immutable one-artifact/157-line inventory, all 48 direct importers, exact Go execution, the no-source-test disposition, Go-duration overflow correction, and final pinned-nightly validation.
 
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
@@ -823,6 +663,8 @@ Validation on Rust 1.93.0:
 No real-cluster test applies to this interface-and-deterministic-helper package. Cluster timestamp allocation and validation behavior will be tested with the concrete `oracle/oracles` receipt. The host has no Go toolchain and the source package has no Go test target; Rust validation therefore uses source-derived boundary cases and crate-wide integration gates.
 
 ## Complete package receipt: `internal/latch`
+
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in [`internal-latch-source-artifact-audit.md`](internal-latch-source-artifact-audit.md). That receipt owns the immutable five-artifact/758-line inventory, all four ordinary tests plus `TestMain`, all four direct importers, exact Go 1.25.12 execution, the shared-scheduler shutdown correction, and final pinned-nightly validation.
 
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
@@ -860,6 +702,8 @@ No real-cluster test is required for the latch package itself: its complete beha
 
 ## Complete package receipt: `error`
 
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in [`error-source-artifact-audit.md`](error-source-artifact-audit.md). That receipt owns the immutable two-artifact/497-line inventory, the sole original test, all 58 direct importers, exact Go 1.25.12 execution, differential corrections, and final pinned-nightly validation.
+
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
 The complete inventory is production file `error/error.go` (429 lines) and behavioral test `error/error_test.go` (68 lines). There is no `doc.go`, build/platform variant, generated input/output, external fixture, package-specific build file, or leak harness. All five production call sites were audited in transaction heartbeat, normal/file commit, and transaction-lock response handling. Those owning packages remain responsible for choosing when to convert a raw key error; generic Rust response extraction correctly retains raw lock/key protobufs needed by lock resolution instead of prematurely applying `ExtractKeyErr` everywhere.
@@ -896,46 +740,11 @@ No real-cluster test applies to this deterministic taxonomy/transformation packa
 
 ## Complete package receipt: `config`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete production inventory is `config/client.go` (300 lines), `config/config.go` (229 lines), build-selected `config/nextgen_off.go` and `config/nextgen_on.go` (20 lines each), `config/ruv2.go` (66 lines), and `config/security.go` (106 lines). Behavioral/support inventory is `config/config_test.go` (172 lines), `config/ruv2_test.go` (81 lines), `config/security_test.go` (120 lines), and the goleak harness `config/main_test.go` (27 lines). There is no `doc.go`, generated source/input, package-specific build file, or source fixture. The native TLS validation test creates an ephemeral self-signed certificate/key pair at runtime, avoiding a checked-in private key while retaining successful client-material coverage.
-
-Rust implementation is the public `src/config.rs` module plus `src/config/client_go.rs`. The established native `Config` remains non-exhaustive and retains its Rust transport timeout, decoding-size, path, and keyspace builders while adding every source section and field. `Default` implements all source constructors: top-level, PD, TiKV, async-commit, coprocessor-cache, RU-v2, pessimistic-transaction, security, and disabled local-latch values. Validation preserves source order, boundaries, and text for PD timeout, local latches, connection count, compression, keepalive, and transaction-file chunk/concurrency limits. Go's signed duration domain maps to non-negative `std::time::Duration`; invalid negative source configuration is excluded by the native type boundary. Existing kebab-case serde compatibility is retained, while source-hidden local-latch and coprocessor admission fields remain excluded.
-
-Global configuration uses an atomically lock-protected `Arc<Config>` snapshot. `get_global_config`, `store_global_config`, and `update_global` preserve independent copy/update and exact-pointer restore behavior; the scope helper applies the failpoint override and global fallback. URI parsing preserves case-insensitive `tikv`, comma-separated authorities, user-info exclusion, first query value, form decoding, fragments, and both source error classes. The two Go build files map to Cargo's explicit `nextgen` feature and `NEXT_GEN` constant, validated in both feature states.
-
-`Security::to_tls_config` validates a CA pool, supports CA-only operation, pre-validates a present certificate/key pair including mismatch, and returns the existing native `SecurityManager`. `src/common/security.rs` now supports optional client identity and reloads configured files for each connection, preserving client-go's callback reload behavior; `src/pd/client.rs` consumes either the source-style security section or the pre-existing Rust builder fields. The source's client-side TLS use has no server-certificate callback counterpart in client-rust, so Go's duplicate server-side `GetCertificate` assignment is non-applicable rather than emulated.
-
-RU-v2 weights and `update_tikv_ru_v2_from_exec_details_v2` preserve nil/absent early returns, wrapping RPC-count patching, all seven executor-input counters, raw-counter accumulation/drain, and scaled TiKV RU calculation. `src/util/ru.rs` supplies the concurrent native accumulator needed by this function; that is an explicit integration slice and does not complete the broader `util` package. Generated protobufs were already present and unchanged. All source importers were inventoried across transport, routing, resource control, raw/tikv clients, transaction locking/file/commit, snapshots, examples, and integration tests. Their use of configuration values remains an integration gate on each owning ledger row; this package receipt claims the complete configuration definitions and algorithms, not those consumers.
-
-The six original behavioral tests are transcreated as six focused Rust tests, with additional assertions for every default and validation branch, malformed/duplicate/encoded paths, global restore identity, failpoint fallback, CA-only and invalid TLS material, both build selections, and exact raw/scaled RU values. Rust's global lock and TLS manager create no persistent task, so the Go goleak harness has no native background worker to monitor.
-
-Validation on Rust 1.93.0:
-
-    cargo test config::client_go::tests --all-features --quiet
-    # 6 passed; 0 failed
-
-    cargo test config::client_go::tests --no-default-features --quiet
-    # 6 passed; 0 failed
-
-    cargo test --lib --all-features --quiet
-    # 140 passed; 0 failed
-
-    cargo test --doc --all-features --quiet
-    # 49 passed; 0 failed
-
-    cargo clippy --all-targets --all-features -- -D warnings
-    # passed
-
-    cargo fmt --all -- --check
-    # passed
-
-    git diff --check
-    # passed
-
-No real-cluster test applies to the package-owned deterministic defaults, validation, parsing, build selection, or RU arithmetic. Actual TLS handshakes, forwarding, batching, and region refresh are covered by the completed `internal/client`, `internal/locate`, and `tikvrpc` receipts; transaction-file operation and its high-level RU collection remain on transaction consumer rows. The host has no Go toolchain, so the original Go tests and goleak harness could not run locally; every original assertion executes in Rust.
+The earlier six-test receipt is superseded by the 2026-08-26 atomic re-audit in [`config-source-artifact-audit.md`](config-source-artifact-audit.md). That receipt owns the immutable ten-artifact/1,141-line source inventory, all seven ordinary tests plus `TestMain`, both build variants, all 68 direct importers, exact Go 1.25.12 execution, differential URL/duration evidence, the reusable global restore correction, and config-driven async-commit/1PC integration. Its final pinned-nightly validation counts are authoritative.
 
 ## Complete package receipt: `oracle/oracles`
+
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in [`oracle-oracles-source-artifact-audit.md`](oracle-oracles-source-artifact-audit.md). That receipt owns the immutable eight-artifact/2,063-line inventory, all 13 ordinary tests plus `TestMain`, all four direct concrete-package importers, eight differential corrections, exact Go execution, and final pinned-nightly validation.
 
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
@@ -971,76 +780,23 @@ The host has no Go toolchain, so the original Go test target could not run local
 
 ## Complete package receipt: `internal/unionstore/rbt`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete inventory is `internal/unionstore/rbt/rbt.go`, `rbt_arena.go`, `rbt_iterator.go`, and `rbt_snapshot.go`, plus the source-derived test file `rbt_test.go`. There is no `doc.go`, build-tag/platform variant, generated input/output, fixture, package-specific build artifact, or leak harness. The parent `internal/unionstore` package and its consumers remain separate atomic claims: this receipt supplies its RBT index only, not buffer composition or ART selection.
-
-Rust implementation is the crate-private `src/transaction/rbt.rs`, registered from `src/transaction/mod.rs`. A safe `BTreeMap` maps the source's arena-backed red-black tree while retaining ordered keys, source-size accounting, staging, value-log history, checkpoints, snapshots, persistent-key-flag behavior, bounds, handles, transaction limits, dirty state, cache counters, and memory-footprint hooks. `DiscardValues` invalidates value reads without changing logical size/entry visibility; handle value reads also fail thereafter. Equal-sized values written after the active stage checkpoint overwrite that stage's logical value-log entry, so checkpoint rollback and value-history selection have the same source behavior.
-
-Arena layout, capacity, raw addresses, and Go's mutable live iterator are deliberately native mappings: `BTreeMap` removes unsafe arena representation; `memory_footprint` reports native payload allocation rather than Go arena capacity; and iterators own a stable copied traversal view rather than becoming invalid after a write. The native `update_flags(key, ops)` operation replaces Go's mutation through a borrow-bound iterator. These mappings preserve all parent-facing ordered/value/flag semantics without exposing unsafe or lifetime-invalid Rust APIs.
-
-The seven Rust tests transcreate every original Go test assertion, including 10,000-key staging cleanup, forward and reverse traversal, empty-buffer seeks, rollback-vs-persistent key flags, flags-only iteration and flag updates that create missing keys. They additionally cover snapshot visibility at the root-stage checkpoint, value-history overwrite rules, checkpoint revert, stage inspection, bounds, reverse bounds, handles, tombstones, entry/buffer limits, memory hooks, cache statistics, discard behavior, and the native flag-update mapping. No unistore fixture is required because this package is deterministic in-process storage.
-
-Validation on `nightly-2026-08-22`:
-
-    rustc --version
-    # rustc 1.100.0-nightly (c656540d6 2026-08-21)
-
-    cargo fmt --all --check
-    # passed
-
-    cargo test transaction::rbt::tests --all-features --quiet
-    # 7 passed; 0 failed
-
-    cargo test --doc --all-features --quiet
-    # 49 passed; 0 failed
-
-    cargo clippy --lib --all-features -- -D warnings -A clippy::redundant_field_names -A clippy::chunks_exact_to_as_chunks
-    # passed; the two exclusions are pre-existing non-RBT findings in request/transaction/store code
-
-    git diff --check
-    # passed
-
-Subsequent nightly crate-wide validation passes all 167 library tests. The host has no Go toolchain, so the original Go tests could not run locally; their complete in-process coverage is transcreated above.
+This coarse historical receipt is superseded by the package-atomic audit in
+[`internal-unionstore-rbt-source-artifact-audit.md`](internal-unionstore-rbt-source-artifact-audit.md).
+The replacement records immutable artifact identities, every production
+surface, exact ports of all three original Go tests, the sole direct importer,
+five red-then-green parity fixes, and current pinned-Go/Rust validation. The
+parent `internal/unionstore` package remains an independent atomic claim.
 
 ## Complete package receipt: `internal/unionstore/art`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete inventory is `internal/unionstore/art/art.go`, `art_arena.go`, `art_node.go`, `art_iterator.go`, and `art_snapshot.go`, plus behavioral/support artifacts `art_test.go`, `art_node_test.go`, `art_iterator_test.go`, and `art_snapshot_test.go`. There is no `doc.go`, build-tag/platform variant, generated source/input, fixture, package-specific build artifact, or leak harness. The parent `internal/unionstore` package and all transaction-buffer selection/consumption remain separate atomic claims.
-
-Rust implementation is the crate-private `src/transaction/art.rs`, registered from `src/transaction/mod.rs`. A safe `BTreeMap` maps the observable ART contract: ordered byte keys, logical size, value-log history and equal-size in-place overwrites, nested staging/checkpoint/revert, persistent-vs-rollbackable flags, durable key handles, limits, dirty state, cache statistics, discard behavior, memory hooks, snapshots, and iterator bounds. Logical size is incrementally maintained, preserving the source's constant-time buffer-limit checks for the 100,000-key workload; the observable live length is derived from non-deleted entries, preventing stale count state after nested rollback.
-
-The ART node classes (4/16/48/256), prefix compression, bitmap child indexes, raw arena address reuse, and allocator free lists are a deliberate non-applicable representation mapping: Rust's ordered map supplies the same key ordering and prefix behavior without unsafe manual storage. Node/arena test artifacts are covered by capacity-boundary key sequences, all-byte key order, empty/prefix/long-common-prefix searches, handle lifetime, and 100,000 decimal-key retrieval rather than reproducing internal allocation topology. Source's snapshot allocator reference count maps to owned immutable snapshot data; cloned snapshot iterators therefore remain valid and shareable after writes, with no unsafe-node reuse to defer.
-
-Ordinary ART iterators retain the source's write-sequence invalidation contract: every successful buffer-changing write, release, cleanup, checkpoint revert, and reset invalidates pre-existing iterators. Snapshot iterators deliberately retain a stable immutable view. The native `update_flags(key, ops)` method maps source mutation through a live iterator: it requires an existing live key and preserves the source's non-rollbackable flag behavior without holding an invalid Rust mutable map borrow. Empty ART bounds are normalized as unbounded, matching the source's `len(bound) == 0` convention.
-
-Seven source-derived Rust tests cover all source behavioral/test categories: all 256 byte keys and 4/16/48/256 capacity boundaries with forward/reverse bounds and finished-iterator errors; short/long common prefixes; flags, flags-only keys, durable handles, discard panics, and flag mutation; persistent cleanup and non-persistent rollback clearing; checkpoints/history; iterator invalidation; stable concurrent snapshot iterators; limits, hooks, cache counters, stage inspection, reset; and the original 100,000-key decimal workload. No unistore fixture is needed because the package is deterministic in-process storage.
-
-Validation on `nightly-2026-08-22`:
-
-    cargo fmt --all --check
-    # passed
-
-    cargo test transaction::art::tests --all-features --quiet
-    # 7 passed; 0 failed
-
-    cargo test transaction::art::tests::hundred_thousand_decimal_keys_and_long_common_prefixes_are_retrievable --all-features --quiet
-    # 1 passed; 0 failed; finished in 0.77s
-
-    cargo test --lib --all-features --quiet
-    # 167 passed; 0 failed
-
-    cargo test --doc --all-features --quiet
-    # 49 passed; 0 failed
-
-    cargo clippy --lib --all-features -- -D warnings -A clippy::redundant_field_names -A clippy::chunks_exact_to_as_chunks
-    # passed; exclusions are pre-existing non-ART style findings
-
-    git diff --check
-    # passed
-
-The host has no Go toolchain, so original Go tests could not run locally. No real-cluster validation applies to this deterministic index implementation; union-store composition and real transaction behavior remain on their owning package rows.
+The earlier coarse receipt is superseded by the independent package-atomic
+audit in
+[`internal-unionstore-art-source-artifact-audit.md`](internal-unionstore-art-source-artifact-audit.md).
+The replacement records immutable identities for all nine artifacts, every
+production and representation decision, independent Rust ports of all 35 Go
+tests plus the benchmark contract, the sole direct importer, five
+red-then-green parity fixes, and exact pinned-Go/Rust validation. The parent
+`internal/unionstore` package remains an independent atomic claim.
 
 ## Complete package receipt: `internal/unionstore`
 
@@ -1087,7 +843,7 @@ The completed `internal/unionstore`, `internal/latch`, `internal/locate`, `inter
 
 Native ownership replaces exposed unionstore/committer pointers, Go contexts/goroutines/wait groups, callback-style async probes, and dynamic mutation containers with encapsulated buffers, typed futures/tasks, lifecycle hooks, deterministic mock dispatch, and owned mutation vectors. These are integration decisions rather than missing behavior. The independent `txnkv`, `txnkv/txnlock`, `txnkv/txnsnapshot`, root `tikv`, and integration receipts are not promoted by this transaction-package receipt.
 
-Final validation on `nightly-2026-08-22`: the complete transaction module suite passes 198 tests; default and all-feature library suites each pass 585 tests; doctests pass 50 tests; all-target/all-feature checking, Clippy, rustdoc, rustfmt, and `git diff --check` pass with only the repository's existing warnings; and mechanical comparison finds 33 pinned source test declarations and 33 recorded names with no missing or extra entry. The host has no Go toolchain, so pinned Go tests cannot run locally. The four original package test files require no live cluster; cross-client real-TiKV differential validation remains a final high-level repository gate.
+Final validation on `nightly-2026-08-22`: 852 no-default workspace tests and 840 all-feature library tests pass with one intentional skip in each matrix; both feature configurations pass all 484 `source_` tests; strict generated-code checking, all-target/all-feature compilation, Clippy, rustfmt, private-item rustdoc, all 51 doctests, and `git diff --check` pass. Mechanical comparison finds 33 pinned source declarations and 33 case-level receipt entries with no missing or extra name. The host has no Go executable, so pinned Go tests were not rerun locally. The four original package test files require no live cluster; cross-client real-TiKV differential validation remains a high-level repository gate.
 
 ## Complete re-audit: `internal/client`
 
@@ -1095,11 +851,13 @@ The prior append-only amendment history is superseded by the 2026-08-25 atomic r
 
 Final local gates on `nightly-2026-08-22` pass 38 focused source-derived BatchCommands tests, clean deterministic proto regeneration, workspace all-target/all-feature checking and Clippy, rustfmt, 771 no-default-feature tests, 761 all-feature library tests, private-item rustdoc, 51 doctests, diff checks, and exact 19-artifact/51-test source inventory comparison. The host has no Go executable, so the original Go suite was not rerun; its package-owned scenarios are mapped individually in the audit. The row is `complete`; no superseded “in-progress” amendment remains authoritative.
 
-## In-progress amendment: `rawkv` retry ownership
+## Complete re-audit: `rawkv`
 
-Client-go `rawkv/rawkv.go` creates `retry.NewBackofferWithVars(ctx, 20000, nil)` for each normal request and scan page. Its BatchGet/BatchDelete/BatchPut fan-out forks a parent, forks every region batch, cancels siblings on first error, waits for every child, then merges the last completed child's accounting into the operation backoffer. Rust now maps that topology through an owned `RegionRetryState` in `RetryableMultiRegion`: normal Rust callers keep their legacy `Backoff`, but RawKV constructs a fresh 20,000-ms `RetryBackoffer` for every multi-region operation. The state is forked once for the batch parent and once per shard, first terminal failure cancels its sibling retry waits, and the final child is merged only after it finishes. Scan uses a fresh source backoffer for each region page, as Go's `sendReq` does. The unsupported Rust-only `RawClient::with_backoff` attempt-count override is explicitly deprecated rather than silently treated as source behavior.
+The earlier retry-only amendment is superseded by the atomic receipt in [`rawkv-source-artifact-audit.md`](rawkv-source-artifact-audit.md). The re-audit mechanically rechecked all eight artifacts/2,743 lines, all 31 executable test declarations and support hooks, every production method, and all direct consumers. It ports every package, mock-integration, and optional-live assertion into always-run Rust tests, including the 20,480-pair scan/delete/checksum cases, exact table-driven scans and deletes, empty values, TTL, CAS, column families, store replacement, and probe surfaces.
 
-Focused pinned-nightly tests cover a RawGet region-miss retry, deterministic per-shard fork/final-child merge accounting, and cancellation of a sibling already waiting in its cumulative retry. `cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features --quiet` passes 302 tests, `cargo +nightly-2026-08-22 fmt --all -- --check` and `git diff --check` pass. This was not a `rawkv` completion receipt: at that checkpoint parity still depended on the then-incomplete `internal/locate.RegionRequestSender`; locate is now complete, while the remaining raw package inventory and integration gates are still open.
+Production parity now includes a public ordinary-build injected RawClient constructor and batch-size probe; one-boundary-region-at-a-time DeleteRange and Checksum with fresh 20,000-ms backoffers; first-error stop for DeleteRange; source-ignored RawChecksum string errors and RawBatchGet/RawScan pair errors; source-exact public error text; and source behavior for malformed over-limit scan responses. The complete retry topology remains the one described by the original amendment: concurrent BatchGet/BatchDelete/BatchPut fork/cancel/final-child accounting, and fresh point/page/region owners elsewhere. Final gate evidence is recorded in the atomic receipt; no rawkv package inventory or integration gate remains open.
+
+## Historical package amendments
 
 The `config/retry` row is further amended: pre-cancelled and noop Rust backoffs now display the triggering reason verbatim, matching the source return value. Cancellation during an already-started backoff sleep records a zero-duration retry and returns success for that call; only the following call observes the cancelled context. This preserves client-go's retry-class accounting and prevents a native cancellation wrapper from changing caller-visible error text. The scoped retry suite passes 19 tests; all remaining consumer loops must still adopt their source-owned cumulative budgets before a package receipt.
 
@@ -1333,7 +1091,11 @@ The ordinary-build public `tikv_client::testutils` module is a zero-state facade
 
 ## `unistore` native-crate completion receipt
 
-The independent workspace crate has exactly five artifacts/2,788 lines and one-way dependency ownership. Its complete inventory, hashes, 70 public declaration points, 24 internal/external tests, direct consumers, source boundary, and validation contract are recorded in [`unistore-crate-completion-audit.md`](unistore-crate-completion-audit.md).
+The independent workspace crate now has exactly six artifacts/3,203 lines and
+one-way dependency ownership. Its complete inventory, hashes, 80 public
+declaration points, 32 unit tests, three external-consumer tests, direct
+consumers, source boundary, and validation contract are recorded in
+[`unistore-crate-completion-audit.md`](unistore-crate-completion-audit.md).
 
 The source-mapped `MockEngine` owns only protocol-independent state and formats from the completed client-go mocktikv package. A smaller native committed-version facade supports modules that do not need lock/prewrite semantics, and true external-crate tests prove both APIs are reusable without `tikv-client`. Protocol conversion stays in the client adapter, so no dependency cycle exists. TiDB's separate server-side UniStore package is explicitly `not-applicable`; no partial external-package claim is hidden behind this crate completion.
 

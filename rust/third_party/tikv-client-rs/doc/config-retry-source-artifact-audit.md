@@ -1,10 +1,10 @@
 # `config/retry` source-artifact audit
 
-This is the atomic completion receipt for client-go package `config/retry`, pinned at commit `52c1e76cec993571493c81de442bcbef90cdc106`. The Rust implementation is in the `tikv-client` crate and is validated with `nightly-2026-08-22`.
+This is the independently reopened atomic completion receipt for client-go package `config/retry`, pinned at commit `52c1e76cec993571493c81de442bcbef90cdc106`. The Rust implementation is in the `tikv-client` crate and is validated with `nightly-2026-08-22`.
 
 ## Complete source inventory
 
-`git ls-tree -r --name-only 52c1e76cec993571493c81de442bcbef90cdc106 config/retry` contains exactly four files:
+`git ls-tree -r --name-only 52c1e76cec993571493c81de442bcbef90cdc106 config/retry` contains exactly four files and 1,020 lines:
 
 | Source artifact | SHA-256 | Rust owner |
 | --- | --- | --- |
@@ -35,25 +35,27 @@ The Rust error type intentionally keeps exhaustion diagnostics as structured fie
 
 ## Test/support mapping
 
-Every original test is represented:
+`backoff_test.go` contains exactly nine ordinary tests. Every declaration now has one independently executable, source-named Rust port:
 
-- `TestCheckKilled` maps to `check_killed_prefers_the_signal_then_runs_the_handler` plus the post-sleep signal case in `cancellation_and_kill_signal_stop_before_or_after_sleep`.
-- `TestBackoffWithMax` maps to `txn_lock_fast_caps_each_sleep_without_resetting_its_exponential_state`.
-- `TestBackoffErrorType` maps to `longest_non_excluded_sleep_selects_the_terminal_error` and the complete constant-table test.
-- `TestBackoffDeepCopy` maps to `fork_inherits_budget_cancels_independently_and_merges_only_to_its_parent`, `clone_and_fork_of_noop_are_normal_backoffers_like_client_go`, and the type-ancestry regression.
-- `TestBackoffUpdateUsingFork` maps to the descendant/unrelated merge assertions in the fork test.
-- `TestBackoffWithMaxExcludedExceed` maps to `excluded_retry_class_still_obeys_its_own_maximum_budget`.
-- `TestMayBackoffForRegionError` maps to the complete nil/real/fake/NotLeader/ServerIsBusy/MaxTimestampNotSynced matrix in `region_errors_only_skip_backoff_for_a_real_epoch_mismatch`.
-- `TestBackoffErrorsKeep` maps to `error_count_is_lifetime_accounting_while_diagnostics_retain_three_records`.
-- `TestBackoffError` maps to `backoff_record_formats_rfc3339_nanoseconds`.
+| client-go test | Rust evidence |
+| --- | --- |
+| `TestCheckKilled` | `retry::tests::source_test_check_killed`; executes signal-before-handler precedence, handler failure, nil-handler signal handling, a second variables owner, and default/nil-vars success |
+| `TestBackoffWithMax` | `retry::tests::source_test_backoff_with_max`; observes the exact five-millisecond one-call cap and retained exponential/reset state |
+| `TestBackoffErrorType` | `retry::tests::source_test_backoff_error_type`; executes the source class sequence, default 800-to-1,600-ms weighting, excluded server-busy sleep, and longest non-excluded terminal selection |
+| `TestBackoffDeepCopy` | `retry::tests::source_test_backoff_deep_copy`; independently compares errors, lifetime count, type sleep/count maps, excluded/total sleep, then proves both clone and fork retain the source terminal class |
+| `TestBackoffUpdateUsingFork` | `retry::tests::source_test_backoff_update_using_fork`; independently proves descendant merge, cleared root ancestry, and unrelated-owner rejection |
+| `TestBackoffWithMaxExcludedExceed` | `retry::tests::source_test_backoff_with_max_excluded_exceed`; proves the excluded class succeeds once and then exhausts its independent limit |
+| `TestMayBackoffForRegionError` | `retry::tests::source_test_may_backoff_for_region_error`; runs nil, real epoch mismatch, fake mismatch, NotLeader, ServerIsBusy, and MaxTimestampNotSynced, with a fresh success and cancelled owner for every backoff case |
+| `TestBackoffErrorsKeep` | `retry::tests::source_test_backoff_errors_keep`; retains the exact 32-error workload and checks lifetime count, three-record window, chronological order, exact reasons, and five-second timestamp proximity after every attempt |
+| `TestBackoffError` | `retry::tests::source_test_backoff_error`; formats the same fixed instant in UTC because Rust `SystemTime` does not retain Go's test-only fixed location |
 
-Additional production-derived tests cover all 17 constants and value-semantic setters, signed-MaxInt32 weighting, exact `String`, pre-sleep and in-flight cancellation, the previously incorrect cancelled-sleep progression, immediate cluster-mismatch termination, PD terminal identity, no-op clone/fork behavior, excluded-only fallback, lock-fast reset, and fork ancestry duplication.
+Additional production-derived tests cover all 17 constants and value-semantic setters, signed-MaxInt32 weighting, exact `String`, pre-sleep and in-flight cancellation, cancelled-sleep progression, immediate cluster-mismatch termination, PD terminal identity, no-op clone/fork behavior, excluded-only fallback, decorrelated cap history, lock-fast reset, and fork ancestry duplication.
 
 The Go `TestMain` goleak harness is accounted for: retry owns no spawned worker. Rust's cancellation test awaits its temporary Tokio task, and the package runs under both focused and complete crate test processes.
 
 ## Consumer inventory and ownership
 
-Every pinned source importer was inspected and assigned to its owning package:
+Exact quoted-import matching finds 43 pinned source importer files. Every importer was inspected and assigned to its owning package:
 
 - `internal/client/client_batch.go` owns the long-lived `BoTiKVRPC` stream-reconnect loop; Rust's completed transport creates the source `MaxInt32` owner and stops it through connection cancellation.
 - `internal/locate/{region_cache,region_request,replica_selector,store_cache}.go` and tests own PD, region, store, selector, and deferred fast-retry use. Its separate completed receipt proves the cache/sender/selector loop coverage over this class table.
@@ -66,4 +68,8 @@ Those callers are not source artifacts of `config/retry`. Their own receipts pro
 
 ## Completion gates
 
-The package is complete when its focused tests pass in default and all-feature modes, the default and all-feature library suites pass, all targets compile with all features, public rustdoc builds, rustfmt and diff checks pass, and the ledger records exact results. No live cluster is required for this deterministic retry state machine; final live TiKV/PD validation remains mandatory for the owning consumers.
+Official Go 1.25.12 passes `go test ./config/retry -count=1` in 4.751 seconds and `go test -race ./config/retry -count=1` in 5.685 seconds. Mechanical reconciliation verifies all four artifacts/1,020 lines, all nine ordinary tests plus `TestMain`, every production declaration/branch, all 17 retry classes, and all 43 quoted importers.
+
+On `nightly-2026-08-22`, all nine one-to-one source ports and the complete 21-test retry module pass in both no-default and all-feature configurations. The complete source-derived matrices pass 778/778 and 775/775. The no-default workspace passes 1,027 active main-crate tests plus one unrelated ignore and every companion matrix; the all-feature library passes 1,024 active tests plus the same ignore. Workspace all-target/all-feature compilation, strict Clippy, private-item rustdoc with warnings denied, all 51 doctests, rustfmt, and whitespace checks pass. No live cluster is required for this deterministic retry state machine; live behavior remains validated by the already completed owning-consumer gates.
+
+The independent re-audit found no production divergence. It did find that the older receipt's grouped test mapping omitted source branches and workloads: three `CheckKilled` cases, three region-error cancellation cases, the 32-record retention scale, and independent clone/fork/update execution. This package-sized batch corrects that evidence without speculative production churn.

@@ -6,8 +6,9 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::future::Future;
 use std::ops::Bound;
+use std::sync::Arc;
 
-use crate::kv::{FlagsOp, KeyFlags};
+use crate::kv::{BatchGetter, FlagsOp, GetOption, Getter, KeyFlags};
 use crate::proto::kvrpcpb;
 use crate::request::{EncodeKeyspace, KeyMode, Keyspace, TruncateKeyspace};
 use crate::BoundRange;
@@ -16,8 +17,9 @@ use crate::KvPair;
 use crate::Result;
 use crate::Value;
 use crate::ValueEntry;
+use async_trait::async_trait;
 
-use super::transaction::{Mutation, MutationFlags, MutationOptions};
+use super::transaction::{KvFilter, Mutation, MutationFlags, MutationOptions};
 use super::unionstore::MemDb;
 
 const SNAPSHOT_CACHE_SIZE_LIMIT: i64 = 10 << 30;
@@ -81,6 +83,16 @@ pub(crate) fn proto_mutations_from_memdb(
     keyspace: Keyspace,
     is_pessimistic: bool,
 ) -> Vec<kvrpcpb::Mutation> {
+    proto_mutations_from_memdb_with_filter(memdb, keyspace, is_pessimistic, None)
+        .expect("building mutations without a filter cannot fail")
+}
+
+fn proto_mutations_from_memdb_with_filter(
+    memdb: &MemDb,
+    keyspace: Keyspace,
+    is_pessimistic: bool,
+    filter: Option<&dyn KvFilter>,
+) -> std::result::Result<Vec<kvrpcpb::Mutation>, (Vec<kvrpcpb::Mutation>, crate::Error)> {
     let physical_key = |key: &[u8]| {
         Key::from(key.to_vec())
             .encode_keyspace(keyspace, KeyMode::Txn)
@@ -90,26 +102,50 @@ pub(crate) fn proto_mutations_from_memdb(
     let mut iterator = memdb.iter_with_flags(None, None);
     while iterator.valid() {
         let flags = iterator.flags();
+        let key = iterator.key().to_vec();
         let mut mutation = kvrpcpb::Mutation {
-            key: physical_key(iterator.key()),
+            key: physical_key(&key),
             assertion: assertion_from_flags(flags).to_proto() as i32,
             ..Default::default()
         };
         let operation = if !iterator.has_value() {
             flags.has_locked().then(|| lock_operation(flags))
-        } else if !iterator.value().is_empty() {
-            mutation.value = iterator.value().to_vec();
-            Some(if flags.has_presume_key_not_exists() {
-                kvrpcpb::Op::Insert
-            } else {
-                kvrpcpb::Op::Put
-            })
-        } else if !is_pessimistic && flags.has_presume_key_not_exists() {
-            Some(kvrpcpb::Op::CheckNotExists)
-        } else if flags.has_newly_inserted() {
-            flags.has_locked().then(|| lock_operation(flags))
         } else {
-            Some(kvrpcpb::Op::Del)
+            let value = iterator.value().to_vec();
+            let unnecessary = if let Some(filter) = filter {
+                match filter.is_unnecessary_key_value(
+                    &key,
+                    &value,
+                    mutation_flags_from_key_flags(flags),
+                ) {
+                    Ok(unnecessary) => unnecessary,
+                    Err(error) => return Err((mutations, error)),
+                }
+            } else {
+                false
+            };
+            if !value.is_empty() {
+                // client-go's MemDB-backed mutation retains the original value
+                // even when a filtered, already-locked write lowers to Op_Lock.
+                mutation.value = value;
+                if unnecessary {
+                    flags.has_locked().then(|| lock_operation(flags))
+                } else {
+                    Some(if flags.has_presume_key_not_exists() {
+                        kvrpcpb::Op::Insert
+                    } else {
+                        kvrpcpb::Op::Put
+                    })
+                }
+            } else if unnecessary {
+                None
+            } else if !is_pessimistic && flags.has_presume_key_not_exists() {
+                Some(kvrpcpb::Op::CheckNotExists)
+            } else if flags.has_newly_inserted() {
+                flags.has_locked().then(|| lock_operation(flags))
+            } else {
+                Some(kvrpcpb::Op::Del)
+            }
         };
         if let Some(operation) = operation {
             mutation.op = operation as i32;
@@ -119,7 +155,7 @@ pub(crate) fn proto_mutations_from_memdb(
             .next()
             .expect("owned MemDB iterator advances deterministically");
     }
-    mutations
+    Ok(mutations)
 }
 
 /// Returns the first and last logical keys in a flushed MemDB generation.
@@ -141,6 +177,97 @@ pub(crate) fn memdb_key_bounds(memdb: &MemDb) -> Option<(Vec<u8>, Vec<u8>)> {
             .expect("a stable flushed MemDB iterator remains valid");
     }
     Some((first, last))
+}
+
+/// A mutable-buffer getter that can report whether it has any entries.
+///
+/// This is the Rust counterpart of client-go's `BatchBufferGetter` boundary.
+pub trait BatchBufferGetter: Getter + BatchGetter {
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Merge a mutable buffer with a snapshot batch getter.
+///
+/// Buffered values win, buffered tombstones suppress snapshot reads, and the
+/// supplied get options are forwarded unchanged to both tiers.
+#[derive(Clone)]
+pub struct BufferBatchGetter {
+    buffer: Arc<dyn BatchBufferGetter>,
+    snapshot: Arc<dyn BatchGetter>,
+}
+
+impl BufferBatchGetter {
+    pub fn new(buffer: Arc<dyn BatchBufferGetter>, snapshot: Arc<dyn BatchGetter>) -> Self {
+        Self { buffer, snapshot }
+    }
+}
+
+/// A snapshot-cache buffer accepted by [`BufferSnapshotBatchGetter`].
+pub trait BatchSnapshotBufferGetter: Getter + BatchGetter {}
+
+impl<T: Getter + BatchGetter> BatchSnapshotBufferGetter for T {}
+
+/// Merge a snapshot-side cache with its backing snapshot getter.
+#[derive(Clone)]
+pub struct BufferSnapshotBatchGetter {
+    buffer: Arc<dyn BatchSnapshotBufferGetter>,
+    snapshot: Arc<dyn BatchGetter>,
+}
+
+impl BufferSnapshotBatchGetter {
+    pub fn new(buffer: Arc<dyn BatchSnapshotBufferGetter>, snapshot: Arc<dyn BatchGetter>) -> Self {
+        Self { buffer, snapshot }
+    }
+}
+
+async fn merge_buffer_batch_get(
+    buffer: &dyn BatchGetter,
+    snapshot: &dyn BatchGetter,
+    keys: &[Vec<u8>],
+    options: &[GetOption],
+) -> Result<HashMap<Vec<u8>, ValueEntry>> {
+    let mut buffer_values = buffer.batch_get(keys, options).await?;
+    if buffer_values.is_empty() {
+        return snapshot.batch_get(keys, options).await;
+    }
+    let mut snapshot_keys = Vec::with_capacity(keys.len().saturating_sub(buffer_values.len()));
+    for key in keys {
+        match buffer_values.get(key) {
+            None => snapshot_keys.push(key.clone()),
+            Some(value) if value.is_value_empty() => {
+                buffer_values.remove(key);
+            }
+            Some(_) => {}
+        }
+    }
+    buffer_values.extend(snapshot.batch_get(&snapshot_keys, options).await?);
+    Ok(buffer_values)
+}
+
+#[async_trait]
+impl BatchGetter for BufferBatchGetter {
+    async fn batch_get(
+        &self,
+        keys: &[Vec<u8>],
+        options: &[GetOption],
+    ) -> Result<HashMap<Vec<u8>, ValueEntry>> {
+        merge_buffer_batch_get(self.buffer.as_ref(), self.snapshot.as_ref(), keys, options).await
+    }
+}
+
+#[async_trait]
+impl BatchGetter for BufferSnapshotBatchGetter {
+    async fn batch_get(
+        &self,
+        keys: &[Vec<u8>],
+        options: &[GetOption],
+    ) -> Result<HashMap<Vec<u8>, ValueEntry>> {
+        merge_buffer_batch_get(self.buffer.as_ref(), self.snapshot.as_ref(), keys, options).await
+    }
 }
 
 /// A caching layer which buffers reads and writes in a transaction.
@@ -202,6 +329,10 @@ impl Buffer {
     /// surface is logical for both API V1 and V2, matching client-go.
     pub(crate) fn mem_buffer(&mut self) -> &mut MemDb {
         &mut self.memdb
+    }
+
+    pub(crate) fn mem_buffer_readonly(&self) -> &MemDb {
+        &self.memdb
     }
 
     pub(crate) fn memdb_memory_hook_is_set(&self) -> bool {
@@ -294,6 +425,10 @@ impl Buffer {
     /// Set the primary key if it is not set
     pub fn primary_key_or(&mut self, key: &Key) {
         self.primary_key.get_or_insert_with(|| key.clone());
+    }
+
+    pub(crate) fn reset_primary_key(&mut self) {
+        self.primary_key = None;
     }
 
     fn logical_key(&self, key: &Key) -> Vec<u8> {
@@ -720,10 +855,12 @@ impl Buffer {
                 .exists
                 .then(|| ValueEntry::new(value.value.clone(), 0))
         });
-        if !shared {
+        if shared {
+            if self.primary_key.is_none() {
+                return Err("pessimistic lock in share mode requires primary key to be selected");
+            }
+        } else if self.is_pessimistic {
             self.primary_key.get_or_insert_with(|| key.clone());
-        } else if self.primary_key.is_none() {
-            return Err("pessimistic lock in share mode requires primary key to be selected");
         }
         let current_flags = self.memdb_flags(&key);
         if current_flags.has_locked_in_share_mode() && !shared {
@@ -866,7 +1003,6 @@ impl Buffer {
     pub fn put(&mut self, key: Key, value: Value) -> Result<()> {
         let logical_key = self.logical_key(&key);
         self.remove_cached_entry(&key);
-        self.primary_key_or(&key);
         self.memdb
             .set(&logical_key, &value)
             .map_err(|error| crate::Error::StringError(error.to_string()))
@@ -884,7 +1020,6 @@ impl Buffer {
                 .get_flags_readonly(&logical_key)
                 .is_ok_and(|flags| !flags.has_presume_key_not_exists());
         self.remove_cached_entry(&key);
-        self.primary_key_or(&key);
         let result = if was_plain_tombstone {
             self.memdb.set(&logical_key, &value)
         } else {
@@ -898,7 +1033,6 @@ impl Buffer {
     pub fn delete(&mut self, key: Key) -> Result<()> {
         let logical_key = self.logical_key(&key);
         self.remove_cached_entry(&key);
-        self.primary_key_or(&key);
         self.memdb
             .delete(&logical_key)
             .map_err(|error| crate::Error::StringError(error.to_string()))
@@ -916,25 +1050,19 @@ impl Buffer {
         proto_mutations_from_memdb(&self.memdb, self.keyspace, self.is_pessimistic)
     }
 
-    /// Returns every value-bearing MemDB entry in source iteration order for
-    /// `KvFilter`. This deliberately includes tombstones that mutation
-    /// lowering may later omit, matching client-go's `initKeysAndMutations`.
-    pub(crate) fn value_entries_for_filter(&self) -> Vec<(Vec<u8>, Value, MutationFlags)> {
-        let mut entries = Vec::with_capacity(self.memdb.len());
-        let mut iterator = self.memdb.iter_with_flags(None, None);
-        while iterator.valid() {
-            if iterator.has_value() {
-                entries.push((
-                    iterator.key().to_vec(),
-                    iterator.value().to_vec(),
-                    mutation_flags_from_key_flags(iterator.flags()),
-                ));
-            }
-            iterator
-                .next()
-                .expect("owned MemDB iterator advances deterministically");
-        }
-        entries
+    /// Builds mutations while invoking `KvFilter` in the authoritative MemDB's
+    /// iteration order. On callback failure, the returned prefix is the same
+    /// key set client-go passes to its asynchronous pessimistic rollback.
+    pub(crate) fn to_proto_mutations_with_filter(
+        &self,
+        filter: &dyn KvFilter,
+    ) -> std::result::Result<Vec<kvrpcpb::Mutation>, (Vec<kvrpcpb::Mutation>, crate::Error)> {
+        proto_mutations_from_memdb_with_filter(
+            &self.memdb,
+            self.keyspace,
+            self.is_pessimistic,
+            Some(filter),
+        )
     }
 
     pub(crate) fn set_mutation_options(
@@ -1207,6 +1335,57 @@ mod tests {
     use super::*;
     use crate::internal_err;
 
+    #[derive(Default)]
+    struct SourceMockBatchStore {
+        values: BTreeMap<Vec<u8>, ValueEntry>,
+    }
+
+    impl SourceMockBatchStore {
+        fn from_entries(entries: impl IntoIterator<Item = (Vec<u8>, ValueEntry)>) -> Self {
+            Self {
+                values: entries.into_iter().collect(),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Getter for SourceMockBatchStore {
+        async fn get(&self, key: &[u8], options: &[GetOption]) -> Result<ValueEntry> {
+            let mut value = self
+                .values
+                .get(key)
+                .cloned()
+                .ok_or_else(|| crate::Error::StringError("not exist".to_owned()))?;
+            if !options.contains(&GetOption::ReturnCommitTs) {
+                value.commit_ts = 0;
+            }
+            Ok(value)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BatchGetter for SourceMockBatchStore {
+        async fn batch_get(
+            &self,
+            keys: &[Vec<u8>],
+            options: &[GetOption],
+        ) -> Result<HashMap<Vec<u8>, ValueEntry>> {
+            let mut result = HashMap::new();
+            for key in keys {
+                if let Ok(value) = self.get(key, options).await {
+                    result.insert(key.clone(), value);
+                }
+            }
+            Ok(result)
+        }
+    }
+
+    impl BatchBufferGetter for SourceMockBatchStore {
+        fn len(&self) -> usize {
+            self.values.len()
+        }
+    }
+
     #[test]
     fn set_and_get_from_buffer() {
         let mut buffer = Buffer::new(false);
@@ -1371,6 +1550,58 @@ mod tests {
 
     #[test]
     fn source_buffer_batch_getter_local_precedence_delete_and_commit_ts() {
+        let keys = ["a", "b", "c", "d", "e"]
+            .map(|key| key.as_bytes().to_vec())
+            .to_vec();
+        let snapshot = Arc::new(SourceMockBatchStore::from_entries([
+            (keys[0].clone(), ValueEntry::new(b"a".to_vec(), 1)),
+            (keys[1].clone(), ValueEntry::new(b"b".to_vec(), 2)),
+            (keys[2].clone(), ValueEntry::new(b"c".to_vec(), 3)),
+            (keys[3].clone(), ValueEntry::new(b"d".to_vec(), 4)),
+        ]));
+        let buffer = Arc::new(SourceMockBatchStore::from_entries([
+            (keys[0].clone(), ValueEntry::new(b"a1".to_vec(), 11)),
+            (keys[1].clone(), ValueEntry::default()),
+        ]));
+        let getter = BufferBatchGetter::new(buffer, snapshot);
+
+        let with_commit_ts = block_on(getter.batch_get(&keys, &[GetOption::ReturnCommitTs]))
+            .expect("buffer/snapshot merge succeeds");
+        assert_eq!(with_commit_ts.len(), 3);
+        assert_eq!(
+            with_commit_ts.get(&keys[0]),
+            Some(&ValueEntry::new(b"a1".to_vec(), 11))
+        );
+        assert_eq!(
+            with_commit_ts.get(&keys[2]),
+            Some(&ValueEntry::new(b"c".to_vec(), 3))
+        );
+        assert_eq!(
+            with_commit_ts.get(&keys[3]),
+            Some(&ValueEntry::new(b"d".to_vec(), 4))
+        );
+        assert!(!with_commit_ts.contains_key(&keys[1]));
+        assert!(!with_commit_ts.contains_key(&keys[4]));
+
+        let without_commit_ts = block_on(getter.batch_get(&keys, &[]))
+            .expect("buffer/snapshot merge succeeds without commit timestamps");
+        assert_eq!(without_commit_ts.len(), 3);
+        assert_eq!(
+            without_commit_ts.get(&keys[0]),
+            Some(&ValueEntry::new(b"a1".to_vec(), 0))
+        );
+        assert_eq!(
+            without_commit_ts.get(&keys[2]),
+            Some(&ValueEntry::new(b"c".to_vec(), 0))
+        );
+        assert_eq!(
+            without_commit_ts.get(&keys[3]),
+            Some(&ValueEntry::new(b"d".to_vec(), 0))
+        );
+    }
+
+    #[test]
+    fn source_transaction_buffer_batch_getter_uses_authoritative_memdb() {
         let keys = ["a", "b", "c", "d", "e"]
             .into_iter()
             .map(|key| Key::from(key.as_bytes().to_vec()))

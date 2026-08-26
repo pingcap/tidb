@@ -235,6 +235,10 @@ mod test {
                 self
             }
 
+            fn as_any_mut(&mut self) -> &mut dyn Any {
+                self
+            }
+
             fn set_leader(&mut self, _: &RegionWithLeader) -> Result<()> {
                 Ok(())
             }
@@ -484,6 +488,10 @@ mod test {
                 self
             }
 
+            fn as_any_mut(&mut self) -> &mut dyn Any {
+                self
+            }
+
             fn set_leader(&mut self, _: &RegionWithLeader) -> Result<()> {
                 Ok(())
             }
@@ -697,6 +705,10 @@ mod test {
             }
 
             fn as_any(&self) -> &dyn Any {
+                self
+            }
+
+            fn as_any_mut(&mut self) -> &mut dyn Any {
                 self
             }
 

@@ -269,6 +269,7 @@ pub trait Request: Any + Sync + Send + 'static {
     ) -> Result<Box<dyn Any>>;
     fn label(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
     fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()>;
     fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion);
     /// Marks a resend of the same logical request. Context-bearing TiKV
@@ -282,6 +283,17 @@ pub trait Request: Any + Sync + Send + 'static {
     /// Set the API V2 keyspace name carried alongside the numeric identifier.
     fn set_keyspace_name(&mut self, _keyspace_name: Option<&str>) {}
     fn set_priority(&mut self, _priority: kvrpcpb::CommandPri) {}
+    /// Sets the raw protobuf command-priority value.
+    ///
+    /// This preserves enum values introduced by a newer server, matching
+    /// client-go's integer-backed `txnutil.Priority`. Existing custom request
+    /// implementations continue to receive known values through
+    /// [`Request::set_priority`].
+    fn set_priority_value(&mut self, priority: i32) {
+        if let Ok(priority) = kvrpcpb::CommandPri::try_from(priority) {
+            self.set_priority(priority);
+        }
+    }
     /// Controls whether TiKV should bypass its data cache for this request.
     fn set_not_fill_cache(&mut self, _not_fill_cache: bool) {}
     /// Sets the isolation level carried in this request's TiKV context.
@@ -585,6 +597,63 @@ pub(crate) fn exec_details_v2(response: &dyn Any) -> Option<&kvrpcpb::ExecDetail
     None
 }
 
+/// Return the region error without consuming it, for client-side trace events.
+pub(crate) fn region_error_ref(response: &dyn Any) -> Option<&crate::proto::errorpb::Error> {
+    macro_rules! region_error_response {
+        ($($response:ty),+ $(,)?) => {
+            $(
+                if let Some(response) = response.downcast_ref::<$response>() {
+                    return response.region_error.as_ref();
+                }
+            )+
+        };
+    }
+    region_error_response!(
+        kvrpcpb::GetResponse,
+        kvrpcpb::ScanResponse,
+        kvrpcpb::PrewriteResponse,
+        kvrpcpb::CommitResponse,
+        kvrpcpb::PessimisticLockResponse,
+        kvrpcpb::ImportResponse,
+        kvrpcpb::CleanupResponse,
+        kvrpcpb::BatchRollbackResponse,
+        kvrpcpb::PessimisticRollbackResponse,
+        kvrpcpb::BatchGetResponse,
+        kvrpcpb::ScanLockResponse,
+        kvrpcpb::ResolveLockResponse,
+        kvrpcpb::TxnHeartBeatResponse,
+        kvrpcpb::CheckTxnStatusResponse,
+        kvrpcpb::CheckSecondaryLocksResponse,
+        kvrpcpb::DeleteRangeResponse,
+        kvrpcpb::GcResponse,
+        kvrpcpb::PrepareFlashbackToVersionResponse,
+        kvrpcpb::FlashbackToVersionResponse,
+        kvrpcpb::FlushResponse,
+        kvrpcpb::BufferBatchGetResponse,
+        kvrpcpb::UnsafeDestroyRangeResponse,
+        kvrpcpb::MvccGetByKeyResponse,
+        kvrpcpb::MvccGetByStartTsResponse,
+        kvrpcpb::GetLockWaitInfoResponse,
+        kvrpcpb::SplitRegionResponse,
+        kvrpcpb::RawGetResponse,
+        kvrpcpb::RawBatchGetResponse,
+        kvrpcpb::RawGetKeyTtlResponse,
+        kvrpcpb::RawPutResponse,
+        kvrpcpb::RawBatchPutResponse,
+        kvrpcpb::RawDeleteResponse,
+        kvrpcpb::RawBatchDeleteResponse,
+        kvrpcpb::RawDeleteRangeResponse,
+        kvrpcpb::RawScanResponse,
+        kvrpcpb::RawBatchScanResponse,
+        kvrpcpb::RawCasResponse,
+        kvrpcpb::RawCoprocessorResponse,
+        kvrpcpb::RawChecksumResponse,
+        kvrpcpb::GetHealthFeedbackResponse,
+        coprocessor::Response,
+    );
+    None
+}
+
 /// Source `tikvrpc.Response.GetSize` matrix. Keep this deliberately narrower
 /// than all generated response types: unlisted commands report zero.
 pub(crate) fn network_response_size(response: &dyn Any) -> u64 {
@@ -688,6 +757,10 @@ macro_rules! impl_request {
                 self
             }
 
+            fn as_any_mut(&mut self) -> &mut dyn Any {
+                self
+            }
+
             fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()> {
                 let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
                 let leader_peer = leader.leader.as_ref().ok_or(Error::LeaderNotFound {
@@ -727,6 +800,11 @@ macro_rules! impl_request {
             fn set_priority(&mut self, priority: kvrpcpb::CommandPri) {
                 let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
                 ctx.priority = priority.into();
+            }
+
+            fn set_priority_value(&mut self, priority: i32) {
+                let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
+                ctx.priority = priority;
             }
 
             fn set_not_fill_cache(&mut self, not_fill_cache: bool) {
@@ -915,6 +993,10 @@ macro_rules! impl_store_request {
                 self
             }
 
+            fn as_any_mut(&mut self) -> &mut dyn Any {
+                self
+            }
+
             fn set_leader(&mut self, _leader: &RegionWithLeader) -> Result<()> {
                 Ok(())
             }
@@ -1074,6 +1156,10 @@ impl Request for debugpb::GetRegionPropertiesRequest {
         self
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn set_leader(&mut self, _leader: &RegionWithLeader) -> Result<()> {
         Ok(())
     }
@@ -1096,6 +1182,10 @@ impl Request for tikvpb::BatchCommandsEmptyRequest {
     }
 
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 
@@ -1148,6 +1238,10 @@ impl Request for kvrpcpb::CompactRequest {
     }
 
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 
@@ -1207,6 +1301,10 @@ impl Request for kvrpcpb::StoreSafeTsRequest {
         self
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn set_leader(&mut self, _leader: &RegionWithLeader) -> Result<()> {
         Ok(())
     }
@@ -1259,6 +1357,10 @@ impl Request for coprocessor::Request {
         self
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()> {
         let context = self.context.get_or_insert(kvrpcpb::Context::default());
         let leader_peer = leader.leader.as_ref().ok_or(Error::LeaderNotFound {
@@ -1303,6 +1405,12 @@ impl Request for coprocessor::Request {
         self.context
             .get_or_insert(kvrpcpb::Context::default())
             .priority = priority.into();
+    }
+
+    fn set_priority_value(&mut self, priority: i32) {
+        self.context
+            .get_or_insert(kvrpcpb::Context::default())
+            .priority = priority;
     }
 
     fn set_max_execution_duration_ms(&mut self, duration_ms: u64) {
@@ -1392,6 +1500,10 @@ impl Request for CoprocessorStreamRequest {
         self
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()> {
         self.request.set_leader(leader)
     }
@@ -1414,6 +1526,10 @@ impl Request for CoprocessorStreamRequest {
 
     fn set_priority(&mut self, priority: kvrpcpb::CommandPri) {
         self.request.set_priority(priority);
+    }
+
+    fn set_priority_value(&mut self, priority: i32) {
+        self.request.set_priority_value(priority);
     }
 
     fn set_max_execution_duration_ms(&mut self, duration_ms: u64) {
@@ -1500,6 +1616,10 @@ impl Request for BatchCoprocessorStreamRequest {
         self
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn set_leader(&mut self, _leader: &RegionWithLeader) -> Result<()> {
         Ok(())
     }
@@ -1536,6 +1656,13 @@ impl Request for BatchCoprocessorStreamRequest {
             .context
             .get_or_insert(kvrpcpb::Context::default())
             .priority = priority.into();
+    }
+
+    fn set_priority_value(&mut self, priority: i32) {
+        self.request
+            .context
+            .get_or_insert(kvrpcpb::Context::default())
+            .priority = priority;
     }
 
     fn tikv_context(&self) -> Option<&kvrpcpb::Context> {
@@ -1607,6 +1734,10 @@ impl Request for MppStreamRequest {
         self
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn set_leader(&mut self, _leader: &RegionWithLeader) -> Result<()> {
         Ok(())
     }
@@ -1663,6 +1794,10 @@ impl Request for mpp::DispatchTaskRequest {
         self
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn set_leader(&mut self, _leader: &RegionWithLeader) -> Result<()> {
         Ok(())
     }
@@ -1689,7 +1824,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn source_call_rpc_command_matrix_has_typed_request_implementations() {
+    fn source_test_encode_request() {
         let requests: Vec<Box<dyn Request>> = vec![
             Box::new(kvrpcpb::GetRequest::default()),
             Box::new(kvrpcpb::ScanRequest::default()),
@@ -1755,6 +1890,89 @@ mod tests {
 
         assert_eq!(requests.len(), 54);
         assert!(requests.iter().all(|request| !request.label().is_empty()));
+
+        // client-go mutates a dynamic request at the API-codec boundary. Rust
+        // encodes keys before constructing its typed request, so replay the
+        // source's eight rows at that native ownership boundary.
+        let codec = ApiV2Codec::new(crate::request::KeyMode::Raw, 4242).unwrap();
+
+        let raw_get = kvrpcpb::RawGetRequest {
+            key: codec.encode_key(b"key"),
+            ..Default::default()
+        };
+        assert_eq!(raw_get.key, codec.encode_key(b"key"));
+
+        let commit_without_primary = kvrpcpb::CommitRequest {
+            keys: vec![codec.encode_key(b"key1"), codec.encode_key(b"key2")],
+            ..Default::default()
+        };
+        assert_eq!(
+            commit_without_primary.keys,
+            [codec.encode_key(b"key1"), codec.encode_key(b"key2")]
+        );
+        assert!(commit_without_primary.primary_key.is_empty());
+
+        let mut commit_with_primary = commit_without_primary.clone();
+        commit_with_primary.primary_key = codec.encode_key(b"key1");
+        assert_eq!(commit_with_primary.primary_key, codec.encode_key(b"key1"));
+
+        let flush = kvrpcpb::FlushRequest {
+            mutations: vec![
+                kvrpcpb::Mutation {
+                    op: kvrpcpb::Op::Put as i32,
+                    key: codec.encode_key(b"key1"),
+                    ..Default::default()
+                },
+                kvrpcpb::Mutation {
+                    op: kvrpcpb::Op::Del as i32,
+                    key: codec.encode_key(b"key2"),
+                    ..Default::default()
+                },
+            ],
+            primary_key: codec.encode_key(b"primary"),
+            ..Default::default()
+        };
+        assert_eq!(flush.mutations[0].key, codec.encode_key(b"key1"));
+        assert_eq!(flush.mutations[1].key, codec.encode_key(b"key2"));
+        assert_eq!(flush.primary_key, codec.encode_key(b"primary"));
+
+        let buffer_batch_get = kvrpcpb::BufferBatchGetRequest {
+            keys: vec![codec.encode_key(b"key1"), codec.encode_key(b"key2")],
+            ..Default::default()
+        };
+        assert_eq!(
+            buffer_batch_get.keys,
+            [codec.encode_key(b"key1"), codec.encode_key(b"key2")]
+        );
+
+        let flashback = kvrpcpb::FlashbackToVersionRequest {
+            start_key: codec.encode_key(b"start"),
+            end_key: codec.end_key().to_vec(),
+            ..Default::default()
+        };
+        assert_eq!(flashback.start_key, codec.encode_key(b"start"));
+        assert_eq!(flashback.end_key, codec.end_key());
+
+        let prepare = kvrpcpb::PrepareFlashbackToVersionRequest {
+            start_key: codec.encode_key(b"prepare-start"),
+            end_key: codec.end_key().to_vec(),
+            ..Default::default()
+        };
+        assert_eq!(prepare.start_key, codec.encode_key(b"prepare-start"));
+        assert_eq!(prepare.end_key, codec.end_key());
+
+        let mut compact = kvrpcpb::CompactRequest {
+            start_key: b"compact-start".to_vec(),
+            ..Default::default()
+        };
+        compact.set_api_version(kvrpcpb::ApiVersion::V2);
+        compact.set_keyspace_id(Some(4242));
+        assert_eq!(compact.start_key, b"compact-start");
+        assert_eq!(compact.api_version, kvrpcpb::ApiVersion::V2 as i32);
+        assert_eq!(
+            compact.keyspace,
+            Some(kvrpcpb::compact_request::Keyspace::KeyspaceId(4242))
+        );
     }
 
     fn assert_context_metadata(request: &mut dyn Request) {

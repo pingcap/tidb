@@ -3,6 +3,7 @@
 //! Ordinary downstream-crate gate for client-go's injected client path.
 
 use std::any::Any;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -12,7 +13,8 @@ use tikv_client::tikv::{
     Store, StoreId,
 };
 use tikv_client::{
-    Error, Key, PdClient, Result, Timestamp, TimestampExt, Transaction, TransactionOptions,
+    Error, Key, PdClient, RawClient, Result, Timestamp, TimestampExt, Transaction,
+    TransactionOptions,
 };
 
 #[derive(Clone)]
@@ -85,4 +87,37 @@ fn ordinary_downstream_build_can_construct_an_injected_transaction() {
     );
 
     assert_eq!(transaction.start_timestamp().version(), 42);
+}
+
+#[test]
+fn ordinary_downstream_build_can_name_transaction_test_controls() {
+    assert_eq!(
+        tikv_client::transaction::PESSIMISTIC_LOCK_MAX_BACKOFF,
+        20_000
+    );
+    assert_eq!(tikv_client::transaction::DEFAULT_LOCK_TTL, 3_000);
+    assert_eq!(tikv_client::transaction::TTL_FACTOR, 6_000.0);
+    assert_eq!(tikv_client::transaction::RESOLVED_CACHE_SIZE, 2_048);
+    assert_eq!(
+        tikv_client::transaction::ASYNC_RESOLVE_LOCK_SEMAPHORE_LIMIT,
+        10_000
+    );
+    assert_eq!(
+        tikv_client::transaction::PRE_SPLIT_DETECT_THRESHOLD.load(Ordering::Relaxed),
+        100_000
+    );
+    assert_eq!(
+        tikv_client::transaction::PRE_SPLIT_SIZE_THRESHOLD.load(Ordering::Relaxed),
+        32 << 20
+    );
+}
+
+#[test]
+fn ordinary_downstream_build_can_construct_an_injected_raw_client() {
+    let pd = Arc::new(InProcessPdClient);
+    let client = RawClient::new_with_pd_client(pd.clone(), 17, Keyspace::Disable, None);
+
+    assert_eq!(client.cluster_id(), 17);
+    assert!(Arc::ptr_eq(&client.pd_client(), &pd));
+    assert_eq!(tikv_client::raw::RAW_BATCH_PUT_SIZE, 16 * 1024);
 }

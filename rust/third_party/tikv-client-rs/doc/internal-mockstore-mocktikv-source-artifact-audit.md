@@ -31,8 +31,8 @@ There is no package `doc.go`, non-Go fixture, package-specific build file, gener
 | --- | --- |
 | MVCC records and key coding | Lock/write records preserve the source little-endian numeric layout, Go-uvarint slices, 10-MiB decode limit, operation types, short-value boundary, and malformed-input failures. `MvccKey` uses the completed memcomparable codec and preserves the empty-key sentinel. |
 | store construction and persistence | Empty paths create an in-memory engine. Nonempty paths restore and atomically snapshot committed MVCC/raw-CF state on close, preserving the source constructor's reusable directory behavior without exposing LevelDB as a Rust API. `must_new_mvcc_store`, `new_mvcc_level_db`, and the client/cluster/PD factory retain the source failure boundaries. |
-| optimistic MVCC | SI/RC visibility, point/batch/forward/reverse reads, resolved-lock bypass, primary latest-read behavior, optimistic prewrite, insert/check-not-exists assertions, rollback tombstones, write conflicts, idempotent commits, cleanup, check-status actions, min-commit-TS rejection, heartbeat, lock scans, resolve/batch-resolve, GC, and range deletion are stateful and source-compatible. |
-| pessimistic MVCC | Pessimistic lock value/existence results, return-value mode, force-lock conflict metadata, wait-for deadlocks and key hashes, rollback ranges/key lists, wake-up modes, for-update timestamps, lock-only reads, and pessimistic status actions share the reusable engine. |
+| optimistic MVCC | SI/RC visibility, point/batch/forward/reverse reads, resolved-lock bypass, primary latest-read behavior, optimistic prewrite, insert/check-not-exists assertions, rollback tombstones, write conflicts, idempotent commits, cleanup including source's unconditional `currentTS == 0` expiry, check-status actions, min-commit-TS rejection, heartbeat, lock scans, resolve/batch-resolve, GC, and range deletion are stateful and source-compatible. |
+| pessimistic MVCC | Pessimistic lock value/existence results, return-value mode, force-lock conflict metadata, ordered multi-edge wait-for deadlocks and exact key hashes, rollback ranges/key lists, wake-up modes, for-update timestamps, lock-only reads, and pessimistic status actions share the reusable engine. The detector is the single public UniStore component completed by the `internal/mockstore/deadlock` receipt; commit, rollback, and cleanup remove edges even on error, while range resolve retains them exactly as the source does. |
 | raw KV and debugger | Every raw CF get/batch/put/delete/forward/reverse-scan/delete-range/CAS/checksum branch is present. Checksum uses Go `hash/crc64`'s reflected ECMA/complement parameters and XOR aggregation. Debug lookups preserve empty-info results for a missing start TS and expose locks, writes, and values. |
 | cluster topology | Stores, addresses/peer addresses/labels, cancellation, offline/tombstone states, peers/learners/down peers, leaders, region epochs, scans, split/merge/buckets, delays, and all four bootstrap shapes are implemented. `SplitKeys` uses source quotient/remainder grouping, including `count > key_count`, and evacuates intersecting ranges before creating replacements. |
 | request session | Store/peer/leader/TiFlash/epoch checks, current-region payloads, resolved locks, SI/RC selection, memcomparable and raw region bounds, and the inclusive 8-MiB raft-entry rejection match source behavior. Rust stores both encoded and decoded bounds once context validation succeeds so typed coprocessor handlers do not repeat decoding. |
@@ -63,7 +63,15 @@ All 23 ordinary source test declarations and the `TestMain` lifecycle contract h
 | `TestMvccGetByKey`, `TestTxnHeartBeat` | `source_test_mvcc_debug_and_heartbeat` |
 | `TestMain` goleak harness | no spawned engine/cluster/PD tasks; handler and store close are explicit; both complete library configurations and doctests are awaited |
 
-The Rust matrix adds coverage needed by production files that have no dedicated source test: pessimistic result/deadlock/rollback paths, raw-KV operations and the Go CRC64 vector, nonempty-path restoration, `MvccKey`, uneven region grouping, session error responses, global TSO/resource groups/GC barriers/previous-region routing, all three coprocessor forms, downstream implementation of the public coprocessor trait, and transactional/raw/debug RPC adaptation.
+The Rust matrix adds coverage needed by production files that have no dedicated
+source test: pessimistic result/deadlock/rollback paths, ordered multiple wait
+edges, graph cleanup on successful and failed terminal operations, retained
+range-resolve edges, unconditional zero-current-TS cleanup, raw-KV operations
+and the Go CRC64 vector, nonempty-path restoration, `MvccKey`, uneven region
+grouping, session error responses, global TSO/resource groups/GC
+barriers/previous-region routing, all three coprocessor forms, downstream
+implementation of the public coprocessor trait, and transactional/raw/debug
+RPC adaptation.
 
 ## Dependencies and consumers
 
@@ -81,6 +89,16 @@ The completed locate, RawKV, and root TiKV receipts already own their production
 
 Completion requires 14/14 pinned artifact identity and the 6,689-line total; all source test names accounted for; the complete reusable-engine and mock-adapter matrices; both default and all-feature library suites; all-target/all-feature compilation; all-target Clippy; rustdoc and doctests; rustfmt and whitespace checks on `nightly-2026-08-22-aarch64-apple-darwin`. A real TiKV/PD cluster does not apply to this deterministic in-process package; live interoperability remains on the final differential milestone.
 
-The final gate satisfies that contract. `cargo test -p unistore` passes 22 tests, and the focused hidden adapter matrix passes 8 tests. The complete default and all-feature library configurations each pass 702 active tests with one intentional process-isolation ignore; the workspace doctest run passes all 51 tests. Workspace/all-target/all-feature `cargo check` and Clippy, all-feature rustdoc, rustfmt, and `git diff --check` pass. The source checkout is clean at `52c1e76cec993571493c81de442bcbef90cdc106`, and mechanical enumeration reconfirms 14 artifacts, 6,689 lines, 23 ordinary tests plus `TestMain`, and exactly nine direct external consumers.
+The current gate passes 32 UniStore unit tests, three external-consumer tests,
+eight hidden adapter tests, and the complete pinned Go package passes ordinary
+and race execution. The no-default workspace matrix passes 1,001
+`tikv-client` library tests plus every workspace/external test with one
+intentional library ignore; the all-feature library matrix passes 998 tests
+plus that ignore. Workspace/all-target/all-feature check and strict Clippy,
+private-item rustdoc, all 51 doctests, rustfmt, and whitespace checks pass. The
+source checkout is clean at
+`52c1e76cec993571493c81de442bcbef90cdc106`, and mechanical enumeration
+reconfirms 14 artifacts, 6,689 lines, 23 ordinary tests plus `TestMain`, and
+exactly nine direct external consumers.
 
 Post-completion API remediation makes the generated protocol namespace public and adds an actual downstream `CoprocessorHandler` implementation. A second runtime remediation sets transactional `GetResponse.not_found`; `source_rpc_matrix_routes_transactional_and_raw_requests` covers present and missing response fields, while `mocktikv_transaction_tests::transactional_get_distinguishes_missing_from_empty_value` constructs `Transaction<MockPdClient>` as an external crate and proves the missing result is `None`. Final `testutils` reconciliation removes the erroneous `internal-tests` admission gate: both the handler and two transaction tests now pass with no default features, including direct authoritative-MemDB commit and fresh-transaction readback. Current clean generation, all-target/all-feature compilation and strict Clippy, rustfmt, 760 no-default workspace tests, 750 all-feature library tests, strict rustdoc, and 51 doctests pass. Hosted run 32867435825 remains earlier integration evidence for clean generation/check/docs, raw integration, and all 78 transaction integration tests after the common multi-region retry repair.

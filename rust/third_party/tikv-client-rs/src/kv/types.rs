@@ -215,21 +215,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn get_options_and_value_entries_match_source_behavior() {
-        let mut get = GetOptions::default();
-        get.apply(&[]);
-        assert!(!get.return_commit_ts());
-        get.apply(&batch_get_to_get_options(&[GetOption::ReturnCommitTs]));
-        assert!(get.return_commit_ts());
+    fn source_test_get_options() {
+        let cases = [
+            (Vec::new(), false),
+            (vec![GetOption::ReturnCommitTs], true),
+            (batch_get_to_get_options(&[]), false),
+            (batch_get_to_get_options(&[GetOption::ReturnCommitTs]), true),
+        ];
+        for (options, expected_return_commit_ts) in cases {
+            let mut actual = GetOptions::default();
+            actual.apply(&options);
+            assert_eq!(actual.return_commit_ts(), expected_return_commit_ts);
+        }
+    }
 
-        let mut batch = BatchGetOptions::default();
-        batch.apply(&[GetOption::ReturnCommitTs]);
-        assert!(batch.return_commit_ts());
+    #[test]
+    fn source_test_batch_get_options() {
+        let cases = [(Vec::new(), false), (vec![GetOption::ReturnCommitTs], true)];
+        for (options, expected_return_commit_ts) in cases {
+            let mut actual = BatchGetOptions::default();
+            actual.apply(&options);
+            assert_eq!(actual.return_commit_ts(), expected_return_commit_ts);
+        }
+    }
 
+    #[test]
+    fn source_test_value_entry() {
         assert!(ValueEntry::default().is_value_empty());
-        assert!(ValueEntry::new(Vec::new(), 123).is_value_empty());
+        // Go distinguishes empty and nil slices; both source rows map to an
+        // empty Vec while retaining their independent executable cases.
+        for source_case in ["empty slice", "nil slice"] {
+            assert!(
+                ValueEntry::new(Vec::new(), 123).is_value_empty(),
+                "source case {source_case}"
+            );
+        }
         assert!(!ValueEntry::new(vec![b'x'], 123).is_value_empty());
         assert!(!ValueEntry::new(vec![b'x'], 0).is_value_empty());
+
+        // Size is a production branch with no assertion in the source test.
         assert_eq!(
             ValueEntry::new(vec![1, 2], 3).size(),
             size_of::<ValueEntry>() + 2
@@ -242,6 +266,8 @@ mod tests {
         assert_eq!(context.lock_wait_time(), LOCK_ALWAYS_WAIT);
         context.init_return_values(2);
         assert!(context.return_values);
+        context.init_check_existence(2);
+        assert!(context.check_existence);
         context.insert_returned_value(
             b"open".to_vec(),
             ReturnedValue {
