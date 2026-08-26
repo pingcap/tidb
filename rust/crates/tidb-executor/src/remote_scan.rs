@@ -462,6 +462,10 @@ pub struct PushdownScanRequest {
     /// reaches the region rather than being re-applied after the rows have
     /// already crossed the network.
     pub ranges: Vec<(Key, Key)>,
+    /// Go's `RequestBuilder.SetTableHandles` carries one row-count hint per
+    /// grouped handle range so DistSQL can schedule region tasks with the
+    /// same cardinality estimate. Empty for ordinary scans.
+    pub range_hints: Vec<usize>,
     /// The statement's coprocessor seam: `DAGRequest.flags` and the sink the
     /// warnings TiKV reports must land in. See [`PushdownStatementContext`].
     pub statement: PushdownStatementContext,

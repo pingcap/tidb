@@ -2580,7 +2580,7 @@ fn run_select_traced_with_delivery_choice_inner(
             // A residual filter can reject rows inside the lookup task. Keep
             // one bounded amount of read-ahead so a moderately selective
             // predicate normally fills the root window without serializing
-            // several BatchGet round trips; the source still emits at most
+            // several remote table scans; the source still emits at most
             // what the unchanged root Limit consumes.
             let window = offset.saturating_add(count).saturating_mul(3);
             if window > 0 {

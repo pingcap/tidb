@@ -651,6 +651,7 @@ where
             dag,
             envelope: RequestEnvelope::new(shapes),
             key_ranges,
+            key_range_hints: request.range_hints.clone(),
             snapshot_ts: request.snapshot_ts,
             keep_order: request.keep_order,
             allow_unordered: request.allow_unordered_response,
@@ -788,6 +789,9 @@ struct RemoteScanPlan {
     /// scan is one; a `TableRangeScan` over a clustered handle is one per
     /// handle range, and the coprocessor request carries them all.
     key_ranges: Vec<KeyRange>,
+    /// Go `RequestBuilder.SetTableHandles` row-count hints, aligned with
+    /// `key_ranges`; empty for scans without grouped handle cardinalities.
+    key_range_hints: Vec<usize>,
     snapshot_ts: u64,
     /// Whether region tasks and the response stream must preserve key order.
     keep_order: bool,
@@ -851,12 +855,20 @@ where
     // own. What it can do is stop sending values that correspond to no
     // session at all.
     let mut builder = RequestBuilder::from_context(&DistSqlContext::new());
+    // Go's `RequestBuilder.SetTableHandles` preserves one row-count hint per
+    // grouped range. Keep the ordinary no-hint path for full/table scans and
+    // refuse misaligned metadata rather than attaching a hint to the wrong
+    // region task.
+    if !plan.key_range_hints.is_empty() && plan.key_range_hints.len() == plan.key_ranges.len() {
+        builder.set_key_ranges_with_hints(plan.key_ranges, plan.key_range_hints);
+    } else {
+        builder.set_non_partitioned_key_ranges(plan.key_ranges);
+    }
     builder
         .set_start_ts(plan.snapshot_ts)
         .set_keep_order(plan.keep_order)
         .set_allow_unordered_response(plan.allow_unordered)
         .set_desc(plan.desc)
-        .set_non_partitioned_key_ranges(plan.key_ranges)
         .set_dag_request(plan.envelope, plan.dag.encode_to_vec());
     let request = builder
         .build_transport_request(Arc::clone(&cancellation))

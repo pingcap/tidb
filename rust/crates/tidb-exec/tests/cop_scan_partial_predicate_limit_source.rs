@@ -480,6 +480,7 @@ fn count_star_lowers_to_count_with_one_constant_child() {
         read_ahead_batches: tidb_executor::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
         snapshot_ts: 4_242,
         ranges: vec![(Key::from_bytes(b"a"), Key::from_bytes(b"z"))],
+        range_hints: Vec::new(),
         statement: PushdownStatementContext::default(),
     };
     let mut stream = scanner
@@ -545,6 +546,7 @@ fn a_descending_scan_marks_both_the_dag_and_dist_sql_request() {
         read_ahead_batches: tidb_executor::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
         snapshot_ts: 4_242,
         ranges: vec![(Key::from_bytes(b"a"), Key::from_bytes(b"z"))],
+        range_hints: Vec::new(),
         statement: PushdownStatementContext::default(),
     };
     let mut stream = scanner

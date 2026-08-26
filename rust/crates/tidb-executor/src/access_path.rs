@@ -1681,7 +1681,20 @@ impl IndexRangeSourceExec {
                         .saturating_sub(unemitted),
                 )
                 .unwrap_or(0);
-                if demand_allowance == 0 && inflight > 0 {
+                // A table-side residual is only known after the row lookup.
+                // Go's IndexLookUpExecutor keeps filling its table-worker
+                // pool while that filter is evaluated, otherwise a selective
+                // predicate turns every doubling batch into a serial RPC.
+                // Index-covered filters already have their qualifying handle
+                // count from the cop stream, so retain the strict demand
+                // bound for those and for unfiltered reads.
+                let needs_table_filter_read_ahead = self.filter.is_some()
+                    && !self.index_filter
+                    && self.top_n.is_none()
+                    // Local test/in-memory cursors have no network wait to
+                    // overlap; keep their exact demand-bounded behavior.
+                    && self.remote_index.is_some();
+                if demand_allowance == 0 && inflight > 0 && !needs_table_filter_read_ahead {
                     break;
                 }
                 let mut handles = Vec::with_capacity(target);
@@ -1748,13 +1761,19 @@ impl IndexRangeSourceExec {
                         crate::storage::note_storage_op(|ops| ops.cop_rows += wire_rows);
                     }
                     // The remote answers only the rows that survived its
-                    // filter, so its own handles are the ones to keep.
-                    let lookup_handles = if self.extra_handle_slot.is_some() {
-                        rows.iter().map(|(handle, _)| Some(handle.clone())).collect()
-                    } else {
-                        Vec::new()
-                    };
-                    let lookup_rows = rows.into_iter().map(|(_, row)| Some(row)).collect();
+                    // filter, so its own handles are the ones to keep. Move
+                    // each handle out once, matching Go's tableWorker rows
+                    // plus rowIdx handoff without a second scan or clone.
+                    let keep_handles = self.extra_handle_slot.is_some();
+                    let (lookup_rows, lookup_handles): (Vec<_>, Vec<_>) = rows
+                        .into_iter()
+                        .map(|(handle, row)| {
+                            (
+                                Some(row),
+                                keep_handles.then_some(handle),
+                            )
+                        })
+                        .unzip();
                     return Ok(Some((lookup_rows, lookup_handles, predicates_applied)));
                 }
                 LookupFetch::LocalFallback => {
@@ -2491,7 +2510,15 @@ impl Executor for IndexRangeSourceExec {
             // RequiredRows. A LIMIT/TopN parent therefore starts a double read
             // at its requested window instead of decoding a full 1,024-row
             // chunk that the parent will immediately discard.
-            self.batch_size = self.batch_size.min(cap).min(MAX_HANDLE_BATCH);
+            // A remote lookup with a table-side residual is already bounded
+            // by the driver's Go-shaped read-ahead hint (currently 3x the
+            // parent LIMIT window). Keep that first window intact so the
+            // table workers can overlap the residual's remote reads. Local
+            // cursors and index-covered filters retain the exact parent-cap
+            // seed used by the in-memory tests.
+            if !(self.remote_index.is_some() && self.filter.is_some() && !self.index_filter) {
+                self.batch_size = self.batch_size.min(cap).min(MAX_HANDLE_BATCH);
+            }
         }
         req.reset();
         if let Some(remote) = self.partial_remote.as_mut() {
@@ -3916,6 +3943,7 @@ impl IndexJoinLookupExec {
                     None,
                     None,
                     Some(&ranges),
+                    None,
                     false,
                     false,
                     crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
@@ -3972,6 +4000,7 @@ impl IndexJoinLookupExec {
                 None,
                 None,
                 Some(&ranges),
+                None,
                 false,
                 false,
                 crate::remote_scan::INDEX_JOIN_READ_AHEAD_BATCHES,

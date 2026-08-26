@@ -38,7 +38,7 @@ use crate::remote_scan::{
     EXTRA_HANDLE_COLUMN_ID,
 };
 use crate::storage::StorageIterator;
-use std::collections::{BTreeMap, BinaryHeap, HashSet};
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use tidb_chunk::chunk::Chunk;
 use tidb_codec::table_key::{
     cut_index_prefix, cut_row_key_prefix, decode_table_id, encode_index_seek_key,
@@ -475,6 +475,7 @@ impl KvTable {
         topn: Option<&PushdownTopN>,
         limit: Option<u64>,
         handle_ranges: Option<&[IndexRange]>,
+        range_hints: Option<&[usize]>,
         descending: bool,
         keep_order: bool,
         read_ahead_batches: usize,
@@ -587,6 +588,14 @@ impl KvTable {
         // One request PER group. Both open up front -- Go builds both parts'
         // responses before reading either (`buildRespForGroupedRanges) -- and
         // the rows are consumed strictly part by part.
+        // Go's `SetTableHandles` supplies hints only for the single grouped
+        // handle request. A straddling unsigned range is split into two
+        // requests above, so do not attach hints to those unrelated groups.
+        let request_range_hints = if groups.len() == 1 {
+            range_hints.filter(|hints| hints.len() == groups[0].len())
+        } else {
+            None
+        };
         let build_request = |ranges: Vec<(Key, Key)>| PushdownScanRequest {
             table_id: self.table_id,
             index: None,
@@ -607,6 +616,7 @@ impl KvTable {
             // no timestamp of its own.
             snapshot_ts: 0,
             ranges,
+            range_hints: request_range_hints.map_or_else(Vec::new, <[usize]>::to_vec),
             statement: statement.clone(),
         };
         let mut scans: Vec<crate::remote_scan::PushdownScan> =
@@ -664,6 +674,14 @@ impl KvTable {
             pending_remote: None,
             pending_chunk: None,
             pending_chunk_row: 0,
+            // Handle lookups keep the complete request schema on the wire
+            // (`output_offsets` is None), so retain its types for the
+            // columnar drain below. Ordinary projected scans may narrow the
+            // wire schema; their existing chunk handoff remains unchanged.
+            field_types: columns
+                .iter()
+                .map(|column| column.field_type.clone())
+                .collect(),
             width: output_offsets.map_or(keep.len(), <[usize]>::len),
             handle_index,
             table_id: self.table_id,
@@ -692,6 +710,7 @@ impl KvTable {
             None,
             limit,
             handle_ranges,
+            None,
             false,
             false,
             crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
@@ -798,6 +817,7 @@ impl KvTable {
         // must; the gap rowids a merged interval spans match no stored row
         // and answer nothing.
         let mut ranges: Vec<IndexRange> = Vec::with_capacity(request_handles.len());
+        let mut range_hints: Vec<usize> = Vec::with_capacity(request_handles.len());
         for handle in &request_handles {
             let TableHandle::Int(value) = handle else {
                 unreachable!("handle kind checked above")
@@ -806,13 +826,17 @@ impl KvTable {
                 // Consecutive handle: widen the open interval's high end.
                 (Some(range), Some(prev)) if range.high.first() == Some(&Datum::Int(prev)) => {
                     range.high = vec![Datum::Int(*value)];
+                    *range_hints.last_mut().expect("every range has a hint") += 1;
                 }
-                _ => ranges.push(IndexRange {
-                    low: vec![Datum::Int(*value)],
-                    high: vec![Datum::Int(*value)],
-                    low_exclusive: false,
-                    high_exclusive: false,
-                }),
+                _ => {
+                    ranges.push(IndexRange {
+                        low: vec![Datum::Int(*value)],
+                        high: vec![Datum::Int(*value)],
+                        low_exclusive: false,
+                        high_exclusive: false,
+                    });
+                    range_hints.push(1);
+                }
             }
         }
         let context = RowDecodeContext::legacy_default(zone);
@@ -823,6 +847,7 @@ impl KvTable {
             None,
             None,
             Some(&ranges),
+            Some(&range_hints),
             false,
             false,
             crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
@@ -858,15 +883,41 @@ impl KvTable {
         // Ordinary consumers intentionally truncate that transport-only
         // column before returning a projected row, but the lookup caller
         // needs it to associate each fetched row with its index handle.
-        while let Some(mut row) = staged.cursor.next_row_with_handle()? {
+        let mut append_row = |mut row: Vec<Datum>| -> Result<(), KvTableError> {
             let Some(Datum::Int(handle)) = row.get(staged.handle_position) else {
-                return Ok(None);
+                return Err(KvTableError::Decode(
+                    "a coprocessor row carried no integer handle".to_owned(),
+                ));
             };
             let handle = TableHandle::Int(*handle);
             if staged.appended_handle {
                 row.remove(staged.handle_position);
             }
             rows.push((handle, row));
+            Ok(())
+        };
+        // A real coprocessor stream transfers decoded chunks. Drain each
+        // chunk once so the stream's row counter and channel are touched once
+        // per batch; fakes and row-only backends keep the original contract.
+        if let Some(batch) = staged.cursor.next_chunk_with_handle()? {
+            for row in batch {
+                append_row(row)?;
+            }
+            loop {
+                let Some(batch) = staged.cursor.next_chunk_with_handle()? else {
+                    break;
+                };
+                if batch.is_empty() {
+                    break;
+                }
+                for row in batch {
+                    append_row(row)?;
+                }
+            }
+        } else {
+            while let Some(row) = staged.cursor.next_row_with_handle()? {
+                append_row(row)?;
+            }
         }
         let wire_rows = staged.cursor.rows_returned().saturating_sub(wire_rows);
         // The coprocessor returns rows in record-key order, while the lookup
@@ -879,11 +930,14 @@ impl KvTable {
             // Keep the source order in a map once instead of scanning
             // `handles` for every returned row (the old position lookup was
             // O(n²) for a large window).
+            // Go's `kv.HandleMap` is hash-backed; preserve the same O(1)
+            // handle-to-index lookup for keep-order restoration instead of
+            // paying the tree comparison cost for every returned row.
             let positions = handles
                 .iter()
                 .enumerate()
                 .map(|(position, handle)| (handle, position))
-                .collect::<BTreeMap<_, _>>();
+                .collect::<HashMap<_, _>>();
             rows.sort_by_key(|(handle, _)| positions.get(handle).copied());
         }
         Ok(Some((rows, predicates_applied, wire_rows)))
@@ -975,6 +1029,7 @@ impl KvTable {
             read_ahead_batches: crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             snapshot_ts: 0,
             ranges,
+            range_hints: Vec::new(),
             statement: statement.clone(),
         };
         let Some(scan) = self.store.open_remote_scan(&request) else {
@@ -1203,6 +1258,7 @@ impl KvTable {
             read_ahead_batches: crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             snapshot_ts: 0,
             ranges: key_ranges,
+            range_hints: Vec::new(),
             statement: statement.clone(),
         };
         let Some(scan) = self.store.open_remote_scan(&request) else {
@@ -1459,6 +1515,7 @@ impl KvTable {
             read_ahead_batches: crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             snapshot_ts: 0,
             ranges: key_ranges,
+            range_hints: Vec::new(),
             statement: statement.clone(),
         };
         let Some(scan) = self.store.open_remote_scan(&request) else {
@@ -2071,6 +2128,9 @@ pub struct RemoteRowCursor {
     /// Unconsumed rows from one clean, decoded columnar response batch.
     pending_chunk: Option<Chunk>,
     pending_chunk_row: usize,
+    /// Field types of the decoded wire columns. Empty for hand-built test
+    /// cursors and row-only backends, which retain the old row path.
+    field_types: Vec<FieldType>,
     /// Number of projected columns, which the remote row may exceed by the
     /// appended handle column.
     width: usize,
@@ -2300,6 +2360,36 @@ impl RemoteRowCursor {
             .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
         self.note_wire_rows();
         Ok(next)
+    }
+
+    /// Drains one decoded response batch for an integer-handle lookup. The
+    /// coprocessor already owns a columnar `Chunk`; consuming that batch at
+    /// once avoids a `next_row`/wire-counter call for every row while keeping
+    /// the public lookup result's owned datum vectors and handle association.
+    /// `None` means the stream is row-only (or a hand-built cursor lacks wire
+    /// type metadata), so callers must use [`Self::next_row_with_handle`].
+    fn next_chunk_with_handle(&mut self) -> Result<Option<Vec<Vec<Datum>>>, KvTableError> {
+        if self.merge_staged || !self.stream.supports_chunks() || self.field_types.is_empty() {
+            return Ok(None);
+        }
+        let Some(batch) = self
+            .stream
+            .next_chunk()
+            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
+        else {
+            self.note_wire_rows();
+            return Ok(Some(Vec::new()));
+        };
+        self.note_wire_rows();
+        let rows = (0..batch.num_rows())
+            .map(|row| {
+                batch
+                    .get_row(row)
+                    .try_get_datum_row(&self.field_types)
+                    .map_err(|error| KvTableError::Decode(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(rows))
     }
 }
 
@@ -3277,6 +3367,7 @@ impl Executor for TableScanExec {
                 self.remote_topn.as_ref(),
                 self.limit,
                 self.handle_ranges.as_deref(),
+                None,
                 self.descending,
                 self.keep_order,
                 crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
@@ -4059,6 +4150,7 @@ mod remote_cursor_tests {
             pending_remote: None,
             pending_chunk: None,
             pending_chunk_row: 0,
+            field_types: Vec::new(),
             width: 1,
             handle_index: Some(0),
             table_id: 0,
@@ -4094,6 +4186,7 @@ mod remote_cursor_tests {
             pending_remote: None,
             pending_chunk: None,
             pending_chunk_row: 0,
+            field_types: Vec::new(),
             width: 1,
             handle_index: Some(1),
             table_id: 0,
@@ -4118,6 +4211,97 @@ mod remote_cursor_tests {
     }
 
     #[test]
+    fn handle_lookup_groups_ranges_with_go_row_count_hints() {
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let mut table = KvTable::with_storage(
+            91,
+            vec![bigint_column(1, "v")],
+            Box::new(RequestCapture {
+                captured: std::sync::Arc::clone(&captured),
+            }),
+        );
+        let handles = vec![
+            TableHandle::Int(8),
+            TableHandle::Int(5),
+            TableHandle::Int(7),
+            TableHandle::Int(5),
+        ];
+
+        assert!(
+            table
+                .stage_rows_by_handles_filtered(
+                    &handles,
+                    &[0],
+                    &[],
+                    &tidb_datatype::SessionTimeZone::utc(),
+                    &PushdownStatementContext::default(),
+                )
+                .unwrap()
+                .is_none(),
+            "the recording store intentionally refuses the remote scan"
+        );
+        let request = captured
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clone()
+            .expect("handle lookup request");
+        assert_eq!(request.ranges.len(), 2);
+        assert_eq!(request.range_hints, vec![1, 2]);
+    }
+
+    #[test]
+    fn handle_lookup_drains_columnar_batches_and_restores_index_order() {
+        let source_types = vec![
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        ];
+        let mut batch = Chunk::new_with_capacity(&source_types, 2);
+        batch.append_int64(0, 70);
+        batch.append_int64(1, 7);
+        batch.append_int64(0, 80);
+        batch.append_int64(1, 8);
+        let cursor = RemoteRowCursor {
+            stream: Box::new(ChunkStream {
+                chunks: std::collections::VecDeque::from([batch]),
+                returned: 0,
+            }),
+            staged: Vec::new().into_iter(),
+            pending_staged: None,
+            pending_remote: None,
+            pending_chunk: None,
+            pending_chunk_row: 0,
+            field_types: source_types,
+            width: 1,
+            handle_index: Some(1),
+            table_id: 0,
+            merge_staged: false,
+            descending: false,
+            noted_rows: 0,
+            predicates_applied: true,
+        };
+        let staged = StagedHandlesLookup {
+            cursor,
+            handle_position: 1,
+            appended_handle: true,
+        };
+        let handles = vec![TableHandle::Int(8), TableHandle::Int(7)];
+        let Some((rows, applied, wire_rows)) =
+            KvTable::finish_rows_by_handles(&handles, staged).unwrap()
+        else {
+            panic!("columnar handle lookup unexpectedly refused");
+        };
+        assert!(applied);
+        assert_eq!(wire_rows, 2);
+        assert_eq!(
+            rows,
+            vec![
+                (TableHandle::Int(8), vec![Datum::Int(80)]),
+                (TableHandle::Int(7), vec![Datum::Int(70)]),
+            ]
+        );
+    }
+
+    #[test]
     fn clean_remote_cursor_moves_an_exact_width_batch_into_the_output() {
         let source_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
         let mut batch = Chunk::new_with_capacity(&source_types, 2);
@@ -4133,6 +4317,7 @@ mod remote_cursor_tests {
             pending_remote: None,
             pending_chunk: None,
             pending_chunk_row: 0,
+            field_types: Vec::new(),
             width: 1,
             handle_index: None,
             table_id: 0,
@@ -4167,6 +4352,7 @@ mod remote_cursor_tests {
             pending_remote: None,
             pending_chunk: None,
             pending_chunk_row: 0,
+            field_types: Vec::new(),
             width: 1,
             handle_index: None,
             table_id: 0,
