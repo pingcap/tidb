@@ -1595,9 +1595,21 @@ impl IndexRangeSourceExec {
         // cancellation work. Pushed-limit/index-side reads retain the
         // per-window cap below because Go truncates those handles while
         // charging `PushedLimit`.
-        let chunked_table_filter =
-            self.remote_index.is_some() && self.filter.is_some() && !self.index_filter && !pushdown;
-        if chunked_table_filter {
+        // Go's `extractTaskHandles` asks `SelectResult.Next` for the current
+        // batch size, but `selectResult.readFromChunk` reuses a whole wire
+        // chunk whenever the index worker has no `PushedLimit` to enforce.
+        // That applies to an unbounded double read even when no residual
+        // table filter exists (the root LIMIT is above the lookup). Keeping
+        // that chunk boundary avoids synthetic 100/200-row windows and
+        // mirrors the Go `checkLimit := PushedLimit != nil &&
+        // checkIndexValue == nil` gate. A pushed/index-side limit still uses
+        // the bounded row path below, because Go truncates handles while
+        // charging `scannedKeys`.
+        let chunked_handle_batch = self.remote_index.is_some()
+            && !pushdown
+            && (self.limit.is_none()
+                || (self.filter.is_some() && !self.index_filter));
+        if chunked_handle_batch {
             if let Some(remote) = self.remote_index.as_mut() {
                 if let Some(handles) = remote.next_handle_batch(want).map_err(|error| {
                     ExecError::unsupported(format!("index row failed to decode: {error:?}"))
