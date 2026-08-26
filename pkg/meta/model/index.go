@@ -147,26 +147,33 @@ func GetFullTextParserTypeBySQLName(name string) FullTextParserType {
 	}
 }
 
+// FullTextIndexInfo is the metadata of a logical FULLTEXT index.
+// The local evaluator uses this metadata without creating index KV entries.
+type FullTextIndexInfo struct {
+	ParserType FullTextParserType `json:"parser_type"`
+}
+
 // IndexInfo provides meta data describing a DB index.
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type IndexInfo struct {
-	ID                  int64            `json:"id"`
-	Name                model.CIStr      `json:"idx_name"` // Index name.
-	Table               model.CIStr      `json:"tbl_name"` // Table name.
-	Columns             []*IndexColumn   `json:"idx_cols"` // Index columns.
-	State               SchemaState      `json:"state"`
-	BackfillState       BackfillState    `json:"backfill_state"`
-	Comment             string           `json:"comment"`                       // Comment
-	Tp                  model.IndexType  `json:"index_type"`                    // Index type: Btree, Hash, Rtree or HNSW
-	Unique              bool             `json:"is_unique"`                     // Whether the index is unique.
-	Primary             bool             `json:"is_primary"`                    // Whether the index is primary key.
-	Invisible           bool             `json:"is_invisible"`                  // Whether the index is invisible.
-	Global              bool             `json:"is_global"`                     // Whether the index is global.
-	MVIndex             bool             `json:"mv_index"`                      // Whether the index is multivalued index.
-	VectorInfo          *VectorIndexInfo `json:"vector_index"`                  // VectorInfo is the vector index information.
-	ConditionExprString string           `json:"partial_condition_expr_string"` // ConditionExprString is the string representation of the partial index condition.
-	AffectColumn        []*IndexColumn   `json:"affect_column,omitempty"`       // AffectColumn is the columns related to the index.
+	ID                  int64              `json:"id"`
+	Name                model.CIStr        `json:"idx_name"` // Index name.
+	Table               model.CIStr        `json:"tbl_name"` // Table name.
+	Columns             []*IndexColumn     `json:"idx_cols"` // Index columns.
+	State               SchemaState        `json:"state"`
+	BackfillState       BackfillState      `json:"backfill_state"`
+	Comment             string             `json:"comment"`                       // Comment
+	Tp                  model.IndexType    `json:"index_type"`                    // Index type: Btree, Hash, Rtree, HNSW, or Fulltext.
+	Unique              bool               `json:"is_unique"`                     // Whether the index is unique.
+	Primary             bool               `json:"is_primary"`                    // Whether the index is primary key.
+	Invisible           bool               `json:"is_invisible"`                  // Whether the index is invisible.
+	Global              bool               `json:"is_global"`                     // Whether the index is global.
+	MVIndex             bool               `json:"mv_index"`                      // Whether the index is multivalued index.
+	VectorInfo          *VectorIndexInfo   `json:"vector_index"`                  // VectorInfo is the vector index information.
+	FullTextInfo        *FullTextIndexInfo `json:"full_text_index,omitempty"`     // FullTextInfo is the FULLTEXT index information.
+	ConditionExprString string             `json:"partial_condition_expr_string"` // ConditionExprString is the string representation of the partial index condition.
+	AffectColumn        []*IndexColumn     `json:"affect_column,omitempty"`       // AffectColumn is the columns related to the index.
 	// Version of global index key format for non-clustered tables.
 	// Set to V1 when the handle can appear in the index key (non-unique indexes,
 	// or unique indexes with any nullable column) to prevent collisions after EXCHANGE PARTITION.
@@ -191,6 +198,10 @@ func (index *IndexInfo) Clone() *IndexInfo {
 		for i := range index.AffectColumn {
 			ni.AffectColumn[i] = index.AffectColumn[i].Clone()
 		}
+	}
+	if index.FullTextInfo != nil {
+		fullTextInfo := *index.FullTextInfo
+		ni.FullTextInfo = &fullTextInfo
 	}
 	return &ni
 }
@@ -258,6 +269,12 @@ func (index *IndexInfo) IsTiFlashLocalIndex() bool {
 	return index.VectorInfo != nil
 }
 
+// IsNonKVIndex reports whether the index is metadata-only in TiDB's KV layer.
+// Such indexes must not participate in TiKV index maintenance or access paths.
+func (index *IndexInfo) IsNonKVIndex() bool {
+	return index.IsTiFlashLocalIndex() || index.FullTextInfo != nil
+}
+
 // HasCondition checks whether the index has a partial index condition.
 func (index *IndexInfo) HasCondition() bool {
 	return len(index.ConditionExprString) > 0
@@ -314,6 +331,9 @@ func FindIndexByColumnsForForeignKey(tbInfo *TableInfo, indices []*IndexInfo, co
 // IsIndexPrefixCoveredForForeignKey checks whether the index covers the foreign key columns
 // and whether the partial index predicate, if any, is safe for foreign key checks.
 func IsIndexPrefixCoveredForForeignKey(tbInfo *TableInfo, index *IndexInfo, cols ...model.CIStr) bool {
+	if index.IsNonKVIndex() {
+		return false
+	}
 	if !IsIndexPrefixCovered(tbInfo, index, cols...) {
 		return false
 	}
