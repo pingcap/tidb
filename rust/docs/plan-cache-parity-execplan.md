@@ -279,6 +279,28 @@ Schema version change, `tidb_prepared_plan_cache_size`, statement-level
 refusals (`SetSkipPlanCache`), and the memory accounting Go does. Plus the
 `EXPLAIN FORMAT='plan_cache'` surface if it is in scope by then.
 
+### M2r — The row pipeline (NEW, not yet started)
+
+Separate from planning, and measured: a range statement's cost grows with rows
+about twice as fast as Go's. Comparing the 10-row and 100-row cells of the
+same shape, the marginal cost per row is ~0.99us here against ~0.51us on Go,
+so a 100-row range carries ~+48us that has nothing to do with the optimizer.
+
+The cause is visible in the code. `drain_root_executor` calls
+`Row::get_datum_row`, which allocates a fresh `Vec<Datum>` per row, and
+`datum_with_buffer`'s string arm does `self.get_bytes(col).to_vec()` — a heap
+allocation per string cell per row. `SelectMeta` is
+`(columns, Vec<Vec<Datum>>)`, so every result is fully materialized before any
+byte reaches the wire.
+
+Go does not materialize `[]types.Datum` for a normal `SELECT`. `writeChunk`
+(`pkg/server/conn.go`) iterates the `chunk.Chunk` and `dumpTextRow` appends
+each cell's bytes straight into the output buffer. Zero per-row allocation.
+
+This is a result-set contract change rather than a local fix, and it reaches
+`tidb-server`'s result sets as well as the driver, so it needs its own
+prototype milestone before it is scheduled.
+
 ## Verification
 
 Repeatable probes live in the session scratchpad and should be moved into
