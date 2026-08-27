@@ -408,6 +408,12 @@ impl BaseJoinProbe {
         self.join_type
     }
 
+    /// Go `rightAsBuildSide`.
+    #[must_use]
+    pub const fn right_as_build_side(&self) -> bool {
+        self.right_as_build_side
+    }
+
     /// Go `workID`.
     #[must_use]
     pub const fn work_id(&self) -> usize {

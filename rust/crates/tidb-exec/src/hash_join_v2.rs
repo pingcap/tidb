@@ -171,6 +171,7 @@
 use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
+use tidb_chunk::chunk_util::copy_selected_rows_with_row_id_func;
 use tidb_executor::joiner::JoinType;
 use tidb_util::memory::Tracker;
 
@@ -721,7 +722,9 @@ impl BuildWorkerV2 {
 /// implementations `innerJoinProbe`, `outerJoinProbe`, `semiJoinProbe`,
 /// `antiSemiJoinProbe`, `leftOuterSemiJoinProbe` -- the same symbols
 /// [`crate::base_join_probe`]'s `new_join_probe` stops at. The inner variant
-/// is implemented below; the outer, semi and anti variants remain deferred.
+/// and the right-build existence variants are implemented below; outer joins,
+/// preserved-build existence joins and residual-condition variants remain
+/// deferred.
 /// Go's
 /// `SetRestoredChunkForProbe` and `SpillRemainingProbeChunks` are omitted:
 /// both are spill-only, and [`crate::base_join_probe`] already records them
@@ -771,6 +774,306 @@ pub trait ProbeV2 {
     fn get_probe_collision(&self) -> u64;
 }
 
+/// Appends the probe rows selected by a semi/anti-semi probe. Go's
+/// `generateResultChkForRightBuild*` copies only the preserved (probe) side;
+/// this helper keeps the same physical-row mapping when the source chunk has
+/// a selection vector.
+fn append_selected_probe_rows(
+    base: &BaseJoinProbe,
+    ctx: &ProbeContext<'_>,
+    joined_chk: &mut Chunk,
+    selected: &[bool],
+) {
+    let Some(probe_chunk) = base.current_chunk() else {
+        return;
+    };
+    let used = if base.right_as_build_side() {
+        &ctx.l_used
+    } else {
+        &ctx.r_used
+    };
+    let offset = if base.right_as_build_side() {
+        0
+    } else {
+        ctx.l_used.len()
+    };
+    for (index, &column_index) in used.iter().enumerate() {
+        let source = probe_chunk.column(column_index);
+        let mut destination = joined_chk.column_mut(offset + index);
+        copy_selected_rows_with_row_id_func(
+            &mut destination,
+            &source,
+            selected,
+            0,
+            selected.len(),
+            |row| base.used_rows()[row],
+        );
+    }
+    if used.is_empty() {
+        let old_rows = joined_chk.num_rows();
+        let appended = selected.iter().filter(|selected| **selected).count();
+        joined_chk.set_num_virtual_rows(old_rows + appended);
+    }
+}
+
+/// Shared right-build implementation for Go `semiJoinProbe` and
+/// `antiSemiJoinProbe`. The preserved side is the probe side, and no residual
+/// condition is accepted here; this is the complete fast path used by Go when
+/// the join has only equi-keys.
+struct ExistenceJoinProbe<'a, S: ProbeKeySerializer> {
+    base: BaseJoinProbe,
+    ctx: ProbeContext<'a>,
+    key_serializer: S,
+    filter: Option<ProbeFilter<'a>>,
+    anti: bool,
+}
+
+impl<'a, S: ProbeKeySerializer> ExistenceJoinProbe<'a, S> {
+    fn new(
+        ctx: ProbeContext<'a>,
+        work_id: usize,
+        join_type: JoinType,
+        key_index: Vec<usize>,
+        probe_key_nullable: &[bool],
+        right_as_build_side: bool,
+        key_serializer: S,
+        filter: Option<ProbeFilter<'a>>,
+    ) -> Self {
+        assert!(right_as_build_side, "existence probe requires right build");
+        assert!(
+            !ctx.has_other_condition,
+            "existence probe has no residual path"
+        );
+        assert!(
+            matches!(join_type, JoinType::SemiJoin | JoinType::AntiSemiJoin),
+            "existence probe requires semi or anti-semi join"
+        );
+        Self {
+            base: new_join_probe(
+                &ctx,
+                work_id,
+                join_type,
+                key_index,
+                probe_key_nullable,
+                right_as_build_side,
+            ),
+            ctx,
+            key_serializer,
+            filter,
+            anti: join_type == JoinType::AntiSemiJoin,
+        }
+    }
+
+    fn set_chunk_for_probe(&mut self, chunk: Chunk) -> Result<(), ProbeError> {
+        self.base
+            .set_chunk_for_probe(&self.ctx, chunk, self.filter, &self.key_serializer)
+    }
+
+    fn probe(&mut self, joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        if joined_chk.is_full() {
+            return Ok(());
+        }
+        let (_, mut remain_cap) = self.base.prepare_for_probe(&self.ctx, joined_chk);
+        let mut selected = vec![false; self.base.chunk_rows()];
+        while remain_cap > 0 && !self.base.is_current_chunk_probe_done() {
+            let probe_row = self.base.current_probe_row();
+            let hash_value = self.base.matched_rows_hash_value()[probe_row];
+            let serialized_key = self.base.serialized_keys()[probe_row].clone();
+            let mut header = self.base.matched_rows_headers()[probe_row];
+            let mut matched = false;
+            while header != 0 {
+                let build_address =
+                    crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
+                let build_row = self.ctx.hash_table.row_bytes(build_address);
+                if is_key_matched(
+                    self.ctx.meta.key_mode,
+                    &serialized_key,
+                    build_row,
+                    self.ctx.meta,
+                ) {
+                    matched = true;
+                    break;
+                }
+                self.base.record_probe_collision();
+                header = BaseJoinProbe::next_matched_row(
+                    self.ctx.hash_table,
+                    &self.ctx.tag_helper,
+                    header,
+                    hash_value,
+                );
+            }
+            self.base.set_matched_rows_header(probe_row, 0);
+            if matched != self.anti {
+                selected[probe_row] = true;
+                remain_cap -= 1;
+            }
+            self.base.set_current_probe_row(probe_row + 1);
+        }
+        append_selected_probe_rows(&self.base, &self.ctx, joined_chk, &selected);
+        Ok(())
+    }
+
+    fn is_current_chunk_probe_done(&self) -> bool {
+        self.base.is_current_chunk_probe_done()
+    }
+
+    fn reset_probe(&mut self) {
+        self.base.reset_probe(&self.ctx);
+    }
+
+    fn reset_probe_collision(&mut self) {
+        self.base.reset_probe_collision();
+    }
+}
+
+/// Go `semiJoinProbe`, restricted to the right-build/equi-key fast path.
+pub struct SemiJoinProbe<'a, S: ProbeKeySerializer> {
+    inner: ExistenceJoinProbe<'a, S>,
+}
+
+impl<'a, S: ProbeKeySerializer> SemiJoinProbe<'a, S> {
+    /// Constructs a semi probe with the right side as build side.
+    #[must_use]
+    pub fn new(
+        ctx: ProbeContext<'a>,
+        work_id: usize,
+        key_index: Vec<usize>,
+        probe_key_nullable: &[bool],
+        right_as_build_side: bool,
+        key_serializer: S,
+        filter: Option<ProbeFilter<'a>>,
+    ) -> Self {
+        Self {
+            inner: ExistenceJoinProbe::new(
+                ctx,
+                work_id,
+                JoinType::SemiJoin,
+                key_index,
+                probe_key_nullable,
+                right_as_build_side,
+                key_serializer,
+                filter,
+            ),
+        }
+    }
+}
+
+impl<S: ProbeKeySerializer> ProbeV2 for SemiJoinProbe<'_, S> {
+    fn set_chunk_for_probe(&mut self, chunk: Chunk) -> Result<(), ProbeError> {
+        self.inner.set_chunk_for_probe(chunk)
+    }
+
+    fn is_current_chunk_probe_done(&self) -> bool {
+        self.inner.is_current_chunk_probe_done()
+    }
+
+    fn probe(&mut self, joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        self.inner.probe(joined_chk)
+    }
+
+    fn need_scan_row_table(&self) -> bool {
+        false
+    }
+
+    fn init_for_scan_row_table(&mut self) {
+        panic!("right-build semi join does not scan the build row table")
+    }
+
+    fn is_scan_row_table_done(&self) -> bool {
+        panic!("right-build semi join does not scan the build row table")
+    }
+
+    fn scan_row_table(&mut self, _joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        panic!("right-build semi join does not scan the build row table")
+    }
+
+    fn reset_probe(&mut self) {
+        self.inner.reset_probe()
+    }
+
+    fn reset_probe_collision(&mut self) {
+        self.inner.reset_probe_collision()
+    }
+
+    fn get_probe_collision(&self) -> u64 {
+        self.inner.base.get_probe_collision()
+    }
+}
+
+/// Go `antiSemiJoinProbe`, restricted to the right-build/equi-key fast path.
+pub struct AntiSemiJoinProbe<'a, S: ProbeKeySerializer> {
+    inner: ExistenceJoinProbe<'a, S>,
+}
+
+impl<'a, S: ProbeKeySerializer> AntiSemiJoinProbe<'a, S> {
+    /// Constructs an anti-semi probe with the right side as build side.
+    #[must_use]
+    pub fn new(
+        ctx: ProbeContext<'a>,
+        work_id: usize,
+        key_index: Vec<usize>,
+        probe_key_nullable: &[bool],
+        right_as_build_side: bool,
+        key_serializer: S,
+        filter: Option<ProbeFilter<'a>>,
+    ) -> Self {
+        Self {
+            inner: ExistenceJoinProbe::new(
+                ctx,
+                work_id,
+                JoinType::AntiSemiJoin,
+                key_index,
+                probe_key_nullable,
+                right_as_build_side,
+                key_serializer,
+                filter,
+            ),
+        }
+    }
+}
+
+impl<S: ProbeKeySerializer> ProbeV2 for AntiSemiJoinProbe<'_, S> {
+    fn set_chunk_for_probe(&mut self, chunk: Chunk) -> Result<(), ProbeError> {
+        self.inner.set_chunk_for_probe(chunk)
+    }
+
+    fn is_current_chunk_probe_done(&self) -> bool {
+        self.inner.is_current_chunk_probe_done()
+    }
+
+    fn probe(&mut self, joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        self.inner.probe(joined_chk)
+    }
+
+    fn need_scan_row_table(&self) -> bool {
+        false
+    }
+
+    fn init_for_scan_row_table(&mut self) {
+        panic!("right-build anti-semi join does not scan the build row table")
+    }
+
+    fn is_scan_row_table_done(&self) -> bool {
+        panic!("right-build anti-semi join does not scan the build row table")
+    }
+
+    fn scan_row_table(&mut self, _joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        panic!("right-build anti-semi join does not scan the build row table")
+    }
+
+    fn reset_probe(&mut self) {
+        self.inner.reset_probe()
+    }
+
+    fn reset_probe_collision(&mut self) {
+        self.inner.reset_probe_collision()
+    }
+
+    fn get_probe_collision(&self) -> u64 {
+        self.inner.base.get_probe_collision()
+    }
+}
+
 /// The v2 inner-join probe corresponding to Go's `innerJoinProbe`.
 ///
 /// The shared [`BaseJoinProbe`] owns chunk preparation, partition lookup and
@@ -781,10 +1084,10 @@ pub trait ProbeV2 {
 /// vectors produced by their physical plan without coupling this crate to the
 /// session evaluator.
 ///
-/// Other-condition evaluation and the outer/semi/anti probe variants remain
-/// separate implementations; using this type for those join kinds would be a
-/// correctness error. The constructor rejects an `other_condition` context
-/// rather than silently dropping that predicate.
+/// Other-condition evaluation and the outer probe variant remain separate;
+/// using this type for those join kinds would be a correctness error. The
+/// constructor rejects an `other_condition` context rather than silently
+/// dropping that predicate.
 pub struct InnerJoinProbe<'a, S: ProbeKeySerializer> {
     base: BaseJoinProbe,
     ctx: ProbeContext<'a>,
