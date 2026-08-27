@@ -504,7 +504,7 @@ func TestColumnTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table tbl1(col_1 int primary key, col_2 int, col_4 int);")
+	tk.MustExec("create table tbl1(col_1 int primary key, col_2 int, col_4 int, key idx_col_2(col_2));")
 	tk.MustExec("create table tbl2(col_1 int primary key, col_2 int, col_3 int);")
 	tk.MustExec("create view view1 as select min(col_1), col_2, max(col_4) as max4 from tbl1 group by col_2;")
 
@@ -555,6 +555,12 @@ func TestColumnTable(t *testing.T) {
 	tk.MustQuery(`select count(*) from information_schema.columns
 				where TABLE_SCHEMA = 'test' and TABLE_NAME in ('tbl1', 'tbl2', 'view1');`).Check(
 		testkit.RowsWithSep("|", "9"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, KEY_NAME, COLUMN_NAME from information_schema.tidb_indexes
+				where TABLE_SCHEMA = 'test';`).Sort().Check(
+		testkit.RowsWithSep("|",
+			"test|tbl1|PRIMARY|col_1",
+			"test|tbl1|idx_col_2|col_2",
+			"test|tbl2|PRIMARY|col_1"))
 }
 
 func TestIndexUsageTable(t *testing.T) {

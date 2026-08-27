@@ -143,6 +143,8 @@ func (s *tikvSnapshot) SetOption(opt int, val any) {
 		if size > 0 {
 			s.KVSnapshot.SetScanBatchSize(size)
 		}
+	case kv.ScanResponseRetainedSize:
+		s.KVSnapshot.SetScanResponseRetainedSize(val.(int64))
 	case kv.ResourceGroupName:
 		s.KVSnapshot.SetResourceGroupName(val.(string))
 	case kv.LoadBasedReplicaReadThreshold:

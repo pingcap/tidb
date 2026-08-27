@@ -237,6 +237,26 @@ func TestHash(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	prefixKey := []byte("prefix-key")
+	for _, field := range []string{"a", "aa", "ab", "b"} {
+		require.NoError(t, tx.HSet(prefixKey, []byte(field), []byte(field)))
+	}
+	hashIter, err := structure.NewHashIterator(tx, prefixKey, []byte("a"))
+	require.NoError(t, err)
+	require.True(t, hashIter.Valid())
+	require.Equal(t, []byte("aa"), hashIter.Field())
+	require.Equal(t, []byte("aa"), hashIter.Value())
+	require.NoError(t, hashIter.Next())
+	require.True(t, hashIter.Valid())
+	require.Equal(t, []byte("ab"), hashIter.Field())
+	require.NoError(t, hashIter.Next())
+	require.True(t, hashIter.Valid())
+	require.Equal(t, []byte("b"), hashIter.Field())
+	require.NoError(t, hashIter.Next())
+	require.False(t, hashIter.Valid())
+	hashIter.Close()
+	require.False(t, hashIter.Valid())
+
 	res, err = tx.HGetLastN(key, 1)
 	require.NoError(t, err)
 	require.Equal(t, []structure.HashPair{

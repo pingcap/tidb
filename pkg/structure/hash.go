@@ -179,6 +179,107 @@ func (t *TxStructure) HGetIter(key []byte, fn func(pair HashPair) error) error {
 	})
 }
 
+// HashIterator iterates hash fields in ascending order. Field and Value are
+// borrowed from the underlying KV iterator and remain valid only until Next or
+// Close is called.
+type HashIterator struct {
+	t      *TxStructure
+	iter   kv.Iterator
+	prefix []byte
+	field  []byte
+	done   bool
+}
+
+// NewHashIterator creates a forward hash iterator positioned strictly after
+// exclusiveStartField. A nil or empty start field starts from the beginning.
+func NewHashIterator(
+	t *TxStructure,
+	key, exclusiveStartField []byte,
+) (*HashIterator, error) {
+	dataPrefix := t.hashDataKeyPrefix(key)
+	iterStart := dataPrefix
+	if len(exclusiveStartField) > 0 {
+		iterStart = t.encodeHashDataKey(key, exclusiveStartField).PrefixNext()
+	}
+	iter, err := t.reader.Iter(iterStart, dataPrefix.PrefixNext())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	hashIter := &HashIterator{
+		t:      t,
+		iter:   iter,
+		prefix: dataPrefix,
+	}
+	if err := hashIter.updateCurrent(); err != nil {
+		iter.Close()
+		return nil, err
+	}
+	return hashIter, nil
+}
+
+func (i *HashIterator) updateCurrent() error {
+	if !i.iter.Valid() || !i.iter.Key().HasPrefix(i.prefix) {
+		i.done = true
+		i.field = nil
+		return nil
+	}
+	_, field, err := i.t.decodeHashDataKey(i.iter.Key())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	i.field = field
+	return nil
+}
+
+// Next advances the iterator to the next hash field.
+func (i *HashIterator) Next() error {
+	if !i.Valid() {
+		return nil
+	}
+	if err := i.iter.Next(); err != nil {
+		return errors.Trace(err)
+	}
+	return i.updateCurrent()
+}
+
+// Valid reports whether the iterator points to a hash field.
+func (i *HashIterator) Valid() bool {
+	return !i.done && i.iter.Valid()
+}
+
+// Field returns the current borrowed hash field.
+func (i *HashIterator) Field() []byte {
+	return i.field
+}
+
+// Value returns the current borrowed hash value.
+func (i *HashIterator) Value() []byte {
+	return i.iter.Value()
+}
+
+// RetainedMemory returns reusable capacity owned by the underlying iterator.
+func (i *HashIterator) RetainedMemory() int64 {
+	if i.iter == nil {
+		return 0
+	}
+	reporter, ok := i.iter.(interface{ RetainedMemory() int64 })
+	if !ok {
+		return 0
+	}
+	return reporter.RetainedMemory()
+}
+
+// Close releases the underlying KV iterator.
+func (i *HashIterator) Close() {
+	if i.iter != nil {
+		i.iter.Close()
+		i.iter = nil
+	}
+	i.done = true
+	i.field = nil
+}
+
 // HGetLen gets the length of hash.
 func (t *TxStructure) HGetLen(key []byte) (uint64, error) {
 	hashLen := 0
@@ -230,8 +331,16 @@ func (t *TxStructure) HClear(key []byte) error {
 
 // IterateHash iterates all the fields and values in hash.
 func (t *TxStructure) IterateHash(key []byte, fn func(k []byte, v []byte) error) error {
+	return t.iterateHashFrom(key, nil, fn)
+}
+
+func (t *TxStructure) iterateHashFrom(key, exclusiveStartField []byte, fn func(k []byte, v []byte) error) error {
 	dataPrefix := t.hashDataKeyPrefix(key)
-	it, err := t.reader.Iter(dataPrefix, dataPrefix.PrefixNext())
+	iterStart := dataPrefix
+	if len(exclusiveStartField) > 0 {
+		iterStart = t.encodeHashDataKey(key, exclusiveStartField).PrefixNext()
+	}
+	it, err := t.reader.Iter(iterStart, dataPrefix.PrefixNext())
 	if err != nil {
 		return errors.Trace(err)
 	}
