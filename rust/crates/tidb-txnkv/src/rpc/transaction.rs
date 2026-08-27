@@ -269,8 +269,14 @@ where
         &mut self,
     ) -> Result<Option<Result<TransactionBatchResponse<R>, DirectUnaryClientError>>, CompletionError>
     {
-        let result = self.completion.try_complete()?;
-        Ok(result.map(|result| self.map_result(result)))
+        let Some(result) = self.completion.try_complete()? else {
+            return Ok(None);
+        };
+        // Same rule as `complete`: the receipt is collected only once a
+        // response exists, so `map_result`'s success arm can name the
+        // publication without the caller having waited for it up front.
+        self.resolve_publication();
+        Ok(Some(self.map_result(result)))
     }
 
     /// Waits for the one terminal response or the canonical call cancellation/deadline.
@@ -279,6 +285,13 @@ where
         call: &UnaryCallContext,
     ) -> Result<Result<TransactionBatchResponse<R>, DirectUnaryClientError>, CompletionError> {
         let result = self.completion.complete(call)?;
+        // The receipt is collected HERE, after the response has landed, not
+        // before the wait starts. By now the worker sent it long ago, so this
+        // never parks -- which is the whole point: client-go's
+        // `sendBatchRequest` hands the entry off and then waits exactly ONCE,
+        // on the response (`internal/client/client_batch.go:1465`). Resolving
+        // it earlier reinstates the very round trip the deferral removed.
+        self.resolve_publication();
         Ok(self.map_result(result))
     }
 

@@ -814,21 +814,21 @@ where
         Ok(pending) => pending,
         Err(error) => return PublishedCommand::BeforePublication(error),
     };
+    // The publication is read AFTER the response, never before it. Reading it
+    // here used to resolve the deferred receipt and park the caller, which put
+    // the submit round trip straight back on the critical path -- the wait the
+    // deferral exists to remove.
+    let completed = pending.complete(call);
+    let error = match completed {
+        Ok(Ok(response)) => return PublishedCommand::Response(response),
+        Ok(Err(error)) => error.to_string(),
+        Err(error) => error.to_string(),
+    };
     let publication = pending
         .publication()
         .expect("Stage A binds a nonzero publication before pending escapes")
         .clone();
-    match pending.complete(call) {
-        Ok(Ok(response)) => PublishedCommand::Response(response),
-        Ok(Err(error)) => PublishedCommand::AfterPublication {
-            publication,
-            error: error.to_string(),
-        },
-        Err(error) => PublishedCommand::AfterPublication {
-            publication,
-            error: error.to_string(),
-        },
-    }
+    PublishedCommand::AfterPublication { publication, error }
 }
 
 #[cfg(test)]
