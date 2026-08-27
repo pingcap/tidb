@@ -15,6 +15,9 @@
 //! Batch b068 ports of `pkg/expression.part3` (`func Test*` items 121–180 on
 //! `origin/master`, sorted by file path then line). Each test re-derives its
 //! intent from the Go source it exercises.
+//!
+//! Verification pass 2 extended several tables with additional rows copied
+//! from the same Go tables.
 
 use super::{chunk_e, e};
 use crate::builtin_ext::json::dispatch as json_dispatch;
@@ -110,7 +113,7 @@ fn eval_as(name: &str, args: Vec<Datum>, ret_type: FieldType, ctx: &impl Columns
 fn json_call(name: &str, vals: &[Datum]) -> Result<Datum, EvalError> {
     json_dispatch(name, vals)
         .or_else(|| json2::dispatch(name, vals))
-        .expect("JSON family should own name/arity")
+        .unwrap_or_else(|| panic!("JSON family should own {name}/{}", vals.len()))
 }
 
 fn json_s(value: &str) -> Datum {
@@ -860,7 +863,29 @@ fn json_member_of() {
         .unwrap(),
         Datum::Int(1)
     );
+    // Remaining Go rows for arrays-of-object strings.
+    assert_eq!(
+        json_call(
+            "JSON_MEMBER_OF",
+            &[json_s(r#"{"a":1}"#), json_s(r#"[{"a":1}, 1]")]
+        )
+        .unwrap(),
+        Datum::Int(0)
+    );
+    assert_eq!(
+        json_call(
+            "JSON_MEMBER_OF",
+            &[json_s(r#"{"a":1}"#), json_s("[ \"{\\\"a\\\":1}\", 1 ]")]
+        )
+        .unwrap(),
+        Datum::Int(1)
+    );
 }
+
+/// Go `pkg/expression/builtin_info_test.go:99 TestCurrentResourceGroup`.
+#[test]
+#[ignore = "go-parity-gap: CURRENT_RESOURCE_GROUP has no evaluator arm in Rust (builtin_return_type deliberately omits it)"]
+fn current_resource_group() {}
 
 /// Go `pkg/expression/builtin_json_test.go:539 TestJSONContains`.
 #[test]
@@ -884,7 +909,9 @@ fn json_contains() {
         ("[1,2,[1,3]]", "[1,3]", 1),
         (r#"[{"a":1}]"#, r#"{"a":1}"#, 1),
         (r#"[{"a":1,"b":2}]"#, r#"{"a":1}"#, 1),
-        (r#"[{"a":{"a":1},"b":2}]"#, r#"{"a":1}"#, 0),
+        // Whitespace-tolerant parsing inside candidate arrays.
+        ("[1,2,[1,3]]", "[1,      3]", 1),
+        ("[1,2,[1,[5,{\"a\":[2,3]}]]]", "[1,{\"a\":[3]}]", 1),
     ] {
         assert_eq!(
             json_call("JSON_CONTAINS", &[json_s(doc), json_s(cand)]).unwrap(),
@@ -900,6 +927,77 @@ fn json_contains() {
         .unwrap(),
         Datum::Int(1)
     );
+    // Go nil-argument rows evaluate to NULL.
+    assert_eq!(
+        json_call(
+            "JSON_CONTAINS",
+            &[
+                json_s(r#"{"a": [1, 2, {"aa": "xx"}]}"#),
+                Datum::Null,
+                json_s("$.a[3]"),
+            ],
+        )
+        .unwrap(),
+        Datum::Null
+    );
+    assert_eq!(
+        json_call(
+            "JSON_CONTAINS",
+            &[json_s(r#"{"a": [1, 2, {"aa": "xx"}]}"#), json_s("1"), Datum::Null],
+        )
+        .unwrap(),
+        Datum::Null
+    );
+    // Go with-path rows.
+    assert_eq!(
+        json_call(
+            "JSON_CONTAINS",
+            &[json_s(r#"[{"a":1}]"#), json_s(r#"{"a":1}"#), json_s("$")],
+        )
+        .unwrap(),
+        Datum::Int(1)
+    );
+    assert_eq!(
+        json_call(
+            "JSON_CONTAINS",
+            &[
+                json_s(r#"[{"a":1,"b":2}]"#),
+                json_s(r#"{"a":1,"b":2}"#),
+                json_s("$"),
+            ],
+        )
+        .unwrap(),
+        Datum::Int(1)
+    );
+    assert_eq!(
+        json_call(
+            "JSON_CONTAINS",
+            &[
+                json_s(r#"[{"a":{"a":1},"b":2}]"#),
+                json_s(r#"{"a":1}"#),
+                json_s("$.a"),
+            ],
+        )
+        .unwrap(),
+        Datum::Int(0)
+    );
+    // Path not identifying a section of the document yields NULL.
+    for path in ["$.c", "$.a[3]", "$.a[2].b"] {
+        assert_eq!(
+            json_call(
+                "JSON_CONTAINS",
+                &[
+                    json_s(r#"{"a": [1, 2, {"aa": "xx"}]}"#),
+                    json_s("1"),
+                    json_s(path),
+                ],
+            )
+            .unwrap(),
+            Datum::Null
+        );
+    }
+    // Go issue-9957 second row: both arguments must be valid JSON.
+    assert!(json_call("JSON_CONTAINS", &[json_s("a:1"), json_s("1")]).is_err());
     for path in ["$.*", "$[*]", "$**.a"] {
         assert!(json_call(
             "JSON_CONTAINS",
@@ -997,6 +1095,7 @@ fn json_length() {
     for (doc, want) in [
         ("null", 1),
         ("true", 1),
+        ("false", 1),
         ("1", 1),
         ("-1", 1),
         ("1.1", 1),
@@ -1004,8 +1103,12 @@ fn json_length() {
         ("{}", 0),
         (r#"{"a":1}"#, 1),
         (r#"{"b":2, "c":3}"#, 2),
+        ("[1]", 1),
         ("[1,2]", 2),
         ("[1,2,[1,3]]", 3),
+        ("[1,2,[1,[5,{\"a\":[2,3]}]]]", 3),
+        (r#"[{"a":1}]"#, 1),
+        (r#"[{"a":{"a":1},"b":2}]"#, 1),
     ] {
         assert_eq!(
             json_call("JSON_LENGTH", &[json_s(doc)]).unwrap(),
@@ -1022,6 +1125,36 @@ fn json_length() {
         .unwrap(),
         Datum::Int(2)
     );
+    // Go path-expression rows.
+    assert_eq!(
+        json_call(
+            "JSON_LENGTH",
+            &[json_s(r#"{"a":{"a":1},"b":2}"#), json_s("$.a")],
+        )
+        .unwrap(),
+        Datum::Int(1)
+    );
+    assert_eq!(
+        json_call(
+            "JSON_LENGTH",
+            &[json_s(r#"[{"a":1,"b":2}]"#), json_s("$[0].a")],
+        )
+        .unwrap(),
+        Datum::Int(1)
+    );
+    for path in ["$.c", "$.a[3]", "$.a[2].b"] {
+        assert!(json_call(
+            "JSON_LENGTH",
+            &[
+                json_s(r#"{"a": [1, 2, {"aa": "xx"}]}"#),
+                json_s(path),
+            ],
+        )
+        .unwrap()
+        .is_null(),
+        "{path}"
+        );
+    }
     assert!(json_call(
         "JSON_LENGTH",
         &[json_s(r#""1""#), json_s("$.a")]
@@ -1070,6 +1203,25 @@ fn json_keys() {
         &json_call("JSON_KEYS", &[json_s(array), json_s("$[1]")]).unwrap(),
         r#"["A2", "B2", "C2"]"#,
     );
+    // Remaining Go rows: object-valued path returns keys of the sub-object;
+    // scalar-valued and non-existent paths yield NULL.
+    for (doc, path) in [
+        (
+            r#"[{"A": 1, "B": 2, "C": {"D": 3}}, {"A": 10, "B": 20, "C": {"D": 4}}, {"A": 1, "B": 2, "C": [{"D": 5}, {"E": 55}]}]"#,
+            "$[last].C[1]",
+        ),
+        (r#"{"a": {"c": 3}, "b": 2}"#, "$.a.c"),
+        (r#"{"a": 1}"#, "$.b"),
+        (r#"{"a": {"c": 3}, "b": 2}"#, "$.c"),
+        (r#"{"a": {"c": 3}, "b": 2}"#, "$.a.d"),
+    ] {
+        let got = json_call("JSON_KEYS", &[json_s(doc), json_s(path)]).unwrap();
+        if path == "$[last].C[1]" {
+            json_eq(&got, r#"["E"]"#);
+        } else {
+            assert!(got.is_null(), "{doc} {path}");
+        }
+    }
 }
 
 /// Go `pkg/expression/builtin_json_test.go:890 TestJSONDepth`.
@@ -1078,15 +1230,31 @@ fn json_depth() {
     for (input, want) in [
         ("null", 1),
         ("true", 1),
+        ("false", 1),
         ("1", 1),
+        ("-1", 1),
+        ("1.1", 1),
+        (r#""1""#, 1),
         ("{}", 1),
         ("[]", 1),
         ("[10, 20]", 2),
+        ("[[], {}]", 2),
         (r#"{"Name": "Homer"}"#, 2),
+        (
+            r#"{"Person": {"Name": "Homer", "Age": 39, "Hobbies": ["Eating", "Sleeping"]}}"#,
+            4,
+        ),
+        (r#"{"a":1}"#, 2),
+        (r#"{"b":2, "c":3}"#, 2),
+        ("[1]", 2),
+        ("[1,2]", 2),
         (r#"[10, {"a": 20}]"#, 3),
         (r#"{"a":[1]}"#, 3),
+        ("[1,2,[1,3]]", 3),
         ("[1,2,[1,[5,[3]]]]", 5),
         (r#"[1,2,[1,[5,{"a":[2,3]}]]]"#, 6),
+        (r#"[{"a":1}]"#, 3),
+        (r#"[{"a":{"a":1},"b":2}]"#, 4),
     ] {
         assert_eq!(
             json_call("JSON_DEPTH", &[json_s(input)]).unwrap(),
@@ -1238,6 +1406,48 @@ fn json_search() {
         &[json_s(json), json_s("wrong"), json_s("abc")]
     )
     .is_err());
+    // Remaining Go rows.
+    json_eq(
+        &json_call(
+            "JSON_SEARCH",
+            &[json_s(json), json_s("all"), json_s("%a%")],
+        )
+        .unwrap(),
+        r#"["$[0]", "$[2].x"]"#,
+    );
+    assert!(json_call(
+        "JSON_SEARCH",
+        &[json_s(json), json_s("ALL"), json_s("ghi")]
+    )
+    .unwrap()
+    .is_null());
+    // Wrong escape char must error; NULL search_str and NULL paths are NULL
+    // results, matching Go's error-handle rows.
+    assert!(json_call(
+        "JSON_SEARCH",
+        &[
+            json_s(json),
+            json_s("all"),
+            json_s("abc"),
+            json_s("??")
+        ]
+    )
+    .is_err());
+    assert!(json_call("JSON_SEARCH", &[json_s(json), json_s("all"), Datum::Null])
+        .unwrap()
+        .is_null());
+    assert!(json_call(
+        "JSON_SEARCH",
+        &[
+            json_s(json),
+            json_s("all"),
+            json_s("abc"),
+            Datum::Null,
+            Datum::Null
+        ]
+    )
+    .unwrap()
+    .is_null());
 }
 
 /// Go `pkg/expression/builtin_json_test.go:1103 TestJSONArrayInsert`.
@@ -1470,6 +1680,10 @@ fn json_schema_valid() {
     );
     assert_eq!(
         json_call("JSON_SCHEMA_VALID", &[json_s("{}"), Datum::Null]).unwrap(),
+        Datum::Null
+    );
+    assert_eq!(
+        json_call("JSON_SCHEMA_VALID", &[Datum::Null, Datum::Null]).unwrap(),
         Datum::Null
     );
     for (schema, document, want) in [
@@ -1982,6 +2196,25 @@ fn round() {
             ],
             Datum::Decimal(tidb_datatype::Decimal::from_literal("1.6")),
         ),
+        // Go rows `newDec("-1.58") -> -2`, `newDec("23.298"), -1 -> "20"`
+        // and `float64(1.298), 0 -> 1`.
+        (
+            vec![Datum::Decimal(tidb_datatype::Decimal::from_literal(
+                "-1.58",
+            ))],
+            Datum::Decimal(tidb_datatype::Decimal::from_literal("-2")),
+        ),
+        (
+            vec![
+                Datum::Decimal(tidb_datatype::Decimal::from_literal("23.298")),
+                Datum::Int(-1),
+            ],
+            Datum::Decimal(tidb_datatype::Decimal::from_literal("20")),
+        ),
+        (
+            vec![Datum::Real(1.298), Datum::Int(0)],
+            Datum::Real(1.0),
+        ),
         (vec![Datum::Null, Datum::Int(2)], Datum::Null),
         (vec![Datum::Int(1), Datum::Int(-2012)], Datum::Int(0)),
         (
@@ -2061,6 +2294,47 @@ fn truncate() {
         (vec![Datum::Real(1.1), Datum::Int(400)], Datum::Real(1.1)),
         (vec![Datum::Real(1.1), Datum::Int(-400)], Datum::Real(0.0)),
         (vec![Datum::Real(0.0), Datum::Int(3)], Datum::Real(0.0)),
+        // Go issue-57651 rows without NaN arguments.
+        (vec![Datum::Real(1.1), Datum::Int(3)], Datum::Real(1.1)),
+        (vec![Datum::Real(0.0), Datum::Int(400)], Datum::Real(0.0)),
+        (vec![Datum::Real(0.0), Datum::Int(-400)], Datum::Real(0.0)),
+        // Go decimal rows `-11.23,-1 -> -10`, `11.58,-1 -> 10`, `1.58,1 -> 1.5`,
+        // `23.298,-1 -> 20`, `23.298,-100 -> 0`.
+        (
+            vec![
+                Datum::Decimal(tidb_datatype::Decimal::from_literal("-11.23")),
+                Datum::Int(-1),
+            ],
+            Datum::Decimal(tidb_datatype::Decimal::from_literal("-10")),
+        ),
+        (
+            vec![
+                Datum::Decimal(tidb_datatype::Decimal::from_literal("11.58")),
+                Datum::Int(-1),
+            ],
+            Datum::Decimal(tidb_datatype::Decimal::from_literal("10")),
+        ),
+        (
+            vec![
+                Datum::Decimal(tidb_datatype::Decimal::from_literal("1.58")),
+                Datum::Int(1),
+            ],
+            Datum::Decimal(tidb_datatype::Decimal::from_literal("1.5")),
+        ),
+        (
+            vec![
+                Datum::Decimal(tidb_datatype::Decimal::from_literal("23.298")),
+                Datum::Int(-1),
+            ],
+            Datum::Decimal(tidb_datatype::Decimal::from_literal("20")),
+        ),
+        (
+            vec![
+                Datum::Decimal(tidb_datatype::Decimal::from_literal("23.298")),
+                Datum::Int(-100),
+            ],
+            Datum::Decimal(tidb_datatype::Decimal::from_literal("0")),
+        ),
     ] {
         let got = math_call("TRUNCATE", &args).unwrap();
         assert!(
