@@ -46,25 +46,25 @@ type mockAutoIDClient struct {
 	rebaseResp               *autoid.RebaseResponse
 	allocReq                 *autoid.AutoIDRequest
 	rebaseReq                *autoid.RebaseRequest
-	alloc                    func(int64, *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error)
-	rebase                   func(int64, *autoid.RebaseRequest) (*autoid.RebaseResponse, error)
+	alloc                    func(context.Context, int64, *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error)
+	rebase                   func(context.Context, int64, *autoid.RebaseRequest) (*autoid.RebaseResponse, error)
 	allocErr                 error
 	rebaseErr                error
 }
 
-func (m *mockAutoIDClient) AllocAutoID(_ context.Context, req *autoid.AutoIDRequest, _ ...grpc.CallOption) (*autoid.AutoIDResponse, error) {
+func (m *mockAutoIDClient) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest, _ ...grpc.CallOption) (*autoid.AutoIDResponse, error) {
 	call := m.allocCallCount.Add(1)
 	if m.alloc != nil {
-		return m.alloc(call, req)
+		return m.alloc(ctx, call, req)
 	}
 	m.allocReq = req
 	return m.allocResp, m.allocErr
 }
 
-func (m *mockAutoIDClient) Rebase(_ context.Context, req *autoid.RebaseRequest, _ ...grpc.CallOption) (*autoid.RebaseResponse, error) {
+func (m *mockAutoIDClient) Rebase(ctx context.Context, req *autoid.RebaseRequest, _ ...grpc.CallOption) (*autoid.RebaseResponse, error) {
 	call := m.rebaseCallCount.Add(1)
 	if m.rebase != nil {
-		return m.rebase(call, req)
+		return m.rebase(ctx, call, req)
 	}
 	m.rebaseReq = req
 	return m.rebaseResp, m.rebaseErr
@@ -88,7 +88,7 @@ func newTransferMockState() *transferMockState {
 
 func (s *transferMockState) client() *mockAutoIDClient {
 	return &mockAutoIDClient{
-		alloc: func(_ int64, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
+		alloc: func(_ context.Context, _ int64, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
 			s.allocRequests <- req
 			if s.beforeAlloc != nil {
 				s.beforeAlloc(req)
@@ -102,7 +102,7 @@ func (s *transferMockState) client() *mockAutoIDClient {
 			base.Store(maxBase)
 			return &autoid.AutoIDResponse{Min: minBase, Max: maxBase}, nil
 		},
-		rebase: func(_ int64, req *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
+		rebase: func(_ context.Context, _ int64, req *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
 			s.rebaseRequests <- req
 			if s.beforeRebase != nil {
 				s.beforeRebase(req)
@@ -418,6 +418,48 @@ func TestSinglePointAllocTransfer(t *testing.T) {
 		require.Equal(t, int64(2), mockCli.rebaseReq.Base)
 	})
 
+	t.Run("uses one deadline for transfer RPCs", func(t *testing.T) {
+		missingDeadlineErr := errors.New("missing transfer deadline")
+		var sourceDeadline, destinationDeadline time.Time
+		mockCli := &mockAutoIDClient{
+			alloc: func(ctx context.Context, _ int64, _ *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
+				var ok bool
+				sourceDeadline, ok = ctx.Deadline()
+				if !ok {
+					return nil, missingDeadlineErr
+				}
+				return &autoid.AutoIDResponse{Min: 2, Max: 2}, nil
+			},
+			rebase: func(ctx context.Context, _ int64, _ *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
+				var ok bool
+				destinationDeadline, ok = ctx.Deadline()
+				if !ok {
+					return nil, missingDeadlineErr
+				}
+				return &autoid.RebaseResponse{}, nil
+			},
+		}
+		allocator := newTestSinglePointAlloc(mockCli)
+
+		require.NoError(t, allocator.Transfer(2, 1))
+		require.Equal(t, sourceDeadline, destinationDeadline)
+	})
+
+	t.Run("uses a deadline for force rebase", func(t *testing.T) {
+		missingDeadlineErr := errors.New("missing force-rebase deadline")
+		mockCli := &mockAutoIDClient{
+			rebase: func(ctx context.Context, _ int64, _ *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
+				if _, ok := ctx.Deadline(); !ok {
+					return nil, missingDeadlineErr
+				}
+				return &autoid.RebaseResponse{}, nil
+			},
+		}
+		allocator := newTestSinglePointAlloc(mockCli)
+
+		require.NoError(t, allocator.ForceRebase(2))
+	})
+
 	t.Run("keeps source owner when destination rebase fails", func(t *testing.T) {
 		rebaseErr := errors.New("rebase failed")
 		mockCli := &mockAutoIDClient{
@@ -463,7 +505,7 @@ func TestSinglePointAllocTransfer(t *testing.T) {
 		firstRequestStarted := make(chan struct{})
 		releaseFirstRequest := make(chan struct{})
 		mockCli := &mockAutoIDClient{
-			alloc: func(call int64, _ *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
+			alloc: func(_ context.Context, call int64, _ *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
 				if call == 1 {
 					close(firstRequestStarted)
 					<-releaseFirstRequest
@@ -740,5 +782,47 @@ func TestAutoIDRPCRetry(t *testing.T) {
 		require.Empty(t, logs.FilterMessage("autoid request entered RPC retry").All())
 		require.Empty(t, logs.FilterMessage("autoid request completed after RPC retry").All())
 		require.Empty(t, logs.FilterMessage("autoid request stopped after reaching RPC retry limit").All())
+	})
+
+	t.Run("write operations release locks when leader discovery times out", func(t *testing.T) {
+		tests := []struct {
+			name string
+			run  func(context.Context, *singlePointAlloc) error
+		}{
+			{
+				name: "transfer",
+				run: func(ctx context.Context, allocator *singlePointAlloc) error {
+					return allocator.transfer(ctx, 33, 44)
+				},
+			},
+			{
+				name: "force rebase",
+				run: func(ctx context.Context, allocator *singlePointAlloc) error {
+					return allocator.forceRebase(ctx, 100)
+				},
+			},
+		}
+
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				allocator := newRPCRetryTestAllocator(t, newTestEtcdClient(t))
+				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				defer cancel()
+
+				err := test.run(ctx, allocator)
+				require.ErrorIs(t, err, context.DeadlineExceeded)
+				require.Equal(t, int64(11), allocator.dbID)
+				require.Equal(t, int64(22), allocator.tblID)
+
+				allocator.mu.Lock()
+				allocator.mu.AutoIDAllocClient = &mockAutoIDClient{
+					allocResp: &autoid.AutoIDResponse{Min: 100, Max: 101},
+				}
+				allocator.mu.Unlock()
+				_, maxID, err := allocator.Alloc(testContext(t), 1, 1, 1)
+				require.NoError(t, err)
+				require.Equal(t, int64(101), maxID)
+			})
+		}
 	})
 }

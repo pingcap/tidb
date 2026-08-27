@@ -73,9 +73,10 @@ const (
 	// AutoIDLeaderPath is etcd key of auto id service leader, exported for test.
 	AutoIDLeaderPath = "tidb/autoid/leader"
 
-	defaultRPCRetryMinErrors   = 10
-	defaultRPCRetryMinDuration = 15 * time.Second
-	rpcRetryAction             = "check AutoID service availability and connectivity, then retry the statement"
+	defaultRPCRetryMinErrors         = 10
+	defaultRPCRetryMinDuration       = 15 * time.Second
+	singlePointWriteOperationTimeout = 2 * defaultRPCRetryMinDuration
+	rpcRetryAction                   = "check AutoID service availability and connectivity, then retry the statement"
 )
 
 type rpcRetryPolicy struct {
@@ -502,13 +503,19 @@ func (d *ClientDiscover) ResetConn(reason error) {
 }
 
 func (sp *singlePointAlloc) Transfer(databaseID, tableID int64) error {
+	ctx, cancel := context.WithTimeout(context.Background(), singlePointWriteOperationTimeout)
+	defer cancel()
+	return sp.transfer(ctx, databaseID, tableID)
+}
+
+func (sp *singlePointAlloc) transfer(ctx context.Context, databaseID, tableID int64) error {
 	sp.stateMu.Lock()
 	defer sp.stateMu.Unlock()
 	if sp.dbID == databaseID && sp.tblID == tableID {
 		return nil
 	}
 	// Re-fetch the authoritative source base because a cold allocator may not have observed IDs allocated by other TiDBs.
-	_, _, err := sp.alloc(context.Background(), 0, 1, 1)
+	_, _, err := sp.alloc(ctx, 0, 1, 1)
 	if err != nil {
 		return err
 	}
@@ -516,7 +523,7 @@ func (sp *singlePointAlloc) Transfer(databaseID, tableID int64) error {
 	sourceDBID, sourceTableID := sp.dbID, sp.tblID
 	sp.dbID = databaseID
 	sp.tblID = tableID
-	if err := sp.rebase(context.Background(), transferBase, false); err != nil {
+	if err := sp.rebase(ctx, transferBase, false); err != nil {
 		sp.dbID = sourceDBID
 		sp.tblID = sourceTableID
 		return err
@@ -600,9 +607,15 @@ func (sp *singlePointAlloc) ForceRebase(newBase int64) error {
 	if newBase == -1 {
 		return ErrAutoincReadFailed.GenWithStack("Cannot force rebase the next global ID to '0'")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), singlePointWriteOperationTimeout)
+	defer cancel()
+	return sp.forceRebase(ctx, newBase)
+}
+
+func (sp *singlePointAlloc) forceRebase(ctx context.Context, newBase int64) error {
 	sp.stateMu.Lock()
 	defer sp.stateMu.Unlock()
-	return sp.rebase(context.Background(), newBase, true)
+	return sp.rebase(ctx, newBase, true)
 }
 
 // RebaseSeq rebases the sequence value in number axis with tableID and the new base value.
