@@ -35,6 +35,7 @@ mod evaluator_binop;
 mod math;
 mod operand_dispatch;
 mod regexp_like;
+mod util_source;
 
 /// Parses and evaluates a constant expression to its label.
 pub(super) fn e(expr: &str) -> String {

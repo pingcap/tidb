@@ -53,7 +53,7 @@
 ///    stays absent.
 /// 3. With `fetchAllLimit = 1` both calls produce the SAME results: the
 ///    "too many digests, fetch all" branch passes empty `inValues`, and
-///    `runMockQuery` returns its whole data table unchanged (`util.go:1906`),
+///    `runMockQuery` returns its whole data table unchanged (`util.go:1907`),
 ///    after which `updateDigestInfo` (`util.go:1956`) still only overwrites
 ///    previously-empty entries.
 #[test]
