@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -245,14 +246,22 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 	})
 	readOnly := sql.IsReadOnly(sessVars)
 	if !readOnly && meetsErr == nil {
-		if shouldCheckConnectionAliveBeforeCommit(sessVars, sql) {
+		checkConnectionAlive := shouldCheckConnectionAliveBeforeCommit(sessVars, sql)
+		if checkConnectionAlive {
 			sessVars.SQLKiller.CheckConnectionAlive()
 		}
 		// The timeout watcher sets the kill signal before canceling the dispatch
 		// context. Do not start commit in that small window: once commit is sent,
 		// cancellation may turn an otherwise deterministic timeout into an
 		// undetermined transaction result.
-		meetsErr = handlePendingSQLKillerSignal(sessVars)
+		//
+		// Preserve the old connection-liveness behavior of handling every signal,
+		// but only extend this check to MaxExecTimeExceeded. Executors such as BRIE
+		// handle QueryInterrupted themselves; reporting it again from RecordSet.Close
+		// would produce two errors for one cancellation.
+		if shouldHandlePendingSQLKillerSignalBeforeCommit(sessVars, checkConnectionAlive) {
+			meetsErr = handlePendingSQLKillerSignal(sessVars)
+		}
 	}
 	if !readOnly {
 		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
@@ -302,6 +311,16 @@ func handlePendingSQLKillerSignal(sessVars *variable.SessionVars) error {
 		return nil
 	}
 	return sessVars.SQLKiller.HandleSignal()
+}
+
+// shouldHandlePendingSQLKillerSignalBeforeCommit preserves the old behavior for
+// statements that perform a connection-alive check. Other statements only need
+// the additional pre-commit guard for a DML timeout; their executors remain
+// responsible for handling other cancellation signals.
+func shouldHandlePendingSQLKillerSignalBeforeCommit(sessVars *variable.SessionVars, checkConnectionAlive bool) bool {
+	signal := sessVars.SQLKiller.GetKillSignal()
+	return signal != sqlkiller.UnspecifiedKillSignal &&
+		(checkConnectionAlive || signal == sqlkiller.MaxExecTimeExceeded)
 }
 
 // normalizeStmtCancellationError translates a canceled request back to the SQLKiller

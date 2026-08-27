@@ -84,6 +84,25 @@ func TestNormalizeStmtCancellationError(t *testing.T) {
 	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
 }
 
+func TestPendingKillSignalBeforeCommitScope(t *testing.T) {
+	vars := variable.NewSessionVars(nil)
+	require.False(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, false))
+	require.False(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, true))
+
+	// The DML-timeout race guard applies to MaxExecTimeExceeded even when the
+	// statement is not eligible for a connection-alive check.
+	vars.SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
+	require.True(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, false))
+	require.True(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, true))
+	vars.SQLKiller.Reset()
+
+	// Other cancellation signals must not be consumed by the new guard. Some
+	// executors, such as BRIE, have already returned QueryInterrupted from Next.
+	vars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	require.False(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, false))
+	require.True(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, true))
+}
+
 func TestSetProcessInfoPreservesTimeoutDuringTxnRetry(t *testing.T) {
 	se := &session{sessionVars: variable.NewSessionVars(nil)}
 	start := time.Now().Add(-time.Second)
