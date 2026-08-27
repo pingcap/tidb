@@ -130,6 +130,16 @@ WHERE t3.a = 2`
 	require.Contains(t, planOf(query), "TableDual")
 	tk.MustQuery(query).Check(testkit.Rows())
 
+	// A USING join coalesces the common column in the join's schema, so collect
+	// its equalities too rather than dropping them with the redundant column.
+	query = `SELECT STRAIGHT_JOIN t3.a
+FROM t1
+JOIN t2 USING (a)
+JOIN t3 USING (a)
+WHERE t1.a = 1`
+	require.Contains(t, planOf(query), "eq(test.t3.a, 1)")
+	tk.MustQuery(query).Check(testkit.Rows("1"))
+
 	// An outer join bounds the region: the constant must not cross it and change
 	// the null-extended side.
 	query = `SELECT t3.a
