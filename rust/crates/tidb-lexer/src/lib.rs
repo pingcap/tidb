@@ -1192,23 +1192,23 @@ mod tests {
     #[path = "consistent_source.rs"]
     mod consistent_source;
 
-    #[path = "go_parity_b051_source.rs"]
-    mod go_parity_b051_source;
+    #[path = "parser_base_ddl_dml_source.rs"]
+    mod parser_base_ddl_dml_source;
 
-    #[path = "go_parity_b052_source.rs"]
-    mod go_parity_b052_source;
+    #[path = "expressions_functions_misc_source.rs"]
+    mod expressions_functions_misc_source;
 
-    #[path = "go_parity_b053_source.rs"]
-    mod go_parity_b053_source;
+    #[path = "charset_digester_sm3_source.rs"]
+    mod charset_digester_sm3_source;
 
-    #[path = "go_parity_b054_source.rs"]
-    mod go_parity_b054_source;
+    #[path = "lexer_parser_privileges_source.rs"]
+    mod lexer_parser_privileges_source;
 
-    #[path = "go_parity_b055_source.rs"]
-    mod go_parity_b055_source;
+    #[path = "parser_parse_restore_source.rs"]
+    mod parser_parse_restore_source;
 
-    #[path = "go_parity_b056_source.rs"]
-    mod go_parity_b056_source;
+    #[path = "field_type_terror_source.rs"]
+    mod field_type_terror_source;
 
     /// Renders a SQL string to its space-joined token labels for compact
     /// assertions (the terminal `Eof` is dropped).
