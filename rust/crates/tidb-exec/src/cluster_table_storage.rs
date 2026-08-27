@@ -1040,13 +1040,32 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
 }
 
 /// One statement's read snapshot: a real read-only transaction at one PD
-/// timestamp, owned by the thread that opened it.
+/// timestamp, owned by the CONNECTION worker that opened it.
 ///
 /// This is the autocommit shape. Inside an explicit transaction the session
 /// reads through [`SessionTransaction::snapshot`] instead, so every statement
 /// shares the one timestamp `BEGIN` took.
-pub struct StatementSnapshot {
-    thread: TransactionThread,
+///
+/// The transaction is held inline rather than behind a borrowed worker
+/// thread. Go's autocommit read builds its `KVSnapshot` on the connection
+/// goroutine and hands nothing to another thread, and there is nothing here
+/// that needs one either: `SharedReadRuntime` is `Arc<Mutex<C>>` plus
+/// `BackgroundRegionCache<L>`, so the transport is shared, not worker-local,
+/// and `tests/transaction_send_source.rs` asserts as much. Sampling a 200-row
+/// range put 192 of 4195 samples in the handshake this removes -- the whole
+/// cost of shipping a purely local `begin_read_only_at` to another thread and
+/// waiting for it to come back.
+pub struct StatementSnapshot<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    /// `None` once the statement has finished; every read after that is
+    /// refused exactly as a closed worker's channel used to refuse it.
+    transaction: Option<RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>>,
+    start_ts: u64,
+    timeout: Duration,
 }
 
 /// One statement snapshot whose ordinary PD timestamp request is in flight.
@@ -1066,37 +1085,39 @@ where
 impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
     PreparedStatementSnapshot<C, L, P>
 {
-    /// Waits for the transaction prepared after planning.
-    pub fn wait(self) -> Result<StatementSnapshot, OptimisticCoordinatorError> {
+    /// Waits for the timestamp prepared after planning, then opens the
+    /// read-only transaction HERE. `begin_read_only_at` spends no timestamp
+    /// and sends no request -- it is local state over an already-shared
+    /// transport -- so handing it to another thread only bought a round trip.
+    pub fn wait(self) -> Result<StatementSnapshot<C, L, P>, OptimisticCoordinatorError> {
         let start_ts = self
             .start_ts
             .wait()
             .map_err(|error| OptimisticCoordinatorError::Timestamp(error.to_string()))?;
+        let transaction = self.opener.begin_read_only_at(start_ts)?;
         Ok(StatementSnapshot {
-            thread: TransactionThread::open_with(
-                &self.opener,
-                self.timeout,
-                TransactionOpen::ReadOnlyAt(start_ts),
-                "cluster-statement-snapshot",
-                CommitProtocol::two_phase_only(),
-            )?,
+            transaction: Some(transaction),
+            start_ts,
+            timeout: self.timeout,
         })
     }
 }
 
-impl fmt::Debug for StatementSnapshot {
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> fmt::Debug
+    for StatementSnapshot<C, L, P>
+{
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("StatementSnapshot")
-            .field("start_ts", &self.thread.start_ts)
-            .field("open", &self.thread.requests.is_some())
+            .field("start_ts", &self.start_ts)
+            .field("open", &self.transaction.is_some())
             .finish()
     }
 }
 
 impl StatementSnapshot {
     /// Starts fetching one ordinary read-only transaction's PD timestamp
-    /// without opening its worker-local transaction.
+    /// without opening the transaction itself.
     pub fn prepare<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         timeout: Duration,
@@ -1109,71 +1130,92 @@ impl StatementSnapshot {
         })
     }
 
-    /// Opens one read-only transaction on its own thread, spending exactly one
-    /// PD timestamp.
+    /// Opens one read-only transaction on the CALLING thread, spending
+    /// exactly one PD timestamp.
     pub fn open<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         timeout: Duration,
-    ) -> Result<Self, OptimisticCoordinatorError> {
-        Ok(Self {
-            thread: TransactionThread::open(
-                &opener,
-                timeout,
-                false,
-                "cluster-statement-snapshot",
-                // Read-only: no commit ever runs, so the protocol is moot.
-                CommitProtocol::two_phase_only(),
-            )?,
-        })
+    ) -> Result<StatementSnapshot<C, L, P>, OptimisticCoordinatorError> {
+        StatementSnapshot::prepare(opener, timeout)?.wait()
     }
+}
 
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> StatementSnapshot<C, L, P> {
     /// The timestamp every read of this statement is served at.
     #[must_use]
     pub const fn start_ts(&self) -> u64 {
-        self.thread.start_ts
+        self.start_ts
     }
+}
 
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> StatementSnapshot<C, L, P> {
     /// Ends the statement's read transaction, leaving no locks behind.
     ///
     /// Calling it twice is a no-op: the statement is already finished.
     pub fn finish(&mut self) -> Result<(), StorageError> {
-        self.thread.finish()
+        let Some(transaction) = self.transaction.take() else {
+            return Ok(());
+        };
+        transaction
+            .finish_without_writes()
+            .map(|_| ())
+            .map_err(|error| StorageError::Backend(error.to_string()))
+    }
+
+    /// One call context per read, never one for the snapshot.
+    /// [`UnaryCallContext`] carries an ABSOLUTE deadline, so a context minted
+    /// when the snapshot opened would charge a later read for the wall-clock
+    /// time the statement spent between them.
+    fn call(&self) -> UnaryCallContext {
+        UnaryCallContext::with_timeout(self.timeout)
+    }
+
+    fn reader(
+        &mut self,
+    ) -> Result<&mut RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>, StorageError>
+    {
+        self.transaction
+            .as_mut()
+            .ok_or_else(|| StorageError::Backend("the transaction is already finished".to_owned()))
     }
 }
 
-impl Drop for StatementSnapshot {
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> Drop
+    for StatementSnapshot<C, L, P>
+{
     fn drop(&mut self) {
         // Go abandons an autocommit read snapshot after the statement: there
         // are no writes or locks whose cleanup the foreground must observe.
-        // Keep the worker-owned transaction lifecycle ordered, but do not put
-        // the next statement behind its local read-only state transition.
-        self.thread.finish_detached();
+        // Ending it here costs nothing to wait for -- `finish_without_writes`
+        // on a read-only transaction is a local state transition and sends no
+        // request -- which is why this no longer has to be detached to keep
+        // the next statement off its critical path.
+        if let Some(transaction) = self.transaction.take() {
+            let _ = transaction.finish_without_writes();
+        }
     }
 }
 
-impl ClusterSnapshot for StatementSnapshot {
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnapshot
+    for StatementSnapshot<C, L, P>
+{
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+        let call = self.call();
+        let read_ts = self.start_ts;
         let bytes = key.as_bytes().to_vec();
-        ask(&self.thread.sender()?, |reply| TransactionRequest::Get {
-            key: bytes,
-            // A statement snapshot serves no locking statement.
-            locking: false,
-            read_ts: None,
-            reply,
-        })
+        self.reader()?
+            .snapshot_get_at(&bytes, read_ts, &call)
+            .map(|result| result.value)
+            .map_err(classify)
     }
 
     fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
-        let keys = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
-        ask(&self.thread.sender()?, |reply| {
-            TransactionRequest::BatchGet {
-                keys,
-                // A statement snapshot serves no locking statement.
-                locking: false,
-                read_ts: None,
-                reply,
-            }
-        })
+        let call = self.call();
+        let read_ts = self.start_ts;
+        let keys: Vec<Vec<u8>> = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
+        self.reader()?
+            .snapshot_batch_get_at(&keys, read_ts, &call)
+            .map_err(classify)
     }
 
     fn scan(
@@ -1182,19 +1224,17 @@ impl ClusterSnapshot for StatementSnapshot {
         end: &Key,
         limit: Option<usize>,
     ) -> Result<SnapshotPairs, StorageError> {
+        let call = self.call();
+        let read_ts = self.start_ts;
         let start = start.as_bytes().to_vec();
         let end = end.as_bytes().to_vec();
-        ask(&self.thread.sender()?, |reply| TransactionRequest::Scan {
-            start,
-            end,
-            limit,
-            read_ts: None,
-            reply,
-        })
+        self.reader()?
+            .snapshot_scan_at(&start, &end, limit, read_ts, &call)
+            .map_err(classify)
     }
 
     fn start_ts(&self) -> u64 {
-        self.thread.start_ts
+        self.start_ts
     }
 }
 
@@ -1671,7 +1711,10 @@ pub fn statement_storage<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCap
     opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     buffer: MutationBuffer,
     timeout: Duration,
-) -> Result<(ClusterTableStorage, Arc<Mutex<StatementSnapshot>>), OptimisticCoordinatorError> {
+) -> Result<
+    (ClusterTableStorage, Arc<Mutex<StatementSnapshot<C, L, P>>>),
+    OptimisticCoordinatorError,
+> {
     let snapshot = Arc::new(Mutex::new(StatementSnapshot::open(opener, timeout)?));
     let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
     Ok((ClusterTableStorage::new(buffer, handle), snapshot))
@@ -1822,13 +1865,12 @@ mod tests {
     use std::sync::mpsc::RecvTimeoutError as StdRecvTimeoutError;
     use std::thread;
 
-    /// The handle crosses threads even though the transaction it drives never
-    /// does; that is the whole reason for the thread-owned shape.
+    /// The handle is still `Send`, and now so is the transaction inside it.
     ///
-    /// It is what says the split is between the transaction and its handle --
-    /// not between "a fresh thread" and "a reused one". Borrowing the thread
-    /// from the pinned pool keeps the transaction on one thread for its whole
-    /// life, so this assertion holds for exactly the reason it always did.
+    /// This used to hold because only a channel crossed threads while the
+    /// transaction stayed pinned to a borrowed worker. It holds for a stronger
+    /// reason now: `RealOptimisticTransaction` is itself `Send` over an
+    /// `Arc<Mutex<_>>` transport, which is what let the worker go.
     fn assert_send<T: Send>() {}
 
     #[test]
@@ -1837,45 +1879,30 @@ mod tests {
         assert_send::<ClusterTableStorage>();
     }
 
+    /// A finished statement snapshot refuses further reads, and finishing it
+    /// twice is a no-op.
+    ///
+    /// The worker channel used to enforce this: a closed sender made every
+    /// later `ask` fail. Owning the transaction inline means the lifecycle has
+    /// to be enforced here instead, so this pins it directly rather than
+    /// through the channel that no longer exists.
     #[test]
-    fn dropping_a_statement_snapshot_does_not_wait_for_worker_cleanup() {
-        let (requests, incoming) = cc::unbounded();
-        let (dropped, drop_finished) = mpsc::channel();
-        let dropper = thread::spawn(move || {
-            drop(StatementSnapshot {
-                thread: TransactionThread {
-                    requests: Some(requests),
-                    start_ts: 42,
-                },
-            });
-            dropped.send(()).expect("report snapshot drop");
-        });
-
-        let synchronous_reply = match incoming
-            .recv_timeout(Duration::from_secs(1))
-            .expect("snapshot drop must ask the worker to finish")
-        {
-            TransactionRequest::Finish { reply } => Some(reply),
-            TransactionRequest::FinishDetached => None,
-            _ => panic!("snapshot drop sent a non-finish request"),
+    fn a_finished_statement_snapshot_refuses_reads_and_finishes_once() {
+        let mut snapshot: StatementSnapshot = StatementSnapshot {
+            transaction: None,
+            start_ts: 42,
+            timeout: Duration::from_secs(1),
         };
-        let returned_without_cleanup = match drop_finished.recv_timeout(Duration::from_millis(50)) {
-            Ok(()) => true,
-            Err(StdRecvTimeoutError::Timeout) => false,
-            Err(StdRecvTimeoutError::Disconnected) => {
-                panic!("snapshot dropper stopped unexpectedly")
-            }
-        };
-
-        if let Some(reply) = synchronous_reply {
-            reply
-                .send(Ok(()))
-                .expect("release synchronous snapshot drop");
-        }
-        dropper.join().expect("snapshot dropper");
+        assert_eq!(snapshot.start_ts(), 42);
         assert!(
-            returned_without_cleanup,
-            "read-only statement cleanup blocked the foreground thread"
+            snapshot.finish().is_ok(),
+            "finishing an already-finished snapshot is a no-op, not an error"
+        );
+        let refused = snapshot.get(&Key::from_bytes(b"k".to_vec()));
+        assert!(
+            matches!(refused, Err(StorageError::Backend(ref message))
+                if message.contains("already finished")),
+            "a read after finish must be refused: {refused:?}"
         );
     }
 
