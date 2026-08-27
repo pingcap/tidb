@@ -357,12 +357,10 @@ pub(super) fn distinct_can_be_eliminated(
     else {
         return false;
     };
-    let [
-        tidb_ast::SelectField::Expr {
-            expr: tidb_ast::Expr::Column(path),
-            ..
-        },
-    ] = select.fields.fields()
+    let [tidb_ast::SelectField::Expr {
+        expr: tidb_ast::Expr::Column(path),
+        ..
+    }] = select.fields.fields()
     else {
         return false;
     };
@@ -2013,13 +2011,11 @@ fn direct_source_has_real_stats(
         [db, name] => (db.as_str(), name.as_str()),
         _ => return false,
     };
-    catalog
-        .stored_table_id(db, name)
-        .is_some_and(|id| {
-            catalog
-                .table_statistics(id)
-                .is_some_and(|stats| !stats.pseudo)
-        })
+    catalog.stored_table_id(db, name).is_some_and(|id| {
+        catalog
+            .table_statistics(id)
+            .is_some_and(|stats| !stats.pseudo)
+    })
 }
 
 fn contains_logic_or(expression: &tidb_ast::Expr) -> bool {
@@ -3323,7 +3319,7 @@ fn build_aggregation(
                 let candidate_rows = input_candidate.as_ref().map(|candidate| {
                     tidb_planner::candidate_cost::evaluate(
                         candidate,
-                        &tidb_planner::candidate_cost::CostEnv::default(),
+                        ctx.optimizer_cost_env(),
                         tidb_planner::task_type::TaskType::Root,
                     )
                     .rows
@@ -3504,11 +3500,8 @@ fn build_aggregation(
                 let mut remapped_functions = state.agg_funcs.clone();
                 let remapped = valid_sources
                     && remapped_groups.iter_mut().all(|expression| {
-                        crate::predicate_pushdown::remap_expression(
-                            expression,
-                            &projection.sources,
-                        )
-                        .is_some()
+                        crate::predicate_pushdown::remap_expression(expression, &projection.sources)
+                            .is_some()
                     })
                     && remapped_functions.iter_mut().all(|function| {
                         function.arg.iter_mut().all(|expression| {
@@ -3564,17 +3557,17 @@ fn build_aggregation(
                         trace.join_reorder_projection(&projection.fields);
                         source = trace.meter(source);
                     }
-                    input_candidate =
-                        match (input_candidate, joined_logical_rows.or(logical_rows)) {
-                            (Some(child), Some(input_rows)) => {
-                                Some(tidb_planner::candidate_cost::Candidate::Projection {
-                                    child: Box::new(child),
-                                    input_rows,
-                                    exprs: vec![false; projection.sources.len()],
-                                })
-                            }
-                            _ => None,
-                        };
+                    input_candidate = match (input_candidate, joined_logical_rows.or(logical_rows))
+                    {
+                        (Some(child), Some(input_rows)) => {
+                            Some(tidb_planner::candidate_cost::Candidate::Projection {
+                                child: Box::new(child),
+                                input_rows,
+                                exprs: vec![false; projection.sources.len()],
+                            })
+                        }
+                        _ => None,
+                    };
                 }
             }
         }
@@ -3608,17 +3601,16 @@ fn build_aggregation(
     let candidate_input_rows = input_candidate.as_ref().map(|candidate| {
         tidb_planner::candidate_cost::evaluate(
             candidate,
-            &tidb_planner::candidate_cost::CostEnv::default(),
+            ctx.optimizer_cost_env(),
             tidb_planner::task_type::TaskType::Root,
         )
         .rows
     });
-    let source_input_rows = candidate_input_rows.or(joined_logical_rows).or(logical_rows);
-    let (has_set_source, set_source_rows) = set_source_stat_rows(
-        select.from.as_ref(),
-        catalog,
-        current_db,
-    );
+    let source_input_rows = candidate_input_rows
+        .or(joined_logical_rows)
+        .or(logical_rows);
+    let (has_set_source, set_source_rows) =
+        set_source_stat_rows(select.from.as_ref(), catalog, current_db);
     let aggregate_input_rows = source_input_rows.or(set_source_rows.filter(|_| has_set_source));
     let source_is_index_reader = matches!(
         input_candidate.as_ref(),
@@ -3841,56 +3833,56 @@ fn build_aggregation(
         // stage (the tiny covering COUNT range), do not replace that root
         // candidate with an unordered partial HashAgg.
         && !matches!(stream_plan, Some(GlobalStreamAggPlan::Count)))
-        .then(|| {
-            global_hash_partial_plan(
-                select,
-                state,
-                &group_by,
-                has_pre_agg_applies,
-                executed_where.is_none(),
-            )
-        })
-        .flatten()
-        .and_then(|(functions, sources)| {
-            let function_count = functions.len();
-            let aggregate = PushdownPartialAggregate::Global {
-                functions: functions.clone(),
+    .then(|| {
+        global_hash_partial_plan(
+            select,
+            state,
+            &group_by,
+            has_pre_agg_applies,
+            executed_where.is_none(),
+        )
+    })
+    .flatten()
+    .and_then(|(functions, sources)| {
+        let function_count = functions.len();
+        let aggregate = PushdownPartialAggregate::Global {
+            functions: functions.clone(),
+        };
+        if !source
+            .table_access()
+            .is_some_and(|access| access.accept_partial_aggregate(&aggregate, ctx))
+        {
+            return None;
+        }
+        for (index, source_kind) in sources.iter().enumerate() {
+            let function = state.agg_funcs.get_mut(index)?;
+            let source_column = match source_kind {
+                GroupedPartialSource::Function(source) => *source,
+                GroupedPartialSource::Avg { count, .. } => *count,
+                GroupedPartialSource::Group(_) => return None,
             };
-            if !source
-                .table_access()
-                .is_some_and(|access| access.accept_partial_aggregate(&aggregate, ctx))
-            {
-                return None;
-            }
-            for (index, source_kind) in sources.iter().enumerate() {
-                let function = state.agg_funcs.get_mut(index)?;
-                let source_column = match source_kind {
-                    GroupedPartialSource::Function(source) => *source,
-                    GroupedPartialSource::Avg { count, .. } => *count,
-                    GroupedPartialSource::Group(_) => return None,
-                };
-                let mut partial = source.schema().columns.get(source_column)?.clone();
-                partial.index = source_column as i64;
-                function.arg = Some(Expression::Column(partial));
-                match source_kind {
-                    GroupedPartialSource::Function(source)
-                        if matches!(
-                            functions[*source].kind,
-                            crate::remote_scan::PushdownAggregateKind::Count
-                        ) =>
-                    {
-                        function.kind = AggKind::FinalCount;
-                    }
-                    GroupedPartialSource::Avg { sum, .. } => {
-                        let mut partial_sum = source.schema().columns.get(*sum)?.clone();
-                        partial_sum.index = *sum as i64;
-                        function.extra_args = vec![Expression::Column(partial_sum)];
-                    }
-                    _ => {}
+            let mut partial = source.schema().columns.get(source_column)?.clone();
+            partial.index = source_column as i64;
+            function.arg = Some(Expression::Column(partial));
+            match source_kind {
+                GroupedPartialSource::Function(source)
+                    if matches!(
+                        functions[*source].kind,
+                        crate::remote_scan::PushdownAggregateKind::Count
+                    ) =>
+                {
+                    function.kind = AggKind::FinalCount;
                 }
+                GroupedPartialSource::Avg { sum, .. } => {
+                    let mut partial_sum = source.schema().columns.get(*sum)?.clone();
+                    partial_sum.index = *sum as i64;
+                    function.extra_args = vec![Expression::Column(partial_sum)];
+                }
+                _ => {}
             }
-            Some(function_count)
-        });
+        }
+        Some(function_count)
+    });
     let partial_global_hash = partial_global_hash_agg_funcs.is_some();
 
     // The TPCC delivery grouped SUM is the corresponding HashAgg split. TiKV
@@ -3962,45 +3954,45 @@ fn build_aggregation(
     // An unordered scan can run the same decomposable functions in a TiKV
     // partial HashAgg. The final root HashAgg merges the function-first
     // partial rows.
-    let partial_grouped_hash_agg_funcs =
-        ((derived_output || prefer_partial_agg_for_input(source_input_rows))
-            && !force_stream
-            && aggregation_elimination.is_none()
-            && !partial_grouped_sum)
-            .then(|| {
-                grouped_hash_partial_plan(
-                    select,
-                    state,
-                    &group_by,
-                    has_pre_agg_applies,
-                    grouped_stream_ordered,
-                    executed_where.is_none(),
-                )
-            })
-            .flatten()
-            .and_then(|plan| {
-                accept_grouped_partial(
-                    &mut source,
-                    state,
-                    &mut group_by,
-                    plan,
-                    derived_output,
-                    false,
-                    ctx,
-                )
-            });
+    let partial_grouped_hash_agg_funcs = ((derived_output
+        || prefer_partial_agg_for_input(source_input_rows))
+        && !force_stream
+        && aggregation_elimination.is_none()
+        && !partial_grouped_sum)
+        .then(|| {
+            grouped_hash_partial_plan(
+                select,
+                state,
+                &group_by,
+                has_pre_agg_applies,
+                grouped_stream_ordered,
+                executed_where.is_none(),
+            )
+        })
+        .flatten()
+        .and_then(|plan| {
+            accept_grouped_partial(
+                &mut source,
+                state,
+                &mut group_by,
+                plan,
+                derived_output,
+                false,
+                ctx,
+            )
+        });
     let partial_grouped_hash = partial_grouped_hash_agg_funcs.is_some();
 
     // An ordered grouped scan can run all decomposable functions at TiKV and
     // stream the partial groups through the reader. The final root stage
     // keeps the same grouping order; COUNT alone changes kind because it must
     // sum per-region partial counts rather than count partial rows.
-    let partial_grouped_stream_agg_funcs =
-        ((derived_output || prefer_partial_agg_for_input(source_input_rows))
-            && !force_stream
-            && aggregation_elimination.is_none()
-            && !partial_grouped_sum
-            && !partial_grouped_hash)
+    let partial_grouped_stream_agg_funcs = ((derived_output
+        || prefer_partial_agg_for_input(source_input_rows))
+        && !force_stream
+        && aggregation_elimination.is_none()
+        && !partial_grouped_sum
+        && !partial_grouped_hash)
         .then(|| {
             grouped_stream_partial_plan(
                 select,
@@ -4416,31 +4408,22 @@ fn build_aggregation(
                 .argument
                 .as_column()
                 .and_then(|column| usize::try_from(column.index).ok());
-            let pushed_remote =
-                argument_offset.is_some_and(|order_offset| {
-                    source.table_access().is_some_and(|access| {
-                        access
-                            .accept_extreme_boundary(order_offset, elimination.desc)
-                    })
-                });
+            let pushed_remote = argument_offset.is_some_and(|order_offset| {
+                source.table_access().is_some_and(|access| {
+                    access.accept_extreme_boundary(order_offset, elimination.desc)
+                })
+            });
             if !pushed_remote {
                 if let Some(order_offset) = argument_offset {
                     let _ = source.table_access().is_some_and(|access| {
-                        access.accept_index_top_n(
-                            &[(order_offset, elimination.desc)],
-                            1,
-                        )
+                        access.accept_index_top_n(&[(order_offset, elimination.desc)], 1)
                     });
                 }
             }
 
             if pushed_remote {
                 if let Some(trace) = trace.as_deref_mut() {
-                    trace.pushed_topn_reader(
-                        &traced_select.order_by,
-                        &qualify,
-                        1,
-                    );
+                    trace.pushed_topn_reader(&traced_select.order_by, &qualify, 1);
                 }
             } else {
                 source = Box::new(TopNExec::new(
@@ -4718,8 +4701,8 @@ fn build_aggregation(
                             // Go's InjectProjBelowAgg: the scalar argument is
                             // evaluated by a Projection BELOW the aggregate,
                             // which reads the projected column.
-                            injected_projection = trace
-                                .injected_below_agg_projection(traced_select, &qualify);
+                            injected_projection =
+                                trace.injected_below_agg_projection(traced_select, &qualify);
                         }
                         _ => {}
                     }

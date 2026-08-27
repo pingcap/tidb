@@ -153,6 +153,7 @@ use tidb_planner::cardinality::row_size::{
     RowSizeStore, RowSizeType,
 };
 use tidb_planner::cost_factors::TOLERANCE_FACTOR;
+use tidb_planner::plan_cost_ver2::CostSessionOpts;
 use tidb_planner::selectivity_greedy::{
     combine_selectivity, ConditionKind, SelectivityDefaults, StatsNode, StatsNodeType,
 };
@@ -176,6 +177,7 @@ const TIDB_REQUEST_FACTOR: f64 = 6_000_000.00;
 const DIST_SQL_SCAN_CONCURRENCY: f64 = 15.0;
 /// Go `SessionVars.IndexLookupConcurrency()`, which falls back to
 /// `DefExecutorConcurrency` because `DefIndexLookupConcurrency` is unset.
+#[cfg(test)]
 const INDEX_LOOKUP_CONCURRENCY: f64 = 5.0;
 /// The table-side requests one double read issues PER INDEX ROW, as Go's
 /// cost model counts them.
@@ -230,6 +232,7 @@ const INDEX_LOOKUP_CONCURRENCY: f64 = 5.0;
 /// That makes the fix an executor change, not a cost change: batch the
 /// handles and issue one read per batch, as Go does. When that lands this
 /// constant already describes the reader, and nothing here has to move.
+#[cfg(test)]
 const DOUBLE_READ_REQUESTS_PER_ROW: f64 = 32.0 / 20000.0;
 /// Go `plan_cost_ver2.go`'s `MinNumRows`.
 const MIN_NUM_ROWS: f64 = 1.0;
@@ -827,6 +830,7 @@ pub(crate) fn index_join_probe_cost(
     output_row_size: f64,
     filter_count: usize,
     stats: Option<&TableStatistics>,
+    cost_session: &CostSessionOpts,
 ) -> f64 {
     let realtime = realtime_row_count(stats);
     let rows = rows.max(MIN_NUM_ROWS);
@@ -852,7 +856,8 @@ pub(crate) fn index_join_probe_cost(
                 false,
             )
             .max(MIN_ROW_SIZE);
-            (scan_cost(rows, row_size) + selection + transferred) / DIST_SQL_SCAN_CONCURRENCY
+            (scan_cost(rows, row_size) + selection + transferred)
+                / cost_session.distsql_scan_concurrency.max(1.0)
         }
         crate::access_path::LookupObject::Index(index_id) => {
             let Some(index) = table.indexes().iter().find(|index| index.id == *index_id) else {
@@ -873,7 +878,8 @@ pub(crate) fn index_join_probe_cost(
             );
             let index_scan =
                 scan_cost(rows, index_row_size) + (index.id % 100) as f64 / 1_000_000.0;
-            let index_side = (index_scan + selection + transferred) / DIST_SQL_SCAN_CONCURRENCY;
+            let index_side = (index_scan + selection + transferred)
+                / cost_session.distsql_scan_concurrency.max(1.0);
             if index_is_covering(table, *index_id, needed_columns) {
                 return index_side;
             }
@@ -914,13 +920,15 @@ pub(crate) fn index_join_probe_cost(
             // (`IndexRangeScan` 10000 and `TableRowIDScan` 10000). Pricing
             // this on the fully filtered count instead made such a probe look
             // ~71x cheaper than Go's.
-            let table_side =
-                scan_cost(index_output_rows, table_row_size) / DIST_SQL_SCAN_CONCURRENCY;
+            let table_side = scan_cost(index_output_rows, table_row_size)
+                / cost_session.distsql_scan_concurrency.max(1.0);
             let double_read_cpu = index_output_rows * TIKV_CPU_FACTOR;
-            let double_read_request =
-                index_output_rows * DOUBLE_READ_REQUESTS_PER_ROW * TIDB_REQUEST_FACTOR;
+            let double_read_request = index_output_rows / cost_session.index_lookup_size.max(1.0)
+                * 32.0
+                * TIDB_REQUEST_FACTOR;
             index_side
-                + (table_side + double_read_cpu + double_read_request) / INDEX_LOOKUP_CONCURRENCY
+                + (table_side + double_read_cpu + double_read_request)
+                    / cost_session.index_lookup_concurrency.max(1.0)
         }
     }
 }
@@ -1220,9 +1228,7 @@ fn has_full_handle_range(table: &KvTable, ranges: Option<&[IndexRange]>) -> bool
         .pk_handle_offset()
         .and_then(|offset| table.columns.get(offset))
         .is_some_and(|column| column.field_type.is_unsigned());
-    ranges.is_none_or(|ranges| {
-        ranges.len() == 1 && ranges[0].is_full_range(unsigned_handle)
-    })
+    ranges.is_none_or(|ranges| ranges.len() == 1 && ranges[0].is_full_range(unsigned_handle))
 }
 
 /// Every candidate way of reading `table` under `where_clause`.
@@ -1281,6 +1287,9 @@ pub(crate) fn enumerate_paths(
     // the complete selectivity/ranger pass a second time in the single-table
     // planner. Other callers that have no such owner pass `None`.
     source_rows: Option<f64>,
+    // The statement snapshot of concurrency and batching variables used by
+    // Go's reader cost formulas.
+    cost_session: &CostSessionOpts,
 ) -> Vec<Candidate<AccessPath>> {
     let realtime = realtime_row_count(stats);
     let source_rows = source_rows
@@ -1332,6 +1341,8 @@ pub(crate) fn enumerate_paths(
         resolver,
         stats,
         realtime,
+        Some(source_rows),
+        cost_session,
         handle_ranges.as_deref(),
         limit,
         table_limit_matches_order,
@@ -1518,6 +1529,8 @@ pub(crate) fn enumerate_paths(
                 limit,
                 stats,
                 realtime,
+                source_rows,
+                cost_session,
                 forced,
                 sort_property,
             ) {
@@ -1547,6 +1560,7 @@ pub(crate) fn enumerate_paths(
             stats,
             realtime,
             source_rows,
+            cost_session,
             index_filter_selectivity,
             // Go's gate on the same two lists
             // (`cross_estimation.go:117-122`).
@@ -1786,6 +1800,11 @@ fn full_scan_candidate(
     limit: Option<&PushedLimit<'_>>,
     stats: Option<&TableStatistics>,
     realtime: f64,
+    // The owning enumeration already derived Go's DataSource row count.
+    // Reuse that value for the full-range index candidate instead of walking
+    // the same predicate and histograms a second time.
+    source_rows: f64,
+    cost_session: &CostSessionOpts,
     forced: bool,
     sort_property: bool,
 ) -> Option<Candidate<AccessPath>> {
@@ -1803,7 +1822,6 @@ fn full_scan_candidate(
     let index_filter_count = index_filters.len();
     let index_filter_selectivity = (!index_filters.is_empty())
         .then(|| selectivity_of_conjuncts_without_paths(&index_filters, table, resolver, stats));
-    let source_rows = source_row_count(table, where_clause, resolver, stats, realtime);
     let ranges = vec![IndexRange::full()];
     let path = index_path(
         table,
@@ -1814,6 +1832,7 @@ fn full_scan_candidate(
         stats,
         realtime,
         source_rows,
+        cost_session,
         index_filter_selectivity,
         !index_filters.is_empty() || table_filter_count > 0,
         false,
@@ -1988,6 +2007,11 @@ fn table_scan_path(
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
     realtime: f64,
+    // Go's `DataSource.StatsInfo().RowCount`, already derived by the owning
+    // enumeration. Reusing it keeps the table candidate on the same single
+    // source-row derivation as the index candidates.
+    source_rows: Option<f64>,
+    cost_session: &CostSessionOpts,
     ranges: Option<&[IndexRange]>,
     limit: Option<&PushedLimit<'_>>,
     limit_matches_order: bool,
@@ -2031,7 +2055,8 @@ fn table_scan_path(
         None => realtime,
         Some(ranges) => crate::handle_range::handle_range_row_count(table, ranges, stats),
     };
-    let after_filter = source_row_count(table, where_clause, resolver, stats, realtime);
+    let after_filter = source_rows
+        .unwrap_or_else(|| source_row_count(table, where_clause, resolver, stats, realtime));
     let count_after_access =
         adjust_count_after_access(unadjusted_count_after_access, after_filter, realtime);
     let physical_count = limit.map_or(count_after_access, |limit| {
@@ -2072,7 +2097,7 @@ fn table_scan_path(
             pseudo: is_pseudo(stats),
         },
         count_after_access,
-        cost: (scanned + transferred) / DIST_SQL_SCAN_CONCURRENCY,
+        cost: (scanned + transferred) / cost_session.distsql_scan_concurrency.max(1.0),
         planner_candidate,
         source_rows: after_filter,
         // Go's skyline comparison does not use the index-risk interval for a
@@ -2179,6 +2204,7 @@ fn index_path(
     stats: Option<&TableStatistics>,
     realtime: f64,
     source_row_count: f64,
+    cost_session: &CostSessionOpts,
     index_filter_selectivity: Option<f64>,
     // Go's `len(path.IndexFilters) > 0 || len(path.TableFilters) > 0`: the
     // ordering-risk ratio in `AdjustRowCountForIndexScanByLimit` applies only
@@ -2312,7 +2338,7 @@ fn index_path(
         index_row_size
     };
     let index_net = net_cost(after_index.min(rows), index_net_row_size);
-    let index_side = (index_scan + index_net) / DIST_SQL_SCAN_CONCURRENCY;
+    let index_side = (index_scan + index_net) / cost_session.distsql_scan_concurrency.max(1.0);
 
     let (cost, planner_candidate) = if covering {
         (
@@ -2347,12 +2373,14 @@ fn index_path(
         // The table side reads one row per index row it looked up.
         let table_scan = scan_cost(rows.max(MIN_NUM_ROWS), table_row_size);
         let table_net = net_cost(rows, table_row_size);
-        let table_side = (table_scan + table_net) / DIST_SQL_SCAN_CONCURRENCY;
+        let table_side =
+            (table_scan + table_net) / cost_session.distsql_scan_concurrency.max(1.0);
         let double_read_cpu = rows * TIKV_CPU_FACTOR;
-        let double_read_tasks = rows * DOUBLE_READ_REQUESTS_PER_ROW;
+        let double_read_tasks = rows / cost_session.index_lookup_size.max(1.0) * 32.0;
         let double_read_request = double_read_tasks * TIDB_REQUEST_FACTOR;
         let cost = index_side
-            + (table_side + double_read_cpu + double_read_request) / INDEX_LOOKUP_CONCURRENCY;
+            + (table_side + double_read_cpu + double_read_request)
+                / cost_session.index_lookup_concurrency.max(1.0);
         (
             cost,
             tidb_planner::candidate_cost::Candidate::Fixed {
@@ -4065,28 +4093,34 @@ mod tests {
             Box::new(MemTableStorage::new()),
         );
         table.set_common_handle_offsets(vec![0, 1, 2]);
-        table.add_index(KvIndex {
-            id: 7,
-            name: "PRIMARY".to_owned(),
-            comment: String::new(),
-            unique: true,
-            column_offsets: vec![0, 1, 2],
-            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
-        table.add_index(KvIndex {
-            id: 8,
-            name: "idx_ab".to_owned(),
-            comment: String::new(),
-            unique: false,
-            column_offsets: vec![0, 1],
-            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
+        table.add_index(
+            KvIndex {
+                id: 7,
+                name: "PRIMARY".to_owned(),
+                comment: String::new(),
+                unique: true,
+                column_offsets: vec![0, 1, 2],
+                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+                visible: true,
+                global: false,
+                clustered_primary: false,
+            },
+            false,
+        );
+        table.add_index(
+            KvIndex {
+                id: 8,
+                name: "idx_ab".to_owned(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: vec![0, 1],
+                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+                visible: true,
+                global: false,
+                clustered_primary: false,
+            },
+            false,
+        );
 
         let column_stats = |id| ColumnStats {
             histogram: tidb_stats::Histogram {
@@ -4286,6 +4320,30 @@ mod tests {
         assert_eq!(physical_scan_row_count(10_000.0, 20_000.0), 10_000.0);
     }
 
+    #[test]
+    fn table_scan_reuses_the_owned_go_datasource_rows() {
+        let table = table_with_index();
+        let columns: Vec<usize> = (0..table.columns.len()).collect();
+        let path = table_scan_path(
+            &table,
+            &columns,
+            None,
+            &NoResolver,
+            None,
+            10_000.0,
+            Some(42.0),
+            &CostSessionOpts::default(),
+            None,
+            None,
+            false,
+            None,
+        );
+        // Go derives DataSource.StatsInfo().RowCount once and the table path
+        // reads that same value; it must not silently re-estimate to the
+        // realtime row count when the owner supplies it.
+        assert_eq!(path.source_rows, 42.0);
+    }
+
     /// Go's `keepIndex` in `skylinePruning` (`find_best_task.go:1830`):
     ///
     /// ```go
@@ -4342,6 +4400,7 @@ mod tests {
                 // ranges, so the heuristic could not fire anyway.
                 false,
                 None,
+                &CostSessionOpts::default(),
             )
             .into_iter()
             .filter_map(|candidate| candidate.path.index.map(|(id, _)| id))
@@ -4395,6 +4454,7 @@ mod tests {
             false,
             true,
             None,
+            &CostSessionOpts::default(),
         )
         .into_iter()
         .map(|candidate| candidate.path.index.map(|(id, _)| id))
@@ -4558,6 +4618,7 @@ mod tests {
             // own row count is that same one row and `adjustCountAfterAccess`
             // has nothing to equalize.
             1.0,
+            &CostSessionOpts::default(),
             None,
             false,
             false,
@@ -4574,6 +4635,7 @@ mod tests {
             // own row count is that same one row and `adjustCountAfterAccess`
             // has nothing to equalize.
             1.0,
+            &CostSessionOpts::default(),
             None,
             false,
             false,
@@ -4613,6 +4675,8 @@ mod tests {
             None,
             realtime,
             None,
+            &CostSessionOpts::default(),
+            None,
             None,
             false,
             None,
@@ -4638,6 +4702,7 @@ mod tests {
             None,
             realtime,
             realtime,
+            &CostSessionOpts::default(),
             None,
             false,
             false,
@@ -4676,6 +4741,8 @@ mod tests {
             &NoResolver,
             None,
             realtime,
+            None,
+            &CostSessionOpts::default(),
             None,
             None,
             false,
@@ -4813,20 +4880,23 @@ mod tests {
             Box::new(MemTableStorage::new()),
         );
         table.set_pk_handle_offset(0);
-        table.add_index(KvIndex {
-            id: 7,
-            name: "tags_mv".to_owned(),
-            comment: String::new(),
-            unique: false,
-            column_offsets: vec![3, 2],
-            prefix_lengths: vec![
-                crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
-                crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
-            ],
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
+        table.add_index(
+            KvIndex {
+                id: 7,
+                name: "tags_mv".to_owned(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: vec![3, 2],
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+                ],
+                visible: true,
+                global: false,
+                clustered_primary: false,
+            },
+            false,
+        );
         table
     }
 
@@ -4841,7 +4911,8 @@ mod tests {
             .iter()
             .map(|column| (column.name.clone(), column.field_type.clone()))
             .collect();
-        let where_clause = parse_where("'OC8p0384XTkt.org/s/link' MEMBER OF (tags) AND country = 'US'");
+        let where_clause =
+            parse_where("'OC8p0384XTkt.org/s/link' MEMBER OF (tags) AND country = 'US'");
         let hints = crate::index_hints::AvailablePaths::unrestricted();
         let candidates = enumerate_paths(
             &table,
@@ -4857,11 +4928,26 @@ mod tests {
             false,
             true,
             None,
+            &CostSessionOpts::default(),
         );
         let (_, ranges) = candidates
             .iter()
-            .find_map(|candidate| candidate.path.index.as_ref().map(|(id, ranges)| (*id, ranges)))
-            .unwrap_or_else(|| panic!("no index candidate among {:?}", candidates.iter().map(|c| c.path.index.as_ref().map(|(id, _)| *id)).collect::<Vec<_>>()));
+            .find_map(|candidate| {
+                candidate
+                    .path
+                    .index
+                    .as_ref()
+                    .map(|(id, ranges)| (*id, ranges))
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "no index candidate among {:?}",
+                    candidates
+                        .iter()
+                        .map(|c| c.path.index.as_ref().map(|(id, _)| *id))
+                        .collect::<Vec<_>>()
+                )
+            });
         assert_eq!(ranges.len(), 1, "{ranges:?}");
         assert!(ranges[0].is_point(false), "{:?}", ranges[0]);
         // The stored elements are byte keys: low == high == [element, country].
@@ -4877,14 +4963,16 @@ mod tests {
         };
         assert_eq!(
             text(&ranges[0].low),
-            vec![
-                "OC8p0384XTkt.org/s/link".to_owned(),
-                "US".to_owned()
-            ],
+            vec!["OC8p0384XTkt.org/s/link".to_owned(), "US".to_owned()],
             "{:?}",
             ranges[0]
         );
-        assert_eq!(text(&ranges[0].high), text(&ranges[0].low), "{:?}", ranges[0]);
+        assert_eq!(
+            text(&ranges[0].high),
+            text(&ranges[0].low),
+            "{:?}",
+            ranges[0]
+        );
     }
 
     #[test]
@@ -4915,13 +5003,19 @@ mod tests {
             false,
             true,
             None,
+            &CostSessionOpts::default(),
         );
         assert!(
+            candidates.iter().all(|candidate| !candidate
+                .path
+                .index
+                .as_ref()
+                .is_some_and(|(id, _)| *id == 7)),
+            "the multi-valued index became a path without a source: {:?}",
             candidates
                 .iter()
-                .all(|candidate| !candidate.path.index.as_ref().is_some_and(|(id, _)| *id == 7)),
-            "the multi-valued index became a path without a source: {:?}",
-            candidates.iter().map(|c| c.path.index.as_ref().map(|(id, _)| *id)).collect::<Vec<_>>()
+                .map(|c| c.path.index.as_ref().map(|(id, _)| *id))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -4950,9 +5044,15 @@ mod tests {
         table.set_pk_handle_offset(0);
         let full = IndexRange::full();
         assert!(full.is_full_range(false));
-        assert!(has_full_handle_range(&table, Some(std::slice::from_ref(&full))));
+        assert!(has_full_handle_range(
+            &table,
+            Some(std::slice::from_ref(&full))
+        ));
         assert!(has_full_handle_range(&table, None));
         let point = point_range();
-        assert!(!has_full_handle_range(&table, Some(std::slice::from_ref(&point))));
+        assert!(!has_full_handle_range(
+            &table,
+            Some(std::slice::from_ref(&point))
+        ));
     }
 }

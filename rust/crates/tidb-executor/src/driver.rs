@@ -347,8 +347,8 @@ pub(crate) use agg_build::*;
 pub(crate) use agg_select::*;
 pub use catalog::*;
 pub(crate) use clause_resolve::*;
-pub use dml::*;
 pub use dml::run_fast_prepared_update;
+pub use dml::*;
 pub(crate) use from::*;
 pub(crate) use grouping::*;
 pub use params::*;
@@ -772,7 +772,11 @@ pub fn run_fast_point_get(
     };
     let row = table
         .get_row_by_handle(&handle, &ctx.session_zone())
-        .map_err(|error| DriverError::Exec(ExecError::Internal(format!("row decode failed: {error:?}").into())))?;
+        .map_err(|error| {
+            DriverError::Exec(ExecError::Internal(
+                format!("row decode failed: {error:?}").into(),
+            ))
+        })?;
     let rows = row
         .map(|row| {
             output_offsets
@@ -869,7 +873,11 @@ pub fn run_fast_prepared_point_get(
     }
     let row = table
         .get_row_by_handle(&handle, &ctx.session_zone())
-        .map_err(|error| DriverError::Exec(ExecError::Internal(format!("row decode failed: {error:?}").into())))?;
+        .map_err(|error| {
+            DriverError::Exec(ExecError::Internal(
+                format!("row decode failed: {error:?}").into(),
+            ))
+        })?;
     let rows = row
         .map(|row| {
             output_offsets
@@ -919,12 +927,8 @@ pub fn run_fast_prepared_point_get_with_decode_context(
         return Ok(None);
     };
     let columns = table.visible_columns();
-    let Some(handle) = access::try_prepared_common_handle_point_get_path(
-        select,
-        table,
-        params,
-        context.zone(),
-    )?
+    let Some(handle) =
+        access::try_prepared_common_handle_point_get_path(select, table, params, context.zone())?
     else {
         return Ok(None);
     };
@@ -970,10 +974,18 @@ pub fn run_fast_prepared_point_get_with_decode_context(
         table.common_handle_offsets(),
         &output_offsets,
     )
-    .map_err(|error| DriverError::Exec(ExecError::Internal(format!("point row decoder failed: {error:?}").into())))?;
+    .map_err(|error| {
+        DriverError::Exec(ExecError::Internal(
+            format!("point row decoder failed: {error:?}").into(),
+        ))
+    })?;
     let row = table
         .get_prepared_point_row(&handle, &decoder, context)
-        .map_err(|error| DriverError::Exec(ExecError::Internal(format!("row decode failed: {error:?}").into())))?;
+        .map_err(|error| {
+            DriverError::Exec(ExecError::Internal(
+                format!("row decode failed: {error:?}").into(),
+            ))
+        })?;
     let rows = row.into_iter().collect();
     Ok(Some((output_columns, rows)))
 }
@@ -1136,7 +1148,11 @@ pub fn run_fast_single_row_scan(
     // partitioned, dirty, or non-clustered table.
     let rows = table
         .first_row_in_handle_ranges(None, &ranges, &ctx.session_zone())
-        .map_err(|error| DriverError::Exec(ExecError::Internal(format!("row decode failed: {error:?}").into())))?
+        .map_err(|error| {
+            DriverError::Exec(ExecError::Internal(
+                format!("row decode failed: {error:?}").into(),
+            ))
+        })?
         .map(|(_, row)| {
             output_offsets
                 .into_iter()
@@ -1652,7 +1668,7 @@ fn run_select_traced_with_delivery_choice_inner(
             }
             Some(tidb_planner::candidate_cost::evaluate(
                 candidate,
-                &tidb_planner::candidate_cost::CostEnv::default(),
+                ctx.optimizer_cost_env(),
                 tidb_planner::task_type::TaskType::Root,
             ))
         };
@@ -3429,7 +3445,12 @@ fn run_select_traced_with_delivery_choice_inner(
     // complete WHERE even when the executable Selection remains above the scan.
     if let Some(delivered) = output_delivered.as_deref_mut() {
         delivered.candidate = logical_column_prune
-            .then(|| from_delivered.candidate.clone().or_else(|| access_candidate.clone()))
+            .then(|| {
+                from_delivered
+                    .candidate
+                    .clone()
+                    .or_else(|| access_candidate.clone())
+            })
             .flatten();
         // A COMPUTED simple projection is Go's `PhysicalProjection` over the
         // child task, priced by `getPlanCostVer24PhysicalProjection` -- child
@@ -3448,11 +3469,14 @@ fn run_select_traced_with_delivery_choice_inner(
             && simple_projection
             && select.order_by.is_empty()
         {
-            if let Some(child) = from_delivered.candidate.clone().or_else(|| access_candidate.clone())
+            if let Some(child) = from_delivered
+                .candidate
+                .clone()
+                .or_else(|| access_candidate.clone())
             {
                 let input_rows = tidb_planner::candidate_cost::evaluate(
                     &child,
-                    &tidb_planner::candidate_cost::CostEnv::default(),
+                    ctx.optimizer_cost_env(),
                     tidb_planner::task_type::TaskType::Root,
                 )
                 .rows;

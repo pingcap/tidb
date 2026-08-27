@@ -812,7 +812,9 @@ pub(crate) fn build_from(
     // build_join round.
     let top = composite_inner_memo::enter_statement();
     let result = stacker::maybe_grow(2 * 1024 * 1024, 16 * 1024 * 1024, move || {
-        build_from_inner(node, catalog, current_db, ctx, trace, demand, required, scan_cap)
+        build_from_inner(
+            node, catalog, current_db, ctx, trace, demand, required, scan_cap,
+        )
     });
     composite_inner_memo::exit_statement(top);
     result
@@ -876,14 +878,7 @@ fn build_candidate_cached(
         }
     }
     let (_, _, delivered) = build_from(
-        node,
-        catalog,
-        current_db,
-        ctx,
-        None,
-        *demand,
-        required,
-        None,
+        node, catalog, current_db, ctx, None, *demand, required, None,
     )?;
     candidate_memo::put(key, request, delivered.candidate.clone());
     Ok(delivered.candidate)
@@ -1279,9 +1274,8 @@ fn build_from_inner(
                                             // a single-point table range stays
                                             // a TableRangeScan instead of
                                             // converting to a Point_Get.
-                                            let allow_point_get = !ctx
-                                                .optimizer_fix_control()
-                                                .get_bool_with_default(
+                                            let allow_point_get =
+                                                !ctx.optimizer_fix_control().get_bool_with_default(
                                                     tidb_planner::fix_control::FIX_52592,
                                                     false,
                                                 );
@@ -1305,9 +1299,7 @@ fn build_from_inner(
                                                 }
                                                 None => {
                                                     trace.table_range_scan(
-                                                        &visible,
-                                                        &ranges,
-                                                        estimate,
+                                                        &visible, &ranges, estimate,
                                                     );
                                                     if keep_order {
                                                         trace.keep_order(false);
@@ -1518,8 +1510,9 @@ fn build_from_inner(
             // equivalent).
             if let Some(cap) = scan_cap {
                 if scan_consumed_filter {
-                    let accepted =
-                        exec.table_access().is_some_and(|access| access.accept_scan_limit(cap));
+                    let accepted = exec
+                        .table_access()
+                        .is_some_and(|access| access.accept_scan_limit(cap));
                     if accepted {
                         if let Some(trace) = trace.as_deref_mut() {
                             trace.limit(0, cap);
@@ -1779,7 +1772,7 @@ fn build_from_inner(
                     let input_rows = actual_delivered.candidate.as_ref().map(|candidate| {
                         tidb_planner::candidate_cost::evaluate(
                             candidate,
-                            &tidb_planner::candidate_cost::CostEnv::default(),
+                            ctx.optimizer_cost_env(),
                             tidb_planner::task_type::TaskType::Root,
                         )
                         .rows
@@ -2078,6 +2071,7 @@ fn index_probe_candidate(
     output_types: &[FieldType],
     logical_output_rows: f64,
     source_rows: f64,
+    cost_session: &tidb_planner::plan_cost_ver2::CostSessionOpts,
 ) -> tidb_planner::candidate_cost::Candidate {
     // Go threads AvgInnerRowCnt through a retained aggregation. The aggregate
     // scales that logical output expectation back to its filtered child rows;
@@ -2148,6 +2142,7 @@ fn index_probe_candidate(
         source_row_size,
         decision.filters.len(),
         stats.as_deref().map(AsRef::as_ref),
+        cost_session,
     );
     // A retained aggregation has its own physical schema. In particular,
     // LogicalAggregation.PruneColumns appends COUNT(1) when pruning would
@@ -2214,11 +2209,12 @@ fn fixed_join_receipt(
     candidate: tidb_planner::candidate_cost::Candidate,
     rows: f64,
     row_size: f64,
+    cost_env: &tidb_planner::candidate_cost::CostEnv,
 ) -> tidb_planner::candidate_cost::Candidate {
     let num_ranges = tidb_planner::candidate_cost::number_of_ranges(&candidate);
     let cost = tidb_planner::candidate_cost::evaluate(
         &candidate,
-        &tidb_planner::candidate_cost::CostEnv::default(),
+        cost_env,
         tidb_planner::task_type::TaskType::Root,
     )
     .est_cost();
@@ -2239,6 +2235,7 @@ struct PushedLeafSelection {
 fn attach_pushed_leaf_selection(
     candidate: Option<tidb_planner::candidate_cost::Candidate>,
     selection: Option<&PushedLeafSelection>,
+    cost_env: &tidb_planner::candidate_cost::CostEnv,
 ) -> Option<tidb_planner::candidate_cost::Candidate> {
     let Some(selection) = selection else {
         return candidate;
@@ -2246,7 +2243,7 @@ fn attach_pushed_leaf_selection(
     candidate.map(|candidate| {
         let input_rows = tidb_planner::candidate_cost::evaluate(
             &candidate,
-            &tidb_planner::candidate_cost::CostEnv::default(),
+            cost_env,
             tidb_planner::task_type::TaskType::Root,
         )
         .rows;
@@ -2302,13 +2299,14 @@ fn logical_cost_types(
 fn candidate_row_size(
     candidate: Option<&tidb_planner::candidate_cost::Candidate>,
     fallback_types: &[FieldType],
+    cost_env: &tidb_planner::candidate_cost::CostEnv,
 ) -> f64 {
     candidate.map_or_else(
         || crate::access_cost::schema_avg_row_size(fallback_types),
         |candidate| {
             tidb_planner::candidate_cost::evaluate(
                 candidate,
-                &tidb_planner::candidate_cost::CostEnv::default(),
+                cost_env,
                 tidb_planner::task_type::TaskType::Root,
             )
             .row_size
@@ -2340,20 +2338,20 @@ fn hash_join_candidate(
     num_join_keys: usize,
     build_is_left: bool,
     concurrency: f64,
+    cost_env: &tidb_planner::candidate_cost::CostEnv,
 ) -> tidb_planner::candidate_cost::Candidate {
     // Go prices a PhysicalHashJoin from getCardinality(build/probe), not from
     // the logical join-reorder groups that produced the parent estimate. A
     // projection, aggregation, or pushed Selection may have changed either
     // physical child's rows by the time this candidate is attached.
-    let env = tidb_planner::candidate_cost::CostEnv::default();
     let left_costed = tidb_planner::candidate_cost::evaluate(
         &left,
-        &env,
+        cost_env,
         tidb_planner::task_type::TaskType::Root,
     );
     let right_costed = tidb_planner::candidate_cost::evaluate(
         &right,
-        &env,
+        cost_env,
         tidb_planner::task_type::TaskType::Root,
     );
     let (build, probe, build_rows, probe_rows, build_row_size) = if build_is_left {
@@ -2410,6 +2408,7 @@ fn index_join_candidate(
     num_join_keys: usize,
     kind: tidb_planner::plan_cost_ver2::IndexJoinKind,
     is_semi_join: bool,
+    cost_env: &tidb_planner::candidate_cost::CostEnv,
 ) -> tidb_planner::candidate_cost::Candidate {
     let inner_types = if decision.lookup_is_left {
         left_types
@@ -2425,15 +2424,16 @@ fn index_join_candidate(
         inner_types,
         logical_probe_rows_one,
         source_rows_one,
+        &cost_env.session,
     );
     let probe_costed = tidb_planner::candidate_cost::evaluate(
         &probe,
-        &tidb_planner::candidate_cost::CostEnv::default(),
+        cost_env,
         tidb_planner::task_type::TaskType::Root,
     );
     let outer_costed = tidb_planner::candidate_cost::evaluate(
         &outer,
-        &tidb_planner::candidate_cost::CostEnv::default(),
+        cost_env,
         tidb_planner::task_type::TaskType::Root,
     );
     // Go rebuilds a composite inner child under IndexJoinProp. The lookup
@@ -2445,7 +2445,7 @@ fn index_join_candidate(
         inner.map_or(probe, |inner| {
             let inner_costed = tidb_planner::candidate_cost::evaluate(
                 inner,
-                &tidb_planner::candidate_cost::CostEnv::default(),
+                cost_env,
                 tidb_planner::task_type::TaskType::Root,
             );
             tidb_planner::candidate_cost::Candidate::Fixed {
@@ -2460,7 +2460,7 @@ fn index_join_candidate(
     };
     let probe_costed = tidb_planner::candidate_cost::evaluate(
         &probe,
-        &tidb_planner::candidate_cost::CostEnv::default(),
+        cost_env,
         tidb_planner::task_type::TaskType::Root,
     );
     tidb_planner::candidate_cost::Candidate::IndexJoin {
@@ -2488,6 +2488,7 @@ fn runtime_probe_candidate(
     catalog: &Catalog,
     rows: crate::driver::join_reorder::JoinRows,
     inner_types: &[FieldType],
+    cost_session: &tidb_planner::plan_cost_ver2::CostSessionOpts,
 ) -> tidb_planner::candidate_cost::Candidate {
     let logical_probe_rows_one = index_join_probe_rows_one(decision, rows);
     let source_rows_one = index_join_physical_probe_rows_one(decision, catalog, rows);
@@ -2497,6 +2498,7 @@ fn runtime_probe_candidate(
         inner_types,
         logical_probe_rows_one,
         source_rows_one,
+        cost_session,
     )
 }
 
@@ -2609,8 +2611,9 @@ fn attach_lookup_probe_bounds(
     left_width: usize,
 ) {
     /// Go `symmetricOp`: the manager normalizes to `col op arg1`.
-    const fn symmetric(op: crate::access_path::LookupProbeBoundOp)
-        -> crate::access_path::LookupProbeBoundOp {
+    const fn symmetric(
+        op: crate::access_path::LookupProbeBoundOp,
+    ) -> crate::access_path::LookupProbeBoundOp {
         use crate::access_path::LookupProbeBoundOp::*;
         match op {
             Ge => Le,
@@ -2636,7 +2639,10 @@ fn attach_lookup_probe_bounds(
                 .iter()
                 .find(|index| index.id == index_id)
                 .and_then(|index| {
-                    index.column_offsets.get(decision.probe_parts.len()).copied()
+                    index
+                        .column_offsets
+                        .get(decision.probe_parts.len())
+                        .copied()
                 }),
             crate::access_path::LookupObject::CommonHandle => decision
                 .table
@@ -2654,8 +2660,16 @@ fn attach_lookup_probe_bounds(
         } else {
             right_side
         };
-        let outer_base = if decision.lookup_is_left { left_width } else { 0 };
-        let inner_base = if decision.lookup_is_left { 0 } else { left_width };
+        let outer_base = if decision.lookup_is_left {
+            left_width
+        } else {
+            0
+        };
+        let inner_base = if decision.lookup_is_left {
+            0
+        } else {
+            left_width
+        };
         // The joined-row positions whose base column IS the compared one.
         let target_positions: Vec<usize> = inner
             .output_to_source
@@ -2667,10 +2681,8 @@ fn attach_lookup_probe_bounds(
         if target_positions.is_empty() {
             continue;
         }
-        let is_target = |index: i64| {
-            usize::try_from(index)
-                .is_ok_and(|at| target_positions.contains(&at))
-        };
+        let is_target =
+            |index: i64| usize::try_from(index).is_ok_and(|at| target_positions.contains(&at));
         let on_outer = |index: i64| {
             usize::try_from(index).is_ok_and(|at| at >= outer_base && at < scope.width())
         };
@@ -2719,28 +2731,27 @@ fn attach_lookup_probe_bounds(
             // One side must BE the compared key column; the manager always
             // stores `col op arg`, so the flipped spelling takes the symmetric
             // operator (Go `symmetricOp`).
-            let (op, arg) =
-                if let Expression::Column(column) = &function.args[0] {
-                    if is_target(column.index) {
-                        (written, &function.args[1])
-                    } else if let Expression::Column(right) = &function.args[1] {
-                        if is_target(right.index) {
-                            (symmetric(written), &function.args[0])
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }
-                } else if let Expression::Column(column) = &function.args[1] {
-                    if is_target(column.index) {
+            let (op, arg) = if let Expression::Column(column) = &function.args[0] {
+                if is_target(column.index) {
+                    (written, &function.args[1])
+                } else if let Expression::Column(right) = &function.args[1] {
+                    if is_target(right.index) {
                         (symmetric(written), &function.args[0])
                     } else {
                         continue;
                     }
                 } else {
                     continue;
-                };
+                }
+            } else if let Expression::Column(column) = &function.args[1] {
+                if is_target(column.index) {
+                    (symmetric(written), &function.args[0])
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            };
             // The compared expression must read OUTER columns only. Go skips
             // a conjunct any of whose affected columns sit in the inner
             // schema; so does this arm.
@@ -2752,18 +2763,14 @@ fn attach_lookup_probe_bounds(
             // (two ge's, a bound on several columns) abandons the whole set:
             // fail closed to today's point-probe path rather than guess an
             // intersection Go's ranger would compute differently.
-            let lowers = bounds.iter().filter(|bound| {
-                matches!(
-                    bound.op,
-                    Op::Ge | Op::Gt
-                )
-            }).count();
-            let uppers = bounds.iter().filter(|bound| {
-                matches!(
-                    bound.op,
-                    Op::Lt | Op::Le
-                )
-            }).count();
+            let lowers = bounds
+                .iter()
+                .filter(|bound| matches!(bound.op, Op::Ge | Op::Gt))
+                .count();
+            let uppers = bounds
+                .iter()
+                .filter(|bound| matches!(bound.op, Op::Lt | Op::Le))
+                .count();
             if (matches!(op, Op::Ge | Op::Gt) && lowers >= 1)
                 || (matches!(op, Op::Lt | Op::Le) && uppers >= 1)
             {
@@ -2773,9 +2780,7 @@ fn attach_lookup_probe_bounds(
             // The dedup encoder needs a comparable domain for the evaluated
             // values; string domains carry collations this admission does not
             // resolve, so they keep today's path.
-            let eval_type = arg
-                .static_type()
-                .map(|field_type| field_type.eval_type());
+            let eval_type = arg.static_type().map(|field_type| field_type.eval_type());
             if !matches!(
                 eval_type,
                 Some(tidb_datatype::EvalType::Int)
@@ -2865,7 +2870,7 @@ fn fallback_index_join_kind(
     right_row_size: f64,
     num_join_keys: usize,
 ) -> tidb_planner::plan_cost_ver2::IndexJoinKind {
-    use tidb_planner::plan_cost_ver2::{IndexJoinKind, Ver2Factors, hash_build_cost};
+    use tidb_planner::plan_cost_ver2::{hash_build_cost, IndexJoinKind, Ver2Factors};
     use tidb_planner::task_type::TaskType;
 
     let (outer_rows, outer_row_size, inner_row_size) = if decision.lookup_is_left {
@@ -3596,8 +3601,8 @@ fn apply_pushed_leaf_filters(
             if !pushed.is_empty() {
                 complete_filter_pushed = residual.is_none()
                     && exec
-                    .table_access()
-                    .is_some_and(|access| access.accept_scan_filter(&pushed, ctx));
+                        .table_access()
+                        .is_some_and(|access| access.accept_scan_filter(&pushed, ctx));
             }
         }
     }
@@ -3800,6 +3805,7 @@ fn build_join_with_choice(
     scan_cap: Option<u64>,
 ) -> Result<(Box<dyn Executor>, FromScope, Delivered), DriverError> {
     let source_join = join;
+    let cost_env = ctx.optimizer_cost_env();
     // Save both leaf pushdown receipts and logical WHERE rewrites before any
     // speculative physical alternative mutates them. Go's
     // `OuterJoinToSemiJoin::canConvertAntiJoin` runs before physical search;
@@ -3879,7 +3885,9 @@ fn build_join_with_choice(
     // Only an all-LEFT chain survives the derivation, so a forwarded cap
     // always rides the preserved side this level preserves too.
     let scan_cap_for_children = match (scan_cap, prune) {
-        (incoming, Some(select)) => preserved_side_scan_cap(join, Some(select), catalog, current_db).or(incoming),
+        (incoming, Some(select)) => {
+            preserved_side_scan_cap(join, Some(select), catalog, current_db).or(incoming)
+        }
         (incoming, None) => incoming,
     };
     let (left_scan_cap, right_scan_cap) = match (&kind, scan_cap_for_children) {
@@ -4155,7 +4163,7 @@ fn build_join_with_choice(
                 if let Some(child) = left_delivered.candidate.take() {
                     let input_rows = tidb_planner::candidate_cost::evaluate(
                         &child,
-                        &tidb_planner::candidate_cost::CostEnv::default(),
+                        cost_env,
                         tidb_planner::task_type::TaskType::Root,
                     )
                     .rows;
@@ -4562,10 +4570,8 @@ fn build_join_with_choice(
     let mut conditions = match &join.on {
         Some(expr) => {
             let resolver = ScopeResolver { scope: &scope };
-            vec![
-                rewrite_expr_resolved(expr, &resolver)
-                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
-            ]
+            vec![rewrite_expr_resolved(expr, &resolver)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?]
         }
         None => Vec::new(),
     };
@@ -4749,7 +4755,7 @@ fn build_join_with_choice(
         {
             let costed = tidb_planner::candidate_cost::evaluate(
                 &candidate,
-                &tidb_planner::candidate_cost::CostEnv::default(),
+                cost_env,
                 tidb_planner::task_type::TaskType::Root,
             );
             let filter_count = sole_relation_name(&join.left)
@@ -4764,14 +4770,24 @@ fn build_join_with_choice(
                     conditions: vec![true; filter_count],
                 }
             };
-            left_delivered.candidate =
-                Some(fixed_join_receipt(candidate, rows.left, costed.row_size));
+            left_delivered.candidate = Some(fixed_join_receipt(
+                candidate,
+                rows.left,
+                costed.row_size,
+                cost_env,
+            ));
         }
     }
-    let left_candidate_row_size =
-        candidate_row_size(left_delivered.candidate.as_ref(), &left_cost_types);
-    let right_candidate_row_size =
-        candidate_row_size(right_delivered.candidate.as_ref(), &right_cost_types);
+    let left_candidate_row_size = candidate_row_size(
+        left_delivered.candidate.as_ref(),
+        &left_cost_types,
+        cost_env,
+    );
+    let right_candidate_row_size = candidate_row_size(
+        right_delivered.candidate.as_ref(),
+        &right_cost_types,
+        cost_env,
+    );
     let mut comparison_not_null = Vec::new();
     for condition in &conditions {
         collect_comparison_not_null_columns(condition, &mut comparison_not_null);
@@ -4959,132 +4975,132 @@ fn build_join_with_choice(
             )
     );
     let mut cast_probe_ordinal = None;
-    let index_joins = (demand.runtime_lookup.is_none()
-        && !coalescing
-        && !left_outer_semi
-        && index_enumerated)
-        .then(|| {
-            let (left_side, right_side) = crate::driver::index_join_decision::join_sides(
-                join,
-                &split.keys,
-                &scope,
-                current_db,
-                left_width,
-                catalog,
-                &left_types,
-                &right_types,
-            );
-            let mut decisions = crate::driver::index_join_decision::index_join_decisions_with_context(
-                kind,
-                &split.keys,
-                &left_side,
-                &right_side,
-                // A merge candidate being present does not prevent Go from
-                // enumerating and costing the index family beside it.
-                false,
-                demand.rows,
-                Some(catalog),
-                ctx,
-            )
-            .into_iter()
-            .filter(|decision| {
-                index_join_satisfies_required_order(
-                    decision.lookup_is_left,
-                    &compact_required,
-                    Some(left_width),
-                )
-            })
-            .collect::<Vec<crate::driver::index_join_decision::IndexJoinDecision>>();
-            // Go's FORCE preference (`PreferLeftAsINLJInner` /
-            // `PreferRightAsINLJInner`, resolved in `findBestTask` once the
-            // inner side has physicalized — `exhaust_physical_plans.go`'s
-            // enumeration note): `TIDB_INLJ(t)` names the INNER side, so
-            // when the index-family hint names a side's alias, only the
-            // decisions probing THAT side survive. An empty result falls
-            // back to every decision, which is Go's give-up-and-warn arm.
-            if let Some(hints) = demand.join_hints {
-                let names_inner = |decision: &crate::driver::index_join_decision::IndexJoinDecision| {
-                    let alias = if decision.lookup_is_left {
-                        hint_left.as_deref()
-                    } else {
-                        hint_right.as_deref()
-                    };
-                    alias.is_some_and(|alias| hints.index_family_names_alias(alias))
-                };
-                if decisions.iter().any(&names_inner) {
-                    decisions.retain(&names_inner);
-                }
-            }
-            // Go's `rule_join_key_type_cast` rewrite makes the INT side of a
-            // mismatched equality probeable by `cast(str AS SIGNED)`. The
-            // split keys hold no such equality, so it arrives here as its
-            // own candidate -- and only under an index-family hint naming
-            // the int side, the one surface the recordings pin (every
-            // unhinted recording of this shape is a hash join).
-            if decisions.is_empty() && forced_index_name.is_some() {
-                for (ordinal, &pair_at) in coercion_rewritten.iter().enumerate() {
-                    let pair = &mut coercions.mismatched[pair_at];
-                    let lookup_is_left = pair.int_offset < left_width;
-                    let lookup_alias = if lookup_is_left {
-                        hint_left.as_deref()
-                    } else {
-                        hint_right.as_deref()
-                    };
-                    let hinted = lookup_alias.zip(demand.join_hints).is_some_and(
-                        |(alias, hints)| hints.index_family_names_alias(alias),
-                    );
-                    if !hinted {
-                        continue;
-                    }
-                    let Some(rewrite) = pair.rewrite.take() else {
-                        continue;
-                    };
-                    let (inner_side, inner_offset, outer_offset) = if lookup_is_left {
-                        (&left_side, pair.int_offset, pair.str_offset - left_width)
-                    } else {
-                        (&right_side, pair.int_offset - left_width, pair.str_offset)
-                    };
-                    let decision = crate::driver::index_join_decision::cast_lookup_decision(
+    let index_joins =
+        (demand.runtime_lookup.is_none() && !coalescing && !left_outer_semi && index_enumerated)
+            .then(|| {
+                let (left_side, right_side) = crate::driver::index_join_decision::join_sides(
+                    join,
+                    &split.keys,
+                    &scope,
+                    current_db,
+                    left_width,
+                    catalog,
+                    &left_types,
+                    &right_types,
+                );
+                let mut decisions =
+                    crate::driver::index_join_decision::index_join_decisions_with_context(
                         kind,
-                        lookup_is_left,
-                        crate::driver::index_join_decision::CastLookupKey {
-                            inner_offset,
-                            outer_offset,
-                            rewrite,
-                        },
-                        inner_side,
+                        &split.keys,
+                        &left_side,
+                        &right_side,
+                        // A merge candidate being present does not prevent Go from
+                        // enumerating and costing the index family beside it.
+                        false,
                         demand.rows,
-                    );
-                    if let Some(decision) = decision.filter(|decision| {
+                        Some(catalog),
+                        ctx,
+                    )
+                    .into_iter()
+                    .filter(|decision| {
                         index_join_satisfies_required_order(
                             decision.lookup_is_left,
                             &compact_required,
                             Some(left_width),
                         )
-                    }) {
-                        cast_probe_ordinal = Some(ordinal);
-                        decisions.push(decision);
-                        break;
+                    })
+                    .collect::<Vec<crate::driver::index_join_decision::IndexJoinDecision>>();
+                // Go's FORCE preference (`PreferLeftAsINLJInner` /
+                // `PreferRightAsINLJInner`, resolved in `findBestTask` once the
+                // inner side has physicalized — `exhaust_physical_plans.go`'s
+                // enumeration note): `TIDB_INLJ(t)` names the INNER side, so
+                // when the index-family hint names a side's alias, only the
+                // decisions probing THAT side survive. An empty result falls
+                // back to every decision, which is Go's give-up-and-warn arm.
+                if let Some(hints) = demand.join_hints {
+                    let names_inner =
+                        |decision: &crate::driver::index_join_decision::IndexJoinDecision| {
+                            let alias = if decision.lookup_is_left {
+                                hint_left.as_deref()
+                            } else {
+                                hint_right.as_deref()
+                            };
+                            alias.is_some_and(|alias| hints.index_family_names_alias(alias))
+                        };
+                    if decisions.iter().any(&names_inner) {
+                        decisions.retain(&names_inner);
                     }
                 }
-            }
-            // Go's `indexJoinPathBuildColManager` reads the join's
-            // other-conditions for comparisons against the object-key column
-            // just past the probe prefix, and its executor rebuilds that key
-            // slot's range per outer row (`ColWithCmpFuncManager`). Attach the
-            // same conjuncts to every decision so the chosen lookup narrows
-            // each probe instead of reading a whole prefix and filtering above.
-            attach_lookup_probe_bounds(
-                &mut decisions,
-                &other_join_conditions,
-                &left_side,
-                &right_side,
-                &scope,
-                left_width,
-            );
-            decisions
-        })
-        .unwrap_or_default();
+                // Go's `rule_join_key_type_cast` rewrite makes the INT side of a
+                // mismatched equality probeable by `cast(str AS SIGNED)`. The
+                // split keys hold no such equality, so it arrives here as its
+                // own candidate -- and only under an index-family hint naming
+                // the int side, the one surface the recordings pin (every
+                // unhinted recording of this shape is a hash join).
+                if decisions.is_empty() && forced_index_name.is_some() {
+                    for (ordinal, &pair_at) in coercion_rewritten.iter().enumerate() {
+                        let pair = &mut coercions.mismatched[pair_at];
+                        let lookup_is_left = pair.int_offset < left_width;
+                        let lookup_alias = if lookup_is_left {
+                            hint_left.as_deref()
+                        } else {
+                            hint_right.as_deref()
+                        };
+                        let hinted = lookup_alias
+                            .zip(demand.join_hints)
+                            .is_some_and(|(alias, hints)| hints.index_family_names_alias(alias));
+                        if !hinted {
+                            continue;
+                        }
+                        let Some(rewrite) = pair.rewrite.take() else {
+                            continue;
+                        };
+                        let (inner_side, inner_offset, outer_offset) = if lookup_is_left {
+                            (&left_side, pair.int_offset, pair.str_offset - left_width)
+                        } else {
+                            (&right_side, pair.int_offset - left_width, pair.str_offset)
+                        };
+                        let decision = crate::driver::index_join_decision::cast_lookup_decision(
+                            kind,
+                            lookup_is_left,
+                            crate::driver::index_join_decision::CastLookupKey {
+                                inner_offset,
+                                outer_offset,
+                                rewrite,
+                            },
+                            inner_side,
+                            demand.rows,
+                        );
+                        if let Some(decision) = decision.filter(|decision| {
+                            index_join_satisfies_required_order(
+                                decision.lookup_is_left,
+                                &compact_required,
+                                Some(left_width),
+                            )
+                        }) {
+                            cast_probe_ordinal = Some(ordinal);
+                            decisions.push(decision);
+                            break;
+                        }
+                    }
+                }
+                // Go's `indexJoinPathBuildColManager` reads the join's
+                // other-conditions for comparisons against the object-key column
+                // just past the probe prefix, and its executor rebuilds that key
+                // slot's range per outer row (`ColWithCmpFuncManager`). Attach the
+                // same conjuncts to every decision so the chosen lookup narrows
+                // each probe instead of reading a whole prefix and filtering above.
+                attach_lookup_probe_bounds(
+                    &mut decisions,
+                    &other_join_conditions,
+                    &left_side,
+                    &right_side,
+                    &scope,
+                    left_width,
+                );
+                decisions
+            })
+            .unwrap_or_default();
     for decision in &index_joins {
         decision.record_stats_access(
             catalog
@@ -5125,6 +5141,7 @@ fn build_join_with_choice(
             } else {
                 &right_cost_types
             },
+            &cost_env.session,
         );
         let runtime = crate::driver::leaf_demand::RuntimeLookupDemand {
             table_id: decision.table.table_id,
@@ -5260,15 +5277,23 @@ fn build_join_with_choice(
     left_delivered.candidate = attach_pushed_leaf_selection(
         left_delivered.candidate.take(),
         left_pushed_selection.as_ref(),
+        cost_env,
     );
     right_delivered.candidate = attach_pushed_leaf_selection(
         right_delivered.candidate.take(),
         right_pushed_selection.as_ref(),
+        cost_env,
     );
-    alternative_left_candidate =
-        attach_pushed_leaf_selection(alternative_left_candidate, left_pushed_selection.as_ref());
-    alternative_right_candidate =
-        attach_pushed_leaf_selection(alternative_right_candidate, right_pushed_selection.as_ref());
+    alternative_left_candidate = attach_pushed_leaf_selection(
+        alternative_left_candidate,
+        left_pushed_selection.as_ref(),
+        cost_env,
+    );
+    alternative_right_candidate = attach_pushed_leaf_selection(
+        alternative_right_candidate,
+        right_pushed_selection.as_ref(),
+        cost_env,
+    );
     // Go attaches each pushed Selection's StatsInfo to the physical child
     // before join-family costs are compared. Access candidates here still
     // carry the pre-filter scan cardinality, while RowSource already owns the
@@ -5292,8 +5317,8 @@ fn build_join_with_choice(
                              rows: f64,
                              types: &[FieldType]| {
                 candidate.map(|candidate| {
-                    let row_size = candidate_row_size(Some(&candidate), types);
-                    fixed_join_receipt(candidate, rows, row_size)
+                    let row_size = candidate_row_size(Some(&candidate), types, cost_env);
+                    fixed_join_receipt(candidate, rows, row_size, cost_env)
                 })
             };
             ordered_left_candidate = normalize(ordered_left_candidate, rows.left, &left_cost_types);
@@ -5379,6 +5404,7 @@ fn build_join_with_choice(
                                 split.keys.len(),
                                 *kind,
                                 semi_join,
+                                cost_env,
                             );
                             alternatives.push((
                                 CostedJoinChoice::Index {
@@ -5409,9 +5435,7 @@ fn build_join_with_choice(
                     // hash orientations. The preserved (left) side is the
                     // build when it is cheaper, which is material for
                     // TPC-H q22's filtered customer/orders join.
-                    JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi => {
-                        &[false, true]
-                    }
+                    JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi => &[false, true],
                 };
                 let build_orientations = match runtime_target_side {
                     // The runtime target is the physical INNER child. Its
@@ -5431,6 +5455,7 @@ fn build_join_with_choice(
                             split.keys.len(),
                             build_is_left,
                             ctx.hash_join_concurrency(),
+                            cost_env,
                         ),
                     ));
                 }
@@ -5442,7 +5467,7 @@ fn build_join_with_choice(
     for (choice, candidate) in &alternatives {
         let costed = tidb_planner::candidate_cost::evaluate(
             candidate,
-            &tidb_planner::candidate_cost::CostEnv::default(),
+            cost_env,
             tidb_planner::task_type::TaskType::Root,
         );
         if best
@@ -5482,8 +5507,7 @@ fn build_join_with_choice(
             || matches!(
                 kind,
                 JoinKind::Inner | JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi
-            )
-                && rows.left < rows.right
+            ) && rows.left < rows.right
     });
     let winning_choice = committed_choice
         .or_else(|| {
@@ -5528,12 +5552,13 @@ fn build_join_with_choice(
         for (choice, candidate) in &alternatives {
             let costed = tidb_planner::candidate_cost::evaluate(
                 candidate,
-                &tidb_planner::candidate_cost::CostEnv::default(),
+                cost_env,
                 tidb_planner::task_type::TaskType::Root,
             );
             eprintln!(
                 "JOIN_CANDIDATE {choice:?} cost={:?} rows={:.2}\n{candidate:#?}",
-                costed.cost.value(), costed.rows
+                costed.cost.value(),
+                costed.rows
             );
         }
     }
@@ -5550,7 +5575,7 @@ fn build_join_with_choice(
             .map(|(choice, candidate)| {
                 let costed = tidb_planner::candidate_cost::evaluate(
                     candidate,
-                    &tidb_planner::candidate_cost::CostEnv::default(),
+                    cost_env,
                     tidb_planner::task_type::TaskType::Root,
                 );
                 format!("{choice:?}:cost={:?},rows={:.3}", costed.cost, costed.rows)
@@ -5654,6 +5679,7 @@ fn build_join_with_choice(
             } else {
                 &right_cost_types
             },
+            &cost_env.session,
         );
         let runtime = crate::driver::leaf_demand::RuntimeLookupDemand {
             table_id: decision.table.table_id,
@@ -5743,11 +5769,7 @@ fn build_join_with_choice(
             // arrive with every seeded batch.
             if !decision.probe_bounds.is_empty() {
                 source.set_probe_bound_ops(
-                    decision
-                        .probe_bounds
-                        .iter()
-                        .map(|bound| bound.op)
-                        .collect(),
+                    decision.probe_bounds.iter().map(|bound| bound.op).collect(),
                 );
             }
             source.set_filters(decision.filter_exprs.clone(), ctx.clone());
@@ -6324,6 +6346,7 @@ fn build_join_with_choice(
                     split.keys.len(),
                     kind,
                     semi_join,
+                    cost_env,
                 )
             }
             CostedJoinChoice::Hash { build_is_left } => hash_join_candidate(
@@ -6332,12 +6355,14 @@ fn build_join_with_choice(
                 split.keys.len(),
                 build_is_left,
                 ctx.hash_join_concurrency(),
+                cost_env,
             ),
         };
         Some(fixed_join_receipt(
             candidate,
             rows.joined,
             crate::access_cost::schema_avg_row_size(&output_cost_types),
+            cost_env,
         ))
     });
     let mut delivered = if let Some((left, right)) = merged_orders {
@@ -6413,7 +6438,9 @@ fn build_join_with_choice(
         scope.star.retain(|offset| *offset < left_width);
         if left_outer_semi {
             let alias = match right_node {
-                JoinNode::Derived { alias: Some(alias), .. } => alias.clone(),
+                JoinNode::Derived {
+                    alias: Some(alias), ..
+                } => alias.clone(),
                 _ => unreachable!("left-outer-semi is recognized only for a derived child"),
             };
             scope.tables.push(FromTable {
@@ -6587,7 +6614,7 @@ fn enforced_merge_sort(
     if let Some(child) = delivered.candidate.take() {
         let costed = tidb_planner::candidate_cost::evaluate(
             &child,
-            &tidb_planner::candidate_cost::CostEnv::default(),
+            ctx.optimizer_cost_env(),
             tidb_planner::task_type::TaskType::Root,
         );
         delivered.candidate = Some(tidb_planner::candidate_cost::Candidate::Sort {
@@ -6840,11 +6867,7 @@ pub(crate) fn preserved_side_scan_cap(
     }
     let limit = select.limit.as_ref()?;
     let count = eval_limit_bound(&limit.count).ok()?;
-    let offset = limit
-        .offset
-        .as_ref()
-        .map_or(Ok(0), eval_limit_bound)
-        .ok()?;
+    let offset = limit.offset.as_ref().map_or(Ok(0), eval_limit_bound).ok()?;
     let cap = offset.checked_add(count)?;
 
     // Every inner table along the all-LEFT chain: visible name -> columns.
@@ -6867,9 +6890,9 @@ pub(crate) fn preserved_side_scan_cap(
             }
             for path in &refs.paths {
                 if path.len() >= 2
-                    && inners.iter().any(|(alias, _)| {
-                        path[path.len() - 2].eq_ignore_ascii_case(alias)
-                    })
+                    && inners
+                        .iter()
+                        .any(|(alias, _)| path[path.len() - 2].eq_ignore_ascii_case(alias))
                 {
                     return None;
                 }
@@ -7005,13 +7028,15 @@ fn kv_unique_on(kv: &crate::kv_table::KvTable, cols: &[String]) -> bool {
             .iter()
             .position(|column| column.name.eq_ignore_ascii_case(name))
     };
-    let key_offsets: Vec<Option<usize>> =
-        lowered.iter().map(|name| offset_of(name)).collect();
+    let key_offsets: Vec<Option<usize>> = lowered.iter().map(|name| offset_of(name)).collect();
     if key_offsets.iter().any(Option::is_none) {
         return false;
     }
     let key_offsets: Vec<usize> = key_offsets.into_iter().flatten().collect();
-    if kv.pk_handle_offset().is_some_and(|pk| key_offsets.contains(&pk)) {
+    if kv
+        .pk_handle_offset()
+        .is_some_and(|pk| key_offsets.contains(&pk))
+    {
         return true;
     }
     let common = kv.common_handle_offsets();
@@ -7043,8 +7068,12 @@ struct ColumnRefCollector {
 impl ColumnRefCollector {
     fn walk(&mut self, expr: &tidb_ast::Expr) {
         match expr {
-            tidb_ast::Expr::Column(path) | tidb_ast::Expr::Default(Some(path)) => self.paths.push(path.clone()),
-            tidb_ast::Expr::MatchAgainst { columns, against, .. } => {
+            tidb_ast::Expr::Column(path) | tidb_ast::Expr::Default(Some(path)) => {
+                self.paths.push(path.clone())
+            }
+            tidb_ast::Expr::MatchAgainst {
+                columns, against, ..
+            } => {
                 for path in columns {
                     self.paths.push(path.clone());
                 }
@@ -7203,14 +7232,13 @@ impl ColumnRefCollector {
                 }
             }
             tidb_ast::Expr::Cast(cast) => self.walk(&cast.expr),
-
         }
     }
 }
 
 #[cfg(test)]
 mod join_schema_tests {
-    use super::{FromScope, join_executor_schema, project_composite_lookup_source};
+    use super::{join_executor_schema, project_composite_lookup_source, FromScope};
     use crate::driver::FromTable;
     use crate::executor::ExecutorMeta;
     use crate::join::JoinKind;

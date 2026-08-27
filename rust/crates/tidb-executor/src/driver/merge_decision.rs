@@ -742,12 +742,11 @@ pub(crate) fn union_orders(
 /// [`possible_properties`] for a derived table:
 /// `LogicalProjection.PreparePossibleProperties` over its `FROM`.
 ///
-/// The subquery must be a plain, order-preserving `SELECT`. `GROUP BY`,
-/// `DISTINCT`, `ORDER BY`, `LIMIT`, a window and a set operation each REPLACE
-/// the row order rather than carrying it, and Go gives every one of them its
-/// own `PreparePossibleProperties` (`LogicalAggregation`'s group-by
-/// permutations, `LogicalSort`'s own items). None of those is ported, so each
-/// is refused here rather than described wrongly.
+/// `DISTINCT`, `ORDER BY`, `LIMIT`, a window and a set operation each replace
+/// the row order rather than carrying it. `GROUP BY` is different: Go's
+/// `LogicalAggregation.PreparePossibleProperties` preserves a complete child
+/// order over the group columns (and a `HAVING` selection above the aggregate
+/// preserves that order too).
 fn derived_properties(
     subquery: &QueryStmt,
     alias: &str,
@@ -760,7 +759,7 @@ fn derived_properties(
         return None;
     };
     if !select.group_by.is_empty() {
-        return grouped_derived_properties(select, alias, column_names, phase);
+        return grouped_derived_properties(select, alias, column_names, catalog, current_db, phase);
     }
     // A derived table's own `WHERE` is the one offered INSIDE it, which is
     // what `run_select_stmt` hands its `FROM`.
@@ -817,12 +816,13 @@ fn grouped_derived_properties(
     select: &SelectStmt,
     alias: &str,
     column_names: &[String],
+    catalog: &Catalog,
+    current_db: &str,
     phase: Phase,
 ) -> Option<SideProperties> {
     if phase == Phase::Delivered
         || select.rollup
         || select.distinct
-        || select.having.is_some()
         || select.limit.is_some()
         || !select.windows.is_empty()
     {
@@ -835,6 +835,22 @@ fn grouped_derived_properties(
             Expr::Column(path) => Some(path),
             _ => None,
         })
+        .collect::<Option<Vec<_>>>()?;
+    // `LogicalAggregation.PreparePossibleProperties` only propagates a
+    // property when the child already provides all GROUP BY columns as a
+    // prefix. A grouped derived table is a projection of that aggregation,
+    // so resolve the same child orders before claiming an output order.
+    let inner_offered = offered_conjuncts(select.where_clause.as_ref());
+    let inner = join_properties(
+        select.from.as_ref()?,
+        catalog,
+        current_db,
+        &inner_offered,
+        phase,
+    )?;
+    let group_offsets = group_paths
+        .iter()
+        .map(|path| inner.offset_of(path))
         .collect::<Option<Vec<_>>>()?;
     if !select.order_by.is_empty()
         && (select.order_by.len() != group_paths.len()
@@ -871,7 +887,7 @@ fn grouped_derived_properties(
         }
         columns = column_names.to_vec();
     }
-    let order = group_paths
+    let output_positions = group_paths
         .iter()
         .map(|group| {
             select.fields.fields().iter().position(|field| {
@@ -879,6 +895,30 @@ fn grouped_derived_properties(
             })
         })
         .collect::<Option<Vec<_>>>()?;
+    let group_offsets_i64 = group_offsets
+        .iter()
+        .map(|offset| *offset as i64)
+        .collect::<Vec<_>>();
+    let order = inner.orders.iter().find_map(|child_order| {
+        let child_order_i64 = child_order
+            .iter()
+            .map(|offset| *offset as i64)
+            .collect::<Vec<_>>();
+        let matched =
+            tidb_planner::find_best_task::max_sort_prefix(&child_order_i64, &group_offsets_i64);
+        if matched.len() != group_offsets.len() || child_order.len() < group_offsets.len() {
+            return None;
+        }
+        child_order[..group_offsets.len()]
+            .iter()
+            .map(|offset| {
+                group_offsets
+                    .iter()
+                    .position(|group_offset| group_offset == offset)
+                    .and_then(|group_index| output_positions.get(group_index).copied())
+            })
+            .collect::<Option<Vec<_>>>()
+    })?;
     Some(SideProperties::single(
         alias.to_owned(),
         columns,
@@ -1998,5 +2038,28 @@ mod tests {
             &BTreeSet::new(),
             &BTreeSet::new(),
         ));
+    }
+
+    /// Go keeps a grouped aggregate's order through the Selection that
+    /// implements HAVING. The order is available only when the child really
+    /// provides the complete GROUP BY prefix.
+    #[test]
+    fn grouped_derived_having_preserves_a_child_group_order() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE t (a INT PRIMARY KEY, b INT)", &mut catalog)
+            .unwrap();
+        let stmt =
+            tidb_parser::parse("SELECT a, SUM(b) AS total FROM t GROUP BY a HAVING SUM(b) > 0")
+                .unwrap();
+        let tidb_ast::Stmt::Query(query) = stmt else {
+            panic!("not a query");
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            panic!("not a SELECT");
+        };
+        let properties =
+            grouped_derived_properties(&select, "g", &[], &catalog, "test", Phase::Promise)
+                .expect("the primary-key child provides the group order");
+        assert_eq!(properties.orders, vec![vec![0]]);
     }
 }

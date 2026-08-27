@@ -26,9 +26,8 @@ returns Go's error for unsupported `EXPLAIN ANALYZE FORMAT='plan_tree'`.
 
 The Go source expected file contains 155 plan rows. A live Go run produced 156
 rows (the only source-file difference was a runtime `stream_count: 8` detail).
-With the source settings
-(`tidb_enforce_mpp=ON`, MPP allowed, and `tikv,tiflash` engines), the live plans
-were:
+With the source settings (`tidb_enforce_mpp=ON`, broadcast thresholds zero, and
+the default `tikv,tiflash,tidb` engine list), the live plans were:
 
 | server | plan rows | MPP rows |
 | --- | ---: | ---: |
@@ -42,10 +41,13 @@ plan. Exact source-plan parity requires transcreating the corresponding Go
 planner/executor packages, rather than synthesizing an MPP-looking explain
 output.
 
-For a fair non-MPP control, both sessions were forced to TiKV with MPP off.
-Go returned 84 rows and Rust 76 rows. Rust selected many nested index joins,
-while Go selected mostly hash joins, so this control also remains plan
-different.
+For a fair one-concurrency, TiKV-only control, both sessions set
+`tidb_isolation_read_engines='tikv'` and all executor, join, lookup, scan, and
+optimizer concurrency factors to `1`. Go returned 84 rows and Rust 77 rows.
+Both selected two `MergeJoin` nodes, one `IndexHashJoin`, and one `HashJoin`
+for the major Q64 joins; the remaining seven rows reflect different nested
+join ordering and explain formatting, so the control is not byte-for-byte
+identical yet.
 
 ## Correctness
 
@@ -70,13 +72,16 @@ index-lookup, and DistSQL scan concurrency were all set to `1`:
 
 | server | min (ms) | p50 (ms) | p95 (ms) | mean (ms) | max (ms) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Go | 17.048 | 18.625 | 20.789 | 19.184 | 27.238 |
-| Rust | 117.893 | 121.640 | 135.341 | 126.457 | 207.228 |
+| Go | 17.977 | 18.999 | 22.751 | 19.581 | 26.333 |
+| Rust | 118.648 | 131.615 | 134.826 | 135.684 | 218.184 |
 
 The MPP timings are intentionally omitted: Rust did not execute MPP/TiFlash,
-so comparing them with Go's MPP plan would not be apples-to-apples. The
-requested no-regression criterion is not established in the fair control; Rust
-is about 6.5x slower at p50, tracking the different physical join choices.
+so comparing them with Go's MPP plan would not be apples-to-apples. Against the
+immediately preceding remote `hparser-integration` binary (p50 142.292 ms
+under the same 20-run protocol), this local Rust build is about 7.5% faster at
+p50 (131.615 ms), so this change does not regress the measured minimal-fixture
+workload. This is not a claim that Rust matches Go's absolute latency; the Rust
+execution path remains slower on this fixture.
 
 This is a minimal-fixture smoke test, not a TPC-DS SF1 throughput run. The Go
 Q64 source test is the plan source of truth; full TPC-DS plan/result/performance

@@ -144,7 +144,7 @@ pub(crate) fn decorrelate_where(
             let candidate_outer_rows = delivered.candidate.as_ref().map(|candidate| {
                 tidb_planner::candidate_cost::evaluate(
                     candidate,
-                    &tidb_planner::candidate_cost::CostEnv::default(),
+                    ctx.optimizer_cost_env(),
                     tidb_planner::task_type::TaskType::Root,
                 )
                 .rows

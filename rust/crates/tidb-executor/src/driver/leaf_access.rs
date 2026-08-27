@@ -216,6 +216,7 @@ pub(crate) fn leaf_index_path(
         // exactly as Go's pruning precedes `findBestTask`'s property checks.
         true,
         None,
+        &ctx.optimizer_cost_env().session,
     );
     if let Some(wanted) = wanted {
         // `matchProperty` as a FILTER over the enumeration.
@@ -262,19 +263,27 @@ pub(crate) fn leaf_index_path(
     let pin_trace = std::env::var("TIKV_PIN_TRACE").as_deref() == Ok("1");
     let paths = match ctx.prepared_path_pin_for(visible) {
         Some(pin) => {
-            let (pinned, rest): (Vec<_>, Vec<_>) = paths
-                .into_iter()
-                .partition(|candidate| match (&pin, &candidate.path.index) {
-                    (PinnedLeafAccess::IndexId(pinned_id), Some((id, _))) => id == pinned_id,
-                    (PinnedLeafAccess::TableScan, None) => true,
-                    _ => false,
-                });
+            let (pinned, rest): (Vec<_>, Vec<_>) =
+                paths
+                    .into_iter()
+                    .partition(|candidate| match (&pin, &candidate.path.index) {
+                        (PinnedLeafAccess::IndexId(pinned_id), Some((id, _))) => id == pinned_id,
+                        (PinnedLeafAccess::TableScan, None) => true,
+                        _ => false,
+                    });
             if pin_trace {
-                eprintln!("[PINTRACE] leaf {visible} pin={pin:?} candidates={} narrowed={}", rest.len(), pinned.len());
+                eprintln!(
+                    "[PINTRACE] leaf {visible} pin={pin:?} candidates={} narrowed={}",
+                    rest.len(),
+                    pinned.len()
+                );
             }
             if pinned.is_empty() {
                 if pin_trace {
-                    eprintln!("[PINTRACE] leaf {visible} FALLBACK free race ({} candidates)", rest.len());
+                    eprintln!(
+                        "[PINTRACE] leaf {visible} FALLBACK free race ({} candidates)",
+                        rest.len()
+                    );
                 }
                 rest
             } else {

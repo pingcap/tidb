@@ -317,20 +317,20 @@ impl PreparedPointGetPlan {
                             residuals: Vec::new(),
                         });
                     }
-                    ResidualCheck::Equal(match point_get_value(&self.output.columns[*position].1, value) {
-                        Some(value) => value,
-                        None
-                            if names_no_rows(&self.output.columns[*position].1, value) =>
-                        {
-                            return Some(PreparedPointGetExecution {
-                                plan: Arc::clone(self),
-                                handle: None,
-                                range_values: None,
-                                residuals: Vec::new(),
-                            });
-                        }
-                        None => return None,
-                    })
+                    ResidualCheck::Equal(
+                        match point_get_value(&self.output.columns[*position].1, value) {
+                            Some(value) => value,
+                            None if names_no_rows(&self.output.columns[*position].1, value) => {
+                                return Some(PreparedPointGetExecution {
+                                    plan: Arc::clone(self),
+                                    handle: None,
+                                    range_values: None,
+                                    residuals: Vec::new(),
+                                });
+                            }
+                            None => return None,
+                        },
+                    )
                 }
             };
             residuals.push((*position, check));
@@ -443,10 +443,12 @@ pub fn build_prepared_point_get_plan(
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<PreparedPointGetPlan> {
     let tidb_ast::Stmt::Query(query) = stmt else {
-        trace_decline("not_query"); return None;
+        trace_decline("not_query");
+        return None;
     };
     let tidb_ast::QueryStmt::Select(select) = &**query else {
-        trace_decline("not_select"); return None;
+        trace_decline("not_select");
+        return None;
     };
     if !crate::access_path::select_is_bare_point_read(select)
         || !select.hints.is_empty()
@@ -457,7 +459,8 @@ pub fn build_prepared_point_get_plan(
         || select.sql_no_cache
         || select.straight_join
     {
-        trace_decline("bare_or_flags"); return None;
+        trace_decline("bare_or_flags");
+        return None;
     }
     let table_ref = single_table_ref(&select.from)?;
     if !table_ref.partitions.is_empty()
@@ -465,17 +468,20 @@ pub fn build_prepared_point_get_plan(
         || !prepared_primary_index_hint(table_ref)
         || table_ref.sample.is_some()
     {
-        trace_decline("no_single_table_ref"); return None;
+        trace_decline("no_single_table_ref");
+        return None;
     }
     let Ok((database, table_name)) = split_table_path(&table_ref.name, current_database) else {
         trace_decline("split_table_path");
         return None;
     };
     let entry @ TableEntry::Kv(table) = catalog.get_in(database, table_name)? else {
-        trace_decline("table_opts"); return None;
+        trace_decline("table_opts");
+        return None;
     };
     if table.partition().is_some() {
-        trace_decline("split_table_path"); return None;
+        trace_decline("split_table_path");
+        return None;
     }
     let (handle_offset, common_handle_offsets) = if let Some(offset) = table.pk_handle_offset() {
         (Some(offset), Vec::new())
@@ -484,7 +490,8 @@ pub fn build_prepared_point_get_plan(
         // A composite common handle encodes its prefix columns in order; the
         // walker below pins each of them exactly once, so any width works.
         if offsets.is_empty() {
-            trace_decline("entry_not_kv"); return None;
+            trace_decline("entry_not_kv");
+            return None;
         }
         (None, offsets.to_vec())
     };
@@ -511,13 +518,13 @@ pub fn build_prepared_point_get_plan(
             .get(*offset)
             .is_none_or(|column| column.generated.is_some())
     }) {
-        trace_decline("partitioned"); return None;
+        trace_decline("partitioned");
+        return None;
     }
     // One walk flattens the WHERE conjunction into resolved equalities; the
     // handle pins exactly one per handle column and everything else filters
     // the decoded row.
-    let conjuncts = match prepared_point_eq_conjuncts(select.where_clause.as_ref()?, &scope, zone)
-    {
+    let conjuncts = match prepared_point_eq_conjuncts(select.where_clause.as_ref()?, &scope, zone) {
         Some(conjuncts) => conjuncts,
         None => {
             trace_decline("conjuncts_none");
@@ -528,7 +535,11 @@ pub fn build_prepared_point_get_plan(
     let mut resolved = Vec::with_capacity(conjuncts.len());
     for conjunct in conjuncts {
         match conjunct {
-            PreparedPointConjunct::Eq { path, order, literal } => {
+            PreparedPointConjunct::Eq {
+                path,
+                order,
+                literal,
+            } => {
                 let Some((offset, _, _)) = resolver.resolve(&path) else {
                     trace_decline("resolve_eq");
                     return None;
@@ -575,7 +586,8 @@ pub fn build_prepared_point_get_plan(
         None => common_handle_offsets.to_vec(),
     };
     if handle_offsets.is_empty() {
-        trace_decline("output_none"); return None;
+        trace_decline("output_none");
+        return None;
     }
     // Which key do the pins name? A FULL handle keeps today's single-row
     // read; anything less looks for a narrower key whose LEADING columns the
@@ -584,7 +596,11 @@ pub fn build_prepared_point_get_plan(
     // instead of re-running resolve and cost model on every EXECUTE.
     let (target, pin_offsets) =
         match prepared_range_key(catalog, &table, &common_handle_offsets, &resolved) {
-            Some((target, pins)) if !handle_offsets.iter().all(|offset| column_pinned_once(*offset, &resolved)) => {
+            Some((target, pins))
+                if !handle_offsets
+                    .iter()
+                    .all(|offset| column_pinned_once(*offset, &resolved)) =>
+            {
                 (target, pins)
             }
             _ => (PreparedPointTarget::RowHandle, handle_offsets.clone()),
@@ -596,7 +612,8 @@ pub fn build_prepared_point_get_plan(
             .iter()
             .filter(|(pinned, kind)| *pinned == *offset && kind.eq_parts().is_some());
         let Some((_, predicate)) = hits.next() else {
-            trace_decline("generated_col"); return None;
+            trace_decline("generated_col");
+            return None;
         };
         let (marker_order, literal) = match predicate.eq_parts() {
             Some(parts) => parts,
@@ -606,12 +623,14 @@ pub fn build_prepared_point_get_plan(
             }
         };
         if hits.next().is_some() {
-            trace_decline("conjuncts_none"); return None;
+            trace_decline("conjuncts_none");
+            return None;
         }
         // The pin value is encoded into a KEY, so its domain has to order
         // like its bytes; otherwise the cache declines to the planner.
         if !point_byte_safe(&columns[*offset].1) {
-            trace_decline("resolve_eq"); return None;
+            trace_decline("resolve_eq");
+            return None;
         }
         parameter_orders.push(marker_order);
         handle_literals.push(literal);
@@ -639,7 +658,8 @@ pub fn build_prepared_point_get_plan(
             PreparedPointPredicate::Eq(marker_order, literal) => {
                 let column_type = &output.columns[position].1;
                 if !point_byte_safe(column_type) {
-                    trace_decline("residual_not_bytesafe"); return None;
+                    trace_decline("residual_not_bytesafe");
+                    return None;
                 }
                 let bound = match marker_order {
                     Some(order) => PointResidualBound::Param(*order),
@@ -650,7 +670,8 @@ pub fn build_prepared_point_get_plan(
                             // semantics; leave such statements to the ordinary
                             // planner rather than caching an always-empty
                             // answer.
-                            trace_decline("handle_empty"); return None;
+                            trace_decline("handle_empty");
+                            return None;
                         }
                         PointResidualBound::Literal(value.clone())
                     }
@@ -670,7 +691,8 @@ pub fn build_prepared_point_get_plan(
         }))
         .max();
     if max_order.is_some_and(|order| order >= parameter_count) {
-        trace_decline("pin_missing"); return None;
+        trace_decline("pin_missing");
+        return None;
     }
 
     trace_accept(&format!(
@@ -718,7 +740,9 @@ enum PreparedPointConjunct {
         order: Option<usize>,
         literal: Option<Datum>,
     },
-    IsNull { path: Vec<String> },
+    IsNull {
+        path: Vec<String>,
+    },
 }
 
 /// One WHERE conjunct RESOLVED to its column offset. `Eq` may pin a key;
@@ -807,7 +831,9 @@ fn prepared_point_eq_conjuncts(
                     }
                 }
             }
-            Expr::Is { expr, target, not } if matches!(target, tidb_ast::IsTarget::Null) && !*not => {
+            Expr::Is { expr, target, not }
+                if matches!(target, tidb_ast::IsTarget::Null) && !*not =>
+            {
                 // `col IS NULL`: a row-level check (NULL never equals, so it
                 // can never pin a key), admitted beside the equalities.
                 let Expr::Column(path) = unparenthesized(expr) else {
@@ -955,20 +981,29 @@ pub fn run_prepared_point_get(
                 low_exclusive: false,
                 high_exclusive: false,
             };
-            let encoded =
-                crate::handle_range::record_key_ranges(table, std::slice::from_ref(&range), ctx.zone(), false)
-                    .map_err(|error| {
-                        ExecError::unsupported(format!(
-                            "prepared point read failed to encode its range: {error:?}"
-                        ))
-                    })?;
+            let encoded = crate::handle_range::record_key_ranges(
+                table,
+                std::slice::from_ref(&range),
+                ctx.zone(),
+                false,
+            )
+            .map_err(|error| {
+                ExecError::unsupported(format!(
+                    "prepared point read failed to encode its range: {error:?}"
+                ))
+            })?;
             // An unencodable bound has no narrowed read; re-plan rather than
             // guess at a fallback range here.
             let Some(ranges) = encoded else {
                 return Ok(None);
             };
             let Some(rows) = table
-                .prepared_rows_in_record_ranges(&ranges, &plan.row_decoder, ctx, PREPARED_RANGE_ROW_CAP)
+                .prepared_rows_in_record_ranges(
+                    &ranges,
+                    &plan.row_decoder,
+                    ctx,
+                    PREPARED_RANGE_ROW_CAP,
+                )
                 .map_err(decode_error)?
             else {
                 return Ok(None);
@@ -1076,8 +1111,16 @@ fn prepared_prefix_estimate(
     if rows <= 0.0 {
         return Some(0.0);
     }
-    let full_columns = stats.columns.keys().copied().collect::<std::collections::BTreeSet<_>>();
-    let full_indexes = stats.indexes.keys().copied().collect::<std::collections::BTreeSet<_>>();
+    let full_columns = stats
+        .columns
+        .keys()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let full_indexes = stats
+        .indexes
+        .keys()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
     let mut estimate = rows;
     for offset in pins {
         let column = table.visible_columns().get(*offset)?;
@@ -1105,19 +1148,20 @@ fn prepared_range_key(
     resolved: &[ResolvedConjunct],
 ) -> Option<(PreparedPointTarget, Vec<usize>)> {
     let mut best: Option<(f64, PreparedPointTarget, Vec<usize>)> = None;
-    let mut consider =
-        |pins: Vec<usize>, key_len: usize, target: PreparedPointTarget| {
-            if pins.is_empty() {
-                return;
-            }
-            let Some(estimate) = prepared_prefix_estimate(catalog, table, &pins, key_len)
-            else {
-                return;
-            };
-            if best.as_ref().is_none_or(|(best_estimate, _, _)| estimate < *best_estimate) {
-                best = Some((estimate, target, pins));
-            }
+    let mut consider = |pins: Vec<usize>, key_len: usize, target: PreparedPointTarget| {
+        if pins.is_empty() {
+            return;
+        }
+        let Some(estimate) = prepared_prefix_estimate(catalog, table, &pins, key_len) else {
+            return;
         };
+        if best
+            .as_ref()
+            .is_none_or(|(best_estimate, _, _)| estimate < *best_estimate)
+        {
+            best = Some((estimate, target, pins));
+        }
+    };
     for index in table.indexes() {
         // A PREFIX key part changes what the entry MEANS (`'ab'` stored where
         // the row holds `'abc'`), so its equality cannot be answered from the
@@ -1404,6 +1448,15 @@ fn pushed_down_conds(
     let mut filtered = select.clone();
     filtered.where_clause = join_predicates(&kept);
     Some(filtered)
+}
+
+/// Selects the logical row count that Go's `DataSource` shares with path
+/// costing.  `DeriveStats` computes `StatsInfo().RowCount` once and
+/// `findBestTask` consumes that value; only a predicate-pushdown blacklist
+/// creates a distinct access-view predicate that must be estimated again.
+#[inline]
+fn source_rows_for_access_paths(conds_narrowed: bool, logical_rows: Option<f64>) -> Option<f64> {
+    (!conds_narrowed).then_some(logical_rows).flatten()
 }
 
 /// Go `MaxMinEliminator.eliminateSingleMaxMin`
@@ -1844,6 +1897,7 @@ pub(crate) fn commit_fast_path_source(
                 &columns,
                 partition_scan,
                 current_db,
+                &ctx.optimizer_cost_env().session,
             ) {
                 commit_index_merge_source(
                     &table,
@@ -1867,6 +1921,7 @@ pub(crate) fn commit_fast_path_source(
                 &columns,
                 partition_scan,
                 current_db,
+                &ctx.optimizer_cost_env().session,
             ) {
                 commit_index_merge_source(
                     &table,
@@ -1893,6 +1948,7 @@ pub(crate) fn commit_fast_path_source(
                     current_db,
                     ordering_index_selectivity_ratio: ctx.ordering_index_selectivity_ratio(),
                     default_string_match_selectivity: ctx.default_string_match_selectivity(),
+                    cost_env: ctx.optimizer_cost_env(),
                 };
                 if let Some(plan) = choose_automatic_index_merge_union(path_select, &automatic) {
                     commit_index_merge_source(
@@ -1911,6 +1967,14 @@ pub(crate) fn commit_fast_path_source(
                 }
             }
         }
+        // Go derives `DataSource.StatsInfo().RowCount` once, then every
+        // `findBestTask` path reads that same value.  When predicate pushdown
+        // left the WHERE unchanged, `logical_rows` is exactly that source
+        // value and can be handed through instead of making the ranger and
+        // histogram walk a second time.  A blacklist-narrowed view has a
+        // different predicate, so keep the old recomputation there rather
+        // than accidentally pricing the narrowed path with the full WHERE.
+        let path_source_rows = source_rows_for_access_paths(conds_narrowed, logical_rows);
         match choose_index_range_path(
             path_select,
             catalog,
@@ -1920,7 +1984,7 @@ pub(crate) fn commit_fast_path_source(
             &hints,
             partition_scan,
             ctx,
-            None,
+            path_source_rows,
             required_order,
         ) {
             // A table path the ranger narrowed. The source already installed
@@ -2193,6 +2257,7 @@ fn choose_index_merge_union(
     columns: &[(String, FieldType)],
     partition_scan: bool,
     current_db: &str,
+    cost_session: &tidb_planner::plan_cost_ver2::CostSessionOpts,
 ) -> Option<IndexMergePlan> {
     if table.partition().is_some() {
         return None;
@@ -2236,6 +2301,7 @@ fn choose_index_merge_union(
             // heuristic never runs through -- see `enumerate_paths`.
             false,
             None,
+            cost_session,
         )
         .into_iter()
         .filter(|candidate| !candidate.access_columns.is_empty())
@@ -2258,6 +2324,7 @@ fn choose_index_merge_intersection(
     columns: &[(String, FieldType)],
     partition_scan: bool,
     current_db: &str,
+    cost_session: &tidb_planner::plan_cost_ver2::CostSessionOpts,
 ) -> Option<IndexMergePlan> {
     if table.partition().is_some() {
         return None;
@@ -2295,6 +2362,7 @@ fn choose_index_merge_intersection(
             // An IndexMerge partial; the heuristic never runs through one.
             false,
             None,
+            cost_session,
         )
         .into_iter()
         .filter(|candidate| !candidate.access_columns.is_empty())
@@ -2325,6 +2393,7 @@ struct AutomaticIndexMergeContext<'a> {
     current_db: &'a str,
     ordering_index_selectivity_ratio: f64,
     default_string_match_selectivity: f64,
+    cost_env: &'a tidb_planner::candidate_cost::CostEnv,
 }
 
 fn choose_automatic_index_merge_union(
@@ -2392,6 +2461,7 @@ fn choose_automatic_index_merge_union(
             // An IndexMerge partial; the heuristic never runs through one.
             false,
             None,
+            &input.cost_env.session,
         )
         .into_iter()
         .filter(|candidate| {
@@ -2424,6 +2494,7 @@ fn choose_automatic_index_merge_union(
         input.ordering_index_selectivity_ratio,
         None,
         None,
+        input.cost_env,
     )?;
     let rows = crate::access_cost::realtime_row_count(stats)
         * crate::access_cost::selectivity_with_default_string_match_selectivity(
@@ -2789,15 +2860,13 @@ pub(crate) fn write_read_path_consumes_predicate(
 ) -> bool {
     match read_path {
         Some(WriteReadPath::Batch(_)) => true,
-        Some(WriteReadPath::Point(_)) => {
-            point_get_predicate_is_consumed(
-                stmt.where_clause,
-                table,
-                columns,
-                zone,
-                stmt.named_partitions,
-            )
-        }
+        Some(WriteReadPath::Point(_)) => point_get_predicate_is_consumed(
+            stmt.where_clause,
+            table,
+            columns,
+            zone,
+            stmt.named_partitions,
+        ),
         Some(WriteReadPath::Ranges(..)) => {
             handle_predicate_is_consumed(stmt.where_clause, table, zone)
         }
@@ -2959,10 +3028,7 @@ pub(crate) fn surviving_partition_estimates(
 
 /// Whether `expr` names a scalar-subquery plan column whose eager
 /// evaluation recorded a NULL (Go's `EvaluateExprWithNull` replacement).
-fn null_scalar_column(
-    scope: &super::from::FromScope,
-    expr: &tidb_ast::Expr,
-) -> bool {
+fn null_scalar_column(scope: &super::from::FromScope, expr: &tidb_ast::Expr) -> bool {
     let tidb_ast::Expr::Column(path) = expr else {
         return false;
     };
@@ -3322,13 +3388,15 @@ fn index_range_partition_names(
 /// -- the only routings `BatchPointGetExec::initialize`'s `getPhysID` can
 /// evaluate per handle.
 fn hash_or_key_partition_column(table: &KvTable) -> bool {
-    table.partition().is_some_and(|partition| match partition.kind {
-        crate::partition_routing::PartitionKind::Hash => {
-            matches!(partition.expr, Expression::Column(_))
-        }
-        crate::partition_routing::PartitionKind::Key => partition.dependencies.len() == 1,
-        _ => false,
-    })
+    table
+        .partition()
+        .is_some_and(|partition| match partition.kind {
+            crate::partition_routing::PartitionKind::Hash => {
+                matches!(partition.expr, Expression::Column(_))
+            }
+            crate::partition_routing::PartitionKind::Key => partition.dependencies.len() == 1,
+            _ => false,
+        })
 }
 
 /// The estimate each partition branch of a fanned-out batch point get
@@ -3669,8 +3737,7 @@ pub(crate) fn choose_index_range_path(
             if std::env::var_os("TIKV_PIN_TRACE").is_some() {
                 eprintln!("[PINTRACE] single-table {name} replay index={index_id}");
             }
-            pinned_hints =
-                crate::index_hints::AvailablePaths::pinned_to_single_index(index_id);
+            pinned_hints = crate::index_hints::AvailablePaths::pinned_to_single_index(index_id);
             &pinned_hints
         }
         _ => {
@@ -3691,6 +3758,7 @@ pub(crate) fn choose_index_range_path(
         ctx.ordering_index_selectivity_ratio(),
         source_rows,
         required_order,
+        ctx.optimizer_cost_env(),
     )?;
     // Record the winner for this statement's next EXECUTE -- the capture
     // half of the same contract, mirroring the join-leaf capture in
@@ -3706,8 +3774,7 @@ pub(crate) fn choose_index_range_path(
                             crate::stmt_context::PinnedLeafAccess::IndexId(*index_id)
                         }
                         None => crate::stmt_context::PinnedLeafAccess::TableScan,
-                    }
-                });
+                    });
             }
         }
     }
@@ -3750,6 +3817,7 @@ fn best_single_table_access_path(
     ordering_index_selectivity_ratio: f64,
     source_rows: Option<f64>,
     required_order: Option<&[usize]>,
+    cost_env: &tidb_planner::candidate_cost::CostEnv,
 ) -> Option<(crate::access_cost::AccessPath, Vec<usize>)> {
     // No `WHERE` at all is not a reason to stop: a covering index is still a
     // candidate, and reading the whole of a narrow index beats reading the
@@ -3818,6 +3886,7 @@ fn best_single_table_access_path(
         // point-range pruning applies before skyline and cost.
         true,
         source_rows,
+        &cost_env.session,
     );
     if let Some(wanted) = required_order {
         // `matchProperty` as a FILTER over the enumeration, exactly as
@@ -3905,8 +3974,7 @@ fn best_single_table_access_path(
             for candidate in &mut matching {
                 candidate.match_property = true;
             }
-            let best_limit =
-                crate::access_cost::choose_access_path(matching, stats, true, true);
+            let best_limit = crate::access_cost::choose_access_path(matching, stats, true, true);
             // The TOPN family plans the same source under the EMPTY property
             // with ExpectedCnt = MaxFloat64: no order to match, no cap to
             // price under. A scan that does not walk in the requested order
@@ -3928,6 +3996,7 @@ fn best_single_table_access_path(
                 demand.statement_forces_an_index(),
                 true,
                 source_rows,
+                &cost_env.session,
             );
             let (limit_count, limit_offset) = match select.limit.as_ref() {
                 Some(limit) => (
@@ -3940,39 +4009,36 @@ fn best_single_table_access_path(
                 ),
                 None => (0, 0),
             };
-            let best_topn =
-                crate::access_cost::choose_access_path(uncapped, stats, false, false)
-                    .map(|mut best| {
-                        let child = best.planner_candidate.clone();
-                        let env = tidb_planner::candidate_cost::CostEnv::default();
-                        let costed = tidb_planner::candidate_cost::evaluate(
-                            &child,
-                            &env,
-                            tidb_planner::task_type::TaskType::Root,
-                        );
-                        let by_items: Vec<bool> = select
-                            .order_by
-                            .iter()
-                            .map(|item| !matches!(item.expr, tidb_ast::Expr::Column(_)))
-                            .collect();
-                        let topn = tidb_planner::plan_cost_ver2::top_n_cost(
-                            None,
-                            costed.rows,
-                            (limit_count, limit_offset),
-                            tidb_planner::plan_cost_ver2::MIN_ROW_SIZE,
-                            &by_items,
-                            (&env.factors.tidb_cpu, &env.factors.tidb_mem, 1.0),
-                            &costed.cost,
-                        );
-                        best.cost = topn.value();
-                        best
-                    });
+            let best_topn = crate::access_cost::choose_access_path(uncapped, stats, false, false)
+                .map(|mut best| {
+                    let child = best.planner_candidate.clone();
+                    let env = cost_env;
+                    let costed = tidb_planner::candidate_cost::evaluate(
+                        &child,
+                        &env,
+                        tidb_planner::task_type::TaskType::Root,
+                    );
+                    let by_items: Vec<bool> = select
+                        .order_by
+                        .iter()
+                        .map(|item| !matches!(item.expr, tidb_ast::Expr::Column(_)))
+                        .collect();
+                    let topn = tidb_planner::plan_cost_ver2::top_n_cost(
+                        None,
+                        costed.rows,
+                        (limit_count, limit_offset),
+                        tidb_planner::plan_cost_ver2::MIN_ROW_SIZE,
+                        &by_items,
+                        (&env.factors.tidb_cpu, &env.factors.tidb_mem, 1.0),
+                        &costed.cost,
+                    );
+                    best.cost = topn.value();
+                    best
+                });
             let best = match (best_limit, best_topn) {
-                (Some(limit), Some(topn)) => Some(if limit.cost <= topn.cost {
-                    limit
-                } else {
-                    topn
-                }),
+                (Some(limit), Some(topn)) => {
+                    Some(if limit.cost <= topn.cost { limit } else { topn })
+                }
                 (found, other) => found.or(other),
             };
             return best.map(|best| (best, needed));
@@ -4000,7 +4066,7 @@ fn best_single_table_access_path(
                 let child = best.planner_candidate.clone();
                 let costed = tidb_planner::candidate_cost::evaluate(
                     &child,
-                    &tidb_planner::candidate_cost::CostEnv::default(),
+                    cost_env,
                     tidb_planner::task_type::TaskType::Root,
                 );
                 let enforced = tidb_planner::candidate_cost::Candidate::Sort {
@@ -4011,7 +4077,7 @@ fn best_single_table_access_path(
                 };
                 best.cost = tidb_planner::candidate_cost::evaluate(
                     &enforced,
-                    &tidb_planner::candidate_cost::CostEnv::default(),
+                    cost_env,
                     tidb_planner::task_type::TaskType::Root,
                 )
                 .est_cost();
@@ -4305,7 +4371,9 @@ pub(crate) fn select_predicate_stats_selectivity(
     current_db: &str,
     scope: &FromScope,
 ) -> Option<f64> {
-    select_predicate_stats_selectivity_in_session(select, predicate, catalog, current_db, scope, 0.0)
+    select_predicate_stats_selectivity_in_session(
+        select, predicate, catalog, current_db, scope, 0.0,
+    )
 }
 
 /// [`select_predicate_stats_selectivity`] with the session's raw
@@ -4529,6 +4597,7 @@ fn write_index_range_path(
         // `DeriveStats` -- heuristic included -- runs exactly as a read's.
         true,
         None,
+        &ctx.optimizer_cost_env().session,
     );
     let best = crate::access_cost::choose_access_path(paths, None, false, false)?;
     match best.index {
@@ -4992,10 +5061,7 @@ fn scan_operand_call(
         // through the same fallthrough every other function takes -- which is
         // why Go's cop Selection carries `json_memberof`. This tree keeps a
         // distinct node; naming the call here restores that equivalence.
-        tidb_ast::Expr::MemberOf { expr, array } => (
-            "json_memberof".to_owned(),
-            vec![expr, array],
-        ),
+        tidb_ast::Expr::MemberOf { expr, array } => ("json_memberof".to_owned(), vec![expr, array]),
         _ => return None,
     };
     let operands = args
@@ -6279,13 +6345,13 @@ pub(crate) fn point_write_prelock_keys(
         };
         Some(TableHandle::Common(encoded))
     };
-    let Some(handle) = handle else { return Vec::new() };
+    let Some(handle) = handle else {
+        return Vec::new();
+    };
     table
         .record_physical_ids()
         .into_iter()
-        .map(|id| {
-            tidb_codec::table_key::encode_row_key_with_handle(id, &handle.record_handle())
-        })
+        .map(|id| tidb_codec::table_key::encode_row_key_with_handle(id, &handle.record_handle()))
         .collect()
 }
 
@@ -6692,6 +6758,17 @@ mod find_best_task_property_tests {
         assert_eq!(single_point_handle(&[high_open]), None);
     }
 
+    #[test]
+    fn access_paths_reuse_go_datasource_rows_only_for_unchanged_predicates() {
+        // Go's `DeriveStats` stores one row count on the DataSource and
+        // `findBestTask` reuses it.  A pushdown blacklist changes the access
+        // predicate, so that case must keep the separate estimate instead of
+        // feeding the full-WHERE count into the narrowed path.
+        assert_eq!(source_rows_for_access_paths(false, Some(42.0)), Some(42.0));
+        assert_eq!(source_rows_for_access_paths(false, None), None);
+        assert_eq!(source_rows_for_access_paths(true, Some(42.0)), None);
+    }
+
     fn expand(sql: &str) -> Option<tidb_ast::Expr> {
         let statement = tidb_parser::parse(sql).expect("query parses");
         let Stmt::Query(query) = statement else {
@@ -6752,8 +6829,8 @@ mod find_best_task_property_tests {
 
     #[test]
     fn a_ge_row_comparison_degenerates_every_branch_but_the_last() {
-        let expanded = expand("SELECT * FROM t WHERE (a, b) >= (1, 2)")
-            .expect("a row comparison expands");
+        let expanded =
+            expand("SELECT * FROM t WHERE (a, b) >= (1, 2)").expect("a row comparison expands");
         let expected = strip_parens(
             &where_clause_of("SELECT * FROM t WHERE a > 1 OR (a = 1 AND b >= 2)")
                 .expect("the expected shape parses"),
@@ -6782,11 +6859,7 @@ mod find_best_task_property_tests {
         };
         // The taobench batch read's detached shape: two points around an
         // open interval, ascending.
-        let ascending = vec![
-            point(1),
-            interval(1, true, 5, true),
-            point(5),
-        ];
+        let ascending = vec![point(1), interval(1, true, 5, true), point(5)];
         let order = IndexAccessOrder::from_ranges(&[0], &ascending);
         assert!(order.single_range);
 
