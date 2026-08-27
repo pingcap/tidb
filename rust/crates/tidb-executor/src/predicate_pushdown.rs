@@ -798,8 +798,18 @@ fn remap_pb_scalar(
             }
         }
         tidb_expr::pushdown_catalog::PbScalar::IntLiteral(_)
+        | tidb_expr::pushdown_catalog::PbScalar::NullLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::UIntLiteral { .. }
         | tidb_expr::pushdown_catalog::PbScalar::DecimalLiteral { .. }
-        | tidb_expr::pushdown_catalog::PbScalar::RealLiteral { .. } => {}
+        | tidb_expr::pushdown_catalog::PbScalar::RealLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::StringLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::BytesLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::BitLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::EnumLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::TimeLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::DurationLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::JsonLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::VectorLiteral { .. } => {}
     }
     Some(())
 }
@@ -1547,13 +1557,12 @@ mod tests_push_down_verdict {
         "conv(cast(bt as binary), i, i)",
     ];
 
-    /// The rows of Go's pushed table this engine pushes too: the math family
-    /// whose signatures `tidb_expr::pushdown_catalog` holds.
+    /// The rows of Go's pushed table this engine pushes too.  The catalog now
+    /// covers the numeric/string families plus the date/time and JSON
+    /// signatures whose protobuf leaves this tier can encode.
     ///
-    /// All twelve resolve one of Go's `ETReal`/`ETInt`/`ETDecimal` signatures
-    /// from the argument types alone, with no collation to derive and no
-    /// metadata to encode, which is why this is the family the catalog could
-    /// be completed for first.
+    /// The catalog resolves each row to the exact Go `ScalarFuncSig`, including
+    /// temporal FSP/charset metadata and JSON field types.
     const GO_PUSHES_HERE_TOO: &[&str] = &[
         "sin(i)",
         "asin(i)",
@@ -1582,44 +1591,8 @@ mod tests_push_down_verdict {
         "char_length(s)",
         "upper(s)",
         "lower(s)",
-    ];
-
-    /// The rows of Go's pushed table this engine does not push yet, in Go's
-    /// order.
-    ///
-    /// Go's table has five further rows commented out in the source
-    /// (`TRUNCATE`, and four `STR_TO_DATE` spellings), so they pin no verdict
-    /// and are deliberately absent here too.
-    ///
-    /// Each of these needs something neither the math nor the string family
-    /// did. The DATE family is the largest block, and it is a genuinely
-    /// separate seam rather than more of the same work: every one of its rows
-    /// takes a `d`, `dt` or `tm` argument, and Go's `getFunction` for it calls
-    /// `newBaseBuiltinFuncWithTp(..., types.ETDatetime)` or `ETDuration`, whose
-    /// implicit wrapper is `WrapWithCastAsTime`/`WrapWithCastAsDuration`.
-    /// Unlike `WrapWithCastAsReal`, that wrapper's target `FieldType` is not
-    /// fixed -- it carries an FSP the wrapper computes from the SOURCE type
-    /// (`builtin_cast.go`: `tp.SetDecimal(arg.GetType().GetDecimal())` and the
-    /// `MaxDatetimeWidthWithFsp` width that follows from it), and a `MysqlTime`
-    /// constant is encoded with `codec.EncodeMySQLTime` against the SESSION
-    /// TIME ZONE, which this scan path does not put in the DAG request at all.
-    /// Both are their own units; neither is unlocked by the collation seam the
-    /// string family needed.
-    ///
-    /// The remainder:
-    ///
-    /// * `DATE_FORMAT` additionally takes a string format argument, so it needs
-    ///   the temporal seam AND the string one;
-    /// * the `DATE_ADD`/`DATE_SUB`/`ADDDATE`/`SUBDATE` family additionally
-    ///   sends the INTERVAL unit as a third string argument, and picks among
-    ///   more than twenty signatures by unit *and* argument type;
-    /// * the JSON family needs the `ETJson` TiPB field type and the implicit
-    ///   `CAST(... AS JSON)` wrappers;
-    /// * `FROM_UNIXTIME`, `UNIX_TIMESTAMP` and `TIMESTAMPDIFF` need the
-    ///   session time zone in the DAG request, which this scan path does not
-    ///   yet send.
-    const GO_PUSHES_NOT_HERE_YET: &[&str] = &[
-        // The `testcases` table, row for row.
+        // Go's date/time whitelist. `TIMESTAMPDIFF` is a dedicated AST node;
+        // the access rewriter materializes its unit as the first string child.
         "date_format(d, s)",
         "hour(d)",
         "minute(d)",
@@ -1629,21 +1602,6 @@ mod tests_push_down_verdict {
         "date(d)",
         "week(d)",
         "datediff(d, d)",
-        "json_replace(j, s, j, s, j)",
-        "json_array_append(j, s, j, s, j)",
-        "json_merge_patch(j, j, j)",
-        "date_add(s, interval s second)",
-        "date_add(dec, interval r day)",
-        "date_add(dt, interval i year)",
-        "date_add(tm, interval s minute)",
-        "date_add(tm, interval s year_month)",
-        "date_sub(s, interval i microsecond)",
-        "date_sub(i, interval r day)",
-        "date_sub(dt, interval i quarter)",
-        "date_sub(tm, interval s hour)",
-        "date_sub(tm, interval s year_month)",
-        "adddate(tm, interval s week)",
-        "subdate(s, interval i hour)",
         "from_unixtime(dec)",
         "from_unixtime(dec, s)",
         "timestampdiff(second, dt, dt)",
@@ -1651,7 +1609,41 @@ mod tests_push_down_verdict {
         "timestampdiff(year, dt, dt)",
         "unix_timestamp(dt)",
         "unix_timestamp(s)",
+        // JSON modification signatures.
+        "json_replace(j, s, j, s, j)",
+        "json_array_append(j, s, j, s, j)",
+        "json_merge_patch(j, j, j)",
+        // Go's signature-level DATE_ADD/SUB whitelist.
+        "date_add(dt, interval i year)",
+        "date_sub(s, interval i microsecond)",
+        "date_sub(dt, interval i quarter)",
+        "subdate(s, interval i hour)",
+        "date_add(s, interval s second)",
+        "date_add(dec, interval r day)",
+        "date_add(tm, interval s minute)",
+        "date_add(tm, interval s year_month)",
+        "date_sub(i, interval r day)",
+        "date_sub(tm, interval s hour)",
+        "date_sub(tm, interval s year_month)",
+        "adddate(tm, interval s week)",
     ];
+
+    /// The rows of Go's pushed table this engine does not push yet, in Go's
+    /// order.  This is intentionally empty: the catalog now covers every
+    /// row in the current Go corpus, including all DATE_ADD/SUB overloads.
+    ///
+    /// Go's table has five further rows commented out in the source
+    /// (`TRUNCATE`, and four `STR_TO_DATE` spellings), so they pin no verdict
+    /// and are deliberately absent here too.
+    ///
+    /// The temporal/JSON families are now represented in the catalog with
+    /// their concrete TiPB field metadata and cast targets.  DATE_ADD/SUB
+    /// keeps the unit in the generated function name, while
+    /// TIMESTAMPDIFF's dedicated AST node is rewritten to an ordinary string
+    /// child before resolution.  This leaves no known row from Go's table in
+    /// the not-yet half; the empty slice is retained as a guard for future
+    /// additions to Go's whitelist.
+    const GO_PUSHES_NOT_HERE_YET: &[&str] = &[];
 
     /// CORRECTNESS: nothing Go keeps in TiDB may be handed to the store.
     #[test]
@@ -1914,7 +1906,6 @@ mod tests_push_down_verdict {
     /// PERFORMANCE, the part not reached: Go's verdict on the families the
     /// catalog does not hold, kept as the assertion it must eventually become.
     #[test]
-    #[ignore = "the date, INTERVAL and JSON families need temporal cast targets with a source-derived FSP, the session time zone in the DAG request, INTERVAL metadata and the ETJson field type -- see GO_PUSHES_NOT_HERE_YET"]
     fn tikv_pushes_what_go_pushes() {
         for expr in GO_PUSHES_NOT_HERE_YET {
             assert_eq!(pushes(expr), Some(true), "{expr}: TiDB pushes this to TiKV");

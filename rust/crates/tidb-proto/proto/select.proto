@@ -79,19 +79,30 @@ message FieldType {
   optional bool array = 8;
 }
 
-// The scalar expression kinds admitted by the bounded signed-BIGINT
-// comparison path. Values are copied from expression.proto.
+// The scalar expression kinds admitted by the coprocessor expression path.
+// Values are copied from expression.proto; keeping the concrete literal
+// families here lets Rust carry the same metadata as Go's ExprToPB.
 enum ExprType {
   Null = 0;
   Int64 = 1;
+  Uint64 = 2;
   Float32 = 3;
   Float64 = 4;
   // Go `constantToPBExpr`'s `KindString`/`KindBinaryLiteral` arm: the raw
-  // bytes as `Val`, with no codec around them. `Bytes` (6, `KindBytes`) is
-  // deliberately absent -- no leaf this path builds is that kind.
+  // bytes as `Val`, with no codec around them.
   String = 5;
+  // Additional scalar leaves used by the upstream DAG converter.  Keeping
+  // the exact tipb numbers here lets the Rust pushdown path carry the same
+  // concrete values instead of falling back to a root Selection.
+  Bytes = 6;
+  MysqlBit = 101;
   MysqlDecimal = 102;
+  MysqlDuration = 103;
+  MysqlEnum = 104;
+  MysqlSet = 106;
   MysqlTime = 107;
+  MysqlJson = 108;
+  TiDBVectorFloat32 = 121;
   ColumnRef = 201;
   // The aggregate-function family a partial TiKV aggregation carries. Only
   // the kinds the pushed-aggregate lowering builds are projected; upstream
@@ -103,8 +114,10 @@ enum ExprType {
   ScalarFunc = 10000;
 }
 
-// The ordinary signed-integer comparison signatures admitted by this path.
-// NULL-safe equality remains outside the six-operator product boundary.
+// Scalar function signatures used by the coprocessor expression path. The
+// comparison rows start with the ordinary signed-integer family; subsequent
+// rows carry the concrete string, temporal, JSON and cast families mirrored
+// from Go's tipb expression contract.
 enum ScalarFuncSig {
   Unspecified = 0;
   LTInt = 100;
@@ -158,6 +171,126 @@ enum ScalarFuncSig {
   // `builtinJSONMemberOfSig` over (json, json). The numeric id is the
   // upstream tipb ScalarFuncSig contract (`JsonMemberOfSig = 5029`).
   JsonMemberOfSig = 5029;
+  JsonReplaceSig = 5006;
+  JsonArrayAppendSig = 5013;
+  JsonMergePatchSig = 5015;
+
+  // Time functions admitted by Go's scalarExprSupportedByTiKV.
+  DateFormatSig = 6001;
+  DateDiff = 6003;
+  Date = 6012;
+  Hour = 6013;
+  Minute = 6014;
+  Second = 6015;
+  MicroSecond = 6016;
+  Month = 6017;
+  WeekWithoutMode = 6026;
+  UnixTimestampCurrent = 6065;
+  UnixTimestampInt = 6066;
+  UnixTimestampDec = 6067;
+  FromUnixTime1Arg = 6088;
+  FromUnixTime2Arg = 6089;
+  TimestampDiff = 6108;
+  AddDateStringString = 6092;
+  AddDateStringInt = 6093;
+  AddDateStringDecimal = 6094;
+  AddDateIntString = 6095;
+  AddDateIntInt = 6096;
+  AddDateDatetimeString = 6097;
+  AddDateDatetimeInt = 6098;
+  SubDateStringString = 6099;
+  SubDateStringInt = 6100;
+  SubDateStringDecimal = 6101;
+  SubDateIntString = 6102;
+  SubDateIntInt = 6103;
+  SubDateDatetimeString = 6104;
+  SubDateDatetimeInt = 6105;
+  SubDateStringReal = 6109;
+  SubDateIntReal = 6110;
+  SubDateIntDecimal = 6111;
+  SubDateDatetimeReal = 6112;
+  SubDateDatetimeDecimal = 6113;
+  SubDateDurationString = 6114;
+  SubDateDurationInt = 6115;
+  SubDateDurationReal = 6116;
+  SubDateDurationDecimal = 6117;
+  AddDateStringReal = 6118;
+  AddDateIntReal = 6119;
+  AddDateIntDecimal = 6120;
+  AddDateDatetimeReal = 6121;
+  AddDateDatetimeDecimal = 6122;
+  AddDateDurationString = 6123;
+  AddDateDurationInt = 6124;
+  AddDateDurationReal = 6125;
+  AddDateDurationDecimal = 6126;
+  AddDateDurationStringDatetime = 6144;
+  AddDateDurationIntDatetime = 6145;
+  AddDateDurationRealDatetime = 6146;
+  AddDateDurationDecimalDatetime = 6147;
+  SubDateDurationStringDatetime = 6148;
+  SubDateDurationIntDatetime = 6149;
+  SubDateDurationRealDatetime = 6150;
+  SubDateDurationDecimalDatetime = 6151;
+  AddDateRealString = 6128;
+  AddDateRealInt = 6129;
+  AddDateRealReal = 6130;
+  AddDateRealDecimal = 6131;
+  AddDateDecimalString = 6132;
+  AddDateDecimalInt = 6133;
+  AddDateDecimalReal = 6134;
+  AddDateDecimalDecimal = 6135;
+  SubDateRealString = 6136;
+  SubDateRealInt = 6137;
+  SubDateRealReal = 6138;
+  SubDateRealDecimal = 6139;
+  SubDateDecimalString = 6140;
+  SubDateDecimalInt = 6141;
+  SubDateDecimalReal = 6142;
+  SubDateDecimalDecimal = 6143;
+
+  // Casts inserted by Go's newBaseBuiltinFuncWithTp for the temporal/JSON
+  // families.  The numeric ids are the upstream tipb contract.
+  CastIntAsString = 3;
+  CastIntAsDecimal = 4;
+  CastIntAsTime = 5;
+  CastIntAsDuration = 6;
+  CastIntAsJson = 7;
+  CastRealAsString = 12;
+  CastRealAsDecimal = 13;
+  CastRealAsTime = 14;
+  CastRealAsDuration = 15;
+  CastRealAsJson = 16;
+  CastDecimalAsString = 22;
+  CastDecimalAsDecimal = 23;
+  CastDecimalAsTime = 24;
+  CastDecimalAsDuration = 25;
+  CastDecimalAsJson = 26;
+  CastStringAsString = 32;
+  CastStringAsDecimal = 33;
+  CastStringAsTime = 34;
+  CastStringAsDuration = 35;
+  CastStringAsJson = 36;
+  CastTimeAsInt = 40;
+  CastTimeAsReal = 41;
+  CastTimeAsString = 42;
+  CastTimeAsDecimal = 43;
+  CastTimeAsTime = 44;
+  CastTimeAsDuration = 45;
+  CastTimeAsJson = 46;
+  CastDurationAsInt = 50;
+  CastDurationAsReal = 51;
+  CastDurationAsString = 52;
+  CastDurationAsDecimal = 53;
+  CastDurationAsTime = 54;
+  CastDurationAsDuration = 55;
+  CastDurationAsJson = 56;
+  CastJsonAsInt = 60;
+  CastJsonAsReal = 61;
+  CastJsonAsString = 62;
+  CastJsonAsDecimal = 63;
+  CastJsonAsTime = 64;
+  CastJsonAsDuration = 65;
+  CastJsonAsJson = 66;
 
   // The implicit casts `newBaseBuiltinFuncWithTp` inserts when a builtin's
   // argument does not already evaluate as the type the chosen signature

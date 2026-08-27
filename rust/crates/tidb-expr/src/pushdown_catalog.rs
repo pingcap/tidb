@@ -52,10 +52,11 @@
 //! # What the lowering refuses, and why refusing is safe
 //!
 //! [`to_pb`] builds the TiPB tree, inserting the same implicit casts
-//! `newBaseBuiltinFuncWithTp` inserts. It refuses any leaf whose TiPB
-//! `FieldType` this tier cannot build faithfully -- today a non-binary
-//! collation (every string, `ENUM`, `SET` and JSON column) and constant
-//! families other than the numeric literals encoded below.
+//! `newBaseBuiltinFuncWithTp` inserts. It refuses only leaves whose TiPB
+//! `FieldType` or literal family this tier cannot build faithfully; concrete
+//! string/ENUM/JSON metadata, including non-binary collations, is carried
+//! through the descriptor instead of forcing a local scan; `SET` remains
+//! refused for predicate leaves because Go's `columnToPBExpr` refuses it too.
 //!
 //! A refusal costs network only. The scan source applies every pushed
 //! conjunct to every row it emits regardless
@@ -65,7 +66,10 @@
 //! the wire -- which is why every row of the table below cites the Go
 //! `getFunction` it was read from.
 
-use tidb_datatype::{collation_to_proto, Datum, Decimal, EvalType, FieldType, FieldTypeCode};
+use tidb_datatype::{
+    collation_to_proto, BinaryJSON, BinaryLiteral, Datum, Decimal, EvalType, FieldType,
+    FieldTypeCode, MySqlDuration, Time, VectorFloat32,
+};
 use tidb_proto::tipb::{Expr, ExprType};
 
 use crate::expression::Expression;
@@ -202,6 +206,10 @@ pub enum RetCollation {
     /// multi-operand derivation does, and is the reason it could be widened to
     /// without the `Coercibility`/`Repertoire` seam.
     FirstArgString,
+    /// The second argument's charset and collation, as `DATE_FORMAT`'s
+    /// `deriveCollation` branch does. Go also stamps the result `flen` from
+    /// the format mask, which is mirrored by the return-type builder below.
+    SecondArgString,
     /// `@@character_set_connection`/`@@collation_connection` with `flen` 64:
     /// `convFunctionClass.getFunction`, which sets them itself rather than
     /// taking `deriveCollation`'s answer.
@@ -238,8 +246,9 @@ impl BuiltinSignature {
     /// adjustment the family's own `getFunction` makes to it afterwards.
     ///
     /// `children` are the arguments already lowered, so a
-    /// [`RetCollation::FirstArgString`] row reads the very field type that
-    /// crosses the wire rather than a second, separately-derived copy of it.
+    /// [`RetCollation::FirstArgString`] and [`RetCollation::SecondArgString`]
+    /// rows read the relevant argument field type that crosses the wire rather
+    /// than a second, separately-derived copy of it.
     fn return_field_type(
         self,
         unsigned: bool,
@@ -268,11 +277,13 @@ impl BuiltinSignature {
                 DECIMAL_RETURN_FLEN,
                 0,
             ),
-            // Every other return family (`ETDatetime`, `ETDuration`,
-            // `ETJson`) needs a field type this tier does not build; such a
-            // row is not in the table, so this arm is unreachable through
-            // `resolve` and refuses rather than guesses.
-            _ => return None,
+            EvalType::Datetime => temporal_field_type(FieldTypeCode::Datetime, 0),
+            EvalType::Timestamp => temporal_field_type(FieldTypeCode::Timestamp, 0),
+            EvalType::Duration => temporal_field_type(FieldTypeCode::Duration, 0),
+            EvalType::Json => temporal_field_type(FieldTypeCode::Json, 0),
+            // Vector-returning builtins are not in the TiKV catalog yet.
+            EvalType::String => unreachable!("string returns use string_return_field_type"),
+            EvalType::VectorFloat32 => return None,
         })
     }
 
@@ -327,8 +338,548 @@ impl BuiltinSignature {
                     &collation,
                 ))
             }
+            RetCollation::SecondArgString => {
+                let argument = children.get(1)?.field_type.as_ref()?;
+                let argument_flag = argument.flag.unwrap_or_default();
+                let collation =
+                    tidb_datatype::proto_to_collation(argument.collate.unwrap_or_default());
+                let charset = argument.charset.clone()?;
+                let (charset, collation, flag) = if collation == BINARY_COLLATION {
+                    (
+                        BINARY_CHARSET.to_owned(),
+                        BINARY_COLLATION.to_owned(),
+                        BINARY_FLAG,
+                    )
+                } else {
+                    (charset, collation, argument_flag & BINARY_FLAG)
+                };
+                // `dateFormatFunctionClass.getFunction` computes the worst
+                // case output width from the format argument's declared
+                // length: `(flen + 1) / 2 * 11`.
+                let format_flen = argument.flen.unwrap_or(UNSPECIFIED_LENGTH);
+                let flen = (format_flen + 1) / 2 * 11;
+                Some(pb_field_type(
+                    FieldTypeCode::VarString.mysql_type().into(),
+                    flag,
+                    flen,
+                    UNSPECIFIED_LENGTH,
+                    &charset,
+                    &collation,
+                ))
+            }
         }
     }
+}
+
+/// Builds the default TiPB field metadata for one non-string evaluation
+/// family.  Go's `newReturnFieldTypeForBaseBuiltinFunc` uses the same type
+/// code/flags pair for these results; keeping this in one helper also makes
+/// the temporal and JSON return arms use the full `ToPBFieldType` path.
+fn temporal_field_type(code: FieldTypeCode, flags: u32) -> tidb_proto::tipb::FieldType {
+    let field_type = FieldType::new(code).with_flags(flags);
+    field_type_to_pb(&field_type).expect("supported temporal/json result type")
+}
+
+// DATE_ADD/SUB are named `date_add_<unit>`/`date_sub_<unit>` by the rewriter.
+// Their unit changes the runtime operation and result metadata, but not the
+// TiPB signature family.  Keep every Go overload here so an unsupported row
+// cannot accidentally resolve merely because it shares a function prefix.
+const DATE_ARGS_SS: &[EvalType] = &[EvalType::String, EvalType::String];
+const DATE_ARGS_SI: &[EvalType] = &[EvalType::String, EvalType::Int];
+const DATE_ARGS_SR: &[EvalType] = &[EvalType::String, EvalType::Real];
+const DATE_ARGS_SD: &[EvalType] = &[EvalType::String, EvalType::Decimal];
+const DATE_ARGS_IS: &[EvalType] = &[EvalType::Int, EvalType::String];
+const DATE_ARGS_II: &[EvalType] = &[EvalType::Int, EvalType::Int];
+const DATE_ARGS_IR: &[EvalType] = &[EvalType::Int, EvalType::Real];
+const DATE_ARGS_ID: &[EvalType] = &[EvalType::Int, EvalType::Decimal];
+const DATE_ARGS_RS: &[EvalType] = &[EvalType::Real, EvalType::String];
+const DATE_ARGS_RI: &[EvalType] = &[EvalType::Real, EvalType::Int];
+const DATE_ARGS_RR: &[EvalType] = &[EvalType::Real, EvalType::Real];
+const DATE_ARGS_RD: &[EvalType] = &[EvalType::Real, EvalType::Decimal];
+const DATE_ARGS_DS: &[EvalType] = &[EvalType::Decimal, EvalType::String];
+const DATE_ARGS_DI: &[EvalType] = &[EvalType::Decimal, EvalType::Int];
+const DATE_ARGS_DR: &[EvalType] = &[EvalType::Decimal, EvalType::Real];
+const DATE_ARGS_DD: &[EvalType] = &[EvalType::Decimal, EvalType::Decimal];
+const DATE_ARGS_TS: &[EvalType] = &[EvalType::Datetime, EvalType::String];
+const DATE_ARGS_TI: &[EvalType] = &[EvalType::Datetime, EvalType::Int];
+const DATE_ARGS_TR: &[EvalType] = &[EvalType::Datetime, EvalType::Real];
+const DATE_ARGS_TD: &[EvalType] = &[EvalType::Datetime, EvalType::Decimal];
+const DATE_ARGS_HS: &[EvalType] = &[EvalType::Duration, EvalType::String];
+const DATE_ARGS_HI: &[EvalType] = &[EvalType::Duration, EvalType::Int];
+const DATE_ARGS_HR: &[EvalType] = &[EvalType::Duration, EvalType::Real];
+const DATE_ARGS_HD: &[EvalType] = &[EvalType::Duration, EvalType::Decimal];
+
+const fn date_arg_types(from: EvalType, to: EvalType) -> &'static [EvalType] {
+    match (from, to) {
+        (EvalType::String, EvalType::String) => DATE_ARGS_SS,
+        (EvalType::String, EvalType::Int) => DATE_ARGS_SI,
+        (EvalType::String, EvalType::Real) => DATE_ARGS_SR,
+        (EvalType::String, EvalType::Decimal) => DATE_ARGS_SD,
+        (EvalType::Int, EvalType::String) => DATE_ARGS_IS,
+        (EvalType::Int, EvalType::Int) => DATE_ARGS_II,
+        (EvalType::Int, EvalType::Real) => DATE_ARGS_IR,
+        (EvalType::Int, EvalType::Decimal) => DATE_ARGS_ID,
+        (EvalType::Real, EvalType::String) => DATE_ARGS_RS,
+        (EvalType::Real, EvalType::Int) => DATE_ARGS_RI,
+        (EvalType::Real, EvalType::Real) => DATE_ARGS_RR,
+        (EvalType::Real, EvalType::Decimal) => DATE_ARGS_RD,
+        (EvalType::Decimal, EvalType::String) => DATE_ARGS_DS,
+        (EvalType::Decimal, EvalType::Int) => DATE_ARGS_DI,
+        (EvalType::Decimal, EvalType::Real) => DATE_ARGS_DR,
+        (EvalType::Decimal, EvalType::Decimal) => DATE_ARGS_DD,
+        (EvalType::Datetime, EvalType::String) => DATE_ARGS_TS,
+        (EvalType::Datetime, EvalType::Int) => DATE_ARGS_TI,
+        (EvalType::Datetime, EvalType::Real) => DATE_ARGS_TR,
+        (EvalType::Datetime, EvalType::Decimal) => DATE_ARGS_TD,
+        (EvalType::Duration, EvalType::String) => DATE_ARGS_HS,
+        (EvalType::Duration, EvalType::Int) => DATE_ARGS_HI,
+        (EvalType::Duration, EvalType::Real) => DATE_ARGS_HR,
+        (EvalType::Duration, EvalType::Decimal) => DATE_ARGS_HD,
+        _ => &[],
+    }
+}
+
+const fn date_signature(
+    from: EvalType,
+    to: EvalType,
+    ret: EvalType,
+    sig: ScalarFuncSig,
+) -> BuiltinSignature {
+    BuiltinSignature {
+        name: "date_arithmetic",
+        selector: &[ArgPattern::ANY, ArgPattern::ANY],
+        arg_types: date_arg_types(from, to),
+        ret,
+        sig,
+        ret_unsigned_from_first_arg: false,
+        // Non-string signatures ignore this field; string DATE_ADD/SUB
+        // results use the connection collation selected by Go's fallback
+        // derivation.
+        ret_collation: RetCollation::ConnectionString,
+    }
+}
+
+const DATE_ADD_SIGNATURES: &[BuiltinSignature] = &[
+    date_signature(
+        EvalType::String,
+        EvalType::String,
+        EvalType::String,
+        ScalarFuncSig::AddDateStringString,
+    ),
+    date_signature(
+        EvalType::String,
+        EvalType::Int,
+        EvalType::String,
+        ScalarFuncSig::AddDateStringInt,
+    ),
+    date_signature(
+        EvalType::String,
+        EvalType::Real,
+        EvalType::String,
+        ScalarFuncSig::AddDateStringReal,
+    ),
+    date_signature(
+        EvalType::String,
+        EvalType::Decimal,
+        EvalType::String,
+        ScalarFuncSig::AddDateStringDecimal,
+    ),
+    date_signature(
+        EvalType::Int,
+        EvalType::String,
+        EvalType::String,
+        ScalarFuncSig::AddDateIntString,
+    ),
+    date_signature(
+        EvalType::Int,
+        EvalType::Int,
+        EvalType::String,
+        ScalarFuncSig::AddDateIntInt,
+    ),
+    date_signature(
+        EvalType::Int,
+        EvalType::Real,
+        EvalType::String,
+        ScalarFuncSig::AddDateIntReal,
+    ),
+    date_signature(
+        EvalType::Int,
+        EvalType::Decimal,
+        EvalType::String,
+        ScalarFuncSig::AddDateIntDecimal,
+    ),
+    date_signature(
+        EvalType::Real,
+        EvalType::String,
+        EvalType::String,
+        ScalarFuncSig::AddDateRealString,
+    ),
+    date_signature(
+        EvalType::Real,
+        EvalType::Int,
+        EvalType::String,
+        ScalarFuncSig::AddDateRealInt,
+    ),
+    date_signature(
+        EvalType::Real,
+        EvalType::Real,
+        EvalType::String,
+        ScalarFuncSig::AddDateRealReal,
+    ),
+    date_signature(
+        EvalType::Real,
+        EvalType::Decimal,
+        EvalType::String,
+        ScalarFuncSig::AddDateRealDecimal,
+    ),
+    date_signature(
+        EvalType::Decimal,
+        EvalType::String,
+        EvalType::String,
+        ScalarFuncSig::AddDateDecimalString,
+    ),
+    date_signature(
+        EvalType::Decimal,
+        EvalType::Int,
+        EvalType::String,
+        ScalarFuncSig::AddDateDecimalInt,
+    ),
+    date_signature(
+        EvalType::Decimal,
+        EvalType::Real,
+        EvalType::String,
+        ScalarFuncSig::AddDateDecimalReal,
+    ),
+    date_signature(
+        EvalType::Decimal,
+        EvalType::Decimal,
+        EvalType::String,
+        ScalarFuncSig::AddDateDecimalDecimal,
+    ),
+    date_signature(
+        EvalType::Datetime,
+        EvalType::String,
+        EvalType::Datetime,
+        ScalarFuncSig::AddDateDatetimeString,
+    ),
+    date_signature(
+        EvalType::Datetime,
+        EvalType::Int,
+        EvalType::Datetime,
+        ScalarFuncSig::AddDateDatetimeInt,
+    ),
+    date_signature(
+        EvalType::Datetime,
+        EvalType::Real,
+        EvalType::Datetime,
+        ScalarFuncSig::AddDateDatetimeReal,
+    ),
+    date_signature(
+        EvalType::Datetime,
+        EvalType::Decimal,
+        EvalType::Datetime,
+        ScalarFuncSig::AddDateDatetimeDecimal,
+    ),
+    date_signature(
+        EvalType::Duration,
+        EvalType::String,
+        EvalType::Duration,
+        ScalarFuncSig::AddDateDurationString,
+    ),
+    date_signature(
+        EvalType::Duration,
+        EvalType::Int,
+        EvalType::Duration,
+        ScalarFuncSig::AddDateDurationInt,
+    ),
+    date_signature(
+        EvalType::Duration,
+        EvalType::Real,
+        EvalType::Duration,
+        ScalarFuncSig::AddDateDurationReal,
+    ),
+    date_signature(
+        EvalType::Duration,
+        EvalType::Decimal,
+        EvalType::Duration,
+        ScalarFuncSig::AddDateDurationDecimal,
+    ),
+    date_signature(
+        EvalType::Duration,
+        EvalType::String,
+        EvalType::Datetime,
+        ScalarFuncSig::AddDateDurationStringDatetime,
+    ),
+    date_signature(
+        EvalType::Duration,
+        EvalType::Int,
+        EvalType::Datetime,
+        ScalarFuncSig::AddDateDurationIntDatetime,
+    ),
+    date_signature(
+        EvalType::Duration,
+        EvalType::Real,
+        EvalType::Datetime,
+        ScalarFuncSig::AddDateDurationRealDatetime,
+    ),
+    date_signature(
+        EvalType::Duration,
+        EvalType::Decimal,
+        EvalType::Datetime,
+        ScalarFuncSig::AddDateDurationDecimalDatetime,
+    ),
+];
+
+const DATE_SUB_SIGNATURES: &[BuiltinSignature] = &[
+    date_signature(
+        EvalType::String,
+        EvalType::String,
+        EvalType::String,
+        ScalarFuncSig::SubDateStringString,
+    ),
+    date_signature(
+        EvalType::String,
+        EvalType::Int,
+        EvalType::String,
+        ScalarFuncSig::SubDateStringInt,
+    ),
+    date_signature(
+        EvalType::String,
+        EvalType::Real,
+        EvalType::String,
+        ScalarFuncSig::SubDateStringReal,
+    ),
+    date_signature(
+        EvalType::String,
+        EvalType::Decimal,
+        EvalType::String,
+        ScalarFuncSig::SubDateStringDecimal,
+    ),
+    date_signature(
+        EvalType::Int,
+        EvalType::String,
+        EvalType::String,
+        ScalarFuncSig::SubDateIntString,
+    ),
+    date_signature(
+        EvalType::Int,
+        EvalType::Int,
+        EvalType::String,
+        ScalarFuncSig::SubDateIntInt,
+    ),
+    date_signature(
+        EvalType::Int,
+        EvalType::Real,
+        EvalType::String,
+        ScalarFuncSig::SubDateIntReal,
+    ),
+    date_signature(
+        EvalType::Int,
+        EvalType::Decimal,
+        EvalType::String,
+        ScalarFuncSig::SubDateIntDecimal,
+    ),
+    date_signature(
+        EvalType::Real,
+        EvalType::String,
+        EvalType::String,
+        ScalarFuncSig::SubDateRealString,
+    ),
+    date_signature(
+        EvalType::Real,
+        EvalType::Int,
+        EvalType::String,
+        ScalarFuncSig::SubDateRealInt,
+    ),
+    date_signature(
+        EvalType::Real,
+        EvalType::Real,
+        EvalType::String,
+        ScalarFuncSig::SubDateRealReal,
+    ),
+    date_signature(
+        EvalType::Real,
+        EvalType::Decimal,
+        EvalType::String,
+        ScalarFuncSig::SubDateRealDecimal,
+    ),
+    date_signature(
+        EvalType::Decimal,
+        EvalType::String,
+        EvalType::String,
+        ScalarFuncSig::SubDateDecimalString,
+    ),
+    date_signature(
+        EvalType::Decimal,
+        EvalType::Int,
+        EvalType::String,
+        ScalarFuncSig::SubDateDecimalInt,
+    ),
+    date_signature(
+        EvalType::Decimal,
+        EvalType::Real,
+        EvalType::String,
+        ScalarFuncSig::SubDateDecimalReal,
+    ),
+    date_signature(
+        EvalType::Decimal,
+        EvalType::Decimal,
+        EvalType::String,
+        ScalarFuncSig::SubDateDecimalDecimal,
+    ),
+    date_signature(
+        EvalType::Datetime,
+        EvalType::String,
+        EvalType::Datetime,
+        ScalarFuncSig::SubDateDatetimeString,
+    ),
+    date_signature(
+        EvalType::Datetime,
+        EvalType::Int,
+        EvalType::Datetime,
+        ScalarFuncSig::SubDateDatetimeInt,
+    ),
+    date_signature(
+        EvalType::Datetime,
+        EvalType::Real,
+        EvalType::Datetime,
+        ScalarFuncSig::SubDateDatetimeReal,
+    ),
+    date_signature(
+        EvalType::Datetime,
+        EvalType::Decimal,
+        EvalType::Datetime,
+        ScalarFuncSig::SubDateDatetimeDecimal,
+    ),
+    date_signature(
+        EvalType::Duration,
+        EvalType::String,
+        EvalType::Duration,
+        ScalarFuncSig::SubDateDurationString,
+    ),
+    date_signature(
+        EvalType::Duration,
+        EvalType::Int,
+        EvalType::Duration,
+        ScalarFuncSig::SubDateDurationInt,
+    ),
+    date_signature(
+        EvalType::Duration,
+        EvalType::Real,
+        EvalType::Duration,
+        ScalarFuncSig::SubDateDurationReal,
+    ),
+    date_signature(
+        EvalType::Duration,
+        EvalType::Decimal,
+        EvalType::Duration,
+        ScalarFuncSig::SubDateDurationDecimal,
+    ),
+    date_signature(
+        EvalType::Duration,
+        EvalType::String,
+        EvalType::Datetime,
+        ScalarFuncSig::SubDateDurationStringDatetime,
+    ),
+    date_signature(
+        EvalType::Duration,
+        EvalType::Int,
+        EvalType::Datetime,
+        ScalarFuncSig::SubDateDurationIntDatetime,
+    ),
+    date_signature(
+        EvalType::Duration,
+        EvalType::Real,
+        EvalType::Datetime,
+        ScalarFuncSig::SubDateDurationRealDatetime,
+    ),
+    date_signature(
+        EvalType::Duration,
+        EvalType::Decimal,
+        EvalType::Datetime,
+        ScalarFuncSig::SubDateDurationDecimalDatetime,
+    ),
+];
+
+/// Resolves the Go-pushable DATE_ADD/SUB overloads.  Go's
+/// `scalarExprSupportedByTiKV` admits the date-arithmetic function family;
+/// `getFunction` then selects one of the concrete overloads below.  Keeping
+/// that overload choice here is important because the protobuf signature also
+/// determines the implicit argument casts and result field type.
+fn resolve_date_arithmetic(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
+    let subtract = name.starts_with("date_sub_");
+    if !subtract && !name.starts_with("date_add_") {
+        return None;
+    }
+    let [first, second] = args else {
+        return None;
+    };
+    // Go normalizes TIMESTAMP and JSON date operands before selecting its
+    // overload (`timestamp` behaves as `datetime`, JSON as `string`).
+    let first_type = match first.eval_type() {
+        EvalType::Timestamp => EvalType::Datetime,
+        EvalType::Json => EvalType::String,
+        other => other,
+    };
+    let second_type = match second.eval_type() {
+        EvalType::Json => EvalType::String,
+        other => other,
+    };
+    let candidates = if subtract {
+        DATE_SUB_SIGNATURES
+    } else {
+        DATE_ADD_SIGNATURES
+    };
+    let mut matches = candidates
+        .iter()
+        .filter(|candidate| candidate.arg_types == [first_type, second_type]);
+    let first_match = matches.next()?;
+    if first_match.ret == EvalType::Duration {
+        let unit = name.rsplit('_').next()?.to_ascii_uppercase();
+        let date_unit = matches!(
+            unit.as_str(),
+            "DAY" | "WEEK" | "MONTH" | "QUARTER" | "YEAR" | "YEAR_MONTH"
+        );
+        if date_unit && unit != "DAY_MICROSECOND" {
+            return candidates.iter().find(|candidate| {
+                candidate.arg_types == [first_type, second_type]
+                    && candidate.ret == EvalType::Datetime
+            });
+        }
+    }
+    Some(first_match)
+}
+
+/// Resolves Go's `unixTimestampFunctionClass` return domain.
+///
+/// The function has one wire family for an argument, but Go chooses
+/// `UnixTimestampInt` when the resolved DATETIME argument has FSP 0 and
+/// `UnixTimestampDec` otherwise.  A single `ANY -> DECIMAL` catalog row would
+/// be observably wrong: it changes the result field type and the TiPB
+/// signature for ordinary `DATETIME`/`DATE` columns.  Unknown precision (for
+/// example a non-constant string or a computed child) follows Go's decimal
+/// fallback.
+fn resolve_unix_timestamp(args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
+    let [argument] = args else {
+        // `unix_timestamp()` is deliberately not pushed by Go:
+        // `scalarExprSupportedByTiKV` rejects the Current signature because
+        // it reads the TiDB session clock rather than a coprocessor row.
+        return None;
+    };
+    let decimal = argument
+        .static_field_type()
+        .map(FieldType::decimal)
+        .unwrap_or(i64::from(UNSPECIFIED_LENGTH));
+    let signature = if decimal == 0 {
+        ScalarFuncSig::UnixTimestampInt
+    } else {
+        ScalarFuncSig::UnixTimestampDec
+    };
+    CATALOG.iter().find(|candidate| {
+        candidate.name == "unix_timestamp"
+            && candidate.sig == signature
+            && candidate.selector.len() == 1
+    })
 }
 
 /// The catalog, in Go's own per-family order.
@@ -662,9 +1213,8 @@ pub const CATALOG: &[BuiltinSignature] = &[
     // argument arrives as any JSON-coercible literal or column -- Go wraps it
     // in the implicit cast `newBaseBuiltinFuncWithTp` inserts -- so its slot
     // matches anything and the lowering asks `coerced_to_pb` for the cast.
-    // A JSON operand's TiPB leaf is one this tier does not build, so the
-    // call refuses to encode and the scan source filters locally; refusing
-    // there costs network only.
+    // JSON leaves are carried with their concrete `MysqlJson` type and the
+    // candidate value is wrapped by the normal implicit cast path below.
     signature(
         "json_memberof",
         &[ArgPattern::ANY, ArgPattern::eval(EvalType::Json)],
@@ -679,6 +1229,178 @@ pub const CATALOG: &[BuiltinSignature] = &[
         &[EvalType::String, EvalType::Int, EvalType::Int],
         ScalarFuncSig::Conv,
         RetCollation::ConnectionString,
+    ),
+    // Go's date/time builtins.  Their signatures are selected from the
+    // evaluation domain, while the scalar protobuf carries the concrete
+    // temporal field type (including FSP) on each child.
+    string_signature(
+        "date_format",
+        &[ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::Datetime, EvalType::String],
+        ScalarFuncSig::DateFormatSig,
+        RetCollation::SecondArgString,
+    ),
+    signature(
+        "date",
+        &[ArgPattern::ANY],
+        &[EvalType::Datetime],
+        EvalType::Datetime,
+        ScalarFuncSig::Date,
+        false,
+    ),
+    signature(
+        "hour",
+        &[ArgPattern::ANY],
+        &[EvalType::Datetime],
+        EvalType::Int,
+        ScalarFuncSig::Hour,
+        false,
+    ),
+    signature(
+        "minute",
+        &[ArgPattern::ANY],
+        &[EvalType::Datetime],
+        EvalType::Int,
+        ScalarFuncSig::Minute,
+        false,
+    ),
+    signature(
+        "second",
+        &[ArgPattern::ANY],
+        &[EvalType::Datetime],
+        EvalType::Int,
+        ScalarFuncSig::Second,
+        false,
+    ),
+    signature(
+        "microsecond",
+        &[ArgPattern::ANY],
+        &[EvalType::Datetime],
+        EvalType::Int,
+        ScalarFuncSig::MicroSecond,
+        false,
+    ),
+    signature(
+        "month",
+        &[ArgPattern::ANY],
+        &[EvalType::Datetime],
+        EvalType::Int,
+        ScalarFuncSig::Month,
+        false,
+    ),
+    signature(
+        "week",
+        &[ArgPattern::ANY],
+        &[EvalType::Datetime],
+        EvalType::Int,
+        ScalarFuncSig::WeekWithoutMode,
+        false,
+    ),
+    signature(
+        "datediff",
+        &[ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::Datetime, EvalType::Datetime],
+        EvalType::Int,
+        ScalarFuncSig::DateDiff,
+        false,
+    ),
+    signature(
+        "from_unixtime",
+        &[ArgPattern::ANY],
+        &[EvalType::Decimal],
+        EvalType::Datetime,
+        ScalarFuncSig::FromUnixTime1Arg,
+        false,
+    ),
+    string_signature(
+        "from_unixtime",
+        &[ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::Decimal, EvalType::String],
+        ScalarFuncSig::FromUnixTime2Arg,
+        RetCollation::ConnectionString,
+    ),
+    signature(
+        "timestampdiff",
+        &[ArgPattern::ANY, ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::String, EvalType::Datetime, EvalType::Datetime],
+        EvalType::Int,
+        ScalarFuncSig::TimestampDiff,
+        false,
+    ),
+    signature(
+        "unix_timestamp",
+        &[ArgPattern::ANY],
+        &[EvalType::Datetime],
+        EvalType::Int,
+        ScalarFuncSig::UnixTimestampInt,
+        false,
+    ),
+    signature(
+        "unix_timestamp",
+        &[ArgPattern::ANY],
+        &[EvalType::Datetime],
+        EvalType::Decimal,
+        ScalarFuncSig::UnixTimestampDec,
+        false,
+    ),
+    // Go wraps a string argument in CAST(... AS DATETIME) before selecting
+    // UnixTimestampDec.  The same row also admits a DATE/ TIMESTAMP column.
+    signature(
+        "unix_timestamp",
+        &[ArgPattern::eval(EvalType::String)],
+        &[EvalType::Datetime],
+        EvalType::Decimal,
+        ScalarFuncSig::UnixTimestampDec,
+        false,
+    ),
+    // JSON modification functions use alternating JSON/path/JSON operands.
+    signature(
+        "json_replace",
+        &[
+            ArgPattern::ANY,
+            ArgPattern::ANY,
+            ArgPattern::ANY,
+            ArgPattern::ANY,
+            ArgPattern::ANY,
+        ],
+        &[
+            EvalType::Json,
+            EvalType::String,
+            EvalType::Json,
+            EvalType::String,
+            EvalType::Json,
+        ],
+        EvalType::Json,
+        ScalarFuncSig::JsonReplaceSig,
+        false,
+    ),
+    signature(
+        "json_array_append",
+        &[
+            ArgPattern::ANY,
+            ArgPattern::ANY,
+            ArgPattern::ANY,
+            ArgPattern::ANY,
+            ArgPattern::ANY,
+        ],
+        &[
+            EvalType::Json,
+            EvalType::String,
+            EvalType::Json,
+            EvalType::String,
+            EvalType::Json,
+        ],
+        EvalType::Json,
+        ScalarFuncSig::JsonArrayAppendSig,
+        false,
+    ),
+    signature(
+        "json_merge_patch",
+        &[ArgPattern::ANY, ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::Json, EvalType::Json, EvalType::Json],
+        EvalType::Json,
+        ScalarFuncSig::JsonMergePatchSig,
+        false,
     ),
 ];
 
@@ -780,6 +1502,10 @@ const fn cast_signature(from: EvalType, to: EvalType) -> Option<Option<ScalarFun
             | (EvalType::Real, EvalType::Real)
             | (EvalType::Decimal, EvalType::Decimal)
             | (EvalType::String, EvalType::String)
+            | (EvalType::Datetime, EvalType::Datetime)
+            | (EvalType::Timestamp, EvalType::Timestamp)
+            | (EvalType::Duration, EvalType::Duration)
+            | (EvalType::Json, EvalType::Json)
     ) {
         // Go returns the argument untouched, so no node is added at all.
         return Some(None);
@@ -791,6 +1517,57 @@ const fn cast_signature(from: EvalType, to: EvalType) -> Option<Option<ScalarFun
         (EvalType::Decimal, EvalType::Real) => ScalarFuncSig::CastDecimalAsReal,
         (EvalType::String, EvalType::Int) => ScalarFuncSig::CastStringAsInt,
         (EvalType::String, EvalType::Real) => ScalarFuncSig::CastStringAsReal,
+        (EvalType::Int, EvalType::String) => ScalarFuncSig::CastIntAsString,
+        (EvalType::Int, EvalType::Decimal) => ScalarFuncSig::CastIntAsDecimal,
+        (EvalType::Int, EvalType::Datetime | EvalType::Timestamp) => ScalarFuncSig::CastIntAsTime,
+        (EvalType::Int, EvalType::Duration) => ScalarFuncSig::CastIntAsDuration,
+        (EvalType::Int, EvalType::Json) => ScalarFuncSig::CastIntAsJson,
+        (EvalType::Real, EvalType::String) => ScalarFuncSig::CastRealAsString,
+        (EvalType::Real, EvalType::Decimal) => ScalarFuncSig::CastRealAsDecimal,
+        (EvalType::Real, EvalType::Datetime | EvalType::Timestamp) => ScalarFuncSig::CastRealAsTime,
+        (EvalType::Real, EvalType::Duration) => ScalarFuncSig::CastRealAsDuration,
+        (EvalType::Real, EvalType::Json) => ScalarFuncSig::CastRealAsJson,
+        (EvalType::Decimal, EvalType::String) => ScalarFuncSig::CastDecimalAsString,
+        (EvalType::Decimal, EvalType::Datetime | EvalType::Timestamp) => {
+            ScalarFuncSig::CastDecimalAsTime
+        }
+        (EvalType::Decimal, EvalType::Duration) => ScalarFuncSig::CastDecimalAsDuration,
+        (EvalType::Decimal, EvalType::Json) => ScalarFuncSig::CastDecimalAsJson,
+        (EvalType::String, EvalType::Decimal) => ScalarFuncSig::CastStringAsDecimal,
+        (EvalType::String, EvalType::Datetime | EvalType::Timestamp) => {
+            ScalarFuncSig::CastStringAsTime
+        }
+        (EvalType::String, EvalType::Duration) => ScalarFuncSig::CastStringAsDuration,
+        (EvalType::String, EvalType::Json) => ScalarFuncSig::CastStringAsJson,
+        (EvalType::Datetime | EvalType::Timestamp, EvalType::Int) => ScalarFuncSig::CastTimeAsInt,
+        (EvalType::Datetime | EvalType::Timestamp, EvalType::Real) => ScalarFuncSig::CastTimeAsReal,
+        (EvalType::Datetime | EvalType::Timestamp, EvalType::String) => {
+            ScalarFuncSig::CastTimeAsString
+        }
+        (EvalType::Datetime | EvalType::Timestamp, EvalType::Decimal) => {
+            ScalarFuncSig::CastTimeAsDecimal
+        }
+        (EvalType::Datetime | EvalType::Timestamp, EvalType::Datetime | EvalType::Timestamp) => {
+            ScalarFuncSig::CastTimeAsTime
+        }
+        (EvalType::Datetime | EvalType::Timestamp, EvalType::Duration) => {
+            ScalarFuncSig::CastTimeAsDuration
+        }
+        (EvalType::Datetime | EvalType::Timestamp, EvalType::Json) => ScalarFuncSig::CastTimeAsJson,
+        (EvalType::Duration, EvalType::Int) => ScalarFuncSig::CastDurationAsInt,
+        (EvalType::Duration, EvalType::Real) => ScalarFuncSig::CastDurationAsReal,
+        (EvalType::Duration, EvalType::String) => ScalarFuncSig::CastDurationAsString,
+        (EvalType::Duration, EvalType::Decimal) => ScalarFuncSig::CastDurationAsDecimal,
+        (EvalType::Duration, EvalType::Datetime | EvalType::Timestamp) => {
+            ScalarFuncSig::CastDurationAsTime
+        }
+        (EvalType::Duration, EvalType::Json) => ScalarFuncSig::CastDurationAsJson,
+        (EvalType::Json, EvalType::Int) => ScalarFuncSig::CastJsonAsInt,
+        (EvalType::Json, EvalType::Real) => ScalarFuncSig::CastJsonAsReal,
+        (EvalType::Json, EvalType::String) => ScalarFuncSig::CastJsonAsString,
+        (EvalType::Json, EvalType::Decimal) => ScalarFuncSig::CastJsonAsDecimal,
+        (EvalType::Json, EvalType::Datetime | EvalType::Timestamp) => ScalarFuncSig::CastJsonAsTime,
+        (EvalType::Json, EvalType::Duration) => ScalarFuncSig::CastJsonAsDuration,
         _ => return None,
     }))
 }
@@ -806,8 +1583,23 @@ pub enum PbScalar {
         /// The column's declared type.
         field_type: FieldType,
     },
+    /// A SQL `NULL` constant. Go emits `ExprType_Null` with an empty value;
+    /// the field type remains the planner's inferred type so a surrounding
+    /// builtin can apply the same implicit cast selection as Go.
+    NullLiteral {
+        /// Planner-inferred type carried on the TiPB leaf.
+        field_type: FieldType,
+    },
     /// A signed integer constant, already folded.
     IntLiteral(i64),
+    /// An unsigned integer constant, already folded. Go uses a distinct
+    /// `ExprType_Uint64` leaf so values above `math.MaxInt64` do not wrap.
+    UIntLiteral {
+        /// The exact unsigned value.
+        value: u64,
+        /// Planner-inferred literal type, including the unsigned flag.
+        field_type: FieldType,
+    },
     /// An exact decimal constant, already folded.
     DecimalLiteral {
         /// Constant value encoded with Go's natural precision and scale.
@@ -822,6 +1614,65 @@ pub enum PbScalar {
         /// The planner-inferred literal type carried on the TiPB leaf.
         field_type: FieldType,
     },
+    /// A folded string/bytes literal.  Go sends both `KindString` and
+    /// `KindBinaryLiteral` as a raw `ExprType_String` leaf; the field type
+    /// carries the collation and binary flag.
+    StringLiteral {
+        /// Raw literal bytes.
+        value: Vec<u8>,
+        /// Planner-inferred literal type.
+        field_type: FieldType,
+    },
+    /// A byte-preserving `KindBytes` literal. Go encodes this as the distinct
+    /// TiPB `ExprType_Bytes` leaf rather than `ExprType_String`.
+    BytesLiteral {
+        /// Raw octets.
+        value: Vec<u8>,
+        /// Planner-inferred literal type.
+        field_type: FieldType,
+    },
+    /// A MySQL BIT literal (`KindMysqlBit`).
+    BitLiteral {
+        /// Raw, width-preserving bit payload.
+        value: BinaryLiteral,
+        /// Planner-inferred literal type.
+        field_type: FieldType,
+    },
+    /// A MySQL ENUM literal (`KindMysqlEnum`).
+    EnumLiteral {
+        /// One-based ENUM element number.
+        value: u64,
+        /// Planner-inferred literal type and element metadata.
+        field_type: FieldType,
+    },
+    /// A folded MySQL DATE/DATETIME/TIMESTAMP literal.
+    TimeLiteral {
+        /// Packed MySQL time value before TiPB encoding.
+        value: Time,
+        /// Planner-inferred literal type.
+        field_type: FieldType,
+    },
+    /// A folded MySQL TIME literal.
+    DurationLiteral {
+        /// Duration value before TiPB encoding.
+        value: MySqlDuration,
+        /// Planner-inferred literal type.
+        field_type: FieldType,
+    },
+    /// A folded binary JSON literal.
+    JsonLiteral {
+        /// Exact type-code-plus-payload representation.
+        value: BinaryJSON,
+        /// Planner-inferred literal type.
+        field_type: FieldType,
+    },
+    /// A TiDB vector literal (`KindVectorFloat32`).
+    VectorLiteral {
+        /// Exact vector payload.
+        value: VectorFloat32,
+        /// Planner-inferred literal type.
+        field_type: FieldType,
+    },
     /// A resolved builtin call.
     Call {
         /// The catalog row [`resolve`] chose.
@@ -832,14 +1683,47 @@ pub enum PbScalar {
 }
 
 impl PbScalar {
+    /// Returns the declared field metadata carried by a leaf. Calls derive
+    /// their result type from the catalog, while the legacy signed integer
+    /// literal uses Go's fixed BIGINT representation and therefore has no
+    /// separate source `FieldType` here.
+    fn static_field_type(&self) -> Option<&FieldType> {
+        match self {
+            Self::Column { field_type, .. }
+            | Self::NullLiteral { field_type }
+            | Self::UIntLiteral { field_type, .. }
+            | Self::DecimalLiteral { field_type, .. }
+            | Self::RealLiteral { field_type, .. }
+            | Self::StringLiteral { field_type, .. }
+            | Self::BytesLiteral { field_type, .. }
+            | Self::BitLiteral { field_type, .. }
+            | Self::EnumLiteral { field_type, .. }
+            | Self::TimeLiteral { field_type, .. }
+            | Self::DurationLiteral { field_type, .. }
+            | Self::JsonLiteral { field_type, .. }
+            | Self::VectorLiteral { field_type, .. } => Some(field_type),
+            Self::IntLiteral(_) | Self::Call { .. } => None,
+        }
+    }
+
     /// The node's evaluation type, which is what the selector matches on.
     #[must_use]
     pub fn eval_type(&self) -> EvalType {
         match self {
             Self::Column { field_type, .. } => field_type.eval_type(),
+            Self::NullLiteral { field_type } => field_type.eval_type(),
             Self::IntLiteral(_) => EvalType::Int,
+            Self::UIntLiteral { field_type, .. } => field_type.eval_type(),
             Self::DecimalLiteral { .. } => EvalType::Decimal,
             Self::RealLiteral { .. } => EvalType::Real,
+            Self::StringLiteral { .. } => EvalType::String,
+            Self::BytesLiteral { .. } => EvalType::String,
+            Self::BitLiteral { field_type, .. } => field_type.eval_type(),
+            Self::EnumLiteral { field_type, .. } => field_type.eval_type(),
+            Self::TimeLiteral { field_type, .. } => field_type.eval_type(),
+            Self::DurationLiteral { .. } => EvalType::Duration,
+            Self::JsonLiteral { .. } => EvalType::Json,
+            Self::VectorLiteral { .. } => EvalType::VectorFloat32,
             Self::Call { signature, .. } => signature.ret,
         }
     }
@@ -854,10 +1738,19 @@ impl PbScalar {
     pub fn is_unsigned(&self) -> bool {
         match self {
             Self::Column { field_type, .. } => field_type.is_unsigned(),
+            Self::NullLiteral { field_type } => field_type.is_unsigned(),
             Self::IntLiteral(_) => false,
-            Self::DecimalLiteral { field_type, .. } | Self::RealLiteral { field_type, .. } => {
-                field_type.is_unsigned()
-            }
+            Self::UIntLiteral { field_type, .. }
+            | Self::DecimalLiteral { field_type, .. }
+            | Self::RealLiteral { field_type, .. } => field_type.is_unsigned(),
+            Self::StringLiteral { field_type, .. }
+            | Self::BytesLiteral { field_type, .. }
+            | Self::BitLiteral { field_type, .. }
+            | Self::EnumLiteral { field_type, .. }
+            | Self::TimeLiteral { field_type, .. }
+            | Self::DurationLiteral { field_type, .. }
+            | Self::JsonLiteral { field_type, .. }
+            | Self::VectorLiteral { field_type, .. } => field_type.is_unsigned(),
             Self::Call { signature, args } => {
                 signature.ret_unsigned_from_first_arg
                     && args.first().is_some_and(PbScalar::is_unsigned)
@@ -877,12 +1770,27 @@ impl PbScalar {
     pub fn is_binary_string(&self) -> bool {
         match self {
             Self::Column { field_type, .. } => field_type.is_binary_string(),
+            Self::NullLiteral { .. } => false,
             Self::IntLiteral(_) => false,
-            Self::DecimalLiteral { .. } | Self::RealLiteral { .. } => false,
+            Self::UIntLiteral { .. } | Self::DecimalLiteral { .. } | Self::RealLiteral { .. } => {
+                false
+            }
+            Self::StringLiteral { field_type, .. } | Self::BytesLiteral { field_type, .. } => {
+                field_type.is_binary_string()
+            }
+            Self::BitLiteral { .. }
+            | Self::EnumLiteral { .. }
+            | Self::TimeLiteral { .. }
+            | Self::DurationLiteral { .. }
+            | Self::JsonLiteral { .. }
+            | Self::VectorLiteral { .. } => false,
             Self::Call { signature, args } => match signature.ret_collation {
                 RetCollation::Numeric | RetCollation::ConnectionString => false,
                 RetCollation::FirstArgString => {
                     args.first().is_some_and(PbScalar::is_binary_string)
+                }
+                RetCollation::SecondArgString => {
+                    args.get(1).is_some_and(PbScalar::is_binary_string)
                 }
             },
         }
@@ -899,6 +1807,12 @@ impl PbScalar {
 /// returns nil for both.
 #[must_use]
 pub fn resolve(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
+    if let Some(signature) = resolve_date_arithmetic(name, args) {
+        return Some(signature);
+    }
+    if name == "unix_timestamp" {
+        return resolve_unix_timestamp(args);
+    }
     CATALOG.iter().find(|candidate| {
         candidate.name == name
             && candidate.selector.len() == args.len()
@@ -929,7 +1843,14 @@ pub fn from_expression(expression: &Expression) -> Option<PbScalar> {
             field_type: column.get_static_type()?.clone(),
         }),
         Expression::Constant(constant) => match &constant.value {
+            Datum::Null => Some(PbScalar::NullLiteral {
+                field_type: constant.ret_type.clone()?,
+            }),
             Datum::Int(value) => Some(PbScalar::IntLiteral(*value)),
+            Datum::UInt(value) => Some(PbScalar::UIntLiteral {
+                value: *value,
+                field_type: constant.ret_type.clone()?,
+            }),
             Datum::Decimal(value) => Some(PbScalar::DecimalLiteral {
                 value: value.clone(),
                 field_type: constant.ret_type.clone()?,
@@ -942,6 +1863,42 @@ pub fn from_expression(expression: &Expression) -> Option<PbScalar> {
                     field_type: constant.ret_type.clone()?,
                 })
             }
+            Datum::String(value) => Some(PbScalar::StringLiteral {
+                value: value.bytes().to_vec(),
+                field_type: constant.ret_type.clone()?,
+            }),
+            Datum::Bytes(value) => Some(PbScalar::BytesLiteral {
+                value: value.clone(),
+                field_type: constant.ret_type.clone()?,
+            }),
+            Datum::BinaryLiteral(value) => Some(PbScalar::StringLiteral {
+                value: value.as_bytes().to_vec(),
+                field_type: constant.ret_type.clone()?,
+            }),
+            Datum::Bit(value) => Some(PbScalar::BitLiteral {
+                value: value.clone(),
+                field_type: constant.ret_type.clone()?,
+            }),
+            Datum::Enum(value, _) => Some(PbScalar::EnumLiteral {
+                value: value.value(),
+                field_type: constant.ret_type.clone()?,
+            }),
+            Datum::Time(value) => Some(PbScalar::TimeLiteral {
+                value: *value,
+                field_type: constant.ret_type.clone()?,
+            }),
+            Datum::Duration(value) => Some(PbScalar::DurationLiteral {
+                value: *value,
+                field_type: constant.ret_type.clone()?,
+            }),
+            Datum::Json(value) => Some(PbScalar::JsonLiteral {
+                value: value.clone(),
+                field_type: constant.ret_type.clone()?,
+            }),
+            Datum::VectorFloat32(value) => Some(PbScalar::VectorLiteral {
+                value: value.clone(),
+                field_type: constant.ret_type.clone()?,
+            }),
             _ => None,
         },
         Expression::ScalarFunction(function) => {
@@ -977,14 +1934,21 @@ pub fn field_type_to_pb(field_type: &FieldType) -> Option<tidb_proto::tipb::Fiel
     if !leaf_column_family(field_type.code()) {
         return None;
     }
-    Some(pb_field_type(
+    let mut result = pb_field_type(
         i32::from(field_type.code().mysql_type()),
         field_type.flags(),
         i32::try_from(field_type.flen()).ok()?,
         i32::try_from(field_type.decimal()).ok()?,
         field_type.charset_name(),
         field_type.collation_name(),
-    ))
+    );
+    result.elems = field_type
+        .elems_snapshot()
+        .into_iter()
+        .map(|elem| elem.to_string())
+        .collect();
+    result.array = Some(field_type.is_array());
+    Some(result)
 }
 
 /// The scan descriptor's own declaration of one output column: the four fields
@@ -1014,6 +1978,10 @@ pub struct ColumnDescriptor {
     /// reduced to a flag. A numeric or temporal column carries `binary`,
     /// exactly as Go's `FieldType` does.
     pub collation: String,
+    /// ENUM/SET element names copied by Go's `ToPBFieldType`.
+    pub elems: Vec<String>,
+    /// Whether the descriptor carries TiDB's ARRAY marker.
+    pub array: bool,
 }
 
 /// Lowers a described call into the TiPB expression Go's `ExprToPB` builds for
@@ -1057,19 +2025,28 @@ pub fn to_pb(
             if !leaf_column_family(code) {
                 return None;
             }
+            let pb_type = FieldType::new(code)
+                .with_flags(declared.flag)
+                .with_flen(i64::from(declared.flen))
+                .with_decimal(i64::from(declared.decimal))
+                .with_charset_name(declared.charset.clone())
+                .with_collation_name(declared.collation.clone())
+                .with_elems(declared.elems.clone())
+                .with_array(declared.array);
             Some(leaf(
                 ExprType::ColumnRef,
                 encode_signed(i64::from(*offset)),
-                pb_field_type(
-                    declared.tp,
-                    declared.flag,
-                    declared.flen,
-                    declared.decimal,
-                    &declared.charset,
-                    &declared.collation,
-                ),
+                field_type_to_pb(&pb_type)?,
             ))
         }
+        PbScalar::NullLiteral { field_type } => Some(Expr {
+            tp: Some(ExprType::Null as i32),
+            val: None,
+            children: Vec::new(),
+            sig: Some(ScalarFuncSig::Unspecified as i32),
+            field_type: Some(field_type_to_pb(field_type)?),
+            has_distinct: Some(false),
+        }),
         PbScalar::IntLiteral(value) => Some(leaf(
             ExprType::Int64,
             encode_signed(*value),
@@ -1080,6 +2057,15 @@ pub fn to_pb(
                 0,
             ),
         )),
+        PbScalar::UIntLiteral { value, field_type } => {
+            let mut encoded = Vec::new();
+            tidb_codec::encode_uint(&mut encoded, *value);
+            Some(leaf(
+                ExprType::Uint64,
+                encoded,
+                field_type_to_pb(field_type)?,
+            ))
+        }
         PbScalar::DecimalLiteral { value, field_type } => {
             let mut encoded = Vec::new();
             tidb_codec::encode_decimal_fixed(&mut encoded, value, 0, 0).ok()?;
@@ -1098,6 +2084,55 @@ pub fn to_pb(
                 field_type_to_pb(field_type)?,
             ))
         }
+        PbScalar::StringLiteral { value, field_type } => Some(leaf(
+            ExprType::String,
+            value.clone(),
+            field_type_to_pb(field_type)?,
+        )),
+        PbScalar::BytesLiteral { value, field_type } => Some(leaf(
+            ExprType::Bytes,
+            value.clone(),
+            field_type_to_pb(field_type)?,
+        )),
+        PbScalar::BitLiteral { value, field_type } => Some(leaf(
+            ExprType::MysqlBit,
+            value.as_bytes().to_vec(),
+            field_type_to_pb(field_type)?,
+        )),
+        PbScalar::EnumLiteral { value, field_type } => {
+            let mut encoded = Vec::new();
+            tidb_codec::encode_uint(&mut encoded, *value);
+            Some(leaf(
+                ExprType::MysqlEnum,
+                encoded,
+                field_type_to_pb(field_type)?,
+            ))
+        }
+        PbScalar::TimeLiteral { value, field_type } => {
+            let packed = value.to_packed_uint().ok()?;
+            let mut encoded = Vec::new();
+            tidb_codec::encode_uint(&mut encoded, packed);
+            Some(leaf(
+                ExprType::MysqlTime,
+                encoded,
+                field_type_to_pb(field_type)?,
+            ))
+        }
+        PbScalar::DurationLiteral { value, field_type } => Some(leaf(
+            ExprType::MysqlDuration,
+            encode_signed(value.nanoseconds()),
+            field_type_to_pb(field_type)?,
+        )),
+        PbScalar::JsonLiteral { value, field_type } => Some(leaf(
+            ExprType::MysqlJson,
+            value.encoded(),
+            field_type_to_pb(field_type)?,
+        )),
+        PbScalar::VectorLiteral { value, field_type } => Some(leaf(
+            ExprType::TiDbVectorFloat32,
+            value.serialize(),
+            field_type_to_pb(field_type)?,
+        )),
         PbScalar::Call { signature, args } => {
             let mut children = Vec::with_capacity(args.len());
             for (argument, required) in args.iter().zip(signature.arg_types) {
@@ -1158,6 +2193,25 @@ fn coerced_to_pb(
                     ),
                 ))
             }
+            // Unlike numeric constants, Go keeps an integer child and emits
+            // the corresponding temporal/JSON cast node.  Let the generic
+            // path below build that node with the target metadata.
+            EvalType::Datetime | EvalType::Timestamp | EvalType::Duration | EvalType::Json => {
+                // Fall through after the constant-specialization block.
+                let cast = cast_signature(argument.eval_type(), required)?;
+                let Some(cast) = cast else {
+                    return to_pb(argument, columns);
+                };
+                let field_type = cast_target_field_type(argument, required)?;
+                return Some(Expr {
+                    tp: Some(ExprType::ScalarFunc as i32),
+                    val: None,
+                    children: vec![to_pb(argument, columns)?],
+                    sig: Some(cast as i32),
+                    field_type: Some(field_type),
+                    has_distinct: Some(false),
+                });
+            }
             _ => None,
         };
     }
@@ -1185,7 +2239,7 @@ fn coerced_to_pb(
             DECIMAL_RETURN_FLEN,
             0,
         ),
-        _ => return None,
+        _ => cast_target_field_type(argument, required)?,
     };
     Some(Expr {
         tp: Some(ExprType::ScalarFunc as i32),
@@ -1195,6 +2249,75 @@ fn coerced_to_pb(
         field_type: Some(field_type),
         has_distinct: Some(false),
     })
+}
+
+/// Builds the target metadata used by Go's temporal, duration, string and
+/// JSON implicit casts.  These targets are part of the wire contract: TiKV
+/// uses the FSP and JSON charset/flag when evaluating the cast, so emitting a
+/// generic binary field type would not be equivalent to `WrapWithCastAsTime`
+/// or `WrapWithCastAsJSON`.
+fn cast_target_field_type(
+    argument: &PbScalar,
+    required: EvalType,
+) -> Option<tidb_proto::tipb::FieldType> {
+    let source = argument.static_field_type();
+    let source_decimal = source.map(FieldType::decimal).unwrap_or(0);
+    let source_eval = source
+        .map(FieldType::eval_type)
+        .unwrap_or_else(|| argument.eval_type());
+    let fsp = match required {
+        EvalType::Datetime | EvalType::Timestamp => match source_eval {
+            EvalType::Int => 0,
+            EvalType::String | EvalType::Real | EvalType::Json => 6,
+            EvalType::Datetime | EvalType::Timestamp | EvalType::Duration | EvalType::Decimal => {
+                source_decimal.clamp(0, 6)
+            }
+            _ => return None,
+        },
+        EvalType::Duration => match source.map(FieldType::code) {
+            Some(FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp) => {
+                source_decimal.clamp(0, 6)
+            }
+            Some(_) | None => 6,
+        },
+        _ => 0,
+    };
+    let field_type = match required {
+        EvalType::String => {
+            let (charset, collation) = crate::collation_derive::connection_charset_info();
+            FieldType::new(FieldTypeCode::VarString)
+                .with_flen(i64::from(UNSPECIFIED_LENGTH))
+                .with_decimal(i64::from(UNSPECIFIED_LENGTH))
+                .with_charset_name(charset)
+                .with_collation_name(collation)
+        }
+        EvalType::Datetime => FieldType::new(FieldTypeCode::Datetime)
+            .with_flags(BINARY_FLAG)
+            .with_flen(19 + if fsp > 0 { fsp + 1 } else { 0 })
+            .with_decimal(fsp)
+            .with_charset_name(BINARY_CHARSET)
+            .with_collation_name(BINARY_COLLATION),
+        EvalType::Timestamp => FieldType::new(FieldTypeCode::Timestamp)
+            .with_flags(BINARY_FLAG)
+            .with_flen(19 + if fsp > 0 { fsp + 1 } else { 0 })
+            .with_decimal(fsp)
+            .with_charset_name(BINARY_CHARSET)
+            .with_collation_name(BINARY_COLLATION),
+        EvalType::Duration => FieldType::new(FieldTypeCode::Duration)
+            .with_flags(BINARY_FLAG)
+            .with_flen(10 + if fsp > 0 { fsp + 1 } else { 0 })
+            .with_decimal(fsp)
+            .with_charset_name(BINARY_CHARSET)
+            .with_collation_name(BINARY_COLLATION),
+        EvalType::Json => FieldType::new(FieldTypeCode::Json)
+            .with_flags(BINARY_FLAG)
+            .with_flen(12_582_912)
+            .with_decimal(UNSPECIFIED_LENGTH.into())
+            .with_charset_name("utf8mb4")
+            .with_collation_name("utf8mb4_bin"),
+        _ => return None,
+    };
+    field_type_to_pb(&field_type)
 }
 
 /// The flags `WrapWithCastAsReal`/`WrapWithCastAsInt` copy onto the cast's own
@@ -1237,8 +2360,7 @@ fn encode_signed(value: i64) -> Vec<u8> {
 /// applies when new collations are enabled, which is how TiKV is told to use
 /// the new collator rather than a byte comparison.
 ///
-/// `elems` is always empty here because no `ENUM`/`SET` leaf reaches this
-/// tier; [`leaf_column_family`] is what keeps that true.
+/// `elems` and `array` are copied as-is, matching Go's `ToPBFieldType`.
 fn pb_field_type(
     mysql_type: i32,
     flags: u32,
@@ -1263,10 +2385,9 @@ fn pb_field_type(
 /// Whether a column of this family may become a TiPB `ColumnRef` leaf here.
 ///
 /// Go `columnToPBExpr` refuses `SET`, `GEOMETRY` and unspecified outright, and
-/// admits `BIT` and `ENUM` only behind `IsPushDownEnabled` switches this tier
-/// does not read; an `ENUM`/`SET` leaf would additionally need its `elems`
-/// list on the wire, and a `JSON` leaf the `ETJson` handling. All of them are
-/// refused here instead, which costs network and never an answer.
+/// admits `BIT`, `ENUM`, JSON, temporal and vector leaves. The caller supplies
+/// the already-resolved push-down metadata, so this helper only enforces the
+/// type-family boundary; blacklist switches remain the planner's concern.
 const fn leaf_column_family(code: FieldTypeCode) -> bool {
     matches!(
         code,
@@ -1280,8 +2401,15 @@ const fn leaf_column_family(code: FieldTypeCode) -> bool {
             | FieldTypeCode::Double
             | FieldTypeCode::NewDecimal
             | FieldTypeCode::Date
+            | FieldTypeCode::NewDate
             | FieldTypeCode::Datetime
             | FieldTypeCode::Timestamp
+            | FieldTypeCode::Duration
+            | FieldTypeCode::Bit
+            | FieldTypeCode::Enum
+            | FieldTypeCode::Json
+            | FieldTypeCode::VectorFloat32
+            | FieldTypeCode::Null
             | FieldTypeCode::Varchar
             | FieldTypeCode::VarString
             | FieldTypeCode::String
@@ -1339,11 +2467,27 @@ mod tests {
                     charset: tidb_datatype::get_collation_by_name(field_type.collation_name())
                         .map_or_else(|_| "binary".to_owned(), |row| row.charset_name),
                     collation: field_type.collation_name().to_owned(),
+                    elems: field_type
+                        .elems_snapshot()
+                        .into_iter()
+                        .map(|elem| elem.to_string())
+                        .collect(),
+                    array: field_type.is_array(),
                 },
             )),
             PbScalar::IntLiteral(_)
+            | PbScalar::NullLiteral { .. }
+            | PbScalar::UIntLiteral { .. }
             | PbScalar::DecimalLiteral { .. }
-            | PbScalar::RealLiteral { .. } => {}
+            | PbScalar::RealLiteral { .. }
+            | PbScalar::StringLiteral { .. }
+            | PbScalar::BytesLiteral { .. }
+            | PbScalar::BitLiteral { .. }
+            | PbScalar::EnumLiteral { .. }
+            | PbScalar::TimeLiteral { .. }
+            | PbScalar::DurationLiteral { .. }
+            | PbScalar::JsonLiteral { .. }
+            | PbScalar::VectorLiteral { .. } => {}
             PbScalar::Call { args, .. } => args.iter().for_each(|arg| collect(arg, out)),
         }
     }
@@ -1538,6 +2682,120 @@ mod tests {
         assert_eq!(pb.children[0].tp, Some(ExprType::MysqlDecimal as i32));
     }
 
+    /// Temporal/JSON families use the same concrete signatures and cast
+    /// metadata as Go's `newBaseBuiltinFuncWithTp`.  In particular,
+    /// `UNIX_TIMESTAMP(string)` must carry a DATETIME cast target (including
+    /// binary temporal metadata), while DATE_ADD/SUB and JSON modification
+    /// calls must select their exact upstream signature numbers.
+    #[test]
+    fn temporal_and_json_families_lower_with_go_signatures_and_casts() {
+        let cases = [
+            (
+                build_call(
+                    "date_add_year",
+                    vec![column(FieldTypeCode::Datetime), PbScalar::IntLiteral(1)],
+                )
+                .unwrap(),
+                ScalarFuncSig::AddDateDatetimeInt,
+            ),
+            (
+                build_call(
+                    "date_add_second",
+                    vec![column(FieldTypeCode::VarString), PbScalar::IntLiteral(1)],
+                )
+                .unwrap(),
+                ScalarFuncSig::AddDateStringInt,
+            ),
+            (
+                build_call(
+                    "date_sub_hour",
+                    vec![
+                        column(FieldTypeCode::Duration),
+                        PbScalar::Column {
+                            offset: 1,
+                            field_type: FieldType::new(FieldTypeCode::VarString),
+                        },
+                    ],
+                )
+                .unwrap(),
+                ScalarFuncSig::SubDateDurationString,
+            ),
+            (
+                build_call(
+                    "json_replace",
+                    vec![
+                        column(FieldTypeCode::Json),
+                        column(FieldTypeCode::Json),
+                        column(FieldTypeCode::Json),
+                        column(FieldTypeCode::Json),
+                        column(FieldTypeCode::Json),
+                    ],
+                )
+                .unwrap(),
+                ScalarFuncSig::JsonReplaceSig,
+            ),
+        ];
+        for (call, expected) in cases {
+            let pb = lower(&call).unwrap_or_else(|| {
+                panic!("the Go-compatible temporal/JSON call {expected:?} lowers")
+            });
+            assert_eq!(pb.sig, Some(expected as i32));
+        }
+
+        let unix = build_call("unix_timestamp", vec![column(FieldTypeCode::VarString)]).unwrap();
+        let pb = lower(&unix).expect("UNIX_TIMESTAMP(string) lowers through CAST AS DATETIME");
+        assert_eq!(pb.sig, Some(ScalarFuncSig::UnixTimestampDec as i32));
+        assert_eq!(
+            pb.children[0].sig,
+            Some(ScalarFuncSig::CastStringAsTime as i32)
+        );
+        let cast_type = pb.children[0].field_type.as_ref().unwrap();
+        assert_eq!(
+            cast_type.tp,
+            Some(FieldTypeCode::Datetime.mysql_type().into())
+        );
+        assert_eq!(cast_type.decimal, Some(6));
+        assert_eq!(
+            cast_type.collate,
+            Some(tidb_datatype::collation_to_proto("binary"))
+        );
+
+        // Go selects the integer result/signature for a DATETIME with FSP 0;
+        // the decimal row above is only for the string/unknown-precision
+        // case.  Keeping this assertion prevents a broad `ANY -> DECIMAL`
+        // row from silently regressing the ordinary timestamp path.
+        let unix = build_call(
+            "unix_timestamp",
+            vec![PbScalar::Column {
+                offset: 0,
+                field_type: FieldType::new(FieldTypeCode::Datetime).with_decimal(0),
+            }],
+        )
+        .unwrap();
+        let pb = lower(&unix).expect("UNIX_TIMESTAMP(datetime) lowers");
+        assert_eq!(pb.sig, Some(ScalarFuncSig::UnixTimestampInt as i32));
+    }
+
+    #[test]
+    fn date_format_uses_the_format_argument_collation_and_width() {
+        let format = PbScalar::Column {
+            offset: 1,
+            field_type: FieldType::new(FieldTypeCode::VarString)
+                .with_collation_name("utf8mb4_general_ci")
+                .with_flen(8),
+        };
+        let call =
+            build_call("date_format", vec![column(FieldTypeCode::Datetime), format]).unwrap();
+        let pb = lower(&call).expect("DATE_FORMAT is a TiKV-pushable signature");
+        let result = pb.field_type.as_ref().expect("result type is encoded");
+        assert_eq!(
+            result.collate,
+            Some(tidb_datatype::collation_to_proto("utf8mb4_general_ci"))
+        );
+        assert_eq!(result.charset.as_deref(), Some("utf8mb4"));
+        assert_eq!(result.flen, Some(44), "(8 + 1) / 2 * 11, as Go computes");
+    }
+
     /// A string column's leaf carries the column's OWN collation, put through
     /// `collate.CollationToProto` -- the id TiKV picks its collator from.
     /// Guessing this is the one mistake that returns wrong rows silently, so
@@ -1570,22 +2828,62 @@ mod tests {
         }
     }
 
-    /// A column family whose TiPB leaf needs more than the fields this tier
-    /// copies is refused: `ENUM`/`SET` carry an `elems` list, and `BIT`,
-    /// `JSON` and `GEOMETRY` are gated or refused by Go's `columnToPBExpr`.
     #[test]
-    fn a_leaf_family_go_gates_or_refuses_is_refused_here() {
-        for code in [
-            FieldTypeCode::Enum,
-            FieldTypeCode::Set,
-            FieldTypeCode::Bit,
-            FieldTypeCode::Json,
-            FieldTypeCode::Geometry,
-        ] {
-            assert!(
-                !leaf_column_family(code),
-                "{code:?} needs more than the six TiPB field-type fields this tier copies"
-            );
+    fn concrete_go_literal_kinds_keep_their_tipb_leaf_types() {
+        let null = PbScalar::NullLiteral {
+            field_type: FieldType::new(FieldTypeCode::Null),
+        };
+        let null_pb = lower(&null).unwrap();
+        assert_eq!(null_pb.tp, Some(ExprType::Null as i32));
+        assert!(null_pb.val.is_none());
+
+        let unsigned = PbScalar::UIntLiteral {
+            value: u64::MAX,
+            field_type: FieldType::new(FieldTypeCode::LongLong).with_unsigned(true),
+        };
+        assert_eq!(lower(&unsigned).unwrap().tp, Some(ExprType::Uint64 as i32));
+
+        let bytes = PbScalar::BytesLiteral {
+            value: vec![0xff, 0x00],
+            field_type: FieldType::new(FieldTypeCode::Blob),
+        };
+        assert_eq!(lower(&bytes).unwrap().tp, Some(ExprType::Bytes as i32));
+
+        let bit = PbScalar::BitLiteral {
+            value: BinaryLiteral::from_uint(3, None),
+            field_type: FieldType::new(FieldTypeCode::Bit),
+        };
+        assert_eq!(lower(&bit).unwrap().tp, Some(ExprType::MysqlBit as i32));
+
+        let enum_value = PbScalar::EnumLiteral {
+            value: 2,
+            field_type: FieldType::new(FieldTypeCode::Enum).with_elems(["red", "green"]),
+        };
+        assert_eq!(
+            lower(&enum_value).unwrap().tp,
+            Some(ExprType::MysqlEnum as i32)
+        );
+
+        let vector = PbScalar::VectorLiteral {
+            value: VectorFloat32::must_create([1.0, 2.0]),
+            field_type: FieldType::new(FieldTypeCode::VectorFloat32),
+        };
+        assert_eq!(
+            lower(&vector).unwrap().tp,
+            Some(ExprType::TiDbVectorFloat32 as i32)
+        );
+    }
+
+    /// The leaf family follows Go's `columnToPBExpr`: `SET` and `GEOMETRY`
+    /// remain refused, while the concrete BIT/ENUM/JSON families carry their
+    /// full metadata on the wire.
+    #[test]
+    fn a_leaf_family_matches_go_column_to_pb() {
+        for code in [FieldTypeCode::Set, FieldTypeCode::Geometry] {
+            assert!(!leaf_column_family(code), "{code:?} is refused by Go");
+        }
+        for code in [FieldTypeCode::Bit, FieldTypeCode::Enum, FieldTypeCode::Json] {
+            assert!(leaf_column_family(code), "{code:?} is admitted by Go");
         }
     }
 
@@ -1830,6 +3128,8 @@ mod tests {
                 decimal: UNSPECIFIED_LENGTH,
                 charset: "binary".to_owned(),
                 collation: "binary".to_owned(),
+                elems: Vec::new(),
+                array: false,
             })
         };
         assert!(
@@ -1853,7 +3153,14 @@ mod tests {
             assert!(
                 matches!(
                     row.ret,
-                    EvalType::Int | EvalType::Real | EvalType::Decimal | EvalType::String
+                    EvalType::Int
+                        | EvalType::Real
+                        | EvalType::Decimal
+                        | EvalType::String
+                        | EvalType::Datetime
+                        | EvalType::Timestamp
+                        | EvalType::Duration
+                        | EvalType::Json
                 ),
                 "{}: the return family needs a TiPB field type this tier builds",
                 row.name

@@ -5014,11 +5014,13 @@ fn scan_predicate(
 }
 
 /// One argument of a described builtin call: a column of the scanned table, an
-/// already-folded integer constant, or a nested call the catalog also resolves.
+/// already-folded concrete constant (numeric, string, temporal, or JSON), or a
+/// nested call the catalog also resolves.
 ///
-/// Anything else -- a non-integer constant, a subquery, a call whose signature
-/// TiKV does not evaluate -- makes the whole conjunct residual, which is Go's
-/// own rule: `scalarFuncToPBExpr` returns nil as soon as one child does.
+/// Anything else -- a subquery, a call whose signature TiKV does not evaluate,
+/// or a constant with no faithful TiPB leaf -- makes the whole conjunct
+/// residual, which is Go's own rule: `scalarFuncToPBExpr` returns nil as soon
+/// as one child does.
 fn scan_operand(
     argument: &tidb_ast::Expr,
     resolver: &impl ColumnResolver,
@@ -5031,12 +5033,16 @@ fn scan_operand(
         let (offset, field_type) = resolve_column(argument, resolver)?;
         return Some(PbScalar::Column { offset, field_type });
     }
-    // A constant subtree first, so a folded literal argument (`MOD(a, 3 + 1)`)
-    // is the constant Go would have folded rather than a `plus` call. Only an
-    // integer is describable: every other constant family needs the TiPB
-    // literal encoding this tier does not build.
-    if let Some(Datum::Int(value)) = constant_value(argument, &resolver.time_zone()) {
-        return Some(PbScalar::IntLiteral(value));
+    // A constant subtree first, so a folded literal (`DATE_FORMAT(d,
+    // CONCAT('%Y','-%m'))`) is the constant Go would have folded rather than a
+    // nested call. `from_expression` carries the concrete TiPB leaf encoding
+    // for strings, temporal values, durations and JSON as well as integers.
+    if let Some((value, field_type)) = constant_value_and_type(argument, &resolver.time_zone()) {
+        return tidb_expr::pushdown_catalog::from_expression(
+            &tidb_expr::expression::Expression::Constant(tidb_expr::constant::Constant::new(
+                value, field_type,
+            )),
+        );
     }
     scan_operand_call(argument, resolver)
 }
@@ -5064,8 +5070,26 @@ fn scan_operand_call(
         // why Go's cop Selection carries `json_memberof`. This tree keeps a
         // distinct node; naming the call here restores that equivalence.
         tidb_ast::Expr::MemberOf { expr, array } => ("json_memberof".to_owned(), vec![expr, array]),
+        tidb_ast::Expr::TimestampDiff { .. } => {
+            let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(argument, resolver).ok()?;
+            return tidb_expr::pushdown_catalog::from_expression(&rewritten);
+        }
         _ => return None,
     };
+    // DATE_ADD/SUB carries its INTERVAL value and unit in one AST child. The
+    // expression rewriter turns that pair into the generated
+    // `date_add_<unit>`/`date_sub_<unit>` call before Go chooses a protobuf
+    // signature; recursively scanning the raw `Expr::Interval` would lose
+    // the unit and can never form a matching catalog row.
+    if matches!(
+        name.as_str(),
+        "date_add" | "date_sub" | "adddate" | "subdate"
+    ) && args.len() == 2
+        && matches!(args[1], tidb_ast::Expr::Interval { .. })
+    {
+        let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(argument, resolver).ok()?;
+        return tidb_expr::pushdown_catalog::from_expression(&rewritten);
+    }
     let operands = args
         .into_iter()
         .map(|nested| scan_operand(nested, resolver))
@@ -5099,17 +5123,6 @@ fn resolve_column(
         }
         _ => None,
     }
-}
-
-/// The already-evaluated value of `expr`, when it is a constant.
-///
-/// A negated integer literal is folded here rather than left as the unary
-/// minus the parser produced, because Go's expression rewriter folds it too
-/// (`foldConstant` over a deterministic function of constants) and the
-/// coprocessor is therefore sent the negative constant, not a `UnaryMinus`
-/// node. Without this, `WHERE a > -1` describes nothing at all.
-fn constant_value(expr: &tidb_ast::Expr, zone: &tidb_datatype::SessionTimeZone) -> Option<Datum> {
-    constant_value_and_type(expr, zone).map(|(value, _)| value)
 }
 
 /// A constant expression's value and the exact type Go's expression builder
