@@ -177,20 +177,45 @@ separable or whether the driver interleaves decision and construction so
 tightly that the split has to happen elsewhere. **If they are not separable,
 stop and revise this plan before writing more code.**
 
-### M1 — Single-pass aggregation choice
+### M1a — Stop planning a third time (DONE, `4ee77f0109`)
 
-Independent of the cache, and worth doing first because it is the largest
-measured single item (33% of a `DISTINCT` statement).
+Deliver the winning candidate's pipeline instead of re-planning under the
+winner. Go costs the candidates it already built; a pass run AFTER the
+comparison is a plan whose cost was never the one compared.
 
-Plan the children ONCE and cost the two aggregation families over that one
-result, as `ExhaustPhysicalPlans4LogicalAggregation` does. The required
-physical property differs between the families (StreamAgg wants sorted input),
-so the shared part is everything the property does not change — in particular
-the access-path ENUMERATION, which Go derives once on the logical plan and
-then chooses from per property.
+Landed. Two boundaries were discovered while doing it and both are now in the
+code:
 
-Verification: the `distinct_1row` and `sum_1row` shapes from the probe below,
-plus no change in any `EXPLAIN` output across the corpus.
+- Delivery is only sound when there is no trace to build. A traced pass
+  APPENDS to the caller's trace, and the caller may already hold the outer
+  plan's frames; a speculative pass writing into its own trace cannot
+  reproduce them. EXPLAIN and EXPLAIN ANALYZE keep the third pass.
+- `derived_output` was `output_delivered.is_some()`, so raising a receipt to
+  READ a cost also switched the pass into derived-relation mode. The pipeline
+  being costed was therefore not the pipeline the statement would run.
+  `Delivered::for_cost()` marks a costing receipt and `derived_output`
+  consults the mark.
+
+**Measured effect: within noise, as expected.** Of the 2079 samples the three
+passes cost on a `DISTINCT` statement, only 120 were the third one.
+
+### M1b — Share the children across the two aggregation families
+
+This is where the 31% actually is: 1959 of 6273 samples, in the two
+SPECULATIVE passes, which each re-run access-path selection and join reorder
+against the same tables.
+
+Plan the children ONCE and cost the two families over that one result, as
+`ExhaustPhysicalPlans4LogicalAggregation` does. The required physical property
+differs between the families (StreamAgg wants sorted input), so the shared
+part is everything the property does not change — in particular the
+access-path ENUMERATION, which Go derives once on the logical plan
+(`DeriveStats` / `deriveTablePathStats`) and then chooses from per property.
+Memoizing that enumeration by (table, filter) within one statement is the
+narrowest form of this and should be tried first.
+
+Verification: the `distinct_1row` shape from the probe below must move, and no
+`EXPLAIN` output across the corpus may change.
 
 ### M2 — Range rebuild
 
@@ -247,11 +272,13 @@ Correctness gates, every milestone:
 
 ## Progress
 
-- 2026-08-26: survey complete, measurements recorded, plan written. No
-  implementation yet. Preceding related fix already landed as `c8f67f1a03`
-  (every coprocessor scan runs on a producer pool instead of a fresh thread),
-  which removed 36-58us from every scan shape and is what left the numbers in
-  the table above.
+- 2026-08-26: survey complete, measurements recorded, plan written. Preceding
+  related fix landed as `c8f67f1a03` (every coprocessor scan runs on a producer
+  pool instead of a fresh thread), which removed 36-58us from every scan shape
+  and is what left the numbers in the table above.
+- 2026-08-26: M1a landed (`4ee77f0109`). Effect within noise; the milestone
+  was split because the profile's "33% in planning" turned out to be 31% in the
+  two speculative passes and 2% in the third. M1b is the real target.
 
 ## Surprises & Discoveries
 
@@ -264,6 +291,15 @@ Correctness gates, every milestone:
 - The executor consumes the planner crate for costing, not construction. The
   large `find_best_task` / `cascades_base` machinery is not on the execution
   path, so "reuse the planner's plan" is not available as a shortcut.
+- The "33% of a DISTINCT statement is planning" figure covers THREE passes and
+  is not evenly split: 1959 samples in the two speculative passes, 120 in the
+  third. Removing the cheapest third first bought nothing measurable. Split a
+  measured aggregate before scheduling work against it.
+- Asking the planner for a cost receipt used to change the plan
+  (`derived_output = output_delivered.is_some()`), and no test in the suite
+  distinguishes derived mode from top-level mode for the aggregate shapes --
+  the suite is equally green with the old coupling restored. The separation is
+  reasoned from `derived_column_prune`, not demonstrated.
 - Writes are at parity (1.00x, four writes in one transaction: 0.894ms vs
   0.891ms). Per-RPC we match Go too (our Get 75.2us against Go's own
   `tidb_tikvclient_request_seconds{type="Get"}` 71-73us; our Cop round trip
