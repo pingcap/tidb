@@ -91,6 +91,9 @@ func (m *TaskMeta) tableRefs(tableInfos map[int64]*model.TableInfo) ([]tableRef,
 
 // Chunk is a ~chunkSize key range of one physical table. Its table-local Ordinal
 // fixes the output file name at split time, so retries produce the same files.
+//
+// A chunk may instead cover several whole tables that share a region, in which
+// case Spans lists them and the per-table fields are unset; see TableSpan.
 type Chunk struct {
 	TableIdx   int    `json:"table_idx"`
 	PhysicalID int64  `json:"physical_id"`
@@ -99,7 +102,28 @@ type Chunk struct {
 	// Size is PD's estimated byte size of [Start, End), not an exact count.
 	Size    int64 `json:"size"`
 	Ordinal int   `json:"ordinal"`
+	// Spans, when set, makes this chunk a batch of whole tables sharing one
+	// region, read together in a single scan instead of one scan each. Start
+	// and End still bound the whole batch; TableIdx is -1 so a reader that
+	// predates batching fails instead of scanning a range spanning tables it
+	// would decode with the wrong schema.
+	Spans []TableSpan `json:"spans,omitempty"`
 }
+
+// TableSpan is one whole table's key range inside a batched Chunk. Ordinal is
+// the same table-local ordinal the table would have been given on its own, so
+// batching never changes an output file name.
+type TableSpan struct {
+	TableIdx   int    `json:"table_idx"`
+	PhysicalID int64  `json:"physical_id"`
+	Start      []byte `json:"start"`
+	End        []byte `json:"end"`
+	Ordinal    int    `json:"ordinal"`
+}
+
+// batched reports whether this chunk covers several tables rather than a range
+// of one.
+func (c *Chunk) batched() bool { return len(c.Spans) > 0 }
 
 // SubtaskMeta is the external representation of a chunk batch. The prepared
 // plan uses the same format before its chunks are grouped into subtasks.

@@ -171,9 +171,20 @@ func (e *dumpStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtas
 	fileSize := max(int64(1), e.taskMeta.FileSize)
 	weightCap := nodeCPU * fileSize
 	countCap := countCapMultiplier * nodeCPU
+	// Batched chunks each cover several whole tables read in one scan, so these
+	// two counts together show how much the scan batching actually folded up.
+	batchedChunks, batchedSpans := 0, 0
+	for i := range stMeta.Chunks {
+		if stMeta.Chunks[i].batched() {
+			batchedChunks++
+			batchedSpans += len(stMeta.Chunks[i].Spans)
+		}
+	}
 	e.logger.Info("run export dump subtask",
 		zap.Int64("subtask-id", subtask.ID),
 		zap.Int("chunk-cnt", len(stMeta.Chunks)),
+		zap.Int("batched-chunk-cnt", batchedChunks),
+		zap.Int("batched-span-cnt", batchedSpans),
 		zap.Int64("weight-cap", weightCap),
 		zap.Int64("count-cap", countCap))
 

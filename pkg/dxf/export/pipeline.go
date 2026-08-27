@@ -41,10 +41,40 @@ func (e *dumpStepExecutor) newChunkExporter() *chunkExporter {
 	}
 }
 
-// exportChunk reads one chunk's key range at the snapshot in handle order,
+// exportChunk writes out one chunk, whether it covers a range of a single table
+// or a batch of whole tables sharing a region.
+func (e *dumpStepExecutor) exportChunk(ctx context.Context, ce *chunkExporter, c Chunk) error {
+	if !c.batched() {
+		return e.exportTableRange(ctx, ce, c)
+	}
+	err := e.exportBatchedChunk(ctx, ce, c)
+	if !errors.ErrorEqual(err, errOldRowFormat) {
+		return err
+	}
+	// Rows predating the current encoding are rare enough not to be worth a
+	// second decoder: fall back to the coprocessor, which decodes either format.
+	// Ordinals are unchanged, so the retry overwrites the same files.
+	e.logger.Info("batched chunk hit an old-format row, exporting its tables one at a time",
+		zap.Int("span-cnt", len(c.Spans)))
+	for _, span := range c.Spans {
+		single := Chunk{
+			TableIdx:   span.TableIdx,
+			PhysicalID: span.PhysicalID,
+			Start:      span.Start,
+			End:        span.End,
+			Ordinal:    span.Ordinal,
+		}
+		if err := e.exportTableRange(ctx, ce, single); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// exportTableRange reads one chunk's key range at the snapshot in handle order,
 // encodes the rows to CSV and uploads them as a group of files named by the
 // chunk's ordinal.
-func (e *dumpStepExecutor) exportChunk(ctx context.Context, ce *chunkExporter, c Chunk) error {
+func (e *dumpStepExecutor) exportTableRange(ctx context.Context, ce *chunkExporter, c Chunk) error {
 	ref := e.tableRefs[c.TableIdx]
 	tblInfo := ref.tableInfo
 	colInfos, fieldTps := exportColumns(tblInfo)

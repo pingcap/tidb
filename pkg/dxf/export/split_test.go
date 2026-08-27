@@ -309,6 +309,59 @@ func TestRegionIndexCover(t *testing.T) {
 	require.Nil(t, sizes)
 }
 
+func TestBatchColocatedChunks(t *testing.T) {
+	// One region [_, m) holding many whole tiny tables, then a second region.
+	regions := &regionIndex{endKeys: keys("m", "z"), sizes: []int64{1000, 77}}
+	tiny := func(pid int64, key string) Chunk {
+		return Chunk{
+			TableIdx: int(pid), PhysicalID: pid,
+			Start: kv.Key(key), End: kv.Key(key + "~"),
+			Size: 1000, Ordinal: 0,
+		}
+	}
+
+	var in []Chunk
+	for i := range minBatchSpans {
+		in = append(in, tiny(int64(i), string(rune('a'+i))))
+	}
+	out := batchColocatedChunks(in, regions)
+	require.Len(t, out, 1)
+	require.True(t, out[0].batched())
+	require.Len(t, out[0].Spans, minBatchSpans)
+	require.Equal(t, -1, out[0].TableIdx)
+	require.Equal(t, in[0].Start, out[0].Start)
+	require.Equal(t, in[len(in)-1].End, out[0].End)
+	// The region's size is shared out, not counted once per table.
+	require.Equal(t, int64(1000), out[0].Size)
+	// Every span keeps the identity that fixes its file name.
+	for i, span := range out[0].Spans {
+		require.Equal(t, in[i].TableIdx, span.TableIdx)
+		require.Equal(t, in[i].PhysicalID, span.PhysicalID)
+		require.Equal(t, in[i].Ordinal, span.Ordinal)
+		require.Equal(t, in[i].Start, span.Start)
+		require.Equal(t, in[i].End, span.End)
+	}
+
+	// Too few neighbours to be worth batching: left exactly as they were.
+	few := in[:minBatchSpans-1]
+	require.Equal(t, few, batchColocatedChunks(few, regions))
+
+	// A table split across several chunks is not a whole-table candidate.
+	split := make([]Chunk, 0, len(in)+1)
+	split = append(split, in...)
+	split = append(split, Chunk{TableIdx: 99, PhysicalID: 99, Start: kv.Key("n"), End: kv.Key("n~"), Size: 5, Ordinal: 0})
+	split = append(split, Chunk{TableIdx: 99, PhysicalID: 99, Start: kv.Key("n~"), End: kv.Key("o"), Size: 5, Ordinal: 1})
+	out = batchColocatedChunks(split, regions)
+	require.Len(t, out, 3)
+	require.True(t, out[0].batched())
+	require.False(t, out[1].batched())
+	require.False(t, out[2].batched())
+
+	// A table crossing a region boundary is not batched either.
+	crossing := []Chunk{{TableIdx: 1, PhysicalID: 1, Start: kv.Key("a"), End: kv.Key("q"), Size: 1, Ordinal: 0}}
+	require.Equal(t, crossing, batchColocatedChunks(crossing, regions))
+}
+
 func TestGroupRangesIntoRuns(t *testing.T) {
 	mk := func(pids ...int64) []physicalRange {
 		ranges := make([]physicalRange, 0, len(pids))

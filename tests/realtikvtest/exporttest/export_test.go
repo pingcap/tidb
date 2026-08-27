@@ -213,6 +213,156 @@ func TestExportSchemaMultiTable(t *testing.T) {
 	require.Equal(t, wantSchemaFor, gotSchemaFor)
 }
 
+// TestExportSchemaBatchedScanMatchesCoprocessor exports the same table two ways
+// and requires the bytes to match. A schema of many tiny tables is read with one
+// scan covering all of them at once, while a single-table export still goes
+// through the coprocessor, so this is what proves the two read paths agree.
+func TestExportSchemaBatchedScanMatchesCoprocessor(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaDir, tableDir := t.TempDir(), t.TempDir()
+
+	tk.MustExec("drop database if exists export_batch_test")
+	tk.MustExec("create database export_batch_test")
+	tk.MustExec("use export_batch_test")
+
+	// Enough tables to be worth batching, each small enough to sit whole inside
+	// a shared region. Types are mixed so decoding is exercised beyond integers,
+	// and one column is added afterwards so its rows fall back to the default.
+	const tableCnt = 12
+	for i := range tableCnt {
+		tbl := fmt.Sprintf("t%02d", i)
+		tk.MustExec(fmt.Sprintf(
+			"create table %s (id int primary key clustered, v varchar(32), d decimal(10,2), n int)", tbl))
+		for r := range 3 {
+			tk.MustExec(fmt.Sprintf("insert into %s values (%d,'v-%d-%d',%d.75,%d)",
+				tbl, r, i, r, r, r*7))
+		}
+		// Rows written before this column existed take its default when read.
+		tk.MustExec(fmt.Sprintf("alter table %s add column added varchar(8) default 'dflt'", tbl))
+		tk.MustExec(fmt.Sprintf("insert into %s values (99,'after',1.00,7,'set')", tbl))
+	}
+
+	rows := tk.MustQuery(fmt.Sprintf(
+		"EXPORT SCHEMA export_batch_test TO 'local://%s'", schemaDir)).Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "succeed", rows[0][2])
+
+	readCSVs := func(dir, table string) map[string]string {
+		entries, err := os.ReadDir(dir)
+		require.NoError(t, err)
+		re := regexp.MustCompile(`^export_batch_test\.` + table + `\.(\d{11})\.csv$`)
+		out := map[string]string{}
+		for _, ent := range entries {
+			m := re.FindStringSubmatch(ent.Name())
+			if m == nil {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(dir, ent.Name()))
+			require.NoError(t, err)
+			out[m[1]] = string(data)
+		}
+		require.NotEmpty(t, out, "no data files for %s in %s", table, dir)
+		return out
+	}
+
+	// Same table on its own: one table never batches, so this is the
+	// coprocessor path reading exactly the same rows.
+	const probe = "t05"
+	rows = tk.MustQuery(fmt.Sprintf(
+		"EXPORT TABLE export_batch_test.%s TO 'local://%s'", probe, tableDir)).Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "succeed", rows[0][2])
+
+	require.Equal(t, readCSVs(tableDir, probe), readCSVs(schemaDir, probe),
+		"batched scan and coprocessor scan must produce identical files")
+
+	// And the content itself is right, so both paths agreeing cannot mean both
+	// are wrong in the same way.
+	var got []string
+	for _, data := range readCSVs(schemaDir, probe) {
+		for line := range strings.Lines(data) {
+			if line = strings.TrimSuffix(line, "\n"); line != "" {
+				got = append(got, line)
+			}
+		}
+	}
+	sort.Strings(got)
+	require.Equal(t, []string{
+		`0,"v-5-0",0.75,0,"dflt"`,
+		`1,"v-5-1",1.75,7,"dflt"`,
+		`2,"v-5-2",2.75,14,"dflt"`,
+		`99,"after",1.00,7,"set"`,
+	}, got)
+}
+
+// TestExportSchemaBatchedScanCommonHandle repeats the cross-path comparison for
+// tables whose primary key lives in the row key rather than its value, which the
+// batched scan has to rebuild itself instead of receiving it already decoded.
+func TestExportSchemaBatchedScanCommonHandle(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaDir, tableDir := t.TempDir(), t.TempDir()
+
+	tk.MustExec("drop database if exists export_batch_ch")
+	tk.MustExec("create database export_batch_ch")
+	tk.MustExec("use export_batch_ch")
+
+	const tableCnt = 12
+	for i := range tableCnt {
+		tbl := fmt.Sprintf("t%02d", i)
+		tk.MustExec(fmt.Sprintf(
+			"create table %s (k varchar(16), s varchar(16), v int, primary key (k, s) clustered)", tbl))
+		for r := range 3 {
+			tk.MustExec(fmt.Sprintf("insert into %s values ('k-%d','s-%d-%d',%d)", tbl, r, i, r, r*3))
+		}
+	}
+
+	rows := tk.MustQuery(fmt.Sprintf(
+		"EXPORT SCHEMA export_batch_ch TO 'local://%s'", schemaDir)).Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "succeed", rows[0][2])
+
+	const probe = "t07"
+	rows = tk.MustQuery(fmt.Sprintf(
+		"EXPORT TABLE export_batch_ch.%s TO 'local://%s'", probe, tableDir)).Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "succeed", rows[0][2])
+
+	readCSVs := func(dir string) map[string]string {
+		entries, err := os.ReadDir(dir)
+		require.NoError(t, err)
+		re := regexp.MustCompile(`^export_batch_ch\.` + probe + `\.(\d{11})\.csv$`)
+		out := map[string]string{}
+		for _, ent := range entries {
+			if m := re.FindStringSubmatch(ent.Name()); m != nil {
+				data, err := os.ReadFile(filepath.Join(dir, ent.Name()))
+				require.NoError(t, err)
+				out[m[1]] = string(data)
+			}
+		}
+		require.NotEmpty(t, out, "no data files for %s in %s", probe, dir)
+		return out
+	}
+	require.Equal(t, readCSVs(tableDir), readCSVs(schemaDir),
+		"batched scan must rebuild the clustered key exactly as the coprocessor does")
+
+	var got []string
+	for _, data := range readCSVs(schemaDir) {
+		for line := range strings.Lines(data) {
+			if line = strings.TrimSuffix(line, "\n"); line != "" {
+				got = append(got, line)
+			}
+		}
+	}
+	sort.Strings(got)
+	require.Equal(t, []string{
+		`"k-0","s-7-0",0`,
+		`"k-1","s-7-1",3`,
+		`"k-2","s-7-2",6`,
+	}, got)
+}
+
 func TestExportTableCommonHandle(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)

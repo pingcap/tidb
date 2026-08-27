@@ -59,16 +59,20 @@ func generateChunks(
 		return nil, 0, err
 	}
 	chunks := make([]Chunk, 0, len(refs))
-	var total int64
 	for tableIdx, ref := range refs {
 		tableChunks, err := splitTable(ref.tableInfo, tableIdx, regions)
 		if err != nil {
 			return nil, 0, err
 		}
-		for _, chunk := range tableChunks {
-			total += chunk.Size
-		}
 		chunks = append(chunks, tableChunks...)
+	}
+	chunks = batchColocatedChunks(chunks, regions)
+	// Summed after batching: PD reports a region's whole size for every table in
+	// it, so totalling the per-table chunks would count a shared region once per
+	// table. Batching shares that size out instead.
+	var total int64
+	for i := range chunks {
+		total += chunks[i].Size
 	}
 	return chunks, total, nil
 }
@@ -111,6 +115,16 @@ type regionIndex struct {
 	sizes   []int64
 }
 
+// holding returns the index of the region containing [start, end), or -1 when
+// no single region covers the whole of it.
+func (r *regionIndex) holding(start, end kv.Key) int {
+	i := sort.Search(len(r.endKeys), func(i int) bool { return r.endKeys[i].Cmp(start) > 0 })
+	if i == len(r.endKeys) || r.endKeys[i].Cmp(end) < 0 {
+		return -1
+	}
+	return i
+}
+
 // cover returns the regions overlapping [start, end). chunksBySize ends the last
 // chunk at the caller's own end key, so a region reaching past end is included
 // whole rather than trimmed.
@@ -145,6 +159,95 @@ func loadRegionIndex(ctx context.Context, store kv.Storage, refs []tableRef) (*r
 		idx.sizes = append(idx.sizes, sizes...)
 	}
 	return idx, nil
+}
+
+const (
+	// minBatchSpans is the fewest tables worth reading together. Below it the
+	// saved requests do not pay for giving up the coprocessor's server-side
+	// decode, which the single-table path still uses.
+	minBatchSpans = 8
+	// maxBatchSpans bounds how much one scan redoes when it is retried.
+	maxBatchSpans = 512
+)
+
+// batchColocatedChunks replaces runs of whole tables that share a region with a
+// single chunk covering them all, so a schema of many tiny tables costs one scan
+// per region rather than one per table. Anything that is not a whole table, or
+// has too few neighbours in its region to be worth batching, is left untouched.
+//
+// Each batched span keeps the ordinal its table already had, so batching never
+// changes an output file name.
+func batchColocatedChunks(chunks []Chunk, regions *regionIndex) []Chunk {
+	// A table split across several chunks is not a whole-table candidate: its
+	// chunks are large enough to be worth a scan each.
+	chunksPerTable := make(map[int64]int, len(chunks))
+	for i := range chunks {
+		chunksPerTable[chunks[i].PhysicalID]++
+	}
+	// Region of each candidate, and how many candidates each region holds, so a
+	// region's size can be shared out over the batches carved from it instead of
+	// being counted once per table.
+	regionOf := make([]int, len(chunks))
+	spansPerRegion := make(map[int]int, len(chunks))
+	for i := range chunks {
+		regionOf[i] = -1
+		if chunksPerTable[chunks[i].PhysicalID] != 1 {
+			continue
+		}
+		if at := regions.holding(chunks[i].Start, chunks[i].End); at >= 0 {
+			regionOf[i] = at
+			spansPerRegion[at]++
+		}
+	}
+
+	out := make([]Chunk, 0, len(chunks))
+	for i := 0; i < len(chunks); {
+		at := regionOf[i]
+		if at < 0 {
+			out = append(out, chunks[i])
+			i++
+			continue
+		}
+		run := i + 1
+		for run < len(chunks) && regionOf[run] == at && run-i < maxBatchSpans {
+			run++
+		}
+		if run-i < minBatchSpans {
+			out = append(out, chunks[i:run]...)
+			i = run
+			continue
+		}
+		out = append(out, newBatchedChunk(chunks[i:run], regions.sizes[at], spansPerRegion[at]))
+		i = run
+	}
+	return out
+}
+
+// newBatchedChunk folds whole-table chunks sharing one region into a single
+// chunk. Its size is the region's share for these tables, since every chunk in a
+// region is reported that whole region's size.
+func newBatchedChunk(chunks []Chunk, regionSize int64, spansInRegion int) Chunk {
+	spans := make([]TableSpan, 0, len(chunks))
+	for _, c := range chunks {
+		spans = append(spans, TableSpan{
+			TableIdx:   c.TableIdx,
+			PhysicalID: c.PhysicalID,
+			Start:      c.Start,
+			End:        c.End,
+			Ordinal:    c.Ordinal,
+		})
+	}
+	size := regionSize
+	if spansInRegion > 1 {
+		size = regionSize * int64(len(chunks)) / int64(spansInRegion)
+	}
+	return Chunk{
+		TableIdx: -1,
+		Start:    chunks[0].Start,
+		End:      chunks[len(chunks)-1].End,
+		Size:     size,
+		Spans:    spans,
+	}
 }
 
 // physicalRange is one physical table's key range, keyed by the id that decides
