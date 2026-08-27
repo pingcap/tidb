@@ -1442,6 +1442,34 @@ fn run_select_traced_with_delivery_choice(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Opens a finished pipeline, drains every row, and closes it.
+///
+/// Both the ordinary end of planning and the aggregation-choice delivery need
+/// this, and they must agree: a statement's rows must not depend on which of
+/// the two produced its pipeline.
+fn drain_root_executor(
+    mut root: Box<dyn Executor>,
+    columns: Vec<(String, FieldType)>,
+    ctx: &crate::StmtContext,
+) -> Result<SelectMeta, DriverError> {
+    let ret_types: Vec<FieldType> = columns.iter().map(|(_, ty)| ty.clone()).collect();
+    root.open()?;
+    let mut req = root.new_chunk();
+    let mut rows: Vec<Vec<Datum>> = Vec::new();
+    loop {
+        next_executor(root.as_mut(), &mut req, &ctx.statement_memory())?;
+        let n = req.num_rows();
+        if n == 0 {
+            break;
+        }
+        for r in 0..n {
+            rows.push(req.get_row(r).get_datum_row(&ret_types));
+        }
+    }
+    root.close()?;
+    Ok((columns, rows))
+}
+
 fn run_select_traced_with_delivery_choice_inner(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
@@ -1484,8 +1512,10 @@ fn run_select_traced_with_delivery_choice_inner(
     };
     // Go enumerates HashAgg before StreamAgg for an empty required property,
     // rebuilds the child under each candidate's property, and keeps the first
-    // candidate on an exact tie. Build both plans without executing or tracing
-    // them, then rebuild only the cheaper one into the caller's real output.
+    // candidate on an exact tie. Build both pipelines without executing or
+    // tracing them, then DELIVER the cheaper one -- Go costs the candidates it
+    // already built and keeps the winner (`ExhaustPhysicalPlans4Logical\
+    // Aggregation` -> `findBestTask`), it does not plan a third time.
     // `DISTINCT` is enumerated with them: Go's `buildDistinct`
     // (`pkg/planner/core/logical_plan_builder.go:1966`) builds a
     // LogicalAggregation whose `GroupByItems` are the projection's columns,
@@ -1505,7 +1535,20 @@ fn run_select_traced_with_delivery_choice_inner(
         // NDV and change its join order/cardinality.
         let stats_checkpoint = catalog.statistics_load_checkpoint();
         let plan_only = trace.as_deref().is_some_and(PlanTrace::is_plan_only);
-        let mut stream_delivered = from::Delivered::new();
+        // Each speculative pass plans in the CALLER's mode -- derived only if
+        // the caller is a derived relation -- so the pipeline the winner built
+        // is the one the statement runs.
+        let speculative_receipt = || {
+            if output_delivered
+                .as_deref()
+                .is_some_and(|delivered| !delivered.cost_only)
+            {
+                from::Delivered::new()
+            } else {
+                from::Delivered::for_cost()
+            }
+        };
+        let mut stream_delivered = speculative_receipt();
         let mut stream_exec = None;
         let mut stream_trace = plan_only.then(PlanTrace::planning);
         let stream = run_select_traced_with_delivery_choice(
@@ -1521,7 +1564,7 @@ fn run_select_traced_with_delivery_choice_inner(
             AggregationChoice::Stream,
         );
         catalog.restore_statistics_load_checkpoint(&stats_checkpoint);
-        let mut hash_delivered = from::Delivered::new();
+        let mut hash_delivered = speculative_receipt();
         let mut hash_exec = None;
         let mut hash_trace = plan_only.then(PlanTrace::planning);
         let hash = run_select_traced_with_delivery_choice(
@@ -1570,6 +1613,40 @@ fn run_select_traced_with_delivery_choice_inner(
             (None, Some(_)) => Some(AggregationChoice::Hash),
             (None, None) => None,
         };
+        // Delivering the winner is only sound when there is no trace to
+        // build. A traced pass APPENDS its frames to the caller's trace, and
+        // the caller may already hold the outer plan's frames -- a derived
+        // table's, a correlated subquery's -- which a speculative pass writing
+        // into its own trace cannot reproduce. EXPLAIN and EXPLAIN ANALYZE
+        // therefore keep the third pass, and neither is on a hot path.
+        if let Some(chosen) = chosen.filter(|_| trace.is_none()) {
+            let (winner, mut winner_exec, winner_delivered, _winner_trace) =
+                if chosen == AggregationChoice::Stream {
+                    (stream, stream_exec, stream_delivered, stream_trace)
+                } else {
+                    (hash, hash_exec, hash_delivered, hash_trace)
+                };
+            let (columns, _) = winner?;
+            // Both speculative passes ran from the SAME statistics snapshot --
+            // the checkpoint is restored after each -- so the pipeline the
+            // winner built is the one a third pass fixed to `chosen` would
+            // build. Restoring only rewinds which columns are resident, which
+            // is a planning input; a built pipeline holds derived values.
+            if let Some(delivered) = output_delivered {
+                *delivered = winner_delivered;
+                delivered.cost_only = false;
+            }
+            let Some(root) = winner_exec.take() else {
+                // A shape that delivers no pipeline (an empty aggregate folded
+                // to a constant, say) has nothing to run; its columns stand.
+                return Ok((columns, Vec::new()));
+            };
+            if let Some(deferred) = deferred_exec {
+                *deferred = Some(root);
+                return Ok((columns, Vec::new()));
+            }
+            return drain_root_executor(root, columns, ctx);
+        }
         if let Some(chosen) = chosen {
             return run_select_traced_with_delivery_choice(
                 select,
@@ -1600,7 +1677,13 @@ fn run_select_traced_with_delivery_choice_inner(
     // projection elimination can then map the outer relation directly onto
     // an aggregation's schema, while a top-level SELECT retains the visible
     // Projection that restores function-first partial aggregate outputs.
-    let derived_output = output_delivered.is_some();
+    // A receipt raised for COSTING does not make this a derived relation:
+    // only a derived-table caller wants the output-order half, and switching
+    // modes under a cost comparison would compare a plan the statement will
+    // not run.
+    let derived_output = output_delivered
+        .as_deref()
+        .is_some_and(|delivered| !delivered.cost_only);
     if let Some(delivered) = output_delivered.as_deref_mut() {
         delivered.clear();
     }
@@ -3923,22 +4006,7 @@ fn run_select_traced_with_delivery_choice_inner(
         return Ok((names.into_iter().zip(ret_types).collect(), Vec::new()));
     }
 
-    root.open()?;
-    let mut req = root.new_chunk();
-    let mut rows: Vec<Vec<Datum>> = Vec::new();
-    loop {
-        next_executor(root.as_mut(), &mut req, &ctx.statement_memory())?;
-        let n = req.num_rows();
-        if n == 0 {
-            break;
-        }
-        for r in 0..n {
-            rows.push(req.get_row(r).get_datum_row(&ret_types));
-        }
-    }
-    root.close()?;
-    let columns = names.into_iter().zip(ret_types).collect();
-    Ok((columns, rows))
+    drain_root_executor(root, names.into_iter().zip(ret_types).collect(), ctx)
 }
 
 /// Source-table identities behind a derived relation's physical columns.

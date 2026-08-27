@@ -669,6 +669,15 @@ pub(crate) struct Delivered {
     /// uses this physical boundary when restoring its functions-first state
     /// layout; it cannot infer the join kind from a stats-dependent candidate.
     pub(crate) semi_join: bool,
+    /// This receipt was asked for to COST the plan, not because the caller is
+    /// a derived relation.
+    ///
+    /// Only a derived-table caller wants the output-order half, and asking for
+    /// it is what puts the planner in derived mode -- which drops the visible
+    /// top-level Projection. A cost comparison must not move the plan it is
+    /// comparing, so a receipt raised for costing leaves the mode alone and
+    /// collects [`Self::candidate`] only.
+    pub(crate) cost_only: bool,
 }
 
 impl Delivered {
@@ -677,6 +686,18 @@ impl Delivered {
             orders: Vec::new(),
             candidate: None,
             semi_join: false,
+            cost_only: false,
+        }
+    }
+
+    /// A receipt raised only to read the plan's cost back, leaving the
+    /// planner in whatever mode the real caller asked for.
+    pub(crate) const fn for_cost() -> Self {
+        Self {
+            orders: Vec::new(),
+            candidate: None,
+            semi_join: false,
+            cost_only: true,
         }
     }
 
@@ -685,6 +706,7 @@ impl Delivered {
             orders,
             candidate: None,
             semi_join: false,
+            cost_only: false,
         }
     }
 

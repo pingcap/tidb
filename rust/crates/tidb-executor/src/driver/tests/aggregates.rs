@@ -3871,3 +3871,60 @@ fn tpch_q17_scalar_wrapped_sum_explains_the_physical_aggregate_function() {
         "the hoisted SUM is the only physical aggregate state: {agg_info}"
     );
 }
+
+/// Executing a grouped aggregate and PLANNING it agree on the output columns.
+///
+/// The two now take different routes. Execution is untraced: it costs the
+/// StreamAgg and HashAgg candidates and delivers the winner's pipeline as
+/// built. Planning is traced, so it re-plans under the chosen family. This
+/// pins the invariant that makes that split legitimate -- the delivered
+/// pipeline is the planned statement's -- on the shape most sensitive to it,
+/// where TiKV returns the partial aggregate functions FIRST and only the
+/// restoring Projection puts the group key back in its `SELECT`-list position.
+#[test]
+fn a_delivered_grouped_aggregate_matches_the_planned_statement() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE cost_receipt (id INT PRIMARY KEY, k INT, c VARCHAR(20))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO cost_receipt VALUES (1, 10, 'a'), (2, 10, 'b'), (3, 20, 'a')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT k, SUM(id) FROM cost_receipt WHERE id BETWEEN 1 AND 100 GROUP BY k";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+
+    let (executed_columns, mut rows) = run_select_meta_on(sql, &catalog, &ctx).unwrap();
+    let planned_columns = plan_select_meta_stmt(select, &catalog, "test", &ctx).unwrap();
+    assert_eq!(
+        executed_columns, planned_columns,
+        "the delivered pipeline's columns must be the planned statement's, or \
+         the cost receipt moved the plan"
+    );
+
+    rows.sort_by_key(|row| match row[0] {
+        Datum::Int(value) => value,
+        _ => panic!("the group key is the FIRST output column, not the sum"),
+    });
+    let keys: Vec<_> = rows.iter().map(|row| row[0].clone()).collect();
+    assert_eq!(
+        keys,
+        vec![Datum::Int(10), Datum::Int(20)],
+        "the group key must arrive in the SELECT list's position; TiKV returns \
+         the partial aggregate functions first and the restoring Projection is \
+         what puts them back, and that Projection is exactly what derived mode \
+         drops"
+    );
+}
