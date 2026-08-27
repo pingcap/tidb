@@ -1564,7 +1564,10 @@ func TestUpgradeVersion284EnableTxnFile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store, dom := session.CreateStoreAndBootstrap(t)
 			defer func() { require.NoError(t, store.Close()) }()
-			upgradeFromVersion := session.CurrentBootstrapVersion - 1
+			// The upgrade must start from 283 (= version284 - 1) so that the ver284
+			// step under test actually runs; deriving it from CurrentBootstrapVersion
+			// breaks on any branch that bumps the bootstrap version (issue #70691).
+			const upgradeFromVersion = int64(283)
 			var migrationCommitted atomicutil.Bool
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/afterUpgradeToVer284Commit", func(s sessionapi.Session) {
 				migrationCommitted.Store(!s.GetSessionVars().InTxn())
