@@ -185,21 +185,69 @@ func snapshotTableInfos(store kv.Storage, taskMeta *TaskMeta) (map[int64]*model.
 		}
 		db.DBName = dbInfo.Name.O
 		dbInfos[db.DBID] = dbInfo
-		for _, tableID := range db.TableIDs {
-			tableInfo, err := reader.GetTable(db.DBID, tableID)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			if tableInfo == nil {
-				return nil, nil, errors.Errorf("export: table %d not found in snapshot metadata", tableID)
-			}
-			if tableInfo.State != model.StatePublic {
-				return nil, nil, errors.Errorf("export: table %d is not public", tableID)
-			}
-			tableInfos[tableID] = tableInfo
+		if err := loadTableInfos(reader, db, tableInfos); err != nil {
+			return nil, nil, err
 		}
 	}
 	return tableInfos, dbInfos, nil
+}
+
+// batchLoadTableThreshold is the table count at which one hash scan of the
+// database beats one point read per table. A statement asks for either a single
+// table (EXPORT TABLE) or every table in the database (EXPORT SCHEMA), so this
+// separates the two cases rather than trading one off against the other.
+const batchLoadTableThreshold = 64
+
+// loadTableInfos resolves db.TableIDs against the snapshot metadata. Tables of a
+// database share one contiguous hash range, so a whole-database export reads
+// them in a single scan instead of a point read each.
+func loadTableInfos(reader meta.Reader, db *DBSpec, tableInfos map[int64]*model.TableInfo) error {
+	if len(db.TableIDs) >= batchLoadTableThreshold {
+		scanned := make(map[int64]*model.TableInfo, len(db.TableIDs))
+		wanted := make(map[int64]struct{}, len(db.TableIDs))
+		for _, tableID := range db.TableIDs {
+			wanted[tableID] = struct{}{}
+		}
+		// IterTables streams rather than materializing every table of the
+		// database at once, which matters when there are many of them.
+		if err := reader.IterTables(db.DBID, func(info *model.TableInfo) error {
+			if _, ok := wanted[info.ID]; ok {
+				scanned[info.ID] = info
+			}
+			return nil
+		}); err != nil {
+			return errors.Trace(err)
+		}
+		for _, tableID := range db.TableIDs {
+			if err := acceptTableInfo(tableInfos, tableID, scanned[tableID]); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, tableID := range db.TableIDs {
+		tableInfo, err := reader.GetTable(db.DBID, tableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := acceptTableInfo(tableInfos, tableID, tableInfo); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// acceptTableInfo validates one resolved table and records it, so both load
+// paths reject a missing or non-public table identically.
+func acceptTableInfo(tableInfos map[int64]*model.TableInfo, tableID int64, tableInfo *model.TableInfo) error {
+	if tableInfo == nil {
+		return errors.Errorf("export: table %d not found in snapshot metadata", tableID)
+	}
+	if tableInfo.State != model.StatePublic {
+		return errors.Errorf("export: table %d is not public", tableID)
+	}
+	tableInfos[tableID] = tableInfo
+	return nil
 }
 
 // GetNextStep implements scheduler.Extension.

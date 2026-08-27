@@ -17,6 +17,8 @@ package export
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -98,6 +100,73 @@ func TestSnapshotTableInfosUsesTaskStore(t *testing.T) {
 	s.taskMeta.DBs[0].TableIDs = []int64{nonPublicTable.ID}
 	_, _, err = snapshotTableInfos(s.store, s.taskMeta)
 	require.ErrorContains(t, err, "is not public")
+}
+
+func TestSnapshotTableInfosBatchLoad(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	dbInfo := &model.DBInfo{ID: 1, Name: ast.NewCIStr("db"), State: model.StatePublic}
+	publicCount := batchLoadTableThreshold + 8
+	publicIDs := make([]int64, 0, publicCount)
+	nonPublicID := int64(9000)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		mutator := meta.NewMutator(txn)
+		if err := mutator.CreateDatabase(dbInfo); err != nil {
+			return err
+		}
+		for i := 0; i < publicCount; i++ {
+			tbl := &model.TableInfo{
+				ID:    int64(100 + i),
+				DBID:  dbInfo.ID,
+				Name:  ast.NewCIStr(fmt.Sprintf("t%d", i)),
+				State: model.StatePublic,
+			}
+			if err := mutator.CreateTableOrView(dbInfo.ID, tbl); err != nil {
+				return err
+			}
+			publicIDs = append(publicIDs, tbl.ID)
+		}
+		return mutator.CreateTableOrView(dbInfo.ID, &model.TableInfo{
+			ID:    nonPublicID,
+			DBID:  dbInfo.ID,
+			Name:  ast.NewCIStr("hidden"),
+			State: model.StateWriteOnly,
+		})
+	}))
+	version, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+
+	load := func(tableIDs []int64) (map[int64]*model.TableInfo, error) {
+		got, _, err := snapshotTableInfos(store, &TaskMeta{
+			SnapshotTS: version.Ver,
+			DBs:        []DBSpec{{DBID: dbInfo.ID, TableIDs: tableIDs}},
+		})
+		return got, err
+	}
+
+	require.GreaterOrEqual(t, len(publicIDs), batchLoadTableThreshold)
+	batched, err := load(publicIDs)
+	require.NoError(t, err)
+	require.Len(t, batched, publicCount)
+
+	// A subset stays under the threshold and takes the point-read path, which
+	// must resolve each table exactly as the scan did.
+	subset := publicIDs[:4]
+	require.Less(t, len(subset), batchLoadTableThreshold)
+	pointRead, err := load(subset)
+	require.NoError(t, err)
+	for _, id := range subset {
+		require.Equal(t, batched[id], pointRead[id])
+	}
+
+	// Both rejections must survive on the scan path, not just the point path.
+	_, err = load(append(slices.Clone(publicIDs), nonPublicID))
+	require.ErrorContains(t, err, "is not public")
+	_, err = load(append(slices.Clone(publicIDs), 999999))
+	require.ErrorContains(t, err, "not found in snapshot metadata")
 }
 
 func TestIsRetryableErr(t *testing.T) {
