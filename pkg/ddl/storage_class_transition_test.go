@@ -17,36 +17,75 @@ package ddl
 import (
 	"testing"
 
-	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
-func TestStorageClassTransitionOperationGrouping(t *testing.T) {
-	tblInfo := &model.TableInfo{ID: 10, DBID: 2, Name: ast.NewCIStr("orders")}
-	operations := make(map[storageClassTransitionKey]*storageClassTransitionOperation)
+func TestBuildStorageClassTransitionOperations(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		ID:   10,
+		Name: ast.NewCIStr("orders"),
+		Partition: &model.PartitionInfo{Definitions: []model.PartitionDefinition{
+			{ID: 11, Name: ast.NewCIStr("p0"), StorageClassTier: model.StorageClassTierIA},
+			{ID: 12, Name: ast.NewCIStr("p1"), StorageClassTier: model.StorageClassTierIA},
+			{ID: 13, Name: ast.NewCIStr("p2"), StorageClassTier: model.StorageClassTierStandard},
+		}},
+	}
+	physicalIDs := map[int64]struct{}{11: {}, 12: {}, 13: {}}
 
-	key, err := addStorageClassTransitionTarget(
-		operations, "test", "orders", tblInfo, "p0", 11, 11, model.StorageClassTierIA, 1234)
+	operations, err := buildStorageClassTransitionOperations(tblInfo, physicalIDs, 1234, "test", "orders")
 	require.NoError(t, err)
-	op := operations[key]
-	require.Equal(t, storageClassDirectionToIA, op.Direction)
-	require.Equal(t, int64(11), op.PartitionID)
-	require.Equal(t, "p0", op.PartitionName)
+	require.Len(t, operations, 2)
 
-	_, err = addStorageClassTransitionTarget(
-		operations, "test", "orders", tblInfo, "p1", 12, 12, model.StorageClassTierIA, 1234)
-	require.NoError(t, err)
-	require.Zero(t, op.PartitionID)
-	require.Empty(t, op.PartitionName)
-	require.Len(t, op.targets, 2)
+	byDirection := make(map[string]*storageClassTransitionOperation, len(operations))
+	for _, operation := range operations {
+		byDirection[operation.Direction] = operation
+	}
+	ia := byDirection[storageClassDirectionToIA]
+	require.Equal(t, []int64{11, 12}, ia.PhysicalTableIDs)
+	require.Zero(t, ia.PartitionID)
+	require.Empty(t, ia.PartitionName)
 
-	standardKey, err := addStorageClassTransitionTarget(
-		operations, "test", "orders", tblInfo, "p2", 13, 13, model.StorageClassTierStandard, 1234)
+	standard := byDirection[storageClassDirectionToStandard]
+	require.Equal(t, []int64{13}, standard.PhysicalTableIDs)
+	require.Equal(t, int64(13), standard.PartitionID)
+	require.Equal(t, "p2", standard.PartitionName)
+}
+
+func TestStorageClassTransitionTracksPartitionedTableParent(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		ID:               10,
+		Name:             ast.NewCIStr("orders"),
+		StorageClassTier: model.StorageClassTierIA,
+		Partition: &model.PartitionInfo{Definitions: []model.PartitionDefinition{
+			{ID: 11, Name: ast.NewCIStr("p0"), StorageClassTier: model.StorageClassTierIA},
+			{ID: 12, Name: ast.NewCIStr("p1"), StorageClassTier: model.StorageClassTierIA},
+		}},
+	}
+	physicalIDs := map[int64]struct{}{10: {}, 11: {}, 12: {}}
+
+	operations, err := buildStorageClassTransitionOperations(tblInfo, physicalIDs, 1234, "test", "orders")
 	require.NoError(t, err)
-	require.NotEqual(t, key, standardKey)
-	require.Equal(t, storageClassDirectionToStandard, operations[standardKey].Direction)
+	require.Len(t, operations, 1)
+	require.Equal(t, []int64{10, 11, 12}, operations[0].PhysicalTableIDs)
+	require.Zero(t, operations[0].PartitionID)
+	require.Empty(t, operations[0].PartitionName)
+}
+
+func TestChangedStorageClassPhysicalIDs(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		ID: 10,
+		Partition: &model.PartitionInfo{Definitions: []model.PartitionDefinition{
+			{ID: 11, Name: ast.NewCIStr("p0"), StorageClassTier: model.StorageClassTierIA},
+			{ID: 12, Name: ast.NewCIStr("p1"), StorageClassTier: model.StorageClassTierIA},
+		}},
+	}
+	old := snapshotPhysicalStorageClasses(tblInfo)
+	tblInfo.Partition.Definitions[0].StorageClassTier = model.StorageClassTierStandard
+
+	changed := changedStorageClassPhysicalIDs(old, snapshotPhysicalStorageClasses(tblInfo))
+	require.Equal(t, map[int64]struct{}{11: {}}, changed)
 }
 
 func TestStorageClassTransitionCompletesOnOneFullObservation(t *testing.T) {
@@ -62,22 +101,10 @@ func TestStorageClassTransitionCompletesOnOneFullObservation(t *testing.T) {
 	require.Equal(t, 1.0, operation.Progress)
 }
 
-func TestStorageClassTransitionPollDecisions(t *testing.T) {
-	require.False(t, storageClassTransitionNeedsSession(0, 0, false))
-	require.True(t, storageClassTransitionNeedsSession(1, 0, false))
-	require.True(t, storageClassTransitionNeedsSession(0, 1, false))
-	require.True(t, storageClassTransitionNeedsSession(0, 0, true))
-
-	require.False(t, storageClassTransitionNeedsHistoryPrune(0, false, false))
-	require.True(t, storageClassTransitionNeedsHistoryPrune(0, true, false))
-	require.True(t, storageClassTransitionNeedsHistoryPrune(0, false, true))
-	require.False(t, storageClassTransitionNeedsHistoryPrune(1, true, true))
-}
-
-func TestSupersededStorageClassTransitionKeepsLastObservation(t *testing.T) {
-	start := model.TSConvert2Time(1234)
-	key := storageClassTransitionKey{tableID: 10, target: model.StorageClassTierIA, startTS: 1234}
+func TestStorageClassTransitionCacheKeepsLastObservation(t *testing.T) {
+	key := storageClassTransitionKey{tableID: 10, direction: storageClassDirectionToIA, startTS: 1234}
 	manager := &storageClassTransitionManager{}
+	manager.mu.active = make(map[storageClassTransitionKey]StorageClassTransition)
 	manager.mu.observed = map[storageClassTransitionKey]StorageClassTransition{
 		key: {
 			TableID:           10,
@@ -87,7 +114,7 @@ func TestSupersededStorageClassTransitionKeepsLastObservation(t *testing.T) {
 			Progress:          0.75,
 			ProgressValid:     true,
 			StatusValid:       true,
-			StartTime:         start,
+			StartTime:         model.TSConvert2Time(1234),
 			PhysicalTableIDs:  []int64{11, 12},
 			startTS:           1234,
 		},
@@ -96,134 +123,40 @@ func TestSupersededStorageClassTransitionKeepsLastObservation(t *testing.T) {
 		StorageClassTransition: StorageClassTransition{
 			TableID:          10,
 			Direction:        storageClassDirectionToIA,
-			State:            model.StorageClassTransitionStateSuperseded,
-			StartTime:        start,
+			StartTime:        model.TSConvert2Time(1234),
 			PhysicalTableIDs: []int64{11, 12},
 			startTS:          1234,
 		},
-		targets: []storageClassTransitionTarget{{target: model.StorageClassTierIA}},
 	}
 
-	manager.mergeObserved(operation)
-
-	require.True(t, operation.StatusValid)
-	require.Equal(t, uint64(4), operation.TotalReplicas)
-	require.Equal(t, uint64(3), operation.CompletedReplicas)
-	require.Equal(t, 0.75, operation.Progress)
+	manager.setActive(map[storageClassTransitionKey]*storageClassTransitionOperation{key: operation})
+	transition := manager.snapshot()[0]
+	require.True(t, transition.StatusValid)
+	require.Equal(t, uint64(4), transition.TotalReplicas)
+	require.Equal(t, uint64(3), transition.CompletedReplicas)
+	require.Equal(t, 0.75, transition.Progress)
 }
 
-func TestStorageClassTransitionSupersedesWholeOperation(t *testing.T) {
-	tblInfo := &model.TableInfo{
-		ID:               10,
-		Name:             ast.NewCIStr("orders"),
-		StorageClassTier: model.StorageClassTierIA,
-		Partition: &model.PartitionInfo{Definitions: []model.PartitionDefinition{
-			{
-				ID: 11, Name: ast.NewCIStr("p0"), StorageClassTier: model.StorageClassTierIA,
-				StorageClassTransition: &model.StorageClassTransitionState{
-					Target: model.StorageClassTierIA, StartTS: 1234,
-					SchemaName: "test", TableName: "orders", PartitionName: "p0",
-				},
-			},
-			{
-				ID: 12, Name: ast.NewCIStr("p1"), StorageClassTier: model.StorageClassTierIA,
-				StorageClassTransition: &model.StorageClassTransitionState{
-					Target: model.StorageClassTierIA, StartTS: 1234,
-					SchemaName: "test", TableName: "orders", PartitionName: "p1",
-				},
-			},
-		}},
-	}
-	old := snapshotStorageClassTransitionState(tblInfo)
-	tblInfo.Partition.Definitions[0].StorageClassTier = model.StorageClassTierStandard
-
-	updateStorageClassTransitionMarkers(tblInfo, old, 5678, "test", "orders")
-
-	require.Len(t, tblInfo.StorageClassTransitionPendingHistory, 1)
-	history := tblInfo.StorageClassTransitionPendingHistory[0]
-	require.Equal(t, model.StorageClassTransitionStateSuperseded, history.State)
-	require.Equal(t, uint64(1234), history.StartTS)
-	require.Equal(t, uint64(5678), history.FinishTS)
-	require.Equal(t, []int64{11, 12}, []int64{history.Targets[0].PhysicalID, history.Targets[1].PhysicalID})
-
-	p0 := tblInfo.Partition.Definitions[0]
-	p1 := tblInfo.Partition.Definitions[1]
-	require.Equal(t, model.StorageClassTierStandard, p0.StorageClassTransition.Target)
-	require.Equal(t, model.StorageClassTierIA, p1.StorageClassTransition.Target)
-	require.Equal(t, uint64(5678), p0.StorageClassTransition.StartTS)
-	require.Equal(t, uint64(5678), p1.StorageClassTransition.StartTS)
+func TestValidateStorageClassTransitionTargets(t *testing.T) {
+	require.Error(t, validateStorageClassTransitionTargets(nil))
+	require.Error(t, validateStorageClassTransitionTargets([]storageClassTransitionTarget{{PhysicalID: 0}}))
+	require.Error(t, validateStorageClassTransitionTargets([]storageClassTransitionTarget{{PhysicalID: 1}, {PhysicalID: 1}}))
+	require.NoError(t, validateStorageClassTransitionTargets([]storageClassTransitionTarget{{PhysicalID: 1}, {PhysicalID: 2}}))
 }
 
-func TestStorageClassTransitionTracksPartitionedTableParent(t *testing.T) {
+func TestStorageClassTransitionTargetsExist(t *testing.T) {
 	tblInfo := &model.TableInfo{
-		ID:   10,
-		Name: ast.NewCIStr("orders"),
+		ID: 10,
 		Partition: &model.PartitionInfo{Definitions: []model.PartitionDefinition{
 			{ID: 11, Name: ast.NewCIStr("p0")},
 			{ID: 12, Name: ast.NewCIStr("p1")},
 		}},
 	}
-	old := snapshotStorageClassTransitionState(tblInfo)
-	tblInfo.StorageClassTier = model.StorageClassTierIA
-	for i := range tblInfo.Partition.Definitions {
-		tblInfo.Partition.Definitions[i].StorageClassTier = model.StorageClassTierIA
+	operation := &storageClassTransitionOperation{
+		targets: []storageClassTransitionTarget{{PhysicalID: 11}, {PhysicalID: 12}},
 	}
+	require.True(t, storageClassTransitionTargetsExist(tblInfo, operation))
 
-	updateStorageClassTransitionMarkers(tblInfo, old, 1234, "test", "orders")
-
-	require.True(t, infoschemacontext.StorageClassAttribute(tblInfo))
-	require.Equal(t, uint64(1234), tblInfo.StorageClassTransition.StartTS)
-	require.Equal(t, model.StorageClassTierIA, tblInfo.StorageClassTransition.Target)
-	for _, partition := range tblInfo.Partition.Definitions {
-		require.Equal(t, uint64(1234), partition.StorageClassTransition.StartTS)
-		require.Equal(t, model.StorageClassTierIA, partition.StorageClassTransition.Target)
-	}
-
-	tblInfo.StorageClassTransition = nil
-	tblInfo.Partition.Definitions[0].StorageClassTransition = nil
-	require.True(t, infoschemacontext.StorageClassAttribute(tblInfo))
-	tblInfo.Partition.Definitions[1].StorageClassTransition = nil
-	require.False(t, infoschemacontext.StorageClassAttribute(tblInfo))
-}
-
-func TestFinalizeStorageClassTransitionRejectsStaleObservation(t *testing.T) {
-	tblInfo := &model.TableInfo{
-		ID:               10,
-		Name:             ast.NewCIStr("orders"),
-		StorageClassTier: model.StorageClassTierStandard,
-		StorageClassTransition: &model.StorageClassTransitionState{
-			Target: model.StorageClassTierStandard, StartTS: 5678, SchemaName: "test", TableName: "orders",
-		},
-	}
-	args := &model.FinishStorageClassTransitionArgs{
-		Action:            model.StorageClassTransitionActionFinalize,
-		Target:            model.StorageClassTierIA,
-		StartTS:           1234,
-		FinishTS:          6000,
-		TotalReplicas:     3,
-		CompletedReplicas: 3,
-	}
-
-	staleKey := storageClassTransitionKey{tableID: 10, target: model.StorageClassTierIA, startTS: 1234}
-	require.False(t, finalizeStorageClassTransition(tblInfo, staleKey, args))
-	require.Equal(t, uint64(5678), tblInfo.StorageClassTransition.StartTS)
-	require.Equal(t, model.StorageClassTierStandard, tblInfo.StorageClassTransition.Target)
-	require.Empty(t, tblInfo.StorageClassTransitionPendingHistory)
-
-	args.Target = model.StorageClassTierStandard
-	args.StartTS = 5678
-	currentKey := storageClassTransitionKey{tableID: 10, target: model.StorageClassTierStandard, startTS: 5678}
-	require.True(t, finalizeStorageClassTransition(tblInfo, currentKey, args))
-	require.Nil(t, tblInfo.StorageClassTransition)
-	require.Len(t, tblInfo.StorageClassTransitionPendingHistory, 1)
-	require.True(t, infoschemacontext.StorageClassAttribute(tblInfo))
-	history := tblInfo.StorageClassTransitionPendingHistory[0]
-	require.Equal(t, model.StorageClassTransitionStateCompleted, history.State)
-	require.Equal(t, uint64(3), history.TotalReplicas)
-	require.Equal(t, uint64(3), history.CompletedReplicas)
-	require.True(t, history.StatusValid)
-
-	require.True(t, cleanupPendingStorageClassTransitionHistory(tblInfo, currentKey))
-	require.Empty(t, tblInfo.StorageClassTransitionPendingHistory)
-	require.False(t, infoschemacontext.StorageClassAttribute(tblInfo))
+	tblInfo.Partition.Definitions = tblInfo.Partition.Definitions[:1]
+	require.False(t, storageClassTransitionTargetsExist(tblInfo, operation))
 }

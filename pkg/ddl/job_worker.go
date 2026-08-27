@@ -1094,15 +1094,13 @@ func (w *worker) runOneJobStep(
 	case model.ActionAlterCheckConstraint:
 		ver, err = w.onAlterCheckConstraint(jobCtx, job)
 	case model.ActionModifyEngineAttribute:
-		ver, err = onModifyTableEngineAttribute(jobCtx, job)
+		ver, err = w.onModifyTableEngineAttribute(jobCtx, job)
 	case model.ActionRefreshMeta:
 		ver, err = onRefreshMeta(jobCtx, job)
 	case model.ActionAlterTableAffinity:
 		ver, err = onAlterTableAffinity(jobCtx, job)
 	case model.ActionAlterTableSetRegionSplitPolicy:
 		ver, err = w.onAlterTableSetRegionSplitPolicy(jobCtx, job)
-	case model.ActionFinishStorageClassTransition:
-		ver, err = onFinishStorageClassTransition(jobCtx, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

@@ -922,10 +922,12 @@ const (
 		state VARCHAR(16) NOT NULL,
 		total_replicas BIGINT UNSIGNED DEFAULT NULL,
 		completed_replicas BIGINT UNSIGNED DEFAULT NULL,
-		progress DOUBLE DEFAULT NULL,
+		start_ts BIGINT UNSIGNED NOT NULL,
 		start_time DATETIME(6) NOT NULL,
-		finish_time DATETIME(6) NOT NULL,
-		duration BIGINT UNSIGNED NOT NULL COMMENT 'seconds',
-		PRIMARY KEY (table_id, start_time, direction),
+		finish_time DATETIME(6) DEFAULT NULL,
+		duration BIGINT UNSIGNED DEFAULT NULL COMMENT 'seconds',
+		physical_targets LONGBLOB NOT NULL COMMENT 'internal physical table and partition targets',
+		PRIMARY KEY (table_id, start_ts, direction),
+		KEY idx_state_table_id (state, table_id),
 		KEY idx_finish_time_table_id (finish_time, table_id))`
 )

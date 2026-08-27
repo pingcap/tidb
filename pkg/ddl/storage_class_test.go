@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -924,4 +925,26 @@ func TestGetSimpleTableStorageClassForShowCreate(t *testing.T) {
 
 func stringPtr(s string) *string {
 	return &s
+}
+
+func TestStorageClassTransitionUsesSystemTableState(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY)")
+
+	tk.MustExec("ALTER TABLE t STORAGE_CLASS IA")
+	tk.MustQuery(`SELECT direction, state, total_replicas, completed_replicas, finish_time, duration
+		FROM mysql.tidb_storage_class_transition_history`).Check(testkit.Rows(
+		"TO_IA RUNNING <nil> <nil> <nil> <nil>",
+	))
+	tk.MustQuery("SHOW COLUMNS FROM mysql.tidb_storage_class_transition_history LIKE 'progress'").Check(testkit.Rows())
+
+	tk.MustExec("ALTER TABLE t STORAGE_CLASS STANDARD")
+	tk.MustQuery(`SELECT direction, state, COUNT(*)
+		FROM mysql.tidb_storage_class_transition_history
+		GROUP BY direction, state ORDER BY direction, state`).Check(testkit.Rows(
+		"TO_IA SUPERSEDED 1",
+		"TO_STANDARD RUNNING 1",
+	))
 }

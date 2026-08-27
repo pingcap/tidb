@@ -4222,8 +4222,8 @@ var (
 	DDLNotifierTables = []TableBasicInfo{
 		{ID: metadef.TiDBDDLNotifierTableID, Name: "tidb_ddl_notifier", SQL: metadef.CreateTiDBDDLNotifierTable},
 	}
-	// StorageClassTransitionHistoryTables contains the durable completed and superseded
-	// storage-class operation history used by the DDL owner poller.
+	// StorageClassTransitionHistoryTables contains durable running and historical
+	// storage-class operations used by the DDL owner poller.
 	StorageClassTransitionHistoryTables = []TableBasicInfo{
 		{ID: metadef.TiDBStorageClassTransitionHistoryTableID, Name: "tidb_storage_class_transition_history", SQL: metadef.CreateTiDBStorageClassTransitionHistoryTable},
 	}

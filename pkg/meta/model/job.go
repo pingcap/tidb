@@ -125,7 +125,6 @@ const (
 	ActionAlterMaskingPolicy                    ActionType = 82
 	ActionDropMaskingPolicy                     ActionType = 83
 	ActionAlterTableSetRegionSplitPolicy        ActionType = 84
-	ActionFinishStorageClassTransition          ActionType = 85
 
 	// range [200, 256) is reserved for a downstream fork
 )
@@ -211,7 +210,6 @@ var ActionMap = map[ActionType]string{
 	ActionAlterMaskingPolicy:                    "alter masking policy",
 	ActionDropMaskingPolicy:                     "drop masking policy",
 	ActionAlterTableSetRegionSplitPolicy:        "alter table set region split policy",
-	ActionFinishStorageClassTransition:          "finish storage class transition",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.

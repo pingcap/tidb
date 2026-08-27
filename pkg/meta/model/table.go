@@ -234,11 +234,6 @@ type TableInfo struct {
 	StorageClassTier string `json:"storage_class_tier,omitempty"`
 	// StorageClassTransitions are the storage class transition rules of the table level.
 	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
-	// StorageClassTransition is the current explicit storage-class transition.
-	StorageClassTransition *StorageClassTransitionState `json:"storage_class_transition,omitempty"`
-	// StorageClassTransitionPendingHistory contains operations that have ended
-	// but have not yet been copied to the system history table.
-	StorageClassTransitionPendingHistory []StorageClassTransitionHistory `json:"storage_class_transition_pending_history,omitempty"`
 
 	Mode TableMode `json:"mode,omitempty"`
 }
@@ -318,11 +313,6 @@ func (t *TableInfo) Clone() *TableInfo {
 		nt.Affinity = t.Affinity.Clone()
 	}
 	nt.StorageClassTransitions = slices.Clone(t.StorageClassTransitions)
-	nt.StorageClassTransition = t.StorageClassTransition.Clone()
-	nt.StorageClassTransitionPendingHistory = slices.Clone(t.StorageClassTransitionPendingHistory)
-	for i := range t.StorageClassTransitionPendingHistory {
-		nt.StorageClassTransitionPendingHistory[i] = t.StorageClassTransitionPendingHistory[i].Clone()
-	}
 
 	return &nt
 }
@@ -1209,15 +1199,14 @@ type PartitionState struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID                      int64                        `json:"id"`
-	Name                    ast.CIStr                    `json:"name"`
-	LessThan                []string                     `json:"less_than"`
-	InValues                [][]string                   `json:"in_values"`
-	PlacementPolicyRef      *PolicyRefInfo               `json:"policy_ref_info"`
-	Comment                 string                       `json:"comment,omitempty"`
-	StorageClassTier        string                       `json:"storage_class_tier,omitempty"`
-	StorageClassTransitions []StorageClassTransitRule    `json:"storage_class_transitions,omitempty"`
-	StorageClassTransition  *StorageClassTransitionState `json:"storage_class_transition,omitempty"`
+	ID                      int64                     `json:"id"`
+	Name                    ast.CIStr                 `json:"name"`
+	LessThan                []string                  `json:"less_than"`
+	InValues                [][]string                `json:"in_values"`
+	PlacementPolicyRef      *PolicyRefInfo            `json:"policy_ref_info"`
+	Comment                 string                    `json:"comment,omitempty"`
+	StorageClassTier        string                    `json:"storage_class_tier,omitempty"`
+	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
 }
 
 // Clone clones PartitionDefinition.
@@ -1225,7 +1214,6 @@ func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
 	nci.LessThan = slices.Clone(ci.LessThan)
 	nci.StorageClassTransitions = slices.Clone(ci.StorageClassTransitions)
-	nci.StorageClassTransition = ci.StorageClassTransition.Clone()
 	return nci
 }
 

@@ -16,7 +16,6 @@ package model
 
 import (
 	"encoding/json"
-	"slices"
 )
 
 // EngineAttribute is the JSON format of ENGINE_ATTRIBUTE property of tables.
@@ -43,67 +42,7 @@ const (
 	StorageClassTierIA       string = "IA"
 
 	StorageClassTierDefault string = StorageClassTierStandard
-
-	// StorageClassTransitionStateCompleted means every observed replica reached
-	// the operation's target before the operation ended.
-	StorageClassTransitionStateCompleted = "COMPLETED"
-	// StorageClassTransitionStateSuperseded means a newer explicit DDL replaced
-	// the operation before it completed.
-	StorageClassTransitionStateSuperseded = "SUPERSEDED"
 )
-
-// StorageClassTransitionState identifies one active explicit storage-class
-// transition. PartitionName is empty for a table-level transition.
-type StorageClassTransitionState struct {
-	// Target is the SQL-facing IA or STANDARD target.
-	Target string `json:"target"`
-	// StartTS is the operation identity allocated from TSO.
-	StartTS uint64 `json:"start_ts"`
-	// SchemaName and TableName are the SQL object names at operation start.
-	SchemaName string `json:"schema_name"`
-	TableName  string `json:"table_name"`
-	// PartitionName is the partition name at operation start.
-	PartitionName string `json:"partition_name,omitempty"`
-}
-
-// Clone clones an active storage-class transition.
-func (s *StorageClassTransitionState) Clone() *StorageClassTransitionState {
-	if s == nil {
-		return nil
-	}
-	cloned := *s
-	return &cloned
-}
-
-// StorageClassTransitionTarget identifies one physical table or partition in
-// a logical storage-class operation.
-type StorageClassTransitionTarget struct {
-	PhysicalID    int64  `json:"physical_id"`
-	PartitionID   int64  `json:"partition_id,omitempty"`
-	PartitionName string `json:"partition_name,omitempty"`
-}
-
-// StorageClassTransitionHistory is a durable pending history record embedded
-// in TableInfo. The DDL owner copies it to the system history table and removes
-// it only after that insert succeeds.
-type StorageClassTransitionHistory struct {
-	Target            string                         `json:"target"`
-	State             string                         `json:"state"`
-	StartTS           uint64                         `json:"start_ts"`
-	FinishTS          uint64                         `json:"finish_ts"`
-	SchemaName        string                         `json:"schema_name"`
-	TableName         string                         `json:"table_name"`
-	Targets           []StorageClassTransitionTarget `json:"targets"`
-	TotalReplicas     uint64                         `json:"total_replicas,omitempty"`
-	CompletedReplicas uint64                         `json:"completed_replicas,omitempty"`
-	StatusValid       bool                           `json:"status_valid,omitempty"`
-}
-
-// Clone clones a pending storage-class history record.
-func (h StorageClassTransitionHistory) Clone() StorageClassTransitionHistory {
-	h.Targets = slices.Clone(h.Targets)
-	return h
-}
 
 // StorageClassDef is the tier & scope definition for storage class.
 type StorageClassDef struct {
