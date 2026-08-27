@@ -105,11 +105,7 @@ func (htc *hashTableContext) hashStateRows() uint64 {
 		if table == nil || table.rowData == nil {
 			continue
 		}
-		validRows := table.rowData.validKeyCount()
-		if validRows > math.MaxUint64-rows {
-			return math.MaxUint64
-		}
-		rows += validRows
+		rows += table.rowData.validKeyCount()
 	}
 	return rows
 }

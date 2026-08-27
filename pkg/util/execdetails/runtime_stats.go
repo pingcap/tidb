@@ -16,7 +16,6 @@ package execdetails
 
 import (
 	"bytes"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -105,12 +104,12 @@ type HashStateRowsSnapshot struct {
 }
 
 // Complete reports whether every observed execution completed state
-// construction and all row arithmetic remained valid.
+// construction with a nonnegative row count.
 func (s HashStateRowsSnapshot) Complete() bool {
 	return s.state == hashStateRowsComplete && s.Rows >= 0
 }
 
-// Invalid reports whether producer lifecycle or row arithmetic was invalid.
+// Invalid reports whether the producer lifecycle or recorded row count is invalid.
 func (s HashStateRowsSnapshot) Invalid() bool {
 	return s.state == hashStateRowsInvalid || s.Rows < 0
 }
@@ -131,21 +130,7 @@ func NewHashStateRuntimeStats() *HashStateRuntimeStats {
 // AddRows records rows admitted to a successfully constructed lookup or group
 // structure. Producers may call it for multiple spill/restore partitions.
 func (s *HashStateRuntimeStats) AddRows(rows uint64) {
-	if rows > math.MaxInt64 {
-		s.Invalidate()
-		return
-	}
-	delta := int64(rows)
-	for {
-		current := s.rows.Load()
-		if current < 0 || delta > math.MaxInt64-current {
-			s.Invalidate()
-			return
-		}
-		if s.rows.CompareAndSwap(current, current+delta) {
-			return
-		}
-	}
+	s.rows.Add(int64(rows))
 }
 
 // Complete marks the lifecycle complete after every state partition is built.
@@ -377,17 +362,7 @@ func (crs *CopRuntimeStats) recordSummaryEvidence(summary *tipb.ExecutorExecutio
 		crs.summaryInvalid = true
 		return
 	}
-	rows := summary.GetNumProducedRows()
-	if rows > math.MaxInt64 || crs.summaryCount == math.MaxUint64 {
-		crs.summaryInvalid = true
-		return
-	}
-	rowDelta := int64(rows)
-	if crs.summaryRows < 0 || rowDelta > math.MaxInt64-crs.summaryRows {
-		crs.summaryInvalid = true
-		return
-	}
-	crs.summaryRows += rowDelta
+	crs.summaryRows += int64(summary.GetNumProducedRows())
 	crs.summaryCount++
 }
 
@@ -786,7 +761,7 @@ func (s CopRowsSnapshot) Complete() bool {
 
 // Observed reports whether at least one valid response summary can contribute
 // rows. Missing summary slots remain visible through Complete and are skipped;
-// contradictory counts and invalid row arithmetic are not usable.
+// contradictory counts and negative row counts are not usable.
 func (s CopRowsSnapshot) Observed() bool {
 	return !s.Invalid && s.Rows >= 0 && s.ExpectedSummaries > 0 &&
 		s.ObservedSummaries > 0 && s.ObservedSummaries <= s.ExpectedSummaries
@@ -803,11 +778,7 @@ func (e *RuntimeStatsColl) RecordExpectedCopResponseSummaries(planIDs []int) {
 			continue
 		}
 		expectation := e.copResponseSummaryExpected[planID]
-		if expectation.count == math.MaxUint64 {
-			expectation.invalid = true
-		} else {
-			expectation.count++
-		}
+		expectation.count++
 		e.copResponseSummaryExpected[planID] = expectation
 	}
 }

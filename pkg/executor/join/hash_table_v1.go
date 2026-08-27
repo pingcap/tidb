@@ -17,7 +17,6 @@ package join
 import (
 	"hash"
 	"hash/fnv"
-	"math"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -541,11 +540,7 @@ func (c *hashRowContainer) hashStateRows() uint64 {
 	if c.hashNANullBucket == nil {
 		return rows
 	}
-	nullRows := uint64(len(c.hashNANullBucket.entries))
-	if nullRows > math.MaxUint64-rows {
-		return math.MaxUint64
-	}
-	return rows + nullRows
+	return rows + uint64(len(c.hashNANullBucket.entries))
 }
 
 func (c *hashRowContainer) Close() error {

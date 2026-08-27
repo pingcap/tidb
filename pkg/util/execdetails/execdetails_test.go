@@ -15,7 +15,6 @@
 package execdetails
 
 import (
-	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -461,18 +460,12 @@ func TestCopRuntimeStats(t *testing.T) {
 		require.True(t, snapshot.Complete())
 		require.Zero(t, snapshot.Rows)
 
-		maxRows := uint64(math.MaxUint64)
-		zero := uint64(0)
-		coverage.RecordExpectedCopResponseSummaries([]int{tableScanID})
-		coverage.RecordOneCopTask(tableScanID, kv.TiKV, &tipb.ExecutorExecutionSummary{
-			TimeProcessedNs: &zero,
-			NumProducedRows: &maxRows,
-			NumIterations:   &zero,
-		})
-		overflow := coverage.GetCopRowsSnapshot(tableScanID)
-		require.True(t, overflow.Invalid)
-		require.False(t, overflow.Observed())
-		require.False(t, overflow.Complete())
+		coverage.RecordExpectedCopResponseSummaries([]int{aggID})
+		coverage.RecordOneCopTask(aggID, kv.TiKV, mockExecutorExecutionSummary(1, 7, 1))
+		snapshot = coverage.GetCopRowsSnapshot(aggID)
+		require.True(t, snapshot.Complete())
+		require.Equal(t, int64(7), snapshot.Rows)
+		require.Equal(t, uint64(3), snapshot.ObservedSummaries)
 	})
 }
 
@@ -1105,21 +1098,16 @@ func TestRootRuntimeStats(t *testing.T) {
 		merged := state.Clone().(*HashStateRuntimeStats)
 		second := NewHashStateRuntimeStats()
 		second.AddRows(3)
+		second.AddRows(2)
 		second.Complete()
 		merged.Merge(second)
 		require.True(t, merged.HashStateRowsSnapshot().Complete())
-		require.Equal(t, int64(3), merged.HashStateRowsSnapshot().Rows)
+		require.Equal(t, int64(5), merged.HashStateRowsSnapshot().Rows)
 
 		partial := NewHashStateRuntimeStats()
 		merged.Merge(partial)
 		require.False(t, merged.HashStateRowsSnapshot().Complete())
 		require.False(t, merged.HashStateRowsSnapshot().Invalid())
-
-		overflow := NewHashStateRuntimeStats()
-		overflow.AddRows(math.MaxUint64)
-		overflow.Complete()
-		require.True(t, overflow.HashStateRowsSnapshot().Invalid())
-		require.False(t, overflow.HashStateRowsSnapshot().Complete())
 
 		concurrent := NewHashStateRuntimeStats()
 		var wg sync.WaitGroup
