@@ -390,47 +390,46 @@ Self-time for the in-transaction range workload: 55.4% `semaphore_wait_trap`
 (coprocessor I/O, identical work to Go), 7.3% `__recvfrom` (client idle), then
 2.9% memmove, ~4% allocator, 1.3% hashing. Nothing else above 1%.
 
-### What closing the rest would take
+### What closing the rest would take (all candidates now priced)
 
-Two structural items with evidence, neither sufficient alone. Both are OS-
-thread boundaries, and the primitive cost is measured on this machine: a
-cross-thread rendezvous round trip is **3.858us** against **0.004us** for an
-uncontended mutex -- a factor of about a thousand. Go places goroutine
-boundaries where this tier places thread boundaries, which is why it can
-afford to parallelise a 100-row aggregation and this tier cannot.
+The gap is NOT diffuse CPU and NOT the row pipeline. Phase timers inside one
+in-transaction range statement (247.6us total, sysbench `oltp_read_only`,
+ranges only):
 
-1. **The in-transaction read hop: 5.3us x 10 reads = 53us of 640.** Measured
-   directly in the workload (`caller_avg` 79.2us against `worker_avg` 73.9us,
-   `asks == served`). Owning the transaction on the connection worker -- M3s
-   extended to `SessionTransaction` -- removes it. Measured BEFORE building it,
-   which is what showed a refactor the size of M3s buys about 2% here.
+| phase | us | share |
+| --- | ---: | ---: |
+| `next_executor` drain | 226.3 | 91% |
+| planning | ~13.5 | 5% |
+| executor `open` | 4.6 | 2% |
+| materialize 50 rows | 3.2 | 1% |
 
-2. **The transport worker hop on every coprocessor RPC: ~10us x ~5.6 = ~56us
-   of 640.** `unary_send` sends a `WorkerCommand::UnarySend` to the transport
-   thread and blocks; the worker exists only to serialise `ChannelPool`
-   mutation, then spawns the call onto the same runtime. That is three
-   boundaries -- caller to worker, worker to runtime task, task back to caller
-   -- where Go takes a pooled `ClientConn` under a mutex and calls on the
-   caller's own goroutine. Our Cop RPC is ~120us against Go's ~110us, which is
-   the right size for it.
+Materialization is **0.064us/row** -- a quarter of the 0.257us/row gap it was
+once blamed for -- and planning is 13.5us, not the ~112us the SQL-layer
+subtraction suggested. Sampling could not separate these because two thirds of
+the statement is a wait; timers could.
 
-   **Attempted 2026-08-27 and reverted.** Sharing the runtime and putting the
-   pool behind `Arc<Mutex<ChannelPool>>` so the caller does its own
-   `block_on` compiles and passes most of the suite, but
-   `tikv_tonic_coprocessor_source::unary_rpc_attaches_context_once_...` panics
-   with "Cannot start a runtime from within a runtime". A probe showed the
-   SAME test thread reporting `in_runtime=false` on the first two sends and
-   `true` on the third, so something leaks a runtime `EnterGuard` between
-   calls; the only two `.enter()` sites in the crate
-   (`channel_pool.rs:82`, `liveness.rs:75`) are both correctly scoped, so the
-   source was not found. Reverted rather than shipped: this is shared
-   transport infrastructure, the hazard was not understood, and the payoff is
-   ~9% of the remaining gap. Anyone resuming should start from that probe.
+Every remaining candidate has now been measured, and none is large:
 
-Everything else is diffuse: ~8us per statement of SQL-layer overhead and the
-allocator/memmove traffic above. Closing it is an efficiency campaign across
-many small sites, not another single fix, and this plan should not pretend
-otherwise.
+| candidate | measured | how |
+| --- | ---: | --- |
+| cop-scan producer handoff | **11us/stmt** (~44us of 640) | forced inline: drain 226->75us, `open` 5->145us, net 11us |
+| in-transaction read hop | **5.3us/read** (53us of 640) | `caller_avg` 79.2 vs `worker_avg` 73.9 |
+| transport worker hop | ~10us/RPC (~56us of 640) | our Cop ~120us vs Go's ~110us; attempt reverted, see below |
+| row materialization | 3.2us/stmt | phase timer |
+| planning | 13.5us/stmt | phase timer |
+
+The 226us drain is the TiKV round trip itself, where per-RPC and per-request
+count already match Go (1 cop RPC each, 44400 MVCC bytes each, ~135B vs ~129B
+per row on the wire). **There is no single remaining fix worth more than about
+10us per statement.** `oltp_read_only` needs ~29% to reach parity; the three
+boundary items together are ~17% and one is blocked. Anyone resuming should
+treat this as an efficiency campaign over many ~10us sites, or decide the
+read-heavy transactional shape is not worth that spend.
+
+Inlining the scan is a real 11us but is NOT safe as a default: the producer
+would block with no consumer once a scan outruns the bounded queue
+(`MAX_BATCHES_AHEAD`), so it needs the same estimate gate the aggregation got.
+Priced and left unshipped rather than gated on a guess.
 
 ## Verification
 
