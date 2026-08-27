@@ -5,6 +5,9 @@ filters:
   "(^|/)BUILD\\.bazel$":
     approvers:
       - sig-community-approvers
+  "(tidb-lightning\\.toml)$":
+    approvers:
+      - sig-critical-approvers-tidb-lightning
   ".*":
     approvers:
-      - sig-approvers-executor-import
+      - sig-approvers-lightning
