@@ -1401,8 +1401,8 @@ func TestMemArbitratorSoftRiskWithoutRunningPool(t *testing.T) {
 	now = now.Add(defHeapReclaimCheckDuration)
 	require.False(t, m.handleMemIssues())
 	require.True(t, m.AtMemRisk())
-	require.False(t, m.AtOOMRisk())
-	require.Zero(t, m.ExecMetrics().Risk.OOM)
+	require.True(t, m.AtOOMRisk())
+	require.Equal(t, int64(1), m.ExecMetrics().Risk.OOM)
 
 	stats.HeapInuse = 1001
 	require.False(t, m.handleMemIssues())
@@ -2373,10 +2373,10 @@ func TestMemArbitrator(t *testing.T) {
 					GC:                    3, // gc when each round of oom check
 					UpdateRuntimeMemStats: 4, // refresh each round; gc & refresh oom check round
 					RecordMemState:        pairSuccessFail{0, 1}}},
-				MockLogs{0, 1, 1},
+				MockLogs{0, 3, 1},
 			}, tMetrics)
 			require.True(t, tMetrics.Action == m.execMetrics.Action)
-			require.True(t, m.execMetrics.Risk == execMetricsRisk{1, 0, NumByPriority{}})
+			require.True(t, m.execMetrics.Risk == execMetricsRisk{1, 1, NumByPriority{}})
 		}
 
 		{
@@ -2392,10 +2392,10 @@ func TestMemArbitrator(t *testing.T) {
 					GC:                    4, // gc when each round of oom check
 					UpdateRuntimeMemStats: 5, // refresh each round
 					RecordMemState:        pairSuccessFail{0, 1}}},
-				MockLogs{0, 1, 1},
+				MockLogs{0, 4, 1},
 			}, tMetrics)
 			require.True(t, tMetrics.Action == m.execMetrics.Action)
-			require.Equal(t, execMetricsRisk{1, 0, NumByPriority{}}, m.execMetrics.Risk)
+			require.Equal(t, execMetricsRisk{1, 1, NumByPriority{}}, m.execMetrics.Risk)
 		}
 		{
 			killEvent := make(map[uint64]int)
@@ -2434,14 +2434,14 @@ func TestMemArbitrator(t *testing.T) {
 						UpdateRuntimeMemStats: 6, // refresh each round
 						RecordMemState:        pairSuccessFail{0, 1}},
 				},
-				MockLogs{0, 5, 1}, // OOM RISK; Start to `KILL`; make task failed; restart check;
+				MockLogs{0, 9, 1}, // Start to `KILL`; make task failed; restart check; KILL awaiting task;
 			}, tMetrics)
 			require.True(t, m.waitAlloc(e2) == ArbitrateFail)
 			require.True(t, m.execMetrics.Task.pairSuccessFail == pairSuccessFail{0, 1})
 			require.Equal(t, tMetrics.Action, m.execMetrics.Action)
-			require.Equal(t, execMetricsRisk{1, 1, NumByPriority{1}}, m.execMetrics.Risk)
-			require.Equal(t, map[uint64]int{e2.pool.uid: 1}, killEvent)
-			require.True(t, m.underKill.num == 1)
+			require.Equal(t, execMetricsRisk{1, 1, NumByPriority{2, 0, 1}}, m.execMetrics.Risk)
+			require.Equal(t, map[uint64]int{e1.pool.uid: 1, e2.pool.uid: 1, e3.pool.uid: 1}, killEvent)
+			require.True(t, m.underKill.num == 3)
 
 			debugTime = m.heapController.memRisk.startTime.t.Add(defHeapReclaimCheckDuration)
 			require.True(t, m.runOneRound() == -2)
@@ -2451,7 +2451,7 @@ func TestMemArbitrator(t *testing.T) {
 						GC:                    6,
 						UpdateRuntimeMemStats: 7,
 						RecordMemState:        pairSuccessFail{0, 1}}},
-				MockLogs{0, 5, 1}, // OOM risk is already active
+				MockLogs{0, 9, 1}, // OOM risk is already active
 			}, tMetrics)
 			require.True(t, e2.ctx.Load().stopped.Load())
 			select {
@@ -2459,7 +2459,7 @@ func TestMemArbitrator(t *testing.T) {
 			default:
 				require.Fail(t, "")
 			}
-			require.Equal(t, execMetricsRisk{1, 1, NumByPriority{1}}, m.execMetrics.Risk)
+			require.Equal(t, execMetricsRisk{1, 1, NumByPriority{2, 0, 1}}, m.execMetrics.Risk)
 
 			m.mu.allocated += 1e5
 			m.entryMap.addQuota(e5, 1e5)
@@ -2478,13 +2478,15 @@ func TestMemArbitrator(t *testing.T) {
 						GC:                    7,
 						UpdateRuntimeMemStats: 8,
 						RecordMemState:        pairSuccessFail{0, 1}}},
-				MockLogs{0, 7, 2}, // Failed to `KILL` root pool; Start to `KILL` root pool;
+				MockLogs{0, 11, 4}, // Failed to `KILL` root pools; Start to `KILL` root pool;
 			}, tMetrics)
-			require.True(t, m.underKill.num == 2)
+			require.True(t, m.underKill.num == 4)
+			require.True(t, m.underKill.entries[e1.pool.uid].arbitratorMu.underKill.fail)
 			require.True(t, m.underKill.entries[e2.pool.uid].arbitratorMu.underKill.fail)
+			require.True(t, m.underKill.entries[e3.pool.uid].arbitratorMu.underKill.fail)
 			require.True(t, m.underKill.entries[e5.pool.uid].arbitratorMu.underKill.start)
 			require.False(t, m.underKill.entries[e5.pool.uid].arbitratorMu.underKill.fail)
-			require.Equal(t, execMetricsRisk{1, 1, NumByPriority{2}}, m.execMetrics.Risk)
+			require.Equal(t, execMetricsRisk{1, 1, NumByPriority{3, 0, 1}}, m.execMetrics.Risk)
 
 			// release quota which make it able to gc
 			m.removeEntryForTest(e2)
@@ -2500,7 +2502,7 @@ func TestMemArbitrator(t *testing.T) {
 						GC:                    8,
 						UpdateRuntimeMemStats: 9,
 						RecordMemState:        pairSuccessFail{0, 1}}},
-				MockLogs{0, 12, 2}, // Finish KILL; Start to KILL; Restart check;
+				MockLogs{0, 14, 4}, // Finish KILL; no runnable root pool remains;
 			}, tMetrics)
 			require.True(t, m.avoidance.heapTracked.Load() == e1.arbitratorMu.quota+e3.arbitratorMu.quota)
 			require.Equal(t, execMetricsRisk{1, 1, NumByPriority{3, 0, 1}}, m.execMetrics.Risk)
@@ -2509,7 +2511,7 @@ func TestMemArbitrator(t *testing.T) {
 
 			m.removeEntryForTest(e1)
 			m.removeEntryForTest(e3)
-			mockHeap = MockHeap{multiRatio(newLimit, 900) - 1, multiRatio(newLimit, 900) - 1} // mem safe
+			mockHeap = MockHeap{multiRatio(newLimit, 850) - 1, multiRatio(newLimit, 850) - 1} // mem safe
 			e4.ctx.Load().arbitrateHelper.(*arbitrateHelperForTest).heapUsedCB = func() int64 {
 				return 1013
 			}
@@ -2524,7 +2526,7 @@ func TestMemArbitrator(t *testing.T) {
 						GC:                    9,
 						UpdateRuntimeMemStats: 10,
 						RecordMemState:        pairSuccessFail{0, 1}}},
-				MockLogs{1, 14, 2}, // Finish KILL; memory is safe;
+				MockLogs{1, 16, 4}, // Finish KILL; memory is safe;
 			}, tMetrics)
 			require.True(t, !m.atMemRisk())
 		}

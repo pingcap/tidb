@@ -1264,9 +1264,7 @@ func (m *memArbitrator) reset(exception bool, maxConsumed int64) bool {
 		globalArbitrator.metrics.pools.internal.Add(-1)
 	}
 
-	if m.digestID != InvalidDigestID {
-		m.UpdateDigestProfileCache(m.digestID, maxConsumed, m.approxUnixTimeSec())
-	}
+	m.UpdateDigestProfileCache(m.digestID, maxConsumed, m.approxUnixTimeSec())
 
 	if m.useBigBudget() {
 		m.bigBudget().Stop()

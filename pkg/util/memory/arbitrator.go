@@ -64,7 +64,7 @@ const (
 	defTaskTickDur                            = time.Millisecond * 10
 	defHeapReclaimCheckDuration               = time.Second * 1
 	defOOMRiskRatio                           = 0.95
-	defMemRiskRatio                           = 0.9
+	defMemRiskRatio                           = 0.85
 	defTickDurMilli                           = kilo * 1            // 1s
 	defStorePoolMediumCapDurMilli             = defTickDurMilli * 5 // 5s
 	defStoreTopNProfilesDurMilli              = defTickDurMilli * 5 // 5s
@@ -2848,22 +2848,18 @@ func (m *MemArbitrator) handleMemRisk(gcExecuted bool) {
 	}
 
 	memToReclaim := m.heapController.memInuse.Load() - m.memRisk()
+
+	if m.intoOOMRisk() {
+		profile := m.recordDebugProfile()
+		profile.append(zap.Int64("quota-to-reclaim", max(0, memToReclaim)))
+		m.actions.Warn("`OOM RISK`: try to `KILL` running root pool", profile.fields[:profile.n]...)
+	}
+
 	newKillNum, reclaiming := m.killTopnEntry(memToReclaim)
 	underKillNum := 0
 	for _, entry := range m.underKill.entries {
 		if !entry.arbitratorMu.underKill.fail {
 			underKillNum++
-		}
-	}
-
-	// In soft-risk, do not make AtOOMRisk visible unless a running root pool is
-	// actually being killed. There is nothing a new session can reclaim when no
-	// running root pool is available, so it should wait on AtMemRisk instead.
-	if hardOOMRisk || newKillNum != 0 || underKillNum != 0 {
-		if m.intoOOMRisk() {
-			profile := m.recordDebugProfile()
-			profile.append(zap.Int64("quota-to-reclaim", max(0, memToReclaim)))
-			m.actions.Warn("`OOM RISK`: try to `KILL` running root pool", profile.fields[:profile.n]...)
 		}
 	}
 
@@ -2881,46 +2877,44 @@ func (m *MemArbitrator) handleMemRisk(gcExecuted bool) {
 			)
 			m.actions.Warn("Restart runtime memory check", profile.fields[:profile.n]...)
 		}
-	} else if hardOOMRisk || m.AtOOMRisk() {
-		if underKillNum == 0 {
-			forceKill := 0
-			for { // make all tasks success
-				entry := m.frontTaskEntry()
-				if entry == nil {
-					break
-				}
-				// force kill
-				if ctx := entry.ctx.Load(); ctx.available() {
-					ctx.stop(ArbitratorOOMRiskKill)
-					m.execMetrics.Risk.OOMKill[entry.ctx.memPriority]++
-					forceKill++
-					if m.removeTask(entry) {
-						entry.windUp(0, ArbitrateFail)
-					}
+	} else if m.AtOOMRisk() && underKillNum == 0 {
+		forceKill := 0
+		for { // make all tasks success
+			entry := m.frontTaskEntry()
+			if entry == nil {
+				break
+			}
+			// force kill
+			if ctx := entry.ctx.Load(); ctx.available() {
+				ctx.stop(ArbitratorOOMRiskKill)
+				m.execMetrics.Risk.OOMKill[entry.ctx.memPriority]++
+				forceKill++
+				if m.removeTask(entry) {
+					entry.windUp(0, ArbitrateFail)
 				}
 			}
-			if forceKill != 0 {
-				profile := m.recordDebugProfile()
-				profile.append(
-					zap.Int("kill-awaiting-num", forceKill),
-					zap.Int64("pool-under-kill-num", m.underKill.num),
-					zap.Int64("quota-under-reclaim", reclaiming),
-					zap.Int64("rest-quota-to-reclaim", max(0, memToReclaim-reclaiming)),
-				)
-				m.actions.Warn("No more running root pool can be killed to resolve `OOM RISK`; KILL all awaiting tasks;",
-					profile.fields[:profile.n]...,
-				)
-			} else {
-				profile := m.recordDebugProfile()
-				profile.append(
-					zap.Int64("pool-under-kill-num", m.underKill.num),
-					zap.Int64("quota-under-reclaim", reclaiming),
-					zap.Int64("rest-quota-to-reclaim", max(0, memToReclaim-reclaiming)),
-				)
-				m.actions.Warn("No more running root pool or awaiting task can be terminated to resolve `OOM RISK`",
-					profile.fields[:profile.n]...,
-				)
-			}
+		}
+		if forceKill != 0 {
+			profile := m.recordDebugProfile()
+			profile.append(
+				zap.Int("kill-awaiting-num", forceKill),
+				zap.Int64("pool-under-kill-num", m.underKill.num),
+				zap.Int64("quota-under-reclaim", reclaiming),
+				zap.Int64("rest-quota-to-reclaim", max(0, memToReclaim-reclaiming)),
+			)
+			m.actions.Warn("No more running root pool can be killed to resolve `OOM RISK`; KILL all awaiting tasks;",
+				profile.fields[:profile.n]...,
+			)
+		} else {
+			profile := m.recordDebugProfile()
+			profile.append(
+				zap.Int64("pool-under-kill-num", m.underKill.num),
+				zap.Int64("quota-under-reclaim", reclaiming),
+				zap.Int64("rest-quota-to-reclaim", max(0, memToReclaim-reclaiming)),
+			)
+			m.actions.Warn("No more running root pool or awaiting task can be terminated to resolve `OOM RISK`",
+				profile.fields[:profile.n]...,
+			)
 		}
 	}
 
