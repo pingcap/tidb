@@ -22,8 +22,9 @@
 //! stops when the output chunk is full, and returns one row at a time when a
 //! filter has order-sensitive side effects. Its cached child chunk is charged
 //! to the statement memory budget for its whole open lifetime. Pure filters
-//! still use the scalar evaluator; Go's column-vector filter implementation
-//! remains outside this seed.
+//! are evaluated once into a reusable selection mask (with direct null and
+//! string-IN kernels); expression kinds without a Rust vector kernel retain
+//! the scalar evaluator as a correctness-preserving fallback.
 
 use std::sync::Arc;
 
@@ -49,6 +50,7 @@ pub struct SelectionExec<C: Columns> {
     tracker: Arc<Tracker>,
     memory: StatementMemory,
     input_row: usize,
+    selected: Vec<bool>,
     batched: bool,
     done: bool,
 }
@@ -101,6 +103,7 @@ impl<C: Columns> SelectionExec<C> {
             tracker,
             memory,
             input_row: 0,
+            selected: Vec::new(),
             batched,
             done: false,
         }
@@ -126,8 +129,46 @@ impl<C: Columns> SelectionExec<C> {
         Ok(true)
     }
 
+    /// Evaluates all pure filters into the physical-row mask used by the
+    /// batched path. This mirrors Go's `VectorizedFilter` contract: filters
+    /// are applied filter-major, already rejected rows are skipped, and a
+    /// false or NULL result clears the row. The expression evaluator currently
+    /// has no typed `VecEval*` interface, so non-specialized expressions use
+    /// the same row evaluator while still avoiding interleaving evaluation
+    /// with output production.
+    fn evaluate_selection_mask(&mut self) -> Result<(), ExecError> {
+        let child_chunk = self
+            .child_chunk
+            .as_ref()
+            .expect("selection child chunk exists while open");
+        let rows = child_chunk.num_rows();
+        let mut selected = vec![true; rows];
+        for (filter, fast_filter) in self.filters.iter().zip(&self.fast_filters) {
+            for row_index in 0..rows {
+                if !selected[row_index] {
+                    continue;
+                }
+                let row = child_chunk.get_row(row_index);
+                if let Some(fast_filter) = fast_filter {
+                    if !fast_filter.matches(row) {
+                        selected[row_index] = false;
+                        continue;
+                    }
+                    if fast_filter.is_complete() {
+                        continue;
+                    }
+                }
+                let value = filter.eval(&self.ctx, row)?;
+                selected[row_index] = truthy_of(&value)? == Some(true);
+            }
+        }
+        self.selected = selected;
+        Ok(())
+    }
+
     fn release_child_chunk(&mut self) {
         self.child_chunk = None;
+        self.selected.clear();
         self.tracker.replace_bytes_used(0);
     }
 }
@@ -251,6 +292,7 @@ impl<C: Columns> Executor for SelectionExec<C> {
         self.tracker.replace_bytes_used(child_chunk.memory_usage());
         self.child_chunk = Some(child_chunk);
         self.input_row = 0;
+        self.selected.clear();
         self.done = false;
         Ok(())
     }
@@ -261,6 +303,41 @@ impl<C: Columns> Executor for SelectionExec<C> {
             return Ok(());
         }
         self.memory.check()?;
+        if self.batched {
+            loop {
+                while self.input_row < self.selected.len() {
+                    if req.is_full() {
+                        return Ok(());
+                    }
+                    if self.selected[self.input_row] {
+                        let row = self
+                            .child_chunk
+                            .as_ref()
+                            .expect("selection child chunk exists while open")
+                            .get_row(self.input_row);
+                        req.append_row(row);
+                    }
+                    self.input_row += 1;
+                }
+
+                let child_chunk = self
+                    .child_chunk
+                    .as_mut()
+                    .expect("selection child chunk exists while open");
+                let before = child_chunk.memory_usage();
+                let result = self.child.next(child_chunk);
+                self.tracker.consume(child_chunk.memory_usage() - before);
+                result?;
+                self.memory.check()?;
+                if child_chunk.num_rows() == 0 {
+                    self.done = true;
+                    self.selected.clear();
+                    return Ok(());
+                }
+                self.evaluate_selection_mask()?;
+                self.input_row = 0;
+            }
+        }
         loop {
             let child_chunk = self
                 .child_chunk

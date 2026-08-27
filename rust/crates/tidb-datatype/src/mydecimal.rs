@@ -569,8 +569,6 @@ impl MyDecimal {
         let words_frac = digits_to_words(i32::from(d.digits_frac));
         let words_int = digits_to_words(i32::from(d.digits_int));
         let round_digit = round_mode as i32;
-        /* TODO - fix this code as it won't work for CEILING mode */
-
         if words_int + words_frac_to > buf_len {
             words_frac_to = buf_len - words_int;
             frac = words_frac_to * DIGITS_PER_WORD;
@@ -640,14 +638,30 @@ impl MyDecimal {
                 return None;
             }
         } else {
-            /* TODO - fix this code as it won't work for CEILING mode */
             let pos = (words_frac_to * DIGITS_PER_WORD - frac - 1) as usize;
-            let mut shifted_number = self.word_buf[to_idx as usize] / POWERS10[pos];
+            let word = self.word_buf[to_idx as usize];
+            let scale = POWERS10[pos];
+            let mut shifted_number = word / scale;
             let dig_after_scale = shifted_number % 10;
-            if dig_after_scale > round_digit || (round_digit == 5 && dig_after_scale == 5) {
+            // The source branch compares only the first discarded digit for
+            // half-up rounding.  Ceiling mode is different: its historical
+            // Go contract rounds a discarded non-zero magnitude away from
+            // zero, so `1.0001` at scale 3 must become `1.001` even though
+            // the first discarded digit is zero.  Inspect the complete
+            // remainder for that mode, while retaining Go's half-up rule for
+            // every other caller.
+            let discarded_nonzero = word % (scale * 10) != 0;
+            let do_inc = match round_mode {
+                RoundMode::Ceiling => discarded_nonzero,
+                RoundMode::HalfUp => {
+                    dig_after_scale > round_digit || (round_digit == 5 && dig_after_scale == 5)
+                }
+                RoundMode::Truncate => false,
+            };
+            if do_inc {
                 shifted_number += 10;
             }
-            self.word_buf[to_idx as usize] = POWERS10[pos] * (shifted_number - dig_after_scale);
+            self.word_buf[to_idx as usize] = scale * (shifted_number - dig_after_scale);
         }
         /*
            In case we're rounding e.g. 1.5e9 to 2.0e9, the decimal words inside
@@ -1292,7 +1306,11 @@ impl MyDecimal {
                 carry = 1;
             }
         }
-        if (carry > 0) == from1.negative { 1 } else { -1 }
+        if (carry > 0) == from1.negative {
+            1
+        } else {
+            -1
+        }
     }
     /// Go `digitsFrac`: the decimal digits after the point.
     #[must_use]
@@ -1591,8 +1609,8 @@ impl MyDecimal {
                 .checked_mul(i128::from(WORD_BASE))?
                 .checked_add(i128::from(word))?;
         }
-        let fraction_padding = fraction_words * DIGITS_PER_WORD as usize
-            - usize::try_from(digits_frac).ok()?;
+        let fraction_padding =
+            fraction_words * DIGITS_PER_WORD as usize - usize::try_from(digits_frac).ok()?;
         if fraction_padding > 0 {
             magnitude /= i128::from(POWERS10[fraction_padding]);
         }

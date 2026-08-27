@@ -33,7 +33,8 @@
 //!   and `fakeSel`/[`FAKE_SEL_LENGTH`].
 //! * [`crate::tagged_ptr`]: [`TagPtrHelper`], [`MAX_TAGGED_BITS`].
 //! * [`crate::base_join_probe`]: [`ProbeContext`] and [`BaseJoinProbe`]. The
-//!   probe half is *not* re-derived here; this file only drives it.
+//!   shared probe machinery is reused here, with the v2 inner-join wrapper
+//!   implemented below.
 //! * `tidb_util::memory::Tracker`: Go `memory.Tracker`, including
 //!   `AttachTo`/`Detach`/`Consume`, so the hash-table memory accounting is
 //!   real rather than mocked.
@@ -173,7 +174,10 @@ use tidb_chunk::chunk::Chunk;
 use tidb_executor::joiner::JoinType;
 use tidb_util::memory::Tracker;
 
-use crate::base_join_probe::ProbeError;
+use crate::base_join_probe::{
+    is_key_matched, new_join_probe, BaseJoinProbe, BuildRowSource, MatchedRowInfo, ProbeContext,
+    ProbeError, ProbeFilter, ProbeKeySerializer,
+};
 use crate::hash_table_v2::{
     get_hash_table_length_by_row_table, get_hash_table_memory_usage, HashTableV2, SubTable,
 };
@@ -716,7 +720,9 @@ impl BuildWorkerV2 {
 /// boundary: `ProbeV2` (`pkg/executor/join/join_probe.go`) and its
 /// implementations `innerJoinProbe`, `outerJoinProbe`, `semiJoinProbe`,
 /// `antiSemiJoinProbe`, `leftOuterSemiJoinProbe` -- the same symbols
-/// [`crate::base_join_probe`]'s `new_join_probe` stops at. Go's
+/// [`crate::base_join_probe`]'s `new_join_probe` stops at. The inner variant
+/// is implemented below; the outer, semi and anti variants remain deferred.
+/// Go's
 /// `SetRestoredChunkForProbe` and `SpillRemainingProbeChunks` are omitted:
 /// both are spill-only, and [`crate::base_join_probe`] already records them
 /// as blocked on `hashJoinSpillHelper`.
@@ -763,6 +769,165 @@ pub trait ProbeV2 {
 
     /// Go `GetProbeCollision`.
     fn get_probe_collision(&self) -> u64;
+}
+
+/// The v2 inner-join probe corresponding to Go's `innerJoinProbe`.
+///
+/// The shared [`BaseJoinProbe`] owns chunk preparation, partition lookup and
+/// row reconstruction. This wrapper supplies the inner-join rule: emit one
+/// output row for every build row whose serialized key equals the probe key.
+/// It deliberately accepts the same filter and key-serializer seams as
+/// [`BaseJoinProbe::set_chunk_for_probe`], so callers can use the exact probe
+/// vectors produced by their physical plan without coupling this crate to the
+/// session evaluator.
+///
+/// Other-condition evaluation and the outer/semi/anti probe variants remain
+/// separate implementations; using this type for those join kinds would be a
+/// correctness error. The constructor rejects an `other_condition` context
+/// rather than silently dropping that predicate.
+pub struct InnerJoinProbe<'a, S: ProbeKeySerializer> {
+    base: BaseJoinProbe,
+    ctx: ProbeContext<'a>,
+    key_serializer: S,
+    filter: Option<ProbeFilter<'a>>,
+}
+
+impl<'a, S: ProbeKeySerializer> InnerJoinProbe<'a, S> {
+    /// Constructs a probe for one worker of an inner v2 join.
+    #[must_use]
+    pub fn new(
+        ctx: ProbeContext<'a>,
+        work_id: usize,
+        key_index: Vec<usize>,
+        probe_key_nullable: &[bool],
+        right_as_build_side: bool,
+        key_serializer: S,
+        filter: Option<ProbeFilter<'a>>,
+    ) -> Self {
+        assert!(
+            !ctx.has_other_condition,
+            "InnerJoinProbe does not evaluate other conditions"
+        );
+        let base = new_join_probe(
+            &ctx,
+            work_id,
+            JoinType::Inner,
+            key_index,
+            probe_key_nullable,
+            right_as_build_side,
+        );
+        Self {
+            base,
+            ctx,
+            key_serializer,
+            filter,
+        }
+    }
+
+    /// Provides read-only access to the shared base for probe diagnostics.
+    #[must_use]
+    pub const fn base(&self) -> &BaseJoinProbe {
+        &self.base
+    }
+}
+
+impl<S: ProbeKeySerializer> ProbeV2 for InnerJoinProbe<'_, S> {
+    fn set_chunk_for_probe(&mut self, chunk: Chunk) -> Result<(), ProbeError> {
+        self.base
+            .set_chunk_for_probe(&self.ctx, chunk, self.filter, &self.key_serializer)
+    }
+
+    fn is_current_chunk_probe_done(&self) -> bool {
+        self.base.is_current_chunk_probe_done()
+    }
+
+    fn probe(&mut self, joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        if joined_chk.is_full() {
+            return Ok(());
+        }
+        let (_, mut remain_cap) = self.base.prepare_for_probe(&self.ctx, joined_chk);
+        let was_incomplete = joined_chk.is_incomplete_chunk();
+        joined_chk.set_num_virtual_rows(joined_chk.num_rows());
+        joined_chk.set_incomplete_chunk(true);
+
+        while remain_cap > 0 && !self.base.is_current_chunk_probe_done() {
+            let probe_row = self.base.current_probe_row();
+            let header = self.base.matched_rows_headers()[probe_row];
+            if header == 0 {
+                self.base.finish_lookup_current_probe_row();
+                self.base.set_current_probe_row(probe_row + 1);
+                continue;
+            }
+
+            let hash_value = self.base.matched_rows_hash_value()[probe_row];
+            let serialized_key = self.base.serialized_keys()[probe_row].clone();
+            let build_address = crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
+            let build_row = self.ctx.hash_table.row_bytes(build_address);
+            if is_key_matched(
+                self.ctx.meta.key_mode,
+                &serialized_key,
+                build_row,
+                self.ctx.meta,
+            ) {
+                self.base.append_build_row_to_cached_build_rows_v2(
+                    &self.ctx,
+                    self.ctx.hash_table,
+                    MatchedRowInfo {
+                        probe_row_index: probe_row,
+                        build_row_start: build_address,
+                        build_row_offset: 0,
+                    },
+                    joined_chk,
+                    0,
+                    false,
+                );
+                self.base.record_matched_row_for_current_probe_row();
+                remain_cap -= 1;
+            } else {
+                self.base.record_probe_collision();
+            }
+            let next = BaseJoinProbe::next_matched_row(
+                self.ctx.hash_table,
+                &self.ctx.tag_helper,
+                header,
+                hash_value,
+            );
+            self.base.set_matched_rows_header(probe_row, next);
+        }
+
+        self.base
+            .finish_current_lookup_loop(&self.ctx, self.ctx.hash_table, joined_chk);
+        joined_chk.set_incomplete_chunk(was_incomplete);
+        Ok(())
+    }
+
+    fn need_scan_row_table(&self) -> bool {
+        false
+    }
+
+    fn init_for_scan_row_table(&mut self) {
+        panic!("inner join does not scan the build row table")
+    }
+
+    fn is_scan_row_table_done(&self) -> bool {
+        panic!("inner join does not scan the build row table")
+    }
+
+    fn scan_row_table(&mut self, _joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        panic!("inner join does not scan the build row table")
+    }
+
+    fn reset_probe(&mut self) {
+        self.base.reset_probe(&self.ctx);
+    }
+
+    fn reset_probe_collision(&mut self) {
+        self.base.reset_probe_collision();
+    }
+
+    fn get_probe_collision(&self) -> u64 {
+        self.base.get_probe_collision()
+    }
 }
 
 // ---------------------------------------------------------------------------

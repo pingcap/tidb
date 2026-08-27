@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{Decimal, DecimalIntegerWarning, DecimalParseError};
+use crate::mydecimal::RoundMode;
 use crate::MyDecimal;
 
 #[test]
@@ -322,7 +323,14 @@ fn test_to_hash_key() {
 fn test_to_hash_key_bin_tests() {
     let groups: &[(&[&str], &[&str])] = &[
         (
-            &["1.1", "1.1000", "1.10000000000", "01.1", "0001.1", "001.1000000"],
+            &[
+                "1.1",
+                "1.1000",
+                "1.10000000000",
+                "01.1",
+                "0001.1",
+                "001.1000000",
+            ],
             &["1.1", "0001.1", "01.1"],
         ),
         (
@@ -337,7 +345,14 @@ fn test_to_hash_key_bin_tests() {
             &["-1.1", "-0001.1", "-01.1"],
         ),
         (
-            &[".1", "0.1", "000000.1", ".10000", "0000.10000", "000000000000000000.1"],
+            &[
+                ".1",
+                "0.1",
+                "000000.1",
+                ".10000",
+                "0000.10000",
+                "000000000000000000.1",
+            ],
             &[".1", "0.1", "000000.1", "00.1"],
         ),
         (
@@ -389,7 +404,13 @@ fn test_to_hash_key_bin_tests() {
             &["12345", "012345", "000012345", "000000000000012345"],
         ),
         (
-            &["123E5", "12300000", "00123E5", "000000123E5", "12300000.00000000"],
+            &[
+                "123E5",
+                "12300000",
+                "00123E5",
+                "000000123E5",
+                "12300000.00000000",
+            ],
             &["12300000", "123E5", "00123E5", "0000000000123E5"],
         ),
         (
@@ -974,6 +995,29 @@ fn test_round_with_ceil() {
                 .to_string(),
             *output,
             "round_ceiling_to_scale({scale}) of {input}"
+        );
+    }
+}
+
+/// The fixed-word `MyDecimal::round` path must inspect every discarded digit
+/// for `ModeCeiling`, not only the first digit after the requested scale.  Go's
+/// source marks this branch as a TODO; keeping the complete remainder here
+/// avoids silently losing a non-zero tail such as `1.0001 -> 1.001`.
+#[test]
+fn test_my_decimal_round_ceiling_checks_the_discarded_tail() {
+    for (input, expected) in [("1.0001", "1.001"), ("-1.0001", "-1.001")] {
+        let (decimal, error) = MyDecimal::from_string(input.as_bytes());
+        assert!(error.is_none(), "{input} parses");
+        let mut rounded = MyDecimal::default();
+        assert_eq!(
+            decimal.round(&mut rounded, 3, RoundMode::Ceiling),
+            None,
+            "{input} rounds without a warning"
+        );
+        assert_eq!(
+            String::from_utf8(rounded.to_string_bytes()).unwrap(),
+            expected,
+            "{input}"
         );
     }
 }
