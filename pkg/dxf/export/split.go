@@ -15,6 +15,7 @@
 package export
 
 import (
+	"bytes"
 	"container/heap"
 	"context"
 	"math"
@@ -155,10 +156,26 @@ func loadRegionIndex(ctx context.Context, store kv.Storage, refs []tableRef) (*r
 		if err != nil {
 			return nil, err
 		}
-		idx.endKeys = append(idx.endKeys, endKeys...)
-		idx.sizes = append(idx.sizes, sizes...)
+		idx.append(endKeys, sizes)
 	}
 	return idx, nil
+}
+
+// append adds one run's regions to the index.
+//
+// A region is reported with its own end key, which can reach past the range it
+// was asked for, so a region straddling the gap between two runs comes back from
+// both queries. Keeping it twice would count its size twice and leave an empty
+// chunk at the seam, so a repeat is dropped. That also keeps the index strictly
+// ascending, which is what cover's search relies on.
+func (r *regionIndex) append(endKeys []kv.Key, sizes []int64) {
+	for i := range endKeys {
+		if n := len(r.endKeys); n > 0 && endKeys[i].Cmp(r.endKeys[n-1]) <= 0 {
+			continue
+		}
+		r.endKeys = append(r.endKeys, endKeys[i])
+		r.sizes = append(r.sizes, sizes[i])
+	}
 }
 
 const (
@@ -178,6 +195,14 @@ const (
 // Each batched span keeps the ordinal its table already had, so batching never
 // changes an output file name.
 func batchColocatedChunks(chunks []Chunk, regions *regionIndex) []Chunk {
+	// Tables arrive in the order the schema listed them, which is not their key
+	// order. Sorting first is what lets neighbours be found by looking at the
+	// next entry, and it is also required for correctness: a batch is read by a
+	// single forward scan, so its spans have to ascend or the scan would pass a
+	// span by and write it out empty.
+	sort.Slice(chunks, func(i, j int) bool {
+		return bytes.Compare(chunks[i].Start, chunks[j].Start) < 0
+	})
 	// A table split across several chunks is not a whole-table candidate: its
 	// chunks are large enough to be worth a scan each.
 	chunksPerTable := make(map[int64]int, len(chunks))

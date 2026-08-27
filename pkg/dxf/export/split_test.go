@@ -309,6 +309,23 @@ func TestRegionIndexCover(t *testing.T) {
 	require.Nil(t, sizes)
 }
 
+func TestRegionIndexAppendDropsRepeats(t *testing.T) {
+	idx := &regionIndex{}
+	// One run: regions ending at b, m. The last one reaches past the run.
+	idx.append(keys("b", "m"), []int64{1, 2})
+	// The next run starts inside that same region, so PD reports it again.
+	idx.append(keys("m", "z"), []int64{2, 3})
+
+	require.Equal(t, keys("b", "m", "z"), idx.endKeys)
+	require.Equal(t, []int64{1, 2, 3}, idx.sizes, "a repeated region must not be counted twice")
+
+	// Without dropping it, a table reaching past that region would take the
+	// region twice and cut an empty chunk at the seam.
+	ends, sizes := idx.cover(kv.Key("c"), kv.Key("q"))
+	require.Equal(t, keys("m", "z"), ends)
+	require.Equal(t, []int64{2, 3}, sizes)
+}
+
 func TestBatchColocatedChunks(t *testing.T) {
 	// One region [_, m) holding many whole tiny tables, then a second region.
 	regions := &regionIndex{endKeys: keys("m", "z"), sizes: []int64{1000, 77}}
@@ -341,6 +358,23 @@ func TestBatchColocatedChunks(t *testing.T) {
 		require.Equal(t, in[i].Start, span.Start)
 		require.Equal(t, in[i].End, span.End)
 	}
+
+	// The schema lists tables in its own order, not key order. A batch is read
+	// by one forward scan, so its spans must still come out ascending — a span
+	// the scan had already passed would be written out empty.
+	shuffled := make([]Chunk, len(in))
+	for i, c := range in {
+		shuffled[len(in)-1-i] = c
+	}
+	out = batchColocatedChunks(shuffled, regions)
+	require.Len(t, out, 1)
+	require.Len(t, out[0].Spans, minBatchSpans)
+	for i := 1; i < len(out[0].Spans); i++ {
+		require.Negative(t, bytes.Compare(out[0].Spans[i-1].Start, out[0].Spans[i].Start),
+			"spans must ascend regardless of the order tables were listed in")
+	}
+	require.Equal(t, out[0].Spans[0].Start, out[0].Start)
+	require.Equal(t, out[0].Spans[len(out[0].Spans)-1].End, out[0].End)
 
 	// Too few neighbours to be worth batching: left exactly as they were.
 	few := in[:minBatchSpans-1]
