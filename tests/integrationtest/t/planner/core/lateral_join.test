@@ -108,6 +108,35 @@ explain format='plan_tree' select * from t1 left join lateral (select b from t2 
 ## EXPLAIN: the decorrelated form is a left outer hash join
 explain format='plan_tree' select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true;
 
+## An always-true WHERE above a non-LATERAL Apply must not prune the LATERAL Apply
+## nested underneath it: t1.a=3 matches two t2 rows and both must survive.
+drop table if exists t4;
+create table t4 (a int);
+insert into t4 values (1);
+select t1.a from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true
+  where 1=1 or exists (select 1 from t4 where t4.a = t1.a) order by t1.a;
+
+## Same shape with INNER JOIN LATERAL
+select t1.a from t1 join lateral (select b from t2 where t2.a = t1.a) as lat on true
+  where 1=1 or exists (select 1 from t4 where t4.a = t1.a) order by t1.a;
+
+## Control: a predicate that does not simplify away keeps the same row count
+select t1.a from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true
+  where t1.x > 0 or exists (select 1 from t4 where t4.a = t1.a) order by t1.a;
+
+## An inner projection may only be pulled above the outer join when it stays NULL on the
+## null-extended row. ifnull/coalesce/IS NULL must not turn a non-match into a real value.
+select t1.a, lat.bz from t1 left join lateral (select ifnull(b, 'z') as bz from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.bz;
+select t1.a, lat.bz from t1 left join lateral (select coalesce(b, 'z') as bz from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.bz;
+select t1.a, lat.bz from t1 left join lateral (select b is null as bz from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.bz;
+select t1.a, lat.bz from t1 left join lateral (select if(b > 'c', 'hi', 'lo') as bz from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.bz;
+select t1.a, lat.bz from t1 left join lateral (select (case when b is null then 'n' else b end) as bz from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.bz;
+
+## Control: NULL-preserving expressions stay decorrelatable and still read NULL on a non-match
+select t1.a, lat.bz from t1 left join lateral (select concat(b, '!') as bz from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.bz;
+explain format='plan_tree' select t1.a, lat.bz from t1 left join lateral (select ifnull(b, 'z') as bz from t2 where t2.a = t1.a) as lat on true;
+explain format='plan_tree' select t1.a, lat.bz from t1 left join lateral (select concat(b, '!') as bz from t2 where t2.a = t1.a) as lat on true;
+
 # TestLateralJoinExplain
 drop table if exists t1, t2;
 create table t1 (a int);

@@ -183,6 +183,91 @@ HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__
 │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─TableReader(Probe)	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+drop table if exists t4;
+create table t4 (a int);
+insert into t4 values (1);
+select t1.a from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true
+where 1=1 or exists (select 1 from t4 where t4.a = t1.a) order by t1.a;
+a
+1
+2
+3
+3
+4
+select t1.a from t1 join lateral (select b from t2 where t2.a = t1.a) as lat on true
+where 1=1 or exists (select 1 from t4 where t4.a = t1.a) order by t1.a;
+a
+1
+2
+3
+3
+select t1.a from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true
+where t1.x > 0 or exists (select 1 from t4 where t4.a = t1.a) order by t1.a;
+a
+1
+2
+3
+3
+4
+select t1.a, lat.bz from t1 left join lateral (select ifnull(b, 'z') as bz from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.bz;
+a	bz
+1	a
+2	c
+3	d
+3	e
+4	NULL
+select t1.a, lat.bz from t1 left join lateral (select coalesce(b, 'z') as bz from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.bz;
+a	bz
+1	a
+2	c
+3	d
+3	e
+4	NULL
+select t1.a, lat.bz from t1 left join lateral (select b is null as bz from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.bz;
+a	bz
+1	0
+2	0
+3	0
+3	0
+4	NULL
+select t1.a, lat.bz from t1 left join lateral (select if(b > 'c', 'hi', 'lo') as bz from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.bz;
+a	bz
+1	lo
+2	lo
+3	hi
+3	hi
+4	NULL
+select t1.a, lat.bz from t1 left join lateral (select (case when b is null then 'n' else b end) as bz from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.bz;
+a	bz
+1	a
+2	c
+3	d
+3	e
+4	NULL
+select t1.a, lat.bz from t1 left join lateral (select concat(b, '!') as bz from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.bz;
+a	bz
+1	a!
+2	c!
+3	d!
+3	e!
+4	NULL
+explain format='plan_tree' select t1.a, lat.bz from t1 left join lateral (select ifnull(b, 'z') as bz from t2 where t2.a = t1.a) as lat on true;
+id	task	access object	operator info
+Apply	root		CARTESIAN left outer join, left side:TableReader
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection(Probe)	root		ifnull(planner__core__lateral_join.t2.b, z)->Column
+  └─TableReader	root		data:Selection
+    └─Selection	cop[tikv]		eq(planner__core__lateral_join.t2.a, planner__core__lateral_join.t1.a)
+      └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format='plan_tree' select t1.a, lat.bz from t1 left join lateral (select concat(b, '!') as bz from t2 where t2.a = t1.a) as lat on true;
+id	task	access object	operator info
+Projection	root		planner__core__lateral_join.t1.a, concat(planner__core__lateral_join.t2.b, !)->Column
+└─HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__lateral_join.t1.a, planner__core__lateral_join.t2.a)]
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 drop table if exists t1, t2;
 create table t1 (a int);
 create table t2 (a int, b varchar(10));
