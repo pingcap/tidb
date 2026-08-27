@@ -263,6 +263,10 @@ func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
 		statementRUScanByteWeight*finalized.units.ScanBytes +
 			statementRUNetByteWeight*finalized.units.NetBytes,
 	)
+	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitCPUWork).Add(finalized.units.CPUWork)
+	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitScanBytes).Add(finalized.units.ScanBytes)
+	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitNetBytes).Add(finalized.units.NetBytes)
+	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitFrontendCompileBytes).Add(finalized.units.FrontendCompileBytes)
 }
 
 func publishStatementRUCalibrationSafely(
