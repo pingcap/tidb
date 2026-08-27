@@ -39,6 +39,11 @@ fn datums_to_constants(datums: &[Datum]) -> Vec<Expression> {
                     .with_added_flags(FieldTypeFlags::UNSIGNED),
                 Datum::Float32(_) | Datum::Real(_) => FieldType::new(C::Double),
                 Datum::String(_) | Datum::Bytes(_) => FieldType::new(C::VarString),
+                // Go's table continues past what the signed-numeric tables
+                // needed: DECIMAL, DURATION and SET map their own types.
+                Datum::Decimal(_) => FieldType::new(C::NewDecimal),
+                Datum::Duration(_) => FieldType::new(C::Duration),
+                Datum::Set(_, _) => FieldType::new(C::Set),
                 other => panic!("kindToFieldType has no test mapping for {other:?}"),
             };
             Expression::Constant(crate::constant::Constant::new(d.clone(), ft))
@@ -270,6 +275,51 @@ fn go_test_arithmetic_mod() {
         (vec![i(-13), i(11)], i(-2)),
         (vec![i(13), i(-11)], i(2)),
         (vec![i(-13), i(-11)], i(-2)),
+    ];
+    for (args, expected) in cases {
+        let value = go_eval("mod", args).unwrap();
+        assert!(
+            datum_equal(&value, expected),
+            "{args:?}: {value:?} != {expected:?}"
+        );
+    }
+}
+
+/// Go `TestArithmeticMod`'s four HYBRID-type rows (`builtin_arithmetic_test.go`):
+/// a string rides StrToInt to its integer prefix on one side, stays REAL when
+/// BOTH sides are strings (MySQL's rule), and Enum/Set/Duration operands
+/// evaluate through their numeric values.
+#[test]
+fn go_test_arithmetic_mod_hybrid_operand_kinds() {
+    let cases: &[(Vec<Datum>, Datum)] = &[
+        (
+            vec![Datum::new_string("1231".to_string()), i(12)],
+            i(7), // StrToInt("1231") % 12
+        ),
+        (
+            vec![
+                Datum::new_string("1231".to_string()),
+                Datum::new_string("12".to_string()),
+            ],
+            r(7.0), // both strings force the REAL signature
+        ),
+        (
+            vec![
+                Datum::Duration(tidb_datatype::MySqlDuration::new(12, 34, 56, 0, 0).unwrap()),
+                i(122),
+            ],
+            i(114), // duration reads as its packed clock 123456
+        ),
+        (
+            vec![
+                Datum::Set(
+                    tidb_datatype::MysqlSet::new("abc", 7),
+                    tidb_datatype::Collation::Utf8Mb4Bin,
+                ),
+                Datum::new_string("12".to_string()),
+            ],
+            r(7.0), // Set numeric value rides the REAL signature beside a string
+        ),
     ];
     for (args, expected) in cases {
         let value = go_eval("mod", args).unwrap();
