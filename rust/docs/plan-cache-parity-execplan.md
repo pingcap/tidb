@@ -279,6 +279,22 @@ Schema version change, `tidb_prepared_plan_cache_size`, statement-level
 refusals (`SetSkipPlanCache`), and the memory accounting Go does. Plus the
 `EXPLAIN FORMAT='plan_cache'` surface if it is in scope by then.
 
+### M1d — Global aggregates pick Go's family (DONE, `da8da8a0c4`)
+
+`SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN ? AND ?` -- sysbench's
+`sum_range`, and the shape a pre-existing red test already pinned -- planned a
+root HashAgg where Go plans a root StreamAgg. The chooser compared the two
+families at the SCAN's cardinality, but the partial stage runs in TiKV, so the
+ROOT's input is ONE row. Go's own `EXPLAIN FORMAT='verbose'` prices its root
+StreamAgg at 49.90 (`1 row * 1 func * cpuFactor`) against a root HashAgg's
+1566.94, dominated by the undivided `10*3*cpuFactor` start cost. Fed one row
+instead of 99, our formula -- which was already faithful -- agrees with Go.
+
+Two pre-existing failures went green. A third test went red and was itself
+wrong: asked directly, Go answers StreamAgg for it too. **Ask the Go node for
+`EXPLAIN FORMAT='verbose'` on the exact statement before trusting a plan
+expectation in this tree.**
+
 ### M2r — The row pipeline (NEW, not yet started)
 
 Separate from planning, and measured: a range statement's cost grows with rows
@@ -334,6 +350,8 @@ Correctness gates, every milestone:
 - 2026-08-26: M1a landed (`4ee77f0109`). Effect within noise; the milestone
   was split because the profile's "33% in planning" turned out to be 31% in the
   two speculative passes and 2% in the third.
+- 2026-08-26: M1d landed (`da8da8a0c4`) — global aggregates now choose Go's
+  family. Net -2 pre-existing failures.
 - 2026-08-26: M1b landed (`0f7953702f`) — the aggregation family is pinned and
   replayed, so a repeated PREPARED statement plans once instead of three
   times. The survey was also corrected: `prepared_path_pins.rs` was already
@@ -361,6 +379,9 @@ Correctness gates, every milestone:
   distinguishes derived mode from top-level mode for the aggregate shapes --
   the suite is equally green with the old coupling restored. The separation is
   reasoned from `derived_column_prune`, not demonstrated.
+- A GREEN test can pin a divergence just as easily as a red one. Go's verbose
+  EXPLAIN is cheap to ask for and settled two disputed plan expectations here
+  in minutes; re-deriving its cost formula from source did not.
 - Writes are at parity (1.00x, four writes in one transaction: 0.894ms vs
   0.891ms). Per-RPC we match Go too (our Get 75.2us against Go's own
   `tidb_tikvclient_request_seconds{type="Get"}` 71-73us; our Cop round trip
