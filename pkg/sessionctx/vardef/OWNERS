@@ -5,6 +5,7 @@ filters:
   "(^|/)BUILD\\.bazel$":
     approvers:
       - sig-community-approvers
-  ".*":
+  "(OWNERS|(sysvar|tidb_vars)\\.go)$":
     approvers:
-      - sig-approvers-executor-import
+      - sig-critical-approvers-tidb-server
+

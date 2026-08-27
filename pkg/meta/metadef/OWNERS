@@ -5,6 +5,9 @@ filters:
   "(^|/)BUILD\\.bazel$":
     approvers:
       - sig-community-approvers
+  "(OWNERS|system_tables_def\\.go)$":
+    approvers:
+      - sig-critical-approvers-tidb-server
   ".*":
     approvers:
-      - sig-approvers-executor-import
+      - sig-approvers-meta
