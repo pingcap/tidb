@@ -826,6 +826,7 @@ struct ExistenceJoinProbe<'a, S: ProbeKeySerializer> {
     key_serializer: S,
     filter: Option<ProbeFilter<'a>>,
     anti: bool,
+    outer_semi: bool,
 }
 
 impl<'a, S: ProbeKeySerializer> ExistenceJoinProbe<'a, S> {
@@ -844,9 +845,19 @@ impl<'a, S: ProbeKeySerializer> ExistenceJoinProbe<'a, S> {
             !ctx.has_other_condition,
             "existence probe has no residual path"
         );
+        let outer_semi = matches!(
+            join_type,
+            JoinType::LeftOuterSemiJoin | JoinType::AntiLeftOuterSemiJoin
+        );
         assert!(
-            matches!(join_type, JoinType::SemiJoin | JoinType::AntiSemiJoin),
-            "existence probe requires semi or anti-semi join"
+            matches!(
+                join_type,
+                JoinType::SemiJoin
+                    | JoinType::AntiSemiJoin
+                    | JoinType::LeftOuterSemiJoin
+                    | JoinType::AntiLeftOuterSemiJoin
+            ),
+            "existence probe requires a semi-family join"
         );
         Self {
             base: new_join_probe(
@@ -860,7 +871,11 @@ impl<'a, S: ProbeKeySerializer> ExistenceJoinProbe<'a, S> {
             ctx,
             key_serializer,
             filter,
-            anti: join_type == JoinType::AntiSemiJoin,
+            anti: matches!(
+                join_type,
+                JoinType::AntiSemiJoin | JoinType::AntiLeftOuterSemiJoin
+            ),
+            outer_semi,
         }
     }
 
@@ -903,13 +918,35 @@ impl<'a, S: ProbeKeySerializer> ExistenceJoinProbe<'a, S> {
                 );
             }
             self.base.set_matched_rows_header(probe_row, 0);
-            if matched != self.anti {
+            if self.outer_semi || matched != self.anti {
                 selected[probe_row] = true;
                 remain_cap -= 1;
+            }
+            if self.outer_semi {
+                // Reuse the header slot after the chain has been consumed as
+                // a per-row 0/1 flag. It is no longer needed for probing and
+                // avoids another allocation in this narrow no-residual path.
+                self.base
+                    .set_matched_rows_header(probe_row, if matched != self.anti { 1 } else { 0 });
             }
             self.base.set_current_probe_row(probe_row + 1);
         }
         append_selected_probe_rows(&self.base, &self.ctx, joined_chk, &selected);
+        if self.outer_semi {
+            let flag_index = if self.base.right_as_build_side() {
+                self.ctx.l_used.len()
+            } else {
+                self.ctx.l_used.len() + self.ctx.r_used.len()
+            };
+            for (probe_row, selected) in selected.iter().enumerate() {
+                if *selected {
+                    joined_chk.append_int64(
+                        flag_index,
+                        self.base.matched_rows_headers()[probe_row] as i64,
+                    );
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1059,6 +1096,156 @@ impl<S: ProbeKeySerializer> ProbeV2 for AntiSemiJoinProbe<'_, S> {
 
     fn scan_row_table(&mut self, _joined_chk: &mut Chunk) -> Result<(), ProbeError> {
         panic!("right-build anti-semi join does not scan the build row table")
+    }
+
+    fn reset_probe(&mut self) {
+        self.inner.reset_probe()
+    }
+
+    fn reset_probe_collision(&mut self) {
+        self.inner.reset_probe_collision()
+    }
+
+    fn get_probe_collision(&self) -> u64 {
+        self.inner.base.get_probe_collision()
+    }
+}
+
+/// Go `leftOuterSemiJoinProbe`, restricted to the right-build/equi-key fast
+/// path. Every preserved row is emitted once with a 0/1 existence flag.
+pub struct LeftOuterSemiJoinProbe<'a, S: ProbeKeySerializer> {
+    inner: ExistenceJoinProbe<'a, S>,
+}
+
+impl<'a, S: ProbeKeySerializer> LeftOuterSemiJoinProbe<'a, S> {
+    /// Constructs a left-outer-semi probe with the right side as build side.
+    #[must_use]
+    pub fn new(
+        ctx: ProbeContext<'a>,
+        work_id: usize,
+        key_index: Vec<usize>,
+        probe_key_nullable: &[bool],
+        right_as_build_side: bool,
+        key_serializer: S,
+        filter: Option<ProbeFilter<'a>>,
+    ) -> Self {
+        Self {
+            inner: ExistenceJoinProbe::new(
+                ctx,
+                work_id,
+                JoinType::LeftOuterSemiJoin,
+                key_index,
+                probe_key_nullable,
+                right_as_build_side,
+                key_serializer,
+                filter,
+            ),
+        }
+    }
+}
+
+impl<S: ProbeKeySerializer> ProbeV2 for LeftOuterSemiJoinProbe<'_, S> {
+    fn set_chunk_for_probe(&mut self, chunk: Chunk) -> Result<(), ProbeError> {
+        self.inner.set_chunk_for_probe(chunk)
+    }
+
+    fn is_current_chunk_probe_done(&self) -> bool {
+        self.inner.is_current_chunk_probe_done()
+    }
+
+    fn probe(&mut self, joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        self.inner.probe(joined_chk)
+    }
+
+    fn need_scan_row_table(&self) -> bool {
+        false
+    }
+
+    fn init_for_scan_row_table(&mut self) {
+        panic!("right-build left-outer-semi join does not scan the build row table")
+    }
+
+    fn is_scan_row_table_done(&self) -> bool {
+        panic!("right-build left-outer-semi join does not scan the build row table")
+    }
+
+    fn scan_row_table(&mut self, _joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        panic!("right-build left-outer-semi join does not scan the build row table")
+    }
+
+    fn reset_probe(&mut self) {
+        self.inner.reset_probe()
+    }
+
+    fn reset_probe_collision(&mut self) {
+        self.inner.reset_probe_collision()
+    }
+
+    fn get_probe_collision(&self) -> u64 {
+        self.inner.base.get_probe_collision()
+    }
+}
+
+/// Go `leftOuterSemiJoinProbe` with its existence flag negated.
+pub struct AntiLeftOuterSemiJoinProbe<'a, S: ProbeKeySerializer> {
+    inner: ExistenceJoinProbe<'a, S>,
+}
+
+impl<'a, S: ProbeKeySerializer> AntiLeftOuterSemiJoinProbe<'a, S> {
+    /// Constructs an anti-left-outer-semi probe with the right side as build
+    /// side.
+    #[must_use]
+    pub fn new(
+        ctx: ProbeContext<'a>,
+        work_id: usize,
+        key_index: Vec<usize>,
+        probe_key_nullable: &[bool],
+        right_as_build_side: bool,
+        key_serializer: S,
+        filter: Option<ProbeFilter<'a>>,
+    ) -> Self {
+        Self {
+            inner: ExistenceJoinProbe::new(
+                ctx,
+                work_id,
+                JoinType::AntiLeftOuterSemiJoin,
+                key_index,
+                probe_key_nullable,
+                right_as_build_side,
+                key_serializer,
+                filter,
+            ),
+        }
+    }
+}
+
+impl<S: ProbeKeySerializer> ProbeV2 for AntiLeftOuterSemiJoinProbe<'_, S> {
+    fn set_chunk_for_probe(&mut self, chunk: Chunk) -> Result<(), ProbeError> {
+        self.inner.set_chunk_for_probe(chunk)
+    }
+
+    fn is_current_chunk_probe_done(&self) -> bool {
+        self.inner.is_current_chunk_probe_done()
+    }
+
+    fn probe(&mut self, joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        self.inner.probe(joined_chk)
+    }
+
+    fn need_scan_row_table(&self) -> bool {
+        false
+    }
+
+    fn init_for_scan_row_table(&mut self) {
+        panic!("right-build anti-left-outer-semi join does not scan the build row table")
+    }
+
+    fn is_scan_row_table_done(&self) -> bool {
+        panic!("right-build anti-left-outer-semi join does not scan the build row table")
+    }
+
+    fn scan_row_table(&mut self, _joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        panic!("right-build anti-left-outer-semi join does not scan the build row table")
     }
 
     fn reset_probe(&mut self) {

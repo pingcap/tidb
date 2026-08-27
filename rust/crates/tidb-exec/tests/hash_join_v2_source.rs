@@ -28,8 +28,9 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 
 use tidb_exec::base_join_probe::{is_key_matched, new_join_probe, BaseJoinProbe, ProbeContext};
 use tidb_exec::hash_join_v2::{
-    new_join_build_worker_v2, AntiSemiJoinProbe, BuildTask, HashJoinCtxV2, HashJoinV2Exec,
-    HashTableContext, InnerJoinProbe, SemiJoinProbe, LABEL_FOR_HASH_TABLE_IN_HASH_JOIN_V2,
+    new_join_build_worker_v2, AntiLeftOuterSemiJoinProbe, AntiSemiJoinProbe, BuildTask,
+    HashJoinCtxV2, HashJoinV2Exec, HashTableContext, InnerJoinProbe, LeftOuterSemiJoinProbe,
+    SemiJoinProbe, LABEL_FOR_HASH_TABLE_IN_HASH_JOIN_V2,
 };
 use tidb_exec::hash_table_v2::{get_hash_table_length_by_row_len, get_hash_table_memory_usage};
 use tidb_exec::join_row_table::{RowLayoutMeta, RowTableSegment};
@@ -623,6 +624,60 @@ fn right_build_semi_and_anti_probes_emit_each_preserved_row_once() {
         .flat_map(|chunk| (0..chunk.num_rows()).map(|row| chunk.get_row(row).get_int64(0)))
         .collect();
     assert_eq!(anti_rows, vec![40]);
+
+    let outer_fields = [
+        FieldType::new(FieldTypeCode::LongLong),
+        FieldType::new(FieldTypeCode::LongLong),
+    ];
+    let mut left_outer = LeftOuterSemiJoinProbe::new(
+        probe_context(),
+        0,
+        vec![0],
+        &[false],
+        true,
+        serializer,
+        None,
+    );
+    let outer_results =
+        HashJoinV2Exec::run_join_worker(&mut left_outer, vec![probe_chunk(&[10, 20, 40])], &|| {
+            Chunk::new(&outer_fields, 2, 2)
+        })
+        .expect("left outer semi probe");
+    let outer_rows: Vec<(i64, i64)> = outer_results
+        .iter()
+        .flat_map(|chunk| {
+            (0..chunk.num_rows()).map(|row| {
+                let row = chunk.get_row(row);
+                (row.get_int64(0), row.get_int64(1))
+            })
+        })
+        .collect();
+    assert_eq!(outer_rows, vec![(10, 1), (20, 1), (40, 0)]);
+
+    let mut anti_outer = AntiLeftOuterSemiJoinProbe::new(
+        probe_context(),
+        0,
+        vec![0],
+        &[false],
+        true,
+        serializer,
+        None,
+    );
+    let anti_outer_results =
+        HashJoinV2Exec::run_join_worker(&mut anti_outer, vec![probe_chunk(&[10, 20, 40])], &|| {
+            Chunk::new(&outer_fields, 2, 2)
+        })
+        .expect("anti-left outer semi probe");
+    let anti_outer_rows: Vec<(i64, i64)> = anti_outer_results
+        .iter()
+        .flat_map(|chunk| {
+            (0..chunk.num_rows()).map(|row| {
+                let row = chunk.get_row(row);
+                (row.get_int64(0), row.get_int64(1))
+            })
+        })
+        .collect();
+    assert_eq!(anti_outer_rows, vec![(10, 0), (20, 0), (40, 1)]);
 }
 
 #[test]
