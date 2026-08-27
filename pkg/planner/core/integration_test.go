@@ -2015,6 +2015,36 @@ func TestVirtualExprPushDown(t *testing.T) {
 	require.NotEmpty(t, plan)
 	tk.MustQuery("select g from t_force_idx force index (idx_exp_i) where (i + 1) >= 1 order by g limit 1;").Check(testkit.Rows("2"))
 
+	tk.MustExec("drop table if exists t_bug")
+	tk.MustExec(`create table t_bug (
+		id bigint primary key auto_increment,
+		s varchar(20),
+		g varchar(20) generated always as (lower(s)) virtual,
+		key(g),
+		key idx_exp_lower ((lower(s)))
+	)`)
+	tk.MustExec("insert into t_bug(s) values ('B'),('a')")
+	// The index side does not keep order here, so the TopN must stay at root instead of being
+	// pushed to the probe side, where a partial TopN could stop early and return wrong rows.
+	rows = [][]any{
+		{"Projection", "root", "test.t_bug.id, test.t_bug.s, test.t_bug.g"},
+		{"└─TopN", "root", "test.t_bug.g, offset:0, count:1"},
+		{"  └─IndexLookUp", "root", ""},
+		{"    ├─IndexRangeScan(Build)", "cop[tikv]", "range:[\"a\",+inf], keep order:false, stats:pseudo"},
+		{"    └─TableRowIDScan(Probe)", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain format='brief' select /* issue:67981 */ * from t_bug force index (idx_exp_lower) where lower(s) >= 'a' order by g limit 1;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("select /* issue:67981 */ * from t_bug force index (idx_exp_lower) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows("2 a a"))
+	rows = [][]any{
+		{"Projection", "root", "test.t_bug.id, test.t_bug.s, test.t_bug.g"},
+		{"└─IndexLookUp", "root", "limit embedded(offset:0, count:1)"},
+		{"  ├─Limit(Build)", "cop[tikv]", "offset:0, count:1"},
+		{"  │ └─IndexRangeScan", "cop[tikv]", "range:[\"a\",+inf], keep order:true, stats:pseudo"},
+		{"  └─TableRowIDScan(Probe)", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain format='brief' select /* issue:67981 */ * from t_bug force index (g) where lower(s) >= 'a' order by g limit 1;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("select /* issue:67981 */ * from t_bug force index (g) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows("2 a a"))
+
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 	is := dom.InfoSchema()

@@ -1097,6 +1097,17 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 				}
 				return attachPlan2Task(p, rootTask)
 			}
+			if p.containVirtualColumn(copTask.tablePlan.Schema().Columns) {
+				// Keep TopN at root when it would be pushed to the table/probe side of an
+				// IndexLookUp on a virtual generated column. The build/index side may not
+				// preserve the global order in this case, so a probe-side partial TopN can
+				// stop too early and return wrong rows.
+				rootTask := t.ConvertToRootTask(p.SCtx())
+				if len(p.GetPartitionBy()) > 0 {
+					return t
+				}
+				return attachPlan2Task(p, rootTask)
+			}
 			pushedDownTopN = p.getPushedDownTopN(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
 		}
