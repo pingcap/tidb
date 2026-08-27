@@ -3088,7 +3088,7 @@ func (m *MemArbitrator) initAwaitFreePool(allocAlignSize, shardNum int64) {
 	}
 
 	p.SetOutOfCapacityAction(func(s OutOfCapacityActionArgs) error {
-		if m.heapController.heapAlloc.Load() > m.oomRisk()-s.Request ||
+		if m.atMemRisk() || m.heapController.memInuse.Load() > m.oomRisk()-s.Request ||
 			m.allocated() > m.limit()-m.OutOfControl()-s.Request {
 			m.updateBlockedAt()
 			m.execMetrics.AwaitFree.Fail++
