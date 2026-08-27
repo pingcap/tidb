@@ -1834,19 +1834,6 @@ func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 		return
 	}
 	execdetails.SyncRUV2MetricsFromRUDetails(sessVars.RUV2Metrics, ruDetail)
-
-	weights := sessVars.RUV2Weights()
-	tidbRU := sessVars.RUV2Metrics.CalculateRUValues(weights)
-
-	dctx := a.Ctx.GetDistSQLCtx()
-	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
-		return
-	}
-	tikvRU := ruDetail.TiKVRUV2()
-	tiflashRU := ruDetail.TiflashRU()
-	if tikvRU > 0 || tidbRU > 0 || tiflashRU > 0 {
-		dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, tikvRU, tidbRU, tiflashRU)
-	}
 }
 
 func (a *ExecStmt) recordLastQueryInfo(err error) {
