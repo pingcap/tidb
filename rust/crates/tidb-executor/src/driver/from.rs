@@ -991,6 +991,8 @@ fn build_from_inner(
                 // it by the DECLARED name rather than by the written one.
                 if crate::infoschema_meta::is_information_schema(database) {
                     trace.mem_table_scan(&declared_table_name(entry, name));
+                } else if let TableEntry::Cte(cte) = entry {
+                    trace.cte_full_scan(name, &visible, cte.num_rows());
                 } else {
                     trace.table_full_scan(&visible, full_scan_estimate(catalog, entry), keep_order);
                 }

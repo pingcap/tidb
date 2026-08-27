@@ -417,7 +417,7 @@ pub(crate) fn run_set_opr_traced_with_deferred(
     let with_catalog;
     let catalog = match &stmt.with {
         Some(with) => {
-            with_catalog = materialize_ctes(with, catalog, current_db, ctx)?;
+            with_catalog = materialize_ctes(with, catalog, current_db, ctx, trace.as_deref_mut())?;
             &with_catalog
         }
         None => catalog,

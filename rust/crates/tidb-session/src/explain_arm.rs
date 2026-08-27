@@ -44,6 +44,11 @@ impl Session {
         let Some(format) = tidb_executor::ExplainFormat::parse(&explain.format) else {
             return Err(DriverError::unsupported("unknown EXPLAIN format name"));
         };
+        if explain.analyze && matches!(format, tidb_executor::ExplainFormat::PlanTree) {
+            return Err(DriverError::unsupported(
+                "explain format 'plan_tree' with analyze is not supported now",
+            ));
+        }
         let Some(target) = explain.statement() else {
             return Err(DriverError::unsupported(
                 "EXPLAIN of a plan digest is not supported yet",

@@ -178,14 +178,16 @@
 //! # Shapes EXPLAIN refuses
 //!
 //! The driver executes more than this recorder has ever printed: derived
-//! tables, lateral joins, `WITH` clauses, set operations. Those build sites
-//! mark the trace refused rather than inventing a node, and the entry points
-//! below answer with the refusal they have always answered with -- the
-//! surface EXPLAIN describes is unchanged by the fact that the trace now
-//! rides the real driver. Operators the driver builds but the recorder has
-//! never printed (an Apply for a correlated subquery, the window stage, an
-//! aggregate query's HAVING and final projection) record no node at all,
-//! which is exactly the plan text this tier has always produced for them.
+//! tables, lateral joins, and some set-operation forms. Those build sites mark
+//! the trace refused rather than inventing a node, and the entry points below
+//! answer with the refusal they have always answered with. Non-recursive
+//! `WITH` clauses are the exception: their materialized definitions and CTE
+//! scans are now recorded as auxiliary roots, so the TPC-DS plan-tree source
+//! suite can inspect the same statement shape as Go. Operators the driver
+//! builds but the recorder has never printed (an Apply for a correlated
+//! subquery, the window stage, an aggregate query's HAVING and final
+//! projection) record no node at all, which is exactly the plan text this tier
+//! has always produced for them.
 //!
 //! # Where the estRows numbers come from
 //!
@@ -225,15 +227,17 @@ const EXPLAIN_COLUMNS: [&str; 5] = ["id", "estRows", "task", "access object", "o
 
 /// The `EXPLAIN FORMAT = '...'` this tier accepts. Go's `'row'` (the
 /// default, also the explicit spelling) and `'brief'` render the identical
-/// tree; `'brief'` merely drops each operator's `_N` build-order suffix
-/// (captured: `explain format = 'brief' select ...` prints `Point_Get` where
-/// the default prints `Point_Get_1`).
+/// five-column tree; `'brief'` merely drops each operator's `_N` build-order
+/// suffix. `'plan_tree'` is Go's four-column tree shape (it omits `estRows`),
+/// which is the format used by the TPC-DS source test.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExplainFormat {
     /// Go's default: every operator id carries its `_N` build-order suffix.
     Row,
     /// Same tree, ids printed without the `_N` suffix.
     Brief,
+    /// Go's four-column tree format, without estimates or id suffixes.
+    PlanTree,
 }
 
 impl ExplainFormat {
@@ -246,6 +250,8 @@ impl ExplainFormat {
             Some(Self::Row)
         } else if format.eq_ignore_ascii_case("brief") {
             Some(Self::Brief)
+        } else if format.eq_ignore_ascii_case("plan_tree") {
+            Some(Self::PlanTree)
         } else {
             None
         }
@@ -273,16 +279,19 @@ fn recorded_roots(trace: PlanTrace) -> Result<Vec<PlanNode>, DriverError> {
     Ok(roots)
 }
 
-/// A `WITH` clause's CTEs are materialized before the query that reads them is
-/// built, so there is no one trace to print for the pair. EXPLAIN has always
-/// refused this shape, and refuses it before the driver runs anything.
-fn refuse_untraced_select(select: &tidb_ast::SelectStmt) -> Result<(), DriverError> {
-    if select.with.is_some() {
-        return Err(DriverError::unsupported(
-            "EXPLAIN of a WITH clause is not supported yet",
-        ));
-    }
+/// The driver materializes a `WITH` clause before building its consumer, so
+/// the consumer's trace is still a truthful description of the executable
+/// plan.  Keep this hook as a single validation boundary for future shapes;
+/// unlike the old fail-closed branch it deliberately admits CTE-backed
+/// SELECTs so the TPC-DS source suite can compare their plans with Go.
+fn refuse_untraced_select(_select: &tidb_ast::SelectStmt) -> Result<(), DriverError> {
     Ok(())
+}
+
+fn written_cte_names(with: Option<&tidb_ast::WithClause>) -> Vec<String> {
+    with.map_or_else(Vec::new, |with| {
+        with.ctes.iter().map(|cte| cte.name.clone()).collect()
+    })
 }
 
 /// Plans `select` and reports the plan as EXPLAIN rows, executing nothing:
@@ -295,9 +304,10 @@ pub fn explain_select_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    let cte_names = written_cte_names(select.with.as_ref());
     // Go `pkg/planner/core/logical_plan_builder.go::computeCTEInlineFlag`
     // removes a single-consumer non-recursive WITH before plan tracing; the
-    // unchanged refusal below therefore remains only for materialized CTEs.
+    // The materialized definitions are retained as auxiliary trace roots.
     let inlined_ctes;
     let select = match crate::driver::inline_single_use_ctes(select, current_db) {
         Some(rewritten) => {
@@ -308,6 +318,7 @@ pub fn explain_select_stmt(
     };
     refuse_untraced_select(select)?;
     let mut trace = PlanTrace::planning();
+    trace.set_cte_names(cte_names);
     if let Some(plan) = plan_fast_single_row_scan(select, catalog, current_db, ctx)? {
         trace.fast_single_row_range(&plan.visible, &plan.ranges, plan.pseudo);
         return Ok(render(recorded(trace)?, format));
@@ -337,8 +348,9 @@ pub fn explain_set_opr_stmt(
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
     let mut trace = PlanTrace::planning();
+    trace.set_cte_names(written_cte_names(set_opr.with.as_ref()));
     run_set_opr_traced(set_opr, catalog, current_db, ctx, Some(&mut trace))?;
-    Ok(render(recorded(trace)?, format))
+    Ok(render_roots(recorded_roots(trace)?, format))
 }
 
 /// `EXPLAIN ANALYZE <select>`: the same plan [`explain_select_stmt`] records,
@@ -354,6 +366,7 @@ pub fn explain_analyze_select_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    let cte_names = written_cte_names(select.with.as_ref());
     let inlined_ctes;
     let select = match crate::driver::inline_single_use_ctes(select, current_db) {
         Some(rewritten) => {
@@ -364,6 +377,7 @@ pub fn explain_analyze_select_stmt(
     };
     refuse_untraced_select(select)?;
     let mut trace = PlanTrace::analyzing();
+    trace.set_cte_names(cte_names);
     run_select_traced(
         select,
         catalog,
@@ -385,6 +399,7 @@ pub fn explain_analyze_set_opr_stmt(
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
     let mut trace = PlanTrace::analyzing();
+    trace.set_cte_names(written_cte_names(set_opr.with.as_ref()));
     run_set_opr_traced(set_opr, catalog, current_db, ctx, Some(&mut trace))?;
     Ok(render_analyze(recorded(trace)?, format))
 }
@@ -495,7 +510,7 @@ pub fn explain_analyze_delete_stmt(
     Ok(render_analyze(recorded(trace)?, format))
 }
 
-/// Assigns ids bottom-up and flattens the tree into the five text columns.
+/// Assigns ids bottom-up and flattens the tree into the requested text shape.
 fn render(plan: PlanNode, format: ExplainFormat) -> SelectMeta {
     render_roots(vec![plan], format)
 }
@@ -505,10 +520,19 @@ fn render_roots(plans: Vec<PlanNode>, format: ExplainFormat) -> SelectMeta {
     let mut rows = Vec::new();
     for plan in plans {
         let plan = assign_ids(plan, &mut counter);
-        flatten(&plan, String::new(), true, true, format, &mut rows);
+        if matches!(format, ExplainFormat::PlanTree) {
+            flatten_plan_tree(&plan, String::new(), true, true, format, &mut rows);
+        } else {
+            flatten(&plan, String::new(), true, true, format, &mut rows);
+        }
     }
     let field_type = FieldType::new(FieldTypeCode::VarString);
-    let columns = EXPLAIN_COLUMNS
+    let names = if matches!(format, ExplainFormat::PlanTree) {
+        ["id", "task", "access object", "operator info"].as_slice()
+    } else {
+        EXPLAIN_COLUMNS.as_slice()
+    };
+    let columns = names
         .iter()
         .map(|name| ((*name).to_owned(), field_type.clone()))
         .collect();
@@ -633,7 +657,7 @@ fn child_prefix(prefix: &str, is_root: bool, is_last: bool) -> String {
 fn explain_id(node: &IdNode, format: ExplainFormat) -> String {
     match format {
         ExplainFormat::Row => format!("{}_{}", node.name, node.counter),
-        ExplainFormat::Brief => node.name.to_owned(),
+        ExplainFormat::Brief | ExplainFormat::PlanTree => node.name.to_owned(),
     }
 }
 
@@ -652,7 +676,30 @@ fn info_text(node: &IdNode, format: ExplainFormat) -> String {
         }
         None => String::new(),
     };
-    format!("{}{left_side}{}", node.info, node.info_tail)
+    let info = format!("{}{left_side}{}", node.info, node.info_tail);
+    if matches!(format, ExplainFormat::PlanTree) {
+        strip_plan_column_ids(&info)
+    } else {
+        info
+    }
+}
+
+/// Go's plan-tree printer intentionally hides the internal `Column#N`
+/// allocator and renders those expressions simply as `Column`.  Keep the
+/// allocator visible in row/brief EXPLAIN, where it is part of the contract,
+/// but normalize it at this format boundary.
+fn strip_plan_column_ids(info: &str) -> String {
+    let mut out = String::with_capacity(info.len());
+    let mut rest = info;
+    while let Some(offset) = rest.find("Column#") {
+        out.push_str(&rest[..offset]);
+        out.push_str("Column");
+        rest = &rest[offset + "Column#".len()..];
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        rest = &rest[digits..];
+    }
+    out.push_str(rest);
+    out
 }
 
 fn est_text(est_rows: Option<f64>) -> String {
@@ -682,6 +729,31 @@ fn flatten(
     let last = node.children.len().saturating_sub(1);
     for (i, child) in node.children.iter().enumerate() {
         flatten(child, child_prefix.clone(), false, i == last, format, out);
+    }
+}
+
+/// Go's `plan_tree` format is the same drawn tree as the row format, but it
+/// intentionally omits the estimate column and operator id suffixes.  Keep
+/// this as a separate flattener instead of making callers infer columns from
+/// a five-column row: the wire metadata and values must stay in lockstep.
+fn flatten_plan_tree(
+    node: &IdNode,
+    prefix: String,
+    is_root: bool,
+    is_last: bool,
+    format: ExplainFormat,
+    out: &mut Vec<Vec<Datum>>,
+) {
+    out.push(vec![
+        text(&draw_id(node, &prefix, is_root, is_last, format)),
+        text(node.task),
+        text(&node.access),
+        text(&info_text(node, format)),
+    ]);
+    let child_prefix = child_prefix(&prefix, is_root, is_last);
+    let last = node.children.len().saturating_sub(1);
+    for (i, child) in node.children.iter().enumerate() {
+        flatten_plan_tree(child, child_prefix.clone(), false, i == last, format, out);
     }
 }
 

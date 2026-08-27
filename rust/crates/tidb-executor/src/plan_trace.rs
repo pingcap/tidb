@@ -397,6 +397,13 @@ pub(crate) struct GoLogicalPlanColumns {
 pub(crate) struct PlanTrace {
     /// Completed subtrees, innermost-last.
     stack: Vec<PlanNode>,
+    /// Statement-scoped CTE definitions. Go prints these roots after the
+    /// consumer tree; they are planned separately because the executor
+    /// materializes their rows before building that consumer.
+    cte_roots: Vec<PlanNode>,
+    /// Original written CTE names, before single-consumer inlining removes
+    /// definitions. Go keeps those original ordinals in `CTE_N` ids.
+    cte_names: Vec<String>,
     /// `EXPLAIN ANALYZE`: meter every operator's real output.
     counting: bool,
     /// Plain `EXPLAIN`: build the pipeline, record it, and stop before
@@ -436,6 +443,8 @@ impl PlanTrace {
     pub(crate) fn planning() -> Self {
         Self {
             stack: Vec::new(),
+            cte_roots: Vec::new(),
+            cte_names: Vec::new(),
             counting: false,
             plan_only: true,
             refused: None,
@@ -452,6 +461,8 @@ impl PlanTrace {
     pub(crate) fn analyzing() -> Self {
         Self {
             stack: Vec::new(),
+            cte_roots: Vec::new(),
+            cte_names: Vec::new(),
             counting: true,
             plan_only: false,
             refused: None,
@@ -612,10 +623,87 @@ impl PlanTrace {
         let Some(main) = self.stack.pop() else {
             return Vec::new();
         };
-        let mut roots = Vec::with_capacity(self.stack.len() + 1);
+        let mut roots = Vec::with_capacity(self.stack.len() + self.cte_roots.len() + 1);
         roots.push(main);
+        // Go emits CTE definitions in reverse written order (the last CTE is
+        // the first auxiliary root after the consumer).
+        roots.extend(self.cte_roots.into_iter().rev());
         roots.extend(self.stack);
         roots
+    }
+
+    /// Retains one separately planned CTE definition for the statement's
+    /// auxiliary EXPLAIN roots.  `body` is the plan of the materialized query;
+    /// the wrapper mirrors Go's `CTE_N`/`Non-Recursive CTE` row.
+    pub(crate) fn cte_root(
+        &mut self,
+        name: &str,
+        fallback_index: usize,
+        body: PlanNode,
+        recursive: bool,
+    ) {
+        const CTE_NAMES: [&str; 16] = [
+            "CTE_0",
+            "CTE_1",
+            "CTE_2",
+            "CTE_3",
+            "CTE_4",
+            "CTE_5",
+            "CTE_6",
+            "CTE_7",
+            "CTE_8",
+            "CTE_9",
+            "CTE_10",
+            "CTE_11",
+            "CTE_12",
+            "CTE_13",
+            "CTE_14",
+            "CTE_15",
+        ];
+        let index = self
+            .cte_names
+            .iter()
+            .position(|candidate| candidate.eq_ignore_ascii_case(name))
+            .unwrap_or(fallback_index);
+        let mut node = PlanNode::new(
+            CTE_NAMES.get(index).copied().unwrap_or("CTE"),
+            None,
+            String::new(),
+            if recursive {
+                "Recursive CTE".to_owned()
+            } else {
+                "Non-Recursive CTE".to_owned()
+            },
+        );
+        node.children.push(body);
+        self.cte_roots.push(node);
+    }
+
+    /// Preserves Go's original `WITH` ordinals across the executor's
+    /// single-consumer CTE inlining rewrite.
+    pub(crate) fn set_cte_names(&mut self, names: Vec<String>) {
+        self.cte_names = names;
+    }
+
+    /// Records a read of one materialized CTE. Unlike a TiKV table scan this
+    /// is already a root task and therefore has no TableReader boundary.
+    pub(crate) fn cte_full_scan(&mut self, name: &str, visible: &str, rows: usize) {
+        let index = self
+            .cte_names
+            .iter()
+            .position(|candidate| candidate.eq_ignore_ascii_case(name));
+        let data = index.map_or_else(|| "CTE".to_owned(), |index| format!("CTE_{index}"));
+        let access = if name.eq_ignore_ascii_case(visible) {
+            format!("CTE:{name}")
+        } else {
+            format!("CTE:{name} AS {visible}")
+        };
+        self.push(PlanNode::new(
+            "CTEFullScan",
+            Some(rows as f64),
+            access,
+            format!("data:{data}"),
+        ));
     }
 
     /// Go's separately optimized, non-evaluated scalar subquery plan under

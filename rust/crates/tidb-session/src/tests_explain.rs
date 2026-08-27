@@ -848,6 +848,44 @@ fn explain_brief_format_strips_operator_ids() {
     );
 }
 
+/// Go's `plan_tree` format is the four-column tree used by the planner's
+/// TPC-DS source suite.  It accepts the format name, omits `estRows`, and
+/// keeps the same operator tree as the ordinary row format.
+#[test]
+fn explain_plan_tree_format_uses_go_columns() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a BIGINT PRIMARY KEY)")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1)").unwrap();
+
+    assert_eq!(
+        row_text(session.run("EXPLAIN FORMAT = 'plan_tree' SELECT * FROM t WHERE a = 1")),
+        vec![vec![
+            "Point_Get".to_owned(),
+            "root".to_owned(),
+            "table:t".to_owned(),
+            "handle:1".to_owned(),
+        ]]
+    );
+}
+
+/// A materialized, multi-use CTE is the shape that previously failed before
+/// the driver could build its actual read path.  The plan-only path must now
+/// describe that consumer instead of returning the old blanket refusal.
+#[test]
+fn explain_plan_tree_materialized_cte_is_not_refused() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a BIGINT)").unwrap();
+    session.run("INSERT INTO t VALUES (1)").unwrap();
+
+    let rows = row_text(session.run(
+        "EXPLAIN FORMAT = 'plan_tree' WITH x AS (SELECT a FROM t) \
+         SELECT x1.a FROM x AS x1 JOIN x AS x2 ON x1.a = x2.a",
+    ));
+    assert!(rows.iter().any(|row| row[0] == "HashJoin"), "{rows:?}");
+}
+
 /// `EXPLAIN ANALYZE` builds and executes the physical `Union` tree for a
 /// `UNION ALL`: each branch retains its own source counters and the union
 /// reports the rows it emits. Go's generic `buildExplain` builds the target

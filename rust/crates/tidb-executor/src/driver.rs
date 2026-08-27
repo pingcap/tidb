@@ -451,11 +451,12 @@ fn materialize_ctes(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    mut trace: Option<&mut PlanTrace>,
 ) -> Result<Catalog, DriverError> {
     // The scratch catalog carries the real tables too, since the CTE bodies
     // and the outer query both read them.
     let mut scratch = catalog.clone();
-    for cte in &with.ctes {
+    for (index, cte) in with.ctes.iter().enumerate() {
         // Each CTE sees the ones already materialized, which is what lets a
         // later one reference an earlier one.
         let table = recursive_cte::materialize_cte_body(
@@ -467,6 +468,35 @@ fn materialize_ctes(
             ctx,
             with.recursive,
         )?;
+        // Plain EXPLAIN needs the same auxiliary CTE definition roots Go
+        // prints after the consumer.  Materialization above intentionally
+        // uses the ordinary (untraced) executor; build a second, plan-only
+        // trace of the already-resolved body so the receipt describes that
+        // definition without executing it twice.
+        if trace.as_deref().is_some_and(PlanTrace::is_plan_only) {
+            let mut body_trace = PlanTrace::planning();
+            let planned = match &*cte.query {
+                tidb_ast::QueryStmt::Select(select) => run_select_traced(
+                    select,
+                    &scratch,
+                    current_db,
+                    ctx,
+                    Some(&mut body_trace),
+                    &tidb_planner::physical_property::PhysicalProperty::default(),
+                    false,
+                ),
+                tidb_ast::QueryStmt::SetOpr(set_opr) => {
+                    run_set_opr_traced(set_opr, &scratch, current_db, ctx, Some(&mut body_trace))
+                }
+            };
+            if planned.is_ok() && body_trace.refusal().is_none() {
+                if let Some(body) = body_trace.into_roots().into_iter().next() {
+                    if let Some(parent) = trace.as_deref_mut() {
+                        parent.cte_root(&cte.name, index, body, with.recursive);
+                    }
+                }
+            }
+        }
         scratch.register_cte_in(current_db, &cte.name, table);
     }
     Ok(scratch)
@@ -1728,7 +1758,7 @@ fn run_select_traced_with_delivery_choice_inner(
     let with_catalog;
     let catalog = match &select.with {
         Some(with) => {
-            with_catalog = materialize_ctes(with, catalog, current_db, ctx)?;
+            with_catalog = materialize_ctes(with, catalog, current_db, ctx, trace.as_deref_mut())?;
             &with_catalog
         }
         None => catalog,
