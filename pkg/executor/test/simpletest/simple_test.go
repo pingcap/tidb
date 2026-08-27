@@ -28,12 +28,15 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/globalconn"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
@@ -792,6 +795,32 @@ func TestKillStmt(t *testing.T) {
 	tk.MustExec("kill connection @kill_id")
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows())
+
+	tk.MustExec("set @kill_id = NULL")
+	tk.MustExecToErr("kill @kill_id", "invalid connection ID: NULL")
+	tk.MustExec("set @kill_id = -1")
+	tk.MustExecToErr("kill @kill_id", "negative value for connection ID: -1")
+
+	tk.MustExec("create user auto_analyze_killer, restricted_killer, restricted_user")
+	tk.MustExec("grant CONNECTION_ADMIN on *.* to restricted_killer")
+	tk.MustExec("grant RESTRICTED_USER_ADMIN on *.* to restricted_user")
+
+	sm := &testkit.MockSessionManager{SerID: dom.ServerID}
+	tk.Session().SetSessionManager(sm)
+	tk.MustExec(fmt.Sprintf("set @kill_id = %d", killConnID))
+
+	handleutil.GlobalAutoAnalyzeProcessList.Tracker(killConnID)
+	defer handleutil.GlobalAutoAnalyzeProcessList.Untracker(killConnID)
+	restoreSEM := sem.SwitchToSEMForTest(t, sem.V1)
+	defer restoreSEM()
+
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "auto_analyze_killer", Hostname: "localhost"}, nil, nil, nil))
+	tk.MustExecToErr("kill @kill_id", "[planner:1227]Access denied; you need (at least one of) the SUPER or CONNECTION_ADMIN privilege(s) for this operation")
+
+	handleutil.GlobalAutoAnalyzeProcessList.Untracker(killConnID)
+	sm.PS = []*sessmgr.ProcessInfo{{ID: killConnID, User: "restricted_user", Host: "%"}}
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "restricted_killer", Hostname: "localhost"}, nil, nil, nil))
+	tk.MustExecToErr("kill @kill_id", "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_CONNECTION_ADMIN privilege(s) for this operation")
 
 	// remote kill is tested in `tests/globalkilltest`
 }

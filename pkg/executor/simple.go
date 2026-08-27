@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -2632,11 +2633,20 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		if err != nil {
 			return err
 		}
-		uintVal, err := val.ConvertTo(e.Ctx().GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeLonglong))
+		if val.IsNull() {
+			return errors.New("invalid connection ID: NULL")
+		}
+		intVal, err := val.ToInt64(e.Ctx().GetSessionVars().StmtCtx.TypeCtx())
 		if err != nil {
 			return errors.Errorf("non-integer value for connection ID: %v", val.GetValue())
 		}
-		s.ConnectionID = uintVal.GetUint64()
+		if intVal < 0 {
+			return errors.Errorf("negative value for connection ID: %d", intVal)
+		}
+		s.ConnectionID = uint64(intVal)
+		if err := e.checkKillConnectionPrivilege(ctx, s.ConnectionID); err != nil {
+			return err
+		}
 	}
 	if !config.GetGlobalConfig().EnableGlobalKill {
 		conf := config.GetGlobalConfig()
@@ -2689,6 +2699,41 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		sm.Kill(s.ConnectionID, s.Query, false, false)
 	}
 
+	return nil
+}
+
+func (e *SimpleExec) checkKillConnectionPrivilege(ctx context.Context, connectionID uint64) error {
+	sm := e.Ctx().GetSessionManager()
+	if sm == nil {
+		return nil
+	}
+
+	var requireConnectionAdmin bool
+	var restrictedUser *auth.UserIdentity
+	if pi, ok := sm.GetProcessInfo(connectionID); ok {
+		loginUser := e.Ctx().GetSessionVars().User
+		if loginUser != nil && pi.User == loginUser.Username {
+			return nil
+		}
+		requireConnectionAdmin = true
+		restrictedUser = &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}
+	} else if handleutil.GlobalAutoAnalyzeProcessList.Contains(connectionID) {
+		requireConnectionAdmin = true
+	}
+	if !requireConnectionAdmin {
+		return nil
+	}
+
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	if checker == nil || !checker.RequestDynamicVerification(activeRoles, "CONNECTION_ADMIN", false) {
+		return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CONNECTION_ADMIN")
+	}
+	if restrictedUser != nil && sem.IsEnabled() &&
+		checker.RequestDynamicVerificationWithUser(ctx, "RESTRICTED_USER_ADMIN", false, restrictedUser) &&
+		!checker.RequestDynamicVerification(activeRoles, "RESTRICTED_CONNECTION_ADMIN", false) {
+		return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_CONNECTION_ADMIN")
+	}
 	return nil
 }
 
