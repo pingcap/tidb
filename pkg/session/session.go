@@ -4222,18 +4222,12 @@ var (
 	DDLNotifierTables = []TableBasicInfo{
 		{ID: metadef.TiDBDDLNotifierTableID, Name: "tidb_ddl_notifier", SQL: metadef.CreateTiDBDDLNotifierTable},
 	}
-	// StorageClassTransitionHistoryTables contains durable running and historical
-	// storage-class operations used by the DDL owner poller.
-	StorageClassTransitionHistoryTables = []TableBasicInfo{
-		{ID: metadef.TiDBStorageClassTransitionHistoryTableID, Name: "tidb_storage_class_transition_history", SQL: metadef.CreateTiDBStorageClassTransitionHistoryTable},
-	}
 
 	ddlTableVersionTables = []versionedDDLTables{
 		{ver: meta.BaseDDLTableVersion, tables: DDLJobTables},
 		{ver: meta.MDLTableVersion, tables: MDLTables},
 		{ver: meta.BackfillTableVersion, tables: BackfillTables},
 		{ver: meta.DDLNotifierTableVersion, tables: DDLNotifierTables},
-		{ver: meta.StorageClassTransitionHistoryDDLTableVersion, tables: StorageClassTransitionHistoryTables},
 	}
 )
 

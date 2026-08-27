@@ -88,6 +88,16 @@ func TestChangedStorageClassPhysicalIDs(t *testing.T) {
 	require.Equal(t, map[int64]struct{}{11: {}}, changed)
 }
 
+func TestAddCurrentStorageClassTransitionTargetsSkipsRemovedTargets(t *testing.T) {
+	physicalIDs := map[int64]struct{}{13: {}}
+	current := map[int64]physicalStorageClass{11: {}, 13: {}}
+	addCurrentStorageClassTransitionTargets(physicalIDs, current, []storageClassTransitionTarget{
+		{PhysicalID: 11},
+		{PhysicalID: 12},
+	})
+	require.Equal(t, map[int64]struct{}{11: {}, 13: {}}, physicalIDs)
+}
+
 func TestStorageClassTransitionCompletesOnOneFullObservation(t *testing.T) {
 	operation := &storageClassTransitionOperation{}
 	require.False(t, updateStorageClassTransitionProgress(operation, 0, 0))

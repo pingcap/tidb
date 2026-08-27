@@ -344,18 +344,22 @@ var (
 		{ID: metadef.TiDBMViewRefreshAlertTableID, Name: "tidb_mview_refresh_alert", SQL: metadef.CreateTiDBMViewRefreshAlertTable},
 		{ID: metadef.TiDBMLogPurgeHistTableID, Name: "tidb_mlog_purge_hist", SQL: metadef.CreateTiDBMLogPurgeHistTable},
 	}
+	// systemTablesOfStorageClassTransitionNextGenVersion contains the durable
+	// operation table used by the NextGen storage-class transition poller.
+	systemTablesOfStorageClassTransitionNextGenVersion = []TableBasicInfo{
+		{ID: metadef.TiDBStorageClassTransitionHistoryTableID, Name: "tidb_storage_class_transition_history", SQL: metadef.CreateTiDBStorageClassTransitionHistoryTable},
+	}
 )
 
 type versionedBootstrapSchema struct {
-	ver       meta.NextGenBootTableVersion
-	databases []DatabaseBasicInfo
+	ver         meta.NextGenBootTableVersion
+	databases   []DatabaseBasicInfo
+	nextGenOnly bool
 }
 
-// definitions of all system tables, shared by classic and next-gen kernel.
-// the version is used in next-gen, in order to create system tables directly
-// through meta kv, without going through DDL, so we can create them with
-// reversed ID range.
-// for classic kernel, only the inner Tables field is used.
+// definitions of bootstrap system tables. NextGen uses the versions to create
+// the tables directly through meta KV with reserved IDs. Classic uses the table
+// definitions except entries marked nextGenOnly.
 var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	{ver: meta.BaseNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfBaseNextGenVersion},
@@ -366,6 +370,9 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	}},
 	{ver: meta.MaterializedViewNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaterializedViewNextGenVersion},
+	}},
+	{ver: meta.StorageClassTransitionNextGenBootTableVersion, nextGenOnly: true, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfStorageClassTransitionNextGenVersion},
 	}},
 }
 
@@ -412,6 +419,9 @@ func doDDLWorks(s sessionapi.Session) {
 			mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", db.Name)
 		}
 		for _, verBoot := range versionedBootstrapSchemas {
+			if verBoot.nextGenOnly {
+				continue
+			}
 			for _, dbInfo := range verBoot.databases {
 				for _, tblInfo := range dbInfo.Tables {
 					mustExecute(s, tblInfo.SQL)

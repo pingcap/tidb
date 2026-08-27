@@ -192,6 +192,9 @@ const (
 	MaskingPolicyNextGenBootTableVersion NextGenBootTableVersion = 2
 	// MaterializedViewNextGenBootTableVersion adds materialized view maintenance metadata tables.
 	MaterializedViewNextGenBootTableVersion NextGenBootTableVersion = 3
+	// StorageClassTransitionNextGenBootTableVersion adds
+	// mysql.tidb_storage_class_transition_history.
+	StorageClassTransitionNextGenBootTableVersion NextGenBootTableVersion = 4
 )
 
 // DDLTableVersion is to display ddl related table versions
@@ -208,9 +211,6 @@ const (
 	BackfillTableVersion DDLTableVersion = 3
 	// DDLNotifierTableVersion is for support ddl notifier, it added tidb_ddl_notifier.
 	DDLNotifierTableVersion DDLTableVersion = 4
-	// StorageClassTransitionHistoryDDLTableVersion adds
-	// mysql.tidb_storage_class_transition_history.
-	StorageClassTransitionHistoryDDLTableVersion DDLTableVersion = 5
 )
 
 func encodeIntVal(i int) []byte {

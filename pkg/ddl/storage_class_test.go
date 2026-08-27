@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -932,6 +933,12 @@ func TestStorageClassTransitionUsesSystemTableState(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY)")
+	if !kerneltype.IsNextGen() {
+		tk.MustExec("ALTER TABLE t STORAGE_CLASS IA")
+		tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tables
+			WHERE table_schema = 'mysql' AND table_name = 'tidb_storage_class_transition_history'`).Check(testkit.Rows("0"))
+		return
+	}
 
 	tk.MustExec("ALTER TABLE t STORAGE_CLASS IA")
 	tk.MustQuery(`SELECT direction, state, total_replicas, completed_replicas, finish_time, duration

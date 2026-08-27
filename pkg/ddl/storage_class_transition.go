@@ -275,12 +275,10 @@ func stageStorageClassTransitions(
 		if !superseded {
 			continue
 		}
-		// Restart every member of a superseded logical operation under the
-		// latest start TSO. This prevents one operation from being partly
-		// RUNNING and partly SUPERSEDED.
-		for _, target := range operation.targets {
-			changed[target.PhysicalID] = struct{}{}
-		}
+		// Restart every surviving member of a superseded logical operation
+		// under the latest start TSO. This prevents one operation from being
+		// partly RUNNING and partly SUPERSEDED without reviving dropped targets.
+		addCurrentStorageClassTransitionTargets(changed, current, operation.targets)
 	}
 
 	operations, err := buildStorageClassTransitionOperations(tblInfo, changed, startTS, schemaName, tableName)
@@ -293,6 +291,18 @@ func stageStorageClassTransitions(
 		}
 	}
 	return nil
+}
+
+func addCurrentStorageClassTransitionTargets(
+	physicalIDs map[int64]struct{},
+	current map[int64]physicalStorageClass,
+	targets []storageClassTransitionTarget,
+) {
+	for _, target := range targets {
+		if _, ok := current[target.PhysicalID]; ok {
+			physicalIDs[target.PhysicalID] = struct{}{}
+		}
+	}
 }
 
 func storageClassTransitionTouches(
@@ -516,7 +526,7 @@ func (m *storageClassTransitionManager) clear() {
 	clear(m.mu.observed)
 }
 
-func (m *storageClassTransitionManager) discover(
+func discoverStorageClassTransitions(
 	ctx context.Context,
 	se *sess.Session,
 ) (map[storageClassTransitionKey]*storageClassTransitionOperation, error) {
@@ -697,7 +707,7 @@ func (m *storageClassTransitionManager) poll(
 	se *sess.Session,
 	pruneHistory bool,
 ) (bool, error) {
-	active, err := m.discover(ctx, se)
+	active, err := discoverStorageClassTransitions(ctx, se)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

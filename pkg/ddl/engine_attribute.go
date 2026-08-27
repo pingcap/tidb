@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -115,7 +116,7 @@ func (w *worker) onModifyTableEngineAttribute(jobCtx *jobContext, job *model.Job
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if attr.StorageClass != nil {
+	if attr.StorageClass != nil && kerneltype.IsNextGen() {
 		if err := w.stageExplicitStorageClassTransition(jobCtx, job, tblInfo, oldState); err != nil {
 			return ver, errors.Trace(err)
 		}
