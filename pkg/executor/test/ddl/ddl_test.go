@@ -908,6 +908,7 @@ func TestRenameTableWithReload(t *testing.T) {
 	tk.MustQuery("select * from rename2.t").Check(testkit.Rows("1", "2"))
 	tk.MustExec("drop table rename2.t")
 
+	// Issue #70582: keep the allocated upper bound across a cold reload and cross-database rename.
 	tk.MustExec("create table rename1.t(id int primary key auto_increment, v varchar(20)) AUTO_ID_CACHE=1")
 	tk.MustExec("insert into rename1.t(v) values ('row1'), ('row2')")
 	forceFullReload(t, store, dom)

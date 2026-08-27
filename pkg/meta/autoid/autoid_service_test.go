@@ -47,6 +47,7 @@ type mockAutoIDClient struct {
 	allocReq                 *autoid.AutoIDRequest
 	rebaseReq                *autoid.RebaseRequest
 	alloc                    func(int64, *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error)
+	rebase                   func(int64, *autoid.RebaseRequest) (*autoid.RebaseResponse, error)
 	allocErr                 error
 	rebaseErr                error
 }
@@ -61,7 +62,10 @@ func (m *mockAutoIDClient) AllocAutoID(_ context.Context, req *autoid.AutoIDRequ
 }
 
 func (m *mockAutoIDClient) Rebase(_ context.Context, req *autoid.RebaseRequest, _ ...grpc.CallOption) (*autoid.RebaseResponse, error) {
-	m.rebaseCallCount.Add(1)
+	call := m.rebaseCallCount.Add(1)
+	if m.rebase != nil {
+		return m.rebase(call, req)
+	}
 	m.rebaseReq = req
 	return m.rebaseResp, m.rebaseErr
 }
@@ -343,6 +347,19 @@ func TestSinglePointAllocTransfer(t *testing.T) {
 		require.Equal(t, int64(1), allocator.tblID)
 	})
 
+	t.Run("uses local bound when the source base is stale", func(t *testing.T) {
+		mockCli := &mockAutoIDClient{
+			allocResp:  &autoid.AutoIDResponse{Min: 0, Max: 0},
+			rebaseResp: &autoid.RebaseResponse{},
+		}
+		allocator := newTestSinglePointAlloc(mockCli)
+		allocator.lastAllocated.Store(4)
+
+		require.NoError(t, allocator.Transfer(2, 1))
+		require.NotNil(t, mockCli.rebaseReq)
+		require.Equal(t, int64(4), mockCli.rebaseReq.Base)
+	})
+
 	t.Run("does not regress after a lower rebase", func(t *testing.T) {
 		mockCli := &mockAutoIDClient{
 			allocResp:  &autoid.AutoIDResponse{Min: 0, Max: 2},
@@ -384,6 +401,108 @@ func TestSinglePointAllocTransfer(t *testing.T) {
 		close(releaseFirstRequest)
 		require.NoError(t, <-firstErr)
 		require.Equal(t, int64(2), allocator.Base())
+	})
+
+	t.Run("keeps unsigned allocation order", func(t *testing.T) {
+		mockCli := &mockAutoIDClient{rebaseResp: &autoid.RebaseResponse{}}
+		allocator := newTestSinglePointAlloc(mockCli)
+		allocator.isUnsigned = true
+		allocator.updateLastAllocated(2)
+		allocator.updateLastAllocated(-2) // -2 represents MaxUint64-1.
+
+		require.Equal(t, int64(-2), allocator.Base())
+		require.NoError(t, allocator.Rebase(context.Background(), 3, false))
+		require.Equal(t, int64(-2), allocator.Base())
+		require.NoError(t, allocator.ForceRebase(3))
+		require.Equal(t, int64(3), allocator.Base())
+	})
+
+	t.Run("in-flight allocation holds the transfer barrier", func(t *testing.T) {
+		allocationStarted := make(chan struct{})
+		releaseAllocation := make(chan struct{})
+		allocRequests := make(chan *autoid.AutoIDRequest, 2)
+		mockCli := &mockAutoIDClient{
+			alloc: func(_ int64, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
+				allocRequests <- req
+				if req.N == 0 {
+					return &autoid.AutoIDResponse{Min: 2, Max: 2}, nil
+				}
+				close(allocationStarted)
+				<-releaseAllocation
+				return &autoid.AutoIDResponse{Min: 0, Max: 2}, nil
+			},
+			rebaseResp: &autoid.RebaseResponse{},
+		}
+		allocator := newTestSinglePointAlloc(mockCli)
+		allocationErr := make(chan error, 1)
+		go func() {
+			_, _, err := allocator.Alloc(context.Background(), 2, 1, 1)
+			allocationErr <- err
+		}()
+
+		<-allocationStarted
+		if allocator.stateMu.TryLock() {
+			allocator.stateMu.Unlock()
+			close(releaseAllocation)
+			t.Fatal("Transfer lock acquired while allocation RPC was in flight")
+		}
+		allocCallCount := mockCli.allocCallCount.Load()
+		close(releaseAllocation)
+		require.Equal(t, int64(1), allocCallCount)
+		require.NoError(t, <-allocationErr)
+		require.True(t, allocator.stateMu.TryLock())
+		allocator.stateMu.Unlock()
+		require.NoError(t, allocator.Transfer(2, 1))
+
+		allocationReq := <-allocRequests
+		sourceBaseReq := <-allocRequests
+		require.Equal(t, int64(1), allocationReq.DbID)
+		require.Equal(t, int64(1), sourceBaseReq.DbID)
+		require.Equal(t, uint64(0), sourceBaseReq.N)
+		require.Equal(t, int64(2), mockCli.rebaseReq.DbID)
+		require.Equal(t, int64(2), mockCli.rebaseReq.Base)
+	})
+
+	t.Run("in-flight rebase holds the transfer barrier", func(t *testing.T) {
+		rebaseStarted := make(chan struct{})
+		releaseRebase := make(chan struct{})
+		rebaseRequests := make(chan *autoid.RebaseRequest, 2)
+		mockCli := &mockAutoIDClient{
+			allocResp: &autoid.AutoIDResponse{Min: 2, Max: 2},
+			rebase: func(call int64, req *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
+				rebaseRequests <- req
+				if call == 1 {
+					close(rebaseStarted)
+					<-releaseRebase
+				}
+				return &autoid.RebaseResponse{}, nil
+			},
+		}
+		allocator := newTestSinglePointAlloc(mockCli)
+		rebaseErr := make(chan error, 1)
+		go func() {
+			rebaseErr <- allocator.Rebase(context.Background(), 2, false)
+		}()
+
+		<-rebaseStarted
+		if allocator.stateMu.TryLock() {
+			allocator.stateMu.Unlock()
+			close(releaseRebase)
+			t.Fatal("Transfer lock acquired while rebase RPC was in flight")
+		}
+		rebaseCallCount := mockCli.rebaseCallCount.Load()
+		close(releaseRebase)
+		require.Equal(t, int64(1), rebaseCallCount)
+		require.NoError(t, <-rebaseErr)
+		require.True(t, allocator.stateMu.TryLock())
+		allocator.stateMu.Unlock()
+		require.NoError(t, allocator.Transfer(2, 1))
+
+		sourceRebaseReq := <-rebaseRequests
+		destinationRebaseReq := <-rebaseRequests
+		require.Equal(t, int64(1), sourceRebaseReq.DbID)
+		require.Equal(t, int64(2), destinationRebaseReq.DbID)
+		require.Equal(t, int64(2), destinationRebaseReq.Base)
 	})
 }
 

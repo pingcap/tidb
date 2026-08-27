@@ -41,7 +41,7 @@ var _ Allocator = &singlePointAlloc{}
 type singlePointAlloc struct {
 	dbID  int64
 	tblID int64
-	// stateMu keeps owner transfer exclusive while allowing concurrent allocation RPCs.
+	// stateMu lets Alloc and Rebase run concurrently while making Transfer and ForceRebase exclusive.
 	stateMu sync.RWMutex
 	// lastAllocated is updated independently because concurrent RPCs can return out of order.
 	lastAllocated atomic.Int64
@@ -507,14 +507,17 @@ func (sp *singlePointAlloc) Transfer(databaseID, tableID int64) error {
 	if sp.dbID == databaseID && sp.tblID == tableID {
 		return nil
 	}
-	_, sourceBase, err := sp.alloc(context.Background(), 0, 1, 1)
+	// Re-fetch the authoritative source base because a cold allocator may not have observed IDs allocated by other TiDBs.
+	// updateLastAllocated keeps the greater of that value and the local bound in case the source metadata is already gone.
+	_, _, err := sp.alloc(context.Background(), 0, 1, 1)
 	if err != nil {
 		return err
 	}
+	transferBase := sp.lastAllocated.Load()
 	sourceDBID, sourceTableID := sp.dbID, sp.tblID
 	sp.dbID = databaseID
 	sp.tblID = tableID
-	if err := sp.rebase(context.Background(), sourceBase, false); err != nil {
+	if err := sp.rebase(context.Background(), transferBase, false); err != nil {
 		sp.dbID = sourceDBID
 		sp.tblID = sourceTableID
 		return err
