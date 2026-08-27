@@ -295,27 +295,27 @@ wrong: asked directly, Go answers StreamAgg for it too. **Ask the Go node for
 `EXPLAIN FORMAT='verbose'` on the exact statement before trusting a plan
 expectation in this tree.**
 
-### M2r — The row pipeline (NEW, not yet started)
+### M2r — The row pipeline (RETRACTED as stated; re-measuring)
 
-Separate from planning, and measured: a range statement's cost grows with rows
-about twice as fast as Go's. Comparing the 10-row and 100-row cells of the
-same shape, the marginal cost per row is ~0.99us here against ~0.51us on Go,
-so a 100-row range carries ~+48us that has nothing to do with the optimizer.
+An earlier revision of this plan claimed the row pipeline costs ~0.99us/row
+against Go's ~0.51us, making it "the largest remaining term". **That was
+inferred from two points whose Go half was noise**: the run it came from put
+Go at 0.02us/row, which is not a physically possible cost for reading a row
+out of a chunk and writing it to the wire.
 
-The cause is visible in the code. `drain_root_executor` calls
-`Row::get_datum_row`, which allocates a fresh `Vec<Datum>` per row, and
-`datum_with_buffer`'s string arm does `self.get_bytes(col).to_vec()` — a heap
-allocation per string cell per row. `SelectMeta` is
-`(columns, Vec<Vec<Datum>>)`, so every result is fully materialized before any
-byte reaches the wire.
+A better-controlled run puts both engines at ~0.7us/row and the gap at a
+roughly FIXED ~45us per statement, independent of row count (42us at 10 rows,
+47us at 100). A dedicated slope probe over range sizes 1/10/50/100/200 is what
+should settle it before any work is scheduled here.
 
-Go does not materialize `[]types.Datum` for a normal `SELECT`. `writeChunk`
-(`pkg/server/conn.go`) iterates the `chunk.Chunk` and `dumpTextRow` appends
-each cell's bytes straight into the output buffer. Zero per-row allocation.
-
-This is a result-set contract change rather than a local fix, and it reaches
-`tidb-server`'s result sets as well as the driver, so it needs its own
-prototype milestone before it is scheduled.
+The code observations stand on their own and are worth keeping whatever the
+slope turns out to be: `drain_root_executor` -> `Row::get_datum_row` allocates
+a `Vec<Datum>` per row, `datum_with_buffer`'s string arm does
+`get_bytes(col).to_vec()` per string cell per row, and `SelectMeta` is
+`(columns, Vec<Vec<Datum>>)` so a result is fully materialized before any byte
+reaches the wire. Go's `writeChunk`/`dumpTextRow` append chunk cells straight
+into the output buffer. That is a real divergence in shape; what is NOT
+established is that it costs measurable time at these row counts.
 
 ## Verification
 
@@ -379,6 +379,10 @@ Correctness gates, every milestone:
   distinguishes derived mode from top-level mode for the aggregate shapes --
   the suite is equally green with the old coupling restored. The separation is
   reasoned from `derived_column_prune`, not demonstrated.
+- A two-point slope is not a slope. The "row pipeline is 2x Go's" claim came
+  from subtracting two cells whose Go half differed by 2us over 90 rows, and
+  it survived into two reports before a better-controlled run contradicted it.
+  Fit a slope over >=4 sizes, or say "fixed per-statement cost" instead.
 - A GREEN test can pin a divergence just as easily as a red one. Go's verbose
   EXPLAIN is cheap to ask for and settled two disputed plan expectations here
   in minutes; re-deriving its cost formula from source did not.
