@@ -145,6 +145,76 @@ fn group_concat_falls_back_to_the_connection_collation() {
 }
 
 // ---------------------------------------------------------------------
+// Go base_func_test.go::TestBaseFunc_InferAggRetType, block 3: the input's
+// non-binary collation wins EVEN when the separator literal carries empty
+// charset/collation metadata.
+// ---------------------------------------------------------------------
+
+#[test]
+fn group_concat_keeps_input_collation_with_empty_separator_metadata() {
+    let mut col_type = FieldType::new(FieldTypeCode::VarString);
+    col_type.set_charset_name("utf8mb4");
+    col_type.set_collation_name("utf8mb4_0900_ai_ci");
+    col_type.del_flags(FieldTypeFlags::BINARY);
+
+    // Go builds the separator with a bare NewFieldType: no charset, no
+    // collation.
+    let empty_sep = FieldType::new(FieldTypeCode::VarString);
+    let mut separator = Constant::default();
+    separator.value = Datum::new_string("|");
+    separator.ret_type = Some(empty_sep);
+
+    let d = BaseFuncDesc::new(
+        &NoColumns,
+        names::GROUP_CONCAT,
+        vec![col_typed(3, col_type), Expression::Constant(separator)],
+    )
+    .unwrap();
+    assert_eq!(d.ret_type.charset_name(), "utf8mb4");
+    assert_eq!(d.ret_type.collation_name(), "utf8mb4_0900_ai_ci");
+}
+
+// ---------------------------------------------------------------------
+// Go base_func_test.go::TestTypeInfer4AvgSum (the `sum(div(col/col))` half)
+// ---------------------------------------------------------------------
+
+#[test]
+fn type_infer_4_avg_sum_follows_a_division_argument_through() {
+    // Go derives the DIV result type first via expression.NewFunction:
+    // NewDecimal(20,0) / NewDecimal(5,0) under DefDivPrecisionIncrement=4
+    // is NewDecimal(25, 4). This crate infers it through the same
+    // argument-shape rule (`builtin_return_type`).
+    let div_arg = |flen: i64| {
+        let mut ft = FieldType::new(FieldTypeCode::NewDecimal);
+        ft.set_flen(flen);
+        ft.set_decimal(0);
+        col_typed(0, ft)
+    };
+    let div_ret =
+        crate::builtin_arithmetic::infer_arithmetic_type("div", &div_arg(20), &div_arg(5))
+            .expect("div infers");
+    assert_eq!(div_ret.flen(), 25);
+    assert_eq!(div_ret.decimal(), 4);
+
+    // AVG over exactly that argument adds one more increment: 29 / 8.
+    let div_node = Expression::ScalarFunction(crate::scalar_function::ScalarFunction::new(
+        tidb_ast::CiString::new("/"),
+        div_ret.clone(),
+        vec![div_arg(20), div_arg(5)],
+    ));
+    let mut avg = BaseFuncDesc::new(&NoColumns, names::AVG, vec![div_node]).unwrap();
+    assert_eq!(avg.ret_type.flen(), 29);
+    assert_eq!(avg.ret_type.decimal(), 8);
+
+    // The partial SUM rides the AVG return type: 51 / 8.
+    let avg_ret = avg.ret_type.clone();
+    avg.name = names::SUM.to_owned();
+    avg.type_infer_4_avg_sum(&avg_ret).unwrap();
+    assert_eq!(avg.ret_type.flen(), 51);
+    assert_eq!(avg.ret_type.decimal(), 8);
+}
+
+// ---------------------------------------------------------------------
 // Go base_func_test.go::TestTypeInfer4AvgSum (the `sum(col)` half)
 // ---------------------------------------------------------------------
 
