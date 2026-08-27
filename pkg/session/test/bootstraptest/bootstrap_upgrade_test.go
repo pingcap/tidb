@@ -1542,6 +1542,10 @@ func TestUpgradeVersion256PlanCacheSkipStatsOnBinding(t *testing.T) {
 }
 
 func TestUpgradeVersion284EnableTxnFile(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("this is only checked in next-gen kernel")
+	}
+
 	tests := []struct {
 		name          string
 		legacyValue   string
