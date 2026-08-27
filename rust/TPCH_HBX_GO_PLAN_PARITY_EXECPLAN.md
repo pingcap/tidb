@@ -1533,3 +1533,32 @@ no Go executable, so Go unit tests and Ready-profile `make lint` are not
 available, and the complete hbx-web3/TPC-H catalog was not rerun. The source
 fix and this receipt commit retain a `Go code:` line and the literal `go 代码`
 phrase.
+
+Revision note, 2026-08-27 (transport-shard source alignment): the latest
+local commit is `724522e3913` (`perf: align transport shards with Go code go
+代码`). During review, the fix was checked against the pinned Go module
+`github.com/tikv/client-go/v2@v2.0.8-0.20260708122311-01bd8f99f4da`: its
+`config/client.go::DefaultTiKVClient` sets `GrpcConnectionCount` to `4`, and
+`internal/client/conn_pool.go::Get` round-robins those per-address
+connections. Rust now makes that source contract explicit in
+`tidb-txnkv/src/rpc/unary.rs`: the unset `TIKV_TRANSPORT_SHARDS` value defaults
+to four, malformed/zero values fall back to the same default, and an explicit
+value is clamped to the existing safety ceiling. The unit regression
+`transport_shards_default_matches_go_connection_count` covers each branch;
+`cargo test -p tidb-txnkv --lib rpc -- --nocapture` is 12/12.
+
+The release binary was rebuilt from `724522e391338b769424f6e8f9799a4bc66f8656`
+with the pinned OpenSSL environment. Against the same Go nightly and
+deterministic 1 GiB `hbx_web3_1g` fixture, the fresh receipt
+`/private/tmp/hbx-1g-20260825/compare-724522e3913-20260827.json` reports four
+normalized plan matches and four result-hash matches, 100 rows each. The
+20-pair one-client receipt
+`/private/tmp/hbx-1g-20260825/bench-724522e3913-20260827.json` reports Go/Rust
+medians q1 `9.531/9.652 ms` (`1.013x`), q2 `8.349/9.072 ms` (`1.087x`), flex
+`7.627/9.429 ms` (`1.236x`), swap `12.471/18.255 ms` (`1.464x`), and 100-row
+batch insert `5.573/6.323 ms` (`1.135x`). Every batch still returns 100 rows
+and `5050.000000000000000000` on both endpoints. This change is deliberately
+source-correct rather than a workload-specific default override; the strict
+one-client performance no-regression gate remains open, and no Go executable,
+full Go suite, Ready-profile `make lint`, or complete hbx-web3/TPC-H catalog is
+available locally. The commit subject retains the literal `go 代码` phrase.
