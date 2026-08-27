@@ -730,6 +730,24 @@ impl BaseJoinProbe {
         self.current_chunk = Some(probe_chunk);
     }
 
+    /// Completes the current probe row with no matched build row. This is the
+    /// null-extension arm used by the no-residual outer-join probe; the normal
+    /// `finish_current_lookup_loop` path gets its probe-row multiplicity from
+    /// matched build rows, whereas an unmatched row still has to be copied
+    /// once.
+    pub fn append_unmatched_probe_row(
+        &mut self,
+        ctx: &ProbeContext<'_>,
+        rows: &dyn BuildRowSource,
+        joined_chk: &mut Chunk,
+    ) {
+        self.offset_and_length_array.push(OffsetAndLength {
+            offset: self.used_rows[self.current_probe_row],
+            length: 1,
+        });
+        self.finish_current_lookup_loop(ctx, rows, joined_chk);
+    }
+
     /// Go `ResetProbe`.
     ///
     /// Go reallocates `cachedBuildRows` (and `rowIndexInfos`) rather than

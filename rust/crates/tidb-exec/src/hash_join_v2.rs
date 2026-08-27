@@ -1261,6 +1261,186 @@ impl<S: ProbeKeySerializer> ProbeV2 for AntiLeftOuterSemiJoinProbe<'_, S> {
     }
 }
 
+/// Go `outerJoinProbe`'s no-residual path when the preserved side is the
+/// probe side. The opposite side is null-extended for an unmatched key. A
+/// right-build `LeftOuter` and a left-build `RightOuter` both have this shape;
+/// the variants that preserve the build side still require row-table used
+/// flags and remain outside this narrow implementation.
+pub struct OuterJoinProbe<'a, S: ProbeKeySerializer> {
+    base: BaseJoinProbe,
+    ctx: ProbeContext<'a>,
+    key_serializer: S,
+    filter: Option<ProbeFilter<'a>>,
+}
+
+impl<'a, S: ProbeKeySerializer> OuterJoinProbe<'a, S> {
+    /// Constructs a no-residual outer probe whose preserved side is the probe
+    /// side (`LeftOuter` with right build or `RightOuter` with left build).
+    #[must_use]
+    pub fn new(
+        ctx: ProbeContext<'a>,
+        work_id: usize,
+        join_type: JoinType,
+        key_index: Vec<usize>,
+        probe_key_nullable: &[bool],
+        right_as_build_side: bool,
+        key_serializer: S,
+        filter: Option<ProbeFilter<'a>>,
+    ) -> Self {
+        let probe_is_preserved = matches!(
+            (join_type, right_as_build_side),
+            (JoinType::LeftOuter, true) | (JoinType::RightOuter, false)
+        );
+        assert!(
+            probe_is_preserved,
+            "outer probe requires the preserved side to be the probe side"
+        );
+        assert!(!ctx.has_other_condition, "outer probe has no residual path");
+        Self {
+            base: new_join_probe(
+                &ctx,
+                work_id,
+                join_type,
+                key_index,
+                probe_key_nullable,
+                right_as_build_side,
+            ),
+            ctx,
+            key_serializer,
+            filter,
+        }
+    }
+
+    fn set_chunk_for_probe(&mut self, chunk: Chunk) -> Result<(), ProbeError> {
+        self.base
+            .set_chunk_for_probe(&self.ctx, chunk, self.filter, &self.key_serializer)
+    }
+
+    fn append_null_build_row(&self, joined_chk: &mut Chunk) {
+        let (used, offset) = if self.base.right_as_build_side() {
+            (&self.ctx.r_used, self.ctx.l_used.len())
+        } else {
+            (&self.ctx.l_used, 0)
+        };
+        for index in 0..used.len() {
+            joined_chk.append_null(offset + index);
+        }
+    }
+
+    fn probe(&mut self, joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        if joined_chk.is_full() {
+            return Ok(());
+        }
+        let (_, mut remain_cap) = self.base.prepare_for_probe(&self.ctx, joined_chk);
+        while remain_cap > 0 && !self.base.is_current_chunk_probe_done() {
+            let probe_row = self.base.current_probe_row();
+            let hash_value = self.base.matched_rows_hash_value()[probe_row];
+            let serialized_key = self.base.serialized_keys()[probe_row].clone();
+            let mut header = self.base.matched_rows_headers()[probe_row];
+            let mut matched = false;
+            while header != 0 {
+                let build_address =
+                    crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
+                let build_row = self.ctx.hash_table.row_bytes(build_address);
+                if is_key_matched(
+                    self.ctx.meta.key_mode,
+                    &serialized_key,
+                    build_row,
+                    self.ctx.meta,
+                ) {
+                    matched = true;
+                    self.base.append_build_row_to_cached_build_rows_v1(
+                        &self.ctx,
+                        self.ctx.hash_table,
+                        probe_row,
+                        build_address,
+                        joined_chk,
+                        0,
+                        false,
+                    );
+                    self.base.record_matched_row_for_current_probe_row();
+                    remain_cap -= 1;
+                } else {
+                    self.base.record_probe_collision();
+                }
+                header = BaseJoinProbe::next_matched_row(
+                    self.ctx.hash_table,
+                    &self.ctx.tag_helper,
+                    header,
+                    hash_value,
+                );
+                self.base.set_matched_rows_header(probe_row, header);
+                if remain_cap == 0 {
+                    break;
+                }
+            }
+            if remain_cap == 0 {
+                // Flush matches for the current probe row but leave its chain
+                // position intact for the next output chunk.
+                let row_finished = self.base.matched_rows_headers()[probe_row] == 0;
+                self.base
+                    .finish_current_lookup_loop(&self.ctx, self.ctx.hash_table, joined_chk);
+                if row_finished {
+                    self.base.set_current_probe_row(probe_row + 1);
+                }
+                break;
+            }
+            if !matched {
+                self.base
+                    .append_unmatched_probe_row(&self.ctx, self.ctx.hash_table, joined_chk);
+                self.append_null_build_row(joined_chk);
+            } else {
+                self.base
+                    .finish_current_lookup_loop(&self.ctx, self.ctx.hash_table, joined_chk);
+            }
+            self.base.set_current_probe_row(probe_row + 1);
+        }
+        Ok(())
+    }
+}
+
+impl<S: ProbeKeySerializer> ProbeV2 for OuterJoinProbe<'_, S> {
+    fn set_chunk_for_probe(&mut self, chunk: Chunk) -> Result<(), ProbeError> {
+        self.set_chunk_for_probe(chunk)
+    }
+
+    fn is_current_chunk_probe_done(&self) -> bool {
+        self.base.is_current_chunk_probe_done()
+    }
+
+    fn probe(&mut self, joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        self.probe(joined_chk)
+    }
+
+    fn need_scan_row_table(&self) -> bool {
+        false
+    }
+
+    fn init_for_scan_row_table(&mut self) {
+        panic!("probe-preserved outer join does not scan the build row table")
+    }
+
+    fn is_scan_row_table_done(&self) -> bool {
+        panic!("probe-preserved outer join does not scan the build row table")
+    }
+
+    fn scan_row_table(&mut self, _joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        panic!("probe-preserved outer join does not scan the build row table")
+    }
+
+    fn reset_probe(&mut self) {
+        self.base.reset_probe(&self.ctx)
+    }
+
+    fn reset_probe_collision(&mut self) {
+        self.base.reset_probe_collision()
+    }
+
+    fn get_probe_collision(&self) -> u64 {
+        self.base.get_probe_collision()
+    }
+}
+
 /// The v2 inner-join probe corresponding to Go's `innerJoinProbe`.
 ///
 /// The shared [`BaseJoinProbe`] owns chunk preparation, partition lookup and

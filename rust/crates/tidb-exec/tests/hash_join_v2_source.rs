@@ -30,7 +30,7 @@ use tidb_exec::base_join_probe::{is_key_matched, new_join_probe, BaseJoinProbe, 
 use tidb_exec::hash_join_v2::{
     new_join_build_worker_v2, AntiLeftOuterSemiJoinProbe, AntiSemiJoinProbe, BuildTask,
     HashJoinCtxV2, HashJoinV2Exec, HashTableContext, InnerJoinProbe, LeftOuterSemiJoinProbe,
-    SemiJoinProbe, LABEL_FOR_HASH_TABLE_IN_HASH_JOIN_V2,
+    OuterJoinProbe, SemiJoinProbe, LABEL_FOR_HASH_TABLE_IN_HASH_JOIN_V2,
 };
 use tidb_exec::hash_table_v2::{get_hash_table_length_by_row_len, get_hash_table_memory_usage};
 use tidb_exec::join_row_table::{RowLayoutMeta, RowTableSegment};
@@ -678,6 +678,66 @@ fn right_build_semi_and_anti_probes_emit_each_preserved_row_once() {
         })
         .collect();
     assert_eq!(anti_outer_rows, vec![(10, 0), (20, 0), (40, 1)]);
+}
+
+#[test]
+fn probe_preserved_outer_join_emits_null_extension_across_output_chunks() {
+    let layout = one_int_key_layout();
+    let (exec, _) = built_exec(
+        1,
+        JoinType::LeftOuter,
+        &layout,
+        &[vec![build_chunk(&[1, 1, 3])]],
+    );
+    let probe_context = ProbeContext {
+        hash_table: &exec.hash_table_context.hash_table,
+        meta: &layout,
+        column_count_needed_for_other_condition: 0,
+        total_column_number: 1,
+        tag_helper: exec.hash_table_context.tag_helper,
+        partition_number: exec.ctx.partition_number,
+        partition_mask_offset: exec.ctx.partition_mask_offset,
+        has_other_condition: false,
+        right_as_build_side: true,
+        l_used: vec![0],
+        r_used: vec![0],
+        l_used_in_other_condition: Vec::new(),
+        r_used_in_other_condition: Vec::new(),
+        concurrency: exec.ctx.concurrency,
+        max_chunk_size: 1024,
+    };
+    let serializer = probe_key as fn(&Chunk, usize) -> Option<Vec<u8>>;
+    let mut probe = OuterJoinProbe::new(
+        probe_context,
+        0,
+        JoinType::LeftOuter,
+        vec![0],
+        &[false],
+        true,
+        serializer,
+        None,
+    );
+    let output_fields = [
+        FieldType::new(FieldTypeCode::LongLong),
+        FieldType::new(FieldTypeCode::LongLong),
+    ];
+    let results = HashJoinV2Exec::run_join_worker(&mut probe, vec![probe_chunk(&[1, 2])], &|| {
+        Chunk::new(&output_fields, 2, 2)
+    })
+    .expect("outer probe");
+    let rows: Vec<(i64, Option<i64>)> = results
+        .iter()
+        .flat_map(|chunk| {
+            (0..chunk.num_rows()).map(|row| {
+                let row = chunk.get_row(row);
+                (
+                    row.get_int64(0),
+                    (!row.is_null(1)).then(|| row.get_int64(1)),
+                )
+            })
+        })
+        .collect();
+    assert_eq!(rows, vec![(1, Some(1)), (1, Some(1)), (2, None)]);
 }
 
 #[test]
