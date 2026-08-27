@@ -52,6 +52,7 @@ var (
 	RUV3Unit      *prometheus.CounterVec
 )
 
+// RUV3 unit label constants define the label name and values for RU v3 raw unit metrics.
 const (
 	LblRUV3Unit = "unit"
 
