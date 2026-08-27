@@ -595,8 +595,15 @@ func TestLeftJoinLateralBuildsOuterApply(t *testing.T) {
 		require.False(t, mysql.HasNotNullFlag(apply.Schema().Columns[i].RetType.GetFlag()),
 			"inner column %d of a LEFT JOIN LATERAL must be nullable", i)
 	}
+	// FullSchema's left half is the left child's own FullSchema, which is longer than
+	// Children()[0].Schema() when the outer side is a USING/NATURAL join, so it needs its
+	// own offset, derived the way buildLateralJoin derives it.
 	require.NotNil(t, apply.FullSchema)
-	for i := outerLen; i < apply.FullSchema.Len(); i++ {
+	outerFullLen := outerLen
+	if lFullSchema, _ := findJoinFullSchema(apply.Children()[0]); lFullSchema != nil {
+		outerFullLen = lFullSchema.Len()
+	}
+	for i := outerFullLen; i < apply.FullSchema.Len(); i++ {
 		require.False(t, mysql.HasNotNullFlag(apply.FullSchema.Columns[i].RetType.GetFlag()),
 			"inner FullSchema column %d of a LEFT JOIN LATERAL must be nullable", i)
 	}
