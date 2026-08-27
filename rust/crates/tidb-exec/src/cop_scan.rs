@@ -60,13 +60,12 @@
 //! [`PushdownScannerError::Unsupported`], which the storage turns into "use
 //! `iter`", so a refused shape is slower and never wrong.
 
-use std::collections::VecDeque;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::thread;
+use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::pinned_thread_pool::PinnedThreadPool;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_distsql::{
@@ -148,84 +147,40 @@ const MAX_BATCHES_AHEAD: usize = 64;
 /// the caller's smaller read-ahead so cancellation remains tight.
 const FULL_SCAN_MIN_BATCHES_AHEAD: usize = 16;
 
-/// A process-local pool for bounded table-lookup scans.
+/// A process-local pool every coprocessor scan producer runs on.
 ///
-/// Go's `IndexLookUpExecutor` submits each table task to its persistent
-/// worker pool (`pkg/executor/distsql.go:743-745, 1432-1434`).  Rust still
-/// needs a second thread for a remote scan because the transport is
-/// intentionally thread-local, but creating a native thread for every
-/// lookup window needlessly pays pthread setup on the same hot path.  Keep
-/// this pool separate from the executor pool: an executor worker waits for
-/// the scan result, so running the scan on that same pool could convoy the
-/// producer and consumer.  Full scans retain their existing unbounded
-/// dedicated-thread policy below.
-type ScanTask = Box<dyn FnOnce() + Send + 'static>;
-
-struct ScanPool {
-    queue: Mutex<VecDeque<ScanTask>>,
-    signal: Condvar,
+/// Go never creates an OS thread for a scan: `IndexLookUpExecutor` submits
+/// each index and table task to a persistent worker pool
+/// (`pkg/executor/distsql.go:743-745, 1432-1434`), and a `TableReader`'s
+/// producer is a goroutine, which costs microseconds. Rust still needs a
+/// second thread per remote scan so response decoding can overlap executor
+/// work, but paying `pthread_create` for it on the statement path is ours
+/// alone: a bounded `WHERE id BETWEEN ? AND ?` was measured spending 6.3% of
+/// its samples in `Thread::new`, 3% of them inside `_pthread_create`.
+///
+/// [`PinnedThreadPool`] is the right shape because it NEVER queues: a
+/// submission takes a parked worker if one is free and starts a new thread if
+/// not. That is what lets one pool serve short lookup windows and whole-region
+/// streams together -- a long scan cannot convoy a short one behind it,
+/// because a short one never waits. The park is kept separate from the
+/// transaction pool's only so the two do not contend on one mutex.
+fn scan_pool() -> &'static PinnedThreadPool {
+    static POOL: OnceLock<PinnedThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| PinnedThreadPool::with_limit(SCAN_WORKER_PARK_LIMIT))
 }
 
-fn scan_pool() -> &'static Arc<ScanPool> {
-    static POOL: OnceLock<Arc<ScanPool>> = OnceLock::new();
-    POOL.get_or_init(|| {
-        let pool = Arc::new(ScanPool {
-            queue: Mutex::new(VecDeque::new()),
-            signal: Condvar::new(),
-        });
-        // Lookup windows are bounded and the caller limits their number to
-        // the Go table-worker width (five by default). Keep enough producers
-        // for several concurrent sessions without allowing a full scan to
-        // starve a lookup indefinitely.
-        let workers = std::thread::available_parallelism()
-            .map(|parallelism| parallelism.get().saturating_mul(2))
-            .unwrap_or(16)
-            .max(16);
-        for _ in 0..workers {
-            let shared = Arc::clone(&pool);
-            thread::Builder::new()
-                .name("cop-scan-pool".to_owned())
-                .spawn(move || scan_pool_worker(shared))
-                .expect("spawn persistent cop-scan pool worker");
-        }
-        pool
-    })
-}
+/// How many idle scan producers the process parks between scans. One per
+/// connection that is mid-scan at the same instant is the working set; past
+/// that a returning worker ends rather than parks.
+const SCAN_WORKER_PARK_LIMIT: usize = 64;
 
-fn scan_pool_worker(pool: Arc<ScanPool>) {
-    loop {
-        let task = {
-            let mut queue = pool
-                .queue
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            loop {
-                if let Some(task) = queue.pop_front() {
-                    break task;
-                }
-                queue = pool
-                    .signal
-                    .wait(queue)
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-            }
-        };
-        task();
-    }
-}
-
-fn enqueue_scan<F>(task: F)
+/// Starts one scan producer, reporting the platform's refusal if a new thread
+/// was needed and could not be created.
+fn enqueue_scan<F>(task: F) -> Result<(), String>
 where
     F: FnOnce() + Send + 'static,
 {
-    let pool = scan_pool();
-    {
-        let mut queue = pool
-            .queue
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        queue.push_back(Box::new(task));
-    }
-    pool.signal.notify_one();
+    scan_pool().run("cop-scan", Box::new(task))
 }
 
 /// One coprocessor scan capability for a node's sessions.
@@ -761,29 +716,16 @@ where
         // full scans, where response decoding must overlap executor work.
         if request.limit == Some(1) {
             serve_scan(&factory, plan, &rows, &node_rows);
-        } else if request.index.is_some() || !request.range_hints.is_empty() {
-            // Go's IndexLookUpExecutor starts both its index worker and its
-            // table workers from one persistent worker pool
-            // (`pkg/executor/distsql.go:743-745,881-1149`). Handle-grouped
-            // requests are the table-worker shape: their ranges carry one
-            // `SetTableHandles` cardinality hint per group. Keep both those
-            // requests and index scans on a persistent producer instead of
-            // creating one native thread for every lookup window. The channel
-            // remains bounded, so cancellation and back-pressure are
-            // unchanged from the dedicated-thread path.
-            enqueue_scan(move || serve_scan(&factory, plan, &rows, &node_rows));
         } else {
-            // A dedicated thread per scan is deliberate: each serve_scan
-            // streams its WHOLE region for the query's lifetime (tens to
-            // hundreds of ms), so the one-time spawn cost amortizes to
-            // noise while the pool would convoy long streams behind short
-            // tasks and serialize concurrent region fetches.
-            thread::Builder::new()
-                .name("cop-scan".to_owned())
-                .spawn(move || serve_scan(&factory, plan, &rows, &node_rows))
-                .map_err(|error| {
-                    PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
-                })?;
+            // Every other scan -- index scans, handle-grouped table-worker
+            // windows, and whole-region streams alike -- runs on the shared
+            // producer pool, which is what Go does for all three
+            // (`pkg/executor/distsql.go:743-745,881-1149`). The pool never
+            // queues, so a whole-region stream cannot convoy a short lookup
+            // behind it. The channel remains bounded, so cancellation and
+            // back-pressure are unchanged from the dedicated-thread path.
+            enqueue_scan(move || serve_scan(&factory, plan, &rows, &node_rows))
+                .map_err(|error| PushdownScannerError::Backend(StorageError::Backend(error)))?;
         }
         self.scans_served.fetch_add(1, Ordering::Relaxed);
         self.requests
@@ -1478,14 +1420,50 @@ pub fn requests_extra_handle(request: &PushdownScanRequest) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::sync::mpsc::sync_channel;
 
     use super::enqueue_scan;
 
+    /// A run of scans REUSES producer threads instead of creating one each.
+    ///
+    /// Go never pays `pthread_create` for a scan producer: `IndexLookUpExecutor`
+    /// submits to a persistent pool (`pkg/executor/distsql.go:743-745`) and a
+    /// `TableReader`'s producer is a goroutine. A bounded
+    /// `WHERE id BETWEEN ? AND ?` was measured spending 6.3% of its samples
+    /// inside `Thread::new` when every scan spawned its own, which is why the
+    /// thread identity -- not just "the work ran" -- is what this pins.
+    ///
+    /// Each scan here finishes before the next is submitted, so a pool that
+    /// parks its workers answers all of them from one thread. The bound allows
+    /// a second only because the park is process-wide: a sibling test's worker
+    /// may hold the parked slot when this one submits.
+    #[test]
+    fn a_run_of_scans_reuses_producer_threads() {
+        const SCANS: usize = 8;
+        let mut producers = BTreeSet::new();
+        for _ in 0..SCANS {
+            let (done, received) = sync_channel(1);
+            enqueue_scan(move || {
+                let _ = done.send(format!("{:?}", std::thread::current().id()));
+            })
+            .expect("the scan pool should start a producer");
+            producers.insert(received.recv().expect("the producer should complete"));
+        }
+        assert!(
+            producers.len() <= 2,
+            "{SCANS} sequential scans ran on {} producer threads; a pool that \
+             parks its workers answers them from one, and one thread per scan \
+             is the `pthread_create` this pool exists to avoid",
+            producers.len()
+        );
+    }
+
     #[test]
     fn bounded_lookup_scan_pool_runs_submitted_work() {
         let (done, received) = sync_channel(1);
-        enqueue_scan(move || done.send(()).expect("lookup producer should run"));
+        enqueue_scan(move || done.send(()).expect("lookup producer should run"))
+            .expect("the scan pool should start a producer");
         received
             .recv()
             .expect("persistent lookup producer should complete");
