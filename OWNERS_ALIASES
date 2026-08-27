@@ -22,7 +22,7 @@ aliases:
     - XuHuaiyu
     - zanmato1984
     - cfzjywxk
-    - Benjamin2037
+    - bb7133
   sig-approvers-executor: # approvers for executor pkg
     - windtalker
     - XuHuaiyu
@@ -36,7 +36,7 @@ aliases:
     - XuHuaiyu
     - zanmato1984
   sig-approvers-lightning: # approvers for lightning module
-    - Benjamin2037
+    - bb7133
     - D3Hunter
     - gmhdbjd
     - lance6716
@@ -50,13 +50,13 @@ aliases:
     - tangenta
     - wjhuang2016
   sig-approvers-ddl: # approvers for ddl pkg
-    - Benjamin2037
+    - bb7133
     - tangenta
     - wjhuang2016
     - ywqzzy
     - zimulala
   sig-approvers-disttask: # approvers for disttask pkg
-    - Benjamin2037
+    - bb7133
     - D3Hunter
     - gmhdbjd
     - lance6716
@@ -64,7 +64,7 @@ aliases:
     - wjhuang2016
     - ywqzzy
   sig-approvers-dumpling: # approvers for dumpling module
-    - Benjamin2037
+    - bb7133
     - gmhdbjd
     - lichunzhu
     - okJiang
@@ -74,17 +74,17 @@ aliases:
     - tangenta
     - ywqzzy
     - D3Hunter
-    - Benjamin2037
+    - bb7133
     - gmhdbjd
   sig-approvers-meta: # approvers for meta pkg
-    - Benjamin2037
+    - bb7133
     - gmhdbjd
     - tangenta
     - wjhuang2016
     - ywqzzy
     - zimulala
   sig-approvers-owner: # approvers for `owner` pkg
-    - Benjamin2037
+    - bb7133
     - lichunzhu
     - tangenta
     - wjhuang2016
@@ -96,7 +96,7 @@ aliases:
     - D3Hunter
     - tangenta
   sig-approvers-resourcemanager: # approvers for resourcemanager pkg
-    - Benjamin2037
+    - bb7133
     - D3Hunter
     - gmhdbjd
     - lance6716
@@ -104,7 +104,7 @@ aliases:
     - wjhuang2016
     - ywqzzy
   sig-approvers-table: # approvers for table packages.
-    - Benjamin2037
+    - bb7133
     - cfzjywxk
     - gmhdbjd
     - tangenta
@@ -112,13 +112,13 @@ aliases:
     - ywqzzy
     - zimulala
   sig-approvers-lock: # approvers for lock pkg
-    - Benjamin2037
+    - bb7133
     - lance6716
     - tangenta
     - wjhuang2016
     - zimulala
   sig-approvers-tidb-binlog: # approvers for tidb-binlog module
-    - Benjamin2037
+    - bb7133
     - gmhdbjd
     - lichunzhu
   sig-approvers-planner: # approvers for planner module
