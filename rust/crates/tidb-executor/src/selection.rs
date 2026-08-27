@@ -31,7 +31,7 @@ use std::sync::Arc;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
-use tidb_expr::evaluator::vectorizable;
+use tidb_expr::evaluator::{vectorizable, vectorized_filter_consider_null};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::{truthy_of, Columns};
@@ -141,27 +141,14 @@ impl<C: Columns> SelectionExec<C> {
             .child_chunk
             .as_ref()
             .expect("selection child chunk exists while open");
-        let rows = child_chunk.num_rows();
-        let mut selected = vec![true; rows];
-        for (filter, fast_filter) in self.filters.iter().zip(&self.fast_filters) {
-            for row_index in 0..rows {
-                if !selected[row_index] {
-                    continue;
-                }
-                let row = child_chunk.get_row(row_index);
-                if let Some(fast_filter) = fast_filter {
-                    if !fast_filter.matches(row) {
-                        selected[row_index] = false;
-                        continue;
-                    }
-                    if fast_filter.is_complete() {
-                        continue;
-                    }
-                }
-                let value = filter.eval(&self.ctx, row)?;
-                selected[row_index] = truthy_of(&value)? == Some(true);
-            }
-        }
+        let (selected, _) = vectorized_filter_consider_null(
+            &self.ctx,
+            true,
+            &self.filters,
+            child_chunk,
+            Vec::new(),
+            Vec::new(),
+        )?;
         self.selected = selected;
         Ok(())
     }
