@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -57,6 +58,32 @@ var unRecoverableTable = map[string]map[string]struct{}{
 	"sys": {
 		// replace into view is not supported now
 		"schema_unused_indexes": {},
+	},
+}
+
+type checkPrivilegeTableRowsCollateCompatibilitySQLPair struct {
+	upstreamCollateSQL   string
+	downstreamCollateSQL string
+	columns              map[string]struct{}
+}
+
+var collateCompatibilityTables = map[string]map[string]checkPrivilegeTableRowsCollateCompatibilitySQLPair{
+	"mysql": {
+		"db": {
+			upstreamCollateSQL:   "SELECT COUNT(1) FROM __TiDB_BR_Temporary_mysql.db",
+			downstreamCollateSQL: "SELECT COUNT(1) FROM (SELECT Host, DB COLLATE utf8mb4_general_ci, User FROM __TiDB_BR_Temporary_mysql.db GROUP BY Host, DB COLLATE utf8mb4_general_ci, User) as a",
+			columns:              map[string]struct{}{"db": {}},
+		},
+		"tables_priv": {
+			upstreamCollateSQL:   "SELECT COUNT(1) FROM __TiDB_BR_Temporary_mysql.tables_priv",
+			downstreamCollateSQL: "SELECT COUNT(1) FROM (SELECT Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci FROM __TiDB_BR_Temporary_mysql.tables_priv GROUP BY Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci) as a",
+			columns:              map[string]struct{}{"db": {}, "table_name": {}},
+		},
+		"columns_priv": {
+			upstreamCollateSQL:   "SELECT COUNT(1) FROM __TiDB_BR_Temporary_mysql.columns_priv",
+			downstreamCollateSQL: "SELECT COUNT(1) FROM (SELECT Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci, Column_name COLLATE utf8mb4_general_ci FROM __TiDB_BR_Temporary_mysql.columns_priv GROUP BY Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci, Column_name COLLATE utf8mb4_general_ci) as a",
+			columns:              map[string]struct{}{"db": {}, "table_name": {}, "column_name": {}},
+		},
 	},
 }
 
@@ -252,6 +279,11 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 		log.Info("replace into existing table",
 			zap.String("table", tableName),
 			zap.Stringer("schema", db.Name))
+		if rc.privilegeTableRowsCollateCompatibility {
+			if err := rc.checkPrivilegeTableRowsCollateCompatibility(ctx, dbName, tableName, ti, db.ExistingTables[tableName]); err != nil {
+				return err
+			}
+		}
 		// target column order may different with source cluster
 		columnNames := make([]string, 0, len(ti.Columns))
 		for _, col := range ti.Columns {
@@ -282,4 +314,98 @@ func (rc *Client) cleanTemporaryDatabase(ctx context.Context, originDB string) {
 			logutil.ShortError(err),
 		)
 	}
+}
+
+func checkSysTableColumnCollateCompatibility(dbNameL, tableNameL, columnNameL, upstreamCollate, downstreamCollate string) bool {
+	if upstreamCollate != "utf8mb4_bin" || downstreamCollate != "utf8mb4_general_ci" {
+		return false
+	}
+	collateCompatibilityTableMap, exists := collateCompatibilityTables[dbNameL]
+	if !exists {
+		return false
+	}
+	collateCompatibilityColumnMap, exists := collateCompatibilityTableMap[tableNameL]
+	if !exists {
+		return false
+	}
+	_, exists = collateCompatibilityColumnMap.columns[columnNameL]
+	return exists
+}
+
+func (rc *Client) checkPrivilegeTableRowsCollateCompatibility(
+	ctx context.Context,
+	dbNameL, tableNameL string,
+	upstreamTable, downstreamTable *model.TableInfo,
+) error {
+	collateCompatibilityTableMap, exists := collateCompatibilityTables[dbNameL]
+	if !exists {
+		return nil
+	}
+	collateCompatibilityColumnMap, exists := collateCompatibilityTableMap[tableNameL]
+	if !exists {
+		return nil
+	}
+	colCount := 0
+	for _, col := range upstreamTable.Columns {
+		if _, exists := collateCompatibilityColumnMap.columns[col.Name.L]; exists {
+			if col.GetCollate() != "utf8mb4_bin" && col.GetCollate() != "utf8mb4_general_ci" {
+				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"incompatible column collate, upstream table %s.%s column %s collate is %s but should be utf8mb4_bin or utf8mb4_general_ci",
+					dbNameL, tableNameL, col.Name.L, col.GetCollate())
+			}
+			colCount += 1
+		}
+	}
+	if colCount != len(collateCompatibilityColumnMap.columns) {
+		return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+			"incompatible column collate, upstream table %s.%s has only %d compatible columns",
+			dbNameL, tableNameL, colCount)
+	}
+	colCount = 0
+	for _, col := range downstreamTable.Columns {
+		if _, exists := collateCompatibilityColumnMap.columns[col.Name.L]; exists {
+			if col.GetCollate() != "utf8mb4_general_ci" {
+				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"incompatible column collate, downstream table %s.%s column %s collate is %s but should be utf8mb4_general_ci",
+					dbNameL, tableNameL, col.Name.L, col.GetCollate())
+			}
+			colCount += 1
+		}
+	}
+	if colCount != len(collateCompatibilityColumnMap.columns) {
+		return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+			"incompatible column collate, downstream table %s.%s has only %d compatible columns",
+			dbNameL, tableNameL, colCount)
+	}
+	ectx := rc.db.se.GetSessionCtx().GetRestrictedSQLExecutor()
+	rows, _, err := ectx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+		nil,
+		collateCompatibilityColumnMap.upstreamCollateSQL,
+	)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get the count of privilege rows")
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("failed to get the count of privilege rows")
+	}
+	upstreamCount := rows[0].GetInt64(0)
+	rows, _, err = ectx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+		nil,
+		collateCompatibilityColumnMap.downstreamCollateSQL,
+	)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get the count of privilege rows")
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("failed to get the count of privilege rows")
+	}
+	downstreamCount := rows[0].GetInt64(0)
+	if upstreamCount != downstreamCount {
+		return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+			"there are duplicated privilege rows with collate utf8mb4_general_ci [upstream count %d != downstream count %d]",
+			upstreamCount, downstreamCount)
+	}
+	return nil
 }
