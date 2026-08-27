@@ -417,63 +417,116 @@ func TestSinglePointAllocTransfer(t *testing.T) {
 		require.Equal(t, int64(3), allocator.Base())
 	})
 
-	t.Run("in-flight allocation holds the transfer barrier", func(t *testing.T) {
+	t.Run("transfers after an in-flight allocation", func(t *testing.T) {
 		allocationStarted := make(chan struct{})
 		releaseAllocation := make(chan struct{})
-		allocRequests := make(chan *autoid.AutoIDRequest, 2)
+		allocRequests := make(chan *autoid.AutoIDRequest, 3)
+		rebaseRequests := make(chan *autoid.RebaseRequest, 1)
+		var sourceBase atomic.Int64
+		var destinationBase atomic.Int64
 		mockCli := &mockAutoIDClient{
 			alloc: func(_ int64, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
 				allocRequests <- req
-				if req.N == 0 {
-					return &autoid.AutoIDResponse{Min: 2, Max: 2}, nil
+				switch {
+				case req.DbID == 1 && req.N == 2:
+					close(allocationStarted)
+					<-releaseAllocation
+					sourceBase.Store(2)
+					return &autoid.AutoIDResponse{Min: 0, Max: 2}, nil
+				case req.DbID == 1 && req.N == 0:
+					base := sourceBase.Load()
+					return &autoid.AutoIDResponse{Min: base, Max: base}, nil
+				case req.DbID == 2 && req.N == 1:
+					minBase := destinationBase.Load()
+					maxBase := minBase + 1
+					destinationBase.Store(maxBase)
+					return &autoid.AutoIDResponse{Min: minBase, Max: maxBase}, nil
+				default:
+					return nil, errors.New("unexpected allocation request")
 				}
-				close(allocationStarted)
-				<-releaseAllocation
-				return &autoid.AutoIDResponse{Min: 0, Max: 2}, nil
 			},
-			rebaseResp: &autoid.RebaseResponse{},
+			rebase: func(_ int64, req *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
+				rebaseRequests <- req
+				destinationBase.Store(req.Base)
+				return &autoid.RebaseResponse{}, nil
+			},
 		}
 		allocator := newTestSinglePointAlloc(mockCli)
-		allocationErr := make(chan error, 1)
+		allocationDone := make(chan error, 1)
+		var allocatedMin, allocatedMax int64
 		go func() {
-			_, _, err := allocator.Alloc(context.Background(), 2, 1, 1)
-			allocationErr <- err
+			var err error
+			allocatedMin, allocatedMax, err = allocator.Alloc(context.Background(), 2, 1, 1)
+			allocationDone <- err
 		}()
 
 		<-allocationStarted
-		if allocator.stateMu.TryLock() {
-			allocator.stateMu.Unlock()
-			close(releaseAllocation)
-			t.Fatal("Transfer lock acquired while allocation RPC was in flight")
-		}
-		allocCallCount := mockCli.allocCallCount.Load()
+		transferStarted := make(chan struct{})
+		transferDone := make(chan error, 1)
+		go func() {
+			close(transferStarted)
+			transferDone <- allocator.Transfer(2, 1)
+		}()
+		<-transferStarted
 		close(releaseAllocation)
-		require.Equal(t, int64(1), allocCallCount)
-		require.NoError(t, <-allocationErr)
-		require.True(t, allocator.stateMu.TryLock())
-		allocator.stateMu.Unlock()
-		require.NoError(t, allocator.Transfer(2, 1))
+
+		require.NoError(t, <-allocationDone)
+		require.NoError(t, <-transferDone)
+		require.Equal(t, int64(0), allocatedMin)
+		require.Equal(t, int64(2), allocatedMax)
+		minBase, maxBase, err := allocator.Alloc(context.Background(), 1, 1, 1)
+		require.NoError(t, err)
+		require.Equal(t, int64(2), minBase)
+		require.Equal(t, int64(3), maxBase)
+		require.Equal(t, int64(3), allocator.Base())
 
 		allocationReq := <-allocRequests
 		sourceBaseReq := <-allocRequests
+		destinationAllocationReq := <-allocRequests
+		destinationRebaseReq := <-rebaseRequests
 		require.Equal(t, int64(1), allocationReq.DbID)
+		require.Equal(t, int64(1), allocationReq.TblID)
 		require.Equal(t, int64(1), sourceBaseReq.DbID)
+		require.Equal(t, int64(1), sourceBaseReq.TblID)
 		require.Equal(t, uint64(0), sourceBaseReq.N)
-		require.Equal(t, int64(2), mockCli.rebaseReq.DbID)
-		require.Equal(t, int64(2), mockCli.rebaseReq.Base)
+		require.Equal(t, int64(2), destinationRebaseReq.DbID)
+		require.Equal(t, int64(1), destinationRebaseReq.TblID)
+		require.Equal(t, int64(2), destinationRebaseReq.Base)
+		require.Equal(t, int64(2), destinationAllocationReq.DbID)
+		require.Equal(t, int64(1), destinationAllocationReq.TblID)
 	})
 
-	t.Run("in-flight rebase holds the transfer barrier", func(t *testing.T) {
+	t.Run("transfers after an in-flight rebase", func(t *testing.T) {
 		rebaseStarted := make(chan struct{})
 		releaseRebase := make(chan struct{})
+		allocRequests := make(chan *autoid.AutoIDRequest, 2)
 		rebaseRequests := make(chan *autoid.RebaseRequest, 2)
+		var sourceBase atomic.Int64
+		var destinationBase atomic.Int64
 		mockCli := &mockAutoIDClient{
-			allocResp: &autoid.AutoIDResponse{Min: 2, Max: 2},
+			alloc: func(_ int64, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
+				allocRequests <- req
+				switch {
+				case req.DbID == 1 && req.N == 0:
+					base := sourceBase.Load()
+					return &autoid.AutoIDResponse{Min: base, Max: base}, nil
+				case req.DbID == 2 && req.N == 1:
+					minBase := destinationBase.Load()
+					maxBase := minBase + 1
+					destinationBase.Store(maxBase)
+					return &autoid.AutoIDResponse{Min: minBase, Max: maxBase}, nil
+				default:
+					return nil, errors.New("unexpected allocation request")
+				}
+			},
 			rebase: func(call int64, req *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
 				rebaseRequests <- req
 				if call == 1 {
 					close(rebaseStarted)
 					<-releaseRebase
+					sourceBase.Store(req.Base)
+				} else {
+					destinationBase.Store(req.Base)
 				}
 				return &autoid.RebaseResponse{}, nil
 			},
@@ -481,28 +534,42 @@ func TestSinglePointAllocTransfer(t *testing.T) {
 		allocator := newTestSinglePointAlloc(mockCli)
 		rebaseErr := make(chan error, 1)
 		go func() {
-			rebaseErr <- allocator.Rebase(context.Background(), 2, false)
+			rebaseErr <- allocator.Rebase(context.Background(), 4, false)
 		}()
 
 		<-rebaseStarted
-		if allocator.stateMu.TryLock() {
-			allocator.stateMu.Unlock()
-			close(releaseRebase)
-			t.Fatal("Transfer lock acquired while rebase RPC was in flight")
-		}
-		rebaseCallCount := mockCli.rebaseCallCount.Load()
+		transferStarted := make(chan struct{})
+		transferDone := make(chan error, 1)
+		go func() {
+			close(transferStarted)
+			transferDone <- allocator.Transfer(2, 1)
+		}()
+		<-transferStarted
 		close(releaseRebase)
-		require.Equal(t, int64(1), rebaseCallCount)
+
 		require.NoError(t, <-rebaseErr)
-		require.True(t, allocator.stateMu.TryLock())
-		allocator.stateMu.Unlock()
-		require.NoError(t, allocator.Transfer(2, 1))
+		require.NoError(t, <-transferDone)
+		minBase, maxBase, err := allocator.Alloc(context.Background(), 1, 1, 1)
+		require.NoError(t, err)
+		require.Equal(t, int64(4), minBase)
+		require.Equal(t, int64(5), maxBase)
+		require.Equal(t, int64(5), allocator.Base())
 
 		sourceRebaseReq := <-rebaseRequests
 		destinationRebaseReq := <-rebaseRequests
+		sourceBaseReq := <-allocRequests
+		destinationAllocationReq := <-allocRequests
 		require.Equal(t, int64(1), sourceRebaseReq.DbID)
+		require.Equal(t, int64(1), sourceRebaseReq.TblID)
+		require.Equal(t, int64(4), sourceRebaseReq.Base)
+		require.Equal(t, int64(1), sourceBaseReq.DbID)
+		require.Equal(t, int64(1), sourceBaseReq.TblID)
+		require.Equal(t, uint64(0), sourceBaseReq.N)
 		require.Equal(t, int64(2), destinationRebaseReq.DbID)
-		require.Equal(t, int64(2), destinationRebaseReq.Base)
+		require.Equal(t, int64(1), destinationRebaseReq.TblID)
+		require.Equal(t, int64(4), destinationRebaseReq.Base)
+		require.Equal(t, int64(2), destinationAllocationReq.DbID)
+		require.Equal(t, int64(1), destinationAllocationReq.TblID)
 	})
 }
 
