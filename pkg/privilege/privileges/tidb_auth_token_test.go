@@ -313,6 +313,26 @@ func TestMatchURIWithWildcard(t *testing.T) {
 			given:    "https://domain.com/bar/baz",
 		},
 		{
+			name:     "empty userinfo does not match absent userinfo",
+			required: "spiffe://@domain.com/bar/*",
+			given:    "spiffe://domain.com/bar/baz",
+		},
+		{
+			name:     "absent userinfo does not match empty userinfo",
+			required: "spiffe://domain.com/bar/*",
+			given:    "spiffe://@domain.com/bar/baz",
+		},
+		{
+			name:     "omitted authority does not match present empty authority",
+			required: "spiffe:/bar/*",
+			given:    "spiffe:///bar/baz",
+		},
+		{
+			name:     "present empty authority does not match omitted authority",
+			required: "spiffe:///bar/*",
+			given:    "spiffe:/bar/baz",
+		},
+		{
 			name:     "query wildcard is literal",
 			required: "spiffe://domain.com/bar/*?key=*",
 			given:    "spiffe://domain.com/bar/baz?key=value",

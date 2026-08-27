@@ -955,8 +955,10 @@ func matchURIWithWildcard(required, given string) bool {
 	}
 	if requiredURI.Scheme != givenURI.Scheme ||
 		requiredURI.Opaque != givenURI.Opaque ||
+		(requiredURI.User == nil) != (givenURI.User == nil) ||
 		requiredURI.User.String() != givenURI.User.String() ||
 		requiredURI.Host != givenURI.Host ||
+		requiredURI.OmitHost != givenURI.OmitHost ||
 		requiredURI.ForceQuery != givenURI.ForceQuery ||
 		requiredURI.RawQuery != givenURI.RawQuery ||
 		requiredURI.EscapedFragment() != givenURI.EscapedFragment() {
