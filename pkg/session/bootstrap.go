@@ -336,6 +336,14 @@ var (
 	systemTablesOfMaskingPolicyNextGenVersion = []TableBasicInfo{
 		{ID: metadef.TiDBMaskingPolicyTableID, Name: "tidb_masking_policy", SQL: metadef.CreateTiDBMaskingPolicyTable},
 	}
+	// systemTablesOfMaterializedViewNextGenVersion contains system tables introduced for materialized view maintenance.
+	systemTablesOfMaterializedViewNextGenVersion = []TableBasicInfo{
+		{ID: metadef.TiDBMViewRefreshInfoTableID, Name: "tidb_mview_refresh_info", SQL: metadef.CreateTiDBMViewRefreshInfoTable},
+		{ID: metadef.TiDBMLogPurgeInfoTableID, Name: "tidb_mlog_purge_info", SQL: metadef.CreateTiDBMLogPurgeInfoTable},
+		{ID: metadef.TiDBMViewRefreshHistTableID, Name: "tidb_mview_refresh_hist", SQL: metadef.CreateTiDBMViewRefreshHistTable},
+		{ID: metadef.TiDBMViewRefreshAlertTableID, Name: "tidb_mview_refresh_alert", SQL: metadef.CreateTiDBMViewRefreshAlertTable},
+		{ID: metadef.TiDBMLogPurgeHistTableID, Name: "tidb_mlog_purge_hist", SQL: metadef.CreateTiDBMLogPurgeHistTable},
+	}
 )
 
 type versionedBootstrapSchema struct {
@@ -355,6 +363,9 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	}},
 	{ver: meta.MaskingPolicyNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaskingPolicyNextGenVersion},
+	}},
+	{ver: meta.MaterializedViewNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaterializedViewNextGenVersion},
 	}},
 }
 
