@@ -508,7 +508,6 @@ func (sp *singlePointAlloc) Transfer(databaseID, tableID int64) error {
 		return nil
 	}
 	// Re-fetch the authoritative source base because a cold allocator may not have observed IDs allocated by other TiDBs.
-	// updateLastAllocated keeps the greater of that value and the local bound in case the source metadata is already gone.
 	_, _, err := sp.alloc(context.Background(), 0, 1, 1)
 	if err != nil {
 		return err
