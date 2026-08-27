@@ -295,27 +295,41 @@ wrong: asked directly, Go answers StreamAgg for it too. **Ask the Go node for
 `EXPLAIN FORMAT='verbose'` on the exact statement before trusting a plan
 expectation in this tree.**
 
-### M2r — The row pipeline (RETRACTED as stated; re-measuring)
+### M2r — The row pipeline (MEASURED; both terms are real)
 
-An earlier revision of this plan claimed the row pipeline costs ~0.99us/row
-against Go's ~0.51us, making it "the largest remaining term". **That was
-inferred from two points whose Go half was noise**: the run it came from put
-Go at 0.02us/row, which is not a physically possible cost for reading a row
-out of a chunk and writing it to the wire.
+A five-point fit over range sizes 1/10/50/100/200, three samples each, engines
+alternating inside every sample:
 
-A better-controlled run puts both engines at ~0.7us/row and the gap at a
-roughly FIXED ~45us per statement, independent of row count (42us at 10 rows,
-47us at 100). A dedicated slope probe over range sizes 1/10/50/100/200 is what
-should settle it before any work is scheduled here.
+```
+rust: 0.686 us/row   intercept 314.5 us
+go  : 0.387 us/row   intercept 286.7 us
+        per-row EXTRA  +0.299 us/row      (rust is 1.77x Go per row)
+        fixed   EXTRA  +27.8 us/statement
+```
 
-The code observations stand on their own and are worth keeping whatever the
-slope turns out to be: `drain_root_executor` -> `Row::get_datum_row` allocates
-a `Vec<Datum>` per row, `datum_with_buffer`'s string arm does
-`get_bytes(col).to_vec()` per string cell per row, and `SelectMeta` is
-`(columns, Vec<Vec<Datum>>)` so a result is fully materialized before any byte
-reaches the wire. Go's `writeChunk`/`dumpTextRow` append chunk cells straight
-into the output buffer. That is a real divergence in shape; what is NOT
-established is that it costs measurable time at these row counts.
+Both terms are real, and they cross at about 90 rows: below that the fixed
+cost dominates, above it the per-row does. Sysbench's ranges return 100 rows,
+where the two contribute about equally (~30us each).
+
+An earlier revision of this plan put the per-row figures at 0.99us against
+0.51us and called it "the largest remaining term". Those numbers came from
+subtracting two cells whose Go half differed by 2us across 90 rows -- 0.02us
+per row for Go, which is not possible -- and the plan was then over-corrected
+to say the gap was fixed-only. The fit above is what should be cited: the
+DIRECTION of the original claim holds, its magnitude did not, and neither
+two-point reading was evidence.
+
+The shape divergence behind the per-row term: `drain_root_executor` ->
+`Row::get_datum_row` allocates a `Vec<Datum>` per row, `datum_with_buffer`'s
+string arm does `get_bytes(col).to_vec()` per string cell per row, and
+`SelectMeta` is `(columns, Vec<Vec<Datum>>)`, so a result is fully
+materialized -- and every string copied twice, chunk -> Datum -> wire -- before
+any byte reaches the client. Go's `writeChunk`/`dumpTextRow` append chunk cells
+straight into the output buffer, copying once and allocating nothing per row.
+
+Next step is a profile of a 200-row range to confirm the 0.299us lands in
+those allocations before the result-set contract is touched, since that change
+reaches `tidb-server`'s result sets as well as the driver.
 
 ## Verification
 
@@ -379,10 +393,12 @@ Correctness gates, every milestone:
   distinguishes derived mode from top-level mode for the aggregate shapes --
   the suite is equally green with the old coupling restored. The separation is
   reasoned from `derived_column_prune`, not demonstrated.
-- A two-point slope is not a slope. The "row pipeline is 2x Go's" claim came
-  from subtracting two cells whose Go half differed by 2us over 90 rows, and
-  it survived into two reports before a better-controlled run contradicted it.
-  Fit a slope over >=4 sizes, or say "fixed per-statement cost" instead.
+- A two-point slope is not a slope. "Row pipeline is 2x Go's" came from two
+  cells whose Go half differed by 2us over 90 rows; the correction that
+  followed ("the gap is fixed, not per-row") came from two other cells and was
+  also wrong. Only the five-point fit separated the two terms -- and both were
+  real. Fit over >=4 sizes before attributing a gap to per-row or per-statement
+  work.
 - A GREEN test can pin a divergence just as easily as a red one. Go's verbose
   EXPLAIN is cheap to ask for and settled two disputed plan expectations here
   in minutes; re-deriving its cost formula from source did not.
