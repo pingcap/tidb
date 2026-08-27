@@ -9,7 +9,9 @@
 //! Go caches a whole physical plan and rebinds its ranges per execute. Here
 //! every range, constant fold and residual split is still freshly derived
 //! from the CURRENT parameters on every execution; what is pinned is only
-//! which candidate WON the cost race originally. That is exactly the property
+//! which candidate WON the cost race originally -- for each join leaf, and
+//! for the statement's aggregation family, which Go's cached plan likewise
+//! carries already decided. That is exactly the property
 //! Go's cache exhibits in mixed workloads -- an execution whose literals
 //! would flip the cost race (a wider date range that makes a secondary index
 //! look selective under a bad estimate) replays the first winner instead of
@@ -38,11 +40,10 @@
 //! Go's invalidate-and-replan. The store is bounded; beyond the bound a new
 //! entry evicts the oldest.
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use tidb_ast::Stmt;
-use tidb_executor::PinnedLeafAccess;
+use tidb_executor::PinnedPlanShape;
 
 use crate::prepared_plan_cache::PreparedPlanKey;
 use crate::Session;
@@ -53,15 +54,15 @@ use crate::Session;
 #[derive(Clone, Debug)]
 pub(crate) struct PreparedPathPinEntry {
     pub(crate) key: PreparedPlanKey,
-    pub(crate) pins: HashMap<String, PinnedLeafAccess>,
+    pub(crate) pins: PinnedPlanShape,
 }
 
 /// What one in-flight prepared execution carries into its statement context.
 pub(crate) struct ActivePreparedPinState {
     /// Hit: replay these pins.
-    pub(crate) apply: Option<Arc<HashMap<String, PinnedLeafAccess>>>,
+    pub(crate) apply: Option<Arc<PinnedPlanShape>>,
     /// Miss: record this execution's winners here.
-    pub(crate) capture: Option<Arc<Mutex<Option<HashMap<String, PinnedLeafAccess>>>>>,
+    pub(crate) capture: Option<Arc<Mutex<Option<PinnedPlanShape>>>>,
     /// The key THIS execution planned against, stored with the captured map.
     pub(crate) key: PreparedPlanKey,
 }
@@ -125,7 +126,7 @@ impl Session {
         // A stale entry (key moved) is replaced by what this run captures.
         Some(ActivePreparedPinState {
             apply: None,
-            capture: Some(Arc::new(Mutex::new(Some(HashMap::new())))),
+            capture: Some(Arc::new(Mutex::new(Some(PinnedPlanShape::default())))),
             key,
         })
     }
@@ -152,7 +153,8 @@ impl Session {
             return;
         };
         if pins.is_empty() {
-            // No join leaf planned under this statement: nothing to pin.
+            // Neither a join leaf nor an aggregation family was decided under
+            // this statement: nothing to pin.
             return;
         }
         let mut store = self.prepared_plan_pins.borrow_mut();

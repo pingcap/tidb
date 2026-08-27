@@ -254,6 +254,41 @@ pub enum PinnedLeafAccess {
     IndexId(i64),
 }
 
+/// Which physical aggregation family won a statement's cost race.
+///
+/// Go's cached plan already HAS its aggregation operator: a hit executes
+/// whichever of `getStreamAggs`/`getHashAggs` won when the plan was first
+/// optimized, and never re-costs the pair. This tier plans the whole select
+/// once per family to compare them, so replaying the winner is what turns
+/// three planning passes into one -- the same saving Go's cache gets, by the
+/// same reasoning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PinnedAggregation {
+    /// `StreamAgg` over ordered input.
+    Stream,
+    /// `HashAgg`.
+    Hash,
+}
+
+/// One prepared statement's committed plan SHAPE, replayed on its next
+/// execution. Ranges, constant folds and residual splits are still derived
+/// fresh from the current parameters; only the decisions are pinned.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PinnedPlanShape {
+    /// The access path each join leaf committed to, by leaf name.
+    pub leaves: HashMap<String, PinnedLeafAccess>,
+    /// The aggregation family the statement committed to, when it has one.
+    pub aggregation: Option<PinnedAggregation>,
+}
+
+impl PinnedPlanShape {
+    /// Nothing was pinned, so there is no shape worth storing.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.leaves.is_empty() && self.aggregation.is_none()
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct StmtContext {
     /// Go's `StaticWarnHandler` entries: a LEVEL, a code and a message.
@@ -495,9 +530,8 @@ pub struct StmtContext {
     /// (apply) and/or its capture sink, installed by
     /// [`crate::Session::begin_prepared_path_pins`]. `None` outside the
     /// prepared funnel leaves planning exactly as before.
-    prepared_path_pins: Option<Arc<HashMap<String, PinnedLeafAccess>>>,
-    prepared_pin_capture:
-        Option<Arc<Mutex<Option<HashMap<String, PinnedLeafAccess>>>>>,
+    prepared_path_pins: Option<Arc<PinnedPlanShape>>,
+    prepared_pin_capture: Option<Arc<Mutex<Option<PinnedPlanShape>>>>,
     /// Go `SessionVars.AllowWriteRowID` (`tidb_opt_write_row_id`): whether an
     /// `INSERT`/`REPLACE`/`UPDATE` may name `_tidb_rowid` and write it.
     allow_write_row_id: bool,
@@ -1299,10 +1333,7 @@ impl StmtContext {
     /// side). A pin names the access path a leaf committed to on an earlier
     /// execution of the same prepared statement.
     #[must_use]
-    pub fn with_prepared_path_pins(
-        mut self,
-        pins: Arc<HashMap<String, PinnedLeafAccess>>,
-    ) -> Self {
+    pub fn with_prepared_path_pins(mut self, pins: Arc<PinnedPlanShape>) -> Self {
         self.prepared_path_pins = Some(pins);
         self
     }
@@ -1313,7 +1344,7 @@ impl StmtContext {
     #[must_use]
     pub fn with_prepared_pin_capture(
         mut self,
-        sink: Arc<Mutex<Option<HashMap<String, PinnedLeafAccess>>>>,
+        sink: Arc<Mutex<Option<PinnedPlanShape>>>,
     ) -> Self {
         self.prepared_pin_capture = Some(sink);
         self
@@ -1323,13 +1354,34 @@ impl StmtContext {
     /// execution, when the current execution replays it.
     #[must_use]
     pub fn prepared_path_pin_for(&self, leaf: &str) -> Option<PinnedLeafAccess> {
-        self.prepared_path_pins.as_ref()?.get(leaf).cloned()
+        self.prepared_path_pins.as_ref()?.leaves.get(leaf).cloned()
+    }
+
+    /// The aggregation family this statement committed to on an earlier
+    /// execution, when the current one replays it.
+    #[must_use]
+    pub fn prepared_aggregation_pin(&self) -> Option<PinnedAggregation> {
+        self.prepared_path_pins.as_ref()?.aggregation
+    }
+
+    /// Records the aggregation family that won this statement's cost race,
+    /// for its next execution to replay. The FIRST family recorded stands:
+    /// an outer statement's choice must not be overwritten by a derived
+    /// select's, exactly as the leaf pins keep their first writer.
+    pub(crate) fn capture_aggregation_pin(&self, family: PinnedAggregation) {
+        let Some(sink) = self.prepared_pin_capture.as_ref() else {
+            return;
+        };
+        if let Ok(mut slot) = sink.lock() {
+            let shape = slot.get_or_insert_with(PinnedPlanShape::default);
+            shape.aggregation.get_or_insert(family);
+        }
     }
 
     /// The capture sink, when this execution records pins.
     pub(crate) fn prepared_pin_capture(
         &self,
-    ) -> Option<Arc<Mutex<Option<HashMap<String, PinnedLeafAccess>>>>> {
+    ) -> Option<Arc<Mutex<Option<PinnedPlanShape>>>> {
         self.prepared_pin_capture.clone()
     }
 

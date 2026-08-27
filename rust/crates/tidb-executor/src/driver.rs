@@ -1528,6 +1528,33 @@ fn run_select_traced_with_delivery_choice_inner(
         && (!select.group_by.is_empty() || select.distinct)
         && required.is_sort_item_empty()
     {
+        // Prepared plan-cache REPLAY, the aggregation half. Go's cached plan
+        // already HAS its aggregation operator: a hit executes whichever of
+        // `getStreamAggs`/`getHashAggs` won when the plan was first
+        // optimized, and never re-costs the pair (`GetPlanFromPlanCache` ->
+        // `adjustCachedPlan`, which rebuilds RANGES and nothing else). This
+        // tier compares the families by planning the whole select once per
+        // family, so replaying the winner is what turns three passes into
+        // one. Correctness never depends on it: both families compute the
+        // same groups from the same input, so forcing one changes what the
+        // statement COSTS, never what it answers.
+        if let Some(pinned) = ctx.prepared_aggregation_pin() {
+            return run_select_traced_with_delivery_choice(
+                select,
+                catalog,
+                current_db,
+                ctx,
+                trace,
+                required,
+                output_delivered,
+                deferred_exec,
+                parent_duplicate_agnostic,
+                match pinned {
+                    crate::stmt_context::PinnedAggregation::Stream => AggregationChoice::Stream,
+                    crate::stmt_context::PinnedAggregation::Hash => AggregationChoice::Hash,
+                },
+            );
+        }
         // Go's logical statistics collection runs once before physical
         // aggregation alternatives are compared. Each speculative branch
         // must therefore start from the same shared residency snapshot;
@@ -1619,6 +1646,15 @@ fn run_select_traced_with_delivery_choice_inner(
         // table's, a correlated subquery's -- which a speculative pass writing
         // into its own trace cannot reproduce. EXPLAIN and EXPLAIN ANALYZE
         // therefore keep the third pass, and neither is on a hot path.
+        // Record the winner for this statement's next EXECUTE -- the capture
+        // half of the same contract as the leaf access-path pins.
+        if let Some(chosen) = chosen {
+            ctx.capture_aggregation_pin(if chosen == AggregationChoice::Stream {
+                crate::stmt_context::PinnedAggregation::Stream
+            } else {
+                crate::stmt_context::PinnedAggregation::Hash
+            });
+        }
         if let Some(chosen) = chosen.filter(|_| trace.is_none()) {
             let (winner, mut winner_exec, winner_delivered, _winner_trace) =
                 if chosen == AggregationChoice::Stream {

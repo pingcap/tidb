@@ -296,8 +296,9 @@ pub(crate) fn leaf_index_path(
     // it records nothing here.
     if let Some(sink) = ctx.prepared_pin_capture() {
         if let Ok(mut slot) = sink.lock() {
-            let map = slot.get_or_insert_with(std::collections::HashMap::new);
-            map.insert(
+            let shape = slot
+                .get_or_insert_with(crate::stmt_context::PinnedPlanShape::default);
+            shape.leaves.insert(
                 visible.to_owned(),
                 match &best.index {
                     Some((index_id, _)) => PinnedLeafAccess::IndexId(*index_id),

@@ -3698,8 +3698,9 @@ pub(crate) fn choose_index_range_path(
     if let Some(name) = visible_name.as_deref() {
         if let Some(sink) = ctx.prepared_pin_capture() {
             if let Ok(mut slot) = sink.lock() {
-                let map = slot.get_or_insert_with(std::collections::HashMap::new);
-                map.entry(name.to_owned()).or_insert_with(|| {
+                let shape = slot
+                    .get_or_insert_with(crate::stmt_context::PinnedPlanShape::default);
+                shape.leaves.entry(name.to_owned()).or_insert_with(|| {
                     match &best.index {
                         Some((index_id, _)) => {
                             crate::stmt_context::PinnedLeafAccess::IndexId(*index_id)
