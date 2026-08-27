@@ -24,12 +24,16 @@ EXECUTE s USING @a,@b;
 SELECT @@last_plan_from_cache;   -- reports 1 today, and it is a LIE
 ```
 
-Today the second `EXECUTE` re-optimizes from the AST, and
-`@@last_plan_from_cache` reports `1` anyway. The variable is fed from
-`non_prepared_plan_cache::admit`, which is an `LruCache<String, ()>` — it
-remembers KEYS and stores no plan. Its own module doc says so: "a hit here
-reuses a KEY and not a plan" and "This runs before planning and never
-short-circuits it".
+Today the second `EXECUTE` re-optimizes from the AST. `@@last_plan_from_cache`
+reporting `1` is NOT a bug: `prepared_plan_cache.rs` deliberately ports Go's
+observable contract — which statements Go's cache would admit, and whether
+this `EXECUTE` would have found its plan there — and says so in its own doc.
+An application reading that variable sees what Go shows it. **The divergence
+is cost, not observable behavior**, and this plan is about closing the cost.
+
+(An earlier revision of this document called that variable "a lie". It is
+not. The correction matters because it changes what "parity" means here: the
+contract is already ported, and what is missing underneath it is the reuse.)
 
 ### Why it matters, measured
 
@@ -110,13 +114,25 @@ the AST.
 
 - `crates/tidb-session/src/prepared_ast.rs` — `PreparedAst` retains the parsed
   `Stmt`, the parameter count, and `point_get_plan: Option<Arc<PreparedPointGetPlan>>`.
-  That point-get plan is the only real plan reuse in the node, and it is why
-  the point-get shape measures at parity.
-- `crates/tidb-session/src/non_prepared_plan_cache.rs` — `admit` is
-  `LruCache<String, ()>`; `probe_non_prepared_plan_cache` runs BEFORE planning
-  and never short-circuits it. It exists to make `@@last_plan_from_cache`
-  report something and to carry the cacheability checker, which IS a faithful
-  port of `NonPreparedPlanCacheableWithCtx`.
+  A full retained plan, for point gets only — and the point-get shape is the
+  one measuring at parity.
+- `crates/tidb-session/src/prepared_path_pins.rs` — REAL reuse, and more than
+  the survey first credited: each join leaf's committed access path is
+  captured on a statement's first execution and replayed on the next, keyed by
+  `PreparedPlanKey` (schema version, database, `sql_mode`, time zone, push-down
+  blacklist generation) and invalidated when any of those moves.
+  `choose_index_range_path` (`driver/access.rs:3638`) restricts enumeration to
+  the pinned index on replay, citing `RebuildPlan4CachedPlan`. Ranges are still
+  rebuilt from the current parameters, which is the half Go also rebuilds.
+  **Prepared statements only** — a repeated statement sent as text does not
+  benefit, which is a measurement trap: a probe that sends plain text 3000
+  times sees none of this, while sysbench under `--db-ps-mode=auto` does.
+- `crates/tidb-session/src/prepared_plan_cache.rs` /
+  `non_prepared_plan_cache.rs` — the ADMISSION rules and cache key at full
+  fidelity (`IsASTCacheable`, `NonPreparedPlanCacheableWithCtx`,
+  `NewPlanCacheKey`), plus the hit/miss `@@last_plan_from_cache` reports.
+  Neither stores a plan, deliberately and documented. When a reified plan
+  lands these are the gates it plugs into; they do not need porting again.
 - `crates/tidb-executor/src/driver.rs` — `run_select_stmt` →
   `run_select_traced_with_delivery_choice_inner` builds the executor pipeline
   DIRECTLY from the AST. There is no retained plan object between the two.
@@ -129,7 +145,10 @@ the AST.
 
 This is the blocker, stated plainly: **Go's plan cache caches a physical plan,
 and this node does not have one.** Any plan for this work must first create
-the thing to cache.
+the thing to cache. What is already done is everything AROUND that object: the
+admission rules, the key, the invalidation, the observable contract, and a
+narrow slice of real reuse (the leaf access path, and whole plans for point
+gets). What is missing is the object itself and the rebuild that rebinds it.
 
 ### The second defect, in the same area
 
@@ -199,7 +218,21 @@ code:
 **Measured effect: within noise, as expected.** Of the 2079 samples the three
 passes cost on a `DISTINCT` statement, only 120 were the third one.
 
-### M1b — Share the children across the two aggregation families
+### M1b — Do not repeat the family race on a replay (DONE, `0f7953702f`)
+
+Go's cached plan carries its aggregation operator already decided;
+`adjustCachedPlan` rebuilds ranges and nothing else. The access-path pins had
+already ported that contract for join leaves, so the statement's aggregation
+family joins the same entry: `HashMap<String, PinnedLeafAccess>` becomes
+`PinnedPlanShape { leaves, aggregation }`, and a replay plans ONCE under the
+pinned family instead of three times. Keying, invalidation and eviction are
+unchanged.
+
+This is the prepared-statement path, which is what sysbench and every
+application driver use. A statement sent as plain text still costs both
+families every time, because pins are prepared-only — see M1c.
+
+### M1c — Share the children WITHIN one first execution
 
 This is where the 31% actually is: 1959 of 6273 samples, in the two
 SPECULATIVE passes, which each re-run access-path selection and join reorder
@@ -278,7 +311,13 @@ Correctness gates, every milestone:
   and is what left the numbers in the table above.
 - 2026-08-26: M1a landed (`4ee77f0109`). Effect within noise; the milestone
   was split because the profile's "33% in planning" turned out to be 31% in the
-  two speculative passes and 2% in the third. M1b is the real target.
+  two speculative passes and 2% in the third.
+- 2026-08-26: M1b landed (`0f7953702f`) — the aggregation family is pinned and
+  replayed, so a repeated PREPARED statement plans once instead of three
+  times. The survey was also corrected: `prepared_path_pins.rs` was already
+  doing real plan reuse for join leaves, which the first revision of this
+  document missed, and `@@last_plan_from_cache` is a deliberate port of Go's
+  observable contract rather than a bug.
 
 ## Surprises & Discoveries
 
