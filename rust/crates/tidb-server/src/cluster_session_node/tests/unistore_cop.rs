@@ -1326,6 +1326,61 @@ fn racing_pessimistic_updates_both_commit_with_serial_effect() {
     );
 }
 
+/// A NON-locking read must not be answered from the pessimistic lock cache.
+///
+/// Go gates that cache on `e.lock`: `PointGetExecutor.get`
+/// (`pkg/executor/point_get.go:671-684`) consults
+/// `TxnCtx.GetKeyInPessimisticLockCache` only inside `if e.lock`, so a plain
+/// `SELECT` falls through to the snapshot and reads at the transaction's own
+/// `start_ts`. The cached row is the one the LOCK saw, at a `for_update_ts`
+/// at or after `start_ts`; answering a plain read from it publishes a newer
+/// row into a repeatable read.
+///
+/// The window is exactly the one pessimistic locking is built to tolerate: a
+/// writer that commits after `BEGIN`, which the lock survives by advancing
+/// its own `for_update_ts` rather than failing.
+#[test]
+fn a_plain_read_is_not_answered_from_the_pessimistic_lock_cache() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut reader = factory
+        .open_session(session_context(84))
+        .expect("session opens");
+    rows(
+        &mut reader,
+        "CREATE TABLE test.lock_cache (id int primary key, v int)",
+    );
+    rows(&mut reader, "INSERT INTO test.lock_cache VALUES (1, 10)");
+
+    assert_eq!(
+        reader.control_transaction("BEGIN").expect("begin"),
+        Some(true)
+    );
+    assert_eq!(
+        displayed(rows(&mut reader, "SELECT v FROM test.lock_cache WHERE id = 1")),
+        [["10"]],
+        "the transaction's snapshot is the row as of BEGIN"
+    );
+
+    let mut writer = factory
+        .open_session(session_context(85))
+        .expect("session opens");
+    rows(&mut writer, "UPDATE test.lock_cache SET v = 99 WHERE id = 1");
+
+    // The LOCKING read may see the newer row -- it takes its own
+    // `for_update_ts`, which is Go's behaviour too. This is what fills the
+    // lock cache.
+    let _ = reader.execute("SELECT v FROM test.lock_cache WHERE id = 1 FOR UPDATE");
+
+    assert_eq!(
+        displayed(rows(&mut reader, "SELECT v FROM test.lock_cache WHERE id = 1")),
+        [["10"]],
+        "the plain read that follows still reads at start_ts: the lock cache \
+         belongs to locking reads only (`point_get.go:677`)"
+    );
+    reader.control_transaction("ROLLBACK").expect("rollback");
+}
+
 /// `BEGIN OPTIMISTIC` keeps Go's optimistic contract: neither `UPDATE`
 /// blocks or locks, and the transaction that commits second fails at
 /// `COMMIT` with the 9007 write conflict -- which is also the receipt that

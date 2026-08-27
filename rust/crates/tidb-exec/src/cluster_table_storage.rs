@@ -108,6 +108,15 @@ use crate::pinned_thread_pool::PinnedThreadPool;
 enum TransactionRequest {
     Get {
         key: Vec<u8>,
+        /// Whether the statement this read belongs to takes LOCKS -- Go's
+        /// `e.lock`. `PointGetExecutor.get` (`pkg/executor/point_get.go:677`)
+        /// consults the pessimistic lock cache only inside `if e.lock`, so a
+        /// plain `SELECT` falls through to the snapshot. The cached row is
+        /// the one its LOCK saw, at a `for_update_ts` at or after `start_ts`;
+        /// serving it to a non-locking read publishes a newer row into a
+        /// repeatable read.
+        locking: bool,
+
         /// `Some` reads at this statement timestamp instead of the
         /// transaction's `start_ts` -- a pessimistic statement retried after
         /// a lock conflict reads at its advanced `for_update_ts` (Go rebuilds
@@ -118,6 +127,8 @@ enum TransactionRequest {
     },
     BatchGet {
         keys: Vec<Vec<u8>>,
+        /// See [`TransactionRequest::Get::locking`].
+        locking: bool,
         /// See [`TransactionRequest::Get::read_ts`].
         read_ts: Option<u64>,
         reply: cc::Sender<Result<SnapshotPairs, StorageError>>,
@@ -477,6 +488,7 @@ fn serve_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabil
         match request {
             TransactionRequest::Get {
                 key,
+                locking,
                 read_ts,
                 reply,
             } => {
@@ -489,6 +501,7 @@ fn serve_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabil
             }
             TransactionRequest::BatchGet {
                 keys,
+                locking,
                 read_ts,
                 reply,
             } => {
@@ -621,6 +634,7 @@ fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: St
                 key,
                 read_ts,
                 reply,
+                locking,
             } => {
                 // Go `PointGetExecutor.get` (`pkg/executor/point_get.go:656-680`):
                 // memBuffer first (that overlay lives at the session layer,
@@ -628,9 +642,11 @@ fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: St
                 // storage. A cached answer is exact at ANY statement
                 // timestamp: the lock pins the key against every other
                 // writer, so no later commit can exist under it.
-                if let Some(cached) = lock_values.get(&key) {
-                    let _ = reply.send(Ok(cached.clone()));
-                    continue;
+                if locking {
+                    if let Some(cached) = lock_values.get(&key) {
+                        let _ = reply.send(Ok(cached.clone()));
+                        continue;
+                    }
                 }
                 let read_ts = read_ts.unwrap_or_else(|| transaction.start_ts());
                 let answer = transaction
@@ -644,6 +660,7 @@ fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: St
                 keys,
                 read_ts,
                 reply,
+                locking,
             } => {
                 // Same order as [`TransactionRequest::Get`], per key: a key
                 // the cache answers costs no batch member, and only the rest
@@ -651,7 +668,7 @@ fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: St
                 let mut answered: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
                 let mut uncached: Vec<Vec<u8>> = Vec::with_capacity(keys.len());
                 for key in keys {
-                    match lock_values.get(&key) {
+                    match lock_values.get(&key).filter(|_| locking) {
                         Some(Some(value)) => answered.push((key, value.clone())),
                         Some(None) => {}
                         None => uncached.push(key),
@@ -1139,6 +1156,8 @@ impl ClusterSnapshot for StatementSnapshot {
         let bytes = key.as_bytes().to_vec();
         ask(&self.thread.sender()?, |reply| TransactionRequest::Get {
             key: bytes,
+            // A statement snapshot serves no locking statement.
+            locking: false,
             read_ts: None,
             reply,
         })
@@ -1149,6 +1168,8 @@ impl ClusterSnapshot for StatementSnapshot {
         ask(&self.thread.sender()?, |reply| {
             TransactionRequest::BatchGet {
                 keys,
+                // A statement snapshot serves no locking statement.
+                locking: false,
                 read_ts: None,
                 reply,
             }
@@ -1431,10 +1452,18 @@ impl SessionTransaction {
     /// Dropping it ends the statement, not the transaction: that is the
     /// re-entry the shape exists for.
     pub fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
+        self.snapshot_for(false)
+    }
+
+    /// [`Self::snapshot`] told whether the statement it serves takes LOCKS --
+    /// Go's `e.lock`, which is what admits the pessimistic lock cache
+    /// (`pkg/executor/point_get.go:677`).
+    pub fn snapshot_for(&self, locking: bool) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
         Ok(Box::new(SessionSnapshot {
             requests: self.thread.sender()?,
             start_ts: self.thread.start_ts,
             read_ts: None,
+            locking,
         }))
     }
 
@@ -1446,6 +1475,15 @@ impl SessionTransaction {
     /// retry may read past `start_ts`, and an optimistic caller reaching here
     /// would silently break snapshot isolation with mixed-timestamp reads.
     pub fn snapshot_at(&self, read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
+        self.snapshot_at_for(read_ts, false)
+    }
+
+    /// [`Self::snapshot_at`] told whether the statement takes locks.
+    pub fn snapshot_at_for(
+        &self,
+        read_ts: u64,
+        locking: bool,
+    ) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
         if !self.pessimistic {
             return Err(StorageError::Backend(
                 "only a pessimistic transaction reads at a statement timestamp".to_owned(),
@@ -1455,6 +1493,7 @@ impl SessionTransaction {
             requests: self.thread.sender()?,
             start_ts: self.thread.start_ts,
             read_ts: Some(read_ts),
+            locking,
         }))
     }
 
@@ -1530,6 +1569,8 @@ struct SessionSnapshot {
     /// pessimistic retry's advanced `for_update_ts`. `None` reads at
     /// `start_ts`.
     read_ts: Option<u64>,
+    /// Whether this statement locks; see [`TransactionRequest::Get::locking`].
+    locking: bool,
 }
 
 impl fmt::Debug for SessionSnapshot {
@@ -1545,8 +1586,10 @@ impl ClusterSnapshot for SessionSnapshot {
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
         let bytes = key.as_bytes().to_vec();
         let read_ts = self.read_ts;
+        let locking = self.locking;
         ask(&self.requests, |reply| TransactionRequest::Get {
             key: bytes,
+            locking,
             read_ts,
             reply,
         })
@@ -1555,8 +1598,10 @@ impl ClusterSnapshot for SessionSnapshot {
     fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
         let keys = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
         let read_ts = self.read_ts;
+        let locking = self.locking;
         ask(&self.requests, |reply| TransactionRequest::BatchGet {
             keys,
+            locking,
             read_ts,
             reply,
         })

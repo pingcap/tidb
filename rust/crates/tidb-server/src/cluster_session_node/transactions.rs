@@ -208,6 +208,14 @@ pub trait OpenClusterTransaction: Send {
     /// transaction.
     fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String>;
 
+    /// [`Self::snapshot`] told whether the statement it serves takes LOCKS --
+    /// Go's `e.lock`, the gate on the pessimistic lock cache
+    /// (`pkg/executor/point_get.go:677`). Defaults to the non-locking
+    /// snapshot so a tier that holds no lock cache is unaffected.
+    fn snapshot_for(&self, _locking: bool) -> Result<Box<dyn ClusterSnapshot>, String> {
+        self.snapshot()
+    }
+
     /// Publishes the staged writes at the transaction's own start timestamp and
     /// empties the buffer.
     ///
@@ -230,6 +238,15 @@ pub trait OpenClusterTransaction: Send {
     /// serve one.
     fn snapshot_at(&self, _read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, String> {
         Err("only a pessimistic transaction reads at a statement timestamp".to_owned())
+    }
+
+    /// [`Self::snapshot_at`] told whether the statement takes locks.
+    fn snapshot_at_for(
+        &self,
+        read_ts: u64,
+        _locking: bool,
+    ) -> Result<Box<dyn ClusterSnapshot>, String> {
+        self.snapshot_at(read_ts)
     }
 
     /// Acquires pessimistic locks on one statement's written keys -- Go
@@ -867,6 +884,10 @@ impl OpenClusterTransaction for SessionTransaction {
         SessionTransaction::snapshot(self).map_err(|error| error.to_string())
     }
 
+    fn snapshot_for(&self, locking: bool) -> Result<Box<dyn ClusterSnapshot>, String> {
+        SessionTransaction::snapshot_for(self, locking).map_err(|error| error.to_string())
+    }
+
     fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), SqlQueryError> {
         SessionTransaction::commit(*self, buffer)
             .map(|_| ())
@@ -883,6 +904,14 @@ impl OpenClusterTransaction for SessionTransaction {
 
     fn snapshot_at(&self, read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, String> {
         SessionTransaction::snapshot_at(self, read_ts).map_err(|error| error.to_string())
+    }
+
+    fn snapshot_at_for(
+        &self,
+        read_ts: u64,
+        locking: bool,
+    ) -> Result<Box<dyn ClusterSnapshot>, String> {
+        SessionTransaction::snapshot_at_for(self, read_ts, locking).map_err(|e| e.to_string())
     }
 
     fn lock_staged_keys(&self, keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, String> {

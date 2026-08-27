@@ -998,12 +998,28 @@ impl ClusterServerSession {
                 // The transaction's timestamp is already spent; its
                 // per-statement read handle costs nothing, so there is
                 // nothing to defer.
-                Some(transaction) => match retry_read_ts {
-                    Some(for_update_ts) => transaction
-                        .snapshot_at(for_update_ts)
-                        .map_err(SqlQueryError::unknown)?,
-                    None => transaction.snapshot().map_err(SqlQueryError::unknown)?,
-                },
+                Some(transaction) => {
+                    // Go's `e.lock`: the pessimistic lock cache may answer a
+                    // read only when the statement itself takes locks
+                    // (`pkg/executor/point_get.go:677`). A statement takes
+                    // locks exactly when it produced prelock keys --
+                    // `pessimistic_statement_prelock_keys` yields them for a
+                    // point write and for `SELECT ... FOR UPDATE`, and
+                    // nothing else (`access_path.rs`, `select.lock.is_none()`
+                    // refuses the plain read). Without this gate the cached
+                    // row -- captured at the LOCK's `for_update_ts` -- is
+                    // served to a later plain `SELECT` that must read at
+                    // `start_ts`, which silently breaks repeatable read.
+                    let locking = !prelock_keys.is_empty();
+                    match retry_read_ts {
+                        Some(for_update_ts) => transaction
+                            .snapshot_at_for(for_update_ts, locking)
+                            .map_err(SqlQueryError::unknown)?,
+                        None => transaction
+                            .snapshot_for(locking)
+                            .map_err(SqlQueryError::unknown)?,
+                    }
+                }
                 None if matches!(
                     shape,
                     StatementReadShape::AutocommitPointGet
