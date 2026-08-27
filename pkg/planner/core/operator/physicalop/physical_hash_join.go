@@ -97,6 +97,12 @@ type PhysicalHashJoin struct {
 	// use the outer table to build a hash table when the outer table is smaller.
 	UseOuterToBuild bool
 
+	// KeepProbeOrder makes the join deliver its rows in probe-side order, letting an
+	// ORDER BY be served by an ordered probe child instead of a Sort above the join. The
+	// executor pays for it by probing with a single worker. Only ever set for hash join
+	// v2 and only when the build side is the inner side; see canKeepProbeOrder.
+	KeepProbeOrder bool
+
 	// on which store the join executes.
 	StoreTp        kv.StoreType
 	MppShuffleJoin bool
@@ -195,6 +201,7 @@ func (p *PhysicalHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, er
 	cloned.BasePhysicalJoin = *base
 	cloned.Concurrency = p.Concurrency
 	cloned.UseOuterToBuild = p.UseOuterToBuild
+	cloned.KeepProbeOrder = p.KeepProbeOrder
 	for _, c := range p.EqualConditions {
 		cloned.EqualConditions = append(cloned.EqualConditions, c.Clone().(*expression.ScalarFunction))
 	}
@@ -294,6 +301,9 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	}
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		fmt.Fprintf(buffer, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
+	}
+	if p.KeepProbeOrder {
+		buffer.WriteString(", keep probe order:true")
 	}
 
 	// for runtime filter

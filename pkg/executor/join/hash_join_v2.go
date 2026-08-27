@@ -281,6 +281,24 @@ type HashJoinCtxV2 struct {
 	maxSpillRound int
 	spillHelper   *hashJoinSpillHelper
 	spillAction   *hashJoinSpillAction
+
+	// KeepProbeOrder makes this join deliver its rows in probe-side order, which the
+	// planner relies on to drop a Sort above the join. Probing then runs on a single
+	// worker so joined rows leave the operator in probe-row order.
+	KeepProbeOrder bool
+}
+
+// probeConcurrency returns the number of probe workers to run. Joined rows only come out
+// in probe-row order if exactly one worker produces them, so an order-preserving join
+// serializes probing. The build phase is unaffected and still uses Concurrency workers.
+//
+// Anything that indexes into ProbeWorkers, or that splits work by worker id, has to agree
+// with this value rather than with Concurrency - only these workers get initialized.
+func (hCtx *HashJoinCtxV2) probeConcurrency() uint {
+	if hCtx.KeepProbeOrder {
+		return 1
+	}
+	return hCtx.Concurrency
 }
 
 func (hCtx *HashJoinCtxV2) resetHashTableContextForRestore() {
@@ -663,7 +681,7 @@ func (e *HashJoinV2Exec) Close() error {
 		for i := range e.ProbeSideTupleFetcher.probeResultChs {
 			channel.Clear(e.ProbeSideTupleFetcher.probeResultChs[i])
 		}
-		for i := range e.ProbeWorkers {
+		for i := range e.probeConcurrency() {
 			close(e.ProbeWorkers[i].joinChkResourceCh)
 			channel.Clear(e.ProbeWorkers[i].joinChkResourceCh)
 		}
@@ -671,8 +689,8 @@ func (e *HashJoinV2Exec) Close() error {
 		e.waiterWg.Wait()
 		e.hashTableContext.reset()
 	}
-	for _, w := range e.ProbeWorkers {
-		w.joinChkResourceCh = nil
+	for i := range e.probeConcurrency() {
+		e.ProbeWorkers[i].joinChkResourceCh = nil
 	}
 
 	if e.stats != nil {
@@ -702,6 +720,12 @@ func (e *HashJoinV2Exec) OpenSelf() error {
 	e.inRestore = false
 	needScanRowTableAfterProbeDone := e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
 	e.HashJoinCtxV2.needScanRowTableAfterProbeDone = needScanRowTableAfterProbeDone
+	// Rows emitted from the row table after probing has finished do not follow the probe
+	// order, and the scan is split across Concurrency workers while only probeConcurrency()
+	// of them run. canKeepProbeOrder rejects every build-side choice that needs this scan,
+	// so the two must never be set together.
+	intest.Assert(!e.KeepProbeOrder || !needScanRowTableAfterProbeDone,
+		"an order-preserving hash join must not need to scan the row table after probing")
 	if e.RightAsBuildSide {
 		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
 			e.BuildKeyTypes, e.ProbeKeyTypes, e.RUsedInOtherCondition, e.RUsed, needScanRowTableAfterProbeDone)
@@ -726,7 +750,9 @@ func (e *HashJoinV2Exec) OpenSelf() error {
 	e.spillHelper = newHashJoinSpillHelper(e, int(e.partitionNumber), e.ProbeSideTupleFetcher.ProbeSideExec.RetFieldTypes(), e.FileNamePrefixForTest)
 	e.maxSpillRound = 1
 
-	if vardef.EnableTmpStorageOnOOM.Load() && e.partitionNumber > 1 {
+	// An order-preserving join must not spill, see setCanSpillFlag, so it never installs
+	// the spill action in the first place.
+	if vardef.EnableTmpStorageOnOOM.Load() && e.partitionNumber > 1 && !e.KeepProbeOrder {
 		e.initMaxSpillRound()
 		e.spillAction = newHashJoinSpillAction(e.spillHelper)
 		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
@@ -739,7 +765,9 @@ func (e *HashJoinV2Exec) OpenSelf() error {
 
 	if e.RuntimeStats() != nil && e.stats == nil {
 		e.stats = &hashJoinRuntimeStatsV2{}
-		e.stats.concurrent = int(e.Concurrency)
+		// Build and probe no longer necessarily run at the same width.
+		e.stats.buildConcurrent = int(e.Concurrency)
+		e.stats.concurrent = int(e.probeConcurrency())
 	}
 
 	if e.stats != nil {
@@ -777,14 +805,15 @@ func (e *HashJoinV2Exec) canSkipProbeIfHashTableIsEmpty() bool {
 
 func (e *HashJoinV2Exec) initializeForProbe() {
 	e.ProbeSideTupleFetcher.HashJoinCtxV2 = e.HashJoinCtxV2
+	probeConcurrency := e.probeConcurrency()
 	// e.joinResultCh is for transmitting the join result chunks to the main thread.
-	e.joinResultCh = make(chan *hashjoinWorkerResult, e.Concurrency+1)
-	e.ProbeSideTupleFetcher.initializeForProbeBase(e.Concurrency, e.joinResultCh)
+	e.joinResultCh = make(chan *hashjoinWorkerResult, probeConcurrency+1)
+	e.ProbeSideTupleFetcher.initializeForProbeBase(probeConcurrency, e.joinResultCh)
 	e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty = e.canSkipProbeIfHashTableIsEmpty()
 	// set buildSuccess to false by default, it will be set to true if build finishes successfully
 	e.ProbeSideTupleFetcher.buildSuccess = false
 
-	for i := range e.Concurrency {
+	for i := range probeConcurrency {
 		e.ProbeWorkers[i].initializeForProbe(e.ProbeSideTupleFetcher.probeChkResourceCh, e.ProbeSideTupleFetcher.probeResultChs[i], e)
 		e.ProbeWorkers[i].JoinProbe.ResetProbeCollision()
 	}
@@ -824,7 +853,8 @@ func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 		e.ProbeSideTupleFetcher.buildSuccess = true
 	}
 
-	for i := range e.Concurrency {
+	probeConcurrency := e.probeConcurrency()
+	for i := range probeConcurrency {
 		workerID := i
 		e.workerWg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "HashJoinWorker").End()
@@ -867,15 +897,15 @@ func (e *HashJoinV2Exec) waitJoinWorkers(start time.Time) {
 	e.workerWg.Wait()
 	if e.stats != nil {
 		e.HashJoinCtxV2.stats.fetchAndProbe += int64(time.Since(start))
-		for _, prober := range e.ProbeWorkers {
-			e.stats.probeCollision += int64(prober.JoinProbe.GetProbeCollision())
+		for i := range e.probeConcurrency() {
+			e.stats.probeCollision += int64(e.ProbeWorkers[i].JoinProbe.GetProbeCollision())
 		}
 	}
 
 	if e.ProbeSideTupleFetcher.buildSuccess {
 		// only scan row table if build is successful
 		if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
-			for i := range e.Concurrency {
+			for i := range e.probeConcurrency() {
 				var workerID = i
 				e.workerWg.RunWithRecover(func() {
 					e.ProbeWorkers[workerID].scanRowTableAfterProbeDone()
@@ -1133,8 +1163,8 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 }
 
 func (e *HashJoinV2Exec) resetProbeStatus() {
-	for _, probe := range e.ProbeWorkers {
-		probe.JoinProbe.ResetProbe()
+	for i := range e.probeConcurrency() {
+		e.ProbeWorkers[i].JoinProbe.ResetProbe()
 	}
 }
 
