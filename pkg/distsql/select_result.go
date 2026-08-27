@@ -330,11 +330,14 @@ type selectResult struct {
 	label string
 	resp  kv.Response
 
-	rowLen                   int
-	fieldTypes               []*types.FieldType
-	intermediateOutputTypes  [][]*types.FieldType
-	ctx                      *dcontext.DistSQLContext
-	isAnalyze                bool
+	rowLen                  int
+	fieldTypes              []*types.FieldType
+	intermediateOutputTypes [][]*types.FieldType
+	ctx                     *dcontext.DistSQLContext
+	isAnalyze               bool // Selects the Analyze close path even when execution-info collection is disabled.
+	// collectExecDetailsForRaw enables statistics collection for raw responses,
+	// which bypass the SelectResponse decoding and statistics path in fetchResp.
+	// Only Analyze currently opts in, using the execution-info setting captured at request creation.
 	collectExecDetailsForRaw bool
 
 	selectResp       *tipb.SelectResponse
@@ -358,7 +361,9 @@ type selectResult struct {
 
 	stats *selectResultRuntimeStats
 
-	analyzeScanDetail clientutil.ScanDetail
+	// scanDetailForRaw accumulates raw-response scan details for this request.
+	// Analyze uses these request totals to estimate scan bytes before combining requests.
+	scanDetailForRaw clientutil.ScanDetail
 	// distSQLConcurrency and paging are only for collecting information, and they don't affect the process of execution.
 	distSQLConcurrency int
 	paging             bool
@@ -556,7 +561,7 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 	r.partialCount++
 	if r.collectExecDetailsForRaw && resultSubset != nil {
 		if withStats, ok := resultSubset.(CopRuntimeStats); ok {
-			r.recordAnalyzeCopRuntimeStats(withStats.GetCopRuntimeStats(), time.Since(start))
+			r.recordCopRuntimeStatsForRaw(withStats.GetCopRuntimeStats(), time.Since(start))
 		}
 	}
 	if resultSubset != nil && err == nil {
@@ -789,7 +794,10 @@ func (r *selectResult) Close() error {
 	return r.close()
 }
 
-func (r *selectResult) recordAnalyzeCopRuntimeStats(copStats *copr.CopRuntimeStats, copTime time.Duration) {
+// recordCopRuntimeStatsForRaw records coprocessor statistics without decoding a
+// SelectResponse or relying on per-executor summaries. Callers must honor
+// collectExecDetailsForRaw; plan-level statistics are attributed to rootPlanID.
+func (r *selectResult) recordCopRuntimeStatsForRaw(copStats *copr.CopRuntimeStats, copTime time.Duration) {
 	if copStats == nil || r.ctx == nil {
 		return
 	}
@@ -815,7 +823,7 @@ func (r *selectResult) recordAnalyzeCopRuntimeStats(copStats *copr.CopRuntimeSta
 		)
 	}
 	if copStats.ScanDetail != nil {
-		r.analyzeScanDetail.Merge(copStats.ScanDetail)
+		r.scanDetailForRaw.Merge(copStats.ScanDetail)
 	}
 }
 
@@ -832,7 +840,7 @@ func (r *selectResult) closeAnalyze() error {
 	}
 	if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
 		for _, copStats := range unconsumed.CollectUnconsumedCopRuntimeStats() {
-			r.recordAnalyzeCopRuntimeStats(copStats, 0)
+			r.recordCopRuntimeStatsForRaw(copStats, 0)
 		}
 	}
 	if r.ctx.RuntimeStatsColl != nil && r.rootPlanID > 0 {
@@ -840,9 +848,9 @@ func (r *selectResult) closeAnalyze() error {
 			r.ctx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
 		}
 		if scanBytes, ok := execdetails.EstimateScanBytes(
-			r.analyzeScanDetail.TotalKeys,
-			r.analyzeScanDetail.ProcessedKeys,
-			r.analyzeScanDetail.ProcessedKeysSize,
+			r.scanDetailForRaw.TotalKeys,
+			r.scanDetailForRaw.ProcessedKeys,
+			r.scanDetailForRaw.ProcessedKeysSize,
 		); ok {
 			r.ctx.RuntimeStatsColl.RecordAnalyzeScanBytes(r.rootPlanID, scanBytes)
 		}
