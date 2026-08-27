@@ -394,6 +394,9 @@ func (sf *ScalarFunction) Equal(ctx EvalContext, e Expression) bool {
 	if !sf.RetType.Equal(fun.RetType) {
 		return false
 	}
+	if !sf.ftsOptionsEqual(fun) {
+		return false
+	}
 	if len(sf.hashcode) > 0 && len(fun.hashcode) > 0 {
 		if intest.InTest {
 			assertCheckHashCode(sf)
@@ -716,6 +719,7 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 			sf.canonicalhashcode = append(sf.canonicalhashcode, byte(evalTp))
 		}
 	}
+	sf.appendFTSOptionsHashCode(&sf.canonicalhashcode)
 }
 
 // Hash64 implements HashEquals.<0th> interface.
@@ -733,6 +737,7 @@ func (sf *ScalarFunction) Hash64(h base.Hasher) {
 	for _, arg := range sf.GetArgs() {
 		arg.Hash64(h)
 	}
+	sf.hashFTSOptions64(h)
 }
 
 // Equals implements HashEquals.<1th> interface.
@@ -758,7 +763,7 @@ func (sf *ScalarFunction) Equals(other any) bool {
 			return false
 		}
 	}
-	return ok
+	return ok && sf.ftsOptionsEqual(sf2)
 }
 
 // ReHashCode is used after we change the argument in place.
@@ -771,6 +776,7 @@ func ReHashCode(sf *ScalarFunction) {
 	for _, arg := range sf.GetArgs() {
 		sf.hashcode = append(sf.hashcode, arg.HashCode()...)
 	}
+	sf.appendFTSOptionsHashCode(&sf.hashcode)
 	// Cast is a special case. The RetType should also be considered as an argument.
 	// Please see `newFunctionImpl()` for detail.
 	if sf.FuncName.L == ast.Cast {
@@ -975,6 +981,9 @@ func (sf *ScalarFunction) MemoryUsage() (sum int64) {
 	}
 	if sf.Function != nil {
 		sum += sf.Function.MemoryUsage()
+	}
+	if options := GetFTSMatchWordOptions(sf); options != nil {
+		sum += options.MemoryUsage()
 	}
 	return sum
 }

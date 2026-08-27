@@ -87,7 +87,7 @@ func TestTiFlashFTSMatchWordPushDown(t *testing.T) {
 		tk.MustContainErrMsg("explain select fts_match_word('hello', title) * 2 from fts_t where fts_match_word('hello', title)", "'FTS_MATCH_WORD()' in SELECT must not be wrapped in expressions")
 		tk.MustContainErrMsg("explain select fts_match_word('world', title) from fts_t where fts_match_word('hello', title)", "'FTS_MATCH_WORD()' in SELECT must match the one in WHERE")
 		tk.MustContainErrMsg("explain select * from fts_t where fts_match_word('hello', title) and fts_match_word('world', title)", "Currently 'FTS_MATCH_WORD()' must be used alone")
-		tk.MustContainErrMsg("explain select * from fts_t where fts_match_word('hello', body)", "Full text search can only be used with a matching fulltext index")
+		tk.MustContainErrMsg("explain select * from fts_t where fts_match_word('hello', body)", "full-text search index ft_title does not cover column test.fts_t.body")
 		tk.MustContainErrMsg("explain select * from fts_t order by fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' in ORDER BY without a LIMIT clause is not supported")
 	})
 }

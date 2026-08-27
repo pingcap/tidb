@@ -31,6 +31,7 @@ import (
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -187,7 +188,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	// step 6: initialize the tableInfo2UnionScan, which indicates which tables are dirty.
 	for _, tbl := range stmt.tbls {
 		tblInfo := tbl.Meta()
-		if tableHasDirtyContent(sctx.GetPlanCtx(), tblInfo) {
+		if plannerutil.TableHasDirtyContent(sctx.GetPlanCtx(), tblInfo) {
 			if vars.StmtCtx.TblInfo2UnionScan == nil {
 				vars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 			}

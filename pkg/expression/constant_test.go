@@ -195,6 +195,36 @@ func TestConstantPropagation(t *testing.T) {
 	}
 }
 
+func TestTryToReplaceCondPreservesFTSMatchWordOptions(t *testing.T) {
+	setupStarterFTSTest(t)
+	ctx := mock.NewContext()
+	fieldType := types.NewFieldType(mysql.TypeVarchar)
+	fieldType.SetCharset("binary")
+	fieldType.SetCollate("binary")
+	source := newColumnWithType(1, fieldType)
+	target := newColumnWithType(2, fieldType.Clone())
+	match := NewFunctionInternal(
+		ctx,
+		ast.FTSMatchWord,
+		types.NewFieldType(mysql.TypeDouble),
+		NewStrConst("ignored"),
+		source,
+	).(*ScalarFunction)
+	options := &FTSMatchWordOptions{
+		Fields: []FTSMatchWordFieldOption{{ParserName: "NGRAM"}},
+		Query:  int64(42),
+	}
+	SetFTSMatchWordOptions(match, options)
+
+	replaced, nonDeterministic, result := tryToReplaceCond(ctx, source, target, match, false)
+	require.True(t, replaced)
+	require.False(t, nonDeterministic)
+	rebuilt, ok := result.(*ScalarFunction)
+	require.True(t, ok)
+	require.Same(t, target, rebuilt.GetArgs()[1])
+	require.Equal(t, options, GetFTSMatchWordOptions(rebuilt))
+}
+
 func TestConstantFolding(t *testing.T) {
 	tests := []struct {
 		condition       func(ctx BuildContext) Expression

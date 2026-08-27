@@ -61,6 +61,7 @@ var (
 	_ Node = &ColumnOption{}
 	_ Node = &ColumnPosition{}
 	_ Node = &Constraint{}
+	_ Node = &FullTextIndexPartSpecification{}
 	_ Node = &IndexPartSpecification{}
 	_ Node = &ReferenceDef{}
 )
@@ -739,6 +740,161 @@ const (
 	IndexVisibilityInvisible
 )
 
+// FullTextNgramParserParams contains only parameters accepted by NGRAM.
+// Pointer fields distinguish omitted parameters from explicitly supplied zero values.
+type FullTextNgramParserParams struct {
+	MinGram     *uint64 `json:"min_gram,omitempty"`
+	MaxGram     *uint64 `json:"max_gram,omitempty"`
+	Granularity *string `json:"granularity,omitempty"`
+	LowerCase   *bool   `json:"lower_case,omitempty"`
+}
+
+// FullTextPathHierarchyParserParams contains only parameters accepted by PATH_HIERARCHY.
+type FullTextPathHierarchyParserParams struct {
+	Delimiter *string `json:"delimiter,omitempty"`
+}
+
+// FullTextParserSpec is a typed FULLTEXT parser and its parser-specific options.
+type FullTextParserSpec struct {
+	// ParserName preserves an unsupported identifier until semantic validation.
+	ParserName    CIStr                              `json:"parser_name,omitempty"`
+	ParserType    FullTextParserType                 `json:"parser_type"`
+	Ngram         *FullTextNgramParserParams         `json:"ngram,omitempty"`
+	PathHierarchy *FullTextPathHierarchyParserParams `json:"path_hierarchy,omitempty"`
+}
+
+// Restore restores a FULLTEXT parser specification.
+func (n *FullTextParserSpec) Restore(ctx *format.RestoreCtx) error {
+	if n.ParserType == FullTextParserTypeInvalid && n.ParserName.O != "" {
+		ctx.WriteName(n.ParserName.O)
+	} else {
+		ctx.WriteKeyWord(n.ParserType.SQLName())
+	}
+	switch n.ParserType {
+	case FullTextParserTypeNgramV1:
+		return n.restoreNgramParams(ctx)
+	case FullTextParserTypePathHierarchyV1:
+		return n.restorePathHierarchyParams(ctx)
+	default:
+		return nil
+	}
+}
+
+func (n *FullTextParserSpec) restoreNgramParams(ctx *format.RestoreCtx) error {
+	if n.Ngram == nil || (n.Ngram.MinGram == nil && n.Ngram.MaxGram == nil &&
+		n.Ngram.Granularity == nil && n.Ngram.LowerCase == nil) {
+		return nil
+	}
+	ctx.WritePlain("(")
+	written := false
+	writeSeparator := func() {
+		if written {
+			ctx.WritePlain(", ")
+		}
+		written = true
+	}
+	if n.Ngram.MinGram != nil {
+		writeSeparator()
+		ctx.WriteKeyWord("MIN_GRAM")
+		ctx.WritePlainf(" = %d", *n.Ngram.MinGram)
+	}
+	if n.Ngram.MaxGram != nil {
+		writeSeparator()
+		ctx.WriteKeyWord("MAX_GRAM")
+		ctx.WritePlainf(" = %d", *n.Ngram.MaxGram)
+	}
+	if n.Ngram.Granularity != nil {
+		writeSeparator()
+		ctx.WriteKeyWord("GRANULARITY")
+		ctx.WritePlain(" = ")
+		ctx.WriteString(*n.Ngram.Granularity)
+	}
+	if n.Ngram.LowerCase != nil {
+		writeSeparator()
+		ctx.WriteKeyWord("LOWER_CASE")
+		ctx.WritePlain(" = ")
+		if *n.Ngram.LowerCase {
+			ctx.WriteKeyWord("TRUE")
+		} else {
+			ctx.WriteKeyWord("FALSE")
+		}
+	}
+	ctx.WritePlain(")")
+	return nil
+}
+
+func (n *FullTextParserSpec) restorePathHierarchyParams(ctx *format.RestoreCtx) error {
+	if n.PathHierarchy == nil || n.PathHierarchy.Delimiter == nil {
+		return nil
+	}
+	ctx.WritePlain("(")
+	ctx.WriteKeyWord("DELIMITER")
+	ctx.WritePlain(" = ")
+	ctx.WriteString(*n.PathHierarchy.Delimiter)
+	ctx.WritePlain(")")
+	return nil
+}
+
+// FullTextIndexPartSpecification is one column and its parsers in a FULLTEXT index.
+// Unlike IndexPartSpecification, it intentionally does not support prefix lengths,
+// expressions, or ASC/DESC ordering.
+type FullTextIndexPartSpecification struct {
+	node
+
+	Column      *ColumnName
+	ParserSpecs []*FullTextParserSpec
+}
+
+// Restore implements Node interface.
+func (n *FullTextIndexPartSpecification) Restore(ctx *format.RestoreCtx) error {
+	if err := n.Column.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while splicing FullTextIndexPartSpecification")
+	}
+	if len(n.ParserSpecs) == 0 {
+		return nil
+	}
+	ctx.WriteKeyWord(" WITH ")
+	ctx.WritePlain("(")
+	for i, parserSpec := range n.ParserSpecs {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := parserSpec.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing FULLTEXT parser: [%v]", i)
+		}
+	}
+	ctx.WritePlain(")")
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *FullTextIndexPartSpecification) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*FullTextIndexPartSpecification)
+	node, ok := n.Column.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Column = node.(*ColumnName)
+	return v.Leave(n)
+}
+
+// FullTextIndexPartsToIndexParts projects FULLTEXT parts to the column-only
+// representation used by shared index-building code.
+func FullTextIndexPartsToIndexParts(parts []*FullTextIndexPartSpecification) []*IndexPartSpecification {
+	result := make([]*IndexPartSpecification, 0, len(parts))
+	for _, part := range parts {
+		result = append(result, &IndexPartSpecification{
+			Column: part.Column,
+			Length: types.UnspecifiedLength,
+		})
+	}
+	return result
+}
+
 // IndexOption is the index options.
 //
 //	  KEY_BLOCK_SIZE [=] value
@@ -753,9 +909,11 @@ const (
 type IndexOption struct {
 	node
 
-	KeyBlockSize uint64
-	Tp           IndexType
-	Comment      string
+	KeyBlockSize   uint64
+	Tp             IndexType
+	Comment        string
+	FullTextParser *FullTextParserSpec
+	// ParserName is the legacy DDL job wire field.
 	ParserName   CIStr
 	Visibility   IndexVisibility
 	PrimaryKeyTp PrimaryKeyType
@@ -770,13 +928,48 @@ type IndexOption struct {
 	Condition                  ExprNode `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
 }
 
+// FillLegacyFullTextParserName fills the legacy IndexOption representation
+// so an older TiDB binary can execute a legacy shared-parser FULLTEXT DDL job.
+// The old implementation only supports STANDARD and MULTILINGUAL.
+func (n *IndexOption) FillLegacyFullTextParserName() {
+	if n == nil || n.FullTextParser == nil {
+		return
+	}
+
+	switch n.FullTextParser.ParserType {
+	case FullTextParserTypeStandardV1, FullTextParserTypeMultilingualV1:
+		n.ParserName = NewCIStr(n.FullTextParser.ParserType.SQLName())
+	default:
+		n.ParserName = CIStr{}
+	}
+}
+
+// NormalizeLegacyFullTextParserName reconstructs the typed parser from a DDL
+// job submitted by an older TiDB binary. It is a no-op for newly encoded jobs.
+func (n *IndexOption) NormalizeLegacyFullTextParserName() {
+	if n == nil || n.FullTextParser != nil || (n.ParserName.O == "" && n.ParserName.L == "") {
+		return
+	}
+
+	parserName := n.ParserName.L
+	if parserName == "" {
+		parserName = n.ParserName.O
+	}
+	parserType := GetFullTextParserTypeBySQLName(parserName)
+	parserSpec := &FullTextParserSpec{ParserType: parserType}
+	if parserType == FullTextParserTypeInvalid {
+		parserSpec.ParserName = n.ParserName
+	}
+	n.FullTextParser = parserSpec
+}
+
 // IsEmpty is true if only default options are given
 // and it should not be added to the output
 func (n *IndexOption) IsEmpty() bool {
 	if n.PrimaryKeyTp != PrimaryKeyTypeDefault ||
 		n.KeyBlockSize > 0 ||
 		n.Tp != IndexTypeInvalid ||
-		len(n.ParserName.O) > 0 ||
+		n.FullTextParser != nil ||
 		n.Comment != "" ||
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
@@ -823,12 +1016,14 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		hasPrevOption = true
 	}
 
-	if len(n.ParserName.O) > 0 {
+	if n.FullTextParser != nil {
 		if hasPrevOption {
 			ctx.WritePlain(" ")
 		}
 		ctx.WriteKeyWord("WITH PARSER ")
-		ctx.WriteName(n.ParserName.O)
+		if err := n.FullTextParser.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing FULLTEXT parser option")
+		}
 		hasPrevOption = true
 	}
 
@@ -978,7 +1173,8 @@ type Constraint struct {
 	Tp   ConstraintType
 	Name string
 
-	Keys []*IndexPartSpecification // Used for PRIMARY KEY, UNIQUE, ......
+	Keys                            []*IndexPartSpecification         // Used for PRIMARY KEY, UNIQUE, ......
+	FullTextIndexPartSpecifications []*FullTextIndexPartSpecification // Used only for FULLTEXT indexes.
 
 	Refer *ReferenceDef // Used for foreign key.
 
@@ -1065,12 +1261,23 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 	}
 
 	ctx.WritePlain("(")
-	for i, keys := range n.Keys {
-		if i > 0 {
-			ctx.WritePlain(", ")
+	if len(n.FullTextIndexPartSpecifications) > 0 {
+		for i, part := range n.FullTextIndexPartSpecifications {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := part.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while splicing FULLTEXT Constraint Keys: [%v]", i)
+			}
 		}
-		if err := keys.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while splicing Constraint Keys: [%v]", i)
+	} else {
+		for i, keys := range n.Keys {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := keys.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while splicing Constraint Keys: [%v]", i)
+			}
 		}
 	}
 	ctx.WritePlain(")")
@@ -1105,6 +1312,13 @@ func (n *Constraint) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Keys[i] = node.(*IndexPartSpecification)
+	}
+	for i, val := range n.FullTextIndexPartSpecifications {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.FullTextIndexPartSpecifications[i] = node.(*FullTextIndexPartSpecification)
 	}
 	if n.Refer != nil {
 		node, ok := n.Refer.Accept(v)
@@ -2688,12 +2902,13 @@ type CreateIndexStmt struct {
 	// see https://mariadb.com/kb/en/library/create-index/
 	IfNotExists bool
 
-	IndexName               string
-	Table                   *TableName
-	IndexPartSpecifications []*IndexPartSpecification
-	IndexOption             *IndexOption
-	KeyType                 IndexKeyType
-	LockAlg                 *IndexLockAndAlgorithm
+	IndexName                       string
+	Table                           *TableName
+	IndexPartSpecifications         []*IndexPartSpecification
+	FullTextIndexPartSpecifications []*FullTextIndexPartSpecification
+	IndexOption                     *IndexOption
+	KeyType                         IndexKeyType
+	LockAlg                         *IndexLockAndAlgorithm
 }
 
 // Restore implements Node interface.
@@ -2722,12 +2937,23 @@ func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 
 	ctx.WritePlain(" (")
-	for i, indexColName := range n.IndexPartSpecifications {
-		if i != 0 {
-			ctx.WritePlain(", ")
+	if len(n.FullTextIndexPartSpecifications) > 0 {
+		for i, part := range n.FullTextIndexPartSpecifications {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := part.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore CreateIndexStmt.FullTextIndexPartSpecifications: [%v]", i)
+			}
 		}
-		if err := indexColName.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore CreateIndexStmt.IndexPartSpecifications: [%v]", i)
+	} else {
+		for i, indexColName := range n.IndexPartSpecifications {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := indexColName.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore CreateIndexStmt.IndexPartSpecifications: [%v]", i)
+			}
 		}
 	}
 	ctx.WritePlain(")")
@@ -2767,6 +2993,13 @@ func (n *CreateIndexStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.IndexPartSpecifications[i] = node.(*IndexPartSpecification)
+	}
+	for i, val := range n.FullTextIndexPartSpecifications {
+		node, ok = val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.FullTextIndexPartSpecifications[i] = node.(*FullTextIndexPartSpecification)
 	}
 	if n.IndexOption != nil {
 		node, ok := n.IndexOption.Accept(v)

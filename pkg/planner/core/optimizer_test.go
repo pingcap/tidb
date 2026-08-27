@@ -19,6 +19,7 @@ import (
 	"math"
 	"math/bits"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -47,6 +48,22 @@ import (
 // LogicalOptimize exports the `logicalOptimize` function for test packages and
 // doesn't affect the normal package and access control of Golang (tricky ^_^)
 var LogicalOptimize = logicalOptimize
+
+func TestFTSOptRuleListFlagAlignment(t *testing.T) {
+	require.Len(t, optRuleFlags, len(optRuleList))
+	for _, testCase := range []struct {
+		flag uint64
+		rule base.LogicalOptRule
+	}{
+		{rule.FlagFullTextIndexResolveTopN, &FullTextIndexResolverTopN{}},
+		{rule.FlagFullTextIndexResolveProjection, &FullTextIndexResolverProjection{}},
+		{rule.FlagFullTextIndexResolveReject, &FullTextIndexResolverRejectRemaining{}},
+	} {
+		ruleIndex := slices.Index(optRuleFlags, testCase.flag)
+		require.GreaterOrEqual(t, ruleIndex, 0)
+		require.IsType(t, testCase.rule, optRuleList[ruleIndex])
+	}
+}
 
 func testDecimalConvert(t *testing.T, lDec, lLen, rDec, rLen int, lConvert, rConvert bool, cDec, cLen int) {
 	lType := types.NewFieldType(mysql.TypeNewDecimal)

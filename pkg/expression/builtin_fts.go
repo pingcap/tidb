@@ -41,6 +41,7 @@ type ftsMatchWordFunctionClass struct {
 
 type builtinFtsMatchWordSig struct {
 	baseBuiltinFunc
+	options *FTSMatchWordOptions
 }
 
 type ftsMysqlMatchAgainstFunctionClass struct {
@@ -53,7 +54,7 @@ type builtinFtsMysqlMatchAgainstSig struct {
 }
 
 func (b *builtinFtsMatchWordSig) Clone() builtinFunc {
-	newSig := &builtinFtsMatchWordSig{}
+	newSig := &builtinFtsMatchWordSig{options: b.options.clone()}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -104,8 +105,10 @@ func (c *ftsMatchWordFunctionClass) getFunction(ctx BuildContext, args []Express
 		}
 	}
 
-	argTps := make([]types.EvalType, 0, len(args))
-	argTps = append(argTps, types.ETString, types.ETString)
+	argTps := make([]types.EvalType, len(args))
+	for i := range argTps {
+		argTps[i] = types.ETString
+	}
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, argTps...)
 	if err != nil {
@@ -118,7 +121,7 @@ func (c *ftsMatchWordFunctionClass) getFunction(ctx BuildContext, args []Express
 	}
 	sessionVars.StmtCtx.FTSFunctionIsUsed = true
 
-	sig := &builtinFtsMatchWordSig{bf}
+	sig := &builtinFtsMatchWordSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_FTSMatchWord)
 	return sig, nil
 }

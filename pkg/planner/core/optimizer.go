@@ -97,7 +97,6 @@ var optRuleList = []base.LogicalOptRule{
 	&ProjectionEliminator{},
 	&rule.MaxMinEliminator{},
 	&rule.ConstantPropagationSolver{},
-	&FullTextIndexResolverWhere{},
 	&PPDSolver{},
 	&rule.JoinKeyTypeCastRewriter{},
 	&OuterJoinEliminator{},
@@ -134,7 +133,6 @@ var optRuleFlags = []uint64{
 	rule.FlagEliminateProjection,
 	rule.FlagMaxMinEliminate,
 	rule.FlagConstantPropagation,
-	rule.FlagFullTextIndexResolveWhere,
 	rule.FlagPredicatePushDown,
 	rule.FlagJoinKeyTypeCast,
 	rule.FlagEliminateOuterJoin,
@@ -399,7 +397,6 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 		flag &= ^rule.FlagJoinReOrder
 	}
 	if logic.SCtx().GetSessionVars().StmtCtx.FTSFunctionIsUsed && deploymode.IsStarter() {
-		flag |= rule.FlagFullTextIndexResolveWhere
 		flag |= rule.FlagFullTextIndexResolveTopN
 		flag |= rule.FlagFullTextIndexResolveProjection
 		flag |= rule.FlagFullTextIndexResolveReject

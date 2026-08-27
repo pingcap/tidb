@@ -1652,6 +1652,7 @@ func BuildTableInfo(
 			unique,
 			columnarIndexType,
 			constr.Keys,
+			constr.FullTextIndexPartSpecifications,
 			constr.Option,
 			model.StatePublic,
 		)
@@ -1815,7 +1816,7 @@ func addIndexForForeignKey(ctx *metabuild.Context, tbInfo *model.TableInfo) erro
 				Length: types.UnspecifiedLength,
 			})
 		}
-		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, model.ColumnarIndexTypeNA, keys, nil, model.StatePublic)
+		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, model.ColumnarIndexTypeNA, keys, nil, nil, model.StatePublic)
 		if err != nil {
 			return errors.Trace(err)
 		}

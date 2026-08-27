@@ -5428,7 +5428,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	var result base.LogicalPlan = ds
-	dirty := tableHasDirtyContent(b.ctx, tableInfo)
+	dirty := util.TableHasDirtyContent(b.ctx, tableInfo)
 	if dirty || tableInfo.TempTableType == model.TempTableLocal || tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		us := logicalop.LogicalUnionScan{HandleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)

@@ -198,7 +198,7 @@ func GetPhysicalScan4LogicalTableScan(s *logicalop.LogicalTableScan, schema *exp
 	ts.SetStats(stats)
 	ts.SetSchema(schema.Clone())
 	if ds.FtsPushDown != nil {
-		ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildFullTextIndexExtra(ds.FtsPushDown.IndexInfo, ds.FtsPushDown.QueryInfo))
+		ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildFullTextIndexExtra(ds.PossibleAccessPaths[0].Index, ds.FtsPushDown))
 	}
 	return ts
 }
@@ -248,7 +248,7 @@ func GetOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 		ts.KeepOrder = true
 	}
 	if ds.FtsPushDown != nil {
-		ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildFullTextIndexExtra(ds.FtsPushDown.IndexInfo, ds.FtsPushDown.QueryInfo))
+		ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildFullTextIndexExtra(path.Index, ds.FtsPushDown))
 	}
 	return ts, rowCount
 }
@@ -420,7 +420,14 @@ func (p *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error) 
 		p.Ranges = res.Ranges
 	} else {
 		var err error
-		pkTP := p.Table.GetPkColInfo().FieldType
+		handleColInfo := model.NewExtraHandleColInfo()
+		if p.Table.PKIsHandle {
+			handleColInfo = p.Table.GetPkColInfo()
+			if handleColInfo == nil {
+				return nil, errors.New("primary-key handle column is missing")
+			}
+		}
+		pkTP := handleColInfo.FieldType
 		// All of access conditions must be used to build ranges, so we don't limit range memory usage.
 		p.Ranges, _, _, err = ranger.BuildTableRange(access, ctx.GetRangerCtx(), &pkTP, 0)
 		if err != nil {
@@ -630,6 +637,23 @@ func (p *PhysicalTableScan) explainFullTextIndex(idx *ColumnarIndexExtra, normal
 		return ""
 	}
 
+	queryText := ftsQueryInfo.QueryText
+	columnNames := ftsQueryInfo.ColumnNames
+	compoundMatchExpr := false
+	if len(ftsQueryInfo.MatchExpr) > 0 {
+		if clause, err := expression.DecodeFTSQueryClause(ftsQueryInfo.MatchExpr[0]); err == nil && clause.Query != nil && len(clause.Fields) > 0 {
+			queryText = fmt.Sprint(clause.Query)
+			columnNames = make([]string, 0, len(clause.Fields))
+			for _, field := range clause.Fields {
+				columnNames = append(columnNames, ftsExplainColumnName(p, field.ColID))
+			}
+		} else {
+			queryText = formatFTSMatchExprForExplain(p, ftsQueryInfo.MatchExpr[0], normalized, redactMode)
+			columnNames = nil
+			compoundMatchExpr = true
+		}
+	}
+
 	ftsIndexBuffer := &strings.Builder{}
 	ftsIndexBuffer.Grow(128)
 	if ftsQueryInfo.TopK != nil && *ftsQueryInfo.TopK < ^uint32(0) {
@@ -641,14 +665,18 @@ func (p *PhysicalTableScan) explainFullTextIndex(idx *ColumnarIndexExtra, normal
 		}
 		ftsIndexBuffer.WriteString(" ")
 	}
-	if normalized {
+	if normalized && !compoundMatchExpr {
 		ftsIndexBuffer.WriteString("?")
 	} else {
-		redact.WriteRedact(ftsIndexBuffer, ftsQueryInfo.QueryText, redactMode)
+		if compoundMatchExpr {
+			ftsIndexBuffer.WriteString(queryText)
+		} else {
+			redact.WriteRedact(ftsIndexBuffer, queryText, redactMode)
+		}
 	}
-	if len(ftsQueryInfo.ColumnNames) > 0 {
+	if len(columnNames) > 0 {
 		ftsIndexBuffer.WriteString(" IN ")
-		ftsIndexBuffer.WriteString(ftsQueryInfo.ColumnNames[0])
+		ftsIndexBuffer.WriteString(strings.Join(columnNames, ", "))
 	}
 	cols := p.Schema().Columns
 	if len(cols) > 0 && ftsQueryInfo.QueryType == tipb.FTSQueryType_FTSQueryTypeWithScore &&
@@ -657,6 +685,87 @@ func (p *PhysicalTableScan) explainFullTextIndex(idx *ColumnarIndexExtra, normal
 		ftsIndexBuffer.WriteString(cols[len(cols)-1].ExplainInfo(ectx))
 	}
 	return ftsIndexBuffer.String()
+}
+
+func formatFTSMatchExprForExplain(p *PhysicalTableScan, expr tipb.Expr, normalized bool, redactMode string) string {
+	var result string
+	switch expr.Sig {
+	case tipb.ScalarFuncSig_FTSMatchWord, tipb.ScalarFuncSig_FTSMatchPrefix:
+		clause, err := expression.DecodeFTSQueryClause(expr)
+		if err != nil {
+			return "<invalid>"
+		}
+		query := fmt.Sprint(clause.Query)
+		if normalized {
+			query = "?"
+		} else {
+			var buffer strings.Builder
+			redact.WriteRedact(&buffer, query, redactMode)
+			query = buffer.String()
+		}
+		fields := make([]string, 0, len(clause.Fields))
+		for _, field := range clause.Fields {
+			fields = append(fields, ftsExplainColumnName(p, field.ColID))
+		}
+		result = query
+		if len(fields) > 0 {
+			result += " IN " + strings.Join(fields, ", ")
+		}
+	case tipb.ScalarFuncSig_LogicalAnd, tipb.ScalarFuncSig_LogicalOr:
+		operator := " AND "
+		if expr.Sig == tipb.ScalarFuncSig_LogicalOr {
+			operator = " OR "
+		}
+		children := make([]string, 0, len(expr.Children))
+		for _, child := range expr.Children {
+			children = append(children, formatFTSMatchExprForExplain(p, *child, normalized, redactMode))
+		}
+		result = "(" + strings.Join(children, operator) + ")"
+	case tipb.ScalarFuncSig_UnaryNotInt, tipb.ScalarFuncSig_UnaryNotReal:
+		if len(expr.Children) != 1 {
+			return "NOT(<invalid>)"
+		}
+		result = "NOT(" + formatFTSMatchExprForExplain(p, *expr.Children[0], normalized, redactMode) + ")"
+	default:
+		return "<unsupported>"
+	}
+	if metadata, err := expression.DecodeFTSQueryClause(expr); err == nil &&
+		metadata.ScoreMode == expression.FtsScoreModeFilter {
+		result = "filter(" + result + ")"
+	}
+	return result
+}
+
+func ftsExplainColumnName(p *PhysicalTableScan, columnID int64) string {
+	columnName := fmt.Sprintf("Column#%d", columnID)
+	for i, columnInfo := range p.Columns {
+		if columnInfo.ID != columnID {
+			continue
+		}
+		if i < len(p.Schema().Columns) && p.Schema().Columns[i].OrigName != "" {
+			return p.Schema().Columns[i].OrigName
+		}
+		return columnInfo.Name.O
+	}
+	if p.Table == nil {
+		return columnName
+	}
+	for _, columnInfo := range p.Table.Columns {
+		if columnInfo.ID != columnID {
+			continue
+		}
+		tableName := p.Table.Name.O
+		nameParts := make([]string, 0, 3)
+		if p.DBName.O != "" {
+			nameParts = append(nameParts, p.DBName.O)
+		}
+		if tableName != "" {
+			nameParts = append(nameParts, tableName)
+		}
+		nameParts = append(nameParts, columnInfo.Name.O)
+		return strings.Join(nameParts, ".")
+	}
+	return columnName
 }
 
 func (p *PhysicalTableScan) haveCorCol() bool {

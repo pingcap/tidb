@@ -19,12 +19,14 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/partidx"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
@@ -46,13 +48,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
-
-// FTSPushDown is the logical full-text search metadata extracted from
-// FTS_MATCH_WORD() before physical access path selection.
-type FTSPushDown struct {
-	IndexInfo *model.IndexInfo
-	QueryInfo *tipb.FTSQueryInfo
-}
 
 // DataSource represents a tableScan without condition push down.
 type DataSource struct {
@@ -148,9 +143,13 @@ type DataSource struct {
 	// index pruning early in the planning phase - which is an approximate heuristic.
 	InterestingColumns []*expression.Column
 
-	// FtsPushDown stores extracted FTS query metadata, when FTS_MATCH_WORD() can
-	// be planned as a TiFlash full-text search scan.
-	FtsPushDown *FTSPushDown
+	// FtsPushDown is the extracted FTS query info, when applicable fts expression is provided
+	// in WHERE and TopN.
+	FtsPushDown *tipb.FTSQueryInfo
+
+	// ftsResolveErr is recorded at the DataSource-local predicate-pushdown
+	// boundary and reported by the final FTS rejection rule.
+	ftsResolveErr error
 }
 
 // Init initializes DataSource.
@@ -195,7 +194,16 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]e
 		return nil, dual, nil
 	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
+	if ds.SCtx().GetSessionVars().StmtCtx.FTSFunctionIsUsed {
+		ds.ftsResolveErr = ds.resolveFTSWherePredicate()
+	}
 	return predicates, ds, nil
+}
+
+// FTSResolveError returns an error captured while resolving the local FTS
+// predicate after ordinary predicate pushdown.
+func (ds *DataSource) FTSResolveError() error {
+	return ds.ftsResolveErr
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
@@ -951,4 +959,23 @@ func UsedHypoTiFlashReplicas(ctx *variable.SessionVars, dbName ast.CIStr, tblInf
 		}
 	}
 	return false
+}
+
+// hashFTSQuery includes the selected FTS query in the generated DataSource hash.
+func (ds *DataSource) hashFTSQuery(h base2.Hasher) {
+	if ds.FtsPushDown == nil {
+		h.HashByte(base2.NilFlag)
+		return
+	}
+	h.HashByte(base2.NotNilFlag)
+	encoded, err := proto.Marshal(ds.FtsPushDown)
+	if err != nil {
+		h.HashString(ds.FtsPushDown.String())
+	} else {
+		h.HashBytes(encoded)
+	}
+}
+
+func (ds *DataSource) equalFTSQuery(other *DataSource) bool {
+	return proto.Equal(ds.FtsPushDown, other.FtsPushDown)
 }

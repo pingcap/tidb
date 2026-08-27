@@ -982,7 +982,7 @@ var funcs = map[string]functionClass{
 	ast.EmbedText:               &embedTextFunctionClass{baseFunctionClass{ast.EmbedText, 2, 3}},
 
 	// fts functions
-	ast.FTSMatchWord:         &ftsMatchWordFunctionClass{baseFunctionClass: baseFunctionClass{ast.FTSMatchWord, 2, 2}},
+	ast.FTSMatchWord:         &ftsMatchWordFunctionClass{baseFunctionClass: baseFunctionClass{ast.FTSMatchWord, 2, -1}},
 	ast.FTSMysqlMatchAgainst: &ftsMysqlMatchAgainstFunctionClass{baseFunctionClass{ast.FTSMysqlMatchAgainst, 2, -1}},
 
 	// TiDB internal function.

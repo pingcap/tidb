@@ -1,10 +1,11 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "logicalop",
     srcs = [
         "base_logical_plan.go",
         "expression_util.go",
+        "fts_path.go",
         "hash64_equals_generated.go",
         "logical_aggregation.go",
         "logical_apply.go",
@@ -42,6 +43,7 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/expression/aggregation",
+        "//pkg/expression/fulltext",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta/model",
@@ -81,6 +83,8 @@ go_library(
         "//pkg/util/ranger",
         "//pkg/util/set",
         "//pkg/util/size",
+        "//pkg/util/stringutil",
+        "@com_github_gogo_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
@@ -95,4 +99,33 @@ filegroup(
         "shallow_ref_generated.go",
     ],
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "logicalop_test",
+    timeout = "short",
+    srcs = ["fts_path_test.go"],
+    embed = [":logicalop"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//pkg/config/deploymode",
+        "//pkg/config/kerneltype",
+        "//pkg/expression",
+        "//pkg/expression/exprstatic",
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/parser/charset",
+        "//pkg/parser/mysql",
+        "//pkg/planner/util",
+        "//pkg/store/mockstore",
+        "//pkg/types",
+        "//pkg/types/parser_driver",
+        "//pkg/util/chunk",
+        "//pkg/util/hint",
+        "//pkg/util/mock",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stretchr_testify//require",
+    ],
 )

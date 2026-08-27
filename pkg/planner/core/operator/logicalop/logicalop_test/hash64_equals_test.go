@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -671,6 +672,42 @@ func TestLogicalExpandHash64Equals(t *testing.T) {
 	expand2.Hash64(hasher2)
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	require.True(t, expand1.Equals(expand2))
+}
+
+func TestDataSourceHash64EqualsIncludesFTSQuery(t *testing.T) {
+	newDataSource := func(query string) *logicalop.DataSource {
+		alias := ast.NewCIStr("t")
+		return &logicalop.DataSource{
+			TableInfo:   &model.TableInfo{ID: 1},
+			TableAsName: &alias,
+			Columns:     []*model.ColumnInfo{{ID: 2}},
+			FtsPushDown: &tipb.FTSQueryInfo{
+				QueryType: tipb.FTSQueryType_FTSQueryTypeWithScore,
+				IndexId:   3,
+				QueryFunc: tipb.ScalarFuncSig_FTSMatchWord,
+				MatchExpr: []tipb.Expr{{
+					Tp:  tipb.ExprType_ScalarFunc,
+					Sig: tipb.ScalarFuncSig_FTSMatchWord,
+					Val: []byte(query),
+				}},
+			},
+		}
+	}
+
+	left := newDataSource("foo")
+	right := newDataSource("foo")
+	leftHasher := base.NewHashEqualer()
+	rightHasher := base.NewHashEqualer()
+	left.Hash64(leftHasher)
+	right.Hash64(rightHasher)
+	require.True(t, left.Equals(right))
+	require.Equal(t, leftHasher.Sum64(), rightHasher.Sum64())
+
+	right.FtsPushDown.MatchExpr[0].Val = []byte("bar")
+	rightHasher.Reset()
+	right.Hash64(rightHasher)
+	require.False(t, left.Equals(right))
+	require.NotEqual(t, leftHasher.Sum64(), rightHasher.Sum64())
 }
 
 func TestLogicalApplyHash64Equals(t *testing.T) {

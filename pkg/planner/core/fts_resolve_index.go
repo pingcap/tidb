@@ -18,33 +18,16 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/types"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 const maxFTSTopK = ^uint32(0)
 
-const ftsMatchWordDirtyTxnErrMsg = "FTS_MATCH_WORD() cannot be used in a transaction with uncommitted changes"
-
-var ftsScoreType = func() types.FieldType {
-	tp := *types.NewFieldType(mysql.TypeFloat)
-	tp.SetFlag(mysql.NotNullFlag)
-	return tp
-}()
-
-func uint32Ptr(v uint32) *uint32 {
-	return &v
-}
-
-// FullTextIndexPlanVisitor traverses logical plans to find DataSource nodes
-// adjacent to FTS_MATCH_WORD() selections or TopN nodes.
+// FullTextIndexPlanVisitor tracks the parent chain above each DataSource for
+// the FTS Projection and TopN resolvers.
 type FullTextIndexPlanVisitor struct {
 	parents           []base.LogicalPlan
 	onEnterDataSource func(v *FullTextIndexPlanVisitor, ds *logicalop.DataSource) (bool, error)
@@ -77,118 +60,41 @@ func (v *FullTextIndexPlanVisitor) visit(plan base.LogicalPlan) (bool, error) {
 	return changed, nil
 }
 
-// FullTextIndexResolverWhere resolves FTS_MATCH_WORD() predicates and pushes
-// them down to TiFlash table scans. It must run before predicate pushdown.
-type FullTextIndexResolverWhere struct{}
-
-// Name returns the name of this optimization rule.
-func (*FullTextIndexResolverWhere) Name() string {
-	return "fts_resolve_index_where"
-}
-
-// Optimize applies full-text index resolution for WHERE predicates.
-func (o *FullTextIndexResolverWhere) Optimize(_ context.Context, plan base.LogicalPlan) (base.LogicalPlan, bool, error) {
-	if !plan.SCtx().GetSessionVars().StmtCtx.FTSFunctionIsUsed {
-		return plan, false, nil
-	}
-	visitor := &FullTextIndexPlanVisitor{onEnterDataSource: o.onEnterDataSource}
-	isChanged, err := visitor.visit(plan)
-	return plan, isChanged, err
-}
-
-func (*FullTextIndexResolverWhere) onEnterDataSource(v *FullTextIndexPlanVisitor, ds *logicalop.DataSource) (bool, error) {
-	parent0 := v.getParent(0)
-	if parent0 == nil {
-		return false, nil
-	}
-	planSelection, ok := parent0.(*logicalop.LogicalSelection)
-	if !ok || len(planSelection.Conditions) == 0 {
-		return false, nil
-	}
-
-	var ftsInfo *expression.FTSInfo
-	newConds := make([]expression.Expression, 0, len(planSelection.Conditions)-1)
-	for idx, expr := range planSelection.Conditions {
-		ftsInfo = expression.InterpretFullTextSearchExpr(expr)
-		if ftsInfo != nil {
-			newConds = append(newConds, planSelection.Conditions[:idx]...)
-			newConds = append(newConds, planSelection.Conditions[idx+1:]...)
-			break
+func joinContainsFullTextSearch(join *logicalop.LogicalJoin) bool {
+	for _, cond := range join.EqualConditions {
+		if expression.ContainsFullTextSearchFn(cond) {
+			return true
 		}
 	}
-	if ftsInfo == nil {
-		return false, nil
+	for _, cond := range join.NAEQConditions {
+		if expression.ContainsFullTextSearchFn(cond) {
+			return true
+		}
 	}
-
-	matchingIndex := findMatchingFullTextIndex(ds, ftsInfo)
-	if matchingIndex == nil {
-		return false, plannererrors.ErrWrongUsage.FastGen("Full text search can only be used with a matching fulltext index")
-	}
-
-	ds.FtsPushDown = &logicalop.FTSPushDown{
-		IndexInfo: matchingIndex,
-		QueryInfo: &tipb.FTSQueryInfo{
-			QueryType:      tipb.FTSQueryType_FTSQueryTypeNoScore,
-			IndexId:        matchingIndex.ID,
-			Columns:        []*tipb.ColumnInfo{tidbutil.ColumnToProto(ftsInfo.Column.ToInfo(), false, false)},
-			ColumnNames:    []string{ftsInfo.Column.OrigName},
-			QueryText:      ftsInfo.Query,
-			QueryTokenizer: string(matchingIndex.FullTextInfo.ParserType),
-			TopK:           uint32Ptr(maxFTSTopK),
-			QueryFunc:      tipb.ScalarFuncSig_FTSMatchWord,
-		},
-	}
-	ds.Columns = append(ds.Columns, &model.ColumnInfo{
-		Name:      ast.NewCIStr("_FTS_SCORE"),
-		ID:        model.VirtualColFTSScoreID,
-		FieldType: ftsScoreType,
-	})
-	ds.Schema().Append(&expression.Column{
-		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
-		ID:       model.VirtualColFTSScoreID,
-		RetType:  ftsScoreType.Clone(),
-		OrigName: "_FTS_SCORE",
-	})
-
-	planSelection.Conditions = newConds
-	if len(planSelection.Conditions) == 0 {
-		removeSelectionNode(v, planSelection)
-	}
-	return true, nil
+	return containsFullTextSearchFn(join.LeftConditions) ||
+		containsFullTextSearchFn(join.RightConditions) ||
+		containsFullTextSearchFn(join.OtherConditions)
 }
 
-func findMatchingFullTextIndex(ds *logicalop.DataSource, ftsInfo *expression.FTSInfo) *model.IndexInfo {
-	for _, idx := range ds.TableInfo.Indices {
-		if idx.FullTextInfo == nil || !idx.IsPublic() || len(idx.Columns) != 1 {
-			continue
-		}
-		if ds.TableInfo.Columns[idx.Columns[0].Offset].ID == ftsInfo.Column.ID {
-			return idx
-		}
-	}
-	return nil
+func invalidFTSWhereShapeError() error {
+	return plannererrors.ErrWrongUsage.FastGen("FTS_MATCH_WORD() must be a direct top-level conjunct owned by one data source")
 }
 
-func removeSelectionNode(v *FullTextIndexPlanVisitor, planSelection *logicalop.LogicalSelection) {
-	parent1 := v.getParent(1)
-	if parent1 == nil {
-		return
+func ftsScoreExprMatchesDataSource(ds *logicalop.DataSource, expr expression.Expression) bool {
+	if ds == nil || ds.FtsPushDown == nil || len(ds.FtsPushDown.MatchExpr) != 1 ||
+		len(ds.PossibleAccessPaths) != 1 || ds.PossibleAccessPaths[0].Index == nil {
+		return false
 	}
-	idxToRemove := -1
-	for idx, child := range parent1.Children() {
-		if child == planSelection {
-			idxToRemove = idx
-			break
-		}
+	rebuilt, ok := logicalop.CheckExprCoveredByColumnarFTSAndRebuild(
+		ds.SCtx().GetExprCtx(), expr, ds.TableInfo, ds.PossibleAccessPaths[0].Index,
+	)
+	if !ok {
+		return false
 	}
-	if idxToRemove < 0 {
-		return
-	}
-	newChildren := make([]base.LogicalPlan, 0, len(parent1.Children())-1+len(planSelection.Children()))
-	newChildren = append(newChildren, parent1.Children()[:idxToRemove]...)
-	newChildren = append(newChildren, planSelection.Children()...)
-	newChildren = append(newChildren, parent1.Children()[idxToRemove+1:]...)
-	parent1.SetChildren(newChildren...)
+	candidate, err := expression.FTSQueryExpressionToPB(
+		ds.SCtx().GetExprCtx().GetEvalCtx(), ds.SCtx().GetClient(), rebuilt,
+	)
+	return err == nil && expression.FTSQueryPBMatchesScoringExpr(&ds.FtsPushDown.MatchExpr[0], candidate)
 }
 
 // FullTextIndexResolverTopN resolves matching ORDER BY FTS_MATCH_WORD() LIMIT
@@ -201,7 +107,10 @@ func (*FullTextIndexResolverTopN) Name() string {
 }
 
 // Optimize applies TopN optimization for full-text search queries.
-func (o *FullTextIndexResolverTopN) Optimize(_ context.Context, plan base.LogicalPlan) (base.LogicalPlan, bool, error) {
+func (o *FullTextIndexResolverTopN) Optimize(
+	_ context.Context,
+	plan base.LogicalPlan,
+) (base.LogicalPlan, bool, error) {
 	if !plan.SCtx().GetSessionVars().StmtCtx.FTSFunctionIsUsed {
 		return plan, false, nil
 	}
@@ -243,15 +152,11 @@ func (*FullTextIndexResolverTopN) onEnterDataSource(v *FullTextIndexPlanVisitor,
 		return false, nil
 	}
 
-	orderByInfo := expression.InterpretFullTextSearchExpr(planTopN.ByItems[0].Expr)
-	if orderByInfo == nil {
+	if expression.InterpretFullTextSearchExpr(planTopN.ByItems[0].Expr) == nil {
 		return false, nil
 	}
-	queryInfo := ds.FtsPushDown.QueryInfo
-	if len(queryInfo.Columns) == 0 || orderByInfo.Column.ID != queryInfo.Columns[0].ColumnId {
-		return false, plannererrors.ErrWrongUsage.FastGen("'FTS_MATCH_WORD()' in ORDER BY must match the one in WHERE")
-	}
-	if orderByInfo.Query != queryInfo.QueryText {
+	queryInfo := ds.FtsPushDown
+	if !ftsScoreExprMatchesDataSource(ds, planTopN.ByItems[0].Expr) {
 		return false, plannererrors.ErrWrongUsage.FastGen("'FTS_MATCH_WORD()' in ORDER BY must match the one in WHERE")
 	}
 
@@ -262,7 +167,8 @@ func (*FullTextIndexResolverTopN) onEnterDataSource(v *FullTextIndexPlanVisitor,
 		if topK > uint64(maxFTSTopK) {
 			topK = uint64(maxFTSTopK)
 		}
-		queryInfo.TopK = uint32Ptr(uint32(topK))
+		topKValue := uint32(topK)
+		queryInfo.TopK = &topKValue
 	}
 	return true, nil
 }
@@ -277,7 +183,10 @@ func (*FullTextIndexResolverProjection) Name() string {
 }
 
 // Optimize applies projection optimization for full-text search queries.
-func (o *FullTextIndexResolverProjection) Optimize(_ context.Context, plan base.LogicalPlan) (base.LogicalPlan, bool, error) {
+func (o *FullTextIndexResolverProjection) Optimize(
+	_ context.Context,
+	plan base.LogicalPlan,
+) (base.LogicalPlan, bool, error) {
 	if !plan.SCtx().GetSessionVars().StmtCtx.FTSFunctionIsUsed {
 		return plan, false, nil
 	}
@@ -321,20 +230,14 @@ func (*FullTextIndexResolverProjection) onEnterDataSource(v *FullTextIndexPlanVi
 		return false, nil
 	}
 
-	queryInfo := ds.FtsPushDown.QueryInfo
-	if queryInfo == nil || len(queryInfo.Columns) == 0 {
-		return false, nil
-	}
+	queryInfo := ds.FtsPushDown
 	matchedProjections := make([]int, 0, len(planProjection.Exprs))
 	for i, expr := range planProjection.Exprs {
 		ftsInfo := expression.InterpretFullTextSearchExpr(expr)
 		if ftsInfo == nil {
 			continue
 		}
-		if ftsInfo.Column.ID != queryInfo.Columns[0].ColumnId {
-			return false, plannererrors.ErrWrongUsage.FastGen("'FTS_MATCH_WORD()' in SELECT must match the one in WHERE")
-		}
-		if ftsInfo.Query != queryInfo.QueryText {
+		if !ftsScoreExprMatchesDataSource(ds, expr) {
 			return false, plannererrors.ErrWrongUsage.FastGen("'FTS_MATCH_WORD()' in SELECT must match the one in WHERE")
 		}
 		matchedProjections = append(matchedProjections, i)
@@ -346,7 +249,7 @@ func (*FullTextIndexResolverProjection) onEnterDataSource(v *FullTextIndexPlanVi
 	scoreColumn := ds.Schema().Columns[len(ds.Schema().Columns)-1]
 	for _, idx := range matchedProjections {
 		planProjection.Exprs[idx] = scoreColumn
-		planProjection.Schema().Columns[idx].RetType = ftsScoreType.Clone()
+		planProjection.Schema().Columns[idx].RetType = logicalop.NewFTSScoreFieldType()
 	}
 	queryInfo.QueryType = tipb.FTSQueryType_FTSQueryTypeWithScore
 	return true, nil
@@ -362,7 +265,10 @@ func (*FullTextIndexResolverRejectRemaining) Name() string {
 }
 
 // Optimize validates remaining full-text search usage.
-func (o *FullTextIndexResolverRejectRemaining) Optimize(_ context.Context, plan base.LogicalPlan) (base.LogicalPlan, bool, error) {
+func (o *FullTextIndexResolverRejectRemaining) Optimize(
+	_ context.Context,
+	plan base.LogicalPlan,
+) (base.LogicalPlan, bool, error) {
 	if !plan.SCtx().GetSessionVars().StmtCtx.FTSFunctionIsUsed {
 		return plan, false, nil
 	}
@@ -385,23 +291,50 @@ func (o *FullTextIndexResolverRejectRemaining) visit(plan base.LogicalPlan) erro
 		}
 	case *logicalop.LogicalUnionScan:
 		if containsFullTextSearchFn(p.Conditions) {
-			return plannererrors.ErrWrongUsage.FastGen(ftsMatchWordDirtyTxnErrMsg)
+			return plannererrors.ErrWrongUsage.FastGen(logicalop.FTSMatchWordDirtyTxnErrMsg)
 		}
 	case *logicalop.DataSource:
-		for _, item := range p.PushedDownConds {
-			if expression.ContainsFullTextSearchFn(item) {
-				return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' must be used alone. It cannot be placed inside any other function or expression as a parameter, or used multiple times. A valid example: SELECT * FROM <TABLE> WHERE FTS_MATCH_WORD(...)")
-			}
+		if err := p.FTSResolveError(); err != nil {
+			return err
+		}
+		if containsFullTextSearchFn(p.AllConds) || containsFullTextSearchFn(p.PushedDownConds) {
+			return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' must be used alone. It cannot be placed inside any other function or expression as a parameter, or used multiple times. A valid example: SELECT * FROM <TABLE> WHERE FTS_MATCH_WORD(...)")
+		}
+	case *logicalop.LogicalApply:
+		if joinContainsFullTextSearch(&p.LogicalJoin) {
+			return invalidFTSWhereShapeError()
+		}
+	case *logicalop.LogicalJoin:
+		if joinContainsFullTextSearch(p) {
+			return invalidFTSWhereShapeError()
 		}
 	case *logicalop.LogicalSelection:
 		if len(p.Children()) == 1 {
 			if _, ok := p.Children()[0].(*logicalop.LogicalUnionScan); ok && containsFullTextSearchFn(p.Conditions) {
-				return plannererrors.ErrWrongUsage.FastGen(ftsMatchWordDirtyTxnErrMsg)
+				return plannererrors.ErrWrongUsage.FastGen(logicalop.FTSMatchWordDirtyTxnErrMsg)
 			}
 		}
-		for _, cond := range p.Conditions {
-			if expression.ContainsFullTextSearchFn(cond) {
-				return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' must be used alone. It cannot be placed inside any other function or expression as a parameter, or used multiple times. A valid example: SELECT * FROM <TABLE> WHERE FTS_MATCH_WORD(...)")
+		if containsFullTextSearchFn(p.Conditions) {
+			return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' must be used alone. It cannot be placed inside any other function or expression as a parameter, or used multiple times. A valid example: SELECT * FROM <TABLE> WHERE FTS_MATCH_WORD(...)")
+		}
+	case *logicalop.LogicalAggregation:
+		if containsFullTextSearchFn(p.GroupByItems) {
+			return unsupportedFTSContextError("GROUP BY")
+		}
+		for _, aggFunc := range p.AggFuncs {
+			if containsFullTextSearchFn(aggFunc.Args) {
+				return unsupportedFTSContextError("aggregate function arguments")
+			}
+			for _, item := range aggFunc.OrderByItems {
+				if expression.ContainsFullTextSearchFn(item.Expr) {
+					return unsupportedFTSContextError("aggregate function ORDER BY")
+				}
+			}
+		}
+	case *logicalop.LogicalWindow:
+		for _, windowFunc := range p.WindowFuncDescs {
+			if containsFullTextSearchFn(windowFunc.Args) {
+				return unsupportedFTSContextError("window function arguments")
 			}
 		}
 	case *logicalop.LogicalTopN:
@@ -435,4 +368,8 @@ func containsFullTextSearchFn(exprs []expression.Expression) bool {
 		}
 	}
 	return false
+}
+
+func unsupportedFTSContextError(contextName string) error {
+	return plannererrors.ErrWrongUsage.FastGen("FTS_MATCH_WORD() is not supported in " + contextName)
 }

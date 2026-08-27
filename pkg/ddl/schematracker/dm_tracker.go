@@ -537,7 +537,7 @@ func (d *SchemaTracker) DropView(_ sessionctx.Context, stmt *ast.DropTableStmt) 
 func (d *SchemaTracker) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	return d.createIndex(ctx, ident, stmt.KeyType, ast.NewCIStr(stmt.IndexName),
-		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
+		stmt.IndexPartSpecifications, stmt.FullTextIndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
 }
 
 func (d *SchemaTracker) putTableIfNoError(err error, dbName ast.CIStr, tbInfo *model.TableInfo) {
@@ -554,10 +554,22 @@ func (d *SchemaTracker) createIndex(
 	keyType ast.IndexKeyType,
 	indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification,
+	fullTextIndexPartSpecifications []*ast.FullTextIndexPartSpecification,
 	indexOption *ast.IndexOption,
 	ifNotExists bool,
 ) (err error) {
 	unique := keyType == ast.IndexKeyTypeUnique
+	columnarIndexType := model.ColumnarIndexTypeNA
+	if keyType == ast.IndexKeyTypeColumnar {
+		switch indexOption.Tp {
+		case ast.IndexTypeVector:
+			columnarIndexType = model.ColumnarIndexTypeVector
+		case ast.IndexTypeFulltext:
+			columnarIndexType = model.ColumnarIndexTypeFulltext
+		default:
+			return dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(indexOption.Tp)
+		}
+	}
 	tblInfo, err := d.TableClonedByName(ti.Schema, ti.Name)
 	if err != nil {
 		return err
@@ -583,9 +595,12 @@ func (d *SchemaTracker) createIndex(
 		return dbterror.ErrDupKeyName.GenWithStack("index already exist %s", indexName)
 	}
 
-	hiddenCols, err := ddl.BuildHiddenColumnInfo(ddl.NewMetaBuildContextWithSctx(ctx), indexPartSpecifications, indexName, t.Meta(), t.Cols())
-	if err != nil {
-		return err
+	var hiddenCols []*model.ColumnInfo
+	if columnarIndexType == model.ColumnarIndexTypeNA {
+		hiddenCols, err = ddl.BuildHiddenColumnInfo(ddl.NewMetaBuildContextWithSctx(ctx), indexPartSpecifications, indexName, t.Meta(), t.Cols())
+		if err != nil {
+			return err
+		}
 	}
 	for _, hiddenCol := range hiddenCols {
 		colInfo := ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
@@ -599,8 +614,9 @@ func (d *SchemaTracker) createIndex(
 		indexName,
 		false,
 		unique,
-		model.ColumnarIndexTypeNA,
+		columnarIndexType,
 		indexPartSpecifications,
+		fullTextIndexPartSpecifications,
 		indexOption,
 		model.StatePublic,
 	)
@@ -1037,6 +1053,7 @@ func (d *SchemaTracker) createPrimaryKey(
 		true,
 		model.ColumnarIndexTypeNA,
 		indexPartSpecifications,
+		nil,
 		indexOption,
 		model.StatePublic,
 	)
@@ -1102,12 +1119,15 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex:
 				err = d.createIndex(sctx, ident, ast.IndexKeyTypeNone, ast.NewCIStr(constr.Name),
-					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+					spec.Constraint.Keys, nil, constr.Option, constr.IfNotExists)
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 				err = d.createIndex(sctx, ident, ast.IndexKeyTypeUnique, ast.NewCIStr(constr.Name),
-					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
+					spec.Constraint.Keys, nil, constr.Option, false) // IfNotExists should be not applied
 			case ast.ConstraintPrimaryKey:
 				err = d.createPrimaryKey(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+			case ast.ConstraintColumnar:
+				err = d.createIndex(sctx, ident, ast.IndexKeyTypeColumnar, ast.NewCIStr(constr.Name),
+					constr.Keys, constr.FullTextIndexPartSpecifications, constr.Option, constr.IfNotExists)
 			case ast.ConstraintForeignKey,
 				ast.ConstraintFulltext,
 				ast.ConstraintCheck:

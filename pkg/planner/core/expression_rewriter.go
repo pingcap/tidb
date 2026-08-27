@@ -1690,6 +1690,14 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) bool {
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr, *ast.TableNameExpr:
+	case *ast.FTSQueryFieldExpr:
+		if er.ctxStackLen() == 0 {
+			er.err = plannererrors.ErrWrongUsage.FastGen("invalid FTS_MATCH_WORD field")
+			break
+		}
+		if _, ok := er.ctxStack[er.ctxStackLen()-1].(*expression.Column); !ok {
+			er.err = plannererrors.ErrWrongUsage.FastGen("FTS_MATCH_WORD fields must be columns")
+		}
 	case *driver.ValueExpr:
 		// set right not null flag for constant value
 		retType := v.Type.Clone()
@@ -3018,8 +3026,37 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 		}
 	} else {
 		function, er.err = er.newFunction(v.FnName.L, v.Type.DeepCopy(), args...)
+		if er.err == nil && v.FnName.L == ast.FTSMatchWord {
+			er.err = setFTSMatchWordOptions(function, v)
+		}
 		er.ctxStackAppend(function, types.EmptyName)
 	}
+}
+
+func setFTSMatchWordOptions(function expression.Expression, call *ast.FuncCallExpr) error {
+	scalar, ok := function.(*expression.ScalarFunction)
+	if !ok {
+		return plannererrors.ErrWrongUsage.FastGen("invalid FTS_MATCH_WORD expression")
+	}
+	if len(call.Args) < 2 {
+		return expression.ErrIncorrectParameterCount.GenWithStackByArgs(call.FnName.O)
+	}
+	options := &expression.FTSMatchWordOptions{
+		Fields: make([]expression.FTSMatchWordFieldOption, len(call.Args)-1),
+	}
+	for i, arg := range call.Args[1:] {
+		switch field := arg.(type) {
+		case *ast.FTSQueryFieldExpr:
+			options.Fields[i].ParserName = field.ParserName
+		case *ast.ColumnNameExpr:
+			// Quoted function names use the generic function-call grammar, so
+			// legacy column arguments are not wrapped in FTSQueryFieldExpr.
+		default:
+			return plannererrors.ErrWrongUsage.FastGen("FTS_MATCH_WORD fields must be columns")
+		}
+	}
+	expression.SetFTSMatchWordOptions(scalar, options)
+	return nil
 }
 
 // Now TableName in expression only used by sequence function like nextval(seq).

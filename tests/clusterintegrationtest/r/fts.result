@@ -1,0 +1,620 @@
+drop table if exists t1;
+create table t1(
+id INT PRIMARY KEY, title TEXT, body TEXT,
+FULLTEXT KEY (title),
+FULLTEXT KEY (body)
+);
+insert into t1 values (1, 'this is title', 'this is body');
+insert into t1 values (2, 'hello world', 'hello world');
+insert into t1 values (3, 'hello there', 'this is a test body');
+insert into t1 values (4, 'random title', 'random body content');
+insert into t1 values (5, 'hello world again', 'hello appears twice in this body hello');
+insert into t1 values (6, 'another title', 'this body does not contain the keyword');
+insert into t1 values (7, 'hello in title', 'but not in the body');
+insert into t1 values (8, 'no keyword here', 'still no hello in this body');
+insert into t1 values (9, 'hello hello hello', 'repeating hello multiple times in the title');
+insert into t1 values (10, 'unique title', 'hello is only in the body this time');
+insert into t1 values (11, 'hello and welcome', 'this body welcomes you with hello');
+insert into t1 values (12, 'a title without hello', 'a body without hello as well');
+insert into t1 values (13, 'hello in both', 'hello in the title and hello in the body');
+insert into t1 values (14, 'just a title', 'hello is hidden in this body');
+insert into t1 values (15, 'hello once', 'hello twice in this body hello');
+insert into t1 values (16, 'no hello here', 'this body is completely unrelated');
+insert into t1 values (17, 'hello at the start', 'and hello at the end hello');
+insert into t1 values (18, 'a very long title without hello', 'but the body contains hello at the very end');
+insert into t1 values (19, 'hello in uppercase', 'HELLO in the body as well');
+insert into t1 values (20, 'mixed case Hello', 'the body says hello in lowercase');
+delete from t1 where id <= 5;
+select * from t1 where fts_match_word('hello', title);
+id	title	body
+7	hello in title	but not in the body
+9	hello hello hello	repeating hello multiple times in the title
+11	hello and welcome	this body welcomes you with hello
+12	a title without hello	a body without hello as well
+13	hello in both	hello in the title and hello in the body
+15	hello once	hello twice in this body hello
+16	no hello here	this body is completely unrelated
+17	hello at the start	and hello at the end hello
+18	a very long title without hello	but the body contains hello at the very end
+19	hello in uppercase	HELLO in the body as well
+20	mixed case Hello	the body says hello in lowercase
+select * from t1 where fts_match_word('hello', body);
+id	title	body
+8	no keyword here	still no hello in this body
+9	hello hello hello	repeating hello multiple times in the title
+10	unique title	hello is only in the body this time
+11	hello and welcome	this body welcomes you with hello
+12	a title without hello	a body without hello as well
+13	hello in both	hello in the title and hello in the body
+14	just a title	hello is hidden in this body
+15	hello once	hello twice in this body hello
+17	hello at the start	and hello at the end hello
+18	a very long title without hello	but the body contains hello at the very end
+19	hello in uppercase	HELLO in the body as well
+20	mixed case Hello	the body says hello in lowercase
+select * from t1 where fts_match_word('hello', title) AND id > 10;
+id	title	body
+11	hello and welcome	this body welcomes you with hello
+12	a title without hello	a body without hello as well
+13	hello in both	hello in the title and hello in the body
+15	hello once	hello twice in this body hello
+16	no hello here	this body is completely unrelated
+17	hello at the start	and hello at the end hello
+18	a very long title without hello	but the body contains hello at the very end
+19	hello in uppercase	HELLO in the body as well
+20	mixed case Hello	the body says hello in lowercase
+select * from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 15;
+id	title	body
+11	hello and welcome	this body welcomes you with hello
+12	a title without hello	a body without hello as well
+17	hello at the start	and hello at the end hello
+18	a very long title without hello	but the body contains hello at the very end
+19	hello in uppercase	HELLO in the body as well
+20	mixed case Hello	the body says hello in lowercase
+select title from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 15;
+title
+hello and welcome
+a title without hello
+hello at the start
+a very long title without hello
+hello in uppercase
+mixed case Hello
+select count(id) from t1 where fts_match_word('hello', title);
+count(id)
+11
+select count(*) from t1 where fts_match_word('hello', title);
+count(*)
+11
+select id from t1 where fts_match_word('hello', title);
+id
+7
+9
+11
+12
+13
+15
+16
+17
+18
+19
+20
+select id from t1 where fts_match_word('hello', title) AND id > 10;
+id
+11
+12
+13
+15
+16
+17
+18
+19
+20
+select id from t1 where fts_match_word('hello', title) AND LENGTH(body) > 10;
+id
+7
+9
+11
+12
+13
+15
+16
+17
+18
+19
+20
+select fts_match_word('hello', title) from t1 where fts_match_word('hello', title);
+fts_match_word('hello', title)
+0.52563405
+0.8672361
+0.52563405
+0.45468768
+0.52563405
+0.62281376
+0.52563405
+0.45468768
+0.35803702
+0.52563405
+0.52563405
+select fts_match_word('hello', title) as score1, fts_match_word('hello', title) as score2 from t1 where fts_match_word('hello', title);
+score1	score2
+0.52563405	0.52563405
+0.8672361	0.8672361
+0.52563405	0.52563405
+0.45468768	0.45468768
+0.52563405	0.52563405
+0.62281376	0.62281376
+0.52563405	0.52563405
+0.45468768	0.45468768
+0.35803702	0.35803702
+0.52563405	0.52563405
+0.52563405	0.52563405
+select fts_match_word('hello', body) from t1 where fts_match_word('hello', body);
+fts_match_word('hello', body)
+0.52563405
+0.48759362
+0.45468768
+0.52563405
+0.52563405
+0.63976735
+0.52563405
+0.7460279
+0.7460279
+0.4259423
+0.52563405
+0.52563405
+select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10;
+fts_match_word('hello', title)
+0.52563405
+0.45468768
+0.52563405
+0.62281376
+0.52563405
+0.45468768
+0.35803702
+0.52563405
+0.52563405
+select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 15;
+fts_match_word('hello', title)
+0.52563405
+0.45468768
+0.45468768
+0.35803702
+0.52563405
+0.52563405
+select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title);
+id	title	body	fts_match_word('hello', title)
+7	hello in title	but not in the body	0.52563405
+9	hello hello hello	repeating hello multiple times in the title	0.8672361
+11	hello and welcome	this body welcomes you with hello	0.52563405
+12	a title without hello	a body without hello as well	0.45468768
+13	hello in both	hello in the title and hello in the body	0.52563405
+15	hello once	hello twice in this body hello	0.62281376
+16	no hello here	this body is completely unrelated	0.52563405
+17	hello at the start	and hello at the end hello	0.45468768
+18	a very long title without hello	but the body contains hello at the very end	0.35803702
+19	hello in uppercase	HELLO in the body as well	0.52563405
+20	mixed case Hello	the body says hello in lowercase	0.52563405
+select *, fts_match_word('hello', body) from t1 where fts_match_word('hello', body);
+id	title	body	fts_match_word('hello', body)
+8	no keyword here	still no hello in this body	0.52563405
+9	hello hello hello	repeating hello multiple times in the title	0.48759362
+10	unique title	hello is only in the body this time	0.45468768
+11	hello and welcome	this body welcomes you with hello	0.52563405
+12	a title without hello	a body without hello as well	0.52563405
+13	hello in both	hello in the title and hello in the body	0.63976735
+14	just a title	hello is hidden in this body	0.52563405
+15	hello once	hello twice in this body hello	0.7460279
+17	hello at the start	and hello at the end hello	0.7460279
+18	a very long title without hello	but the body contains hello at the very end	0.4259423
+19	hello in uppercase	HELLO in the body as well	0.52563405
+20	mixed case Hello	the body says hello in lowercase	0.52563405
+select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10;
+id	title	body	fts_match_word('hello', title)
+11	hello and welcome	this body welcomes you with hello	0.52563405
+12	a title without hello	a body without hello as well	0.45468768
+13	hello in both	hello in the title and hello in the body	0.52563405
+15	hello once	hello twice in this body hello	0.62281376
+16	no hello here	this body is completely unrelated	0.52563405
+17	hello at the start	and hello at the end hello	0.45468768
+18	a very long title without hello	but the body contains hello at the very end	0.35803702
+19	hello in uppercase	HELLO in the body as well	0.52563405
+20	mixed case Hello	the body says hello in lowercase	0.52563405
+select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 15;
+id	title	body	fts_match_word('hello', title)
+11	hello and welcome	this body welcomes you with hello	0.52563405
+12	a title without hello	a body without hello as well	0.45468768
+17	hello at the start	and hello at the end hello	0.45468768
+18	a very long title without hello	but the body contains hello at the very end	0.35803702
+19	hello in uppercase	HELLO in the body as well	0.52563405
+20	mixed case Hello	the body says hello in lowercase	0.52563405
+select title, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 15;
+title	fts_match_word('hello', title)
+hello and welcome	0.52563405
+a title without hello	0.45468768
+hello at the start	0.45468768
+a very long title without hello	0.35803702
+hello in uppercase	0.52563405
+mixed case Hello	0.52563405
+select count(id) from t1 where fts_match_word('hello', title);
+count(id)
+11
+select count(*) from t1 where fts_match_word('hello', title);
+count(*)
+11
+select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title);
+id	fts_match_word('hello', title)
+7	0.52563405
+9	0.8672361
+11	0.52563405
+12	0.45468768
+13	0.52563405
+15	0.62281376
+16	0.52563405
+17	0.45468768
+18	0.35803702
+19	0.52563405
+20	0.52563405
+select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10;
+id	fts_match_word('hello', title)
+11	0.52563405
+12	0.45468768
+13	0.52563405
+15	0.62281376
+16	0.52563405
+17	0.45468768
+18	0.35803702
+19	0.52563405
+20	0.52563405
+select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND LENGTH(body) > 10;
+id	fts_match_word('hello', title)
+7	0.52563405
+9	0.8672361
+11	0.52563405
+12	0.45468768
+13	0.52563405
+15	0.62281376
+16	0.52563405
+17	0.45468768
+18	0.35803702
+19	0.52563405
+20	0.52563405
+select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title);
+fts_match_word('hello', title)	id
+0.52563405	7
+0.8672361	9
+0.52563405	11
+0.45468768	12
+0.52563405	13
+0.62281376	15
+0.52563405	16
+0.45468768	17
+0.35803702	18
+0.52563405	19
+0.52563405	20
+select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) AND id > 10;
+fts_match_word('hello', title)	id
+0.52563405	11
+0.45468768	12
+0.52563405	13
+0.62281376	15
+0.52563405	16
+0.45468768	17
+0.35803702	18
+0.52563405	19
+0.52563405	20
+select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) AND LENGTH(body) > 10;
+fts_match_word('hello', title)	id
+0.52563405	7
+0.8672361	9
+0.52563405	11
+0.45468768	12
+0.52563405	13
+0.62281376	15
+0.52563405	16
+0.45468768	17
+0.35803702	18
+0.52563405	19
+0.52563405	20
+select * from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) LIMIT 10;
+id	title	body
+18	a very long title without hello	but the body contains hello at the very end
+17	hello at the start	and hello at the end hello
+12	a title without hello	a body without hello as well
+16	no hello here	this body is completely unrelated
+11	hello and welcome	this body welcomes you with hello
+13	hello in both	hello in the title and hello in the body
+20	mixed case Hello	the body says hello in lowercase
+7	hello in title	but not in the body
+19	hello in uppercase	HELLO in the body as well
+15	hello once	hello twice in this body hello
+select * from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+id	title	body
+9	hello hello hello	repeating hello multiple times in the title
+15	hello once	hello twice in this body hello
+7	hello in title	but not in the body
+20	mixed case Hello	the body says hello in lowercase
+13	hello in both	hello in the title and hello in the body
+16	no hello here	this body is completely unrelated
+19	hello in uppercase	HELLO in the body as well
+11	hello and welcome	this body welcomes you with hello
+12	a title without hello	a body without hello as well
+17	hello at the start	and hello at the end hello
+select * from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100;
+id	title	body
+select * from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100;
+id	title	body
+select body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+body
+repeating hello multiple times in the title
+hello twice in this body hello
+but not in the body
+the body says hello in lowercase
+hello in the title and hello in the body
+this body is completely unrelated
+HELLO in the body as well
+this body welcomes you with hello
+a body without hello as well
+and hello at the end hello
+select count(*) from (select id from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10) AS tmp;
+count(*)
+10
+select id from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+id
+9
+15
+7
+20
+13
+16
+19
+11
+12
+17
+select id from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+id
+15
+11
+19
+20
+13
+16
+17
+12
+18
+select id, body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+id	body
+9	repeating hello multiple times in the title
+15	hello twice in this body hello
+7	but not in the body
+20	the body says hello in lowercase
+13	hello in the title and hello in the body
+16	this body is completely unrelated
+19	HELLO in the body as well
+11	this body welcomes you with hello
+12	a body without hello as well
+17	and hello at the end hello
+select id from t1 where fts_match_word('hello', title) AND LENGTH(body)>10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+id
+9
+15
+16
+7
+19
+13
+20
+11
+12
+17
+select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) LIMIT 10;
+fts_match_word('hello', title)
+0.35803702
+0.45468768
+0.45468768
+0.52563405
+0.52563405
+0.52563405
+0.52563405
+0.52563405
+0.52563405
+0.62281376
+select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+fts_match_word('hello', title)
+0.8672361
+0.62281376
+0.52563405
+0.52563405
+0.52563405
+0.52563405
+0.52563405
+0.52563405
+0.45468768
+0.45468768
+select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100;
+fts_match_word('hello', title)
+select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100;
+fts_match_word('hello', title)
+select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) LIMIT 10;
+id	title	body	fts_match_word('hello', title)
+18	a very long title without hello	but the body contains hello at the very end	0.35803702
+17	hello at the start	and hello at the end hello	0.45468768
+12	a title without hello	a body without hello as well	0.45468768
+16	no hello here	this body is completely unrelated	0.52563405
+11	hello and welcome	this body welcomes you with hello	0.52563405
+13	hello in both	hello in the title and hello in the body	0.52563405
+20	mixed case Hello	the body says hello in lowercase	0.52563405
+7	hello in title	but not in the body	0.52563405
+19	hello in uppercase	HELLO in the body as well	0.52563405
+15	hello once	hello twice in this body hello	0.62281376
+select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+id	title	body	fts_match_word('hello', title)
+9	hello hello hello	repeating hello multiple times in the title	0.8672361
+15	hello once	hello twice in this body hello	0.62281376
+7	hello in title	but not in the body	0.52563405
+20	mixed case Hello	the body says hello in lowercase	0.52563405
+13	hello in both	hello in the title and hello in the body	0.52563405
+16	no hello here	this body is completely unrelated	0.52563405
+19	hello in uppercase	HELLO in the body as well	0.52563405
+11	hello and welcome	this body welcomes you with hello	0.52563405
+12	a title without hello	a body without hello as well	0.45468768
+17	hello at the start	and hello at the end hello	0.45468768
+select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100;
+id	title	body	fts_match_word('hello', title)
+select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100;
+id	title	body	fts_match_word('hello', title)
+select fts_match_word('hello', title), body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+fts_match_word('hello', title)	body
+0.8672361	repeating hello multiple times in the title
+0.62281376	hello twice in this body hello
+0.52563405	but not in the body
+0.52563405	the body says hello in lowercase
+0.52563405	hello in the title and hello in the body
+0.52563405	this body is completely unrelated
+0.52563405	HELLO in the body as well
+0.52563405	this body welcomes you with hello
+0.45468768	a body without hello as well
+0.45468768	and hello at the end hello
+select body, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+body	fts_match_word('hello', title)
+repeating hello multiple times in the title	0.8672361
+hello twice in this body hello	0.62281376
+but not in the body	0.52563405
+the body says hello in lowercase	0.52563405
+hello in the title and hello in the body	0.52563405
+this body is completely unrelated	0.52563405
+HELLO in the body as well	0.52563405
+this body welcomes you with hello	0.52563405
+a body without hello as well	0.45468768
+and hello at the end hello	0.45468768
+select count(*) from (select id from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10) AS tmp;
+count(*)
+10
+select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+fts_match_word('hello', title)	id
+0.8672361	9
+0.62281376	15
+0.52563405	7
+0.52563405	20
+0.52563405	13
+0.52563405	16
+0.52563405	19
+0.52563405	11
+0.45468768	12
+0.45468768	17
+select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+fts_match_word('hello', title)	id
+0.62281376	15
+0.52563405	11
+0.52563405	19
+0.52563405	20
+0.52563405	13
+0.52563405	16
+0.45468768	17
+0.45468768	12
+0.35803702	18
+select fts_match_word('hello', title), id, body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+fts_match_word('hello', title)	id	body
+0.8672361	9	repeating hello multiple times in the title
+0.62281376	15	hello twice in this body hello
+0.52563405	7	but not in the body
+0.52563405	20	the body says hello in lowercase
+0.52563405	13	hello in the title and hello in the body
+0.52563405	16	this body is completely unrelated
+0.52563405	19	HELLO in the body as well
+0.52563405	11	this body welcomes you with hello
+0.45468768	12	a body without hello as well
+0.45468768	17	and hello at the end hello
+select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) AND LENGTH(body)>10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+fts_match_word('hello', title)	id
+0.8672361	9
+0.62281376	15
+0.52563405	16
+0.52563405	7
+0.52563405	19
+0.52563405	13
+0.52563405	20
+0.52563405	11
+0.45468768	12
+0.45468768	17
+select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+id	fts_match_word('hello', title)
+9	0.8672361
+15	0.62281376
+7	0.52563405
+20	0.52563405
+13	0.52563405
+16	0.52563405
+19	0.52563405
+11	0.52563405
+12	0.45468768
+17	0.45468768
+select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+id	fts_match_word('hello', title)
+15	0.62281376
+11	0.52563405
+19	0.52563405
+20	0.52563405
+13	0.52563405
+16	0.52563405
+17	0.45468768
+12	0.45468768
+18	0.35803702
+select id, fts_match_word('hello', title), body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+id	fts_match_word('hello', title)	body
+9	0.8672361	repeating hello multiple times in the title
+15	0.62281376	hello twice in this body hello
+7	0.52563405	but not in the body
+20	0.52563405	the body says hello in lowercase
+13	0.52563405	hello in the title and hello in the body
+16	0.52563405	this body is completely unrelated
+19	0.52563405	HELLO in the body as well
+11	0.52563405	this body welcomes you with hello
+12	0.45468768	a body without hello as well
+17	0.45468768	and hello at the end hello
+select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND LENGTH(body)>10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+id	fts_match_word('hello', title)
+9	0.8672361
+15	0.62281376
+16	0.52563405
+7	0.52563405
+19	0.52563405
+13	0.52563405
+20	0.52563405
+11	0.52563405
+12	0.45468768
+17	0.45468768
+drop table if exists fts_parameterized_score;
+create table fts_parameterized_score(
+row_id INT PRIMARY KEY,
+fs_id VARCHAR(32),
+content_text TEXT,
+FULLTEXT KEY ft_content_fs(content_text WITH (STANDARD), fs_id WITH (EXACT))
+);
+insert into fts_parameterized_score values
+(1, 'tenant-a', 'hello from tenant a one'),
+(2, 'tenant-a', 'hello from tenant a two'),
+(3, 'tenant-a', 'hello from tenant a three'),
+(4, 'tenant-a', 'hello from tenant a four'),
+(5, 'tenant-a', 'hello from tenant a five'),
+(6, 'tenant-a', 'hello from tenant a six'),
+(7, 'tenant-a', 'hello from tenant a seven'),
+(8, 'tenant-a', 'hello from tenant a eight'),
+(9, 'tenant-a', 'hello from tenant a nine'),
+(10, 'tenant-a', 'hello from tenant a ten'),
+(11, 'tenant-a', 'hello from tenant a eleven'),
+(12, 'tenant-b', 'hello from tenant b');
+prepare fts_parameterized_score_stmt from 'select group_concat(distinct fs_id) as fs_ids, count(*) as row_count, max(score) >= min(score) as valid_score_range from (select fs_id, fts_match_word("hello", content_text) as score from fts_parameterized_score where fs_id = ? and fts_match_word("hello", content_text) order by score desc limit 10) q';
+set @fs_id = 'tenant-a';
+execute fts_parameterized_score_stmt using @fs_id;
+fs_ids	row_count	valid_score_range
+tenant-a	10	1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @fs_id = 'tenant-b';
+execute fts_parameterized_score_stmt using @fs_id;
+fs_ids	row_count	valid_score_range
+tenant-b	1	1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+deallocate prepare fts_parameterized_score_stmt;
