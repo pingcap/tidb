@@ -464,25 +464,36 @@ impl PdOracle {
         let mut adaptive = self.state.adaptive_update_interval.lock().unwrap();
         let mut state = self.state.adaptive_state.lock().unwrap();
         let current = *adaptive;
+        let recently_requested_short_staleness = || {
+            current != configured
+                && state.last_short_staleness_read.is_some_and(|last| {
+                    signed_duration_nanoseconds(now, last)
+                        < ADAPTIVE_DELAY_BEFORE_RECOVERING
+                            .as_nanos()
+                            .min(i64::MAX as u128) as i64
+                })
+        };
         let next = if configured <= MIN_ADAPTIVE_UPDATE_INTERVAL {
             state.state = AdaptiveUpdateIntervalState::Unadjustable;
             configured
-        } else if let Some(required) = required_staleness
-            .filter(|required| *required < current && current > MIN_ADAPTIVE_UPDATE_INTERVAL)
-        {
-            state.state = AdaptiveUpdateIntervalState::Adapting;
-            required
-                .checked_sub(ADAPTIVE_SHRINKING_PRESERVE)
-                .unwrap_or(Duration::ZERO)
-                .max(MIN_ADAPTIVE_UPDATE_INTERVAL)
-        } else if current != configured
-            && state.last_short_staleness_read.is_some_and(|last| {
-                signed_duration_nanoseconds(now, last)
-                    < ADAPTIVE_DELAY_BEFORE_RECOVERING
-                        .as_nanos()
-                        .min(i64::MAX as u128) as i64
-            })
-        {
+        } else if required_staleness.is_some_and(|required| !required.is_zero()) {
+            let required = required_staleness.unwrap();
+            if required < current && current > MIN_ADAPTIVE_UPDATE_INTERVAL {
+                state.state = AdaptiveUpdateIntervalState::Adapting;
+                required
+                    .checked_sub(ADAPTIVE_SHRINKING_PRESERVE)
+                    .unwrap_or(Duration::ZERO)
+                    .max(MIN_ADAPTIVE_UPDATE_INTERVAL)
+            } else if recently_requested_short_staleness() {
+                state.state = AdaptiveUpdateIntervalState::Adapting;
+                current
+            } else {
+                // client-go checks only the unadjustable and adapting states
+                // for a nonzero request. Preserve both the interval and the
+                // previous state when neither check applies.
+                current
+            }
+        } else if recently_requested_short_staleness() {
             state.state = AdaptiveUpdateIntervalState::Adapting;
             current
         } else if current == configured {
@@ -1268,6 +1279,49 @@ mod tests {
         }
     }
 
+    fn new_unseeded_pd_oracle_for_test<S>(source: Arc<S>) -> PdOracle
+    where
+        S: PdTimestampSource,
+    {
+        let source: Arc<dyn PdTimestampSource> = source;
+        let (shrink_sender, shrink_receiver) = mpsc::channel(1);
+        PdOracle {
+            state: Arc::new(PdOracleState {
+                source,
+                last_timestamps: RwLock::new(HashMap::new()),
+                configured_update_interval: Mutex::new(Duration::ZERO),
+                adaptive_update_interval: Mutex::new(Duration::ZERO),
+                adaptive_state: Mutex::new(AdaptiveState {
+                    last_short_staleness_read: None,
+                    last_tick: UNIX_EPOCH,
+                    state: AdaptiveUpdateIntervalState::None,
+                }),
+                validation_flights: tokio::sync::Mutex::new(HashMap::new()),
+                next_validation_flight_id: AtomicU64::new(0),
+                shrink_sender,
+                deferred_shrink_receiver: Mutex::new(Some(shrink_receiver)),
+                close_notify: Notify::new(),
+                update_task: Mutex::new(None),
+                closed: AtomicBool::new(false),
+            }),
+        }
+    }
+
+    fn set_empty_pd_oracle_last_timestamp_for_test(oracle: &PdOracle, timestamp: u64, scope: &str) {
+        let scope = if scope.is_empty() {
+            super::super::GLOBAL_TXN_SCOPE
+        } else {
+            scope
+        };
+        oracle.state.last_timestamps.write().unwrap().insert(
+            scope.to_owned(),
+            LastTimestamp {
+                timestamp,
+                arrival: get_time_from_timestamp(timestamp),
+            },
+        );
+    }
+
     async fn wait_for_low_resolution_change(oracle: &PdOracle, check_frequency: Duration) {
         let option = OracleOption::default();
         let current = oracle.get_low_resolution_timestamp(&option).await.unwrap();
@@ -1423,19 +1477,54 @@ mod tests {
 
     #[tokio::test]
     #[allow(non_snake_case)]
+    async fn source_go_integration_tests_store_test_TestOracle() {
+        let oracle = MockOracle::new();
+        let option = OracleOption::default();
+
+        let first = oracle.get_timestamp(&option).await.unwrap();
+        let second = oracle.get_timestamp(&option).await.unwrap();
+        assert!(first < second);
+
+        let low_first = oracle.get_low_resolution_timestamp(&option).await.unwrap();
+        let low_second = oracle.get_low_resolution_timestamp(&option).await.unwrap();
+        assert!(low_first < low_second);
+        let low_async = oracle.get_low_resolution_timestamp_async(&option);
+        assert!(low_async.wait().await.unwrap() > low_second);
+        let _ = oracle.until_expired(0, 0, &option);
+
+        oracle.disable();
+        let enabling_oracle = oracle.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            enabling_oracle.enable();
+        });
+        let mut backoffer =
+            crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 5_000);
+        let retried = loop {
+            match oracle.get_timestamp(&option).await {
+                Ok(timestamp) => break timestamp,
+                Err(error) => backoffer
+                    .backoff(crate::retry::BO_PD_RPC, error.to_string())
+                    .await
+                    .unwrap(),
+            }
+        };
+        assert!(retried > low_second);
+        assert!(oracle.is_expired(low_second, 50, &option));
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
     async fn source_go_oracle_oracles_pd_test_TestPDOracle_UntilExpired() {
-        let oracle = PdOracle::new(
-            Arc::new(TestPdSource::new(1_700_000_000_000)),
-            PdOracleOptions {
-                no_update_timestamp: true,
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
+        let oracle =
+            new_unseeded_pd_oracle_for_test(Arc::new(TestPdSource::new(1_700_000_000_000)));
         let start = SystemTime::now();
         let start_timestamp = system_time_to_timestamp(start);
-        oracle.set_last_timestamp_for_test(start_timestamp, super::super::GLOBAL_TXN_SCOPE);
+        set_empty_pd_oracle_last_timestamp_for_test(
+            &oracle,
+            start_timestamp,
+            super::super::GLOBAL_TXN_SCOPE,
+        );
         let lock_timestamp = system_time_to_timestamp(start + Duration::from_millis(10)) + 1;
         assert_eq!(
             oracle.until_expired(
@@ -1447,23 +1536,16 @@ mod tests {
             ),
             25
         );
-        oracle.close();
     }
 
     #[tokio::test]
     #[allow(non_snake_case)]
     async fn source_go_oracle_oracles_pd_test_TestPdOracle_GetStaleTimestamp() {
-        let oracle = PdOracle::new(
-            Arc::new(TestPdSource::new(1_700_000_000_000)),
-            PdOracleOptions {
-                no_update_timestamp: true,
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
+        let oracle =
+            new_unseeded_pd_oracle_for_test(Arc::new(TestPdSource::new(1_700_000_000_000)));
         let start = SystemTime::now();
-        oracle.set_last_timestamp_for_test(
+        set_empty_pd_oracle_last_timestamp_for_test(
+            &oracle,
             system_time_to_timestamp(start),
             super::super::GLOBAL_TXN_SCOPE,
         );
@@ -1484,23 +1566,19 @@ mod tests {
                 .unwrap_err();
             assert!(error.to_string().contains("invalid prevSecond"));
         }
-        oracle.close();
     }
 
     #[tokio::test]
     #[allow(non_snake_case)]
     async fn source_go_oracle_oracles_pd_test_TestPdOracle_SetLowResolutionTimestampUpdateInterval()
     {
-        let oracle = PdOracle::new(
-            Arc::new(TestPdSource::new(1_700_000_000_000)),
-            PdOracleOptions {
-                update_interval: Duration::from_millis(50),
-                no_update_timestamp: true,
-            },
-        )
-        .await
-        .unwrap();
+        let oracle =
+            new_unseeded_pd_oracle_for_test(Arc::new(TestPdSource::new(1_700_000_000_000)));
         let option = OracleOption::default();
+        oracle
+            .set_low_resolution_timestamp_update_interval(Duration::from_millis(50))
+            .unwrap();
+        oracle.get_timestamp(&option).await.unwrap();
         let low_resolution = oracle.get_low_resolution_timestamp(&option).await.unwrap();
         let fresh = oracle.get_timestamp(&option).await.unwrap();
         assert!(fresh > low_resolution);
@@ -1548,16 +1626,10 @@ mod tests {
     #[tokio::test]
     #[allow(non_snake_case)]
     async fn source_go_oracle_oracles_pd_test_TestNonFutureStaleTSO() {
-        let oracle = PdOracle::new(
-            Arc::new(TestPdSource::new(1_700_000_000_000)),
-            PdOracleOptions {
-                no_update_timestamp: true,
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-        oracle.set_last_timestamp_for_test(
+        let oracle =
+            new_unseeded_pd_oracle_for_test(Arc::new(TestPdSource::new(1_700_000_000_000)));
+        set_empty_pd_oracle_last_timestamp_for_test(
+            &oracle,
             system_time_to_timestamp(SystemTime::now()),
             super::super::GLOBAL_TXN_SCOPE,
         );
@@ -1569,7 +1641,8 @@ mod tests {
                 let oracle = oracle.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(Duration::from_micros(100)).await;
-                    oracle.set_last_timestamp_for_test(
+                    set_empty_pd_oracle_last_timestamp_for_test(
+                        &oracle,
                         system_time_to_timestamp(now),
                         super::super::GLOBAL_TXN_SCOPE,
                     );
@@ -1591,7 +1664,6 @@ mod tests {
             }
             updater.await.unwrap();
         }
-        oracle.close();
     }
 
     #[tokio::test]
@@ -1917,6 +1989,46 @@ mod tests {
         assert_eq!(
             oracle.state.adaptive_state.lock().unwrap().state,
             AdaptiveUpdateIntervalState::Unadjustable
+        );
+        oracle.close();
+    }
+
+    #[tokio::test]
+    async fn source_uncovered_nonzero_update_request_does_not_run_normal_recovery_checks() {
+        let oracle = PdOracle::new(
+            Arc::new(TestPdSource::new(1_700_000_000_000)),
+            PdOracleOptions {
+                update_interval: Duration::from_secs(2),
+                no_update_timestamp: true,
+            },
+        )
+        .await
+        .unwrap();
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+
+        assert_eq!(
+            oracle.next_update_interval(now, Some(Duration::from_secs(2))),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            oracle.state.adaptive_state.lock().unwrap().state,
+            AdaptiveUpdateIntervalState::None
+        );
+
+        *oracle.state.adaptive_update_interval.lock().unwrap() = Duration::from_millis(900);
+        {
+            let mut state = oracle.state.adaptive_state.lock().unwrap();
+            state.state = AdaptiveUpdateIntervalState::Recovering;
+            state.last_short_staleness_read = None;
+            state.last_tick = now - Duration::from_secs(1);
+        }
+        assert_eq!(
+            oracle.next_update_interval(now, Some(Duration::from_secs(2))),
+            Duration::from_millis(900)
+        );
+        assert_eq!(
+            oracle.state.adaptive_state.lock().unwrap().state,
+            AdaptiveUpdateIntervalState::Recovering
         );
         oracle.close();
     }

@@ -153,10 +153,12 @@ pub fn resource_group_name_from_context(context: &TraceContext) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #![allow(non_snake_case)]
+
     use super::*;
 
     #[test]
-    fn source_test_get_request_source() {
+    fn source_go_util_request_source_test_TestGetRequestSource() {
         let mut source = RequestSource {
             internal: true,
             source_type: "test".to_owned(),
@@ -176,7 +178,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_build_request_source() {
+    fn source_go_util_request_source_test_TestBuildRequestSource() {
         assert_eq!(
             build_request_source(true, "test", "lightning"),
             "internal_test_lightning"

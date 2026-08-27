@@ -95,24 +95,18 @@ impl ExecDetails {
 
     pub fn add_backoff(&self, duration: Duration) {
         self.backoff_count.fetch_add(1, Ordering::Relaxed);
-        self.backoff_duration_ns.fetch_add(
-            i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX),
-            Ordering::Relaxed,
-        );
+        self.backoff_duration_ns
+            .fetch_add(duration.as_nanos() as i64, Ordering::Relaxed);
     }
 
     pub fn add_wait_kv_response(&self, duration: Duration) {
-        self.wait_kv_response_duration_ns.fetch_add(
-            i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX),
-            Ordering::Relaxed,
-        );
+        self.wait_kv_response_duration_ns
+            .fetch_add(duration.as_nanos() as i64, Ordering::Relaxed);
     }
 
     pub fn add_wait_pd_response(&self, duration: Duration) {
-        self.wait_pd_response_duration_ns.fetch_add(
-            i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX),
-            Ordering::Relaxed,
-        );
+        self.wait_pd_response_duration_ns
+            .fetch_add(duration.as_nanos() as i64, Ordering::Relaxed);
     }
 }
 
@@ -196,9 +190,9 @@ impl TrafficDetails {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TiKvExecDetails {
-    pub time_detail: Option<TimeDetail>,
-    pub scan_detail: Option<ScanDetail>,
-    pub write_detail: Option<WriteDetail>,
+    pub time_detail: Option<Arc<TimeDetail>>,
+    pub scan_detail: Option<Arc<ScanDetail>>,
+    pub write_detail: Option<Arc<WriteDetail>>,
 }
 
 impl TiKvExecDetails {
@@ -216,29 +210,30 @@ impl TiKvExecDetails {
         let mut write = WriteDetail::default();
         write.merge_from_pb(details.write_detail.as_ref());
         Self {
-            time_detail: Some(time),
-            scan_detail: Some(scan),
-            write_detail: Some(write),
+            time_detail: Some(Arc::new(time)),
+            scan_detail: Some(Arc::new(scan)),
+            write_detail: Some(Arc::new(write)),
         }
     }
 }
 
 impl fmt::Display for TiKvExecDetails {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let parts = [
+        let mut output = String::new();
+        for part in [
             self.time_detail.as_ref().map(ToString::to_string),
             self.scan_detail.as_ref().map(ToString::to_string),
             self.write_detail.as_ref().map(ToString::to_string),
-        ];
-        let mut first = true;
-        for part in parts.into_iter().flatten().filter(|part| !part.is_empty()) {
-            if !first {
-                formatter.write_str(", ")?;
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if !output.is_empty() {
+                output.push_str(", ");
             }
-            first = false;
-            formatter.write_str(&part)?;
+            output.push_str(&part);
         }
-        Ok(())
+        formatter.write_str(&output)
     }
 }
 
@@ -264,7 +259,7 @@ impl CommitTsLagDetails {
             return;
         }
         self.wait_time += other.wait_time;
-        self.backoff_count += other.backoff_count;
+        self.backoff_count = self.backoff_count.wrapping_add(other.backoff_count);
         self.first_lag_ts = other.first_lag_ts;
         self.wait_until_ts = other.wait_until_ts;
     }
@@ -328,11 +323,16 @@ impl CommitDetails {
         self.commit_time += other.commit_time;
         self.local_latch_time += other.local_latch_time;
         self.resolve_lock.merge(&other.resolve_lock);
-        self.write_keys += other.write_keys;
-        self.write_size += other.write_size;
-        self.prewrite_region_num += other.prewrite_region_num;
-        self.transaction_retry += other.transaction_retry;
-        self.detail.commit_backoff_time_ns += other.detail.commit_backoff_time_ns;
+        self.write_keys = self.write_keys.wrapping_add(other.write_keys);
+        self.write_size = self.write_size.wrapping_add(other.write_size);
+        self.prewrite_region_num = self
+            .prewrite_region_num
+            .wrapping_add(other.prewrite_region_num);
+        self.transaction_retry = self.transaction_retry.wrapping_add(other.transaction_retry);
+        self.detail.commit_backoff_time_ns = self
+            .detail
+            .commit_backoff_time_ns
+            .wrapping_add(other.detail.commit_backoff_time_ns);
         self.detail
             .prewrite_backoff_types
             .extend(other.detail.prewrite_backoff_types.iter().cloned());
@@ -423,19 +423,25 @@ pub struct LockKeysDetails {
 impl LockKeysDetails {
     pub fn merge(&mut self, other: &Self) {
         self.total_time += other.total_time;
-        self.region_num += other.region_num;
-        self.lock_keys += other.lock_keys;
-        self.aggressive_lock_new_count += other.aggressive_lock_new_count;
-        self.aggressive_lock_derived_count += other.aggressive_lock_derived_count;
-        self.locked_with_conflict_count += other.locked_with_conflict_count;
+        self.region_num = self.region_num.wrapping_add(other.region_num);
+        self.lock_keys = self.lock_keys.wrapping_add(other.lock_keys);
+        self.aggressive_lock_new_count = self
+            .aggressive_lock_new_count
+            .wrapping_add(other.aggressive_lock_new_count);
+        self.aggressive_lock_derived_count = self
+            .aggressive_lock_derived_count
+            .wrapping_add(other.aggressive_lock_derived_count);
+        self.locked_with_conflict_count = self
+            .locked_with_conflict_count
+            .wrapping_add(other.locked_with_conflict_count);
         self.resolve_lock.merge(&other.resolve_lock);
-        self.backoff_time_ns += other.backoff_time_ns;
-        self.lock_rpc_time_ns += other.lock_rpc_time_ns;
-        self.lock_rpc_count += other.lock_rpc_count;
+        self.backoff_time_ns = self.backoff_time_ns.wrapping_add(other.backoff_time_ns);
+        self.lock_rpc_time_ns = self.lock_rpc_time_ns.wrapping_add(other.lock_rpc_time_ns);
+        self.lock_rpc_count = self.lock_rpc_count.wrapping_add(other.lock_rpc_count);
         self.detail
             .backoff_types
             .extend(other.detail.backoff_types.iter().cloned());
-        self.retry_count += 1;
+        self.retry_count = self.retry_count.wrapping_add(1);
         if self.detail.slowest_request_total_time < other.detail.slowest_request_total_time {
             self.detail.slowest_request_total_time = other.detail.slowest_request_total_time;
             self.detail.slowest_region = other.detail.slowest_region;
@@ -467,7 +473,9 @@ pub struct ResolveLockDetail {
 
 impl ResolveLockDetail {
     pub fn merge(&mut self, other: &Self) {
-        self.resolve_lock_time_ns += other.resolve_lock_time_ns;
+        self.resolve_lock_time_ns = self
+            .resolve_lock_time_ns
+            .wrapping_add(other.resolve_lock_time_ns);
     }
 }
 
@@ -514,18 +522,18 @@ impl PoolTaskDetails {
         let had_wall_samples = self.task_wall_time_sample_count > 0;
         let had_tasks = self.task_count > 0;
 
-        self.task_count += 1;
-        self.poll_count += details.poll_count;
+        self.task_count = self.task_count.wrapping_add(1);
+        self.poll_count = self.poll_count.wrapping_add(details.poll_count);
         self.max_poll_count = self.max_poll_count.max(details.poll_count);
         self.min_poll_count = minimum(self.min_poll_count, details.poll_count, had_tasks);
-        self.dispatch_count += details.dispatch_count;
+        self.dispatch_count = self.dispatch_count.wrapping_add(details.dispatch_count);
         self.max_dispatch_count = self.max_dispatch_count.max(details.dispatch_count);
         self.min_dispatch_count =
             minimum(self.min_dispatch_count, details.dispatch_count, had_tasks);
         let task_wall = Duration::from_nanos(details.total_wall_nanos);
         self.total_wall_time += task_wall;
         if !task_wall.is_zero() {
-            self.task_wall_time_sample_count += 1;
+            self.task_wall_time_sample_count = self.task_wall_time_sample_count.wrapping_add(1);
             self.max_task_wall_time = self.max_task_wall_time.max(task_wall);
             self.min_task_wall_time = minimum(self.min_task_wall_time, task_wall, had_wall_samples);
         }
@@ -555,8 +563,12 @@ impl PoolTaskDetails {
         }
 
         if details.fair_queue_enabled {
-            self.fair_queue_sample_count += details.dispatch_count;
-            self.total_fair_queue_waited_task_slices += details.total_fair_queue_waited_task_slices;
+            self.fair_queue_sample_count = self
+                .fair_queue_sample_count
+                .wrapping_add(details.dispatch_count);
+            self.total_fair_queue_waited_task_slices = self
+                .total_fair_queue_waited_task_slices
+                .wrapping_add(details.total_fair_queue_waited_task_slices);
             self.max_fair_queue_waited_task_slices = self
                 .max_fair_queue_waited_task_slices
                 .max(details.max_fair_queue_waited_task_slices);
@@ -600,16 +612,18 @@ impl PoolTaskDetails {
         let had_wall_samples = self.task_wall_time_sample_count > 0;
         let had_tasks = self.task_count > 0;
 
-        self.task_count += other.task_count;
-        self.poll_count += other.poll_count;
+        self.task_count = self.task_count.wrapping_add(other.task_count);
+        self.poll_count = self.poll_count.wrapping_add(other.poll_count);
         self.max_poll_count = self.max_poll_count.max(other.max_poll_count);
         self.min_poll_count = minimum(self.min_poll_count, other.min_poll_count, had_tasks);
-        self.dispatch_count += other.dispatch_count;
+        self.dispatch_count = self.dispatch_count.wrapping_add(other.dispatch_count);
         self.max_dispatch_count = self.max_dispatch_count.max(other.max_dispatch_count);
         self.min_dispatch_count =
             minimum(self.min_dispatch_count, other.min_dispatch_count, had_tasks);
         self.total_wall_time += other.total_wall_time;
-        self.task_wall_time_sample_count += other.task_wall_time_sample_count;
+        self.task_wall_time_sample_count = self
+            .task_wall_time_sample_count
+            .wrapping_add(other.task_wall_time_sample_count);
         self.max_task_wall_time = self.max_task_wall_time.max(other.max_task_wall_time);
         if !other.total_wall_time.is_zero() {
             self.min_task_wall_time = minimum(
@@ -636,8 +650,12 @@ impl PoolTaskDetails {
                 had_wake_samples,
             );
         }
-        self.fair_queue_sample_count += other.fair_queue_sample_count;
-        self.total_fair_queue_waited_task_slices += other.total_fair_queue_waited_task_slices;
+        self.fair_queue_sample_count = self
+            .fair_queue_sample_count
+            .wrapping_add(other.fair_queue_sample_count);
+        self.total_fair_queue_waited_task_slices = self
+            .total_fair_queue_waited_task_slices
+            .wrapping_add(other.total_fair_queue_waited_task_slices);
         self.max_fair_queue_waited_task_slices = self
             .max_fair_queue_waited_task_slices
             .max(other.max_fair_queue_waited_task_slices);
@@ -840,19 +858,37 @@ pub struct ScanDetail {
 
 impl ScanDetail {
     pub fn merge(&mut self, other: &Self) {
-        self.total_keys += other.total_keys;
-        self.processed_keys += other.processed_keys;
-        self.processed_keys_size += other.processed_keys_size;
-        self.rocksdb_delete_skipped_count += other.rocksdb_delete_skipped_count;
-        self.rocksdb_key_skipped_count += other.rocksdb_key_skipped_count;
-        self.rocksdb_block_cache_hit_count += other.rocksdb_block_cache_hit_count;
-        self.rocksdb_block_read_count += other.rocksdb_block_read_count;
-        self.rocksdb_block_read_bytes += other.rocksdb_block_read_bytes;
+        self.total_keys = self.total_keys.wrapping_add(other.total_keys);
+        self.processed_keys = self.processed_keys.wrapping_add(other.processed_keys);
+        self.processed_keys_size = self
+            .processed_keys_size
+            .wrapping_add(other.processed_keys_size);
+        self.rocksdb_delete_skipped_count = self
+            .rocksdb_delete_skipped_count
+            .wrapping_add(other.rocksdb_delete_skipped_count);
+        self.rocksdb_key_skipped_count = self
+            .rocksdb_key_skipped_count
+            .wrapping_add(other.rocksdb_key_skipped_count);
+        self.rocksdb_block_cache_hit_count = self
+            .rocksdb_block_cache_hit_count
+            .wrapping_add(other.rocksdb_block_cache_hit_count);
+        self.rocksdb_block_read_count = self
+            .rocksdb_block_read_count
+            .wrapping_add(other.rocksdb_block_read_count);
+        self.rocksdb_block_read_bytes = self
+            .rocksdb_block_read_bytes
+            .wrapping_add(other.rocksdb_block_read_bytes);
         self.rocksdb_block_read_duration += other.rocksdb_block_read_duration;
         self.get_snapshot_duration += other.get_snapshot_duration;
-        self.ia_cache_hit_count += other.ia_cache_hit_count;
-        self.ia_remote_read_segment_count += other.ia_remote_read_segment_count;
-        self.ia_remote_read_segment_bytes += other.ia_remote_read_segment_bytes;
+        self.ia_cache_hit_count = self
+            .ia_cache_hit_count
+            .wrapping_add(other.ia_cache_hit_count);
+        self.ia_remote_read_segment_count = self
+            .ia_remote_read_segment_count
+            .wrapping_add(other.ia_remote_read_segment_count);
+        self.ia_remote_read_segment_bytes = self
+            .ia_remote_read_segment_bytes
+            .wrapping_add(other.ia_remote_read_segment_bytes);
         self.ia_remote_read_segment_duration += other.ia_remote_read_segment_duration;
     }
 
@@ -860,20 +896,39 @@ impl ScanDetail {
         let Some(detail) = detail else {
             return;
         };
-        self.total_keys += i64::try_from(detail.total_versions).unwrap_or(i64::MAX);
-        self.processed_keys += i64::try_from(detail.processed_versions).unwrap_or(i64::MAX);
-        self.processed_keys_size +=
-            i64::try_from(detail.processed_versions_size).unwrap_or(i64::MAX);
-        self.rocksdb_delete_skipped_count += detail.rocksdb_delete_skipped_count;
-        self.rocksdb_key_skipped_count += detail.rocksdb_key_skipped_count;
-        self.rocksdb_block_cache_hit_count += detail.rocksdb_block_cache_hit_count;
-        self.rocksdb_block_read_count += detail.rocksdb_block_read_count;
-        self.rocksdb_block_read_bytes += detail.rocksdb_block_read_byte;
+        self.total_keys = self.total_keys.wrapping_add(detail.total_versions as i64);
+        self.processed_keys = self
+            .processed_keys
+            .wrapping_add(detail.processed_versions as i64);
+        self.processed_keys_size = self
+            .processed_keys_size
+            .wrapping_add(detail.processed_versions_size as i64);
+        self.rocksdb_delete_skipped_count = self
+            .rocksdb_delete_skipped_count
+            .wrapping_add(detail.rocksdb_delete_skipped_count);
+        self.rocksdb_key_skipped_count = self
+            .rocksdb_key_skipped_count
+            .wrapping_add(detail.rocksdb_key_skipped_count);
+        self.rocksdb_block_cache_hit_count = self
+            .rocksdb_block_cache_hit_count
+            .wrapping_add(detail.rocksdb_block_cache_hit_count);
+        self.rocksdb_block_read_count = self
+            .rocksdb_block_read_count
+            .wrapping_add(detail.rocksdb_block_read_count);
+        self.rocksdb_block_read_bytes = self
+            .rocksdb_block_read_bytes
+            .wrapping_add(detail.rocksdb_block_read_byte);
         self.rocksdb_block_read_duration += Duration::from_nanos(detail.rocksdb_block_read_nanos);
         self.get_snapshot_duration += Duration::from_nanos(detail.get_snapshot_nanos);
-        self.ia_cache_hit_count += detail.ia_cache_hit_count;
-        self.ia_remote_read_segment_count += detail.ia_remote_read_segment_count;
-        self.ia_remote_read_segment_bytes += detail.ia_remote_read_segment_bytes;
+        self.ia_cache_hit_count = self
+            .ia_cache_hit_count
+            .wrapping_add(detail.ia_cache_hit_count);
+        self.ia_remote_read_segment_count = self
+            .ia_remote_read_segment_count
+            .wrapping_add(detail.ia_remote_read_segment_count);
+        self.ia_remote_read_segment_bytes = self
+            .ia_remote_read_segment_bytes
+            .wrapping_add(detail.ia_remote_read_segment_bytes);
         self.ia_remote_read_segment_duration +=
             Duration::from_nanos(detail.ia_remote_read_segment_nanos);
     }
@@ -929,9 +984,7 @@ impl fmt::Display for ScanDetail {
             if self.ia_remote_read_segment_bytes > 0 {
                 fields.push(format!(
                     "remote_read_segment_bytes: {}",
-                    format_bytes(
-                        i64::try_from(self.ia_remote_read_segment_bytes).unwrap_or(i64::MAX)
-                    )
+                    format_bytes(self.ia_remote_read_segment_bytes as i64)
                 ));
             }
             if !self.ia_remote_read_segment_duration.is_zero() {
@@ -985,7 +1038,7 @@ impl fmt::Display for ScanDetail {
             write!(
                 formatter,
                 "{block_prefix}read_byte: {}",
-                format_bytes(i64::try_from(self.rocksdb_block_read_bytes).unwrap_or(i64::MAX))
+                format_bytes(self.rocksdb_block_read_bytes as i64)
             )?;
             block_prefix = ", ";
         }
@@ -1195,6 +1248,8 @@ impl fmt::Display for TimeDetail {
 
 #[cfg(test)]
 mod tests {
+    #![allow(non_snake_case)]
+
     use super::*;
     use crate::proto::kvrpcpb::{ExecutorInputs, PoolTaskDetails as PbPoolTaskDetails, Ruv2};
     use crate::proto::resource_manager::Consumption;
@@ -1205,7 +1260,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_ru_details_drain_ru_v2() {
+    fn source_go_util_execdetails_test_TestRUDetailsDrainRUV2() {
         let details = RuDetails::new();
         details.add_ru_v2(Some(&Ruv2 {
             read_rpc_count: 1,
@@ -1243,7 +1298,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_ru_details_clone_and_merge_raw_ru_v2() {
+    fn source_go_util_execdetails_test_TestRUDetailsCloneAndMergeRawRUV2() {
         let original = RuDetails::new();
         original.add_ru_v2(Some(&Ruv2 {
             read_rpc_count: 1,
@@ -1329,7 +1384,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_pool_task_details_string_uses_average_times() {
+    fn source_go_util_execdetails_test_TestPoolTaskDetailsStringUsesAverageTimes() {
         assert_eq!(
             full_pool_details().to_string(),
             "{tasks:2, poll_count:{total:8, avg:4, max:5, min:3}, dispatch_count:{total:6, max:4, min:2}, task_wall_time:{total:20ms, avg:10ms, max:12ms, min:8ms}, queue_wait:{total:12ms, avg:2ms, max:4ms, min:1ms}, wake_wait:{total:8ms, avg:2ms, max:3ms, min:1ms}, fair_queue:{enabled:true, waited_task_slices:{total:18, avg:3, max:5, min:2}}, poll_cpu:{total:8ms, avg:1ms, max:2ms, min:500µs}, poll_wall:{total:12ms, avg:1.5ms, max:3ms, min:750µs}}"
@@ -1337,7 +1392,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_pool_task_details_string_omits_zero_times() {
+    fn source_go_util_execdetails_test_TestPoolTaskDetailsStringOmitsZeroTimes() {
         let details = PoolTaskDetails {
             task_count: 1,
             poll_count: 2,
@@ -1355,7 +1410,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_pool_task_details_string_omits_average_with_no_samples() {
+    fn source_go_util_execdetails_test_TestPoolTaskDetailsStringOmitsAverageWithNoSamples() {
         let details = PoolTaskDetails {
             task_count: 1,
             total_queue_wait_time: millis(2),
@@ -1403,7 +1458,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_pool_task_details_merge_from_pb_and_merge() {
+    fn source_go_util_execdetails_test_TestPoolTaskDetailsMergeFromPBAndMerge() {
         let mut first = pool_pb(
             5,
             3,
@@ -1525,7 +1580,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_pool_task_details_merge_minimum_presence() {
+    fn source_go_util_execdetails_test_TestPoolTaskDetailsMergeMinimumPresence() {
         let first = pool_pb(2, 1, 3, (0, 0, 0), (0, 0, 0), None, (1, 1, 0), (2, 2, 0));
         let second = pool_pb(
             3,
@@ -1573,7 +1628,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_pool_task_details_string_formats_fractional_count_averages() {
+    fn source_go_util_execdetails_test_TestPoolTaskDetailsStringFormatsFractionalCountAverages() {
         let details = PoolTaskDetails {
             task_count: 3,
             poll_count: 8,
@@ -1594,7 +1649,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_pool_task_details_string_keeps_zero_fair_queue_wait() {
+    fn source_go_util_execdetails_test_TestPoolTaskDetailsStringKeepsZeroFairQueueWait() {
         let details = PoolTaskDetails {
             task_count: 1,
             poll_count: 2,
@@ -1613,7 +1668,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_pool_task_details_empty_and_clone() {
+    fn source_go_util_execdetails_test_TestPoolTaskDetailsEmptyAndClone() {
         let mut details = PoolTaskDetails::default();
         details.merge_from_pb(None);
         assert!(details.is_empty());
@@ -1633,7 +1688,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_scan_detail_merge_from_scan_detail_v2_includes_ia_fields() {
+    fn source_go_util_execdetails_test_TestScanDetailMergeFromScanDetailV2IncludesIAFields() {
         let pb = kvrpcpb::ScanDetailV2 {
             processed_versions: 10,
             processed_versions_size: 20,
@@ -1694,7 +1749,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_scan_detail_merge_includes_ia_fields() {
+    fn source_go_util_execdetails_test_TestScanDetailMergeIncludesIAFields() {
         let mut left = ScanDetail {
             ia_cache_hit_count: 1,
             ia_remote_read_segment_count: 2,
@@ -1769,7 +1824,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_lock_keys_details_merge() {
+    fn source_go_util_execdetails_test_TestLockKeysDetailsMerge() {
         let mut left = lock_details_a();
         left.merge(&lock_details_b());
         assert_eq!(left.total_time, millis(30));
@@ -1790,7 +1845,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_lock_keys_details_merge_slowest_not_replaced() {
+    fn source_go_util_execdetails_test_TestLockKeysDetailsMergeSlowestNotReplaced() {
         let mut left = LockKeysDetails::default();
         left.detail.slowest_request_total_time = millis(10);
         left.detail.slowest_region = 1;
@@ -1806,7 +1861,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_lock_keys_details_clone() {
+    fn source_go_util_execdetails_test_TestLockKeysDetailsClone() {
         let original = lock_details_a();
         let mut cloned = original.clone();
         assert_eq!(original, cloned);
@@ -1889,7 +1944,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_commit_details_merge() {
+    fn source_go_util_execdetails_test_TestCommitDetailsMerge() {
         let mut left = commit_details_a();
         left.merge(&commit_details_b());
         assert_eq!(left.get_commit_ts_time, millis(22));
@@ -1915,7 +1970,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_commit_details_merge_slowest_not_replaced() {
+    fn source_go_util_execdetails_test_TestCommitDetailsMergeSlowestNotReplaced() {
         let mut left = CommitDetails::default();
         left.detail.slowest_prewrite.request_total_time = millis(10);
         left.detail.slowest_prewrite.region = 1;
@@ -1932,7 +1987,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_commit_details_clone() {
+    fn source_go_util_execdetails_test_TestCommitDetailsClone() {
         let mut original = commit_details_a();
         original.prewrite_request_num = 9;
         let mut cloned = original.clone();
@@ -1951,7 +2006,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_scan_detail_merge() {
+    fn source_go_util_execdetails_test_TestScanDetailMerge() {
         let mut left = ScanDetail {
             total_keys: 100,
             processed_keys: 50,
@@ -2013,14 +2068,14 @@ mod tests {
     }
 
     #[test]
-    fn source_test_write_detail_merge() {
+    fn source_go_util_execdetails_test_TestWriteDetailMerge() {
         let mut left = full_write_detail(1);
         left.merge(&full_write_detail(1));
         assert_eq!(left, full_write_detail(2));
     }
 
     #[test]
-    fn source_test_time_detail_merge() {
+    fn source_go_util_execdetails_test_TestTimeDetailMerge() {
         let mut left = TimeDetail {
             process_time: millis(10),
             suspend_time: millis(2),
@@ -2049,7 +2104,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_time_detail() {
+    fn source_go_util_misc_test_TestTimeDetail() {
         let mut detail = TimeDetail {
             kv_read_wall_time: millis(2),
             total_rpc_wall_time: millis(3),
@@ -2075,7 +2130,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_time_detail_merge_nil() {
+    fn source_go_util_execdetails_test_TestTimeDetailMergeNil() {
         let mut detail = TimeDetail {
             process_time: millis(10),
             ..Default::default()
@@ -2095,7 +2150,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_ru_details_update_tiflash() {
+    fn source_go_util_execdetails_test_TestRUDetailsUpdateTiFlash() {
         let details = RuDetails::new();
         details.update(
             &Consumption {
@@ -2142,5 +2197,210 @@ mod tests {
         ));
         assert!(Arc::ptr_eq(ru_details_from_context(&context).unwrap(), &ru));
         assert!(commit_details_from_context(&base).is_none());
+    }
+
+    #[test]
+    fn source_uncovered_tikv_exec_details_preserves_empty_component_separators() {
+        let details = TiKvExecDetails {
+            time_detail: Some(Arc::new(TimeDetail {
+                process_time: millis(1),
+                ..Default::default()
+            })),
+            scan_detail: Some(Arc::new(ScanDetail::default())),
+            write_detail: Some(Arc::new(WriteDetail {
+                scheduler_process_duration: millis(1),
+                ..Default::default()
+            })),
+        };
+        assert!(details.to_string().contains("}, , write_detail: {"));
+    }
+
+    #[test]
+    fn source_uncovered_scan_detail_uses_go_uint64_to_int64_conversion() {
+        let mut detail = ScanDetail::default();
+        detail.merge_from_pb(Some(&kvrpcpb::ScanDetailV2 {
+            total_versions: u64::MAX,
+            processed_versions: u64::MAX,
+            processed_versions_size: u64::MAX,
+            rocksdb_block_read_byte: u64::MAX,
+            ia_remote_read_segment_bytes: u64::MAX,
+            ..Default::default()
+        }));
+        assert_eq!(detail.total_keys, -1);
+        assert_eq!(detail.processed_keys, -1);
+        assert_eq!(detail.processed_keys_size, -1);
+        let rendered = detail.to_string();
+        assert!(rendered.contains("remote_read_segment_bytes: -1 Bytes"));
+        assert!(rendered.contains("read_byte: -1 Bytes"));
+    }
+
+    #[test]
+    fn source_uncovered_exec_detail_duration_conversion_wraps_like_go() {
+        let details = ExecDetails::default();
+        details.add_backoff(Duration::from_nanos(u64::MAX));
+        details.add_wait_kv_response(Duration::from_nanos(u64::MAX));
+        details.add_wait_pd_response(Duration::from_nanos(u64::MAX));
+        let snapshot = details.snapshot();
+        assert_eq!(snapshot.backoff_count, 1);
+        assert_eq!(snapshot.backoff_duration_ns, -1);
+        assert_eq!(snapshot.wait_kv_response_duration_ns, -1);
+        assert_eq!(snapshot.wait_pd_response_duration_ns, -1);
+    }
+
+    #[test]
+    fn source_uncovered_integer_aggregates_wrap_like_go() {
+        let mut pool = PoolTaskDetails {
+            task_count: u64::MAX,
+            poll_count: u64::MAX,
+            dispatch_count: u64::MAX,
+            task_wall_time_sample_count: u64::MAX,
+            fair_queue_sample_count: u64::MAX,
+            total_fair_queue_waited_task_slices: u64::MAX,
+            ..Default::default()
+        };
+        pool.merge_from_pb(Some(&PbPoolTaskDetails {
+            poll_count: 1,
+            dispatch_count: 1,
+            total_wall_nanos: 1,
+            fair_queue_enabled: true,
+            total_fair_queue_waited_task_slices: 1,
+            ..Default::default()
+        }));
+        assert_eq!(pool.task_count, 0);
+        assert_eq!(pool.poll_count, 0);
+        assert_eq!(pool.dispatch_count, 0);
+        assert_eq!(pool.task_wall_time_sample_count, 0);
+        assert_eq!(pool.fair_queue_sample_count, 0);
+        assert_eq!(pool.total_fair_queue_waited_task_slices, 0);
+
+        let mut scan = ScanDetail {
+            total_keys: i64::MAX,
+            processed_keys: i64::MAX,
+            processed_keys_size: i64::MAX,
+            rocksdb_delete_skipped_count: u64::MAX,
+            ..Default::default()
+        };
+        scan.merge(&ScanDetail {
+            total_keys: 1,
+            processed_keys: 1,
+            processed_keys_size: 1,
+            rocksdb_delete_skipped_count: 1,
+            ..Default::default()
+        });
+        assert_eq!(scan.total_keys, i64::MIN);
+        assert_eq!(scan.processed_keys, i64::MIN);
+        assert_eq!(scan.processed_keys_size, i64::MIN);
+        assert_eq!(scan.rocksdb_delete_skipped_count, 0);
+
+        let mut commit = CommitDetails {
+            detail: CommitDetailsInner {
+                commit_backoff_time_ns: i64::MAX,
+                ..Default::default()
+            },
+            write_keys: usize::MAX,
+            write_size: usize::MAX,
+            prewrite_region_num: i32::MAX,
+            transaction_retry: usize::MAX,
+            resolve_lock: ResolveLockDetail {
+                resolve_lock_time_ns: i64::MAX,
+            },
+            ..Default::default()
+        };
+        commit.merge(&CommitDetails {
+            detail: CommitDetailsInner {
+                commit_backoff_time_ns: 1,
+                ..Default::default()
+            },
+            write_keys: 1,
+            write_size: 1,
+            prewrite_region_num: 1,
+            transaction_retry: 1,
+            resolve_lock: ResolveLockDetail {
+                resolve_lock_time_ns: 1,
+            },
+            ..Default::default()
+        });
+        assert_eq!(commit.write_keys, 0);
+        assert_eq!(commit.write_size, 0);
+        assert_eq!(commit.prewrite_region_num, i32::MIN);
+        assert_eq!(commit.transaction_retry, 0);
+        assert_eq!(commit.resolve_lock.resolve_lock_time_ns, i64::MIN);
+        assert_eq!(commit.detail.commit_backoff_time_ns, i64::MIN);
+
+        let mut locks = LockKeysDetails {
+            region_num: i32::MAX,
+            lock_keys: i32::MAX,
+            aggressive_lock_new_count: usize::MAX,
+            aggressive_lock_derived_count: usize::MAX,
+            locked_with_conflict_count: usize::MAX,
+            backoff_time_ns: i64::MAX,
+            lock_rpc_time_ns: i64::MAX,
+            lock_rpc_count: i64::MAX,
+            retry_count: usize::MAX,
+            ..Default::default()
+        };
+        locks.merge(&LockKeysDetails {
+            region_num: 1,
+            lock_keys: 1,
+            aggressive_lock_new_count: 1,
+            aggressive_lock_derived_count: 1,
+            locked_with_conflict_count: 1,
+            backoff_time_ns: 1,
+            lock_rpc_time_ns: 1,
+            lock_rpc_count: 1,
+            ..Default::default()
+        });
+        assert_eq!(locks.region_num, i32::MIN);
+        assert_eq!(locks.lock_keys, i32::MIN);
+        assert_eq!(locks.aggressive_lock_new_count, 0);
+        assert_eq!(locks.aggressive_lock_derived_count, 0);
+        assert_eq!(locks.locked_with_conflict_count, 0);
+        assert_eq!(locks.backoff_time_ns, i64::MIN);
+        assert_eq!(locks.lock_rpc_time_ns, i64::MIN);
+        assert_eq!(locks.lock_rpc_count, i64::MIN);
+        assert_eq!(locks.retry_count, 0);
+    }
+
+    #[test]
+    fn source_uncovered_request_detail_clones_share_nested_go_pointers() {
+        let details = TiKvExecDetails {
+            time_detail: Some(Arc::new(TimeDetail {
+                process_time: millis(1),
+                ..Default::default()
+            })),
+            scan_detail: Some(Arc::new(ScanDetail {
+                total_keys: 1,
+                ..Default::default()
+            })),
+            write_detail: Some(Arc::new(WriteDetail {
+                scheduler_process_duration: millis(1),
+                ..Default::default()
+            })),
+        };
+        let commit = CommitDetails {
+            detail: CommitDetailsInner {
+                slowest_prewrite: ReqDetailInfo {
+                    exec_details: details.clone(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let cloned = commit.clone();
+        let original = &commit.detail.slowest_prewrite.exec_details;
+        let copied = &cloned.detail.slowest_prewrite.exec_details;
+        assert!(Arc::ptr_eq(
+            original.time_detail.as_ref().unwrap(),
+            copied.time_detail.as_ref().unwrap()
+        ));
+        assert!(Arc::ptr_eq(
+            original.scan_detail.as_ref().unwrap(),
+            copied.scan_detail.as_ref().unwrap()
+        ));
+        assert!(Arc::ptr_eq(
+            original.write_detail.as_ref().unwrap(),
+            copied.write_detail.as_ref().unwrap()
+        ));
     }
 }

@@ -75,6 +75,8 @@ impl RateLimit {
 
 #[cfg(test)]
 mod tests {
+    #![allow(non_snake_case)]
+
     use std::any::Any;
     use std::sync::Arc;
 
@@ -89,7 +91,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_test_rate_limit() {
+    async fn source_go_util_rate_limit_test_TestRateLimit() {
         let limiter = Arc::new(RateLimit::new(1));
         assert_eq!(limiter.capacity(), 1);
         assert_eq!(

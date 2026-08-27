@@ -2,6 +2,17 @@
 
 This is the atomic completion receipt for client-go package `txnkv/transaction`, pinned at commit `52c1e76cec993571493c81de442bcbef90cdc106`. Runtime downstream testing previously reopened the claim because Rust's transaction did not use or expose the completed staged `MemDb` as its committing buffer. That gap is closed: the Rust implementation in `tikv-client` now uses one authoritative `MemDb`, exposes it through `Transaction::get_mem_buffer` and `SyncTransaction::get_mem_buffer`, and is validated with `nightly-2026-08-22`. A later whole-body test scan corrected five exact identities that still only invoked aggregate helpers. Strengthening the two transaction-file action identities exposed and fixed a production ordering gap: the resource-group name is now attached before a dynamic tagger runs, as in client-go, for ordinary commit, pipelined commit, split, and transaction-file prewrite/commit/rollback requests. The injected-client constructor is an ordinary-build public API so embedded and in-process stores do not depend on a test feature; an external no-feature crate gate implements both required client traits and constructs the generic transaction.
 
+The 2026-08-26 package re-audit revalidated the immutable 16-artifact boundary,
+all 33 direct unit-test owners, and the complete public/private function
+inventory after the root integration package was ported. Integration execution
+had already corrected exact wrapping prewrite minimum timestamps,
+transaction-file retry-state retention after region regrouping, and
+max-execution arbitration against the effective context wait. Code-to-code
+review then found two additional observable differences: `LockKeysFunc`'s
+callback began before client-go's aggressive-lock applicability preflight, and
+finite wait arithmetic discarded negative elapsed time instead of preserving
+signed `time.Sub` milliseconds. Both now have failing-before/passing regressions.
+
 ## Complete source inventory
 
 `git ls-tree -r --name-only 52c1e76cec993571493c81de442bcbef90cdc106 txnkv/transaction` contains exactly 16 files and 11,766 lines:
@@ -34,12 +45,12 @@ There is no package `doc.go`, build-tag or platform variant, generated source/in
 | Mutation collection, primary selection, sizing, lock TTL, min/max commit timestamps, schema checks, callbacks, binlog, resource tags, request source, disk-full and transaction-source fields | `Transaction`, `CommitSettings`, and `Committer` preserve the complete commit state machine and protocol inputs. Safe owned `Vec<kvrpcpb::Mutation>` replaces `CommitterMutations`/`PlainMutations`; source range-selection and transaction-file helpers operate on that native representation. |
 | Mem-buffer flags and exported `GetMemBuffer` use | `Transaction::get_mem_buffer` and the sync façade return the exact `MemDb` used by transaction reads, scans, sizing, memory hooks, filtering, lock/constraint/assertion decisions, and commit traversal. `Buffer.entry_map` retains only snapshot and lock-return caching; it has no mutation variants or mutation-option map. Direct staging cleanup/release and every `KeyFlags` operation therefore affect commit without copying or draining. Direct `get_mem_buffer().get`/`batch_get` calls retain mutable and in-flight precedence and fetch remote snapshot values after a pipelined flush, matching TiDB's production `GetMemBuffer` consumers. MemDB keys stay logical under API-v2 and are encoded exactly once when lowering mutations to physical requests. |
 | `BufferBatchGetter` and `BufferSnapshotBatchGetter` | `Buffer` point/batch read methods merge local writes, deletes, locks, and cached snapshot values before fetching missing keys. Pipelined point, batch, option-bearing, and direct MemDB reads use `BufferBatchGet`, preserve the transaction's own-lock resolved hint, cache both values and misses after BatchGet, and invalidate that cache on every Flush call. A direct MemDB batch coalesces all remote misses into one RPC. Ordinary snapshot cached misses, commit timestamps, update/no-update modes, and local precedence are retained. Rust iterators/futures replace Go callback interfaces. |
-| Optimistic/pessimistic locking | Lock wait modes, timeout/deadline recalculation, return values, `LockOnlyIfExists`, shared locks, deadlock callbacks, force-lock results, farmhash deadlock keys, aggressive locking, rollback, and independently retained lock provenance are implemented. Shared-only transactions cannot select a primary. |
-| Prewrite | Per-region sharding carries physical `TxnSize`, pessimistic/constraint actions, assertions, async/1PC fields, secondaries, min/max commit timestamps, keyspace/resource metadata, retry budgets, and typed key errors. Shared holders are expanded. `NoResolvePolicy` and newer optimistic locks return typed write conflicts before any resolver RPC. |
+| Optimistic/pessimistic locking | Lock wait modes, timeout/deadline recalculation, return values, `LockOnlyIfExists`, shared locks, deadlock callbacks, force-lock results, farmhash deadlock keys, aggressive locking, rollback, and independently retained lock provenance are implemented. Shared-only transactions cannot select a primary. Effective waits use signed, Go-duration-saturated millisecond subtraction, retain the context's authoritative wait across dispatch/terminal arbitration, and report a tighter max-execution deadline after whole-millisecond wire truncation. `LockKeysFunc` installs its callback only after the source aggressive-lock preflight and then owns it through all later returns/cancellation. |
+| Prewrite | Per-region sharding carries physical `TxnSize`, pessimistic/constraint actions, assertions, async/1PC fields, secondaries, min/max commit timestamps, keyspace/resource metadata, retry budgets, and typed key errors. Minimum commit TS follows the source branch order and wrapping `uint64` increment for start/for-update overflow. Shared holders are expanded. `NoResolvePolicy` and newer optimistic locks return typed write conflicts before any resolver RPC. |
 | Commit and cleanup | Primary ambiguity is tracked separately from secondary failure; definitive primary responses clear undetermined state. Check-only mutations are stripped after prewrite. Failed public attempts close the transaction, stop heartbeat ownership, and schedule cleanup; ordinary rollback suppresses cleanup failures as source does. Background work runs lifecycle hooks. |
 | Async commit and 1PC | Eligibility, fallback flags, callback JSON, timestamp allocation, max-commit validation, zero-minimum fallback, one-shard requirement, and one-PC commit timestamp handling are covered. Shared locks, pipelined mode, binlog, and other incompatible inputs disable the protocol before it is reported as tried. |
 | Pipelined transactions | The authoritative `MemDb` owns mutable and in-flight generations, thresholds, forced empty generations, bounded memory, wait/error transfer, write throttling, metrics, typed duplicate-key value enrichment, first-primary and range metadata, and cache invalidation. Range bounds are captured from logical MemDB iteration before API-v2 mutation lowering, so Flush/Commit carry one physical prefix while PD lookup and lock-range resolution encode logical bounds exactly once. Flush RPCs use source `start_ts + 1`, background primary success starts the TTL manager, heartbeats alone advance broadcast `min_commit_ts`, and terminal errors or the 24-hour lifetime close future flushing. Commit/rollback cancel and wait for workers, broadcast ongoing/completed status with the source fields, resolve the flushed range at configured concurrency, and retain the five-second production follower grace. Shared locking, scans, snapshots, staging, and unsupported MemBuffer operations retain source rejection behavior. |
-| Transaction-file protocol | A single reusable `txn_file` module owns chunk serialization, file upload, HTTP/TLS client pooling, 90-second idle timeout, parallel budget, cancellation, sorting/deduplication, split keys, dedicated pre-split path, admission, primary-batch lookup, Prewrite/Commit/Rollback actions, keyspace/resource metadata, lock expansion/resolution, prepared timestamp retry, schema/upper-bound validation, undetermined normalization, and idle-pool replacement. OpenSSL is selected only for the source-compatible TLS client. |
+| Transaction-file protocol | A single reusable `txn_file` module owns chunk serialization, file upload, HTTP/TLS client pooling, 90-second idle timeout, parallel budget, cancellation, sorting/deduplication, split keys, dedicated pre-split path, admission, primary-batch lookup, Prewrite/Commit/Rollback actions, keyspace/resource metadata, lock expansion/resolution, prepared timestamp retry, schema/upper-bound validation, undetermined normalization, and idle-pool replacement. Once a primary attempt marks the action as retrying, that state enters every secondary batch even after region regrouping. OpenSSL is selected only for the source-compatible TLS client. |
 | Large-transaction proactive split | The source mutation-count and byte thresholds are public, process-wide `AtomicU32` test/integration controls. Zero retains Go's immediate-trigger semantics. A large regional group generates deterministic split keys, invokes the split path, scatters each returned region with one cumulative PD retry budget, waits for each scatter operator to finish, and only then invalidates the old cached region. Split/scatter failure remains non-fatal and does not invalidate; wait failure is logged and does not undo a successful split, exactly as in Go. |
 | Public transaction surface | Async native methods cover source reads, writes, scans, locks, commit/rollback, protocol switches, scope/causality, variables, request/interceptor/resource controls, callback/binlog/schema/filter/memory hooks, request source, commit-wait, diagnostics, and heartbeat. Typed futures replace synchronous context methods; `SyncTransaction` remains the existing optional blocking façade. |
 
@@ -91,6 +102,12 @@ Mechanical source enumeration finds exactly 33 `func Test...` declarations. Ever
 
 Additional source-derived tests cover transaction validity after the first commit/rollback attempt, commit-wait retry/classification, all-check transactions, mutation assertion/constraint actions, `NoResolvePolicy`, normal and failed cleanup, large-2PC splitting, binlog lifecycle, schema/filter/callback/memory contracts, async/1PC fallback, pipelined generations, request context propagation, and keyspace/API coding. The integration failpoint test proves failed commit closes the public transaction while detached cleanup removes its lock.
 
+Two source-uncovered package regressions supplement, but do not inflate, the
+33-test bijection. One brackets `LockKeysFunc` callback ownership around the
+aggressive-lock preflight: shared/aggressive rejection invokes it zero times,
+while the later optimistic/aggressive rejection invokes it once. The other
+checks future wait-start subtraction and the 292-year signed Go-duration cap.
+
 ## Consumer and integration audit
 
 Every direct pinned importer was inspected and assigned:
@@ -107,16 +124,23 @@ The complete `internal/locate`, `internal/client`, `internal/apicodec`, `tikvrpc
 Final independent-test validation on `nightly-2026-08-22` used the exact batch code:
 
 - `make check`: clean protocol generation; workspace all-target/all-feature check; rustfmt; strict workspace Clippy with warnings denied.
-- `cargo nextest run --config-file config/nextest.toml --all --no-default-features`: 1,274 tests passed and two were intentionally skipped. This matrix includes the external mocktikv, public-protocol, ordinary-build injected-client, shared-UniStore, and package unit-test targets.
-- `cargo nextest run --config-file config/nextest.toml --all --all-features --lib`: 1,249 tests passed and six were intentionally skipped.
+- `cargo nextest run --config-file config/nextest.toml --all --no-default-features`: 1,395 tests passed and two were intentionally skipped. This matrix includes the external mocktikv, public-protocol, ordinary-build injected-client, shared-UniStore, package unit-test, and complete root-integration targets.
+- `cargo nextest run --config-file config/nextest.toml --all --all-features --lib`: 1,359 tests passed and six were intentionally skipped.
 - `cargo test --no-default-features --lib source_go_txnkv_transaction_ -- --nocapture` and the `--all-features` variant: all 33 independently named transaction-package tests passed in each configuration.
 - `make doc`: strict private-item workspace rustdoc passed; all 51 doctests passed.
 - `git diff --check`: passed.
 - Mechanical declaration comparison: 33 pinned source tests and 33 direct Rust test bodies, with no missing, extra, duplicate, forwarding, registered test-to-test, or one-call-only helper identity.
-- `/private/tmp/go1.25.12-full/bin/go test ./txnkv/transaction -count=1`: passed in 0.026 seconds.
-- `/private/tmp/go1.25.12-full/bin/go test -race ./txnkv/transaction -count=1`: passed in 1.077 seconds; the linker emitted only its known malformed `LC_DYSYMTAB` warning.
+- `/private/tmp/go1.25.12-full/bin/go test ./txnkv/transaction -count=1`: passed in 0.025 seconds.
+- `/private/tmp/go1.25.12-full/bin/go test -race ./txnkv/transaction -count=1`: passed in 1.075 seconds; the linker emitted only its known malformed `LC_DYSYMTAB` warning.
 
 The strengthened `TestTxnFileActionsApplyResourceGroupTagger` failed before the production fix because `Request::resource_group_name()` returned `None` inside the tagger. It now passes all three source action rows with `Some("txn-file-test")`, and dispatched protobuf contexts retain the same name. Static tags still suppress the dynamic tagger. This red/green result corrects the earlier receipt's claim that the action metadata port was already direct and complete.
+
+The latest re-audit's callback regression failed with one invocation on the
+source preflight rejection and now records zero, while retaining one invocation
+for a later lock error. Its wait regression failed with 100 ms for a start time
+50 ms in the future and now returns client-go's 150 ms; a farther deadline
+saturates to Go's signed `time.Duration` millisecond maximum. The translated
+`TestPessimisticLockMaxExecutionTime` and complete matrices remain green.
 
 Package-owned behavior is covered through deterministic request-level mocks and source-derived state-machine tests. The pinned Go normal and race baselines and both Rust feature configurations execute the declarations, subtests, table rows, randomized rounds, and assertions mapped above. Earlier repository-level receipts retain their separately recorded real-cluster evidence.
 

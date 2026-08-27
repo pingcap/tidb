@@ -984,6 +984,28 @@ pub fn get_txn_commit_counter() -> TxnCommitCounter {
     global_metrics().get_txn_commit_counter()
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TxnCommitProtocol {
+    TwoPc,
+    AsyncCommit,
+    OnePc,
+}
+
+pub(crate) fn record_txn_commit(protocol: TxnCommitProtocol, succeeded: bool) {
+    let source_name = match (protocol, succeeded) {
+        (TxnCommitProtocol::TwoPc, true) => "TwoPCTxnCounterOk",
+        (TxnCommitProtocol::TwoPc, false) => "TwoPCTxnCounterError",
+        (TxnCommitProtocol::AsyncCommit, true) => "AsyncCommitTxnCounterOk",
+        (TxnCommitProtocol::AsyncCommit, false) => "AsyncCommitTxnCounterError",
+        (TxnCommitProtocol::OnePc, true) => "OnePCTxnCounterOk",
+        (TxnCommitProtocol::OnePc, false) => "OnePCTxnCounterError",
+    };
+    match global_metrics().shortcut(source_name) {
+        Some(ClientGoShortcut::Counter(counter)) => counter.inc(),
+        shortcut => panic!("transaction shortcut {source_name} is not a counter: {shortcut:?}"),
+    }
+}
+
 /// Applies client-go's read-SLI classification to the process-wide metrics.
 pub fn observe_read_sli(read_keys: u64, read_time: f64, read_size: f64) {
     global_metrics().observe_read_sli(read_keys, read_time, read_size);

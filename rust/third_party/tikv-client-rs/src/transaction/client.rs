@@ -510,7 +510,17 @@ impl Client {
             .plan();
         // API V2 transport decoding has already restored every LockInfo field
         // to client-go's logical representation.
-        plan.execute().await
+        let locks = plan.execute().await?;
+        Ok(locks
+            .into_iter()
+            .flat_map(|lock| {
+                if lock.shared_lock_infos.is_empty() {
+                    vec![lock]
+                } else {
+                    lock.shared_lock_infos
+                }
+            })
+            .collect())
     }
 
     /// Resolves the given locks and returns any that remain live.

@@ -139,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn source_priority_take_and_cancelled_cleanup_contract() {
+    fn source_test_priority() {
         let mut queue = PriorityQueue::new();
         for priority in 1..=5 {
             queue.push(Item {
@@ -185,11 +185,6 @@ mod tests {
         assert_eq!(queue.highest_priority(), 2);
         queue.reset();
         assert!(queue.is_empty());
-    }
-
-    #[test]
-    fn source_test_priority() {
-        source_priority_take_and_cancelled_cleanup_contract();
     }
 
     #[test]

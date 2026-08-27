@@ -591,6 +591,7 @@ async fn resolve_locks_with_context_body(
     let force_lite = context.force_lite;
     let mut lock_resolver = LockResolver::new(context);
     let mut read_lite_cleanups = HashMap::new();
+    let mut synchronous_lite_cleanups = HashMap::new();
 
     // records the commit version of each primary lock (representing the status of the transaction)
     let mut commit_versions: HashMap<u64, u64> = HashMap::new();
@@ -949,7 +950,18 @@ async fn resolve_locks_with_context_body(
             }
             let resolve_lite = force_lite
                 || lock.txn_size < get_global_config().tikv_client.resolve_lock_lite_threshold;
-            if resolve_lite && lock.key == lock.primary_lock {
+            if resolve_lite {
+                if lock.key != lock.primary_lock {
+                    let cleanup = synchronous_lite_cleanups
+                        .entry(lock.lock_version)
+                        .or_insert_with(|| ReadLiteCleanup {
+                            lock: lock.clone(),
+                            commit_version,
+                            keys: Vec::new(),
+                        });
+                    debug_assert_eq!(cleanup.commit_version, commit_version);
+                    cleanup.keys.push(lock.key.clone());
+                }
                 continue;
             }
             let cleaned_region = resolve_lock_with_retry(
@@ -976,6 +988,27 @@ async fn resolve_locks_with_context_body(
                     .insert(cleaned_region);
             }
         }
+    }
+    for cleanup in synchronous_lite_cleanups.into_values() {
+        resolve_lite_locks_with_retry_for_read_cleanup(
+            &cleanup.keys,
+            &cleanup.lock.primary_lock,
+            false,
+            cleanup.lock.lock_version,
+            cleanup.commit_version,
+            cleanup.lock.is_txn_file,
+            pd_client.clone(),
+            keyspace,
+            keyspace_name,
+            lock_resolver.ctx.rpc_interceptor.clone(),
+            lock_resolver.ctx.resource_group_name.as_deref(),
+            lock_resolver.ctx.resource_control.clone(),
+            lock_resolver.ctx.ru_details.clone(),
+            OPTIMISTIC_BACKOFF,
+            true,
+            true,
+        )
+        .await?;
     }
     for cleanup in read_lite_cleanups.into_values() {
         schedule_read_lite_cleanup(
@@ -1774,6 +1807,11 @@ impl Default for ResolveLocksOptions {
 }
 
 impl ResolveLocksContext {
+    #[cfg(test)]
+    pub(crate) fn set_async_resolve_pool_size(&mut self, size: usize) {
+        self.async_resolve_pool = AsyncResolveTaskPool::new(Arc::new(Semaphore::new(size)));
+    }
+
     /// Cancel and join every detached cleanup owned by this resolver.
     ///
     /// The transaction client calls this before closing its shared transport,
@@ -2001,9 +2039,33 @@ pub struct LockResolver {
     ctx: ResolveLocksContext,
 }
 
+fn txn_not_found_error(error: &Error) -> Option<&kvrpcpb::TxnNotFound> {
+    match error {
+        Error::TxnNotFound(error) => Some(error),
+        Error::ExtractedErrors(errors) | Error::MultipleKeyErrors(errors) => {
+            errors.iter().find_map(txn_not_found_error)
+        }
+        Error::Connection { source, .. }
+        | Error::UndeterminedError(source)
+        | Error::PessimisticLockError { inner: source, .. } => txn_not_found_error(source),
+        _ => None,
+    }
+}
+
+fn is_txn_not_found_error(error: &Error) -> bool {
+    txn_not_found_error(error).is_some()
+}
+
 impl LockResolver {
     pub fn new(ctx: ResolveLocksContext) -> Self {
         Self { ctx }
+    }
+
+    /// Whether an error reports that the primary transaction record was not
+    /// found, including through the aggregate wrappers used by request plans.
+    /// This is the Rust counterpart of client-go's `IsErrorNotFound` probe.
+    pub fn is_error_not_found(&self, error: &Error) -> bool {
+        is_txn_not_found_error(error)
     }
 
     /// Cancel and join this resolver's detached cleanup tasks.
@@ -2302,6 +2364,8 @@ impl LockResolver {
             return Ok(txn_status);
         }
 
+        let response_primary = primary.clone();
+
         // CheckTxnStatus may meet the following cases:
         // 1. LOCK
         // 1.1 Lock expired -- orphan lock, fail to update TTL, crash recovery etc.
@@ -2348,6 +2412,24 @@ impl LockResolver {
             },
             Err(err) => return Err(err),
         };
+
+        if let TransactionStatusKind::Locked(ttl, lock_info) = &mut status.kind {
+            // A valid CheckTxnStatus response may omit LockInfo and carry only
+            // LockTtl. Rust's resolver keeps a concrete LockInfo in its typed
+            // status, so recover the fields already known from the request.
+            if lock_info.lock_version == 0
+                && lock_info.key.is_empty()
+                && lock_info.primary_lock.is_empty()
+            {
+                lock_info.key = response_primary.clone();
+                lock_info.primary_lock = response_primary;
+                lock_info.lock_version = txn_id;
+                lock_info.lock_ttl = *ttl;
+                if resolving_pessimistic_lock {
+                    lock_info.lock_type = kvrpcpb::Op::PessimisticLock as i32;
+                }
+            }
+        }
 
         let current = pd_client.clone().get_timestamp().await?;
         status.check_ttl(current);
@@ -2510,7 +2592,10 @@ impl LockResolver {
                 .await
             {
                 Ok(status) => return Ok(status),
-                Err(Error::TxnNotFound(txn_not_found)) => {
+                Err(error) if is_txn_not_found_error(&error) => {
+                    let txn_not_found = txn_not_found_error(&error)
+                        .expect("TxnNotFound guard checked above")
+                        .clone();
                     let current = pd_client.clone().get_timestamp().await?;
                     if lock_until_expired_ms(lock.lock_version, lock.lock_ttl, current) <= 0 {
                         warn!(

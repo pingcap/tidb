@@ -4,20 +4,26 @@
 //! `internal/mockstore/deadlock` package. Keeping the detector in the reusable
 //! crate ensures every protocol adapter observes the same graph semantics.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Mutex;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct TransactionKeyHash {
-    transaction: u64,
-    key_hash: u64,
+/// One edge in the transaction wait-for graph.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WaitForEntry {
+    pub transaction: u64,
+    pub wait_for_transaction: u64,
+    pub key_hash: u64,
+    pub key: Vec<u8>,
+    pub resource_group_tag: Vec<u8>,
+    pub wait_time: u64,
 }
 
 /// The key hash associated with the edge which closes a deadlock cycle.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeadlockError {
     pub key_hash: u64,
+    pub wait_chain: Vec<WaitForEntry>,
 }
 
 impl fmt::Display for DeadlockError {
@@ -31,7 +37,8 @@ impl std::error::Error for DeadlockError {}
 /// Detects cycles in a transaction wait-for graph.
 #[derive(Default)]
 pub struct DeadlockDetector {
-    wait_for: Mutex<HashMap<u64, Vec<TransactionKeyHash>>>,
+    wait_for: Mutex<HashMap<u64, Vec<WaitForEntry>>>,
+    deadlocked: Mutex<HashSet<u64>>,
 }
 
 impl DeadlockDetector {
@@ -50,48 +57,88 @@ impl DeadlockDetector {
         wait_for_transaction: u64,
         key_hash: u64,
     ) -> Result<(), DeadlockError> {
-        let mut wait_for = self.wait_for.lock().expect("deadlock graph lock poisoned");
-        Self::detect_from(&wait_for, source_transaction, wait_for_transaction)?;
-        Self::register(
-            &mut wait_for,
+        self.detect_with_context(
             source_transaction,
             wait_for_transaction,
             key_hash,
-        );
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    /// Detects and registers an edge while retaining the metadata TiKV reports
+    /// in a deadlock wait chain.
+    pub fn detect_with_context(
+        &self,
+        source_transaction: u64,
+        wait_for_transaction: u64,
+        key_hash: u64,
+        key: Vec<u8>,
+        resource_group_tag: Vec<u8>,
+    ) -> Result<(), DeadlockError> {
+        let mut wait_for = self.wait_for.lock().expect("deadlock graph lock poisoned");
+        let edge = WaitForEntry {
+            transaction: source_transaction,
+            wait_for_transaction,
+            key_hash,
+            key,
+            resource_group_tag,
+            wait_time: 0,
+        };
+        if let Some((deadlock_key_hash, mut wait_chain)) = Self::detect_from(
+            &wait_for,
+            source_transaction,
+            wait_for_transaction,
+            &mut HashSet::new(),
+        ) {
+            wait_chain.push(edge);
+            let mut deadlocked = self
+                .deadlocked
+                .lock()
+                .expect("deadlocked transaction set poisoned");
+            deadlocked.extend(wait_chain.iter().map(|entry| entry.transaction));
+            return Err(DeadlockError {
+                key_hash: deadlock_key_hash,
+                wait_chain,
+            });
+        }
+        Self::register(&mut wait_for, edge);
         Ok(())
     }
 
     fn detect_from(
-        wait_for: &HashMap<u64, Vec<TransactionKeyHash>>,
+        wait_for: &HashMap<u64, Vec<WaitForEntry>>,
         source_transaction: u64,
         wait_for_transaction: u64,
-    ) -> Result<(), DeadlockError> {
-        let Some(next_transactions) = wait_for.get(&wait_for_transaction) else {
-            return Ok(());
-        };
-        for next in next_transactions {
-            if next.transaction == source_transaction {
-                return Err(DeadlockError {
-                    key_hash: next.key_hash,
-                });
-            }
-            Self::detect_from(wait_for, source_transaction, next.transaction)?;
+        visited: &mut HashSet<u64>,
+    ) -> Option<(u64, Vec<WaitForEntry>)> {
+        if !visited.insert(wait_for_transaction) {
+            return None;
         }
-        Ok(())
+        let next_transactions = wait_for.get(&wait_for_transaction)?;
+        for next in next_transactions {
+            if next.wait_for_transaction == source_transaction {
+                return Some((next.key_hash, vec![next.clone()]));
+            }
+            if let Some((key_hash, mut path)) = Self::detect_from(
+                wait_for,
+                source_transaction,
+                next.wait_for_transaction,
+                visited,
+            ) {
+                path.insert(0, next.clone());
+                return Some((key_hash, path));
+            }
+        }
+        None
     }
 
-    fn register(
-        wait_for: &mut HashMap<u64, Vec<TransactionKeyHash>>,
-        source_transaction: u64,
-        wait_for_transaction: u64,
-        key_hash: u64,
-    ) {
-        let edge = TransactionKeyHash {
-            transaction: wait_for_transaction,
-            key_hash,
-        };
-        let edges = wait_for.entry(source_transaction).or_default();
-        if !edges.contains(&edge) {
+    fn register(wait_for: &mut HashMap<u64, Vec<WaitForEntry>>, edge: WaitForEntry) {
+        let edges = wait_for.entry(edge.transaction).or_default();
+        if !edges.iter().any(|candidate| {
+            candidate.wait_for_transaction == edge.wait_for_transaction
+                && candidate.key_hash == edge.key_hash
+        }) {
             edges.push(edge);
         }
     }
@@ -102,17 +149,30 @@ impl DeadlockDetector {
             .lock()
             .expect("deadlock graph lock poisoned")
             .remove(&transaction);
+        self.deadlocked
+            .lock()
+            .expect("deadlocked transaction set poisoned")
+            .remove(&transaction);
+    }
+
+    /// Reports whether a transaction participated in a detected cycle. A
+    /// waiter in that cycle must return its original conflict after wakeup
+    /// instead of silently acquiring the released key.
+    pub fn was_deadlocked(&self, transaction: u64) -> bool {
+        self.deadlocked
+            .lock()
+            .expect("deadlocked transaction set poisoned")
+            .contains(&transaction)
     }
 
     /// Removes the first exact wait-for edge and its now-empty transaction.
     pub fn clean_up_wait_for(&self, transaction: u64, wait_for_transaction: u64, key_hash: u64) {
-        let edge = TransactionKeyHash {
-            transaction: wait_for_transaction,
-            key_hash,
-        };
         let mut wait_for = self.wait_for.lock().expect("deadlock graph lock poisoned");
         let remove_transaction = if let Some(edges) = wait_for.get_mut(&transaction) {
-            if let Some(index) = edges.iter().position(|candidate| *candidate == edge) {
+            if let Some(index) = edges.iter().position(|candidate| {
+                candidate.wait_for_transaction == wait_for_transaction
+                    && candidate.key_hash == key_hash
+            }) {
                 edges.remove(index);
             }
             edges.is_empty()
@@ -131,6 +191,10 @@ impl DeadlockDetector {
             .lock()
             .expect("deadlock graph lock poisoned")
             .retain(|transaction, _| *transaction >= minimum_ts);
+        self.deadlocked
+            .lock()
+            .expect("deadlocked transaction set poisoned")
+            .retain(|transaction| *transaction >= minimum_ts);
     }
 
     #[cfg(test)]
@@ -163,15 +227,47 @@ mod tests {
         assert_eq!(detector.detect(2, 3, 200), Ok(()));
         assert_eq!(
             detector.detect(3, 1, 300),
-            Err(DeadlockError { key_hash: 200 })
+            Err(DeadlockError {
+                key_hash: 200,
+                wait_chain: vec![
+                    WaitForEntry {
+                        transaction: 1,
+                        wait_for_transaction: 2,
+                        key_hash: 100,
+                        key: Vec::new(),
+                        resource_group_tag: Vec::new(),
+                        wait_time: 0,
+                    },
+                    WaitForEntry {
+                        transaction: 2,
+                        wait_for_transaction: 3,
+                        key_hash: 200,
+                        key: Vec::new(),
+                        resource_group_tag: Vec::new(),
+                        wait_time: 0,
+                    },
+                    WaitForEntry {
+                        transaction: 3,
+                        wait_for_transaction: 1,
+                        key_hash: 300,
+                        key: Vec::new(),
+                        resource_group_tag: Vec::new(),
+                        wait_time: 0,
+                    },
+                ],
+            })
         );
         assert_eq!(
             detector.detect(3, 1, 300).unwrap_err().to_string(),
             "deadlock(200)"
         );
+        assert!(detector.was_deadlocked(1));
+        assert!(detector.was_deadlocked(2));
+        assert!(detector.was_deadlocked(3));
 
         detector.clean_up(2);
         assert_eq!(detector.edge_count(2), None);
+        assert!(!detector.was_deadlocked(2));
 
         assert_eq!(detector.detect(3, 1, 300), Ok(()));
         assert_eq!(detector.edge_count(3), Some(1));
@@ -199,7 +295,27 @@ mod tests {
         assert_eq!(detector.edge_count(1), Some(2));
         assert_eq!(
             detector.detect(2, 1, 21),
-            Err(DeadlockError { key_hash: 11 })
+            Err(DeadlockError {
+                key_hash: 11,
+                wait_chain: vec![
+                    WaitForEntry {
+                        transaction: 1,
+                        wait_for_transaction: 2,
+                        key_hash: 11,
+                        key: Vec::new(),
+                        resource_group_tag: Vec::new(),
+                        wait_time: 0,
+                    },
+                    WaitForEntry {
+                        transaction: 2,
+                        wait_for_transaction: 1,
+                        key_hash: 21,
+                        key: Vec::new(),
+                        resource_group_tag: Vec::new(),
+                        wait_time: 0,
+                    },
+                ],
+            })
         );
         assert_eq!(detector.edge_count(2), None);
     }
@@ -234,7 +350,27 @@ mod tests {
         detector.detect(9, 9, 99).unwrap();
         assert_eq!(
             detector.detect(9, 9, 100),
-            Err(DeadlockError { key_hash: 99 })
+            Err(DeadlockError {
+                key_hash: 99,
+                wait_chain: vec![
+                    WaitForEntry {
+                        transaction: 9,
+                        wait_for_transaction: 9,
+                        key_hash: 99,
+                        key: Vec::new(),
+                        resource_group_tag: Vec::new(),
+                        wait_time: 0,
+                    },
+                    WaitForEntry {
+                        transaction: 9,
+                        wait_for_transaction: 9,
+                        key_hash: 100,
+                        key: Vec::new(),
+                        resource_group_tag: Vec::new(),
+                        wait_time: 0,
+                    },
+                ],
+            })
         );
         assert_eq!(detector.edge_count(9), Some(1));
     }

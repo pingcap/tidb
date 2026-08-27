@@ -80,6 +80,23 @@ The package deliberately uses native Tonic/Prost ownership for grpc-go dial-opti
 
 The source declares 50 ordinary tests plus `TestMain`. Every ordinary declaration now has its own source-named Rust test; the detailed tables in the next section retain the underlying behavior and representation decisions each port executes.
 
+An exact-body integrity pass corrected the first version of this claim. Forty of
+the source-named tests were one-call aliases rather than owners of their setup,
+action, and assertions. Twenty-two of those aliases were ordinary `#[test]`
+functions that called an async test body without polling its returned future,
+so they executed no behavior at all. The correction attaches each exact source
+identity to the real body, inlines the three metric-bearing helper cases, gives
+the two close-lifecycle tests independent state transitions, gives the sync and
+async transport-failure identities independent dispatches, and makes
+`TestInterceptedClient` execute its own interceptor. The repository-wide
+one-call scan now reports no `internal/client` alias; the sole remaining result
+belonged to the separately tracked `internal/apicodec` receipt and is corrected
+in the following consolidated batch. A second registered-test scan then found
+that two otherwise-direct BatchCommands encoding ports also invoked
+supplemental functions still marked `#[test]`; those calls are removed while
+the supplemental tests remain independently executable. These corrections
+found no additional production divergence.
+
 | Source file | Source declaration | Independently executable Rust port |
 | --- | --- | --- |
 | `client_async_test.go` | `TestSendRequestAsyncBasic` | `source_test_send_request_async_basic` |
@@ -134,7 +151,7 @@ The source declares 50 ordinary tests plus `TestMain`. Every ordinary declaratio
 | `priority_queue_test.go` | `TestPriorityQueueTakeAllLeavesReferencesInBackingArray` | `source_test_priority_queue_take_all_leaves_references_in_backing_array` |
 | `main_test.go` | `TestMain` | Harness disposition: Rust-owned task handles, cancellation, close/restart, panic recovery, and mock-server force-stop gates replace goleak. |
 
-The five grpc-go buffer-pool tests are executable ownership ports rather than skipped dispositions. They prove independent Prost allocations, retained clones after the original is dropped, repeatable typed conversion, single-owner return through `Option::take`, and concurrent message encoding. The priority-queue backing-array test uses drop tracking to prove `take(all)` transfers every owned element and leaves no hidden queue reference. Three metric-bearing aliases use distinct label sets so the original mapped test and the new source-named port can run together without cumulative-counter contamination.
+The five grpc-go buffer-pool tests are executable ownership ports rather than skipped dispositions. They prove independent Prost allocations, retained clones after the original is dropped, repeatable typed conversion, single-owner return through `Option::take`, and concurrent message encoding. The priority-queue backing-array test uses drop tracking to prove `take(all)` transfers every owned element and leaves no hidden queue reference. Each metric-bearing source port now owns one fresh label set and executes once; there is no duplicate aggregate test to contaminate cumulative counters.
 
 ## Original test mapping
 
@@ -144,12 +161,12 @@ Every original test is listed below with the deterministic native behavior execu
 
 | Source test | Rust evidence |
 | --- | --- |
-| `TestSendRequestAsyncBasic` | Native future dispatch; `source_debug_and_empty_commands_use_their_distinct_paths`, `source_batch_dispatcher_construction_uses_client_configuration`, and the complete `util/async` native-mapping receipt. |
-| `TestSendRequestAsyncAttachContext` | `source_context_bearing_unary_requests_retain_full_context_metadata` and real BatchCommands request transport tests. |
-| `TestSendRequestAsyncUpdateTiKVRUV2` | `updates_and_drains_ru_v2_exactly`, `source_cop_stream_ru_v2_counts_only_the_first_received_rpc`, and physical unary/batch RU-v2 plan tests. |
-| `TestSendRequestAsyncTimeout` | `source_dropped_submission_cancels_before_batch_selection`, `source_cancelled_response_records_its_stream_tail`, and request-stage timeout/cancellation boundary tests. |
-| `TestSendRequestAsyncAndCloseClientOnHandle` | `source_explicit_close_retires_published_and_future_worker_entries`. |
-| `TestSendRequestAsyncAndCloseClientBeforeSend` | `source_close_fails_only_entries_not_yet_published` and `source_client_close_retires_every_pool_once_and_prevents_reconnect`. |
+| `TestSendRequestAsyncBasic` | `source_test_send_request_async_basic` owns native future dispatch through the distinct Debug and BatchCommands paths; the complete `util/async` receipt owns callback scheduling. |
+| `TestSendRequestAsyncAttachContext` | `source_test_send_request_async_attach_context` owns the full context-field matrix; real BatchCommands request transport tests supplement it. |
+| `TestSendRequestAsyncUpdateTiKVRUV2` | `source_test_send_request_async_update_tikv_ruv2` owns physical-dispatch count updates; stream and drain tests supplement it. |
+| `TestSendRequestAsyncTimeout` | `source_test_send_request_async_timeout` owns drop-before-selection cancellation; `source_test_cancel_timeout_ret_err` owns the stream-tail boundary. |
+| `TestSendRequestAsyncAndCloseClientOnHandle` | `source_test_send_request_async_and_close_client_on_handle` owns published and future-entry retirement. |
+| `TestSendRequestAsyncAndCloseClientBeforeSend` | `source_test_send_request_async_and_close_client_before_send` owns the queued-versus-published close boundary. |
 
 ### `client_batch_test.go`
 
@@ -167,58 +184,58 @@ Every original test is listed below with the deterministic native behavior execu
 
 | Source test | Rust evidence |
 | --- | --- |
-| `TestPanicInRecvLoop` | `source_receive_loop_recovers_panics_on_the_same_stream` and `source_short_response_recovers_without_retiring_the_missing_suffix`; the receive loop increments `batch-recv-loop` and resumes `Recv` on that stream. |
-| `TestRecvErrorInMultipleRecvLoops` | `source_connection_epoch_retires_only_the_recovery_leaders_host`, `source_epoch_retires_only_the_recovery_leader_when_reopen_cannot_finish`, and dispatcher recreation integration; one connection epoch serializes sibling direct/forwarded recovery without cross-host retirement. |
+| `TestPanicInRecvLoop` | `source_test_panic_in_recv_loop` owns the failed in-flight request and successful post-recovery request; short-envelope recovery supplements it. |
+| `TestRecvErrorInMultipleRecvLoops` | `source_test_recv_error_in_multiple_recv_loops`, `source_epoch_retires_only_the_recovery_leader_when_reopen_cannot_finish`, and dispatcher recreation integration; one connection epoch serializes sibling direct/forwarded recovery without cross-host retirement. |
 
 ### `client_interceptor_test.go`
 
 | Source test | Rust evidence |
 | --- | --- |
-| `TestInterceptedClient` | Complete `tikvrpc/interceptor` receipt and transaction physical-RPC interceptor integration. |
-| `TestAppendChainedInterceptor` | `chain_is_onion_ordered_and_replaces_duplicate_names`. |
-| `TestGetResourceControlInfoHonorsSelectionPolicy` | `source_resource_control_selection_uses_routed_replica_and_zone`. |
-| `TestSendRequestDoesNotSettleAndKeepsRUDetailsOnTransportFailure` | `transaction_resource_control_does_not_settle_transport_failures`. |
-| `TestSendRequestSettlesOnSuccess` | `transaction_resource_control_charges_and_settles_each_physical_rpc`. |
-| `TestSendRequestAsyncDoesNotSettleAndKeepsRUDetailsOnTransportFailure` | Same physical future path as synchronous Rust callers; the transport-failure test above is the native mapping. |
-| `TestBypassRUV2FollowsRequestInfoBypass` | `source_request_info_uses_typed_command_context_and_bypass_rules` and `source_ru_v2_skips_internal_bypass_requests`. |
+| `TestInterceptedClient` | `source_test_intercepted_client` independently dispatches through one interceptor and proves it executes exactly once. |
+| `TestAppendChainedInterceptor` | `source_test_append_chained_interceptor` owns onion ordering and duplicate-name replacement. |
+| `TestGetResourceControlInfoHonorsSelectionPolicy` | `source_test_get_resource_control_info_honors_selection_policy` owns routed-replica and zone selection. |
+| `TestSendRequestDoesNotSettleAndKeepsRUDetailsOnTransportFailure` | `source_test_send_request_does_not_settle_and_keeps_ru_details_on_transport_failure` owns its failed dispatch and request-only charge assertion. |
+| `TestSendRequestSettlesOnSuccess` | `source_test_send_request_settles_on_success` owns successful physical prewrite/commit charging and settlement. |
+| `TestSendRequestAsyncDoesNotSettleAndKeepsRUDetailsOnTransportFailure` | `source_test_send_request_async_does_not_settle_and_keeps_ru_details_on_transport_failure` independently executes the native async failure path. |
+| `TestBypassRUV2FollowsRequestInfoBypass` | `source_test_bypass_ruv2_follows_request_info_bypass` owns typed bypass rules; the RU-v2 skip test supplements it. |
 
 ### `client_test.go`
 
 | Source test | Rust evidence |
 | --- | --- |
-| `TestStreamFirstRecvErrorClosesLease` | All three typed wrappers eagerly await their first item and drop the owned Tonic stream on error; `source_coprocessor_stream_reads_first_response_before_returning` exercises the real transport boundary. Per-`message` timeout and explicit close share the wrapper macro. |
-| `TestConn` | `source_connection_pool_round_robin_increments_before_selecting`, `source_close_addr_ver_does_not_evict_a_newer_cached_client`, and `source_pool_creation_is_singleflight_per_client`. |
-| `TestGetConnAfterClose` | `source_client_close_retires_every_pool_once_and_prevents_reconnect` and close-time connection-gauge clearing. |
-| `TestCancelTimeoutRetErr` | Native future cancellation plus `source_dropped_submission_cancels_before_batch_selection` and timeout request-stage assertions. |
-| `TestCompletedTiKVRUV2RPCCount` | Typed command classifications and RU-v2 physical-response tests, including write/read/bypass/non-TiKV boundaries. |
-| `TestSendWhenReconnect` | Finite concurrency waits on stream readiness until the caller timeout; `source_connection_selection_skips_a_recreating_pool_slot` and dispatcher recreation integration verify source pool scanning and later recovery. |
-| `TestCollapseResolveLock` | `source_resolve_lock_singleflight_key_and_exclusions`. |
-| `TestForwardMetadataByUnaryCall` | `source_unary_forwarding_metadata_is_applied_only_when_requested`. |
-| `TestForwardMetadataByBatchCommands` | `source_batch_stream_metadata_carries_forwarding_host_and_pool_index` and the real dispatcher metadata/recreation test. |
-| `TestBatchCommandsBuilder` | `source_builder_groups_direct_and_forwarded_requests_with_monotonic_ids`, priority, cancellation, and reset tests. |
-| `TestBatchRequestTerminalOutcome` | `source_receive_loop_routes_each_id_and_retains_terminal_outcomes`. |
-| `TestVisitBatchRequestObservations` | `source_batch_request_stage_observations_preserve_terminal_boundaries`. |
-| `TestFormatBatchRequestTimeoutReasonNormalizesObservedSentNS` | The same telemetry test covers response-before-send normalization and source nanosecond fields. |
-| `TestWriteBatchCommandsEntryProgress` | Real dispatcher integration verifies every envelope has `client_send_time_ns`; receive progress tests verify response watermarks. |
-| `TestInspectPendingBatchRequests` | `source_inspect_pending_batch_requests_separates_confirmed_entries`. |
-| `TestTraceExecDetails` | `execution_detail_tree_and_historical_timeline_match_client_go` and `source_exec_details_trace_wraps_a_physical_batch_rpc`. |
-| `TestBatchClientRecoverAfterServerRestart` | Deterministic close/reopen generation in `source_dispatcher_recreates_failed_streams_and_preserves_metadata_per_host`. |
-| `TestLimitConcurrency` | `source_concurrency_limit_is_per_connection_and_scans_round_robin`, priority, unavailable-slot, and reset tests. |
-| `TestPrioritySentLimit` | `source_builder_prioritizes_and_allows_high_priority_to_exceed_limit`. |
-| `TestBatchClientReceiveHealthFeedback` | `source_health_feedback_listener_is_replaced_and_runs_before_demux`. |
-| `TestRandomRestartStoreAndForwarding` | Deterministic direct/forwarded failure isolation and recreation tests replace the nondeterministic stress loop. |
-| `TestFastFailRequest` | `TikvConnect` applies the fixed source five-second Endpoint dial timeout; the connector default assertion prevents request-timeout coupling. |
-| `TestErrConn` | `source_transport_error_carries_cached_connection_identity` and plan-level compare-close extraction tests. |
-| `TestFastFailWhenNoAvailableConn` | `source_default_concurrency_fast_fails_an_unavailable_batch_stream`. |
-| `TestConcurrentCloseConnPanic` | `source_client_close_retires_every_pool_once_and_prevents_reconnect` concurrently joins client close and versioned address close, then verifies exactly-once retirement. |
-| `TestBatchPolicy` | `source_turbo_batch_policy_presets_and_custom_values_are_preserved`, collection-order, overload, and `source_idle_deadline_does_not_interrupt_collection_after_a_head_arrives` tests. |
+| `TestStreamFirstRecvErrorClosesLease` | All three typed wrappers eagerly await their first item and drop the owned Tonic stream on error; `source_test_stream_first_recv_error_closes_lease` exercises the real transport boundary. Per-`message` timeout and explicit close share the wrapper macro. |
+| `TestConn` | `source_test_conn`, `source_close_addr_ver_does_not_evict_a_newer_cached_client`, and `source_pool_creation_is_singleflight_per_client`. |
+| `TestGetConnAfterClose` | `source_test_get_conn_after_close` closes one versioned cached client and observes its terminal state and removal. |
+| `TestCancelTimeoutRetErr` | `source_test_cancel_timeout_ret_err` owns cancellation delivery and stream-tail accounting. |
+| `TestCompletedTiKVRUV2RPCCount` | `source_test_completed_tikv_ruv2_rpc_count` owns first-response stream counting; typed classification tests supplement write/read/bypass/non-TiKV boundaries. |
+| `TestSendWhenReconnect` | Finite concurrency waits on stream readiness until the caller timeout; `source_test_send_when_reconnect` and dispatcher recreation integration verify source pool scanning and later recovery. |
+| `TestCollapseResolveLock` | `source_test_collapse_resolve_lock`. |
+| `TestForwardMetadataByUnaryCall` | `source_test_forward_metadata_by_unary_call`. |
+| `TestForwardMetadataByBatchCommands` | `source_test_forward_metadata_by_batch_commands` and the real dispatcher metadata/recreation test. |
+| `TestBatchCommandsBuilder` | `source_test_batch_commands_builder` owns direct/forwarded grouping and monotonic IDs; priority, cancellation, and reset tests supplement it. |
+| `TestBatchRequestTerminalOutcome` | `source_test_batch_request_terminal_outcome`. |
+| `TestVisitBatchRequestObservations` | `source_test_visit_batch_request_observations`. |
+| `TestFormatBatchRequestTimeoutReasonNormalizesObservedSentNS` | `source_test_format_batch_request_timeout_reason_normalizes_observed_sent_ns` owns the shared first-response boundary and source formatting. |
+| `TestWriteBatchCommandsEntryProgress` | `source_test_write_batch_commands_entry_progress` owns publication-before-send and failed-group retirement; dispatcher integration supplements envelope timestamps. |
+| `TestInspectPendingBatchRequests` | `source_test_inspect_pending_batch_requests`. |
+| `TestTraceExecDetails` | `execution_detail_tree_and_historical_timeline_match_client_go` and `source_test_trace_exec_details`. |
+| `TestBatchClientRecoverAfterServerRestart` | Deterministic close/reopen generation in `source_test_batch_client_recover_after_server_restart`. |
+| `TestLimitConcurrency` | `source_test_limit_concurrency`, priority, unavailable-slot, and reset tests. |
+| `TestPrioritySentLimit` | `source_test_priority_sent_limit`. |
+| `TestBatchClientReceiveHealthFeedback` | `source_test_batch_client_receive_health_feedback`. |
+| `TestRandomRestartStoreAndForwarding` | `source_test_random_restart_store_and_forwarding` owns deterministic direct/forwarded failure isolation; recreation tests supplement it. |
+| `TestFastFailRequest` | `source_test_fast_fail_request` proves `TikvConnect` applies the fixed source five-second Endpoint dial timeout rather than the request timeout. |
+| `TestErrConn` | `source_test_err_conn` and plan-level compare-close extraction tests. |
+| `TestFastFailWhenNoAvailableConn` | `source_test_fast_fail_when_no_available_conn`. |
+| `TestConcurrentCloseConnPanic` | `source_test_concurrent_close_conn_panic` concurrently joins client close and versioned address close, then verifies exactly-once retirement. |
+| `TestBatchPolicy` | `source_test_batch_policy`, collection-order, overload, and `source_idle_deadline_does_not_interrupt_collection_after_a_head_arrives` tests. |
 
 ### `priority_queue_test.go` and `main_test.go`
 
 | Source test | Rust evidence |
 | --- | --- |
-| `TestPriority` | `source_priority_take_and_cancelled_cleanup_contract`. |
-| `TestPriorityQueueTakeAllLeavesReferencesInBackingArray` | Rust's draining ownership leaves no interface references in a backing array; the same test verifies the queue is empty after take/cleanup. The Go GC-retention failure mode is unrepresentable without unsafe code. |
+| `TestPriority` | `source_test_priority`. |
+| `TestPriorityQueueTakeAllLeavesReferencesInBackingArray` | `source_test_priority_queue_take_all_leaves_references_in_backing_array` uses drop tracking to prove Rust's draining ownership leaves no hidden queue references. |
 | `TestMain` | Go's goleak wrapper maps to owned `JoinHandle`/cancellation lifetimes. Explicit close, idle retirement, send/receive panic recovery, stream recreation, and mock-server force-stop tests prove every package-created task has a shutdown owner. |
 
 ## Validation boundary
@@ -228,30 +245,26 @@ The Rust tests use real loopback Tonic transports for unary, stream, BatchComman
 Final validation uses Go 1.25.12 and `nightly-2026-08-22`:
 
     go test ./internal/client -count=1
-    # passed in 34.541s
+    # passed in 34.620s
 
     go test -race ./internal/client -count=1
-    # passed in 42.246s
+    # passed in 48.054s
 
-    cargo +nightly-2026-08-22 test --quiet --lib --no-default-features source_
-    # 844 passed; 0 failed
+    cargo +nightly-2026-08-22 test --quiet --no-default-features --lib source_test_ -- --test-threads=1
+    # 207 passed; 0 failed
 
-    cargo +nightly-2026-08-22 test --quiet --lib --all-features source_
-    # 841 passed; 0 failed
+    cargo +nightly-2026-08-22 test --quiet --lib source_test_ -- --test-threads=1
+    # 207 passed; 0 failed
 
-    cargo +nightly-2026-08-22 test --quiet --workspace --no-default-features
-    # main library: 1,091 passed; 0 failed; 1 ignored; all companion and doctest targets passed
+    make unit-test
+    # no-default: 1,237 passed; 2 configured skips
+    # all-features library: 1,212 passed; 6 configured skips
 
-    cargo +nightly-2026-08-22 test --quiet --lib --all-features
-    # 1,088 passed; 0 failed; 1 ignored
-
-    cargo +nightly-2026-08-22 check --workspace --all-targets --all-features
-    cargo +nightly-2026-08-22 clippy --workspace --all-targets --all-features -- -D warnings
-    RUSTDOCFLAGS=-Dwarnings cargo +nightly-2026-08-22 doc --workspace --all-features --no-deps --document-private-items
-    cargo +nightly-2026-08-22 test --doc --all-features
+    make check
+    make doc
     # passed; 51 doctests
 
     cargo +nightly-2026-08-22 fmt --all -- --check
     git diff --check
 
-Mechanical source verification resolves the client-go checkout to `52c1e76cec993571493c81de442bcbef90cdc106`, finds exactly 19 `internal/client` artifacts, 51 distinct source `Test...` declarations, 32 direct importer files, and exactly 50 independently named ordinary Rust ports. `TestMain` is the sole harness disposition. The stronger ports found no production divergence; all production and consumer assignments from the 2026-08-25 re-audit remain valid.
+Mechanical source verification resolves the client-go checkout to `52c1e76cec993571493c81de442bcbef90cdc106`, finds exactly 19 `internal/client` artifacts, 51 distinct source `Test...` declarations, 32 direct importer files, and exactly 50 independently named ordinary Rust ports. Each of those 50 names has exactly one definition and no invocation from another registered test. The repository-wide one-call and registered-test scans find no package-local forwarding. `TestMain` is the sole harness disposition. The correction removed 40 aliases, activated 22 previously dropped async futures, added the missing `TestPanicInRecvLoop` identity, removed two residual registered-test calls, and found no production divergence; all production and consumer assignments from the 2026-08-25 re-audit remain valid.

@@ -374,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    fn source_uncovered_chain_is_onion_ordered_and_replaces_duplicate_names() {
+    fn source_test_append_chained_interceptor() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let count = Arc::new(AtomicUsize::new(0));
         let interceptor = |name: &'static str| {
@@ -513,11 +513,23 @@ mod tests {
 
     #[test]
     fn source_test_intercepted_client() {
-        source_test_interceptor();
-    }
+        let executed = Arc::new(AtomicUsize::new(0));
+        let executed_by_interceptor = executed.clone();
+        let interceptor = new_rpc_interceptor("test", move |_, _, next| {
+            let executed_by_interceptor = executed_by_interceptor.clone();
+            Box::pin(async move {
+                executed_by_interceptor.fetch_add(1, Ordering::SeqCst);
+                next().await
+            })
+        });
+        let request = TestRequest;
+        futures::executor::block_on(interceptor.wrap(
+            "",
+            &request,
+            Arc::new(|| Box::pin(async { Ok(Box::new(()) as Box<dyn Any>) })),
+        ))
+        .unwrap();
 
-    #[test]
-    fn source_test_append_chained_interceptor() {
-        source_uncovered_chain_is_onion_ordered_and_replaces_duplicate_names();
+        assert_eq!(executed.load(Ordering::SeqCst), 1);
     }
 }

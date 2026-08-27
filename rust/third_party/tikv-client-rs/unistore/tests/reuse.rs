@@ -1,8 +1,8 @@
 // Copyright 2026 TiKV Project Authors. Licensed under Apache-2.0.
 
 use unistore::{
-    AssertionLevel, DeadlockDetector, DeadlockError, IsolationLevel, MockEngine, Mutation,
-    MvccStore, PrewriteRequest, TxnMutation,
+    AssertionLevel, DeadlockDetector, IsolationLevel, MockEngine, Mutation, MvccStore,
+    PrewriteRequest, TxnMutation,
 };
 
 #[test]
@@ -10,10 +10,15 @@ fn deadlock_detector_is_reusable_outside_the_crate() {
     let detector = DeadlockDetector::new();
     detector.detect(1, 2, 11).unwrap();
     detector.detect(1, 3, 12).unwrap();
-    assert_eq!(
-        detector.detect(2, 1, 21),
-        Err(DeadlockError { key_hash: 11 })
-    );
+    let error = detector.detect(2, 1, 21).unwrap_err();
+    assert_eq!(error.key_hash, 11);
+    assert_eq!(error.wait_chain.len(), 2);
+    assert_eq!(error.wait_chain[0].transaction, 1);
+    assert_eq!(error.wait_chain[0].wait_for_transaction, 2);
+    assert_eq!(error.wait_chain[0].key_hash, 11);
+    assert_eq!(error.wait_chain[1].transaction, 2);
+    assert_eq!(error.wait_chain[1].wait_for_transaction, 1);
+    assert_eq!(error.wait_chain[1].key_hash, 21);
     detector.clean_up_wait_for(1, 2, 11);
     detector.clean_up(1);
     detector.expire(2);

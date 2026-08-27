@@ -332,14 +332,27 @@ impl BitOrAssign for TraceControlFlags {
     }
 }
 
-/// Client trace-event family. Discriminants match client-go.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u32)]
-pub enum Category {
-    TransactionTwoPhaseCommit = 0,
-    TransactionLockResolve = 1,
-    KvRequest = 2,
-    RegionCache = 3,
+/// Client trace-event family. Known values match client-go, while the public
+/// numeric representation retains unknown values introduced by consumers or
+/// future client-go versions.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[repr(transparent)]
+pub struct Category(pub u32);
+
+#[allow(non_upper_case_globals)]
+impl Category {
+    pub const TransactionTwoPhaseCommit: Self = Self(0);
+    pub const TransactionLockResolve: Self = Self(1);
+    pub const KvRequest: Self = Self(2);
+    pub const RegionCache: Self = Self(3);
+
+    pub const fn from_raw(value: u32) -> Self {
+        Self(value)
+    }
+
+    pub const fn as_raw(self) -> u32 {
+        self.0
+    }
 }
 
 /// Native structured field passed to a trace event handler.
@@ -582,7 +595,14 @@ impl TransactionBatchTrace {
         );
     }
 
-    pub(crate) fn emit_result(&self, success: bool) {
+    pub(crate) fn emit_result(&self, success: bool, response_error: bool) {
+        // client-go's commit path emits a false result only when SendReq
+        // itself fails. A key error carried by CommitResponse returns without
+        // a commit.batch.result event. Prewrite emits its terminal result for
+        // both request and response errors.
+        if response_error && matches!(self.kind, TransactionBatchKind::Commit) {
+            return;
+        }
         if !is_category_enabled(Category::TransactionTwoPhaseCommit) {
             return;
         }
@@ -603,9 +623,11 @@ impl TransactionBatchTrace {
 
 #[cfg(test)]
 mod tests {
+    #![allow(non_snake_case)]
+
     use super::*;
     use serial_test::serial;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
     fn reset_handlers() {
         set_trace_event_handler(None);
@@ -615,7 +637,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_trace_control_flags_has() {
+    fn source_go_trace_flags_test_TestTraceControlFlags_Has() {
         let flags = TraceControlFlags::IMMEDIATE_LOG | TraceControlFlags::TIKV_CATEGORY_REQUEST;
         assert!(flags.has(TraceControlFlags::IMMEDIATE_LOG));
         assert!(flags.has(TraceControlFlags::TIKV_CATEGORY_REQUEST));
@@ -625,7 +647,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_trace_control_flags_with() {
+    fn source_go_trace_flags_test_TestTraceControlFlags_With() {
         let mut flags = TraceControlFlags::default();
         flags = flags.with(TraceControlFlags::IMMEDIATE_LOG);
         assert!(flags.has(TraceControlFlags::IMMEDIATE_LOG));
@@ -638,7 +660,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_trace_control_flags_combined_operations() {
+    fn source_go_trace_flags_test_TestTraceControlFlags_CombinedOperations() {
         let flags = TraceControlFlags::default()
             .with(TraceControlFlags::IMMEDIATE_LOG)
             .with(TraceControlFlags::TIKV_CATEGORY_REQUEST)
@@ -651,7 +673,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_trace_control_flags_bit_values() {
+    fn source_go_trace_flags_test_TestTraceControlFlags_BitValues() {
         assert_eq!(TraceControlFlags::IMMEDIATE_LOG, TraceControlFlags(1 << 0));
         assert_eq!(
             TraceControlFlags::TIKV_CATEGORY_REQUEST,
@@ -685,13 +707,13 @@ mod tests {
 
     #[test]
     #[serial]
-    fn source_test_trace_control_extractor() {
+    fn source_go_trace_trace_test_TestTraceControlExtractor() {
         reset_handlers();
         let context = TraceContext::new();
-        assert_eq!(
-            trace_control_flags(&context),
-            TraceControlFlags::TIKV_CATEGORY_REQUEST
-        );
+        let default_flags = trace_control_flags(&context);
+        assert_eq!(default_flags, TraceControlFlags::TIKV_CATEGORY_REQUEST);
+        assert!(default_flags.has(TraceControlFlags::TIKV_CATEGORY_REQUEST));
+        assert!(!default_flags.has(TraceControlFlags::IMMEDIATE_LOG));
         assert!(!immediate_logging_enabled(&context));
 
         set_trace_control_extractor(Some(Arc::new(|_| {
@@ -711,6 +733,7 @@ mod tests {
                 .unwrap_or_default()
         })));
         assert_eq!(trace_control_flags(&context), TraceControlFlags::default());
+        assert!(!immediate_logging_enabled(&context));
         let detailed = context.with_value::<FlagsKey, _>(
             TraceControlFlags::TIKV_CATEGORY_WRITE_DETAILS
                 | TraceControlFlags::TIKV_CATEGORY_READ_DETAILS,
@@ -728,12 +751,13 @@ mod tests {
             trace_control_flags(&detailed),
             TraceControlFlags::TIKV_CATEGORY_REQUEST
         );
+        assert!(!immediate_logging_enabled(&detailed));
         reset_handlers();
     }
 
     #[test]
     #[serial]
-    fn source_test_trace_event_func() {
+    fn source_go_trace_trace_test_TestTraceEventFunc() {
         reset_handlers();
         let called = Arc::new(AtomicBool::new(false));
         let observed = called.clone();
@@ -767,7 +791,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn source_test_is_category_enabled_func() {
+    fn source_go_trace_trace_test_TestIsCategoryEnabledFunc() {
         reset_handlers();
         assert!(!is_category_enabled(Category::TransactionTwoPhaseCommit));
         set_category_enabled_handler(Some(Arc::new(|category| {
@@ -781,7 +805,26 @@ mod tests {
     }
 
     #[test]
-    fn source_test_trace_id_context() {
+    #[serial]
+    fn source_uncovered_unknown_category_values_reach_registered_handlers() {
+        reset_handlers();
+        assert_eq!(Category::default(), Category::TransactionTwoPhaseCommit);
+        let unknown = Category(99);
+        set_category_enabled_handler(Some(Arc::new(move |category| category == unknown)));
+        assert!(is_category_enabled(unknown));
+
+        let observed = Arc::new(AtomicU32::new(0));
+        let event_category = observed.clone();
+        set_trace_event_handler(Some(Arc::new(move |_, category, _, _| {
+            event_category.store(category.0, Ordering::SeqCst);
+        })));
+        trace_event(&TraceContext::new(), unknown, "future.category", &[]);
+        assert_eq!(observed.load(Ordering::SeqCst), 99);
+        reset_handlers();
+    }
+
+    #[test]
+    fn source_go_trace_trace_test_TestTraceIDContext() {
         let context = TraceContext::new();
         assert_eq!(context.trace_id(), None);
         let first = context.with_trace_id(vec![1, 2, 3, 4, 5]);

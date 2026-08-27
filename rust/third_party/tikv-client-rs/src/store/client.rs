@@ -528,7 +528,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_unary_forwarding_metadata_is_applied_only_when_requested() {
+    async fn source_test_forward_metadata_by_unary_call() {
         let (mut server, _) = crate::store::mockserver::start_mock_tikv_service()
             .await
             .unwrap();
@@ -571,7 +571,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_coprocessor_stream_reads_first_response_before_returning() {
+    async fn source_test_stream_first_recv_error_closes_lease() {
         let (mut server, _) = crate::store::mockserver::start_mock_tikv_service()
             .await
             .unwrap();
@@ -655,7 +655,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_transport_error_carries_cached_connection_identity() {
+    async fn source_test_err_conn() {
         let (mut server, _) = crate::store::mockserver::start_mock_tikv_service()
             .await
             .unwrap();
@@ -748,7 +748,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_connection_pool_round_robin_increments_before_selecting() {
+    async fn source_test_conn() {
         let clients = (0..3)
             .map(|_| TikvClient::new(Channel::from_static("http://127.0.0.1:1").connect_lazy()))
             .collect();
@@ -763,7 +763,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn source_resolve_lock_singleflight_key_and_exclusions() {
+    async fn source_test_collapse_resolve_lock() {
         use crate::proto::tikvpb;
         use tikvpb::batch_commands_response::response::Cmd;
 
@@ -905,7 +905,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_exec_details_trace_wraps_a_physical_batch_rpc() {
+    async fn source_test_trace_exec_details() {
         use crate::proto::tikvpb;
         use tikvpb::batch_commands_response::response::Cmd;
 
@@ -971,7 +971,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_debug_and_empty_commands_use_their_distinct_paths() {
+    async fn source_test_send_request_async_basic() {
         let (mut server, _) = crate::store::mockserver::start_mock_tikv_service()
             .await
             .unwrap();
@@ -1014,7 +1014,7 @@ mod tests {
     }
 
     #[test]
-    fn source_batch_stream_metadata_carries_forwarding_host_and_pool_index() {
+    fn source_test_forward_metadata_by_batch_commands() {
         let forwarded =
             KvRpcClient::batch_commands_request((), "store-2", 3).expect("valid source metadata");
         assert_eq!(
@@ -1045,42 +1045,6 @@ mod tests {
     }
 
     #[test]
-    fn source_test_send_request_async_basic() {
-        source_debug_and_empty_commands_use_their_distinct_paths();
-    }
-
-    #[test]
-    fn source_test_stream_first_recv_error_closes_lease() {
-        source_coprocessor_stream_reads_first_response_before_returning();
-    }
-
-    #[test]
-    fn source_test_conn() {
-        source_connection_pool_round_robin_increments_before_selecting();
-    }
-
-    #[test]
-    #[serial]
-    fn source_test_collapse_resolve_lock() {
-        source_resolve_lock_singleflight_key_and_exclusions();
-    }
-
-    #[test]
-    fn source_test_forward_metadata_by_unary_call() {
-        source_unary_forwarding_metadata_is_applied_only_when_requested();
-    }
-
-    #[test]
-    fn source_test_forward_metadata_by_batch_commands() {
-        source_batch_stream_metadata_carries_forwarding_host_and_pool_index();
-    }
-
-    #[test]
-    fn source_test_trace_exec_details() {
-        source_exec_details_trace_wraps_a_physical_batch_rpc();
-    }
-
-    #[test]
     fn source_test_fast_fail_request() {
         let connector = TikvConnect::new(
             Arc::new(SecurityManager::default()),
@@ -1090,11 +1054,6 @@ mod tests {
         assert_eq!(connector.timeout, Duration::from_secs(20));
         assert_eq!(connector.dial_timeout, TIKV_DIAL_TIMEOUT);
         assert_eq!(connector.dial_timeout, Duration::from_secs(5));
-    }
-
-    #[test]
-    fn source_test_err_conn() {
-        source_transport_error_carries_cached_connection_identity();
     }
 }
 

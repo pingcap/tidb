@@ -322,18 +322,30 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 self.predicted_read_bytes,
             )
         });
-        if let Some(selected) = &selected_resource_control {
-            let result = selected
+        if crate::trace::is_category_enabled(crate::trace::Category::KvRequest) {
+            crate::trace::trace_event(
+                &self.trace_context,
+                crate::trace::Category::KvRequest,
+                "kv.request.send",
+                &request_trace_fields(self, &request),
+            );
+        }
+        let started_at = Instant::now();
+        let stats = tikv_stats(self.request.label());
+        let admission_result = match &selected_resource_control {
+            Some(selected) => selected
                 .controller
                 .on_request_wait(&selected.resource_group_name, selected.request)
-                .await?;
-            if let Some(ru_details) = &self.ru_details {
-                ru_details.update(&result.consumption, result.wait_duration);
-            }
-            request.set_resource_control_penalty(result.penalty);
-            request.set_resource_control_priority_if_unset(result.priority);
-        }
-        let stats = tikv_stats(self.request.label());
+                .await
+                .map(|result| {
+                    if let Some(ru_details) = &self.ru_details {
+                        ru_details.update(&result.consumption, result.wait_duration);
+                    }
+                    request.set_resource_control_penalty(result.penalty);
+                    request.set_resource_control_priority_if_unset(result.priority);
+                }),
+            None => Ok(()),
+        };
         let client = self
             .kv_client
             .as_ref()
@@ -356,18 +368,89 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 }
             }) as futures::future::BoxFuture<'_, crate::interceptor::RpcDispatchResult>
         });
-        if crate::trace::is_category_enabled(crate::trace::Category::KvRequest) {
-            crate::trace::trace_event(
-                &self.trace_context,
-                crate::trace::Category::KvRequest,
-                "kv.request.send",
-                &request_trace_fields(self, &request),
-            );
+        let (result, transport_attempted) = match admission_result {
+            Ok(()) => {
+                let result = match &self.interceptor {
+                    Some(interceptor) => interceptor.dispatch(&self.target, &request, next).await,
+                    None => next().await,
+                };
+                (result, true)
+            }
+            Err(error) => (Err(error), false),
+        };
+        if let Some(runtime_stats) = &self.region_request_runtime_stats {
+            if let Some(command) = CommandType::from_request_label(self.request.label()) {
+                runtime_stats.record_rpc(command, started_at.elapsed());
+            }
+            if let Err(error) = &result {
+                let error = request_error_message(Some(error));
+                runtime_stats.record_error(error.clone());
+                if let (Some(peer_id), Some(store_id)) =
+                    (self.logical_peer_id, self.logical_store_id)
+                {
+                    runtime_stats.record_replica_access(
+                        self.request_stale_read,
+                        self.request_replica_read,
+                        peer_id,
+                        store_id,
+                        error,
+                    );
+                }
+            }
         }
-        let started_at = Instant::now();
-        let result = match &self.interceptor {
-            Some(interceptor) => interceptor.dispatch(&self.target, &request, next).await,
-            None => next().await,
+        let network_collector = crate::traffic::NetworkCollector {
+            stale_read: self.network_stale_read || self.replica_read_config.stale_read,
+            access_location: self.resource_control_access_location,
+            endpoint_type: self.physical_endpoint_type,
+            details: self
+                .network_traffic_details
+                .clone()
+                .or_else(crate::traffic::current_network_traffic_details),
+        };
+        if transport_attempted {
+            network_collector.on_request(&request);
+            if let Ok(response) = &result {
+                network_collector.on_response(&request, response.as_ref());
+            }
+        }
+        let result = match result {
+            Ok(response) => match selected_resource_control {
+                Some(selected) => {
+                    let response_info =
+                        crate::resource_control::ResponseInfo::from_dispatch_response(
+                            response.as_ref(),
+                        );
+                    let settlement = selected.controller.on_response_wait(
+                        &selected.resource_group_name,
+                        selected.request,
+                        response_info,
+                    );
+                    match settlement {
+                        Ok(settlement) => {
+                            if let Some(ru_details) = &self.ru_details {
+                                ru_details
+                                    .update(&settlement.consumption, settlement.wait_duration);
+                            }
+                            Ok(response)
+                        }
+                        Err(error)
+                            if request
+                                .as_any()
+                                .downcast_ref::<kvrpcpb::CommitRequest>()
+                                .is_some_and(|request| request.is_txn_file) =>
+                        {
+                            log::warn!(
+                                "txn file: resource control accounting failed after commit: {}",
+                                error
+                            );
+                            Ok(response)
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                None => Ok(response),
+            },
+            Err(error) => Err(error),
         };
         if crate::trace::is_category_enabled(crate::trace::Category::KvRequest) {
             let mut fields = vec![
@@ -382,7 +465,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 if let Some(region_error) = crate::store::region_error_ref(response.as_ref()) {
                     fields.push(crate::trace::TraceField::new(
                         "region_error",
-                        format!("{region_error:?}"),
+                        crate::error::protobuf_text(region_error),
                     ));
                 }
             }
@@ -418,76 +501,6 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 }
             }
         }
-        if let Some(runtime_stats) = &self.region_request_runtime_stats {
-            if let Some(command) = CommandType::from_request_label(self.request.label()) {
-                runtime_stats.record_rpc(command, started_at.elapsed());
-            }
-            if let Err(error) = &result {
-                let error = request_error_message(Some(error));
-                runtime_stats.record_error(error.clone());
-                if let (Some(peer_id), Some(store_id)) =
-                    (self.logical_peer_id, self.logical_store_id)
-                {
-                    runtime_stats.record_replica_access(
-                        self.request_stale_read,
-                        self.request_replica_read,
-                        peer_id,
-                        store_id,
-                        error,
-                    );
-                }
-            }
-        }
-        let network_collector = crate::traffic::NetworkCollector {
-            stale_read: self.network_stale_read || self.replica_read_config.stale_read,
-            access_location: self.resource_control_access_location,
-            endpoint_type: self.physical_endpoint_type,
-            details: self
-                .network_traffic_details
-                .clone()
-                .or_else(crate::traffic::current_network_traffic_details),
-        };
-        network_collector.on_request(&request);
-        if let Ok(response) = &result {
-            network_collector.on_response(&request, response.as_ref());
-        }
-        let result = match result {
-            Ok(response) => {
-                if let Some(selected) = selected_resource_control {
-                    let response_info =
-                        crate::resource_control::ResponseInfo::from_dispatch_response(
-                            response.as_ref(),
-                        );
-                    let settlement = selected.controller.on_response_wait(
-                        &selected.resource_group_name,
-                        selected.request,
-                        response_info,
-                    );
-                    match settlement {
-                        Ok(settlement) => {
-                            if let Some(ru_details) = &self.ru_details {
-                                ru_details
-                                    .update(&settlement.consumption, settlement.wait_duration);
-                            }
-                        }
-                        Err(error)
-                            if request
-                                .as_any()
-                                .downcast_ref::<kvrpcpb::CommitRequest>()
-                                .is_some_and(|request| request.is_txn_file) =>
-                        {
-                            log::warn!(
-                                "txn file: resource control accounting failed after commit: {}",
-                                error
-                            );
-                        }
-                        Err(error) => return Err(error),
-                    }
-                }
-                Ok(response)
-            }
-            Err(error) => Err(error),
-        };
         if self.record_client_side_slow_score {
             if let Some(health_status) = &self.store_health {
                 health_status.record_client_side_latency(started_at.elapsed());
@@ -541,6 +554,11 @@ fn request_route_trace_fields<Req: KvRequest>(
 ) -> Vec<crate::trace::TraceField> {
     let region = dispatch.region_with_leader.as_ref();
     let region_id = region.map(RegionWithLeader::ver_id).unwrap_or_default();
+    let store_addr = if dispatch.forwarded_host.is_empty() {
+        dispatch.target.clone()
+    } else {
+        dispatch.forwarded_host.clone()
+    };
     vec![
         crate::trace::TraceField::new("region_id", region_id.id),
         crate::trace::TraceField::new("region_ver", region_id.ver),
@@ -551,7 +569,7 @@ fn request_route_trace_fields<Req: KvRequest>(
                 .logical_store_id
                 .unwrap_or(dispatch.store_token_store_id),
         ),
-        crate::trace::TraceField::new("store_addr", dispatch.target.clone()),
+        crate::trace::TraceField::new("store_addr", store_addr),
     ]
 }
 
@@ -998,6 +1016,36 @@ pub struct RetryableMultiRegion<P: Plan, PdC: PdClient, R: RegionRetryState = Ba
     pub(crate) snapshot_async_batch_get: bool,
 }
 
+fn multi_region_shard_error<T>(result: &Result<Vec<Result<T>>>) -> Option<&Error> {
+    match result {
+        Err(error) => Some(error),
+        Ok(results) => results.iter().find_map(|result| result.as_ref().err()),
+    }
+}
+
+fn assertion_only_error(error: &Error) -> bool {
+    match error {
+        Error::AssertionFailed(_) => true,
+        Error::ExtractedErrors(errors) | Error::MultipleKeyErrors(errors) => {
+            !errors.is_empty() && errors.iter().all(assertion_only_error)
+        }
+        Error::Connection { source, .. }
+        | Error::UndeterminedError(source)
+        | Error::PessimisticLockError { inner: source, .. } => assertion_only_error(source),
+        _ => false,
+    }
+}
+
+fn into_multi_region_shard_error<T>(result: Result<Vec<Result<T>>>) -> Error {
+    match result {
+        Err(error) => error,
+        Ok(results) => results
+            .into_iter()
+            .find_map(Result::err)
+            .expect("selected failing shard must contain an error"),
+    }
+}
+
 #[allow(private_bounds)]
 impl<P: Plan + Shardable, PdC: PdClient, R: RegionRetryState> RetryableMultiRegion<P, PdC, R>
 where
@@ -1131,23 +1179,34 @@ where
             .collect::<Vec<Option<Result<<Self as Plan>::Result>>>>();
         let snapshot_waits_for_all_shards = snapshot_region_scope.is_some();
         let mut selected_error_index = None;
+        let mut selected_error_is_assertion = false;
         let mut last_forked = None;
         while let Some(joined) = join_set.join_next().await {
             let (index, (result, forked)) = match joined {
                 Ok(joined) => joined,
                 Err(error) => return (Err(error.into()), backoff),
             };
-            if result.is_err() {
+            if let Some(error) = multi_region_shard_error(&result) {
                 if snapshot_waits_for_all_shards {
                     // client-go's synchronous and callback BatchGet fanout
                     // both wait for every region and overwrite the returned
                     // error in completion order.
                     selected_error_index = Some(index);
-                } else if selected_error_index.is_none() {
-                    // RawKV fanout cancels sibling retry owners and retains
-                    // the first completed error.
-                    selected_error_index = Some(index);
-                    cancel.cancel();
+                    selected_error_is_assertion = assertion_only_error(error);
+                } else {
+                    let assertion_only = assertion_only_error(error);
+                    // Prewrite keeps the first assertion failure while it
+                    // waits for a stronger error from another batch. Any
+                    // non-assertion failure cancels sibling retries now.
+                    if selected_error_index.is_none()
+                        || (selected_error_is_assertion && !assertion_only)
+                    {
+                        selected_error_index = Some(index);
+                        selected_error_is_assertion = assertion_only;
+                    }
+                    if !assertion_only {
+                        cancel.cancel();
+                    }
                 }
             }
             last_forked = Some(forked);
@@ -1175,15 +1234,13 @@ where
                 backoff,
             )
         } else if let Some(error_index) = selected_error_index {
-            let error = match results
-                .into_iter()
-                .nth(error_index)
-                .expect("selected shard index must exist")
-                .expect("completed failing shard must produce a result")
-            {
-                Err(error) => error,
-                Ok(_) => unreachable!("selected shard result must be an error"),
-            };
+            let error = into_multi_region_shard_error(
+                results
+                    .into_iter()
+                    .nth(error_index)
+                    .expect("selected shard index must exist")
+                    .expect("completed failing shard must produce a result"),
+            );
             (Err(error), backoff)
         } else {
             let results = results
@@ -1225,11 +1282,15 @@ where
         )
         .await;
         if let Some(trace) = &trace {
+            let response_error = result
+                .0
+                .as_ref()
+                .is_ok_and(|responses| responses.iter().any(Result::is_err));
             let success = result
                 .0
                 .as_ref()
                 .is_ok_and(|responses| responses.iter().all(Result::is_ok));
-            trace.emit_result(success);
+            trace.emit_result(success, response_error);
         }
         result
     }
@@ -2724,6 +2785,24 @@ where
                 .into());
             }
 
+            // client-go's pessimistic-lock response handler deliberately does
+            // not resolve a lock that TiKV reports as recently updated. Such
+            // a response is the terminal result of TiKV's lock wait, not an
+            // orphan-cleanup opportunity. Shared-lock wrappers have already
+            // been expanded by `HasLocks`, so apply the source threshold to
+            // every holder independently.
+            if clone.resolve_locks_context.pessimistic_region_resolve {
+                const SKIP_RESOLVE_THRESHOLD_MS: u64 = 300;
+                let before = locks.len();
+                locks.retain(|lock| {
+                    lock.duration_to_last_update_ms == 0
+                        || lock.duration_to_last_update_ms >= SKIP_RESOLVE_THRESHOLD_MS
+                });
+                if locks.is_empty() && before != 0 {
+                    return Err(crate::error::ERR_LOCK_WAIT_TIMEOUT.into());
+                }
+            }
+
             if self.backoff.is_none() {
                 return Err(Error::ResolveLockError(locks));
             }
@@ -3543,10 +3622,11 @@ mod test {
                     Keyspace::Disable,
                     kvrpcpb::GetRequest::default(),
                 )
-                .single_region_with_store(RegionStore::new(
-                    MockPdClient::region1(),
-                    Arc::new(client),
-                ))
+                .single_region_with_store(
+                    RegionStore::new(MockPdClient::region1(), Arc::new(client))
+                        .with_target("proxy:20160")
+                        .with_forwarded_host("logical:20160"),
+                )
                 .await
                 .unwrap()
                 .plan()
@@ -3562,6 +3642,7 @@ mod test {
         assert_eq!(events[0].0, crate::trace::Category::KvRequest);
         assert_eq!(events[0].1, "kv.request.send");
         assert_eq!(events[0].2["cmd"].as_deref(), Some("Get"));
+        assert_eq!(events[0].2["store_addr"].as_deref(), Some("logical:20160"));
         assert_eq!(events[1].1, "kv.request.result");
         assert_eq!(events[1].2["success"].as_deref(), Some("true"));
     }
@@ -3669,6 +3750,328 @@ mod test {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
+    async fn source_uncovered_commit_key_error_does_not_emit_a_result_event() {
+        crate::trace::set_category_enabled_handler(Some(Arc::new(|category| {
+            category == crate::trace::Category::TransactionTwoPhaseCommit
+        })));
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let captured_events = Arc::clone(&events);
+        crate::trace::set_trace_event_handler(Some(Arc::new(move |context, _, name, fields| {
+            if context.trace_id() != Some(b"commit-key-error") {
+                return;
+            }
+            captured_events.lock().unwrap().push((
+                name.to_owned(),
+                fields
+                    .iter()
+                    .find(|field| field.name == "success")
+                    .and_then(|field| field.value::<bool>())
+                    .copied(),
+            ));
+        })));
+        let _reset = ResetTraceHandlers;
+
+        let client = MockKvClient::with_dispatch_hook(|request| {
+            assert!(request.is::<kvrpcpb::CommitRequest>());
+            Ok(Box::new(kvrpcpb::CommitResponse {
+                error: Some(kvrpcpb::KeyError {
+                    abort: "abort".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+        });
+        let pd_client = Arc::new(MockPdClient::with_client_and_regions(
+            client,
+            vec![MockPdClient::region1()],
+        ));
+        let result = crate::trace::with_trace_context(
+            crate::trace::TraceContext::new().with_trace_id(b"commit-key-error".to_vec()),
+            async {
+                PlanBuilder::new(
+                    pd_client,
+                    Keyspace::Disable,
+                    kvrpcpb::CommitRequest {
+                        keys: vec![vec![1]],
+                        primary_key: vec![1],
+                        start_version: 42,
+                        commit_version: 43,
+                        ..Default::default()
+                    },
+                )
+                .retry_multi_region(Backoff::no_backoff())
+                .plan()
+                .execute()
+                .await
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(result[0].is_err());
+        assert_eq!(
+            events.lock().unwrap().as_slice(),
+            &[("commit.batch.start".to_owned(), None)]
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn source_uncovered_kv_result_uses_gogo_region_error_text() {
+        crate::trace::set_category_enabled_handler(Some(Arc::new(|category| {
+            category == crate::trace::Category::KvRequest
+        })));
+        let observed = Arc::new(StdMutex::new(Vec::new()));
+        let captured = Arc::clone(&observed);
+        crate::trace::set_trace_event_handler(Some(Arc::new(move |context, _, name, fields| {
+            if context.trace_id() != Some(b"region-error-text") || name != "kv.request.result" {
+                return;
+            }
+            captured.lock().unwrap().push(
+                fields
+                    .iter()
+                    .find(|field| field.name == "region_error")
+                    .and_then(|field| field.value::<String>())
+                    .cloned()
+                    .expect("region error field"),
+            );
+        })));
+        let _reset = ResetTraceHandlers;
+
+        let client = MockKvClient::with_dispatch_hook(|request| {
+            assert!(request.is::<kvrpcpb::GetRequest>());
+            Ok(Box::new(kvrpcpb::GetResponse {
+                region_error: Some(errorpb::Error {
+                    message: "trace-region".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+        });
+        crate::trace::with_trace_context(
+            crate::trace::TraceContext::new().with_trace_id(b"region-error-text".to_vec()),
+            async {
+                PlanBuilder::new(
+                    Arc::new(MockPdClient::default()),
+                    Keyspace::Disable,
+                    kvrpcpb::GetRequest::default(),
+                )
+                .single_region_with_store(RegionStore::new(
+                    MockPdClient::region1(),
+                    Arc::new(client),
+                ))
+                .await
+                .unwrap()
+                .plan()
+                .execute()
+                .await
+                .unwrap();
+            },
+        )
+        .await;
+
+        assert_eq!(
+            observed.lock().unwrap().as_slice(),
+            &["message:\"trace-region\" ".to_owned()]
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn source_uncovered_kv_events_enclose_resource_admission_failures() {
+        struct FailingAdmissionController {
+            order: Arc<StdMutex<Vec<String>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl crate::resource_control::ResourceGroupController for FailingAdmissionController {
+            async fn on_request_wait(
+                &self,
+                _: &str,
+                _: crate::resource_control::RequestInfo,
+            ) -> Result<crate::resource_control::RequestWaitResult> {
+                self.order.lock().unwrap().push("admission".to_owned());
+                Err(Error::StringError("admission rejected".to_owned()))
+            }
+
+            fn on_response_wait(
+                &self,
+                _: &str,
+                _: crate::resource_control::RequestInfo,
+                _: crate::resource_control::ResponseInfo,
+            ) -> Result<crate::resource_control::ResponseWaitResult> {
+                panic!("a rejected request must not be settled")
+            }
+        }
+
+        crate::trace::set_category_enabled_handler(Some(Arc::new(|category| {
+            category == crate::trace::Category::KvRequest
+        })));
+        let order = Arc::new(StdMutex::new(Vec::new()));
+        let traced_order = Arc::clone(&order);
+        crate::trace::set_trace_event_handler(Some(Arc::new(move |context, _, name, fields| {
+            if context.trace_id() != Some(b"admission-trace") {
+                return;
+            }
+            if name == "kv.request.result" {
+                assert_eq!(
+                    fields
+                        .iter()
+                        .find(|field| field.name == "success")
+                        .and_then(|field| field.value::<bool>()),
+                    Some(&false)
+                );
+                assert!(fields
+                    .iter()
+                    .find(|field| field.name == "error")
+                    .and_then(|field| field.value::<String>())
+                    .is_some_and(|error| error.contains("admission rejected")));
+            }
+            traced_order.lock().unwrap().push(name.to_owned());
+        })));
+        let _reset = ResetTraceHandlers;
+
+        let controller = Arc::new(FailingAdmissionController {
+            order: Arc::clone(&order),
+        });
+        let client = MockKvClient::with_dispatch_hook(|_| {
+            panic!("admission failure must prevent transport dispatch")
+        });
+        let result = crate::trace::with_trace_context(
+            crate::trace::TraceContext::new().with_trace_id(b"admission-trace".to_vec()),
+            async {
+                PlanBuilder::new(
+                    Arc::new(MockPdClient::default()),
+                    Keyspace::Disable,
+                    kvrpcpb::GetRequest::default(),
+                )
+                .resource_group("trace-group")
+                .resource_control(controller)
+                .single_region_with_store(RegionStore::new(
+                    MockPdClient::region1(),
+                    Arc::new(client),
+                ))
+                .await
+                .unwrap()
+                .plan()
+                .execute()
+                .await
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(
+            order.lock().unwrap().as_slice(),
+            &[
+                "kv.request.send".to_owned(),
+                "admission".to_owned(),
+                "kv.request.result".to_owned(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn source_uncovered_kv_result_follows_resource_settlement_failure() {
+        struct FailingSettlementController {
+            order: Arc<StdMutex<Vec<String>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl crate::resource_control::ResourceGroupController for FailingSettlementController {
+            async fn on_request_wait(
+                &self,
+                _: &str,
+                _: crate::resource_control::RequestInfo,
+            ) -> Result<crate::resource_control::RequestWaitResult> {
+                self.order.lock().unwrap().push("admission".to_owned());
+                Ok(crate::resource_control::RequestWaitResult::default())
+            }
+
+            fn on_response_wait(
+                &self,
+                _: &str,
+                _: crate::resource_control::RequestInfo,
+                _: crate::resource_control::ResponseInfo,
+            ) -> Result<crate::resource_control::ResponseWaitResult> {
+                self.order.lock().unwrap().push("settlement".to_owned());
+                Err(Error::StringError("settlement rejected".to_owned()))
+            }
+        }
+
+        crate::trace::set_category_enabled_handler(Some(Arc::new(|category| {
+            category == crate::trace::Category::KvRequest
+        })));
+        let order = Arc::new(StdMutex::new(Vec::new()));
+        let traced_order = Arc::clone(&order);
+        crate::trace::set_trace_event_handler(Some(Arc::new(move |context, _, name, fields| {
+            if context.trace_id() != Some(b"settlement-trace") {
+                return;
+            }
+            if name == "kv.request.result" {
+                assert_eq!(
+                    fields
+                        .iter()
+                        .find(|field| field.name == "success")
+                        .and_then(|field| field.value::<bool>()),
+                    Some(&false)
+                );
+                assert!(fields
+                    .iter()
+                    .find(|field| field.name == "error")
+                    .and_then(|field| field.value::<String>())
+                    .is_some_and(|error| error.contains("settlement rejected")));
+            }
+            traced_order.lock().unwrap().push(name.to_owned());
+        })));
+        let _reset = ResetTraceHandlers;
+
+        let controller = Arc::new(FailingSettlementController {
+            order: Arc::clone(&order),
+        });
+        let transport_order = Arc::clone(&order);
+        let client = MockKvClient::with_dispatch_hook(move |request| {
+            assert!(request.is::<kvrpcpb::GetRequest>());
+            transport_order.lock().unwrap().push("transport".to_owned());
+            Ok(Box::new(kvrpcpb::GetResponse::default()))
+        });
+        let result = crate::trace::with_trace_context(
+            crate::trace::TraceContext::new().with_trace_id(b"settlement-trace".to_vec()),
+            async {
+                PlanBuilder::new(
+                    Arc::new(MockPdClient::default()),
+                    Keyspace::Disable,
+                    kvrpcpb::GetRequest::default(),
+                )
+                .resource_group("trace-group")
+                .resource_control(controller)
+                .single_region_with_store(RegionStore::new(
+                    MockPdClient::region1(),
+                    Arc::new(client),
+                ))
+                .await
+                .unwrap()
+                .plan()
+                .execute()
+                .await
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(
+            order.lock().unwrap().as_slice(),
+            &[
+                "kv.request.send".to_owned(),
+                "admission".to_owned(),
+                "transport".to_owned(),
+                "settlement".to_owned(),
+                "kv.request.result".to_owned(),
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn physical_dispatch_collects_task_scoped_network_traffic() {
         let observed_request_size = Arc::new(AtomicU64::new(0));
         let hook_size = observed_request_size.clone();
@@ -3728,7 +4131,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn successful_physical_dispatch_updates_source_ru_v2_rpc_counts() {
+    async fn source_test_send_request_async_update_tikv_ruv2() {
         let client = MockKvClient::with_dispatch_hook(|request| {
             assert!(request.is::<kvrpcpb::GetRequest>());
             Ok(Box::new(kvrpcpb::GetResponse {
@@ -5451,11 +5854,6 @@ mod test {
             "sibling retry completed",
             "client-go returns the last completed failing snapshot shard"
         );
-    }
-
-    #[test]
-    fn source_test_send_request_async_update_tikv_ruv2() {
-        successful_physical_dispatch_updates_source_ru_v2_rpc_counts();
     }
 
     #[tokio::test]

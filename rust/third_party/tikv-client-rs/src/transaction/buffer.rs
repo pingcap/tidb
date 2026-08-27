@@ -491,6 +491,15 @@ impl Buffer {
             .unwrap_or_default()
     }
 
+    pub(crate) fn presumes_key_not_exists(&self, key: &Key) -> bool {
+        self.memdb_flags(key).has_presume_key_not_exists()
+    }
+
+    pub(crate) fn unmark_presume_key_not_exists(&mut self, key: &Key) {
+        self.memdb
+            .update_flags(&self.logical_key(key), &[FlagsOp::DelPresumeKeyNotExists]);
+    }
+
     fn memdb_has_flag(&self, predicate: impl Fn(KeyFlags) -> bool) -> bool {
         let mut iterator = self.memdb.iter_with_flags(None, None);
         while iterator.valid() {
@@ -953,11 +962,35 @@ impl Buffer {
         self.memdb_flags(key).has_locked()
     }
 
+    pub(crate) fn needs_check_exists(&self, key: &Key) -> bool {
+        self.memdb_flags(key).has_need_check_exists()
+    }
+
+    pub(crate) fn locked_value_exists(&self, key: &Key) -> bool {
+        self.memdb_flags(key).has_locked_value_exists()
+    }
+
     pub(crate) fn pessimistic_lock_keys(&self) -> BTreeSet<Vec<u8>> {
         let mut keys = BTreeSet::new();
         let mut iterator = self.memdb.iter_with_flags(None, None);
         while iterator.valid() {
             if iterator.flags().has_locked() {
+                keys.insert(<Key as Into<Vec<u8>>>::into(
+                    self.physical_key(iterator.key()),
+                ));
+            }
+            iterator
+                .next()
+                .expect("owned MemDB iterator advances deterministically");
+        }
+        keys
+    }
+
+    pub(crate) fn presume_key_not_exists_keys(&self) -> BTreeSet<Vec<u8>> {
+        let mut keys = BTreeSet::new();
+        let mut iterator = self.memdb.iter_with_flags(None, None);
+        while iterator.valid() {
+            if iterator.flags().has_presume_key_not_exists() {
                 keys.insert(<Key as Into<Vec<u8>>>::into(
                     self.physical_key(iterator.key()),
                 ));

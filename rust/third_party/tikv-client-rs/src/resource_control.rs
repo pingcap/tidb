@@ -175,11 +175,14 @@ impl ResponseInfo {
                 let mut kv_cpu_duration = kv_cpu(details, response.exec_details.as_ref());
                 for task in &response.batch_responses {
                     let task_details = task.exec_details_v2.as_ref();
-                    read_bytes += task_details
-                        .and_then(|details| details.scan_detail_v2.as_ref())
-                        .map(scan_read_bytes)
-                        .unwrap_or(task.data.len() as u64);
-                    kv_cpu_duration += kv_cpu(task_details, None);
+                    read_bytes = read_bytes.wrapping_add(
+                        task_details
+                            .and_then(|details| details.scan_detail_v2.as_ref())
+                            .map(scan_read_bytes)
+                            .unwrap_or(task.data.len() as u64),
+                    );
+                    kv_cpu_duration =
+                        wrapping_duration_add(kv_cpu_duration, kv_cpu(task_details, None));
                 }
                 Self {
                     read_bytes,
@@ -410,12 +413,19 @@ fn kv_cpu(
     if let Some(detail) = details_v2.and_then(|details| details.time_detail_v2.as_ref()) {
         Duration::from_nanos(detail.process_wall_time_ns)
     } else if let Some(detail) = details_v2.and_then(|details| details.time_detail.as_ref()) {
-        Duration::from_millis(detail.process_wall_time_ms)
+        Duration::from_nanos(detail.process_wall_time_ms.wrapping_mul(1_000_000))
     } else if let Some(detail) = legacy_details.and_then(|details| details.time_detail.as_ref()) {
-        Duration::from_millis(detail.process_wall_time_ms)
+        Duration::from_nanos(detail.process_wall_time_ms.wrapping_mul(1_000_000))
     } else {
         Duration::ZERO
     }
+}
+
+fn wrapping_duration_add(left: Duration, right: Duration) -> Duration {
+    // Go's time.Duration is an int64 nanosecond count. Rust's native duration
+    // is unsigned, so retain the source's low-64-bit arithmetic at this wire
+    // boundary; all ordinary nonnegative CPU durations remain unchanged.
+    Duration::from_nanos((left.as_nanos() as u64).wrapping_add(right.as_nanos() as u64))
 }
 
 #[cfg(test)]
@@ -453,7 +463,8 @@ mod test {
     }
 
     #[test]
-    fn source_test_response_info_read_bytes() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_resourcecontrol_resource_control_test_TestResponseInfoReadBytes() {
         let response = coprocessor::Response {
             exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
                 scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
@@ -491,7 +502,8 @@ mod test {
     }
 
     #[test]
-    fn source_test_response_info_batched_tasks() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_resourcecontrol_resource_control_test_TestResponseInfoBatchedTasks() {
         let response = coprocessor::Response {
             exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
                 scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
@@ -553,6 +565,57 @@ mod test {
         assert_eq!(info.read_bytes, expected);
         assert_eq!(info.kv_cpu, Duration::from_nanos(1_300));
         assert_eq!(info.response_size, response.encoded_len() as u64);
+    }
+
+    #[test]
+    fn source_uncovered_response_read_bytes_wrap_like_go_uint64() {
+        let response = coprocessor::Response {
+            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
+                    processed_versions_size: u64::MAX,
+                    total_versions_size: u64::MAX,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            batch_responses: vec![coprocessor::StoreBatchTaskResponse {
+                data: vec![0],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            ResponseInfo::from_response(Response::Cop(&response)).read_bytes(),
+            0
+        );
+    }
+
+    #[test]
+    fn source_uncovered_batched_kv_cpu_wraps_like_go_duration() {
+        let response = coprocessor::Response {
+            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
+                    process_wall_time_ns: u64::MAX,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            batch_responses: vec![coprocessor::StoreBatchTaskResponse {
+                exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                    time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
+                        process_wall_time_ns: 1,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            ResponseInfo::from_response(Response::Cop(&response)).kv_cpu(),
+            Duration::ZERO
+        );
     }
 
     #[test]
@@ -638,7 +701,7 @@ mod test {
     }
 
     #[test]
-    fn source_request_info_uses_typed_command_context_and_bypass_rules() {
+    fn source_test_bypass_ruv2_follows_request_info_bypass() {
         let request = kvrpcpb::PrewriteRequest {
             mutations: vec![kvrpcpb::Mutation {
                 key: b"key".to_vec(),
@@ -673,7 +736,8 @@ mod test {
     }
 
     #[test]
-    fn source_test_make_request_info() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_resourcecontrol_resource_control_test_TestMakeRequestInfo() {
         let read = kvrpcpb::BatchGetRequest {
             context: Some(kvrpcpb::Context {
                 peer: Some(crate::proto::metapb::Peer {
@@ -747,7 +811,9 @@ mod test {
     }
 
     #[test]
-    fn source_test_make_request_info_predicted_read_bytes() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_resourcecontrol_resource_control_test_TestMakeRequestInfoPredictedReadBytes(
+    ) {
         let request = kvrpcpb::BatchGetRequest {
             context: Some(kvrpcpb::Context {
                 peer: Some(crate::proto::metapb::Peer {
@@ -827,7 +893,7 @@ mod test {
     }
 
     #[test]
-    fn source_resource_control_selection_uses_routed_replica_and_zone() {
+    fn source_test_get_resource_control_info_honors_selection_policy() {
         let request = kvrpcpb::GetRequest {
             context: Some(kvrpcpb::Context {
                 resource_control_context: Some(kvrpcpb::ResourceControlContext {
@@ -926,7 +992,8 @@ mod test {
     }
 
     #[test]
-    fn source_test_make_request_info_is_cop() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_resourcecontrol_resource_control_test_TestMakeRequestInfoIsCop() {
         let cop = coprocessor::Request::default();
         assert!(RequestInfo::from_store_request(&cop).is_cop());
         assert!(RequestInfo::from_store_request(&CoprocessorStreamRequest::new(cop)).is_cop());
@@ -979,15 +1046,5 @@ mod test {
         assert_eq!(response.kv_cpu(), Duration::ZERO);
         assert!(response.succeed());
         assert_eq!(response.response_size(), 0);
-    }
-
-    #[test]
-    fn source_test_get_resource_control_info_honors_selection_policy() {
-        source_resource_control_selection_uses_routed_replica_and_zone();
-    }
-
-    #[test]
-    fn source_test_bypass_ruv2_follows_request_info_bypass() {
-        source_request_info_uses_typed_command_context_and_bypass_rules();
     }
 }

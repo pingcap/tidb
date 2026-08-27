@@ -78,6 +78,15 @@ All 17 assertion-bearing Go tests now have independently named Rust ports. The R
 | `TestEncodeMPPRequest` | `request::keyspace::tests::source_test_encode_mpp_request` |
 | `TestDecodeBucketKeys` | `request::keyspace::tests::source_test_decode_bucket_keys` |
 
+The repository-wide exact-body correction found that
+`TestNewCodecV2RejectsKeyspaceIdentity` was still a one-call alias into a
+supplemental registered test, while `TestGetKeyspaceID` performed its source
+assertion and then called another registered metadata test. The identity test
+now owns the former body directly, and the keyspace-ID port no longer invokes
+the supplemental test. All 17 mapped names have exactly one definition and no
+registered test calls; supplemental metadata coverage remains independently
+executable.
+
 `TestCodecV2` is only the testify suite runner; every assertion executes through the individually mapped suite methods above. `TestV1DecodeBucketKey` has an empty body at the pin, so it has no assertions to transcreate; the stronger Rust V1 bucket and region tests remain supplementary coverage. Go's invalid numeric `Mode(99)` and nil metadata pointer are unconstructible through the Rust enum/numeric constructor; the corresponding ports prove those type boundaries and exercise the native metadata adapter's identity handling without inventing a nullable public constructor.
 
 Additional production-derived tests cover exact V1 null-oneof stamping, canonical keyspace-name retention across clones, API V3 context isolation and generated schema availability, malformed-region-key classification through wrapped errors, maximum-ID end-prefix carry, shared lock wrappers, empty logical lock keys, malformed optional secondaries, transactional/raw response precedence, deprecated Cleanup/legacy GC, pipelined/flashback commands, physical/MVCC/observer/wait/split commands, and ordinary/TiFlash coprocessor transforms.
@@ -94,8 +103,8 @@ All 14 pinned direct source-importer files were inspected and assigned without p
 
 ## Re-audit result and completion evidence
 
-The independently ported source cases found no additional production divergence: the implementation already preserves the exact six-region epoch clipping table, all five nested key-error forms, both response-command tables, empty MVCC lock keys, MPP metadata/ranges, and all three bucket-edge tables. The previous receipt was behaviorally correct but its grouped test evidence was not sufficient for the repository's current one-to-one test-port standard.
+The independently ported source cases found no additional production divergence: the implementation already preserves the exact six-region epoch clipping table, all five nested key-error forms, both response-command tables, empty MVCC lock keys, MPP metadata/ranges, and all three bucket-edge tables. The previous receipt was behaviorally correct but its grouped and forwarding test evidence was not sufficient for the repository's current direct-port standard.
 
-The exact Go package passes both ordinary and race-enabled execution with Go 1.25.12. On `nightly-2026-08-22`, all 17 independently named Rust ports pass with no default features and all features; the complete source-derived filters pass 794/794 and 791/791; the no-default workspace passes 1,041 active main-library tests plus one unrelated ignore and every companion/doctest target; the all-feature library passes 1,038 active tests plus the same ignore; strict all-target/all-feature check, Clippy with warnings denied, private rustdoc with warnings denied, and all 51 doctests pass. Rustfmt, exact source-inventory/test-declaration/importer reconciliation, and whitespace checks are final commit gates.
+The exact Go package passes ordinary execution in 0.018s and race-enabled execution in 1.051s with Go 1.25.12. On `nightly-2026-08-22`, all 17 independently named Rust ports pass in both feature configurations as part of the 207-test source-identity matrices. Complete unit validation passes 1,237 tests with two configured skips without default features and 1,212 tests with six configured skips in the all-feature library. Strict generation/all-target check, Clippy with warnings denied, private rustdoc with warnings denied, and all 51 doctests pass. Rustfmt, exact source-inventory/test-declaration/importer reconciliation, registered-test call scanning, and whitespace checks are final commit gates.
 
 No live TiKV/PD cluster is required to prove deterministic byte/protobuf transforms. Final API-v1/API-v2 differential validation remains mandatory for the owning high-level packages.

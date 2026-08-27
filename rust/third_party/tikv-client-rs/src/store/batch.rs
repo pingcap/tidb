@@ -2676,7 +2676,7 @@ mod tests {
     }
 
     #[test]
-    fn source_turbo_batch_policy_presets_and_custom_values_are_preserved() {
+    fn source_test_batch_policy() {
         let (basic, valid) = TurboBatchTrigger::from_policy(crate::config::BATCH_POLICY_BASIC);
         assert!(valid);
         assert_eq!(basic.turbo_wait_time(), None);
@@ -2762,7 +2762,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_concurrency_limit_is_per_connection_and_scans_round_robin() {
+    async fn source_test_limit_concurrency() {
         let clients = vec![
             TikvClient::new(Channel::from_static("http://127.0.0.1:1").connect_lazy()),
             TikvClient::new(Channel::from_static("http://127.0.0.1:2").connect_lazy()),
@@ -2816,7 +2816,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_connection_selection_skips_a_recreating_pool_slot() {
+    async fn source_test_send_when_reconnect() {
         let clients = vec![
             TikvClient::new(Channel::from_static("http://127.0.0.1:1").connect_lazy()),
             TikvClient::new(Channel::from_static("http://127.0.0.1:2").connect_lazy()),
@@ -2866,7 +2866,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_connection_epoch_retires_only_the_recovery_leaders_host() {
+    async fn source_test_recv_error_in_multiple_recv_loops() {
         let epoch = AtomicU64::new(0);
         let mut direct_epoch = 0;
         let mut forwarded_epoch = 0;
@@ -2973,7 +2973,7 @@ mod tests {
     }
 
     #[test]
-    fn source_timeout_diagnostics_share_the_batch_first_response_boundary() {
+    fn source_test_format_batch_request_timeout_reason_normalizes_observed_sent_ns() {
         let start = Instant::now();
         let first = Arc::new(BatchRequestTelemetry::new(0, start));
         let second = Arc::new(BatchRequestTelemetry::new(0, start));
@@ -3003,7 +3003,7 @@ mod tests {
     }
 
     #[test]
-    fn source_batch_request_stage_observations_preserve_terminal_boundaries() {
+    fn source_test_visit_batch_request_observations() {
         assert_eq!(
             BatchRequestOutcome::from_error(Some(&Error::StringError(
                 "BatchCommands stream request channel closed".to_owned()
@@ -3209,7 +3209,7 @@ mod tests {
     }
 
     #[test]
-    fn source_builder_groups_direct_and_forwarded_requests_with_monotonic_ids() {
+    fn source_test_batch_commands_builder() {
         let mut builder = BatchCommandsBuilder::new();
         let _first = builder.push(empty(1), 0, "");
         let _second = builder.push(empty(2), 0, "store-2");
@@ -3240,7 +3240,7 @@ mod tests {
     }
 
     #[test]
-    fn source_builder_prioritizes_and_allows_high_priority_to_exceed_limit() {
+    fn source_test_priority_sent_limit() {
         let mut builder = BatchCommandsBuilder::new();
         let _first = builder.push(empty(1), 1, "");
         let _second = builder.push(empty(2), HIGH_TASK_PRIORITY, "");
@@ -3278,7 +3278,7 @@ mod tests {
     }
 
     #[test]
-    fn source_dropped_submission_cancels_before_batch_selection() {
+    fn source_test_send_request_async_timeout() {
         let mut builder = BatchCommandsBuilder::new();
         let dropped = builder.push(empty(1), 0, "");
         let live = builder.push(empty(2), 0, "");
@@ -3309,7 +3309,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_receive_loop_routes_each_id_and_retains_terminal_outcomes() {
+    async fn source_test_batch_request_terminal_outcome() {
         let pending = BatchPendingResponses::new();
         let received = pending.register(1, "");
         let cancelled = pending.register(2, "");
@@ -3412,7 +3412,9 @@ mod tests {
         assert_eq!(pending.len(), 1);
     }
 
-    async fn assert_publish_registers_before_send_and_retires_only_failed_group_ids(target: &str) {
+    #[tokio::test]
+    async fn source_test_write_batch_commands_entry_progress() {
+        let target = "source-test-publish-accounting";
         let connection_index = 29;
         let pending = BatchPendingResponses::new();
         let mut builder = BatchCommandsBuilder::new();
@@ -3468,15 +3470,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_publish_registers_before_send_and_retires_only_failed_group_ids() {
-        assert_publish_registers_before_send_and_retires_only_failed_group_ids(
-            "source-publish-accounting",
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn source_close_fails_only_entries_not_yet_published() {
+    async fn source_test_send_request_async_and_close_client_before_send() {
         let mut builder = BatchCommandsBuilder::new();
         let mut published = builder.push(empty(1), 0, "");
         let pending = BatchPendingResponses::new();
@@ -3501,7 +3495,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_explicit_close_retires_published_and_future_worker_entries() {
+    async fn source_test_send_request_async_and_close_client_on_handle() {
         let client = KvRpcClient::new(
             vec![TikvClient::new(
                 Channel::from_static("http://127.0.0.1:1").connect_lazy(),
@@ -3580,7 +3574,9 @@ mod tests {
         drop(worker);
     }
 
-    async fn assert_receive_stream_failure_only_retires_matching_forwarding_host(target: &str) {
+    #[tokio::test]
+    async fn source_test_random_restart_store_and_forwarding() {
+        let target = "source-test-receive-accounting";
         let connection_index = 31;
         let pending = Arc::new(BatchPendingResponses::new());
         let (direct_completed_sender, direct_completed) = oneshot::channel();
@@ -3659,16 +3655,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn source_receive_stream_failure_only_retires_matching_forwarding_host() {
-        assert_receive_stream_failure_only_retires_matching_forwarding_host(
-            "source-receive-accounting",
-        )
-        .await;
-    }
-
     #[test]
-    fn source_inspect_pending_batch_requests_separates_confirmed_entries() {
+    fn source_test_inspect_pending_batch_requests() {
         let pending = BatchPendingResponses::new();
         let now = Instant::now();
         let confirmed = Arc::new(BatchStreamProgress::default());
@@ -3708,7 +3696,9 @@ mod tests {
         assert_eq!(receivers.len(), 5);
     }
 
-    async fn assert_cancelled_response_records_its_stream_tail(target: &str) {
+    #[tokio::test]
+    async fn source_test_cancel_timeout_ret_err() {
+        let target = "source-test-cancelled-entry-tail";
         let connection_index = 37;
         let pending = BatchPendingResponses::new();
         let telemetry = Arc::new(BatchRequestTelemetry::new(0, Instant::now()));
@@ -3751,17 +3741,16 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn source_cancelled_response_records_its_stream_tail() {
-        assert_cancelled_response_records_its_stream_tail("source-cancelled-entry-tail").await;
-    }
-
     #[derive(Default)]
-    struct RecordedHealthFeedback(Mutex<Vec<u64>>);
+    struct RecordedHealthFeedback(Mutex<Vec<(u64, u64, i32)>>);
 
     impl ClientEventListener for RecordedHealthFeedback {
         fn on_health_feedback(&self, feedback: &kvrpcpb::HealthFeedback) {
-            self.0.lock().unwrap().push(feedback.feedback_seq_no);
+            self.0.lock().unwrap().push((
+                feedback.feedback_seq_no,
+                feedback.store_id,
+                feedback.slow_score,
+            ));
         }
     }
 
@@ -3823,6 +3812,62 @@ mod tests {
         assert!(matches!(
             receiver.await,
             Ok(Ok(BatchCommandResponse::Empty(response))) if response.test_id == 2
+        ));
+        assert_eq!(pending.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn source_test_panic_in_recv_loop() {
+        let pending = Arc::new(BatchPendingResponses::new());
+        let failed_before_recovery = pending.register(41, "");
+        let completed_after_recovery = pending.register(42, "");
+        let listener: Arc<dyn ClientEventListener> = Arc::new(PanickingHealthFeedback);
+
+        let exit = run_batch_receive_loop_recovering_panics(
+            futures::stream::iter([
+                Ok(tikvpb::BatchCommandsResponse {
+                    request_ids: vec![41],
+                    responses: vec![tikvpb::batch_commands_response::Response {
+                        cmd: Some(tikvpb::batch_commands_response::response::Cmd::Empty(
+                            tikvpb::BatchCommandsEmptyResponse { test_id: 41 },
+                        )),
+                    }],
+                    health_feedback: Some(kvrpcpb::HealthFeedback::default()),
+                    ..Default::default()
+                }),
+                Ok(tikvpb::BatchCommandsResponse {
+                    request_ids: vec![42],
+                    responses: vec![tikvpb::batch_commands_response::Response {
+                        cmd: Some(tikvpb::batch_commands_response::response::Cmd::Empty(
+                            tikvpb::BatchCommandsEmptyResponse { test_id: 42 },
+                        )),
+                    }],
+                    ..Default::default()
+                }),
+            ]),
+            pending.clone(),
+            String::new(),
+            "source-test-panic-in-recv-loop",
+            0,
+            Arc::new(BatchStreamProgress::default()),
+            Cancellation::default(),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(std::sync::RwLock::new(Some(listener))),
+        )
+        .await;
+
+        assert!(matches!(exit, BatchReceiveLoopExit::Failed(_)));
+        pending.fail_for_host("", || {
+            Error::StringError("BatchCommands stream request channel closed".to_owned())
+        });
+        assert!(matches!(
+            failed_before_recovery.await,
+            Ok(Err(Error::StringError(message)))
+                if message == "BatchCommands stream request channel closed"
+        ));
+        assert!(matches!(
+            completed_after_recovery.await,
+            Ok(Ok(BatchCommandResponse::Empty(response))) if response.test_id == 42
         ));
         assert_eq!(pending.len(), 0);
     }
@@ -3940,7 +3985,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_default_concurrency_fast_fails_an_unavailable_batch_stream() {
+    async fn source_test_fast_fail_when_no_available_conn() {
         let pending = Arc::new(BatchPendingResponses::new());
         let cancellation = Cancellation::default();
         let stream = BatchCommandsStream {
@@ -3970,8 +4015,10 @@ mod tests {
         ));
     }
 
+    #[cfg(not(feature = "nextgen"))]
     #[tokio::test]
-    async fn source_health_feedback_listener_is_replaced_and_runs_before_demux() {
+    #[allow(non_snake_case)]
+    async fn source_go_integration_tests_health_feedback_test_TestGetHealthFeedback() {
         let client = KvRpcClient::new(
             vec![TikvClient::new(
                 Channel::from_static("http://127.0.0.1:1").connect_lazy(),
@@ -3983,14 +4030,19 @@ mod tests {
         client.set_event_listener(replaced.clone());
         client.set_event_listener(active.clone());
 
-        let _ = run_batch_receive_loop(
-            futures::stream::iter(vec![Ok(tikvpb::BatchCommandsResponse {
+        let responses = (1..=3).map(|feedback_seq_no| {
+            Ok(tikvpb::BatchCommandsResponse {
                 health_feedback: Some(kvrpcpb::HealthFeedback {
-                    feedback_seq_no: 7,
+                    feedback_seq_no,
+                    store_id: 41,
+                    slow_score: 1,
                     ..Default::default()
                 }),
                 ..Default::default()
-            })]),
+            })
+        });
+        let _ = run_batch_receive_loop(
+            futures::stream::iter(responses),
             Arc::new(BatchPendingResponses::new()),
             String::new(),
             "test",
@@ -4003,7 +4055,10 @@ mod tests {
         .await;
 
         assert!(replaced.0.lock().unwrap().is_empty());
-        assert_eq!(*active.0.lock().unwrap(), [7]);
+        assert_eq!(
+            *active.0.lock().unwrap(),
+            [(1, 41, 1), (2, 41, 1), (3, 41, 1)]
+        );
     }
 
     #[tokio::test]
@@ -4046,7 +4101,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_dispatcher_recreates_failed_streams_and_preserves_metadata_per_host() {
+    async fn source_test_batch_client_recover_after_server_restart() {
         let metadata = Arc::new(Mutex::new(Vec::new()));
         let client_send_times = Arc::new(Mutex::new(Vec::new()));
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test server port");
@@ -4172,106 +4227,5 @@ mod tests {
             .await
             .expect("test server task completes")
             .expect("test server stops cleanly");
-    }
-
-    #[test]
-    fn source_test_send_request_async_timeout() {
-        source_dropped_submission_cancels_before_batch_selection();
-    }
-
-    #[test]
-    fn source_test_send_request_async_and_close_client_on_handle() {
-        source_explicit_close_retires_published_and_future_worker_entries();
-    }
-
-    #[test]
-    fn source_test_send_request_async_and_close_client_before_send() {
-        source_close_fails_only_entries_not_yet_published();
-    }
-
-    #[test]
-    fn source_test_recv_error_in_multiple_recv_loops() {
-        source_connection_epoch_retires_only_the_recovery_leaders_host();
-    }
-
-    #[tokio::test]
-    async fn source_test_cancel_timeout_ret_err() {
-        assert_cancelled_response_records_its_stream_tail("source-test-cancelled-entry-tail").await;
-    }
-
-    #[test]
-    fn source_test_send_when_reconnect() {
-        source_connection_selection_skips_a_recreating_pool_slot();
-    }
-
-    #[test]
-    fn source_test_batch_commands_builder() {
-        source_builder_groups_direct_and_forwarded_requests_with_monotonic_ids();
-    }
-
-    #[test]
-    fn source_test_batch_request_terminal_outcome() {
-        source_receive_loop_routes_each_id_and_retains_terminal_outcomes();
-    }
-
-    #[test]
-    fn source_test_visit_batch_request_observations() {
-        source_batch_request_stage_observations_preserve_terminal_boundaries();
-    }
-
-    #[test]
-    fn source_test_format_batch_request_timeout_reason_normalizes_observed_sent_ns() {
-        source_timeout_diagnostics_share_the_batch_first_response_boundary();
-    }
-
-    #[tokio::test]
-    async fn source_test_write_batch_commands_entry_progress() {
-        assert_publish_registers_before_send_and_retires_only_failed_group_ids(
-            "source-test-publish-accounting",
-        )
-        .await;
-    }
-
-    #[test]
-    fn source_test_inspect_pending_batch_requests() {
-        source_inspect_pending_batch_requests_separates_confirmed_entries();
-    }
-
-    #[test]
-    fn source_test_batch_client_recover_after_server_restart() {
-        source_dispatcher_recreates_failed_streams_and_preserves_metadata_per_host();
-    }
-
-    #[test]
-    fn source_test_limit_concurrency() {
-        source_concurrency_limit_is_per_connection_and_scans_round_robin();
-    }
-
-    #[test]
-    fn source_test_priority_sent_limit() {
-        source_builder_prioritizes_and_allows_high_priority_to_exceed_limit();
-    }
-
-    #[test]
-    fn source_test_batch_client_receive_health_feedback() {
-        source_health_feedback_listener_is_replaced_and_runs_before_demux();
-    }
-
-    #[tokio::test]
-    async fn source_test_random_restart_store_and_forwarding() {
-        assert_receive_stream_failure_only_retires_matching_forwarding_host(
-            "source-test-receive-accounting",
-        )
-        .await;
-    }
-
-    #[test]
-    fn source_test_fast_fail_when_no_available_conn() {
-        source_default_concurrency_fast_fails_an_unavailable_batch_stream();
-    }
-
-    #[test]
-    fn source_test_batch_policy() {
-        source_turbo_batch_policy_presets_and_custom_values_are_preserved();
     }
 }

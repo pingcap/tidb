@@ -125,6 +125,20 @@ impl LockContext {
         }
     }
 
+    /// Returns the full result recorded for one pessimistic-lock key.
+    ///
+    /// This is the owned Rust counterpart of client-go's public `LockCtx.Values`
+    /// map and preserves existence, conflict timestamp, and already-locked
+    /// metadata in addition to the optional value convenience above.
+    pub fn returned_value(&self, key: &[u8]) -> Option<ReturnedValue> {
+        self.values.lock().unwrap().get(key).cloned()
+    }
+
+    /// Returns the number of per-key pessimistic-lock results collected.
+    pub fn returned_values_len(&self) -> usize {
+        self.values.lock().unwrap().len()
+    }
+
     pub fn for_each_value_not_locked(&self, mut function: impl FnMut(&[u8], &[u8])) {
         let values = self.values.lock().unwrap();
         for (key, value) in values.iter() {

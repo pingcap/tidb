@@ -10,6 +10,7 @@ pub mod cluster;
 pub mod mocktikv;
 
 use std::any::Any;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -87,6 +88,8 @@ pub struct MockPdClient {
     #[new(default)]
     timestamp: Arc<Mutex<Timestamp>>,
     #[new(default)]
+    timestamp_sequence: Arc<Mutex<Option<VecDeque<Timestamp>>>>,
+    #[new(default)]
     epoch_not_match_regions: Arc<Mutex<Vec<RegionWithLeader>>>,
     #[new(default)]
     invalidated_regions: Arc<Mutex<Vec<RegionVerId>>>,
@@ -137,10 +140,21 @@ impl MockPdClient {
         *self.timestamp.lock().unwrap() = timestamp;
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_timestamp_sequence(&self, timestamps: impl IntoIterator<Item = Timestamp>) {
+        *self.timestamp_sequence.lock().unwrap() = Some(timestamps.into_iter().collect());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_timestamp_sequence(&self) {
+        *self.timestamp_sequence.lock().unwrap() = None;
+    }
+
     pub fn default() -> MockPdClient {
         MockPdClient {
             client: MockKvClient::default(),
             timestamp: Arc::default(),
+            timestamp_sequence: Arc::default(),
             epoch_not_match_regions: Arc::default(),
             invalidated_regions: Arc::default(),
             closed_client_addresses: Arc::default(),
@@ -379,6 +393,11 @@ impl PdClient for MockPdClient {
     }
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
+        if let Some(sequence) = self.timestamp_sequence.lock().unwrap().as_mut() {
+            return Ok(sequence
+                .pop_front()
+                .expect("empty mock PD timestamp sequence"));
+        }
         Ok(self.timestamp.lock().unwrap().clone())
     }
 

@@ -467,6 +467,18 @@ pub fn is_write_conflict(error: &(dyn StdError + 'static)) -> bool {
     })
 }
 
+/// Whether the error chain reports an immediate pessimistic-lock failure
+/// requested with `LOCK_NO_WAIT`.
+pub fn is_lock_acquire_fail_and_no_wait_set(error: &(dyn StdError + 'static)) -> bool {
+    has_static_error(error, StaticError::LockAcquireFailedNoWait)
+}
+
+/// Whether the error chain reports that a pessimistic lock exceeded its
+/// configured wait limit.
+pub fn is_lock_wait_timeout(error: &(dyn StdError + 'static)) -> bool {
+    has_static_error(error, StaticError::LockWaitTimeout)
+}
+
 fn has_static_error(error: &(dyn StdError + 'static), expected: StaticError) -> bool {
     error_chain(error).any(|error| {
         error.downcast_ref::<StaticError>() == Some(&expected)
