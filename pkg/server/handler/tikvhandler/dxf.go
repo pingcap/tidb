@@ -104,6 +104,7 @@ type dxfNode struct {
 
 // DXFNodesHandler handles listing nodes registered in `mysql.dist_framework_meta`.
 type DXFNodesHandler struct {
+	// Keep this dependency injectable for testing errors and cancellation without replacing global task-manager state.
 	getNodes func(context.Context) ([]proto.ManagedNode, error)
 }
 
