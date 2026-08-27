@@ -346,6 +346,70 @@ The premise that forced the handshake is already disproved: three files claim
 `Rc` or `thread_local` anywhere in `tidb-txnkv` (`tests/transaction_send_source.rs`
 asserts `Send` for both production transactions).
 
+## Where the sysbench gap actually is (measured 2026-08-26, end of day)
+
+Four workloads, engines alternating inside every sample, median of 3:
+
+| workload | rust tps | go tps | rust/go |
+| --- | ---: | ---: | ---: |
+| oltp_point_select | 9634.1 | 8737.4 | **1.103x faster** |
+| oltp_write_only | 1000.6 | 960.9 | **1.041x faster** |
+| oltp_read_write | 225.6 | 258.8 | 0.872x |
+| oltp_read_only | 354.0 | 456.5 | 0.775x |
+
+`oltp_read_only` decomposed by switching statement groups off IN THE REAL
+WORKLOAD (not single-statement cells, which mispredicted it twice):
+
+| group | rust/stmt | go/stmt | delta | count | contributes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| point select | 113.6us | 98.0us | +15.6 | x10 | +156us |
+| simple range | 269 | 203 | +66 | x1 | +66 |
+| sum range | 263 | 187 | +76 | x1 | +76 |
+| order range | 351 | 246 | +105 | x1 | +105 |
+| distinct range | 494 | 321 | +173 | x1 | +173 |
+| | | | | **sum** | **+576us** |
+
+against a measured full-transaction deficit of +640us, so the attribution is
+essentially complete. **There is no dominant term left.**
+
+The point-select line decomposes exactly:
+
+* 5.3us is the `ask` channel hop to the transaction worker (measured directly:
+  caller 79.2us, worker service 73.9us, `asks == served`).
+* ~8us is SQL-layer work above storage (ours ~34us against Go's ~26us).
+* The TiKV Get itself is at parity -- 73.9us against Go's own
+  `tidb_tikvclient_request_seconds{type="Get"}` of 71-73us.
+
+Note the sign flip that makes this workload-specific: **autocommit** point
+selects are 104us here against Go's 114us -- we WIN -- because Go pays a TSO
+per autocommit statement. Inside a transaction Go drops that TSO and gets
+16us faster while we get 10us slower, and the crossover is the whole story of
+`oltp_point_select` being 1.10x and `oltp_read_only` being 0.775x.
+
+Self-time for the in-transaction range workload: 55.4% `semaphore_wait_trap`
+(coprocessor I/O, identical work to Go), 7.3% `__recvfrom` (client idle), then
+2.9% memmove, ~4% allocator, 1.3% hashing. Nothing else above 1%.
+
+### What closing the rest would take
+
+Two structural items with evidence, neither sufficient alone:
+
+1. **The in-transaction read hop, 5.3us x 10 reads = 53us of 640.** Owning the
+   transaction on the connection worker (M3s extended to `SessionTransaction`)
+   would remove it. Measured BEFORE building it, which is what showed a
+   refactor the size of M3s buys about 2% here.
+2. **The transport worker hop on every coprocessor RPC.** `unary_send` ships a
+   `WorkerCommand::UnarySend` to the transport thread and blocks; the worker
+   exists only to serialise `ChannelPool` access, then spawns onto the runtime.
+   Go looks up a pooled channel under a mutex and calls on the caller's
+   goroutine. Our Cop RPC is ~120us against Go's ~110us, and ~5.6 cop RPCs per
+   `read_only` transaction makes that ~56us of 640.
+
+Everything else is diffuse: ~8us per statement of SQL-layer overhead and the
+allocator/memmove traffic above. Closing it is an efficiency campaign across
+many small sites, not another single fix, and this plan should not pretend
+otherwise.
+
 ## Verification
 
 Repeatable probes live in the session scratchpad and should be moved into
