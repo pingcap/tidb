@@ -20,11 +20,15 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
@@ -234,4 +238,59 @@ func TestIssue56832(t *testing.T) {
 	tk.MustExec("insert into t values (0,'0'), (1,'1'), (2,'2');")
 	tk.MustExec("update t set c = 2 where id = 0;")
 	tk.MustQuery("select c from t where id = 0").Check(testkit.Rows("1"))
+}
+
+func TestPruneCommonHandleDuplicateValues(t *testing.T) {
+	fieldType := types.NewFieldType(mysql.TypeVarchar)
+	column := &model.ColumnInfo{ID: 1, Offset: 0, FieldType: *fieldType}
+	primaryIndex := &model.IndexInfo{
+		ID:      1,
+		Primary: true,
+		Unique:  true,
+		Columns: []*model.IndexColumn{{Offset: 0, Length: types.UnspecifiedLength}},
+	}
+	tableInfo := &model.TableInfo{
+		ID:             1,
+		Columns:        []*model.ColumnInfo{column},
+		Indices:        []*model.IndexInfo{primaryIndex},
+		IsCommonHandle: true,
+	}
+	indexValues := func(values ...any) [][]types.Datum {
+		result := make([][]types.Datum, 0, len(values))
+		for _, value := range values {
+			result = append(result, []types.Datum{types.NewDatum(value)})
+		}
+		return result
+	}
+
+	testCases := []struct {
+		name     string
+		input    [][]types.Datum
+		expected []string
+	}{
+		{name: "empty", input: nil, expected: nil},
+		{name: "no duplicates", input: indexValues("a", "b", "c"), expected: []string{"a", "b", "c"}},
+		{name: "duplicates and null", input: indexValues("b", "a", "b", nil, "c", "a"), expected: []string{"b", "a", "c"}},
+		{name: "all duplicates", input: indexValues("a", "a", "a"), expected: []string{"a"}},
+		{name: "only nulls", input: indexValues(nil, nil), expected: nil},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			plan := &core.BatchPointGetPlan{
+				TblInfo:     tableInfo,
+				IndexInfo:   primaryIndex,
+				IndexValues: testCase.input,
+			}
+
+			handles, isTableDual := plan.PrunePartitionsAndValues(mock.NewContext())
+			require.False(t, isTableDual)
+			require.Len(t, handles, len(testCase.expected))
+			require.Len(t, plan.IndexValues, len(testCase.expected))
+			for i, expected := range testCase.expected {
+				actual, err := plan.IndexValues[i][0].ToString()
+				require.NoError(t, err)
+				require.Equal(t, expected, actual)
+			}
+		})
+	}
 }
