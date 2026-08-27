@@ -371,9 +371,9 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	{ver: meta.MaterializedViewNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaterializedViewNextGenVersion},
 	}},
-	{ver: meta.StorageClassTransitionNextGenBootTableVersion, nextGenOnly: true, databases: []DatabaseBasicInfo{
+	{ver: meta.StorageClassTransitionNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfStorageClassTransitionNextGenVersion},
-	}},
+	}, nextGenOnly: true},
 }
 
 func bootstrapSchemas(store kv.Storage) error {
