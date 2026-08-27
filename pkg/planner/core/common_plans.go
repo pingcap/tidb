@@ -613,10 +613,9 @@ type MViewDeltaMerge struct {
 	MVColumnCount    int
 	DeltaColumnCount int
 	// MVTablePKCols stores MV table handle columns with positions in Source row layout.
-	MVTablePKCols                   util.HandleCols `plan-cache-clone:"shallow"`
-	GroupKeyMVOffsets               []int           `plan-cache-clone:"shallow"`
-	CountStarMVOffset               int
-	DefinitionDivPrecisionIncrement int
+	MVTablePKCols     util.HandleCols `plan-cache-clone:"shallow"`
+	GroupKeyMVOffsets []int           `plan-cache-clone:"shallow"`
+	CountStarMVOffset int
 
 	AggInfos []mview.AggInfo `plan-cache-clone:"shallow"`
 }

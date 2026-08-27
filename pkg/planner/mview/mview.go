@@ -172,8 +172,7 @@ type BuildResult struct {
 
 	// CountStarMVOffset is the offset (0-based) of COUNT(*) in MV output columns.
 	// Build returns error when MV definition does not include COUNT(*).
-	CountStarMVOffset               int
-	DefinitionDivPrecisionIncrement int
+	CountStarMVOffset int
 
 	AggInfos []AggInfo
 }
@@ -426,17 +425,8 @@ func buildLocal(
 	if mv.MaterializedView == nil {
 		return nil, errors.Errorf("table %s is not a materialized view", mv.Name.O)
 	}
-	if mv.MaterializedView.MViewMaintenanceVersion < model.MViewMaintenanceVersionBase ||
-		mv.MaterializedView.MViewMaintenanceVersion > model.MViewMaintenanceVersionAVG {
-		return nil, errors.Errorf(
-			"materialized view %s uses unsupported maintenance version %d",
-			mv.Name.O,
-			mv.MaterializedView.MViewMaintenanceVersion,
-		)
-	}
-	if mv.MaterializedView.MViewMaintenanceVersion > model.MViewMaintenanceVersionBase &&
-		(mv.MaterializedView.DefinitionDivPrecisionIncrement < 0 ||
-			mv.MaterializedView.DefinitionDivPrecisionIncrement > variable.MaxDivPrecisionIncrement) {
+	if mv.MaterializedView.DefinitionDivPrecisionIncrement < 0 ||
+		mv.MaterializedView.DefinitionDivPrecisionIncrement > variable.MaxDivPrecisionIncrement {
 		return nil, errors.Errorf("materialized view %s has invalid maintenance numeric metadata", mv.Name.O)
 	}
 	if len(mv.MaterializedView.BaseTableIDs) != 1 {
@@ -512,17 +502,6 @@ func buildLocal(
 	if err != nil {
 		return nil, err
 	}
-	hasAvg := false
-	for _, ac := range aggCols {
-		if ac.info.Kind == AggAvg {
-			hasAvg = true
-			break
-		}
-	}
-	if hasAvg != (mv.MaterializedView.MViewMaintenanceVersion > model.MViewMaintenanceVersionBase) {
-		return nil, errors.Errorf("materialized view %s has maintenance version inconsistent with its definition", mv.Name.O)
-	}
-
 	if len(mv.Columns) != len(mvSel.Fields.Fields) {
 		// This should never happen for valid MV metadata. Keep it as a guard to avoid mismatched join schema.
 		return nil, errors.Errorf(
@@ -765,14 +744,7 @@ func buildFromLocal(
 		GroupKeyMVOffsets:              append([]int(nil), local.groupKeyOffs...),
 		GroupKeyBaseCols:               groupKeyBaseCols,
 		CountStarMVOffset:              local.countStarMVOffset,
-		DefinitionDivPrecisionIncrement: func() int {
-			if local.mv.MaterializedView == nil ||
-				local.mv.MaterializedView.MViewMaintenanceVersion <= model.MViewMaintenanceVersionBase {
-				return local.sctx.GetSessionVars().GetDivPrecisionIncrement()
-			}
-			return local.mv.MaterializedView.DefinitionDivPrecisionIncrement
-		}(),
-		AggInfos: outAggInfos,
+		AggInfos:                       outAggInfos,
 	}
 	return res, nil
 }

@@ -135,9 +135,8 @@ func TestBuildRefreshMVFastPlan(t *testing.T) {
 			mkTestCol(4, "s", 3, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1), count(b), sum(b) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), count(b), sum(b) from t group by a",
 		},
 	}
 
@@ -269,9 +268,8 @@ func TestBuildRefreshMVFastPlanWithMinMaxHasFullUpdate(t *testing.T) {
 			mkTestCol(5, "s", 4, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1), max(b), min(b), sum(b) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), max(b), min(b), sum(b) from t group by a",
 		},
 	}
 
@@ -703,9 +701,8 @@ func TestExplainRefreshMVFastPlanTree(t *testing.T) {
 			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
 		},
 	}
 
@@ -811,9 +808,8 @@ func TestExplainRefreshMVFastPlanTreeMinMax(t *testing.T) {
 			mkTestCol(4, "mn", 3, mysql.TypeLong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1), max(b), min(b) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), max(b), min(b) from t group by a",
 		},
 	}
 
@@ -896,9 +892,8 @@ func TestExplainRefreshMViewCompleteDeltaPlanTree(t *testing.T) {
 		},
 		PKIsHandle: true,
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
 		},
 	}
 	mvTbl.Columns[0].FieldType.AddFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
@@ -987,9 +982,8 @@ func TestBuildRefreshMViewCompleteDeltaApplyPlan(t *testing.T) {
 		},
 		PKIsHandle: true,
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
 		},
 	}
 	mvTbl.Columns[0].FieldType.AddFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
@@ -1065,9 +1059,8 @@ func TestBuildRefreshMViewCompleteDeltaApplyPlanWithCascadesEnabled(t *testing.T
 		},
 		PKIsHandle: true,
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
 		},
 	}
 	mvTbl.Columns[0].FieldType.AddFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
@@ -1126,9 +1119,8 @@ func TestBuildRefreshMViewCompleteDeltaApplyPlanNullableGroupKey(t *testing.T) {
 			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
 		},
 	}
 	mvTbl.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
@@ -1225,9 +1217,8 @@ func TestBuildRefreshMVFastSumNotNullNoCountExpr(t *testing.T) {
 			mkTestCol(3, "s", 2, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1), sum(b) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), sum(b) from t group by a",
 		},
 	}
 
@@ -1305,9 +1296,8 @@ func TestMViewBuildResultHandleCols(t *testing.T) {
 						mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
 					},
 					MaterializedView: &model.MaterializedViewInfo{
-						BaseTableIDs:            []int64{baseID},
-						MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-						SQLContent:              "select a, count(1) from t group by a",
+						BaseTableIDs: []int64{baseID},
+						SQLContent:   "select a, count(1) from t group by a",
 					},
 				}
 			},
@@ -1337,9 +1327,8 @@ func TestMViewBuildResultHandleCols(t *testing.T) {
 						pkCol,
 					},
 					MaterializedView: &model.MaterializedViewInfo{
-						BaseTableIDs:            []int64{baseID},
-						MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-						SQLContent:              "select count(1), a from t group by a",
+						BaseTableIDs: []int64{baseID},
+						SQLContent:   "select count(1), a from t group by a",
 					},
 				}
 			},
@@ -1381,9 +1370,8 @@ func TestMViewBuildResultHandleCols(t *testing.T) {
 						},
 					},
 					MaterializedView: &model.MaterializedViewInfo{
-						BaseTableIDs:            []int64{baseID},
-						MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-						SQLContent:              "select a, count(1), b from t group by a, b",
+						BaseTableIDs: []int64{baseID},
+						SQLContent:   "select a, count(1), b from t group by a, b",
 					},
 				}
 			},

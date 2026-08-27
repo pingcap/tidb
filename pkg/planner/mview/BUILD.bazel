@@ -55,6 +55,7 @@ go_test(
         "//pkg/planner/core/resolve",
         "//pkg/session",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util/hint",
         "@com_github_stretchr_testify//require",

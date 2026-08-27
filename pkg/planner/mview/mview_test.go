@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/mview"
 	_ "github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
@@ -115,9 +116,8 @@ func TestBuildCountSum(t *testing.T) {
 			mkCol(4, "s", 3, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, COUNT(1), CoUnT(b), sUm(b) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, COUNT(1), CoUnT(b), sUm(b) from t group by a",
 		},
 	}
 
@@ -173,7 +173,7 @@ func TestBuildCountSum(t *testing.T) {
 		{Pos: 7, DB: mvDBName, Tbl: mvTableAlias, Col: "__mview_mv_rowid", OrigCol: "_tidb_rowid"},
 	})
 
-	mv.MaterializedView.MViewMaintenanceVersion = 0
+	mv.MaterializedView.DefinitionDivPrecisionIncrement = variable.MaxDivPrecisionIncrement + 1
 	_, err = mview.Build(
 		sctx.GetPlanCtx(),
 		is,
@@ -181,7 +181,7 @@ func TestBuildCountSum(t *testing.T) {
 		mview.BuildOptions{FromTS: 10},
 		nil,
 	)
-	require.ErrorContains(t, err, "unsupported maintenance version 0")
+	require.ErrorContains(t, err, "invalid maintenance numeric metadata")
 }
 
 func TestBuildCountExprSumExpr(t *testing.T) {
@@ -227,9 +227,8 @@ func TestBuildCountExprSumExpr(t *testing.T) {
 			mkCol(4, "s_expr", 3, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1), count(a+b), sum((a+b)) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), count(a+b), sum((a+b)) from t group by a",
 		},
 	}
 
@@ -325,9 +324,8 @@ func TestBuildMLogDeltaSelectTiFlashHint(t *testing.T) {
 			mkCol(2, "cnt", 1, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
 		},
 	}
 
@@ -426,9 +424,8 @@ func TestBuildMLogDeltaSelectCommitTSWindow(t *testing.T) {
 			mkCol(2, "cnt", 1, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
 		},
 	}
 
@@ -514,9 +511,8 @@ func TestBuildMergeSourceSelectJoinOperatorByMVNullability(t *testing.T) {
 			mkCol(3, "cnt", 2, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, b, count(1) from t group by a, b",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, b, count(1) from t group by a, b",
 		},
 	}
 	mv.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
@@ -609,9 +605,8 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 			mkCol(4, "mn", 3, mysql.TypeLong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1), max(b), min(b) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), max(b), min(b) from t group by a",
 		},
 	}
 
@@ -756,9 +751,8 @@ func TestFullUpdateLookupIndexHintUsesAllSupportingIndexes(t *testing.T) {
 			mkCol(3, "mx", 2, mysql.TypeLong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1), max(b) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), max(b) from t group by a",
 		},
 	}
 
@@ -837,9 +831,8 @@ func TestBuildMinMaxNullableDependencyOrder(t *testing.T) {
 			mkCol(5, "mn", 4, mysql.TypeLong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1), count(b), max(b), min(b) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), count(b), max(b), min(b) from t group by a",
 		},
 	}
 
@@ -913,9 +906,8 @@ func TestBuildMinMaxNullableWithoutCountExpr(t *testing.T) {
 			mkCol(4, "mn", 3, mysql.TypeLong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1), max(b), min(b) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), max(b), min(b) from t group by a",
 		},
 	}
 
@@ -987,9 +979,8 @@ func TestBuildSumNullableWithDuplicateCountExpr(t *testing.T) {
 			mkCol(5, "s", 4, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1), count(b), count(b), sum(b) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), count(b), count(b), sum(b) from t group by a",
 		},
 	}
 
@@ -1068,9 +1059,8 @@ func TestBuildMinMaxNullableWithDuplicateCountExpr(t *testing.T) {
 			mkCol(6, "mn", 5, mysql.TypeLong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1), count(b), count(b), max(b), min(b) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), count(b), count(b), max(b), min(b) from t group by a",
 		},
 	}
 
@@ -1148,9 +1138,8 @@ func TestBuildSumWithoutCountExpr(t *testing.T) {
 			mkCol(3, "s", 2, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1), sum(b) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), sum(b) from t group by a",
 		},
 	}
 
@@ -1209,9 +1198,8 @@ func TestBuildMissingCountStar(t *testing.T) {
 			mkCol(3, "s", 2, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(b), sum(b) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(b), sum(b) from t group by a",
 		},
 	}
 
@@ -1266,9 +1254,8 @@ func TestBuildMissingOldNew(t *testing.T) {
 			mkCol(2, "cnt", 1, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
 		},
 	}
 
@@ -1313,9 +1300,8 @@ func TestBuildCompleteDiffSourceLayout(t *testing.T) {
 		},
 		PKIsHandle: true,
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1), sum(b) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), sum(b) from t group by a",
 		},
 	}
 	mv.Columns[0].FieldType.AddFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
@@ -1405,9 +1391,8 @@ func TestBuildCompleteDiffSourceNullableGroupKeyUsesNullEQ(t *testing.T) {
 			mkCol(2, "cnt", 1, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
 		},
 	}
 	mv.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
@@ -1478,9 +1463,8 @@ func TestBuildCompleteDiffSourceCommonHandleReusesOldRowImage(t *testing.T) {
 			},
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, b, count(1) from t group by a, b",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, b, count(1) from t group by a, b",
 		},
 	}
 	mv.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
@@ -1526,9 +1510,8 @@ func TestBuildCompleteDiffSourceExtraHandleKeepsRowIDProjection(t *testing.T) {
 			mkCol(2, "cnt", 1, mysql.TypeLonglong),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
-			BaseTableIDs:            []int64{baseID},
-			MViewMaintenanceVersion: model.MViewMaintenanceVersionBase,
-			SQLContent:              "select a, count(1) from t group by a",
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
 		},
 	}
 	mv.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)

@@ -187,10 +187,9 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.Equal(t, "FAST", mvCountColTable.Meta().MaterializedView.RefreshMethod)
 	require.Equal(t, "", mvCountColTable.Meta().MaterializedView.RefreshStartWith)
 	require.Equal(t, "", mvCountColTable.Meta().MaterializedView.RefreshNext)
-	require.Equal(t, model.MViewMaintenanceVersionBase, mvCountColTable.Meta().MaterializedView.MViewMaintenanceVersion)
+	require.Equal(t, tk.Session().GetSessionVars().GetDivPrecisionIncrement(), mvCountColTable.Meta().MaterializedView.DefinitionDivPrecisionIncrement)
 	mvAvgTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_avg"))
 	require.NoError(t, err)
-	require.Equal(t, model.MViewMaintenanceVersionAVG, mvAvgTable.Meta().MaterializedView.MViewMaintenanceVersion)
 	require.Equal(t, tk.Session().GetSessionVars().GetDivPrecisionIncrement(), mvAvgTable.Meta().MaterializedView.DefinitionDivPrecisionIncrement)
 
 	// ATTRIBUTES configures overdue-alert thresholds for automatically scheduled MV refresh tasks.

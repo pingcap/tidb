@@ -352,28 +352,17 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	}
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	mvTableInfo.MaterializedView = &model.MaterializedViewInfo{
-		BaseTableIDs:       []int64{baseTableID},
-		InitBuildState:     model.MVInitBuildBuilding,
-		SQLContent:         selectSQL,
-		RefreshMethod:      refreshMethod,
-		RefreshStartWith:   refreshStartWith,
-		RefreshNext:        refreshNext,
-		AlertWarningSec:    alertWarningSec,
-		AlertOverdueSec:    alertOverdueSec,
-		AlertRefreshFailed: alertRefreshFailed,
-		DefinitionSQLMode:  ctx.GetSessionVars().SQLMode,
-		MViewMaintenanceVersion: func() uint8 {
-			if queryAnalysis.HasAvg {
-				return model.MViewMaintenanceVersionAVG
-			}
-			return model.MViewMaintenanceVersionBase
-		}(),
-		DefinitionDivPrecisionIncrement: func() int {
-			if queryAnalysis.HasAvg {
-				return ctx.GetSessionVars().GetDivPrecisionIncrement()
-			}
-			return 0
-		}(),
+		BaseTableIDs:                    []int64{baseTableID},
+		InitBuildState:                  model.MVInitBuildBuilding,
+		SQLContent:                      selectSQL,
+		RefreshMethod:                   refreshMethod,
+		RefreshStartWith:                refreshStartWith,
+		RefreshNext:                     refreshNext,
+		AlertWarningSec:                 alertWarningSec,
+		AlertOverdueSec:                 alertOverdueSec,
+		AlertRefreshFailed:              alertRefreshFailed,
+		DefinitionSQLMode:               ctx.GetSessionVars().SQLMode,
+		DefinitionDivPrecisionIncrement: ctx.GetSessionVars().GetDivPrecisionIncrement(),
 		DefinitionTimeZone: model.TimeZoneLocation{
 			Name:   tzName,
 			Offset: tzOffset,
@@ -1572,7 +1561,6 @@ type mviewQueryAnalysis struct {
 	GroupByInfos []mviewGroupByInfo
 	GroupByCols  []string
 	HasMinOrMax  bool
-	HasAvg       bool
 }
 
 func validateCreateMaterializedViewQuery(
@@ -1819,7 +1807,6 @@ func validateCreateMaterializedViewQuery(
 		GroupByInfos: groupByInfos,
 		GroupByCols:  groupByCols,
 		HasMinOrMax:  hasMinOrMax,
-		HasAvg:       len(avgExprCols) > 0,
 	}, nil
 }
 

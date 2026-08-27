@@ -277,39 +277,25 @@ func TestReorgExprContext(t *testing.T) {
 
 func TestCreateMaterializedViewBuildSessionMVMaintenance(t *testing.T) {
 	for _, tt := range []struct {
-		name               string
-		maintenanceVersion uint8
-		definitionDPI      int
-		wantDPI            int
-		wantError          string
+		name          string
+		definitionDPI int
+		wantDPI       int
+		wantError     string
 	}{
 		{
-			name:               "base maintenance",
-			maintenanceVersion: model.MViewMaintenanceVersionBase,
-			definitionDPI:      0,
-			wantDPI:            17,
+			name:          "maintenance with nonzero precision",
+			definitionDPI: 11,
+			wantDPI:       11,
 		},
 		{
-			name:               "avg maintenance with zero precision",
-			maintenanceVersion: model.MViewMaintenanceVersionAVG,
-			definitionDPI:      0,
-			wantDPI:            0,
+			name:          "maintenance with zero precision",
+			definitionDPI: 0,
+			wantDPI:       0,
 		},
 		{
-			name:               "zero maintenance version",
-			maintenanceVersion: 0,
-			wantError:          "unsupported maintenance version",
-		},
-		{
-			name:               "unknown maintenance version",
-			maintenanceVersion: model.MViewMaintenanceVersionAVG + 1,
-			wantError:          "unsupported maintenance version",
-		},
-		{
-			name:               "invalid precision",
-			maintenanceVersion: model.MViewMaintenanceVersionAVG,
-			definitionDPI:      variable.MaxDivPrecisionIncrement + 1,
-			wantError:          "invalid maintenance numeric metadata",
+			name:          "invalid precision",
+			definitionDPI: variable.MaxDivPrecisionIncrement + 1,
+			wantError:     "invalid maintenance numeric metadata",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -327,7 +313,6 @@ func TestCreateMaterializedViewBuildSessionMVMaintenance(t *testing.T) {
 				SessionVars: make(map[string]string),
 			}
 			mvTblInfo := &model.TableInfo{MaterializedView: &model.MaterializedViewInfo{
-				MViewMaintenanceVersion:         tt.maintenanceVersion,
 				DefinitionDivPrecisionIncrement: tt.definitionDPI,
 			}}
 			restore, err := initCreateMaterializedViewBuildSession(sctx, job, mvTblInfo, sctx.GetSessionVars().CurrentDB)

@@ -717,14 +717,8 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing materialized view metadata")
 	}
 	mviewInfo := mvTblInfo.MaterializedView
-	if mviewInfo.MViewMaintenanceVersion < model.MViewMaintenanceVersionBase ||
-		mviewInfo.MViewMaintenanceVersion > model.MViewMaintenanceVersionAVG {
-		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
-			fmt.Sprintf("create materialized view: unsupported maintenance version %d", mviewInfo.MViewMaintenanceVersion),
-		)
-	}
-	if mviewInfo.MViewMaintenanceVersion > model.MViewMaintenanceVersionBase &&
-		(mviewInfo.DefinitionDivPrecisionIncrement < 0 || mviewInfo.DefinitionDivPrecisionIncrement > variable.MaxDivPrecisionIncrement) {
+	if mviewInfo.DefinitionDivPrecisionIncrement < 0 ||
+		mviewInfo.DefinitionDivPrecisionIncrement > variable.MaxDivPrecisionIncrement {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid maintenance numeric metadata")
 	}
 	restore := restoreSessCtx(sessCtx)
@@ -736,9 +730,7 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		restore(sessCtx)
 		return nil, errors.Trace(err)
 	}
-	if mviewInfo.MViewMaintenanceVersion > model.MViewMaintenanceVersionBase {
-		sessCtx.GetSessionVars().DivPrecisionIncrement = mviewInfo.DefinitionDivPrecisionIncrement
-	}
+	sessCtx.GetSessionVars().DivPrecisionIncrement = mviewInfo.DefinitionDivPrecisionIncrement
 	targetExecutionVars, err := MViewExecutionSessionVarsFromJob(job, sessCtx.GetSessionVars())
 	if err != nil {
 		restore(sessCtx)

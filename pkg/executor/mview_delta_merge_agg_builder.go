@@ -122,7 +122,6 @@ func (b *executorBuilder) buildMViewDeltaMerge(v *plannercore.MViewDeltaMerge) e
 		v.AggInfos,
 		sourceFieldTypes,
 		deltaAggColCount,
-		v.DefinitionDivPrecisionIncrement,
 	)
 	if err != nil {
 		b.err = err
@@ -150,7 +149,6 @@ func buildMViewDeltaMergeAggMappings(
 	aggInfos []mview.AggInfo,
 	sourceFieldTypes []*types.FieldType,
 	deltaAggColCount int,
-	definitionDivPrecisionIncrement int,
 ) ([]MViewDeltaMergeAggMapping, error) {
 	if sctx == nil {
 		return nil, errors.New("MViewDeltaMerge session context is nil")
@@ -177,11 +175,10 @@ func buildMViewDeltaMergeAggMappings(
 		}
 
 		mapping := MViewDeltaMergeAggMapping{
-			AggFunc:               aggDesc,
-			ColID:                 []int{outputColID},
-			DependencyColID:       deps,
-			RequiredExactState:    aggInfo.RequiredExactState,
-			DivPrecisionIncrement: definitionDivPrecisionIncrement,
+			AggFunc:            aggDesc,
+			ColID:              []int{outputColID},
+			DependencyColID:    deps,
+			RequiredExactState: aggInfo.RequiredExactState,
 		}
 		if aggInfo.Kind == mview.AggAvg {
 			// The AVG merger must use the physical MV output type, not AVG(SUM(...))'s inferred type.

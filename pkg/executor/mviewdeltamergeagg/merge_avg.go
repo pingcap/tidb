@@ -25,6 +25,7 @@ func (e *Exec) buildAvgMerger(
 	mapping Mapping,
 	colID2ComputedIdx map[int]int,
 	childTypes []*types.FieldType,
+	definitionDivPrecisionIncrement int,
 ) (aggMerger, error) {
 	if len(mapping.ColID) != 1 {
 		return nil, errors.Errorf("AVG mapping expects exactly 1 output column, got %d", len(mapping.ColID))
@@ -74,7 +75,7 @@ func (e *Exec) buildAvgMerger(
 		countStarRef:          refs[2],
 		retTp:                 retTp,
 		sumTp:                 sumTp,
-		divPrecisionIncrement: mapping.DivPrecisionIncrement,
+		divPrecisionIncrement: definitionDivPrecisionIncrement,
 	}, nil
 }
 

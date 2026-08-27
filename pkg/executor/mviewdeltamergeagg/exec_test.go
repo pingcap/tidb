@@ -23,6 +23,7 @@ import (
 	executil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -344,10 +345,13 @@ func TestAvgFinalizesFromUpdatedSumAndCounts(t *testing.T) {
 			{AggFunc: countStarDesc, ColID: []int{6}, DependencyColID: []int{0}},
 			{AggFunc: countDesc, ColID: []int{5}, DependencyColID: []int{2}},
 			{AggFunc: sumDesc, ColID: []int{4}, DependencyColID: []int{1, 5}, RequiredExactState: true},
-			{AggFunc: avgDesc, ColID: []int{7}, DependencyColID: []int{4, 5, 6}, DivPrecisionIncrement: 4},
+			{AggFunc: avgDesc, ColID: []int{7}, DependencyColID: []int{4, 5, 6}},
 		},
 		DeltaAggColCount: 3,
-		WorkerCnt:        2,
+		TargetInfo: &model.TableInfo{MaterializedView: &model.MaterializedViewInfo{
+			DefinitionDivPrecisionIncrement: 4,
+		}},
+		WorkerCnt: 2,
 	}
 	writer := &collectWriter{}
 	mergeExec.Writer = writer

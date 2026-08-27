@@ -50,6 +50,7 @@ go_test(
         "//pkg/executor/internal/util",
         "//pkg/expression",
         "//pkg/expression/aggregation",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/sessionctx",
