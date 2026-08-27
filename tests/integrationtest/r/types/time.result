@@ -375,6 +375,16 @@ SUBTIME('01:00:00', '')
 NULL
 Level	Code	Message
 Warning	1292	Truncated incorrect time value: ''
+SELECT ADDTIME('', '01:00:00');
+ADDTIME('', '01:00:00')
+NULL
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
+SELECT SUBTIME('', '01:00:00');
+SUBTIME('', '01:00:00')
+NULL
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
 SELECT TIMEDIFF('', '01:00:00');
 TIMEDIFF('', '01:00:00')
 NULL
@@ -404,15 +414,17 @@ Warning	1292	Truncated incorrect time value: ''
 Warning	1292	Truncated incorrect time value: ''
 SELECT ADDTIME(a, b) FROM t_empty_time_vec ORDER BY a;
 ADDTIME(a, b)
-01:00:00
+NULL
 NULL
 Level	Code	Message
 Warning	1292	Truncated incorrect time value: ''
+Warning	1292	Truncated incorrect time value: ''
 SELECT SUBTIME(a, b) FROM t_empty_time_vec ORDER BY a;
 SUBTIME(a, b)
--01:00:00
+NULL
 NULL
 Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
 Warning	1292	Truncated incorrect time value: ''
 SELECT TIMEDIFF(a, b) FROM t_empty_time_vec ORDER BY a;
 TIMEDIFF(a, b)

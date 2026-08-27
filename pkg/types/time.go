@@ -1726,9 +1726,7 @@ func matchDuration(str string, fsp int) (Duration, bool, error) {
 	}
 
 	if len(str) == 0 {
-		// MySQL treats an empty string as a zero duration even in strict mode,
-		// unlike DATE/DATETIME which reject it (see #69902).
-		return Duration{Duration: 0, Fsp: fsp}, false, nil
+		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	negative, rest := isNegativeDuration(str)
