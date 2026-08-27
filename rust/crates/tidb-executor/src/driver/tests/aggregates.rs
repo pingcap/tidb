@@ -3526,6 +3526,58 @@ fn select_distinct() {
     );
 }
 
+/// A DISTINCT scalar subquery may accept a cop partial aggregate while its
+/// residual predicate remains above the scan. EXPLAIN must fall back to the
+/// ordinary root HashAgg shape instead of returning a trace-only error.
+#[test]
+fn explain_distinct_scalar_subquery_with_filter() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE date_dim (d_month_seq BIGINT, d_year BIGINT, d_moy BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO date_dim VALUES (1201, 2000, 2), (1201, 2000, 2)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+
+    let sql = "SELECT (SELECT DISTINCT d_month_seq FROM date_dim \
+        WHERE d_year = 2000 AND d_moy = 2)";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) = explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &crate::StmtContext::for_query(),
+        ExplainFormat::Brief,
+    )
+    .unwrap();
+    let operators = rows
+        .iter()
+        .filter_map(|row| match row.first() {
+            Some(Datum::Bytes(bytes)) => Some(String::from_utf8_lossy(bytes).into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(operators.iter().any(|operator| operator.contains("HashAgg")), "{rows:#?}");
+    assert!(operators.iter().any(|operator| operator.contains("Selection")), "{rows:#?}");
+    assert_eq!(
+        run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap(),
+        vec![vec![Datum::Int(1201)]]
+    );
+}
+
 /// A pseudo-statistics Sysbench DISTINCT range is physically `Sort -> final
 /// HashAgg -> Reader -> partial HashAgg -> cop Scan`; the identity FIRST_ROW
 /// output projection is absorbed by the final aggregate.

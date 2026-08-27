@@ -3908,37 +3908,53 @@ fn run_select_traced_with_delivery_choice_inner(
         };
         if let Some(trace) = trace.as_deref_mut() {
             if partial_distinct {
-                if !trace.partial_hash_agg(
-                    traced_select.fields.fields(),
-                    &qualify,
-                    distinct_logical_rows,
-                    distinct_streamed,
-                ) {
-                    trace.refuse("partial DISTINCT aggregate child is not a bare scan");
-                }
-            } else {
-                trace.scan_reader();
-            }
-            if partial_distinct {
-                trace.final_distinct(traced_select.fields.fields(), &qualify, distinct_streamed);
-            } else if physical_source_names {
-                let column_names =
-                    physical_source_column_names(select, &current_scope, catalog, current_db);
-                if !trace.physical_distinct(
-                    std::slice::from_ref(&input),
-                    &column_names,
-                    distinct_logical_rows,
-                    distinct_streamed,
-                ) {
-                    trace.refuse("a projection-eliminated DISTINCT is not printable yet");
-                }
-            } else {
-                trace.distinct(
+                // A pushed DISTINCT may still have a residual Selection
+                // above its scan (for example the scalar DISTINCT subquery
+                // in TPC-DS Q6).  The executor can accept that pushdown, but
+                // the trace helper intentionally only rewires a bare scan.
+                // Fall back to Go's ordinary root HashAgg shape instead of
+                // turning a printable plan into an EXPLAIN error.
+                let partial_traced = trace.partial_hash_agg(
                     traced_select.fields.fields(),
                     &qualify,
                     distinct_logical_rows,
                     distinct_streamed,
                 );
+                if partial_traced {
+                    trace.final_distinct(
+                        traced_select.fields.fields(),
+                        &qualify,
+                        distinct_streamed,
+                    );
+                } else {
+                    trace.distinct(
+                        traced_select.fields.fields(),
+                        &qualify,
+                        distinct_logical_rows,
+                        distinct_streamed,
+                    );
+                }
+            } else {
+                trace.scan_reader();
+                if physical_source_names {
+                    let column_names =
+                        physical_source_column_names(select, &current_scope, catalog, current_db);
+                    if !trace.physical_distinct(
+                        std::slice::from_ref(&input),
+                        &column_names,
+                        distinct_logical_rows,
+                        distinct_streamed,
+                    ) {
+                        trace.refuse("a projection-eliminated DISTINCT is not printable yet");
+                    }
+                } else {
+                    trace.distinct(
+                        traced_select.fields.fields(),
+                        &qualify,
+                        distinct_logical_rows,
+                        distinct_streamed,
+                    );
+                }
             }
             aggregate = trace.meter(aggregate);
         }
