@@ -603,6 +603,20 @@ where
         })
     }
 
+    /// Go `rebase4Signed`'s `allocIDs == true` transaction: read the stored
+    /// end, take `max(currentEnd, requiredBase)` and RESERVE a full window of
+    /// `step` ids above it -- one atomic read-modify-write (`pkg/meta/autoid/
+    /// autoid.go:348`, `:408`). This is what lets a monotonic run of explicit
+    /// ids pay the meta key once per window instead of once per row.
+    fn rebase_alloc(
+        &self,
+        required: u64,
+        step: u64,
+        unsigned: bool,
+    ) -> Result<(u64, u64), AutoIdStoreError> {
+        self.transact(|current| rebase_reservation(current, required, step, unsigned))
+    }
+
     fn force_rebase(&self, required: u64, _unsigned: bool) -> Result<(), AutoIdStoreError> {
         self.transact(|current| {
             if current == required {
@@ -641,6 +655,24 @@ fn batch_reservation(
         (None, (current, current))
     } else {
         (Some(end), (current, end))
+    }
+}
+
+/// The decision run inside the counter transaction for one allocating rebase:
+/// Go's `rebase4{Signed,Unsigned}` `allocIDs == true` arm. The counter moves to
+/// `max(currentEnd, requiredBase)` and a fresh window of `step` ids above it is
+/// reserved in the same transaction; an empty window means the domain is full.
+fn rebase_reservation(current: u64, required: u64, step: u64, unsigned: bool) -> (Option<u64>, (u64, u64)) {
+    let base = if tidb_executor::kv_table::exceeds(required, current, unsigned) {
+        required
+    } else {
+        current
+    };
+    let end = advance(base, step.max(1), unsigned);
+    if end == current {
+        (None, (base, end))
+    } else {
+        (Some(end), (base, end))
     }
 }
 
@@ -714,6 +746,35 @@ mod tests {
         assert_eq!(
             batch_reservation(10, 30, 2, 3, 1, false),
             (Some(40), (10, 40))
+        );
+    }
+
+    /// The `allocIDs == true` rebase arm (`pkg/meta/autoid/autoid.go:408`):
+    /// one transaction moves the counter past the required base AND reserves a
+    /// full window of `step` ids above it. This is what lets Go amortize an
+    /// ascending run of explicit ids to one counter transaction per window.
+    #[test]
+    fn test_rebase_reservation_reserves_a_window_past_the_required_base() {
+        // Fresh counter, first explicit id: write end = base + step.
+        assert_eq!(
+            rebase_reservation(0, 5, 30_000, false),
+            (Some(30_005), (5, 30_005))
+        );
+        // A peer moved the counter past our value meanwhile: the window sits
+        // above THAT mark, and the base says so -- ids up to it are already
+        // handed out.
+        assert_eq!(
+            rebase_reservation(50, 5, 10, true),
+            (Some(60), (50, 60))
+        );
+        // The monotonic run continues INSIDE the caller's cached window; the
+        // next crossing pays for the following whole window in one write. The
+        // base follows the STORED end (`rebase4Signed`: `newBase = max(
+        // currentEnd, requiredBase)`): everything up to it is already handed
+        // out or reserved.
+        assert_eq!(
+            rebase_reservation(30_005, 6, 30_000, false),
+            (Some(60_005), (30_005, 60_005))
         );
     }
 
