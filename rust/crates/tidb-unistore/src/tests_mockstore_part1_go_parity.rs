@@ -30,17 +30,19 @@
 //!   arm, and `TestMinCommitTs`' second push segment.
 //! * Ported here as executable pins: `cop_handler_test.go`'s
 //!   `TestIsPrefixNext`, `TestPointGet`, `TestClosureExecutor`.
-//! * Divergence found while verifying: `pd_test.go::TestMockPDServiceDiscovery`
+//! * Divergence found while verifying:
+//!   `pd_test.go::TestMockPDServiceDiscovery`
 //!   expects master's `normalizeMockPDAddrs` to KEEP a `unix://localhost:m0`
 //!   endpoint (3 clients); the workspace helper rejects non-http(s) schemes
 //!   and pins only 2. Production files are out of this batch's scope, so the
 //!   master vectors are pinned below under `#[ignore]`.
 //! * Gaps whose subject has no Rust transcreation anywhere in the workspace
 //!   (`go-parity-gap`, ignored with the master vectors): the two top-level
-//!   integration tests (`cluster_test.go`, `tikv_test.go`),
-//!   `mockcopr/executor_test.go`, the MPP/exchanger shapes of
+//!   integration tests (`cluster_test.go`, `tikv_test.go`,
+//!   `mockcopr/executor_test.go`), the MPP/exchanger shapes of
 //!   `cop_handler_test.go`, `raw_handler_test.go`, `pd.go`'s global-config
-//!   trio and member lister, and `tikv/gc_worker.go`'s GC states manager.
+//!   trio and member lister (`unistore/pd.go:287`), and
+//!   `tikv/gc_worker.go`'s GC states manager.
 //!   The five `main_test.go` harnesses and four lockstore benchmarks are
 //!   recorded as skips with reasons (module tail).
 
@@ -51,7 +53,8 @@ use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
 use tidb_datatype::Datum;
 use tidb_proto::{coprocessor, tipb};
 
-/// Go's batch constants (`cop_handler_test.go:40-45`).
+/// Go's batch constants (`cop_handler_test.go:50-56`): `keyNumber` 3,
+/// `tableID` 0, `startTs` 10, `ttl` 60000, `dagRequestStartTs` 100.
 const START_TS: u64 = 10;
 const LOCK_TTL_COP: u64 = 60_000;
 const DAG_REQUEST_START_TS: u64 = 100;
@@ -70,8 +73,10 @@ const NEG_DEFAULT_COLLATION_ID: i32 = -46;
 // test file, so their semantics belong to this pin, not to a product API).
 // ---------------------------------------------------------------------------
 
-/// Go `convertToPrefixNext` (`cop_handler_test.go:168`): the smallest key
-/// strictly larger than the input, computed by suffix increment.
+/// Go `convertToPrefixNext`
+/// (`pkg/store/mockstore/unistore/cophandler/cop_handler_test.go:152-168`):
+/// the smallest key strictly larger than the input, computed by suffix
+/// increment.
 fn convert_to_prefix_next(mut key: Vec<u8>) -> Vec<u8> {
     if key.is_empty() {
         return vec![0];
@@ -91,14 +96,16 @@ fn convert_to_prefix_next(mut key: Vec<u8>) -> Vec<u8> {
     key
 }
 
-/// Go `isPrefixNext` (`cop_handler_test.go:184`): prefix-nexting the first
-/// argument lands exactly on the second.
+/// Go `isPrefixNext`
+/// (`pkg/store/mockstore/unistore/cophandler/cop_handler_test.go:170-173`):
+/// prefix-nexting the first argument lands exactly on the second.
 fn is_prefix_next(key: &[u8], expected: &[u8]) -> bool {
     convert_to_prefix_next(key.to_vec()) == expected
 }
 
-/// The three `tipb.ColumnInfo`s of Go `prepareTestTableData`
-/// (`cop_handler_test.go:96-115`): column ids `[1, 2, 3]`, types
+/// The three `tipb.ColumnInfo`s Go `prepareTestTableData` builds for every
+/// row (`pkg/store/mockstore/unistore/cophandler/cop_handler_test.go:101-118`,
+/// column-info loop at 111-117): column ids `[1, 2, 3]`, types
 /// longlong/string/double, `Collation: -mysql.DefaultCollationID` each.
 fn cop_column_infos() -> Vec<tipb::ColumnInfo> {
     [(1, TYPE_LONGLONG), (2, TYPE_STRING), (3, TYPE_DOUBLE)]
@@ -113,7 +120,10 @@ fn cop_column_infos() -> Vec<tipb::ColumnInfo> {
 }
 
 /// Encodes one row value EXACTLY like Go's
-/// `tablecodec.EncodeRow(..., &rowcodec.Encoder{Enable: true})`: the NEW
+/// `tablecodec.EncodeRow(..., &rowcodec.Encoder{Enable: true})` inside
+/// `prepareTestTableData`
+/// (`pkg/store/mockstore/unistore/cophandler/cop_handler_test.go:121-130`):
+/// the NEW
 /// row format over datums `(handle, "abc", 10.0)` at column ids `[1,2,3]`.
 fn cop_row_value(handle: i64) -> Vec<u8> {
     let row = [
@@ -124,8 +134,9 @@ fn cop_row_value(handle: i64) -> Vec<u8> {
     tidb_tablecodec::encode_table_row(None, &row, &[1, 2, 3], true, None).expect("row encodes")
 }
 
-/// Go `getTestPointRange` (`cop_handler_test.go:148`): the half-open record
-/// range covering exactly one int handle.
+/// Go `getTestPointRange`
+/// (`pkg/store/mockstore/unistore/cophandler/cop_handler_test.go:140-148`):
+/// the half-open record range covering exactly one int handle.
 fn cop_point_range(table_id: i64, handle: i64) -> coprocessor::KeyRange {
     let start = encode_row_key_with_handle(table_id, &RecordHandle::Int(handle));
     let end = convert_to_prefix_next(start.clone());
@@ -137,7 +148,8 @@ fn cop_point_range(table_id: i64, handle: i64) -> coprocessor::KeyRange {
 }
 
 /// Commits one test row through prewrite+commit the way Go's `initTestData`
-/// does (`cop_handler_test.go:57`): version `START_TS + 2*slot`, commit at
+/// does (`pkg/store/mockstore/unistore/cophandler/cop_handler_test.go:71-91`):
+/// version `START_TS + 2*slot`, commit at
 /// +1, ttl 60000, primary = the row key itself.
 fn cop_init_row(store: &mut MvccStore, key: &[u8], handle: i64, slot: usize) {
     use tidb_proto::{KvrpcMutation, KvrpcOp};
@@ -172,8 +184,10 @@ fn cop_seed_three_rows(store: &mut MvccStore) {
 
 /// Encodes a DAG request through the protobuf surface and dispatches it the
 /// way Go's `newDagContext(..., dagReq, dagRequestStartTs)` +
-/// `buildExecutorsAndExecute` pair does: visibility ts comes from the
-/// coprocessor request (`dagCtx.startTS = req.StartTs`).
+/// `buildExecutorsAndExecute` pair does
+/// (`pkg/store/mockstore/unistore/cophandler/cop_handler_test.go:176-218`):
+/// visibility ts comes from the coprocessor request
+/// (`dagCtx.startTS = req.StartTs`).
 fn run_dag(
     store: &mut MvccStore,
     dag: tipb::DagRequest,
@@ -196,7 +210,9 @@ fn run_dag(
     tipb::SelectResponse::decode(resp.data.as_slice()).expect("a select response")
 }
 
-/// Go's `dagBuilder` chain (`cop_handler_test.go:216+`) narrowed to the
+/// Go's `dagBuilder` chain (`pkg/store/mockstore/unistore/cophandler/
+/// cop_handler_test.go:229-280`: `newDagBuilder`, `setStartTs`,
+/// `addTableScan`, `addSelection`, `addLimit`, `build`) narrowed to the
 /// shapes those tests build: TableScan over the given columns + output
 /// offsets `{0, 1}`, optionally plus Selection / Limit executors.
 fn cop_dag(
@@ -241,7 +257,8 @@ fn cop_dag(
     }
 }
 
-/// Builds Go's `buildEQIntExpr` (`cop_handler_test.go:434`):
+/// Builds Go's `buildEQIntExpr`
+/// (`pkg/store/mockstore/unistore/cophandler/cop_handler_test.go:434-452`):
 /// ScalarFunc(EQInt)(ColumnRef(offset), Int64(value)); `buildNEIntExpr` is
 /// the same shape under [`tidb_proto::tipb::ScalarFuncSig::NeInt`].
 fn cop_cmp_int_expr(sig: tipb::ScalarFuncSig, offset: i64, value: i64) -> tipb::Expr {
@@ -272,7 +289,9 @@ fn cop_cmp_int_expr(sig: tipb::ScalarFuncSig, offset: i64, value: i64) -> tipb::
 // Executable ports.
 // ---------------------------------------------------------------------------
 
-/// Go `TestIsPrefixNext` (`cop_handler_test.go:286`), every vector: suffix
+/// Go `TestIsPrefixNext`
+/// (`pkg/store/mockstore/unistore/cophandler/cop_handler_test.go:286-298`),
+/// every vector: suffix
 /// increment stops at the first non-255 byte, rolls 255s over, and grows an
 /// all-255 buffer by one trailing zero byte.
 #[test]
@@ -295,7 +314,9 @@ fn is_prefix_next_lands_on_gos_expected_successors() {
     }
 }
 
-/// Go `TestPointGet` (`cop_handler_test.go:300`): a point range on
+/// Go `TestPointGet`
+/// (`pkg/store/mockstore/unistore/cophandler/cop_handler_test.go:300-355`):
+/// a point range on
 /// `math.MinInt64` answers ZERO chunks / zero rows; the same DAG on handle 0
 /// answers exactly one row carrying TWO columns whose values equal the
 /// written `(0, "abc")` (Go compares through the binary collator).
@@ -334,7 +355,9 @@ fn point_get_answers_nothing_for_min_int64_and_one_row_for_zero() {
     assert_eq!(text, b"abc", "the string column survives");
 }
 
-/// Go `TestClosureExecutor` (`cop_handler_test.go:357`): the composed
+/// Go `TestClosureExecutor`
+/// (`pkg/store/mockstore/unistore/cophandler/cop_handler_test.go:357-383`):
+/// the composed
 /// executor chain `TableScan + Selection(EQInt(offset 1, -1)) + Limit(1)`
 /// over a point range on handle 1 answers ZERO rows — nothing survives the
 /// pushed selection.
@@ -365,8 +388,9 @@ fn closure_executor_selection_over_point_range_answers_zero_rows() {
 // landed ports skipped them — executed through the public store surface.
 // ---------------------------------------------------------------------------
 
-/// Go `TestCheckTxnStatus`'s tail (`mvcc_test.go:794-806`): when the lock at
-/// `lock_ts` belongs to ANOTHER transaction — its primary differs from the
+/// Go `TestCheckTxnStatus`'s tail
+/// (`pkg/store/mockstore/unistore/tikv/mvcc_test.go:719-726`): when the lock
+/// at `lock_ts` belongs to ANOTHER transaction — its primary differs from the
 /// checked key — the check fails with `ErrPrimaryMismatch`; the pessimistic
 /// rollback that follows clears the key again.
 #[test]
@@ -434,7 +458,8 @@ fn check_txn_status_reports_a_foreign_primary_and_rolls_it_back() {
 }
 
 /// Go `TestCheckSecondaryLocksStatus`'s pessimistic arm
-/// (`mvcc_test.go:784-792`): a standing PESSIMISTIC lock among the reported
+/// (`pkg/store/mockstore/unistore/tikv/mvcc_test.go:775-782`): a standing
+/// PESSIMISTIC lock among the reported
 /// secondary keys is rolled back BY the check itself — no locks come back,
 /// commit ts stays zero, and a rollback record takes its place so even the
 /// original transaction cannot prewrite there anymore.
@@ -484,9 +509,11 @@ fn check_secondary_locks_rolls_back_a_pessimistic_secondary() {
     assert_eq!(err, KvError::AlreadyRollback);
 }
 
-/// Go `TestMinCommitTs` whole (`mvcc_test.go:1191`): both segments. First a
-/// push past caller 20 floors commits to 21; then a re-prewrite at ts 30 is
-/// pushed by caller 40 to floor 41 and STILL commits once above it (at 50).
+/// Go `TestMinCommitTs` whole
+/// (`pkg/store/mockstore/unistore/tikv/mvcc_test.go:1191-1209`): both
+/// segments. First a push past caller 20 floors commits to 21; then a
+/// re-prewrite at ts 30 is pushed by caller 40 to floor 41 and STILL commits
+/// once above it (at 50).
 #[test]
 fn min_commit_ts_pushes_keep_the_floor_until_a_commit_above_it() {
     use tidb_proto::{KvrpcMutation, KvrpcOp, KvrpcTxnAction};
@@ -546,13 +573,16 @@ fn min_commit_ts_pushes_keep_the_floor_until_a_commit_above_it() {
 // the transcreation can flip #[ignore] into a runnable check.
 // ---------------------------------------------------------------------------
 
-/// Go `TestMockPDServiceDiscovery` (`pd_test.go:101`). Master's
-/// `normalizeMockPDAddrs` keeps every address `pkg/util.NormalizeServiceURL`
-/// accepts, and master accepts unix family endpoints verbatim — three
+/// Go `TestMockPDServiceDiscovery`
+/// (`pkg/store/mockstore/unistore/pd_test.go:101-119`). Master's
+/// `normalizeMockPDAddrs` (`pkg/store/mockstore/unistore/pd.go:184-190`)
+/// keeps every address `pkg/util.NormalizeServiceURL` accepts
+/// (`pkg/util/service_url.go:98-104`, schemes http/https/unix/unixs at
+/// 134-138), and master accepts unix family endpoints verbatim — three
 /// clients with URLs `http://127.0.0.1:2379`, `http://172.32.21.32:2379`,
 /// `unix://localhost:m0`. The workspace helper rejects them.
 #[test]
-#[ignore = "go-parity-gap: pkg/util/service_url.go NormalizeServiceURL is not transcreated; \
+#[ignore = "go-parity-gap: pkg/util/service_url.go NormalizeServiceURL (line 98) is not transcreated; \
            tidb-txnkv's normalize_mock_pd_url rejects unix:// so only 2 of Go's 3 clients exist"]
 fn mock_pd_service_discovery_keeps_the_unix_endpoint() {
     // ("invalid_pd_address", invalid)
@@ -562,7 +592,8 @@ fn mock_pd_service_discovery_keeps_the_unix_endpoint() {
     panic!("blocked on transcreating pkg/util/service_url.go (NormalizeServiceURL)");
 }
 
-/// Go `TestGetAllMembersUsesInjectedPDAddrs` (`pd_test.go:121`): a client
+/// Go `TestGetAllMembersUsesInjectedPDAddrs`
+/// (`pkg/store/mockstore/unistore/pd_test.go:121-130`): a client
 /// built over normalized injected addrs answers GetMembersResponse with one
 /// member per addr — each member's ClientUrls holds exactly that URL — and
 /// the leader is members[0].
@@ -572,10 +603,10 @@ fn get_all_members_uses_injected_pd_addrs() {
     // addrs ["127.0.0.1:2379", "unix://localhost:m0"]:
     // members.len()==2; members[0].client_urls==["http://127.0.0.1:2379"];
     // members[1].client_urls==["unix://localhost:m0"]; leader==members[0].
-    panic!("blocked on transcreating pkg/store/mockstore/unistore/pd.go GetAllMembers");
+    panic!("blocked on transcreating pkg/store/mockstore/unistore/pd.go GetAllMembers (line 287)");
 }
 
-/// Go `TestLoad` (`pd_test.go:41`): storing `LoadOkGlobalConfig=ok` makes
+/// Go `TestLoad` (`pkg/store/mockstore/unistore/pd_test.go:41-59`): storing `LoadOkGlobalConfig=ok` makes
 /// LoadGlobalConfig answer `/global/config/LoadOkGlobalConfig`="ok" while a
 /// never-stored name answers its normalized key with an EMPTY value.
 #[test]
@@ -588,8 +619,8 @@ fn load_global_config_answers_stored_values_and_blank_misses() {
     panic!("blocked on transcreating pkg/store/mockstore/unistore/pd.go Load/StoreGlobalConfig");
 }
 
-/// Go `TestStore` (`pd_test.go:61`): loading before storing answers "", the
-/// store writes through, the reload answers "ok".
+/// Go `TestStore` (`pkg/store/mockstore/unistore/pd_test.go:61-76`): loading
+/// before storing answers "", the store writes through, the reload answers "ok".
 #[test]
 #[ignore = "go-parity-gap: unistore pdClient.LoadGlobalConfig/StoreGlobalConfig have no Rust transcreation yet"]
 fn store_global_config_round_trips_new_object() {
@@ -597,9 +628,10 @@ fn store_global_config_round_trips_new_object() {
     panic!("blocked on transcreating pkg/store/mockstore/unistore/pd.go Load/StoreGlobalConfig");
 }
 
-/// Go `TestWatch` (`pd_test.go:78`): WatchGlobalConfig streams 10 bursts of
-/// every stored item before closing; each delivered event's name and value
-/// are non-empty.
+/// Go `TestWatch` (`pkg/store/mockstore/unistore/pd_test.go:78-93`):
+/// WatchGlobalConfig streams 10 bursts of
+/// every stored item before closing; each delivered event's first item's
+/// Value is non-empty (Go asserts only `Value`, pd_test.go:86-89).
 #[test]
 #[ignore = "go-parity-gap: unistore pdClient.WatchGlobalConfig has no Rust transcreation yet"]
 fn watch_global_config_streams_ten_bursts_of_every_item() {
@@ -608,7 +640,8 @@ fn watch_global_config_streams_ten_bursts_of_every_item() {
     panic!("blocked on transcreating pkg/store/mockstore/unistore/pd.go WatchGlobalConfig");
 }
 
-/// Go `TestRawHandler` (`raw_handler_test.go:27`): put/get/delete one key,
+/// Go `TestRawHandler`
+/// (`pkg/store/mockstore/unistore/raw_handler_test.go:27-76`): put/get/delete one key,
 /// batch put/get/delete three pairs preserving order, scan `[keys[0],
 /// keys[9])` limit 2 answering the first two stored pairs, delete-range
 /// wiping them, and an empty scan afterwards.
@@ -625,7 +658,8 @@ fn raw_handler_round_trips_raw_kv_ops_in_order() {
     panic!("blocked on transcreating pkg/store/mockstore/unistore/raw_handler.go");
 }
 
-/// Go `TestClusterSplit` (`cluster_test.go`): 1000 committed rows plus index
+/// Go `TestClusterSplit`
+/// (`pkg/store/mockstore/cluster_test.go:37-121`): 1000 committed rows plus index
 /// entries split into 10 regions apiece leave 12 regions total; scanning
 /// each region slice inside the record/index prefix yields exactly 100-row
 /// pages whose union covers all 1000 keys of each kind.
@@ -641,7 +675,7 @@ fn cluster_split_regions_cover_every_record_and_index_key() {
     panic!("blocked on hosting TestClusterSplit over a client-go seam");
 }
 
-/// Go `TestConfig` (`tikv_test.go`): `MockTiKVDriver.Open("mocktikv://")`
+/// Go `TestConfig` (`pkg/store/mockstore/tikv_test.go:25-65`): `MockTiKVDriver.Open("mocktikv://")`
 /// follows `txn_local_latches.enabled` from the global config (latches on→
 /// `IsLatchEnabled()` true, off→false), while `driver.Open(":")` and
 /// `driver.Open("faketikv://")` fail.
@@ -654,7 +688,8 @@ fn config_mock_tikv_driver_pins_txn_local_latches_and_bad_urls() {
     panic!("blocked on transcreating pkg/store/mockstore/tikv.go driver surface");
 }
 
-/// Go `TestResolvedLargeTxnLocks` (`mockcopr/executor_test.go:44`): a reader
+/// Go `TestResolvedLargeTxnLocks`
+/// (`pkg/store/mockstore/mockcopr/executor_test.go:44-122`): a reader
 /// meeting the secondary lock of a large txn (primary TTL 100s, secondary
 /// TTL 200ms, min_commit_ts=start+1) resolves instead of blocking — plain
 /// scan, BatchGet (`id in (1)`), and PointGet under begin/rollback all
@@ -671,7 +706,9 @@ fn resolved_large_txn_secondary_locks_do_not_block_readers() {
     panic!("blocked on the mockcopr + session integration seam");
 }
 
-/// Go `TestMppExecutor` (`cop_handler_test.go:385`): driving
+/// Go `TestMppExecutor`
+/// (`pkg/store/mockstore/unistore/cophandler/cop_handler_test.go:385-412`):
+/// driving
 /// TableScan + Selection(EQInt(offset 1, 1)) + Limit(1) over the point range
 /// through `buildAndRunMPPExecutor(dagCtx, dagReq, pagingSize=0)` with
 /// CollectRangeCounts answers counts[0] == 1 — the PER-RANGE SCANNED-row
@@ -685,7 +722,9 @@ fn mpp_executor_counts_one_scanned_row_for_the_point_range() {
     panic!("blocked on transcreating cophandler/mpp.go");
 }
 
-/// Go `BenchmarkExecutors` (`cop_handler_test.go:551`): over the triangular
+/// Go `BenchmarkExecutors`
+/// (`pkg/store/mockstore/unistore/cophandler/cop_handler_test.go:551-625`):
+/// over the triangular
 /// grid rows,limit ∈ {1,10,…,100000}² with limit<=rows, prepare NE-filtered
 /// DAGs (Selection NEInt(offset 0, 1), Limit(limit), CollectRangeCounts,
 /// request ts 3000000, full-range [handle 0, handle rows)) on fresh stores
@@ -699,7 +738,8 @@ fn benchmark_executors_runs_the_whole_grid_without_error() {
 }
 
 /// Go `TestExchSenderExecNextReturnsWhenCtxCanceledBeforeTunnelConnected`
-/// (`cop_handler_test.go:641`): `exchSenderExec.next()` must RETURN rather
+/// (`pkg/store/mockstore/unistore/cophandler/cop_handler_test.go:641-679`):
+/// `exchSenderExec.next()` must RETURN rather
 /// than block on `connectedCh` when the request context is canceled before
 /// any tunnel connects — pinned in Go with a goroutine racing a 1-second
 /// deadline.
@@ -711,7 +751,8 @@ fn exch_sender_next_returns_when_context_cancels_before_connect() {
     panic!("blocked on transcreating cophandler/mpp_exec.go");
 }
 
-/// Go `TestMockGCStatesManager` (`tikv/mock_pd_test.go:26`), looped over
+/// Go `TestMockGCStatesManager`
+/// (`pkg/store/mockstore/unistore/tikv/mock_pd_test.go:26-149`), looped over
 /// keyspace ids {NullKeyspaceID, 0, 1}: a fresh GC state carries safe points
 /// 0 and one bootstrap GC barrier which ExcludeGCBarriers hides; advancing
 /// txn/GC safe points moves 0→10 and 0→9 while refusing decreases and gc-ts
