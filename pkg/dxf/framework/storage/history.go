@@ -135,6 +135,56 @@ type HistoryTaskPage struct {
 	ApproxTotalCount int64
 }
 
+// TaskCleanupInfo contains task metadata needed to clean up external files.
+type TaskCleanupInfo struct {
+	ID      int64
+	Type    proto.TaskType
+	State   proto.TaskState
+	EndTime *time.Time
+}
+
+// GetTaskCleanupInfoByIDs gets task cleanup metadata from active and history tables.
+func (mgr *TaskManager) GetTaskCleanupInfoByIDs(ctx context.Context, taskIDs []int64) (map[int64]TaskCleanupInfo, error) {
+	result := make(map[int64]TaskCleanupInfo)
+	if len(taskIDs) == 0 {
+		return result, nil
+	}
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("%?,", len(taskIDs)), ",")
+	args := make([]any, len(taskIDs)*2)
+	for i, taskID := range taskIDs {
+		args[i] = taskID
+		args[len(taskIDs)+i] = taskID
+	}
+	rows, err := mgr.ExecuteSQLWithNewSession(ctx, `
+		select id, type, state, unix_timestamp(end_time)
+		from mysql.tidb_global_task
+		where id in (`+placeholders+`)
+		union all
+		select id, type, state, unix_timestamp(end_time)
+		from mysql.tidb_global_task_history
+		where id in (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		info := TaskCleanupInfo{
+			ID:    row.GetInt64(0),
+			Type:  proto.TaskType(row.GetString(1)),
+			State: proto.TaskState(row.GetString(2)),
+		}
+		if !row.IsNull(3) && row.GetInt64(3) > 0 {
+			endTime := time.Unix(row.GetInt64(3), 0).UTC()
+			info.EndTime = &endTime
+		}
+		result[info.ID] = info
+	}
+	return result, nil
+}
+
 // ValidateHistoryTaskPageSize validates page size for history task listing.
 func ValidateHistoryTaskPageSize(pageSize int) error {
 	if pageSize < MinHistoryTaskPageSize || pageSize > MaxHistoryTaskPageSize {

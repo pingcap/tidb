@@ -534,6 +534,21 @@ func (mr *MockTaskManagerMockRecorder) GetTaskByID(arg0, arg1 any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskByID", reflect.TypeOf((*MockTaskManager)(nil).GetTaskByID), arg0, arg1)
 }
 
+// GetTaskCleanupInfoByIDs mocks base method.
+func (m *MockTaskManager) GetTaskCleanupInfoByIDs(arg0 context.Context, arg1 []int64) (map[int64]storage.TaskCleanupInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTaskCleanupInfoByIDs", arg0, arg1)
+	ret0, _ := ret[0].(map[int64]storage.TaskCleanupInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTaskCleanupInfoByIDs indicates an expected call of GetTaskCleanupInfoByIDs.
+func (mr *MockTaskManagerMockRecorder) GetTaskCleanupInfoByIDs(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskCleanupInfoByIDs", reflect.TypeOf((*MockTaskManager)(nil).GetTaskCleanupInfoByIDs), arg0, arg1)
+}
+
 // GetTopNoNeedResourceTasks mocks base method.
 func (m *MockTaskManager) GetTopNoNeedResourceTasks(arg0 context.Context) ([]*proto.TaskBase, error) {
 	m.ctrl.T.Helper()
