@@ -295,41 +295,56 @@ wrong: asked directly, Go answers StreamAgg for it too. **Ask the Go node for
 `EXPLAIN FORMAT='verbose'` on the exact statement before trusting a plan
 expectation in this tree.**
 
-### M2r — The row pipeline (MEASURED; both terms are real)
+### M2r — The row pipeline (per-row term LOCATED; not where the code smell is)
 
-A five-point fit over range sizes 1/10/50/100/200, three samples each, engines
-alternating inside every sample:
+The five-point fit stands: rust 0.686 us/row against Go's 0.387, plus a fixed
++27.8 us/statement. What changed is WHERE the per-row term lives.
 
-```
-rust: 0.686 us/row   intercept 314.5 us
-go  : 0.387 us/row   intercept 286.7 us
-        per-row EXTRA  +0.299 us/row      (rust is 1.77x Go per row)
-        fixed   EXTRA  +27.8 us/statement
-```
+A profile of a 200-row range never shows `get_datum_row` at all — the
+`Vec<Datum>`-per-row and `to_vec()`-per-string-cell allocations account for
+under 1.2% of the statement, roughly 0.025 us/row against a 0.299 us/row gap,
+an order of magnitude short. Twice this document named them as the cause;
+they are not.
 
-Both terms are real, and they cross at about 90 rows: below that the fixed
-cost dominates, above it the per-row does. Sysbench's ranges return 100 rows,
-where the two contribute about equally (~30us each).
+Asked on the identical 200-row statement, the two engines are indistinguishable
+where it would have mattered:
 
-An earlier revision of this plan put the per-row figures at 0.99us against
-0.51us and called it "the largest remaining term". Those numbers came from
-subtracting two cells whose Go half differed by 2us across 90 rows -- 0.02us
-per row for Go, which is not possible -- and the plan was then over-corrected
-to say the gap was fixed-only. The fit above is what should be cited: the
-DIRECTION of the original claim holds, its magnitude did not, and neither
-two-point reading was evidence.
+| | Rust | Go |
+| --- | ---: | ---: |
+| cop RPCs per statement | 1 | 1 |
+| MVCC bytes processed | 44400 | 44400 |
+| wire payload per row | ~135 B | ~129 B |
 
-The shape divergence behind the per-row term: `drain_root_executor` ->
-`Row::get_datum_row` allocates a `Vec<Datum>` per row, `datum_with_buffer`'s
-string arm does `get_bytes(col).to_vec()` per string cell per row, and
-`SelectMeta` is `(columns, Vec<Vec<Datum>>)`, so a result is fully
-materialized -- and every string copied twice, chunk -> Datum -> wire -- before
-any byte reaches the client. Go's `writeChunk`/`dumpTextRow` append chunk cells
-straight into the output buffer, copying once and allocating nothing per row.
+(Go from `EXPLAIN ANALYZE`'s `scan_detail`/`cop_task`; Rust from the node's own
+page counters over 2000 executions.)
 
-Next step is a profile of a 200-row range to confirm the 0.299us lands in
-those allocations before the result-set contract is touched, since that change
-reaches `tidb-server`'s result sets as well as the driver.
+So the per-row term is not TiKV-side work, not extra round trips, and not wire
+volume. It is client-side work spread thinly — the 200-row profile leaves
+~410 samples unattributed across chunk decode, `append_partial_row_by_col_idxs`
+(78), datum materialization and wire encoding, none individually above the
+profiler's threshold. **A diffuse cost is not a milestone.** Streaming the
+result set would be a large contract change aimed at a cost that is not
+concentrated where the change would land, so this is parked, not scheduled.
+
+The shape divergence is still worth recording for its own sake: `SelectMeta` is
+`(columns, Vec<Vec<Datum>>)`, so every string is copied twice (chunk -> Datum
+-> wire) where Go's `writeChunk`/`dumpTextRow` copies once. That is a design
+difference; it is not, at these row counts, a measurable one.
+
+### M3s — Open a statement's snapshot on the connection worker (NEXT)
+
+The FIXED term has a concentrated home. On the same 200-row profile, 14% of
+the statement is snapshot acquisition: 326 samples waiting for a PD timestamp
+and 192 waiting for the transaction-worker thread to hand back a read-only
+transaction. That handshake is ours alone — Go builds its `KVSnapshot` on the
+connection goroutine and hands nothing to another thread — and ~192/4195 of a
+~450us statement is ~20us, which is the right order for the +27.8us intercept.
+
+The premise that forced the handshake is already disproved: three files claim
+"the production transport is worker-local (`Rc<RefCell<..>>`)", and
+`SharedReadRuntime` is `Arc<Mutex<C>>` + `BackgroundRegionCache<L>`, with no
+`Rc` or `thread_local` anywhere in `tidb-txnkv` (`tests/transaction_send_source.rs`
+asserts `Send` for both production transactions).
 
 ## Verification
 
@@ -393,6 +408,9 @@ Correctness gates, every milestone:
   distinguishes derived mode from top-level mode for the aggregate shapes --
   the suite is equally green with the old coupling restored. The separation is
   reasoned from `derived_column_prune`, not demonstrated.
+- A code smell is not a cost. The per-row allocations were named as the cause
+  twice on inspection alone; profiling put them an order of magnitude below
+  the measured gap. Profile before scheduling a fix against a smell.
 - A two-point slope is not a slope. "Row pipeline is 2x Go's" came from two
   cells whose Go half differed by 2us over 90 rows; the correction that
   followed ("the gap is fixed, not per-row") came from two other cells and was
