@@ -65,12 +65,9 @@
 //! `evalAndEncode`/`appendInt64`/etc, ported in
 //! [`crate::farmhash`]), so results match Go's exactly, including above the
 //! 65536-distinct-value threshold where the sketch stops being exact and
-//! starts extrapolating. Only the encodings for `INT`/`REAL`/`DECIMAL`/
-//! `STRING`/`BINARY`/vector arguments are byte-identical to Go's; `TIME`,
-//! `DURATION`, and `JSON` arguments fall back to the datum's generic hash
-//! key, which dedupes correctly but does not hash identically to Go's raw
-//! struct layout / recursive `BinaryJSON.HashValue` -- a documented,
-//! narrower divergence than before.
+//! starts extrapolating. The concrete encoders cover Go's INT/REAL/DECIMAL,
+//! string/binary, temporal, duration, JSON, and vector datum paths; unknown
+//! sentinels are the only values rejected by this layer.
 
 use crate::agg_spill::AggSpillDiskAction;
 
@@ -79,7 +76,7 @@ mod spill;
 
 use crate::approx_count_distinct::ApproxCountDistinctSketch;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::hash_join::{FastBytesMap, IdentityU64Hasher, fast_bytes_fingerprint};
+use crate::hash_join::{fast_bytes_fingerprint, FastBytesMap, IdentityU64Hasher};
 use crate::mem_quota::StatementMemory;
 use spill::new_group_bytes;
 
@@ -88,25 +85,25 @@ pub use parallel::HashAggContext;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{BuildHasherDefault, Hash, Hasher};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use tidb_codec::{
-    NIL_FLAG, UVARINT_FLAG, VARINT_FLAG, encode_bytes, encode_compact_bytes, encode_uvarint,
-    encode_varint,
+    encode_bytes, encode_compact_bytes, encode_uvarint, encode_varint, NIL_FLAG, UVARINT_FLAG,
+    VARINT_FLAG,
 };
 use tidb_datatype::{
     BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, EvalType, FieldType, FieldTypeCode,
-    MAX_DECIMAL_SCALE, TimeType, UNSPECIFIED_LENGTH,
+    TimeType, MAX_DECIMAL_SCALE, UNSPECIFIED_LENGTH,
 };
-use tidb_expr::Columns;
 use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
+use tidb_expr::Columns;
 use tidb_util::disk;
 use tidb_util::memory::{ActionOnExceed, ArcAction, Tracker};
-use tidb_util::selection::{Selectable, select};
+use tidb_util::selection::{select, Selectable};
 use tidb_util::set::MemorySet;
 
 struct DatumSelection<'a>(&'a mut [Datum]);
@@ -281,7 +278,10 @@ enum DirectStringAgg {
     Count(Option<usize>),
     FinalCount(usize),
     Sum(usize),
-    FirstRow { column: usize, field_type: FieldType },
+    FirstRow {
+        column: usize,
+        field_type: FieldType,
+    },
 }
 
 /// The scalar states used by Web3Bench's pushed-down `SUM`/`COUNT` shape.
@@ -397,8 +397,7 @@ fn direct_string_first_value(
 
 const DIRECT_STRING_MAX_KEY_BYTES: usize = 192;
 
-type DirectStringBucketMap<V> =
-    HashMap<u64, V, BuildHasherDefault<IdentityU64Hasher>>;
+type DirectStringBucketMap<V> = HashMap<u64, V, BuildHasherDefault<IdentityU64Hasher>>;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum ParallelIntKey {
@@ -980,18 +979,19 @@ fn group_concat_arg_text(func: &AggFunc) -> String {
 }
 
 fn group_concat_bytes(value: &Datum) -> Result<Vec<u8>, ExecError> {
-    Ok(match value {
-        Datum::Bytes(bytes) => bytes.clone(),
-        Datum::String(text) => text.bytes().to_vec(),
-        Datum::Int(number) => number.to_string().into_bytes(),
-        Datum::UInt(number) => number.to_string().into_bytes(),
-        Datum::Real(number) => number.to_string().into_bytes(),
-        Datum::Decimal(number) => number.to_string().into_bytes(),
-        _ => {
-            return Err(ExecError::unsupported(
-                "GROUP_CONCAT over this datum kind is not yet supported",
-            ));
-        }
+    // Go's `builtinGroupConcat.writeValue` formats every non-`KindBytes`
+    // value through its datum value (`fmt %v`), covering temporal, duration,
+    // ENUM/SET, BIT, JSON, and vector values in addition to scalar/string
+    // cases. Reuse the shared byte-authoritative conversion for those textual
+    // forms so binary string values keep their original octets.
+    // Go's `writeValue` formats `KindBinaryLiteral`/`KindMysqlBit` through
+    // `fmt %v` on `BinaryLiteral`, whose String method emits the `0x...`
+    // spelling (it is not the decimal value used by numeric coercion).
+    if let Datum::BinaryLiteral(value) | Datum::Bit(value) = value {
+        return Ok(value.to_string().into_bytes());
+    }
+    value.sql_bytes().map_err(|_| {
+        ExecError::unsupported("GROUP_CONCAT over this datum kind is not yet supported")
     })
 }
 
@@ -1036,8 +1036,13 @@ fn real_aggregate_value(value: &Datum, function: &'static str) -> Result<f64, Ex
 /// `JSON` encodes via `BinaryJSON.HashValue`, a recursive type-tagged
 /// traversal that folds integers into doubles when no precision is lost (so
 /// `3` and `3.0` collide) and recurses into arrays/objects so structurally
-/// equal values hash equal.
-pub(crate) fn approx_count_distinct_encode(datum: &Datum) -> Result<Vec<u8>, ExecError> {
+/// equal values hash equal. String and byte values use the aggregate
+/// expression's collator, matching Go's per-argument `evalAndEncode` input;
+/// the caller must not infer it from the materialized datum alone.
+pub(crate) fn approx_count_distinct_encode(
+    datum: &Datum,
+    collation: Collation,
+) -> Result<Vec<u8>, ExecError> {
     let unsupported = || ExecError::unsupported("APPROX_COUNT_DISTINCT over this datum kind");
     Ok(match datum {
         Datum::Int(value) => value.to_le_bytes().to_vec(),
@@ -1048,14 +1053,12 @@ pub(crate) fn approx_count_distinct_encode(datum: &Datum) -> Result<Vec<u8>, Exe
         Datum::Real(value) | Datum::Float32(value) => value.to_le_bytes().to_vec(),
         Datum::Decimal(value) => value.to_hash_key().map_err(|_| unsupported())?.0,
         Datum::String(text) => {
-            let collation = datum.collation().unwrap_or(Collation::Binary);
             let key = collation.immutable_key(text.bytes());
             let mut encoded = Vec::new();
             encode_compact_bytes(&mut encoded, &key);
             encoded
         }
         Datum::Bytes(bytes) => {
-            let collation = datum.collation().unwrap_or(Collation::Binary);
             let key = collation.immutable_key(bytes);
             let mut encoded = Vec::new();
             encode_compact_bytes(&mut encoded, &key);
@@ -2136,12 +2139,10 @@ impl<C: Columns> GroupedStreamAggExec<C> {
     ) -> Self {
         debug_assert!(!group_by.is_empty());
         debug_assert_eq!(agg_funcs.len(), output_positions.len());
-        debug_assert!(
-            output_positions
-                .iter()
-                .copied()
-                .all(|position| position < agg_funcs.len())
-        );
+        debug_assert!(output_positions
+            .iter()
+            .copied()
+            .all(|position| position < agg_funcs.len()));
         debug_assert!((0..agg_funcs.len()).all(|position| output_positions.contains(&position)));
         let child_chunk = child.new_chunk();
         let states = agg_funcs.iter().map(AggState::new).collect();
@@ -2590,8 +2591,7 @@ impl<C: HashAggContext> HashAggExec<C> {
         let collation = expr_collation(&self.group_by[0]);
         let bytes_per_char = match collation {
             tidb_datatype::Collation::Binary => 1,
-            tidb_datatype::Collation::Utf8Mb4Bin
-            | tidb_datatype::Collation::Utf8Mb40900Bin => 4,
+            tidb_datatype::Collation::Utf8Mb4Bin | tidb_datatype::Collation::Utf8Mb40900Bin => 4,
             _ => return None,
         };
         if field_type
@@ -2628,10 +2628,7 @@ impl<C: HashAggContext> HashAggExec<C> {
     fn open_direct_string_group(&mut self, fingerprint: u64) -> (usize, i64) {
         let idx = self.group_count;
         let capacity = self.group_key_buffer.capacity();
-        let key = std::mem::replace(
-            &mut self.group_key_buffer,
-            Vec::with_capacity(capacity),
-        );
+        let key = std::mem::replace(&mut self.group_key_buffer, Vec::with_capacity(capacity));
         let bytes = new_group_bytes(key.len(), self.agg_funcs.len());
         self.direct_string_keys.push(key);
         match self.direct_string_buckets.entry(fingerprint) {
@@ -2712,9 +2709,8 @@ impl<C: HashAggContext> HashAggExec<C> {
                     AggKind::Sum => {
                         let column = func.arg.as_ref()?.as_column()?;
                         let field_type = column.get_static_type()?;
-                        (field_type.code() == FieldTypeCode::NewDecimal).then_some(
-                            DirectStringAgg::Sum(usize::try_from(column.index).ok()?),
-                        )
+                        (field_type.code() == FieldTypeCode::NewDecimal)
+                            .then_some(DirectStringAgg::Sum(usize::try_from(column.index).ok()?))
                     }
                     AggKind::FirstRow => {
                         let column = func.arg.as_ref()?.as_column()?;
@@ -2814,9 +2810,7 @@ impl<C: HashAggContext> HashAggExec<C> {
     /// Returns the narrow global `COUNT(DISTINCT string_column)` shape. The
     /// generic aggregate path evaluates a `Datum` and re-encodes it for every
     /// row; a binary string column can use its chunk bytes directly instead.
-    fn direct_global_count_distinct_column(
-        &self,
-    ) -> Option<(usize, tidb_datatype::Collation)> {
+    fn direct_global_count_distinct_column(&self) -> Option<(usize, tidb_datatype::Collation)> {
         if !self.group_by.is_empty() || self.agg_funcs.len() != 1 {
             return None;
         }
@@ -2951,9 +2945,7 @@ impl<C: HashAggContext> HashAggExec<C> {
                 self.group_key_buffer.extend_from_slice(bytes);
             }
             let fingerprint = fast_bytes_fingerprint(&self.group_key_buffer);
-            let idx = match self
-                .direct_string_group_index(fingerprint, &self.group_key_buffer)
-            {
+            let idx = match self.direct_string_group_index(fingerprint, &self.group_key_buffer) {
                 Some(idx) => idx,
                 None => {
                     if self.in_spill_mode.load(SeqCst) && self.group_count != 0 {
@@ -2993,9 +2985,7 @@ impl<C: HashAggContext> HashAggExec<C> {
                 DirectStringAgg::Count(Some(index))
                 | DirectStringAgg::FinalCount(index)
                 | DirectStringAgg::Sum(index)
-                | DirectStringAgg::FirstRow { column: index, .. } => {
-                    Some(chunk.column(*index))
-                }
+                | DirectStringAgg::FirstRow { column: index, .. } => Some(chunk.column(*index)),
                 DirectStringAgg::Count(None) => None,
             })
             .collect::<Vec<_>>();
@@ -3009,7 +2999,9 @@ impl<C: HashAggContext> HashAggExec<C> {
         let mut pending_tracker_bytes = 0;
         let mut deferred = Vec::new();
         for row_index in 0..rows {
-            let physical_row = chunk.sel().map_or(row_index, |selection| selection[row_index]);
+            let physical_row = chunk
+                .sel()
+                .map_or(row_index, |selection| selection[row_index]);
             self.group_key_buffer.clear();
             if key_column.is_null(physical_row) {
                 self.group_key_buffer.push(0);
@@ -3034,9 +3026,7 @@ impl<C: HashAggContext> HashAggExec<C> {
                 self.group_key_buffer.extend_from_slice(bytes);
             }
             let fingerprint = fast_bytes_fingerprint(&self.group_key_buffer);
-            let idx = match self
-                .direct_string_group_index(fingerprint, &self.group_key_buffer)
-            {
+            let idx = match self.direct_string_group_index(fingerprint, &self.group_key_buffer) {
                 Some(idx) => idx,
                 None => {
                     if self.in_spill_mode.load(SeqCst) && self.group_count != 0 {
@@ -3395,9 +3385,8 @@ impl<C: HashAggContext> HashAggExec<C> {
     fn fold_chunk(&mut self, chunk: &Chunk, rows: usize) -> Result<Vec<usize>, ExecError> {
         if let Some((offset, collation)) = self.direct_string_group_column() {
             if let Some(specs) = self.direct_string_aggregate_specs() {
-                return self.fold_direct_string_group_columnar(
-                    chunk, rows, offset, collation, &specs,
-                );
+                return self
+                    .fold_direct_string_group_columnar(chunk, rows, offset, collation, &specs);
             }
             return self.fold_direct_string_group(chunk, rows, offset, collation);
         }
@@ -3997,7 +3986,7 @@ fn eval_agg_input<C: Columns>(
                 break;
             }
             if let Some(buf) = &mut tuple_key {
-                buf.extend_from_slice(&approx_count_distinct_encode(&datum)?);
+                buf.extend_from_slice(&approx_count_distinct_encode(&datum, expr_collation(expr))?);
             }
         }
         (Some(tuple_key.map_or(Datum::Null, Datum::Bytes)), None)
@@ -4040,8 +4029,8 @@ fn eval_agg_input<C: Columns>(
 mod tests {
     use super::*;
     use tidb_datatype::{FieldType, FieldTypeCode};
-    use tidb_expr::NoColumns;
     use tidb_expr::column::Column;
+    use tidb_expr::NoColumns;
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::LongLong)
@@ -4370,7 +4359,11 @@ mod tests {
         let count_type = long();
         let fields = [group_type.clone(), sum_type.clone(), count_type.clone()];
         let mut data = Chunk::new_with_capacity(&fields, 3);
-        for (group, sum, count) in [(b"a".as_slice(), "1.00", 2), (b"a", "2.50", 3), (b"b", "3.00", 1)] {
+        for (group, sum, count) in [
+            (b"a".as_slice(), "1.00", 2),
+            (b"a", "2.50", 3),
+            (b"b", "3.00", 1),
+        ] {
             data.append_bytes(0, group);
             data.append_datum(
                 1,
@@ -5080,6 +5073,43 @@ mod tests {
     }
 
     #[test]
+    fn group_concat_stringifies_temporal_duration_and_json_values() {
+        let time = Datum::Time(
+            tidb_datatype::Time::new(
+                tidb_datatype::CoreTime::from_date(2020, 1, 2, 3, 4, 5, 123_456),
+                tidb_datatype::TimeType::DateTime,
+                6,
+            )
+            .unwrap(),
+        );
+        let duration = Datum::Duration(
+            tidb_datatype::MySqlDuration::from_nanoseconds(
+                (3_600 + 2 * 60 + 3) * 1_000_000_000 + 400_000_000,
+                6,
+            )
+            .unwrap(),
+        );
+        let json = Datum::Json(
+            tidb_datatype::BinaryJSON::from_typed_value(&tidb_datatype::BinaryJSONValue::Object(
+                std::collections::BTreeMap::from([(
+                    "a".to_owned(),
+                    tidb_datatype::BinaryJSONValue::Int64(1),
+                )]),
+            ))
+            .unwrap(),
+        );
+        let bit = Datum::Bit(tidb_datatype::BinaryLiteral::from(vec![5]));
+
+        for value in [time, duration, json] {
+            assert_eq!(
+                group_concat_bytes(&value).unwrap(),
+                value.sql_bytes().unwrap()
+            );
+        }
+        assert_eq!(group_concat_bytes(&bit).unwrap(), b"0x05");
+    }
+
+    #[test]
     fn approx_percentile_uses_ordinal_selection() {
         let percentile = Partial::ApproxPercentile {
             values: vec![Datum::Int(9), Datum::Int(1), Datum::Int(5), Datum::Int(3)],
@@ -5188,7 +5218,7 @@ mod tests {
         fn distinct_count(values: &[Datum]) -> u64 {
             let mut sketch = ApproxCountDistinctSketch::new();
             for value in values {
-                let encoded = approx_count_distinct_encode(value).unwrap();
+                let encoded = approx_count_distinct_encode(value, Collation::Binary).unwrap();
                 sketch.insert(&encoded);
             }
             sketch.fixed_size()
@@ -5223,6 +5253,27 @@ mod tests {
 
         fn json(value: &BinaryJSONValue) -> Datum {
             Datum::Json(BinaryJSON::from_typed_value(value).unwrap())
+        }
+
+        #[test]
+        fn string_encoding_uses_the_expression_collation() {
+            let values = [
+                Datum::String(tidb_datatype::StringDatum::new(
+                    b"a".to_vec(),
+                    Collation::Utf8Mb4GeneralCi,
+                )),
+                Datum::String(tidb_datatype::StringDatum::new(
+                    b"A".to_vec(),
+                    Collation::Utf8Mb4GeneralCi,
+                )),
+            ];
+            let mut sketch = ApproxCountDistinctSketch::new();
+            for value in &values {
+                sketch.insert(
+                    &approx_count_distinct_encode(value, Collation::Utf8Mb4GeneralCi).unwrap(),
+                );
+            }
+            assert_eq!(sketch.fixed_size(), 1);
         }
 
         // Go: `insert into t_date values (1,'2020-01-01'),(2,'2020-01-01'),
@@ -5271,10 +5322,8 @@ mod tests {
         // `date_add('2000-01-01 00:00:00', interval i microsecond)` for
         // `i` in `0..75000` -> ZZDUMP dt_large = 74710 (the BJKST sketch's
         // extrapolated estimate once the exact-count threshold is
-        // exceeded). This is the encoding this module ports: without the
-        // 16-byte `appendTime` layout, TIME arguments would fall back to a
-        // different byte representation and this sketch would diverge from
-        // Go's for exactly this reason.
+        // exceeded). This is the encoding this module ports: the 16-byte
+        // `appendTime` layout keeps the sketch byte-identical to Go.
         #[test]
         fn datetime_large_cardinality_matches_go_estimate() {
             let n: u32 = 75_000;
@@ -5293,9 +5342,10 @@ mod tests {
         #[test]
         fn mixed_tuple_dedup_matches_go() {
             fn tuple_bytes(a: i64, b: Datum, c: Datum) -> Vec<u8> {
-                let mut encoded = approx_count_distinct_encode(&Datum::Int(a)).unwrap();
-                encoded.extend(approx_count_distinct_encode(&b).unwrap());
-                encoded.extend(approx_count_distinct_encode(&c).unwrap());
+                let mut encoded =
+                    approx_count_distinct_encode(&Datum::Int(a), Collation::Binary).unwrap();
+                encoded.extend(approx_count_distinct_encode(&b, Collation::Binary).unwrap());
+                encoded.extend(approx_count_distinct_encode(&c, Collation::Binary).unwrap());
                 encoded
             }
             let dt = || datetime_micros(0, 0);

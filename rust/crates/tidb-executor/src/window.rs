@@ -1378,6 +1378,10 @@ fn compute_one(
     let constant_default = rewritten_args.get(1).is_none_or(column_free);
 
     let mut values = vec![Datum::Null; rows.len()];
+    let aggregate_collations: Vec<tidb_datatype::Collation> = rewritten_args
+        .iter()
+        .map(tidb_expr::collation_derive::collation_of_node)
+        .collect();
     for indices in partitions.values_mut() {
         sort_partition(indices, &order_keys, &order_collations, &call.spec.order_by)?;
         let peers = peer_groups(indices, &order_keys, &order_collations)?;
@@ -1423,6 +1427,7 @@ fn compute_one(
                             tidb_datatype::Collation::DEFAULT,
                             tidb_expr::collation_derive::collation_of_node,
                         ),
+                        aggregate_collations.as_slice(),
                     )
                 }),
                 &result_type,
@@ -1730,7 +1735,12 @@ fn evaluate_partition(
     // session's `div_precision_increment` -- the two things AVG's final
     // division needs, and needed only together.
     // ... plus the ARGUMENT's derived collation, which MIN/MAX orders under.
-    agg: Option<(&AggKind, u32, tidb_datatype::Collation)>,
+    agg: Option<(
+        &AggKind,
+        u32,
+        tidb_datatype::Collation,
+        &[tidb_datatype::Collation],
+    )>,
     result_type: &FieldType,
     values: &mut [Datum],
 ) -> Result<(), DriverError> {
@@ -1779,7 +1789,7 @@ fn evaluate_partition(
                 let (low, high) =
                     call.frame
                         .range(position, total, peers[position], range_keys.as_ref())?;
-                let (kind, div_precision_increment, collation) =
+                let (kind, div_precision_increment, collation, arg_collations) =
                     agg.expect("an aggregate window call resolves its kind");
                 // The extra arguments a frame row contributes: only
                 // `JSON_OBJECTAGG`'s value and `APPROX_COUNT_DISTINCT`'s
@@ -1799,6 +1809,7 @@ fn evaluate_partition(
                     AggKind::ApproxCountDistinct => (
                         Some(approx_distinct_tuple(
                             (0..arg_values.len()).map(|slot| arg_at(slot, at)),
+                            arg_collations,
                         )),
                         Vec::new(),
                     ),
@@ -1849,13 +1860,20 @@ fn evaluate_partition(
 /// per-type encoding (`crate::hash_agg::approx_count_distinct_encode`, the
 /// same one the GROUP BY path uses) is appended with no separator, matching
 /// Go's own unframed concatenation.
-fn approx_distinct_tuple(values: impl IntoIterator<Item = Datum>) -> Datum {
+fn approx_distinct_tuple(
+    values: impl IntoIterator<Item = Datum>,
+    collations: &[tidb_datatype::Collation],
+) -> Datum {
     let mut buffer = Vec::new();
-    for value in values {
+    for (index, value) in values.into_iter().enumerate() {
         if value == Datum::Null {
             return Datum::Null;
         }
-        let Ok(key) = crate::hash_agg::approx_count_distinct_encode(&value) else {
+        let collation = collations
+            .get(index)
+            .copied()
+            .unwrap_or(tidb_datatype::Collation::DEFAULT);
+        let Ok(key) = crate::hash_agg::approx_count_distinct_encode(&value, collation) else {
             return Datum::Null;
         };
         buffer.extend_from_slice(&key);
