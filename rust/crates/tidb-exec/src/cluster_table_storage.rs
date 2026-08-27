@@ -1626,7 +1626,16 @@ impl ClusterSnapshot for SessionSnapshot {
     }
 
     fn start_ts(&self) -> u64 {
-        self.start_ts
+        // The timestamp this snapshot READS at, which is the statement's when
+        // it has one. Both callers stamp it into a request that names an MVCC
+        // version -- `PushdownScanRequest::snapshot_ts`
+        // (`tidb-executor/src/cluster_storage.rs`) -- so answering the
+        // transaction's `start_ts` while the statement's point reads use its
+        // advanced `for_update_ts` would read one statement at two
+        // timestamps. Go re-executes a retried pessimistic statement wholly
+        // at `forUpdateTS` (`handlePessimisticDML` -> `UpdateForUpdateTS`),
+        // pushdown included.
+        self.read_ts.unwrap_or(self.start_ts)
     }
 }
 
@@ -1894,5 +1903,45 @@ mod tests {
             )),
             StorageError::Backend(_)
         ));
+    }
+
+    /// A snapshot serving a RETRIED pessimistic statement reports the
+    /// statement's timestamp, not the transaction's.
+    ///
+    /// `ClusterSnapshot::start_ts` is stamped into
+    /// `PushdownScanRequest::snapshot_ts`, which names the MVCC version the
+    /// coprocessor reads. A retried statement's point reads already use the
+    /// advanced `for_update_ts` (`SessionTransaction::snapshot_at`), so
+    /// answering `start_ts` here would read ONE statement at TWO timestamps
+    /// and recompute from the row the statement just lost the lock race on.
+    /// Go re-executes the whole retried statement at `forUpdateTS`
+    /// (`handlePessimisticDML` -> `UpdateForUpdateTS`).
+    #[test]
+    fn a_statement_snapshot_reports_the_timestamp_it_reads_at() {
+        let (requests, _rx) = cc::unbounded();
+        let at_transaction = SessionSnapshot {
+            requests: requests.clone(),
+            start_ts: 100,
+            read_ts: None,
+            locking: false,
+        };
+        assert_eq!(
+            at_transaction.start_ts(),
+            100,
+            "an ordinary statement reads at the transaction's own timestamp"
+        );
+
+        let retried = SessionSnapshot {
+            requests,
+            start_ts: 100,
+            read_ts: Some(200),
+            locking: false,
+        };
+        assert_eq!(
+            retried.start_ts(),
+            200,
+            "a retried statement reads at its advanced for_update_ts, and \
+             every read of it must agree -- pushdown included"
+        );
     }
 }

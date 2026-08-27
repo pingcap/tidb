@@ -293,9 +293,23 @@ impl SnapshotLockSet {
             // carries this reader's pushed-min-commit-ts decisions, which are
             // relative to the version they were made at, while `access`
             // records that a transaction COMMITTED at or before the reader --
-            // and since a snapshot timestamp only ever advances here (a
-            // pessimistic retry moves to a newer `for_update_ts`), that fact
-            // stays true at the new version.
+            // and that fact stays true at any LATER version.
+            //
+            // It does not stay true at an EARLIER one, and this reader does
+            // move backwards: `for_update_ts` is statement-local, so the
+            // statement after a retried one reads at the transaction's
+            // `start_ts` again. Go never has to answer this because it does
+            // not reuse the object across the drop -- once
+            // `forUpdateTS != startTS`, `base.go:459-467` hands every
+            // statement a brand-new `KVSnapshot` whose `resolvedLocks` and
+            // `committedLocks` are both empty, and `SetSnapshotTS`
+            // (`snapshot.go:187-201`) only ever moves a reused one FORWARD.
+            // Carrying `access` down would tell TiKV to read THROUGH a lock
+            // whose commit is in the future of the new read -- surfacing a
+            // later commit to an earlier reader.
+            if self.classified_at.is_some_and(|previous| read_ts < previous) {
+                self.access.clear();
+            }
             self.ignore.clear();
             self.classified_at = Some(read_ts);
         }
@@ -1220,9 +1234,59 @@ where
 mod tests {
     use std::time::Duration;
 
-    use super::{wait_status_backoff, LockRecoveryError};
+    use super::{wait_status_backoff, LockRecoveryError, LockRecoveryResult, SnapshotLockSet};
     use crate::region::RegionBackoffBudget;
     use crate::{UnaryCallContext, UnaryCancellation};
+
+    /// A reader that moves BACKWARDS in time drops what it learned at the
+    /// later version.
+    ///
+    /// `access` (`committed_locks`) says "this transaction committed at or
+    /// before me", which TiKV uses to read THROUGH the lock. That is true for
+    /// every later version and false for earlier ones. Go never has to decide:
+    /// once `forUpdateTS != startTS` it hands each statement a brand-new
+    /// `KVSnapshot` with both sets empty (`sessiontxn/isolation/base.go:459`),
+    /// and `SetSnapshotTS` (`txnsnapshot/snapshot.go:187-201`) only advances a
+    /// reused one. This reader IS reused across statements, and the statement
+    /// after a retried one goes back to the transaction's `start_ts`, so the
+    /// backwards step has to clear what the forward one earned.
+    #[test]
+    fn a_reader_moving_back_in_time_forgets_the_later_versions_commits() {
+        fn committed(locks: &SnapshotLockSet) -> Vec<u64> {
+            let mut context = tidb_proto::KvrpcContext::default();
+            locks.stamp(&mut context);
+            context.committed_locks
+        }
+
+        let mut locks = SnapshotLockSet::default();
+        locks.rescope(100);
+        locks.absorb(&LockRecoveryResult {
+            ignore_locks: Vec::new(),
+            access_locks: vec![90],
+            ..LockRecoveryResult::default()
+        });
+        assert!(
+            committed(&locks).contains(&90),
+            "the commit is visible at the version that classified it"
+        );
+
+        // A pessimistic retry advances the statement; the classification made
+        // there is still sound at the newer version.
+        locks.rescope(200);
+        assert!(
+            committed(&locks).contains(&90),
+            "moving FORWARD keeps it: a commit at or before 100 is also at or \
+             before 200"
+        );
+
+        // The next statement reads at the transaction's own timestamp again.
+        locks.rescope(100);
+        assert!(
+            !committed(&locks).contains(&90),
+            "moving BACK must drop it, or TiKV is told to read through a lock \
+             whose commit the earlier reader must not see"
+        );
+    }
 
     #[test]
     fn txn_not_found_wait_distinguishes_budget_exhaustion_from_call_deadline() {
