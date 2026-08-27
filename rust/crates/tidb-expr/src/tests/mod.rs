@@ -28,6 +28,11 @@ mod go_control_op_math_values;
 mod aggregation_arithmetic_cast_source;
 mod builtin_info_json_math_source;
 mod builtin_string_time_source;
+mod context_override_values_source;
+mod expr_to_pb_switcher_source;
+mod expression_null_const_source;
+mod expression_with_null_source;
+mod function_traits_source;
 mod go_string_values;
 mod go_time_values;
 mod etstring_argument;
@@ -35,6 +40,7 @@ mod evaluator_binop;
 mod math;
 mod operand_dispatch;
 mod regexp_like;
+mod vectorizable_and_chunk_eval_source;
 
 /// Parses and evaluates a constant expression to its label.
 pub(super) fn e(expr: &str) -> String {
