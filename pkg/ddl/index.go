@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -988,6 +989,32 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 		return false, ver, errors.Trace(err)
 	}
+
+	var wg util.WaitGroupWrapper
+	if _, ok := bc.(*ingest.MockBackendCtx); !ok {
+		// Adjust dynamically max_write_speed during writing to tikv
+		wg.Run(func() {
+			interval := UpdateDDLJobReorgCfgInterval
+			if intest.InTest {
+				interval = 300 * time.Millisecond
+			}
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if bc.Done() {
+					return
+				}
+				maxWriteSpeed := int(variable.DDLReorgMaxWriteSpeed.Load())
+				if maxWriteSpeed != bc.GetLocalBackend().GetWriteSpeedLimit() {
+					bc.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
+				}
+			}
+		})
+	}
+
 	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, allIndexInfos, false)
 	if err != nil {
 		if !errorIsRetryable(err, job) {
@@ -1019,6 +1046,7 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 	}
 	bc.SetDone()
+	wg.Wait()
 	return true, ver, nil
 }
 
