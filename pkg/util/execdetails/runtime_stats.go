@@ -70,6 +70,8 @@ const (
 	TpFKCascadeRuntimeStats
 	// TpRURuntimeStats is the tp for RURuntimeStats
 	TpRURuntimeStats
+	// TpExplainRURuntimeStats is the tp for ExplainRURuntimeStats
+	TpExplainRURuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -1096,4 +1098,47 @@ func (e *RURuntimeStats) Merge(other RuntimeStats) {
 // Tp implements the RuntimeStats interface.
 func (*RURuntimeStats) Tp() int {
 	return TpRURuntimeStats
+}
+
+// ExplainRURuntimeStats stores per-operator RU values for EXPLAIN ANALYZE FORMAT='ru'.
+type ExplainRURuntimeStats struct {
+	SelfRU float64
+	CumRU  float64
+}
+
+// String implements the RuntimeStats interface.
+func (e *ExplainRURuntimeStats) String() string {
+	if e == nil || (e.SelfRU == 0 && e.CumRU == 0) {
+		return ""
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, 24))
+	buf.WriteString("selfRU:")
+	buf.WriteString(strconv.FormatFloat(e.SelfRU, 'f', 2, 64))
+	buf.WriteString(", cumRU:")
+	buf.WriteString(strconv.FormatFloat(e.CumRU, 'f', 2, 64))
+	return buf.String()
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *ExplainRURuntimeStats) Clone() RuntimeStats {
+	if e == nil {
+		return &ExplainRURuntimeStats{}
+	}
+	return &ExplainRURuntimeStats{
+		SelfRU: e.SelfRU,
+		CumRU:  e.CumRU,
+	}
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *ExplainRURuntimeStats) Merge(other RuntimeStats) {
+	if tmp, ok := other.(*ExplainRURuntimeStats); ok {
+		e.SelfRU += tmp.SelfRU
+		e.CumRU += tmp.CumRU
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (*ExplainRURuntimeStats) Tp() int {
+	return TpExplainRURuntimeStats
 }
