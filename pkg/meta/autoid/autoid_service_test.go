@@ -143,13 +143,14 @@ func requireRebaseRequest(t *testing.T, req *autoid.RebaseRequest, dbID, base in
 }
 
 func startTransfer(allocator *singlePointAlloc, dbID, tableID int64) <-chan error {
-	started := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		close(started)
 		done <- allocator.Transfer(dbID, tableID)
 	}()
-	<-started
+	for allocator.stateMu.TryRLock() {
+		allocator.stateMu.RUnlock()
+		runtime.Gosched()
+	}
 	return done
 }
 
