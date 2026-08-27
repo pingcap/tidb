@@ -1148,11 +1148,16 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	matchResult := property.PropMatched
 	groupByColIdxs := make([]int, 0)
 	colIdx := 0
+	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	for _, sortItem := range prop.SortItems {
 		found := false
 		for ; colIdx < len(idxCols); colIdx++ {
 			// Case 1: this sort item is satisfied by the index column, go to match the next sort item.
-			if idxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualColumn(idxCols[colIdx]) {
+			// EqualByExprAndID, not EqualColumn: when several expression indexes repeat the same
+			// expression, each one owns a distinct hidden generated column, and the sort item was
+			// substituted with only one of them. Those columns compute the same value, so an index
+			// carrying any of them still delivers the requested order.
+			if idxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualByExprAndID(evalCtx, idxCols[colIdx]) {
 				found = true
 				colIdx++
 				break
