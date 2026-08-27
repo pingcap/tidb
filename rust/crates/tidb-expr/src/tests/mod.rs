@@ -61,6 +61,12 @@ mod scalar_function_semantics_source;
 mod util_filter_condition_source;
 mod builtin_sig_infra_gaps_source;
 mod hash_group_key_codec_matrix_source;
+mod constant_test_go_tables_source;
+mod evaluator_go_tables_source;
+mod column_equals_nil_wrapped_source;
+mod distsql_pb_roundtrip_gap_source;
+mod vectorized_filter_consider_null_gap_source;
+mod expr_to_pb_lowering_gap_source;
 
 /// Parses and evaluates a constant expression to its label.
 pub(super) fn e(expr: &str) -> String {
