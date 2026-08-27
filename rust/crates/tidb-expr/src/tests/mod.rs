@@ -40,6 +40,8 @@ mod etstring_argument;
 mod evaluator_binop;
 mod math;
 mod builtin_math_misc_op_source;
+mod builtin_time_calendars_source;
+mod builtin_vectorized_time_infra_source;
 mod crypto_encryption_source;
 mod ilike_info_cast_source;
 mod operand_dispatch;
