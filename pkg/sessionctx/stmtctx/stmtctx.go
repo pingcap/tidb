@@ -375,6 +375,7 @@ type StatementContext struct {
 	planHint       string
 	planHintSet    bool
 	binaryPlan     string
+	ruv3Total      float64
 	// indexForce is set if any table in the query has a force or use index applied
 	indexForce bool
 	// To avoid cycle import, we use interface{} for the following two fields.
@@ -919,6 +920,16 @@ func (sc *StatementContext) GetBinaryPlan() string {
 // SetBinaryPlan sets the binaryPlan field of stmtctx
 func (sc *StatementContext) SetBinaryPlan(binaryPlan string) {
 	sc.binaryPlan = binaryPlan
+}
+
+// GetRUV3Total gets the statement-local RU v3 total.
+func (sc *StatementContext) GetRUV3Total() float64 {
+	return sc.ruv3Total
+}
+
+// SetRUV3Total sets the statement-local RU v3 total.
+func (sc *StatementContext) SetRUV3Total(total float64) {
+	sc.ruv3Total = total
 }
 
 // GetResourceGroupTagger returns the implementation of kv.ResourceGroupTagBuilder related to self.

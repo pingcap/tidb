@@ -240,6 +240,11 @@ func publishStatementRUFinalizedSnapshot(
 	stmt *ExecStmt,
 	finalized statementRUFinalizedSnapshot,
 ) {
+	if stmt != nil && stmt.Ctx != nil {
+		if sessVars := stmt.Ctx.GetSessionVars(); sessVars != nil && sessVars.StmtCtx != nil {
+			sessVars.StmtCtx.SetRUV3Total(finalized.result.TotalRU)
+		}
+	}
 	publishStatementRUMetricsSafely(finalized)
 	publishStatementRUCalibrationSafely(stmt, statementRUCalibrationSnapshot{
 		State: finalized.calibrationState,
