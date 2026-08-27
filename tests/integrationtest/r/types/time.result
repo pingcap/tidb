@@ -422,3 +422,34 @@ Level	Code	Message
 Warning	1292	Truncated incorrect time value: ''
 Warning	1292	Truncated incorrect time value: ''
 DROP TABLE t_empty_time_vec;
+DROP TABLE IF EXISTS t_empty_time_typed_left;
+CREATE TABLE t_empty_time_typed_left(dt DATETIME, dur TIME, s VARCHAR(20));
+INSERT INTO t_empty_time_typed_left VALUES ('2025-01-01 01:00:00', '01:00:00', '');
+SELECT ADDTIME(dt, s), ADDTIME(dur, s) FROM t_empty_time_typed_left;
+ADDTIME(dt, s)	ADDTIME(dur, s)
+NULL	NULL
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
+Warning	1292	Truncated incorrect time value: ''
+SELECT SUBTIME(dt, s), SUBTIME(dur, s) FROM t_empty_time_typed_left;
+SUBTIME(dt, s)	SUBTIME(dur, s)
+NULL	NULL
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
+Warning	1292	Truncated incorrect time value: ''
+INSERT INTO t_empty_time_typed_left VALUES ('2025-01-01 02:00:00', '02:00:00', '01:00:00');
+SELECT ADDTIME(dt, s), ADDTIME(dur, s) FROM t_empty_time_typed_left ORDER BY dt;
+ADDTIME(dt, s)	ADDTIME(dur, s)
+NULL	NULL
+2025-01-01 03:00:00	03:00:00.000000
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
+Warning	1292	Truncated incorrect time value: ''
+SELECT SUBTIME(dt, s), SUBTIME(dur, s) FROM t_empty_time_typed_left ORDER BY dt;
+SUBTIME(dt, s)	SUBTIME(dur, s)
+NULL	NULL
+2025-01-01 01:00:00	01:00:00.000000
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: ''
+Warning	1292	Truncated incorrect time value: ''
+DROP TABLE t_empty_time_typed_left;

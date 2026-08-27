@@ -127,11 +127,19 @@ func (b *builtinAddDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 			continue
 		}
 
+		tc := typeCtx(ctx)
+		if len(arg1) == 0 {
+			// Unlike storing '' into a TIME column, ADDTIME/SUBTIME never treat an
+			// empty duration argument as zero: MySQL always warns and returns NULL.
+			tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", arg1))
+			result.SetNull(i, true) // fixed: true
+			continue
+		}
+
 		if !isDuration(arg1) {
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
-		tc := typeCtx(ctx)
 		arg1Duration, _, err := types.ParseDuration(tc, arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -253,11 +261,19 @@ func (b *builtinAddDurationAndStringSig) vecEvalDuration(ctx EvalContext, input 
 
 		// calculate
 
+		tc := typeCtx(ctx)
+		if len(arg1) == 0 {
+			// Unlike storing '' into a TIME column, ADDTIME/SUBTIME never treat an
+			// empty duration argument as zero: MySQL always warns and returns NULL.
+			tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", arg1))
+			result.SetNull(i, true) // fixed: true
+			continue
+		}
+
 		if !isDuration(arg1) {
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
-		tc := typeCtx(ctx)
 		arg1Duration, _, err := types.ParseDuration(tc, arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -419,9 +435,10 @@ func (b *builtinAddStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 			// Unlike storing '' into a TIME column, ADDTIME/SUBTIME never treat an
 			// empty duration argument as zero: MySQL always warns and returns NULL.
 			tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", arg1))
-			result.AppendNull()
+			result.AppendNull() // fixed: false
 			continue
 		}
+
 		arg1Duration, _, err := types.ParseDuration(tc, arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -590,11 +607,19 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 			continue
 		}
 
+		tc := typeCtx(ctx)
+		if len(arg1) == 0 {
+			// Unlike storing '' into a TIME column, ADDTIME/SUBTIME never treat an
+			// empty duration argument as zero: MySQL always warns and returns NULL.
+			tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", arg1))
+			result.AppendNull() // fixed: false
+			continue
+		}
+
 		if !isDuration(arg1) {
 			result.AppendNull() // fixed: false
 			continue
 		}
-		tc := typeCtx(ctx)
 		arg1Duration, _, err := types.ParseDuration(tc, arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -774,11 +799,19 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 			continue
 		}
 
+		tc := typeCtx(ctx)
+		if len(arg1) == 0 {
+			// Unlike storing '' into a TIME column, ADDTIME/SUBTIME never treat an
+			// empty duration argument as zero: MySQL always warns and returns NULL.
+			tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", arg1))
+			result.SetNull(i, true) // fixed: true
+			continue
+		}
+
 		if !isDuration(arg1) {
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
-		tc := typeCtx(ctx)
 		arg1Duration, _, err := types.ParseDuration(tc, arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -788,6 +821,7 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 			}
 			return err
 		}
+
 		output, err := arg0.Add(typeCtx(ctx), arg1Duration.Neg())
 
 		if err != nil {
@@ -899,11 +933,19 @@ func (b *builtinSubDurationAndStringSig) vecEvalDuration(ctx EvalContext, input 
 
 		// calculate
 
+		tc := typeCtx(ctx)
+		if len(arg1) == 0 {
+			// Unlike storing '' into a TIME column, ADDTIME/SUBTIME never treat an
+			// empty duration argument as zero: MySQL always warns and returns NULL.
+			tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", arg1))
+			result.SetNull(i, true) // fixed: true
+			continue
+		}
+
 		if !isDuration(arg1) {
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
-		tc := typeCtx(ctx)
 		arg1Duration, _, err := types.ParseDuration(tc, arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -1065,9 +1107,10 @@ func (b *builtinSubStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 			// Unlike storing '' into a TIME column, ADDTIME/SUBTIME never treat an
 			// empty duration argument as zero: MySQL always warns and returns NULL.
 			tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", arg1))
-			result.AppendNull()
+			result.AppendNull() // fixed: false
 			continue
 		}
+
 		arg1Duration, _, err := types.ParseDuration(tc, arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -1236,11 +1279,19 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 			continue
 		}
 
+		tc := typeCtx(ctx)
+		if len(arg1) == 0 {
+			// Unlike storing '' into a TIME column, ADDTIME/SUBTIME never treat an
+			// empty duration argument as zero: MySQL always warns and returns NULL.
+			tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", arg1))
+			result.AppendNull() // fixed: false
+			continue
+		}
+
 		if !isDuration(arg1) {
 			result.AppendNull() // fixed: false
 			continue
 		}
-		tc := typeCtx(ctx)
 		arg1Duration, _, err := types.ParseDuration(tc, arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {

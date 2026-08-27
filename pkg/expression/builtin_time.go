@@ -5091,10 +5091,16 @@ func (b *builtinAddDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
+	tc := typeCtx(ctx)
+	if len(s) == 0 {
+		// Unlike storing '' into a TIME column, ADDTIME never treats an empty
+		// duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", s))
+		return types.ZeroDatetime, true, nil
+	}
 	if !isDuration(s) {
 		return types.ZeroDatetime, true, nil
 	}
-	tc := typeCtx(ctx)
 	arg1, _, err := types.ParseDuration(tc, s, types.GetFsp(s))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -5185,10 +5191,16 @@ func (b *builtinAddDurationAndStringSig) evalDuration(ctx EvalContext, row chunk
 	if isNull || err != nil {
 		return types.ZeroDuration, isNull, err
 	}
+	tc := typeCtx(ctx)
+	if len(s) == 0 {
+		// Unlike storing '' into a TIME column, ADDTIME never treats an empty
+		// duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", s))
+		return types.ZeroDuration, true, nil
+	}
 	if !isDuration(s) {
 		return types.ZeroDuration, true, nil
 	}
-	tc := typeCtx(ctx)
 	arg1, _, err := types.ParseDuration(tc, s, types.GetFsp(s))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -5407,10 +5419,16 @@ func (b *builtinAddDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) 
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+	tc := typeCtx(ctx)
+	if len(s) == 0 {
+		// Unlike storing '' into a TIME column, ADDTIME/SUBTIME never treat an
+		// empty duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", s))
+		return "", true, nil
+	}
 	if !isDuration(s) {
 		return "", true, nil
 	}
-	tc := typeCtx(ctx)
 	arg1, _, err := types.ParseDuration(tc, s, getFsp4TimeAddSub(s))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -6143,10 +6161,16 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
+	tc := typeCtx(ctx)
+	if len(s) == 0 {
+		// Unlike storing '' into a TIME column, SUBTIME never treats an empty
+		// duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", s))
+		return types.ZeroDatetime, true, nil
+	}
 	if !isDuration(s) {
 		return types.ZeroDatetime, true, nil
 	}
-	tc := typeCtx(ctx)
 	arg1, _, err := types.ParseDuration(tc, s, types.GetFsp(s))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -6362,10 +6386,16 @@ func (b *builtinSubDurationAndStringSig) evalDuration(ctx EvalContext, row chunk
 	if isNull || err != nil {
 		return types.ZeroDuration, isNull, err
 	}
+	tc := typeCtx(ctx)
+	if len(s) == 0 {
+		// Unlike storing '' into a TIME column, SUBTIME never treats an empty
+		// duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", s))
+		return types.ZeroDuration, true, nil
+	}
 	if !isDuration(s) {
 		return types.ZeroDuration, true, nil
 	}
-	tc := typeCtx(ctx)
 	arg1, _, err := types.ParseDuration(tc, s, types.GetFsp(s))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -6465,10 +6495,16 @@ func (b *builtinSubDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) 
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+	tc := typeCtx(ctx)
+	if len(s) == 0 {
+		// Unlike storing '' into a TIME column, ADDTIME/SUBTIME never treat an
+		// empty duration argument as zero: MySQL always warns and returns NULL.
+		tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", s))
+		return "", true, nil
+	}
 	if !isDuration(s) {
 		return "", true, nil
 	}
-	tc := typeCtx(ctx)
 	arg1, _, err := types.ParseDuration(tc, s, getFsp4TimeAddSub(s))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {

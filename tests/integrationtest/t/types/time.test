@@ -238,3 +238,21 @@ SELECT SUBTIME(a, b) FROM t_empty_time_vec ORDER BY a;
 SELECT TIMEDIFF(a, b) FROM t_empty_time_vec ORDER BY a;
 --disable_warnings
 DROP TABLE t_empty_time_vec;
+
+# Same as above, but with a typed (non-string) left argument, exercising the
+# Datetime/Duration-and-String ADDTIME/SUBTIME overloads.
+DROP TABLE IF EXISTS t_empty_time_typed_left;
+CREATE TABLE t_empty_time_typed_left(dt DATETIME, dur TIME, s VARCHAR(20));
+INSERT INTO t_empty_time_typed_left VALUES ('2025-01-01 01:00:00', '01:00:00', '');
+--enable_warnings
+SELECT ADDTIME(dt, s), ADDTIME(dur, s) FROM t_empty_time_typed_left;
+SELECT SUBTIME(dt, s), SUBTIME(dur, s) FROM t_empty_time_typed_left;
+--disable_warnings
+
+# Force vectorized execution for the same typed-left overloads.
+INSERT INTO t_empty_time_typed_left VALUES ('2025-01-01 02:00:00', '02:00:00', '01:00:00');
+--enable_warnings
+SELECT ADDTIME(dt, s), ADDTIME(dur, s) FROM t_empty_time_typed_left ORDER BY dt;
+SELECT SUBTIME(dt, s), SUBTIME(dur, s) FROM t_empty_time_typed_left ORDER BY dt;
+--disable_warnings
+DROP TABLE t_empty_time_typed_left;
