@@ -50,6 +50,11 @@ mod ilike_info_cast_source;
 mod operand_dispatch;
 mod regexp_like;
 mod vectorizable_and_chunk_eval_source;
+mod setvar_getvar_values_getparam_source;
+mod in_func_decimal_collation_source;
+mod regexp_vec_cache_source;
+mod find_in_set_lookup_source;
+mod convert_using_signature_source;
 
 /// Parses and evaluates a constant expression to its label.
 pub(super) fn e(expr: &str) -> String {
