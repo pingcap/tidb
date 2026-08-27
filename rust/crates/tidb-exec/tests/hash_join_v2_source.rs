@@ -741,6 +741,66 @@ fn probe_preserved_outer_join_emits_null_extension_across_output_chunks() {
 }
 
 #[test]
+fn probe_preserved_right_outer_join_places_null_build_columns_first() {
+    let layout = one_int_key_layout();
+    let (exec, _) = built_exec(
+        1,
+        JoinType::RightOuter,
+        &layout,
+        &[vec![build_chunk(&[1, 1, 3])]],
+    );
+    let probe_context = ProbeContext {
+        hash_table: &exec.hash_table_context.hash_table,
+        meta: &layout,
+        column_count_needed_for_other_condition: 0,
+        total_column_number: 1,
+        tag_helper: exec.hash_table_context.tag_helper,
+        partition_number: exec.ctx.partition_number,
+        partition_mask_offset: exec.ctx.partition_mask_offset,
+        has_other_condition: false,
+        right_as_build_side: false,
+        l_used: vec![0],
+        r_used: vec![0],
+        l_used_in_other_condition: Vec::new(),
+        r_used_in_other_condition: Vec::new(),
+        concurrency: exec.ctx.concurrency,
+        max_chunk_size: 1024,
+    };
+    let serializer = probe_key as fn(&Chunk, usize) -> Option<Vec<u8>>;
+    let mut probe = OuterJoinProbe::new(
+        probe_context,
+        0,
+        JoinType::RightOuter,
+        vec![0],
+        &[false],
+        false,
+        serializer,
+        None,
+    );
+    let output_fields = [
+        FieldType::new(FieldTypeCode::LongLong),
+        FieldType::new(FieldTypeCode::LongLong),
+    ];
+    let results = HashJoinV2Exec::run_join_worker(&mut probe, vec![probe_chunk(&[1, 2])], &|| {
+        Chunk::new(&output_fields, 2, 2)
+    })
+    .expect("right outer probe");
+    let rows: Vec<(Option<i64>, i64)> = results
+        .iter()
+        .flat_map(|chunk| {
+            (0..chunk.num_rows()).map(|row| {
+                let row = chunk.get_row(row);
+                (
+                    (!row.is_null(0)).then(|| row.get_int64(0)),
+                    row.get_int64(1),
+                )
+            })
+        })
+        .collect();
+    assert_eq!(rows, vec![(Some(1), 1), (Some(1), 1), (None, 2)]);
+}
+
+#[test]
 fn a_build_side_with_no_rows_leaves_every_partition_hash_table_empty() {
     let layout = one_int_key_layout();
     let (exec, total) = built_exec(2, JoinType::Inner, &layout, &[Vec::new(), Vec::new()]);

@@ -721,10 +721,10 @@ impl BuildWorkerV2 {
 /// boundary: `ProbeV2` (`pkg/executor/join/join_probe.go`) and its
 /// implementations `innerJoinProbe`, `outerJoinProbe`, `semiJoinProbe`,
 /// `antiSemiJoinProbe`, `leftOuterSemiJoinProbe` -- the same symbols
-/// [`crate::base_join_probe`]'s `new_join_probe` stops at. The inner variant
-/// and the right-build existence variants are implemented below; outer joins,
-/// preserved-build existence joins and residual-condition variants remain
-/// deferred.
+/// [`crate::base_join_probe`]'s `new_join_probe` stops at. The inner variant,
+/// probe-preserved no-residual outer variant, and right-build existence
+/// variants are implemented below; preserved-build existence, residual-
+/// condition, and spill variants remain deferred.
 /// Go's
 /// `SetRestoredChunkForProbe` and `SpillRemainingProbeChunks` are omitted:
 /// both are spill-only, and [`crate::base_join_probe`] already records them
