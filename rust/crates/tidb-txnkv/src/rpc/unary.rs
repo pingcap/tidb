@@ -291,18 +291,24 @@ impl Clone for RawTransportClient {
     }
 }
 
-/// Shards built when the environment does not name a count. Four keeps each
-/// worker's per-command cost far below saturation at TiDB-scale write rates;
-/// sixteen is the sanity ceiling.
+/// Shards built when the environment does not name a count. Go's
+/// `client-go` defaults `TiKVClient.GrpcConnectionCount` to four connections
+/// per TiKV address (`config/client.go::DefaultTiKVClient`), so the
+/// source-compatible default is four Rust transport runtimes as well.
+/// Operators that deliberately need a different count can still opt in with
+/// `TIKV_TRANSPORT_SHARDS`; sixteen is the sanity ceiling.
 const DEFAULT_TRANSPORT_SHARDS: usize = 4;
 const MAX_TRANSPORT_SHARDS: usize = 16;
 
-fn transport_shard_count() -> usize {
-    std::env::var("TIKV_TRANSPORT_SHARDS")
-        .ok()
+fn configured_transport_shards(value: Option<&str>) -> usize {
+    value
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(DEFAULT_TRANSPORT_SHARDS)
         .clamp(1, MAX_TRANSPORT_SHARDS)
+}
+
+fn transport_shard_count() -> usize {
+    configured_transport_shards(std::env::var("TIKV_TRANSPORT_SHARDS").ok().as_deref())
 }
 
 impl RawTransportClient {
@@ -382,7 +388,8 @@ impl RawTransportClient {
         entries: Vec<BatchCommandEntry>,
         call: &UnaryCallContext,
     ) -> Result<super::transport_runtime::DeferredReceipts, DirectUnaryClientError> {
-        self.route()?.batch_submit_deferred_with_call(address, entries, call)
+        self.route()?
+            .batch_submit_deferred_with_call(address, entries, call)
     }
 
     pub(super) fn submit_batch_with_call(
@@ -709,7 +716,17 @@ const fn grpc_error_code(code: tonic::Code) -> Option<DirectUnaryGrpcCode> {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{error_chain_contains_timeout, UnaryCancellation};
+    use super::{configured_transport_shards, error_chain_contains_timeout, UnaryCancellation};
+
+    #[test]
+    fn transport_shards_default_matches_go_connection_count() {
+        assert_eq!(configured_transport_shards(None), 4);
+        assert_eq!(configured_transport_shards(Some("1")), 1);
+        assert_eq!(configured_transport_shards(Some("4")), 4);
+        assert_eq!(configured_transport_shards(Some("0")), 4);
+        assert_eq!(configured_transport_shards(Some("not-a-number")), 4);
+        assert_eq!(configured_transport_shards(Some("999")), 16);
+    }
 
     #[test]
     fn tonic_timeout_source_is_not_misclassified_as_remote_canceled() {
