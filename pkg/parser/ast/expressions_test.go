@@ -55,6 +55,11 @@ func (n *checkExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+func (n *checkExpr) AcceptInPlace(v InPlaceVisitor) bool {
+	v.Enter(n)
+	return v.Leave(n)
+}
+
 func (n *checkExpr) reset() {
 	n.enterCnt = 0
 	n.leaveCnt = 0

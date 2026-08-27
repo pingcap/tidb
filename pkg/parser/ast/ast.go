@@ -37,6 +37,15 @@ type Node interface {
 	// children should be skipped. Otherwise, call its children in particular order that
 	// later elements depends on former elements. Finally, return visitor.Leave.
 	Accept(v Visitor) (node Node, ok bool)
+	// AcceptInPlace accepts InPlaceVisitor to visit itself without replacing nodes.
+	// It is separate from Accept to avoid the runtime replacement checks and child
+	// writebacks that would otherwise make in-place traversal significantly slower.
+	// Implementations must use the same traversal order and control flow as Accept,
+	// but must not assign visitor callback results back to the AST. The generator
+	// derives AcceptInPlace implementations from Accept to keep them in sync. Every
+	// implementation must honor Enter's skipChildren result by skipping children
+	// while still calling Leave for the current node.
+	AcceptInPlace(v InPlaceVisitor) bool
 	// Text returns the utf8 encoding text of the element.
 	Text() string
 	// OriginalText returns the original text of the element.
@@ -153,6 +162,27 @@ type Visitor interface {
 	// Non-expression node must be the same type as the input node n.
 	// ok returns false to stop visiting.
 	Leave(n Node) (node Node, ok bool)
+}
+
+// InPlaceVisitor visits a Node without replacing nodes.
+// Enter and Leave have the same traversal control flow as Visitor. Callbacks
+// may intentionally mutate fields on the visited nodes; those mutations and
+// synchronization with concurrent access are the caller's responsibility.
+type InPlaceVisitor interface {
+	// Enter is called before children nodes are visited.
+	// When skipChildren is true, AcceptInPlace must skip all children and call Leave
+	// for the current node.
+	Enter(n Node) (skipChildren bool)
+	// Leave is called after children nodes have been visited.
+	// ok returns false to stop visiting.
+	Leave(n Node) (ok bool)
+}
+
+// Walk visits node using Node.AcceptInPlace's traversal order and control flow.
+// Callback mutations and synchronization with concurrent access are the
+// caller's responsibility.
+func Walk(node Node, visitor InPlaceVisitor) bool {
+	return node.AcceptInPlace(visitor)
 }
 
 // GetStmtLabel generates a label for a statement.

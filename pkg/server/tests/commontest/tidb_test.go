@@ -1191,6 +1191,7 @@ func TestTopSQLCatchRunningSQL(t *testing.T) {
 	mc := mockTopSQLTraceCPU.NewTopSQLCollector()
 	topsql.SetupTopProfilingForTest(mc)
 	sqlCPUCollector := collector.NewSQLCPUCollector(mc)
+	sqlCPUCollector.SetProcessCPUUpdater(ts.Server)
 	sqlCPUCollector.Start()
 	defer sqlCPUCollector.Stop()
 

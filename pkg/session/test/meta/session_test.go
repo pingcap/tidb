@@ -284,5 +284,5 @@ func TestNextgenBootstrap(t *testing.T) {
 		}
 	}
 	require.EqualValues(t, 2, reservedSchemaCnt)
-	require.EqualValues(t, 60, reservedTableCnt)
+	require.EqualValues(t, 65, reservedTableCnt)
 }

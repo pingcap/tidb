@@ -200,6 +200,7 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 
 	cli := &client{
 		svc:          oss.NewClient(ossCfg, ossOptFns...),
+		presignSvc:   newPresignClient(ossCfg, ossOptFns...),
 		BucketPrefix: bucketPrefix,
 		options:      &qs,
 	}
@@ -219,11 +220,23 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 	}, nil
 }
 
+// newPresignClient uses the public endpoint because presigned URLs may be consumed
+// outside the Alibaba Cloud VPC. Explicit custom endpoints are retained because
+// the SDK gives them precedence over endpoint flags. It also disables SDK logging
+// because the presign request pipeline otherwise logs credentials in the raw query.
+func newPresignClient(config *oss.Config, optFns ...func(*oss.Options)) *oss.Client {
+	presignConfig := config.Copy()
+	presignConfig.WithUseInternalEndpoint(false)
+	presignConfig.WithLogLevel(oss.LogOff)
+	return oss.NewClient(&presignConfig, optFns...)
+}
+
 func newOSSStorageForTest(svc API, options *backuppb.S3, accessRec *recording.AccessStats) *s3like.Storage {
 	bucketPrefix := storeapi.NewBucketPrefix(options.Bucket, options.Prefix)
 	return s3like.NewStorage(
 		&client{
 			svc:          svc,
+			presignSvc:   svc,
 			BucketPrefix: bucketPrefix,
 			options:      options,
 		},
