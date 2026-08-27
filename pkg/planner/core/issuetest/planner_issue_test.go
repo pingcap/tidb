@@ -73,19 +73,75 @@ func TestNestedInnerJoinPredicatePropagation(t *testing.T) {
 	tk.MustExec("create table t1 (a int)")
 	tk.MustExec("create table t2 (a int)")
 	tk.MustExec("create table t3 (a int)")
+	tk.MustExec("create table t4 (a int)")
 	tk.MustExec("insert into t1 values (1), (2)")
 	tk.MustExec("insert into t2 values (1), (2)")
 	tk.MustExec("insert into t3 values (1), (2)")
+	tk.MustExec("insert into t4 values (1), (2)")
 
+	planOf := func(query string) string {
+		return fmt.Sprint(tk.MustQuery("explain format = 'brief' " + query).Rows())
+	}
+
+	// A constant in the WHERE clause reaches the far side of the region.
 	query := `SELECT STRAIGHT_JOIN t3.a
 FROM t1
 JOIN t2 ON t1.a = t2.a
 JOIN t3 ON t2.a = t3.a
 WHERE t1.a = 1`
-
-	plan := fmt.Sprint(tk.MustQuery("explain format = 'brief' " + query).Rows())
-	require.Contains(t, plan, "eq(test.t3.a, 1)")
+	require.Contains(t, planOf(query), "eq(test.t3.a, 1)")
 	tk.MustQuery(query).Check(testkit.Rows("1"))
+
+	// A comparison other than equality propagates the same way, so the behaviour
+	// does not depend on the operator.
+	query = `SELECT STRAIGHT_JOIN t3.a
+FROM t1
+JOIN t2 ON t1.a = t2.a
+JOIN t3 ON t2.a = t3.a
+WHERE t1.a > 1`
+	require.Contains(t, planOf(query), "gt(test.t3.a, 1)")
+	tk.MustQuery(query).Check(testkit.Rows("2"))
+
+	// A constant living in a deeper ON clause rather than at the top also reaches
+	// the far side.
+	query = `SELECT STRAIGHT_JOIN t3.a
+FROM t1
+JOIN t2 ON t1.a = t2.a AND t1.a = 1
+JOIN t3 ON t2.a = t3.a`
+	require.Contains(t, planOf(query), "eq(test.t3.a, 1)")
+	tk.MustQuery(query).Check(testkit.Rows("1"))
+
+	// A four-way chain propagates all the way to the last table.
+	query = `SELECT STRAIGHT_JOIN t4.a
+FROM t1
+JOIN t2 ON t1.a = t2.a
+JOIN t3 ON t2.a = t3.a
+JOIN t4 ON t3.a = t4.a
+WHERE t1.a = 1`
+	require.Contains(t, planOf(query), "eq(test.t4.a, 1)")
+	tk.MustQuery(query).Check(testkit.Rows("1"))
+
+	// Contradictory constants across the region collapse the join.
+	query = `SELECT STRAIGHT_JOIN t3.a
+FROM t1
+JOIN t2 ON t1.a = t2.a AND t1.a = 1
+JOIN t3 ON t2.a = t3.a
+WHERE t3.a = 2`
+	require.Contains(t, planOf(query), "TableDual")
+	tk.MustQuery(query).Check(testkit.Rows())
+
+	// An outer join bounds the region: the constant must not cross it and change
+	// the null-extended side.
+	query = `SELECT t3.a
+FROM t3
+LEFT JOIN (t1 JOIN t2 ON t1.a = t2.a) ON t3.a = t1.a
+WHERE t1.a = 1`
+	tk.MustQuery(query).Check(testkit.Rows("1"))
+	query = `SELECT t1.a, t3.a
+FROM (t1 JOIN t2 ON t1.a = t2.a AND t1.a = 1)
+LEFT JOIN t3 ON t3.a = t1.a
+ORDER BY t1.a`
+	tk.MustQuery(query).Check(testkit.Rows("1 1"))
 }
 
 func TestPlannerIssueRegressions(t *testing.T) {

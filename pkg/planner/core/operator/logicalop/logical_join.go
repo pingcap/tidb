@@ -252,55 +252,33 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
-		_, isPlainJoin := p.Self().(*LogicalJoin)
-		if isPlainJoin && p.JoinType == base.InnerJoin {
-			var childEqualities []expression.Expression
-			for _, child := range p.Children() {
-				childEqualities = appendChildColumnEqualities(childEqualities, child)
-			}
+		// A descendant inner join's conditions are not visible here, so a constant
+		// filter on one side of this join never reaches the far side of the region.
+		// Borrow them for the propagation below and drop them again afterwards, so
+		// they cannot land in this join's own ON clause via extractOnCondition.
+		// p.Self() excludes *LogicalApply, which embeds LogicalJoin but must not
+		// borrow conditions across the correlated boundary.
+		var borrowed []expression.Expression
+		if _, isPlainJoin := p.Self().(*LogicalJoin); isPlainJoin && p.JoinType == base.InnerJoin {
 			evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-			hasConstantEquality := slices.ContainsFunc(tempCond, func(condition expression.Expression) bool {
-				sf, ok := condition.(*expression.ScalarFunction)
-				return ok && sf.FuncName.L == ast.EQ && expression.ValidCompareConstantPredicate(evalCtx, sf)
-			})
-			if len(childEqualities) > 0 && hasConstantEquality {
-				propagationConditions := expression.CNFExprs(
-					append(slices.Clone(tempCond), childEqualities...),
-				).Clone()
-				propagated := expression.PropagateConstantForJoin(
-					p.SCtx().GetExprCtx(),
-					p.SCtx().GetSessionVars().AlwaysKeepJoinKey,
-					p.Children()[0].Schema(),
-					p.Children()[1].Schema(),
-					p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin,
-					propagationConditions...,
-				)
-				for _, condition := range propagated {
-					if expression.Contains(evalCtx, tempCond, condition) || expression.Contains(evalCtx, childEqualities, condition) {
-						continue
-					}
-					sf, ok := condition.(*expression.ScalarFunction)
-					if !ok || sf.FuncName.L != ast.EQ {
-						continue
-					}
-					column, _ := expression.ValidCompareConstantPredicateHelper(evalCtx, sf, true)
-					if column == nil {
-						column, _ = expression.ValidCompareConstantPredicateHelper(evalCtx, sf, false)
-					}
-					if column != nil && p.Schema().Contains(column) {
-						tempCond = append(tempCond, condition)
-					}
-				}
+			for _, child := range p.Children() {
+				borrowed = appendRegionConditions(evalCtx, borrowed, child)
 			}
+			tempCond = append(tempCond, borrowed...)
 		}
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
 		tempCond = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), tempCond,
 			p.Children()[0].Schema(), p.Children()[1].Schema(),
 			true, p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
-		// Return table dual when filter is constant false or null.
+		// Return table dual when filter is constant false or null. The borrowed
+		// conditions are still present, so a contradiction anywhere in the region
+		// collapses the join here.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
 			return ret, dual, nil
+		}
+		if len(borrowed) > 0 {
+			tempCond = removeBorrowedConditions(p.SCtx().GetExprCtx().GetEvalCtx(), tempCond, borrowed)
 		}
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(tempCond, true, true)
 		p.LeftConditions = nil
@@ -354,38 +332,80 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	return ret, newnChild, err
 }
 
-func appendChildColumnEqualities(conditions []expression.Expression, plan base.LogicalPlan) []expression.Expression {
+// appendRegionConditions collects the conditions of the contiguous inner-join
+// region rooted at plan. Both `col = col` and `col op const` are collected, so a
+// constant sitting in a deeper ON clause can still reach the far side of the
+// region. The walk stops at anything that is not a selection or a plain inner
+// join, which keeps it inside one query block.
+func appendRegionConditions(
+	evalCtx expression.EvalContext,
+	conditions []expression.Expression,
+	plan base.LogicalPlan,
+) []expression.Expression {
 	if selection, ok := plan.(*LogicalSelection); ok {
-		conditions = appendColumnEqualities(conditions, selection.Conditions, selection.Schema())
-		return appendChildColumnEqualities(conditions, selection.Children()[0])
+		conditions = appendSafeConditions(evalCtx, conditions, selection.Conditions, selection.Schema())
+		return appendRegionConditions(evalCtx, conditions, selection.Children()[0])
 	}
 	join, ok := plan.(*LogicalJoin)
 	if !ok || join.JoinType != base.InnerJoin {
 		return conditions
 	}
-	conditions = appendColumnEqualities(conditions, expression.ScalarFuncs2Exprs(join.EqualConditions), join.Schema())
-	conditions = appendColumnEqualities(conditions, join.OtherConditions, join.Schema())
+	if _, isPlainJoin := join.Self().(*LogicalJoin); !isPlainJoin {
+		return conditions
+	}
+	conditions = appendSafeConditions(evalCtx, conditions, expression.ScalarFuncs2Exprs(join.EqualConditions), join.Schema())
+	conditions = appendSafeConditions(evalCtx, conditions, join.OtherConditions, join.Schema())
 	for _, child := range join.Children() {
-		conditions = appendChildColumnEqualities(conditions, child)
+		conditions = appendRegionConditions(evalCtx, conditions, child)
 	}
 	return conditions
 }
 
-func appendColumnEqualities(
+// appendSafeConditions keeps the comparisons the constant solver can use: a
+// column-to-column equality, or a column compared against a constant. Empty-aware
+// equalities from IN are excluded because they do not imply plain equality.
+func appendSafeConditions(
+	evalCtx expression.EvalContext,
 	conditions, candidates []expression.Expression,
 	schema *expression.Schema,
 ) []expression.Expression {
 	for _, condition := range candidates {
 		sf, ok := condition.(*expression.ScalarFunction)
-		if !ok || sf.FuncName.L != ast.EQ || expression.IsEQCondFromIn(sf) {
+		if !ok || expression.IsEQCondFromIn(sf) {
 			continue
 		}
-		left, right, colOK := expression.IsColOpCol(sf)
-		if colOK && schema.Contains(left) && schema.Contains(right) {
+		if left, right, isColOpCol := expression.IsColOpCol(sf); isColOpCol {
+			if sf.FuncName.L == ast.EQ && schema.Contains(left) && schema.Contains(right) {
+				conditions = append(conditions, sf)
+			}
+			continue
+		}
+		if column, _ := expression.ValidCompareConstantPredicateHelper(
+			evalCtx, sf, true); column != nil && schema.Contains(column) {
+			conditions = append(conditions, sf)
+			continue
+		}
+		if column, _ := expression.ValidCompareConstantPredicateHelper(
+			evalCtx, sf, false); column != nil && schema.Contains(column) {
 			conditions = append(conditions, sf)
 		}
 	}
 	return conditions
+}
+
+// removeBorrowedConditions drops the conditions borrowed from the region so this
+// join keeps only its own, leaving the predicates the solver newly derived.
+func removeBorrowedConditions(
+	evalCtx expression.EvalContext,
+	conditions, borrowed []expression.Expression,
+) []expression.Expression {
+	kept := conditions[:0]
+	for _, condition := range conditions {
+		if !expression.Contains(evalCtx, borrowed, condition) {
+			kept = append(kept, condition)
+		}
+	}
+	return kept
 }
 
 // simplifyOuterJoin transforms outer joins to simpler join types when predicates are null-rejected.
