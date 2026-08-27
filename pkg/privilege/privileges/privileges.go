@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -938,14 +939,31 @@ func checkCertSAN(priv *globalPrivRecord, cert *x509.Certificate, sans map[util.
 	return
 }
 
-// matchURIWithWildcard matches URI SANs while allowing a required segment that
-// is exactly "*" to match one non-empty segment.
+// matchURIWithWildcard matches URI SANs while allowing a required path segment
+// that is exactly "*" to match one non-empty path segment.
 func matchURIWithWildcard(required, given string) bool {
 	if !strings.Contains(required, "*") {
 		return required == given
 	}
-	requiredSegments := strings.Split(required, "/")
-	givenSegments := strings.Split(given, "/")
+	requiredURI, err := url.Parse(required)
+	if err != nil {
+		return false
+	}
+	givenURI, err := url.Parse(given)
+	if err != nil {
+		return false
+	}
+	if requiredURI.Scheme != givenURI.Scheme ||
+		requiredURI.Opaque != givenURI.Opaque ||
+		requiredURI.User.String() != givenURI.User.String() ||
+		requiredURI.Host != givenURI.Host ||
+		requiredURI.ForceQuery != givenURI.ForceQuery ||
+		requiredURI.RawQuery != givenURI.RawQuery ||
+		requiredURI.EscapedFragment() != givenURI.EscapedFragment() {
+		return false
+	}
+	requiredSegments := strings.Split(requiredURI.EscapedPath(), "/")
+	givenSegments := strings.Split(givenURI.EscapedPath(), "/")
 	if len(requiredSegments) != len(givenSegments) {
 		return false
 	}

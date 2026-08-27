@@ -627,6 +627,8 @@ func TestCheckCertBasedAuth(t *testing.T) {
 	require.Error(t, authWithSANs([]string{"spiffe://domain.com/bar/extra/something/foo/baz"}, nil, nil))
 	require.Error(t, authWithSANs([]string{"spiffe://domain.com//something/foo/baz"}, nil, nil))
 	require.Error(t, authWithSANs([]string{"spiffe://domain.com/bar/something/foo/"}, nil, nil))
+	adminTK.MustExec(`ALTER USER 'r14_san_only_pass'@'localhost' REQUIRE SAN 'URI:spiffe://*/bar/*'`)
+	require.Error(t, authWithSANs([]string{"spiffe://domain.com/bar/baz"}, nil, nil))
 
 	// An asterisk has no special meaning unless it is the entire URI segment.
 	adminTK.MustExec(`ALTER USER 'r14_san_only_pass'@'localhost' REQUIRE SAN 'URI:spiffe://domain.com/foo*/bar'`)
