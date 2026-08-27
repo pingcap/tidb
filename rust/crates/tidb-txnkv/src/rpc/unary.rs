@@ -723,7 +723,7 @@ mod tests {
         assert_eq!(configured_transport_shards(None), 4);
         assert_eq!(configured_transport_shards(Some("1")), 1);
         assert_eq!(configured_transport_shards(Some("4")), 4);
-        assert_eq!(configured_transport_shards(Some("0")), 4);
+        assert_eq!(configured_transport_shards(Some("0")), 1);
         assert_eq!(configured_transport_shards(Some("not-a-number")), 4);
         assert_eq!(configured_transport_shards(Some("999")), 16);
     }

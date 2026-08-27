@@ -1534,16 +1534,18 @@ available, and the complete hbx-web3/TPC-H catalog was not rerun. The source
 fix and this receipt commit retain a `Go code:` line and the literal `go 代码`
 phrase.
 
-Revision note, 2026-08-27 (transport-shard source alignment): the latest
-local commit is `724522e3913` (`perf: align transport shards with Go code go
-代码`). During review, the fix was checked against the pinned Go module
+Revision note, 2026-08-27 (transport-shard source alignment): the transport
+shard changes are `724522e3913` (`perf: align transport shards with Go code go
+代码`) plus the follow-up clamp-behavior correction in this worktree. During
+review, the fix was checked against the pinned Go module
 `github.com/tikv/client-go/v2@v2.0.8-0.20260708122311-01bd8f99f4da`: its
 `config/client.go::DefaultTiKVClient` sets `GrpcConnectionCount` to `4`, and
 `internal/client/conn_pool.go::Get` round-robins those per-address
 connections. Rust now makes that source contract explicit in
 `tidb-txnkv/src/rpc/unary.rs`: the unset `TIKV_TRANSPORT_SHARDS` value defaults
-to four, malformed/zero values fall back to the same default, and an explicit
-value is clamped to the existing safety ceiling. The unit regression
+to four, malformed values fall back to that default, and an explicit value is
+clamped to the existing `[1, 16]` safety interval (so an explicit zero remains
+the lower-clamped value `1`). The unit regression
 `transport_shards_default_matches_go_connection_count` covers each branch;
 `cargo test -p tidb-txnkv --lib rpc -- --nocapture` is 12/12.
 
