@@ -33,6 +33,7 @@ mod go_time_values;
 mod etstring_argument;
 mod evaluator_binop;
 mod math;
+mod builtin_math_misc_op_source;
 mod operand_dispatch;
 mod regexp_like;
 
