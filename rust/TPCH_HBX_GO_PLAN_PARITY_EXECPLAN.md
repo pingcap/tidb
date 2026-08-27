@@ -1536,7 +1536,8 @@ phrase.
 
 Revision note, 2026-08-27 (transport-shard source alignment): the transport
 shard changes are `724522e3913` (`perf: align transport shards with Go code go
-代码`) plus the follow-up clamp-behavior correction in this worktree. During
+代码`) plus follow-up `18b1db55b6a` (`fix: preserve Go shard clamp behavior go
+代码`). During
 review, the fix was checked against the pinned Go module
 `github.com/tikv/client-go/v2@v2.0.8-0.20260708122311-01bd8f99f4da`: its
 `config/client.go::DefaultTiKVClient` sets `GrpcConnectionCount` to `4`, and
