@@ -2003,7 +2003,18 @@ func TestVirtualExprPushDown(t *testing.T) {
 	}
 	tk.MustQuery("explain select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
 
-<<<<<<< HEAD
+	tk.MustExec("drop table if exists t_force_idx;")
+	tk.MustExec(`create table t_force_idx (
+		i bigint,
+		g bigint generated always as (i + 1) virtual,
+		key idx_g (g),
+		key idx_exp_i ((i + 1))
+	)`)
+	tk.MustExec("insert into t_force_idx (i) values (1);")
+	plan := tk.MustQuery("explain format='brief' select g from t_force_idx force index (idx_exp_i) where (i + 1) >= 1 order by g limit 1;").Rows()
+	require.NotEmpty(t, plan)
+	tk.MustQuery("select g from t_force_idx force index (idx_exp_i) where (i + 1) >= 1 order by g limit 1;").Check(testkit.Rows("2"))
+
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 	is := dom.InfoSchema()
@@ -2013,29 +2024,6 @@ func TestVirtualExprPushDown(t *testing.T) {
 		Count:     1,
 		Available: true,
 	}
-=======
-		tk.MustExec("drop table if exists t_force_idx;")
-		tk.MustExec(`create table t_force_idx (
-			i bigint,
-			g bigint generated always as (i + 1) virtual,
-			key idx_g (g),
-			key idx_exp_i ((i + 1))
-		)`)
-		tk.MustExec("insert into t_force_idx (i) values (1);")
-		plan := tk.MustQuery("explain format='brief' select g from t_force_idx force index (idx_exp_i) where (i + 1) >= 1 order by g limit 1;").Rows()
-		require.NotEmpty(t, plan)
-		tk.MustQuery("select g from t_force_idx force index (idx_exp_i) where (i + 1) >= 1 order by g limit 1;").Check(testkit.Rows("2"))
-
-		tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
-		tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
-		is := dom.InfoSchema()
-		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-		require.NoError(t, err)
-		tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
-			Count:     1,
-			Available: true,
-		}
->>>>>>> 264de6ce191 (planner: avoid TopN panic on expr index virtual column (#67319))
 
 	// TopN to tiflash.
 	rows = [][]any{
