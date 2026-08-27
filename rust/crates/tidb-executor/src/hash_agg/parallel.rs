@@ -278,6 +278,10 @@ fn key_bucket(key: &[u8], bucket_count: usize) -> usize {
     (hash as usize) % bucket_count
 }
 
+/// Below this estimated input the serial fold is cheaper than the pipeline's
+/// worker handoffs. See `HashAggExec::with_estimated_input_rows`.
+const PIPELINE_MIN_INPUT_ROWS: f64 = 16_384.0;
+
 /// Reads one concurrency system variable with Go's resolution order: the
 /// session value first (a context answers `None` when unset), then the
 /// global-scope snapshot.
@@ -357,6 +361,24 @@ impl<C: HashAggContext> HashAggExec<C> {
     /// Requires `C: HashAggContext` so the context-capability constant
     /// participates in the decision at `Open` time.
     pub(super) fn pipeline_eligibility(&self) -> Option<(usize, usize)> {
+        // An input this small never repays the pipeline's thread handoffs.
+        // Go parallelises here too, but its partial/final workers are
+        // goroutines whose handoff is tens of nanoseconds; ours are OS-thread
+        // wakeups. Measured on `SELECT DISTINCT c ... ORDER BY c` over one
+        // range, the serial fold won at every size up to the whole 1000-row
+        // table -- 10 rows 399.8us against 497.8us, 100 rows 721.3 against
+        // 767.3, 500 rows 2147.3 against 2250.8, 1000 rows 3802.2 against
+        // 4084.2 -- and at 100 rows that is the difference between 1.20x Go
+        // and 0.995x. The bound is deliberately far above those sizes rather
+        // than at the measured crossover: the pipeline exists for the
+        // 200K-group / 800K-row shapes this file's own docs cite, and nothing
+        // here measured where it starts to pay.
+        if self
+            .estimated_input_rows
+            .is_some_and(|rows| rows < PIPELINE_MIN_INPUT_ROWS)
+        {
+            return None;
+        }
         // The binary-string Web3Bench shape has a columnar serial fold that
         // is cheaper than materializing per-worker expression rows. Keep it
         // on that path even when the session falls back to the default

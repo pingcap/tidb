@@ -3867,14 +3867,20 @@ fn run_select_traced_with_delivery_choice_inner(
                 ctx.clone(),
             ))
         } else {
-            Box::new(HashAggExec::new(
-                meta,
-                group_by,
-                agg_funcs,
-                source,
-                ctx.clone(),
-                ctx.statement_memory(),
-            ))
+            Box::new(
+                HashAggExec::new(
+                    meta,
+                    group_by,
+                    agg_funcs,
+                    source,
+                    ctx.clone(),
+                    ctx.statement_memory(),
+                )
+                // A `DISTINCT` this narrow never repays the parallel
+                // pipeline's thread handoffs; the planner's own estimate is
+                // what decides.
+                .with_estimated_input_rows(joined_logical_rows),
+            )
         };
         if let Some(trace) = trace.as_deref_mut() {
             if partial_distinct {

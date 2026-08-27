@@ -4531,14 +4531,19 @@ fn build_aggregation(
             ctx.clone(),
         ))
     } else if partial_global_hash {
-        Box::new(HashAggExec::new(
-            ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
-            group_by,
-            std::mem::take(&mut state.agg_funcs),
-            source,
-            ctx.clone(),
-            ctx.statement_memory(),
-        ))
+        Box::new(
+            HashAggExec::new(
+                ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
+                group_by,
+                std::mem::take(&mut state.agg_funcs),
+                source,
+                ctx.clone(),
+                ctx.statement_memory(),
+            )
+            // The planner's own input estimate decides whether the parallel
+            // pipeline can repay its thread handoffs.
+            .with_estimated_input_rows(source_input_rows),
+        )
     } else if let Some(stream_plan) = stream_plan {
         let mut agg_funcs = std::mem::take(&mut state.agg_funcs);
         if partial_stream_agg {
@@ -4628,14 +4633,19 @@ fn build_aggregation(
             ctx.clone(),
         ))
     } else {
-        Box::new(HashAggExec::new(
-            ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
-            group_by,
-            std::mem::take(&mut state.agg_funcs),
-            source,
-            ctx.clone(),
-            ctx.statement_memory(),
-        ))
+        Box::new(
+            HashAggExec::new(
+                ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
+                group_by,
+                std::mem::take(&mut state.agg_funcs),
+                source,
+                ctx.clone(),
+                ctx.statement_memory(),
+            )
+            // The planner's own input estimate decides whether the parallel
+            // pipeline can repay its thread handoffs.
+            .with_estimated_input_rows(source_input_rows),
+        )
     };
     let root = match trace {
         Some(trace) => {
