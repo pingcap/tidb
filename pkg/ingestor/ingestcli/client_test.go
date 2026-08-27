@@ -34,6 +34,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/pd/client/opt"
 )
 
@@ -231,6 +232,10 @@ func (sc *storeClient) GetStore(_ context.Context, _ uint64, _ ...opt.GetStoreOp
 		Address:       sc.addr,
 		StatusAddress: sc.addr,
 	}, nil
+}
+
+func (*storeClient) GetCodecPDClient() *tikvclient.CodecPDClient {
+	return nil
 }
 
 func TestNextClientURL(t *testing.T) {

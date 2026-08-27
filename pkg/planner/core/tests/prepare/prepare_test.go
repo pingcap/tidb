@@ -1707,3 +1707,23 @@ func TestHashPartitionAndPlanCache(t *testing.T) {
 	explain = tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	require.Equal(t, "Point_Get_1", explain.Rows()[0][0])
 }
+
+func TestBatchPointGetPlanCacheMixedInList(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (k1 int, k2 int, v int, unique key uk(k1, k2))")
+	tk.MustExec("insert into t values (1, 2, 100), (3, 2, 200), (1, 4, 300)")
+	// The first IN-list row has a literal where the second row has a parameter
+	// marker (and vice versa). The batch-point-get plan-cache range rebuild used
+	// to dereference a nil index-column type for such a column and panic on the
+	// second (cache-hit) execution.
+	tk.MustExec("prepare st from 'select v from t where (k1, k2) in ((1, ?), (?, 2))'")
+	tk.MustExec("set @a = 2, @b = 3")
+	tk.MustQuery("execute st using @a, @b").Sort().Check(testkit.Rows("100", "200"))
+	// Re-execute with new values to hit the plan cache and exercise the rebuild.
+	tk.MustExec("set @a = 4, @b = 3")
+	tk.MustQuery("execute st using @a, @b").Sort().Check(testkit.Rows("200", "300"))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+}

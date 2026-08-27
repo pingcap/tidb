@@ -4,12 +4,13 @@ go_test(
     name = "index_test",
     timeout = "short",
     srcs = [
+        "index_prune_bench_test.go",
         "index_test.go",
         "main_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 12,
+    shard_count = 13,
     deps = [
         "//pkg/domain",
         "//pkg/domain/infosync",

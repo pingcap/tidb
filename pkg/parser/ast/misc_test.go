@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
@@ -444,5 +445,82 @@ func TestRedactTrafficStmt(t *testing.T) {
 		n, ok := node.(ast.SensitiveStmtNode)
 		require.True(t, ok, tc.input)
 		require.Equal(t, tc.secured, n.SecureText(), tc.input)
+	}
+}
+
+func TestSetStmtSecureTextRedactsEmbeddingAPIKeys(t *testing.T) {
+	p := parser.New()
+	for _, name := range []string{
+		"tidb_exp_embed_jina_ai_api_key",
+		"tidb_exp_embed_openai_api_key",
+		"tidb_exp_embed_cohere_api_key",
+		"tidb_exp_embed_huggingface_api_key",
+		"tidb_exp_embed_nvidia_nim_api_key",
+		"tidb_exp_embed_gemini_api_key",
+	} {
+		input := fmt.Sprintf("SET @@GLOBAL.%s = 'secret-api-key'", name)
+		node, err := p.ParseOneStmt(input, "", "")
+		require.NoError(t, err, input)
+		stmt, ok := node.(*ast.SetStmt)
+		require.True(t, ok, input)
+		require.Equal(t, fmt.Sprintf("SET @@GLOBAL.`%s`='******'", name), stmt.SecureText(), input)
+	}
+
+	// A similarly named user variable is not a system API-key configuration.
+	node, err := p.ParseOneStmt("SET @tidb_exp_embed_openai_api_key = 'ordinary-user-value'", "", "")
+	require.NoError(t, err)
+	stmt := node.(*ast.SetStmt)
+	require.Contains(t, stmt.SecureText(), "ordinary-user-value")
+	require.NotContains(t, stmt.SecureText(), "******")
+
+	// A system variable that merely shares the old prefix/suffix pattern must
+	// not be redacted unless it is one of the explicitly supported API-key variables.
+	node, err = p.ParseOneStmt("SET @@GLOBAL.tidb_exp_embed_future_api_key = 'ordinary-system-value'", "", "")
+	require.NoError(t, err)
+	stmt = node.(*ast.SetStmt)
+	require.Contains(t, stmt.SecureText(), "ordinary-system-value")
+	require.NotContains(t, stmt.SecureText(), "******")
+}
+
+func TestSetPwdStmtSecureText(t *testing.T) {
+	// Direct construction: SetPwdStmt.User can be nil (current-user form),
+	// matching what Restore handles. SecureText must not leak "<nil>".
+	cases := []struct {
+		name string
+		stmt *ast.SetPwdStmt
+		want string
+	}{
+		{
+			name: "nil user",
+			stmt: &ast.SetPwdStmt{Password: "x"},
+			want: "set password",
+		},
+		{
+			name: "nil user with retain",
+			stmt: &ast.SetPwdStmt{Password: "x", RetainCurrentPassword: true},
+			want: "set password RETAIN CURRENT PASSWORD",
+		},
+		{
+			name: "named user",
+			stmt: &ast.SetPwdStmt{
+				User:     &auth.UserIdentity{Username: "u", Hostname: "%"},
+				Password: "x",
+			},
+			want: "set password for user u@%",
+		},
+		{
+			name: "named user with retain",
+			stmt: &ast.SetPwdStmt{
+				User:                  &auth.UserIdentity{Username: "u", Hostname: "%"},
+				Password:              "x",
+				RetainCurrentPassword: true,
+			},
+			want: "set password for user u@% RETAIN CURRENT PASSWORD",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Equal(t, c.want, c.stmt.SecureText())
+		})
 	}
 }

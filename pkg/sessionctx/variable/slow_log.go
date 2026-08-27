@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
@@ -429,6 +430,16 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
 	}
+	iaStats := execdetails.GetIARemoteReadSegmentStats(logItems.ExecDetail.ScanDetail)
+	if iaStats.Count > 0 {
+		writeSlowLogItem(&buf, execdetails.IARemoteReadSegmentCountStr, strconv.FormatUint(iaStats.Count, 10))
+	}
+	if iaStats.Bytes > 0 {
+		writeSlowLogItem(&buf, execdetails.IARemoteReadSegmentSizeStr, strconv.FormatUint(iaStats.Bytes, 10))
+	}
+	if iaStats.WaitTime > 0 {
+		writeSlowLogItem(&buf, execdetails.IARemoteReadSegmentWaitTimeStr, strconv.FormatFloat(iaStats.WaitTime.Seconds(), 'f', -1, 64))
+	}
 
 	if len(s.CurrentDB) > 0 {
 		writeSlowLogItem(&buf, SlowLogDBStr, strings.ToLower(s.CurrentDB))
@@ -588,6 +599,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
+	}
+	for _, field := range config.GetGlobalConfig().GetKeyspaceObservabilitySlowLogFields() {
+		writeSlowLogItem(&buf, field.Name, field.Value)
 	}
 
 	if s.CurrentDBChanged {
@@ -852,8 +866,7 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 		Setter: func(ctx context.Context, _ *SessionVars, items *SlowQueryLogItems) {
 			stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
 			if stmtDetailRaw != nil {
-				stmtDetail := *(stmtDetailRaw.(*execdetails.StmtExecDetails))
-				items.WriteSQLRespTotal = stmtDetail.WriteSQLRespDuration
+				items.WriteSQLRespTotal = stmtDetailRaw.(*execdetails.StmtExecDetails).WriteSQLRespDuration
 			}
 		},
 		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {

@@ -209,6 +209,34 @@ func buildLimitExec(ctx sessionctx.Context, src exec.Executor, offset, count int
 	return limitExec
 }
 
+func TestDMLChildChunkInitCapByRowWidth(t *testing.T) {
+	sctx := defaultCtx()
+	child := buildLimitExec(sctx, newRequiredRowsDataSource(sctx, 10, nil), 0, 1000)
+	require.Equal(t, 1000, child.InitCap())
+
+	base := exec.NewBaseExecutor(sctx, nil, 0, child)
+	base.SetInitCap(chunk.ZeroCapacity)
+	dmlExec := &DeleteExec{BaseExecutor: base}
+
+	chk := newDMLChildChunk(dmlExec, exec.RetTypes(child), child.InitCap())
+	require.Equal(t, 1000, chk.Capacity())
+	require.Equal(t, sctx.GetSessionVars().MaxChunkSize, chk.RequiredRows())
+
+	fields := make([]*types.FieldType, 1024)
+	cols := make([]*expression.Column, len(fields))
+	for i := range fields {
+		fields[i] = types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlen(1000).BuildP()
+		cols[i] = &expression.Column{Index: i, RetType: fields[i]}
+	}
+	wideChild := buildLimitExec(sctx, &requiredRowsDataSource{
+		BaseExecutor: exec.NewBaseExecutor(sctx, expression.NewSchema(cols...), 0),
+	}, 0, 1000)
+
+	chk = newDMLChildChunk(dmlExec, exec.RetTypes(wideChild), wideChild.InitCap())
+	require.Equal(t, 1, chk.Capacity())
+	require.Equal(t, sctx.GetSessionVars().MaxChunkSize, chk.RequiredRows())
+}
+
 func defaultCtx() sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
@@ -741,7 +769,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType base.JoinType, innerSrc
 		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(ctx.GetExprCtx(), j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil)
+	b := newExecutorBuilder(context.Background(), ctx, nil, nil)
 	return b.build(j)
 }
 

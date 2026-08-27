@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
@@ -1445,6 +1446,9 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 }
 
 func TestCreateTableWithColumnarIndex(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1464,6 +1468,15 @@ func TestCreateTableWithColumnarIndex(t *testing.T) {
 		tk.MustQuery("select * from v;").Check(testkit.Rows("1 2 3"))
 		tk.MustExec(`DROP TABLE t`)
 	}
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "columnar"
+	})
+	checkCreateTableWithColumnarIdx(1)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "tiflash"
+	})
 
 	// test TiFlash store count is 0
 	replicas, err := infoschema.GetTiFlashStoreCount(tk.Session().GetStore())

@@ -31,6 +31,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -51,8 +52,13 @@ import (
 const (
 	// A token needs a lifetime to avoid brute force attack.
 	tokenLifetime = time.Minute
+	// Starter uses a longer lifetime because session migration can span a longer
+	// idle window in zero-backend deployments.
+	starterTokenLifetime = 8 * time.Hour
 	// LoadCertInterval is the interval of reloading the certificate. The certificate should be rotated periodically.
 	LoadCertInterval = 10 * time.Minute
+	// starterLoadCertInterval is the certificate reload interval for Starter.
+	starterLoadCertInterval = 24 * time.Hour
 	// After a certificate is replaced, it's still valid for oldCertValidTime.
 	// oldCertValidTime must be a little longer than LoadCertInterval, because the previous server may
 	// sign with the old cert but the new server checks with the new cert.
@@ -63,7 +69,31 @@ const (
 	// - server B reloads the same new cert again at 00:10:01, and it has 3 certs now.
 	// - server B receives the token at 00:10:02, so the old cert should be valid for more than 10m after replacement.
 	oldCertValidTime = 15 * time.Minute
+	// starterOldCertValidTime is the old certificate grace period for Starter.
+	starterOldCertValidTime = 36 * time.Hour
 )
+
+func currentTokenLifetime() time.Duration {
+	if deploymode.IsStarter() {
+		return starterTokenLifetime
+	}
+	return tokenLifetime
+}
+
+// GetLoadCertInterval returns the current interval for reloading session-token signing certificates.
+func GetLoadCertInterval() time.Duration {
+	if deploymode.IsStarter() {
+		return starterLoadCertInterval
+	}
+	return LoadCertInterval
+}
+
+func currentOldCertValidTime() time.Duration {
+	if deploymode.IsStarter() {
+		return starterOldCertValidTime
+	}
+	return oldCertValidTime
+}
 
 // SessionToken represents the token used to authenticate with the new server.
 type SessionToken struct {
@@ -79,7 +109,7 @@ func CreateSessionToken(username string) (*SessionToken, error) {
 	token := &SessionToken{
 		Username:   username,
 		SignTime:   now,
-		ExpireTime: now.Add(tokenLifetime),
+		ExpireTime: now.Add(currentTokenLifetime()),
 	}
 	tokenBytes, err := json.Marshal(token)
 	if err != nil {
@@ -114,7 +144,7 @@ func ValidateSessionToken(tokenBytes []byte, username string) (err error) {
 	// However, we need to be tolerant of these problems:
 	// - The `tokenLifetime` may change between TiDB versions, so we can't check `token.SignTime.Add(tokenLifetime).Equal(token.ExpireTime)`
 	// - There may exist time bias between TiDB instances, so we can't check `now.After(token.SignTime)`
-	if token.SignTime.Add(tokenLifetime).Before(now) {
+	if token.SignTime.Add(currentTokenLifetime()).Before(now) {
 		return ErrCannotMigrateSession.GenWithStackByArgs("token lifetime is too long", token.SignTime.String())
 	}
 	if !strings.EqualFold(username, token.Username) {
@@ -222,7 +252,7 @@ func (sc *signingCert) loadCert() error {
 	newCerts = append(newCerts, &certInfo{
 		cert:       cert,
 		privKey:    tlsCert.PrivateKey,
-		expireTime: now.Add(LoadCertInterval + oldCertValidTime),
+		expireTime: now.Add(GetLoadCertInterval() + currentOldCertValidTime()),
 	})
 	for i := range sc.certs {
 		// Discard the certs that are already expired.

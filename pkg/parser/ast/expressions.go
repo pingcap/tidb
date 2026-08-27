@@ -88,7 +88,10 @@ func (n *BetweenExpr) Restore(ctx *format.RestoreCtx) error {
 	if ctx.Flags.HasRestoreBracketAroundBetweenExpr() {
 		ctx.WritePlain("(")
 	}
-	if err := n.Expr.Restore(ctx); err != nil {
+	// There is no opcode for BETWEEN. Use a restore-only opcode so BETWEEN
+	// operands can be checked against MySQL precedence without conflating
+	// BETWEEN with comparison operators.
+	if err := restoreExprWithBinaryOpParent(ctx, n.Expr, restoreOpBetween, binaryOpLeftSide); err != nil {
 		return errors.Annotate(err, "An error occurred while restore BetweenExpr.Expr")
 	}
 	if n.Not {
@@ -96,11 +99,11 @@ func (n *BetweenExpr) Restore(ctx *format.RestoreCtx) error {
 	} else {
 		ctx.WriteKeyWord(" BETWEEN ")
 	}
-	if err := n.Left.Restore(ctx); err != nil {
+	if err := restoreExprWithBinaryOpParent(ctx, n.Left, restoreOpBetween, binaryOpRightSide); err != nil {
 		return errors.Annotate(err, "An error occurred while restore BetweenExpr.Left")
 	}
 	ctx.WriteKeyWord(" AND ")
-	if err := n.Right.Restore(ctx); err != nil {
+	if err := restoreExprWithBinaryOpParent(ctx, n.Right, restoreOpBetween, binaryOpRightSide); err != nil {
 		return errors.Annotate(err, "An error occurred while restore BetweenExpr.Right ")
 	}
 	if ctx.Flags.HasRestoreBracketAroundBetweenExpr() {
@@ -176,6 +179,33 @@ func restoreBinaryOpWithSpacesAround(ctx *format.RestoreCtx, op opcode.Op) error
 	return nil
 }
 
+func restoreExprWithBinaryOpParent(ctx *format.RestoreCtx, expr ExprNode, parentOp opcode.Op, parentSide int) error {
+	originalParentOp, originalParentSide := ctx.ParentBinaryOp, ctx.ParentBinarySide
+	defer func() {
+		ctx.ParentBinaryOp, ctx.ParentBinarySide = originalParentOp, originalParentSide
+	}()
+	ctx.ParentBinaryOp, ctx.ParentBinarySide = int(parentOp), parentSide
+	return expr.Restore(ctx)
+}
+
+func restoreExprWithUnaryOpParent(ctx *format.RestoreCtx, expr ExprNode) error {
+	originalInUnaryOperation := ctx.InUnaryOperation
+	defer func() {
+		ctx.InUnaryOperation = originalInUnaryOperation
+	}()
+	ctx.InUnaryOperation = true
+	return expr.Restore(ctx)
+}
+
+func restoreWithResetParentContext(ctx *format.RestoreCtx, restore func() error) error {
+	inUnaryOperation, parentOp, parentSide := ctx.InUnaryOperation, ctx.ParentBinaryOp, ctx.ParentBinarySide
+	defer func() {
+		ctx.InUnaryOperation, ctx.ParentBinaryOp, ctx.ParentBinarySide = inUnaryOperation, parentOp, parentSide
+	}()
+	ctx.InUnaryOperation, ctx.ParentBinaryOp, ctx.ParentBinarySide = false, 0, 0
+	return restore()
+}
+
 // Restore implements Node interface.
 func (n *BinaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
 	originalFlags := ctx.Flags
@@ -183,12 +213,18 @@ func (n *BinaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("(")
 		ctx.Flags |= format.RestoreBracketAroundBetweenExpr
 	}
+	parentOp, parentSide := ctx.ParentBinaryOp, ctx.ParentBinarySide
+	defer func() {
+		ctx.ParentBinaryOp, ctx.ParentBinarySide = parentOp, parentSide
+	}()
+	ctx.ParentBinaryOp, ctx.ParentBinarySide = int(n.Op), binaryOpLeftSide
 	if err := n.L.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.L")
 	}
 	if err := restoreBinaryOpWithSpacesAround(ctx, n.Op); err != nil {
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.Op")
 	}
+	ctx.ParentBinaryOp, ctx.ParentBinarySide = int(n.Op), binaryOpRightSide
 	if err := n.R.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.R")
 	}
@@ -382,7 +418,9 @@ func (*SubqueryExpr) resultSet() {}
 // Restore implements Node interface.
 func (n *SubqueryExpr) Restore(ctx *format.RestoreCtx) error {
 	ctx.WritePlain("(")
-	if err := n.Query.Restore(ctx); err != nil {
+	if err := restoreWithResetParentContext(ctx, func() error {
+		return n.Query.Restore(ctx)
+	}); err != nil {
 		return errors.Annotate(err, "An error occurred while restore SubqueryExpr.Query")
 	}
 	ctx.WritePlain(")")
@@ -427,7 +465,7 @@ type CompareSubqueryExpr struct {
 
 // Restore implements Node interface.
 func (n *CompareSubqueryExpr) Restore(ctx *format.RestoreCtx) error {
-	if err := n.L.Restore(ctx); err != nil {
+	if err := restoreExprWithBinaryOpParent(ctx, n.L, n.Op, binaryOpLeftSide); err != nil {
 		return errors.Annotate(err, "An error occurred while restore CompareSubqueryExpr.L")
 	}
 	if err := restoreBinaryOpWithSpacesAround(ctx, n.Op); err != nil {
@@ -712,7 +750,7 @@ type PatternInExpr struct {
 
 // Restore implements Node interface.
 func (n *PatternInExpr) Restore(ctx *format.RestoreCtx) error {
-	if err := n.Expr.Restore(ctx); err != nil {
+	if err := restoreExprWithBinaryOpParent(ctx, n.Expr, opcode.In, binaryOpLeftSide); err != nil {
 		return errors.Annotate(err, "An error occurred while restore PatternInExpr.Expr")
 	}
 	if n.Not {
@@ -796,7 +834,7 @@ type IsNullExpr struct {
 
 // Restore implements Node interface.
 func (n *IsNullExpr) Restore(ctx *format.RestoreCtx) error {
-	if err := n.Expr.Restore(ctx); err != nil {
+	if err := restoreExprWithBinaryOpParent(ctx, n.Expr, opcode.IsNull, binaryOpLeftSide); err != nil {
 		return errors.Trace(err)
 	}
 	if n.Not {
@@ -845,7 +883,11 @@ type IsTruthExpr struct {
 
 // Restore implements Node interface.
 func (n *IsTruthExpr) Restore(ctx *format.RestoreCtx) error {
-	if err := n.Expr.Restore(ctx); err != nil {
+	parentOp := opcode.IsFalsity
+	if n.True > 0 {
+		parentOp = opcode.IsTruth
+	}
+	if err := restoreExprWithBinaryOpParent(ctx, n.Expr, parentOp, binaryOpLeftSide); err != nil {
 		return errors.Trace(err)
 	}
 	if n.Not {
@@ -913,7 +955,7 @@ type PatternLikeOrIlikeExpr struct {
 
 // Restore implements Node interface.
 func (n *PatternLikeOrIlikeExpr) Restore(ctx *format.RestoreCtx) error {
-	if err := n.Expr.Restore(ctx); err != nil {
+	if err := restoreExprWithBinaryOpParent(ctx, n.Expr, opcode.Like, binaryOpLeftSide); err != nil {
 		return errors.Annotate(err, "An error occurred while restore PatternLikeOrIlikeExpr.Expr")
 	}
 
@@ -931,7 +973,7 @@ func (n *PatternLikeOrIlikeExpr) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if err := n.Pattern.Restore(ctx); err != nil {
+	if err := restoreExprWithBinaryOpParent(ctx, n.Pattern, opcode.Like, binaryOpRightSide); err != nil {
 		return errors.Annotate(err, "An error occurred while restore PatternLikeOrIlikeExpr.Pattern")
 	}
 
@@ -1011,8 +1053,16 @@ type ParenthesesExpr struct {
 
 // Restore implements Node interface.
 func (n *ParenthesesExpr) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasRestoreSkipRedundantParentheses() && canRestoreWithoutParentheses(ctx, n.Expr) {
+		if err := n.Expr.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred when restore ParenthesesExpr.Expr")
+		}
+		return nil
+	}
 	ctx.WritePlain("(")
-	if err := n.Expr.Restore(ctx); err != nil {
+	if err := restoreWithResetParentContext(ctx, func() error {
+		return n.Expr.Restore(ctx)
+	}); err != nil {
 		return errors.Annotate(err, "An error occurred when restore ParenthesesExpr.Expr")
 	}
 	ctx.WritePlain(")")
@@ -1041,6 +1091,149 @@ func (n *ParenthesesExpr) Accept(v Visitor) (Node, bool) {
 		n.Expr = node.(ExprNode)
 	}
 	return v.Leave(n)
+}
+
+const (
+	binaryOpLeftSide = iota + 1
+	binaryOpRightSide
+)
+
+const (
+	restoreOpMemberOf opcode.Op = -1 - iota
+	restoreOpCollate
+	restoreOpBetween
+)
+
+// canRestoreWithoutParentheses decides whether removing a pair of parentheses
+// keeps the expression under the same surrounding parse boundary. Unknown or
+// ambiguous cases keep parentheses. Unary parents are conservative because
+// expressions like -(a + b) are not equivalent to -a + b.
+func canRestoreWithoutParentheses(ctx *format.RestoreCtx, expr ExprNode) bool {
+	if ctx.InUnaryOperation {
+		return false
+	}
+	// Unary expressions need conservative handling under a binary parent because
+	// dropping their parentheses can expose a different parse boundary to the
+	// surrounding binary operator.
+	if _, ok := expr.(*UnaryOperationExpr); ok && ctx.ParentBinaryOp != 0 {
+		return false
+	}
+	childOp, ok := restoreParenthesizedExprOp(expr)
+	if !ok {
+		return true
+	}
+	parentOp := opcode.Op(ctx.ParentBinaryOp)
+	if parentOp == 0 {
+		return true
+	}
+	return canRestoreBinaryChildWithoutParentheses(parentOp, childOp, ctx.ParentBinarySide)
+}
+
+func restoreParenthesizedExprOp(expr ExprNode) (opcode.Op, bool) {
+	switch x := expr.(type) {
+	case *BinaryOperationExpr:
+		return x.Op, true
+	case *BetweenExpr:
+		return restoreOpBetween, true
+	case *CompareSubqueryExpr:
+		return x.Op, true
+	case *IsNullExpr:
+		return opcode.IsNull, true
+	case *IsTruthExpr:
+		if x.True > 0 {
+			return opcode.IsTruth, true
+		}
+		return opcode.IsFalsity, true
+	case *PatternInExpr:
+		return opcode.In, true
+	case *PatternLikeOrIlikeExpr:
+		return opcode.Like, true
+	case *PatternRegexpExpr:
+		return opcode.Regexp, true
+	case *SetCollationExpr:
+		return restoreOpCollate, true
+	case *FuncCallExpr:
+		if x.FnName.L == JSONMemberOf {
+			return restoreOpMemberOf, true
+		}
+	}
+	return 0, false
+}
+
+func canRestoreBinaryChildWithoutParentheses(parentOp, childOp opcode.Op, side int) bool {
+	parentPrecedence := restoreBinaryPrecedence(parentOp)
+	childPrecedence := restoreBinaryPrecedence(childOp)
+	if parentPrecedence == 0 || childPrecedence == 0 {
+		return false
+	}
+	if childPrecedence > parentPrecedence {
+		return true
+	}
+	if childPrecedence < parentPrecedence {
+		return false
+	}
+	return side == binaryOpLeftSide || isAssociativeRestoreOp(parentOp, childOp)
+}
+
+// restoreBinaryPrecedence follows MySQL operator precedence: larger values bind
+// tighter, and 0 means unknown so parentheses must be kept. Binary operators are
+// left-associative, so same-precedence right children can drop parentheses only
+// for operators that preserve SQL evaluation semantics after regrouping.
+// Arithmetic operators are intentionally excluded: subtraction, division,
+// integer division, and modulo are not associative, while addition and
+// multiplication can still produce different finite-precision numeric results
+// after reassociation.
+//
+// Examples:
+//   - `(a + b) * c` must keep parentheses.
+//   - `a + (b * c)` can become `a + b * c`.
+//   - `(a BETWEEN b AND c) = d` must keep parentheses because BETWEEN binds
+//     weaker than comparison operators.
+//
+// See https://dev.mysql.com/doc/refman/8.4/en/operator-precedence.html.
+func restoreBinaryPrecedence(op opcode.Op) int {
+	switch op {
+	case opcode.LogicOr:
+		return 1
+	case opcode.LogicXor:
+		return 2
+	case opcode.LogicAnd:
+		return 3
+	case opcode.EQ, opcode.NE, opcode.NullEQ, opcode.LT, opcode.LE, opcode.GT, opcode.GE,
+		opcode.In, opcode.Like, opcode.Regexp, opcode.IsNull, opcode.IsTruth, opcode.IsFalsity,
+		restoreOpMemberOf:
+		return 5
+	case restoreOpBetween:
+		return 4
+	case opcode.Or:
+		return 6
+	case opcode.And:
+		return 7
+	case opcode.LeftShift, opcode.RightShift:
+		return 8
+	case opcode.Plus, opcode.Minus:
+		return 9
+	case opcode.Mul, opcode.Div, opcode.IntDiv, opcode.Mod:
+		return 10
+	case opcode.Xor:
+		return 11
+	case restoreOpCollate:
+		return 12
+	default:
+		return 0
+	}
+}
+
+func isAssociativeRestoreOp(parentOp, childOp opcode.Op) bool {
+	if parentOp != childOp {
+		return false
+	}
+	switch parentOp {
+	case opcode.LogicAnd, opcode.LogicOr, opcode.And, opcode.Or, opcode.Xor:
+		return true
+	default:
+		return false
+	}
 }
 
 // PositionExpr is the expression for order by and group by position.
@@ -1100,7 +1293,7 @@ type PatternRegexpExpr struct {
 
 // Restore implements Node interface.
 func (n *PatternRegexpExpr) Restore(ctx *format.RestoreCtx) error {
-	if err := n.Expr.Restore(ctx); err != nil {
+	if err := restoreExprWithBinaryOpParent(ctx, n.Expr, opcode.Regexp, binaryOpLeftSide); err != nil {
 		return errors.Annotate(err, "An error occurred while restore PatternRegexpExpr.Expr")
 	}
 
@@ -1110,7 +1303,7 @@ func (n *PatternRegexpExpr) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" REGEXP ")
 	}
 
-	if err := n.Pattern.Restore(ctx); err != nil {
+	if err := restoreExprWithBinaryOpParent(ctx, n.Pattern, opcode.Regexp, binaryOpRightSide); err != nil {
 		return errors.Annotate(err, "An error occurred while restore PatternRegexpExpr.Pattern")
 	}
 
@@ -1208,7 +1401,7 @@ func (n *UnaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
 	if err := n.Op.Restore(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	if err := n.V.Restore(ctx); err != nil {
+	if err := restoreExprWithUnaryOpParent(ctx, n.V); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1462,7 +1655,7 @@ type SetCollationExpr struct {
 
 // Restore implements Node interface.
 func (n *SetCollationExpr) Restore(ctx *format.RestoreCtx) error {
-	if err := n.Expr.Restore(ctx); err != nil {
+	if err := restoreExprWithBinaryOpParent(ctx, n.Expr, restoreOpCollate, binaryOpLeftSide); err != nil {
 		return errors.Trace(err)
 	}
 	ctx.WriteKeyWord(" COLLATE ")

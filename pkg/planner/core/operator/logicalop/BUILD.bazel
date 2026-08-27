@@ -79,6 +79,7 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/plancodec",
         "//pkg/util/ranger",
+        "//pkg/util/set",
         "//pkg/util/size",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

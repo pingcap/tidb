@@ -384,9 +384,10 @@ id	task	access object	operator info
 Projection	root		istrue(or(not(ge(executor__explain.t.i, j筧8)), not(eq(executor__explain.t.i, 暈lH忧ll6))))->Column, Column, quote(executor__explain.t.i)->Column
 └─StreamAgg	root		group by:executor__explain.t.i, funcs:max(executor__explain.t.e)->Column, funcs:firstrow(executor__explain.t.i)->executor__explain.t.i
   └─Sort	root		executor__explain.t.i
-    └─TableReader	root	partition:all	data:Selection
-      └─Selection	cop[tikv]		or(gt(executor__explain.t.h, 240817), and(ge(executor__explain.t.i, "WVz"), le(executor__explain.t.i, "G#駧褉ZC領*lov")))
-        └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─IndexMerge	root	partition:all	type: union
+      ├─TableRangeScan(Build)	cop[tikv]	table:t	range:(240817,+inf], keep order:false, stats:pseudo
+      ├─IndexFullScan(Build)	cop[tikv]	table:t, index:idx_25(h, i, e)	keep order:false, stats:pseudo
+      └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 select count(*) from (SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;
 count(*)
 16

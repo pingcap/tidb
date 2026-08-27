@@ -24,9 +24,9 @@ import (
 
 func TestMergePartialResult4BitFuncs(t *testing.T) {
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncBitAnd, mysql.TypeLonglong, 5, 0, 0, 0),
-		buildAggTester(ast.AggFuncBitOr, mysql.TypeLonglong, 5, 7, 7, 7),
-		buildAggTester(ast.AggFuncBitXor, mysql.TypeLonglong, 5, 4, 5, 1),
+		buildAggTester(ast.AggFuncBitAnd, mysql.TypeLonglong, 0, 5, 0, 0, 0),
+		buildAggTester(ast.AggFuncBitOr, mysql.TypeLonglong, 0, 5, 7, 7, 7),
+		buildAggTester(ast.AggFuncBitXor, mysql.TypeLonglong, 0, 5, 4, 5, 1),
 	}
 	for _, test := range tests {
 		testMergePartialResult(t, test)
@@ -35,11 +35,11 @@ func TestMergePartialResult4BitFuncs(t *testing.T) {
 
 func TestMemBitFunc(t *testing.T) {
 	tests := []aggMemTest{
-		buildAggMemTester(ast.AggFuncBitAnd, mysql.TypeLonglong, 5,
+		buildAggMemTester(ast.AggFuncBitAnd, mysql.TypeLonglong, 0, 5,
 			aggfuncs.DefPartialResult4BitFuncSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncBitOr, mysql.TypeLonglong, 5,
+		buildAggMemTester(ast.AggFuncBitOr, mysql.TypeLonglong, 0, 5,
 			aggfuncs.DefPartialResult4BitFuncSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncBitXor, mysql.TypeLonglong, 5,
+		buildAggMemTester(ast.AggFuncBitXor, mysql.TypeLonglong, 0, 5,
 			aggfuncs.DefPartialResult4BitFuncSize, defaultUpdateMemDeltaGens, false),
 	}
 	for _, test := range tests {

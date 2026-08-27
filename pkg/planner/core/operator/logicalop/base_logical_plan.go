@@ -349,16 +349,6 @@ func (p *BaseLogicalPlan) GetBaseLogicalPlan() base.LogicalPlan {
 	return p
 }
 
-// ConvertOuterToInnerJoin implements LogicalPlan.<24th> interface.
-func (p *BaseLogicalPlan) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	s := p.self
-	for i, child := range s.Children() {
-		newChild := child.ConvertOuterToInnerJoin(predicates)
-		s.SetChild(i, newChild)
-	}
-	return s
-}
-
 // *************************** implementation of self functionality ***************************
 
 // GetLogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.

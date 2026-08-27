@@ -74,6 +74,10 @@ func (s *mockStorage) EtcdAddrs() ([]string, error) {
 	return nil, nil
 }
 
+func (s *mockStorage) GetPDAddrs() ([]string, error) {
+	return nil, nil
+}
+
 func (s *mockStorage) TLSConfig() *tls.Config {
 	return nil
 }

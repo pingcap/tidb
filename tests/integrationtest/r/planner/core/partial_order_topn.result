@@ -499,7 +499,7 @@ TopN	3.00	root		planner__core__partial_order_topn.t_prefix_len.short_prefix, off
   ├─Limit(Build)	3.00	cop[tikv]		offset:0, count:3, prefix_col:planner__core__partial_order_topn.t_prefix_len.short_prefix, prefix_len:5
   │ └─IndexFullScan	10000.00	cop[tikv]	table:t_prefix_len, index:idx_short(short_prefix)	keep order:true, stats:pseudo
   └─TableRowIDScan(Probe)	3.00	cop[tikv]	table:t_prefix_len	keep order:false, stats:pseudo
-explain format='brief' select  /*+ force_index(t_prefix_len, long_prefix) */  * from t_prefix_len order by long_prefix limit 3;
+explain format='brief' select  /*+ force_index(t_prefix_len, idx_long) */  * from t_prefix_len order by long_prefix limit 3;
 id	estRows	task	access object	operator info
 TopN	3.00	root		planner__core__partial_order_topn.t_prefix_len.long_prefix, offset:0, count:3, prefix_col:planner__core__partial_order_topn.t_prefix_len.long_prefix, prefix_len:50
 └─IndexLookUp	3.00	root		

@@ -16,6 +16,9 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
@@ -23,18 +26,30 @@ import (
 
 var (
 	_ functionClass = &ftsMatchWordFunctionClass{}
+	_ functionClass = &ftsMysqlMatchAgainstFunctionClass{}
 )
 
 var (
 	_ builtinFunc = &builtinFtsMatchWordSig{}
+	_ builtinFunc = &builtinFtsMysqlMatchAgainstSig{}
 )
 
 type ftsMatchWordFunctionClass struct {
 	baseFunctionClass
+	expropt.SessionVarsPropReader
 }
 
 type builtinFtsMatchWordSig struct {
 	baseBuiltinFunc
+}
+
+type ftsMysqlMatchAgainstFunctionClass struct {
+	baseFunctionClass
+}
+
+type builtinFtsMysqlMatchAgainstSig struct {
+	baseBuiltinFunc
+	modifier ast.FulltextSearchModifier
 }
 
 func (b *builtinFtsMatchWordSig) Clone() builtinFunc {
@@ -43,9 +58,34 @@ func (b *builtinFtsMatchWordSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinFtsMysqlMatchAgainstSig) Clone() builtinFunc {
+	newSig := &builtinFtsMysqlMatchAgainstSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.modifier = b.modifier
+	return newSig
+}
+
+func (b *builtinFtsMysqlMatchAgainstSig) SetModifier(modifier ast.FulltextSearchModifier) {
+	b.modifier = modifier
+}
+
+// SetFTSMysqlMatchAgainstModifier sets the modifier for the internal `MATCH ... AGAINST` builtin signature.
+// It is expected to be called by planner right after building the scalar function.
+func SetFTSMysqlMatchAgainstModifier(sf *ScalarFunction, modifier ast.FulltextSearchModifier) error {
+	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+	if !ok {
+		return errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, sf.Function)
+	}
+	sig.SetModifier(modifier)
+	return nil
+}
+
 func (c *ftsMatchWordFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
+	}
+	if !deploymode.IsStarter() {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("FTS_MATCH_WORD() is only supported in starter deployment mode")
 	}
 
 	argAgainst := args[0]
@@ -72,6 +112,12 @@ func (c *ftsMatchWordFunctionClass) getFunction(ctx BuildContext, args []Express
 		return nil, err
 	}
 
+	sessionVars, err := c.GetSessionVars(ctx.GetEvalCtx())
+	if err != nil {
+		return nil, err
+	}
+	sessionVars.StmtCtx.FTSFunctionIsUsed = true
+
 	sig := &builtinFtsMatchWordSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_FTSMatchWord)
 	return sig, nil
@@ -80,4 +126,54 @@ func (c *ftsMatchWordFunctionClass) getFunction(ctx BuildContext, args []Express
 func (b *builtinFtsMatchWordSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	// Reject executing match against in TiDB side.
 	return 0, false, errors.Errorf("cannot use 'FTS_MATCH_WORD()' outside of fulltext index")
+}
+
+func (c *ftsMysqlMatchAgainstFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	argAgainst := args[0]
+	argAgainstConstant, ok := argAgainst.(*Constant)
+	if !ok {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("match against a non-constant string")
+	}
+	if argAgainstConstant.Value.Kind() != types.KindString && !argAgainstConstant.Value.IsNull() {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("match against a non-string constant")
+	}
+
+	argsMatch := args[1:]
+	for _, arg := range argsMatch {
+		_, ok := arg.(*Column)
+		if !ok {
+			return nil, ErrNotSupportedYet.GenWithStackByArgs("not matching a column")
+		}
+	}
+
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETString)
+	for _, arg := range argsMatch {
+		if arg.GetType(ctx.GetEvalCtx()).EvalType() != types.ETString {
+			return nil, ErrNotSupportedYet.GenWithStackByArgs("Doesn't support match search on a non-string column without fulltext index")
+		}
+		argTps = append(argTps, types.ETString)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, argTps...)
+	if err != nil {
+		return nil, err
+	}
+
+	sig := &builtinFtsMysqlMatchAgainstSig{baseBuiltinFunc: bf}
+	sig.setPbCode(tipb.ScalarFuncSig_FTSMatchExpression)
+	return sig, nil
+}
+
+func (b *builtinFtsMysqlMatchAgainstSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+	// args[0] is validated to be a *Constant by getFunction; guard defensively
+	// since the sig may be reconstructed via the distsql path without that check.
+	if constArg, ok := b.args[0].(*Constant); ok && constArg.Value.IsNull() {
+		return 0, true, nil
+	}
+	return 0, false, errors.Errorf("cannot use 'MATCH ... AGAINST' outside of fulltext index")
 }

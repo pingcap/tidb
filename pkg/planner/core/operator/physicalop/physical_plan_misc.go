@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -115,6 +116,19 @@ func (pi *PhysPlanPartInfo) CloneForPlanCache() *PhysPlanPartInfo {
 	cloned.PartitionNames = pi.PartitionNames
 	cloned.Columns = utilfuncp.CloneColumnsForPlanCache(pi.Columns, nil)
 	cloned.ColumnNames = pi.ColumnNames
+	return cloned
+}
+
+// Clone clones the PhysPlanPartInfo.
+func (pi *PhysPlanPartInfo) Clone() *PhysPlanPartInfo {
+	if pi == nil {
+		return nil
+	}
+	cloned := new(PhysPlanPartInfo)
+	cloned.PruningConds = plannerutil.CloneExprs(pi.PruningConds)
+	cloned.PartitionNames = append([]ast.CIStr(nil), pi.PartitionNames...)
+	cloned.Columns = plannerutil.CloneCols(pi.Columns)
+	cloned.ColumnNames = types.NameSlice(plannerutil.CloneFieldNames(pi.ColumnNames))
 	return cloned
 }
 

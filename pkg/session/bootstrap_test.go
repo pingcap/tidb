@@ -1512,7 +1512,7 @@ func TestKeyspaceEtcdNamespace(t *testing.T) {
 		t.Skip("keyspace is not supported in classic kernel")
 	}
 	keyspaceMeta := keyspacepb.KeyspaceMeta{}
-	keyspaceMeta.Id = 2
+	keyspaceMeta.Keyspace = &keyspacepb.KeyspaceMeta_Id{Id: 2}
 	keyspaceMeta.Name = keyspace.System
 	makeStore(t, &keyspaceMeta, true)
 }
@@ -1555,7 +1555,7 @@ func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix 
 	t.Cleanup(func() {
 		ddl.CloseOwnerManager(mockStore)
 	})
-	dom, err := domap.getWithEtcdClient(mockStore, etcdClient, nil)
+	dom, err := domap.getWithEtcdClient(mockStore, etcdClient, nil, domainCreateOptions{})
 	require.NoError(t, err)
 	defer dom.Close()
 
@@ -1595,6 +1595,10 @@ type mockEtcdBackend struct {
 }
 
 func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
+	return mebd.pdAddrs, nil
+}
+
+func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
 	return mebd.pdAddrs, nil
 }
 
@@ -1885,24 +1889,29 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	require.Len(t, versionedBootstrapSchemas[0].databases[1].Tables, 0)
 
 	versions := make([]int, 0, len(versionedBootstrapSchemas))
-	allIDs := make([]int64, 0, len(versionedBootstrapSchemas))
+	dbNameToID := make(map[string]int64)
+	allTableIDs := make([]int64, 0, len(versionedBootstrapSchemas))
 	for _, vbs := range versionedBootstrapSchemas {
 		versions = append(versions, int(vbs.ver))
 		for _, db := range vbs.databases {
 			require.Greater(t, db.ID, metadef.ReservedGlobalIDLowerBound)
 			require.LessOrEqual(t, db.ID, metadef.ReservedGlobalIDUpperBound)
-			allIDs = append(allIDs, db.ID)
+			if existingID, ok := dbNameToID[db.Name]; ok {
+				require.Equalf(t, existingID, db.ID, "database %s should have consistent ID across versions", db.Name)
+			} else {
+				dbNameToID[db.Name] = db.ID
+			}
 
 			testTableBasicInfoSlice(t, db.Tables, "IF NOT EXISTS mysql.%s (")
 			for _, tbl := range db.Tables {
-				allIDs = append(allIDs, tbl.ID)
+				allTableIDs = append(allTableIDs, tbl.ID)
 			}
 		}
 	}
 	require.IsIncreasing(t, versions,
 		"versions in versionedBootstrapSchemas should be monotonically increasing, and cannot have duplicate versions")
-	slices.Sort(allIDs)
-	require.IsIncreasing(t, allIDs, "versionedBootstrapSchemas should not have duplicate IDs")
+	slices.Sort(allTableIDs)
+	require.IsIncreasing(t, allTableIDs, "versionedBootstrapSchemas should not have duplicate table IDs")
 }
 
 func TestCheckSystemTableConstraint(t *testing.T) {

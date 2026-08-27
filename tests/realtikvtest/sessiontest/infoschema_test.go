@@ -65,8 +65,10 @@ func TestNextGenTiKVRegionStatusDoesNotMixOtherKeyspaces(t *testing.T) {
 	require.NotEmpty(t, systemRegionIDs)
 
 	userTK := testkit.NewTestKit(t, runtimes["keyspace1"].Store)
+	// Physical regions can overlap keyspace boundaries; reject SYSTEM table
+	// metadata leakage instead of treating region IDs as keyspace-owned.
 	userTK.MustQuery(fmt.Sprintf(
-		"select count(*) from information_schema.tikv_region_status where region_id in (%s)",
+		"select count(*) from information_schema.tikv_region_status where region_id in (%s) and db_name = 'sys_region_status' and table_name = 't'",
 		strings.Join(systemRegionIDs, ","))).Check(testkit.Rows("0"))
 }
 

@@ -21,6 +21,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/testkit/testmain"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -38,7 +40,11 @@ func TestMain(m *testing.M) {
 	os.Args = newArgs
 
 	if !skipLeakTest {
-		goleak.VerifyTestMain(m,
+		cleanup := func(exitCode int) int {
+			memory.CleanupGlobalMemArbitratorForTest()
+			return exitCode
+		}
+		goleak.VerifyTestMain(testmain.WrapTestingM(m, cleanup),
 			goleak.IgnoreCurrent(),
 			goleak.IgnoreTopFunction("github.com/pingcap/tidb/br/pkg/utils.StartExitSingleListener.func1"),
 			goleak.IgnoreTopFunction("github.com/pingcap/tidb/br/pkg/utils.StartDynamicPProfListener.func1"),
@@ -49,13 +55,21 @@ func TestMain(m *testing.M) {
 			goleak.IgnoreTopFunction("google.golang.org/grpc.(*ClientConn).WaitForStateChange"),
 			goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/config/retry.(*Config).createBackoffFn.newBackoffFn.func2"),
 			goleak.IgnoreTopFunction("google.golang.org/grpc/internal/grpcsync.NewCallbackSerializer"),
+			goleak.IgnoreTopFunction("google.golang.org/grpc/internal/grpcsync.(*CallbackSerializer).run"),
+			goleak.IgnoreTopFunction("google.golang.org/grpc/test/bufconn.(*Listener).Accept"),
 		)
 	}
 
 	os.Exit(m.Run())
 }
 
-func TestRunMain(*testing.T) {
+func cleanupMainTestResources() {
+	memory.CleanupGlobalMemArbitratorForTest()
+}
+
+func TestRunMain(t *testing.T) {
+	t.Cleanup(cleanupMainTestResources)
+
 	var args []string
 	for _, arg := range os.Args {
 		switch {
@@ -75,6 +89,17 @@ func TestRunMain(*testing.T) {
 	}()
 
 	<-waitCh
+}
+
+func TestCleanupMainTestResourcesStopsGlobalMemArbitrator(t *testing.T) {
+	baseline := goleak.IgnoreCurrent()
+
+	memory.SetupGlobalMemArbitratorForTest(t.TempDir())
+	require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModeStandardName))
+
+	cleanupMainTestResources()
+
+	require.NoError(t, goleak.Find(baseline))
 }
 
 func TestCalculateMemoryLimit(t *testing.T) {

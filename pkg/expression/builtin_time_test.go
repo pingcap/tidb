@@ -2054,6 +2054,16 @@ func TestWeek(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, test.expect, result.GetInt64())
 	}
+
+	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{
+		types.NewStringDatum("2023-01-01"),
+		types.NewDatum(nil),
+	}))
+	require.NoError(t, err)
+	result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.False(t, result.IsNull())
+	require.Equal(t, int64(1), result.GetInt64())
 }
 
 func TestWeekWithoutModeSig(t *testing.T) {

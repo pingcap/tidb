@@ -17,6 +17,7 @@ package sessionapi
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -31,6 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
+
+// ErrIdentityNotFound indicates that MatchIdentity did not find a matching user.
+var ErrIdentityNotFound = errors.New("identity not found")
 
 // Session context, it is consistent with the lifecycle of a client connection.
 type Session interface {

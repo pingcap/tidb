@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -106,13 +107,16 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return e.importFromSelect(ctx)
 	}
 
-	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
-		return err2
-	}
-	if kerneltype.IsNextGen() {
-		ksCodec := e.userSctx.GetStore().GetCodec().GetKeyspace()
-		if err2 := e.controller.CalResourceParams(ctx, ksCodec); err2 != nil {
+	useAsyncPrepare := importinto.ShouldUseAsyncPrepare(e.controller.Plan)
+	if !useAsyncPrepare {
+		if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 			return err2
+		}
+		if kerneltype.IsNextGen() {
+			ksCodec := e.userSctx.GetStore().GetCodec().GetKeyspace()
+			if err2 := e.controller.CalResourceParams(ctx, ksCodec); err2 != nil {
+				return err2
+			}
 		}
 	}
 
@@ -122,7 +126,11 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 	defer CloseSession(newSCtx)
-	if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
+	if useAsyncPrepare {
+		if err2 = e.controller.CheckRequirementsBeforeInitDataFiles(ctx, newSCtx); err2 != nil {
+			return err2
+		}
+	} else if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
 		return err2
 	}
 
@@ -395,15 +403,56 @@ func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, mana
 }
 
 func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	manager, err := dxfstorage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return err
 	}
-	if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-		return manager.CancelTaskByKeySession(ctx, se, importinto.TaskKey(jobID))
-	}); err != nil {
+	taskKey := importinto.TaskKey(jobID)
+	_, err = manager.GetTaskBaseByKeyWithHistory(ctx, taskKey)
+	if err == nil {
+		if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			return manager.CancelTaskByKeySession(ctx, se, taskKey)
+		}); err != nil {
+			return err
+		}
+		return handle.WaitTaskDoneByKey(ctx, taskKey)
+	}
+	if !goerrors.Is(err, dxfstorage.ErrTaskNotFound) {
 		return err
 	}
-	return handle.WaitTaskDoneByKey(ctx, importinto.TaskKey(jobID))
+	failpoint.InjectCall("afterCancelImportTaskProbeMiss", jobID)
+
+	// In next-gen, the import job and DXF task are created in separate
+	// transactions. The job row can exist before the DXF task row is committed,
+	// or the task submission can fail after the job is created. The task lookup
+	// distinguishes a missing task from one outside the cancel update's
+	// state predicate. If the task row is committed after the lookup, do not wait
+	// for it. The dangling fallback will either cancel the still-pending import
+	// job or report that the scheduler changed the job state first.
+	// see job_doc.go for more detail
+	logutil.Logger(ctx).Info("cancel import job directly after initial dxf task lookup found no task",
+		zap.Int64("jobID", jobID),
+		zap.String("taskKey", taskKey))
+	failpoint.InjectCall("beforeCancelDanglingImportJob", jobID)
+	return cancelDanglingImportJob(ctx, jobID)
+}
+
+// cancelDanglingImportJob cancels a pending import job after cancellation could
+// not find its DXF task, so it will not block another import job for the same
+// table. see job_doc.go for more detail
+func cancelDanglingImportJob(ctx context.Context, jobID int64) error {
+	manager, err := dxfstorage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	return manager.WithNewSession(func(se sessionctx.Context) error {
+		if err2 := importer.CancelPendingJob(ctx, se.GetSQLExecutor(), jobID); err2 != nil {
+			return err2
+		}
+		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+			return errors.New("job state changed during cancel, please try again later")
+		}
+		return nil
+	})
 }

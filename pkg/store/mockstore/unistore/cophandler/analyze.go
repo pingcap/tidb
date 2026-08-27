@@ -480,20 +480,22 @@ func (e *analyzeColumnsExec) Fields() []*resolve.ResultField {
 func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	e.req = req
-	err := e.reader.Scan(e.seekKey, e.endKey, math.MaxInt64, e.startTS, e)
-	if err != nil {
-		return err
-	}
-	if req.NumRows() < req.Capacity() {
+	for {
+		err := e.reader.Scan(e.seekKey, e.endKey, math.MaxInt64, e.startTS, e)
+		if err != nil {
+			return err
+		}
+		if req.NumRows() == req.Capacity() {
+			return nil
+		}
 		if e.curRan == len(e.ranges)-1 {
 			e.seekKey = e.endKey
-		} else {
-			e.curRan++
-			e.seekKey = e.ranges[e.curRan].StartKey
-			e.endKey = e.ranges[e.curRan].EndKey
+			return nil
 		}
+		e.curRan++
+		e.seekKey = e.ranges[e.curRan].StartKey
+		e.endKey = e.ranges[e.curRan].EndKey
 	}
-	return nil
 }
 
 func (e *analyzeColumnsExec) Process(key, value []byte, _ uint64) error {

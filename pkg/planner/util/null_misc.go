@@ -217,6 +217,14 @@ func proveNullRejectedScalarFunc(
 		return proveNullRejectedIn(ctx, innerSchema, expr, allowNullifiedFold)
 	case ast.IsNull:
 		return nullRejectProof{}
+	case ast.Week, ast.YearWeek:
+		// Only the date argument is NULL-preserving. A NULL mode argument is
+		// treated as mode 0 by MySQL/TiDB, so these functions cannot be listed
+		// in nullRejectNullPreservingFunctions.
+		if proveNullRejected(ctx, innerSchema, expr.GetArgs()[0], allowNullifiedFold).mustNull {
+			return nullRejectProof{nonTrue: true, mustNull: true}
+		}
+		return nullRejectProof{}
 	}
 
 	if mode, ok := nullRejectRejectNullTests[expr.FuncName.L]; ok {

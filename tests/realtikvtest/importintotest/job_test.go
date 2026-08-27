@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
@@ -69,6 +70,35 @@ func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row 
 	}
 	s.Regexp(jobInfo.ErrorMessage, row[fmap["ResultMessage"]])
 	s.Equal(jobInfo.CreatedBy, row[fmap["CreatedBy"]])
+}
+
+func (s *mockGCSSuite) blockSchedulerBeforeGetSchedulableTasks() func() {
+	reachedBlockPoint := make(chan struct{})
+	releaseBlock := make(chan struct{})
+	var reachedOnce sync.Once
+	var releaseOnce sync.Once
+
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeGetSchedulableTasks",
+		func() {
+			reachedOnce.Do(func() {
+				close(reachedBlockPoint)
+			})
+			<-releaseBlock
+		},
+	)
+	releaseFn := func() {
+		releaseOnce.Do(func() {
+			close(releaseBlock)
+		})
+	}
+	s.T().Cleanup(releaseFn)
+
+	select {
+	case <-reachedBlockPoint:
+	case <-time.After(maxWaitTime):
+		s.T().Fatal("timeout waiting scheduler beforeGetSchedulableTasks block point")
+	}
+	return releaseFn
 }
 
 func (s *mockGCSSuite) TestShowJob() {
@@ -366,6 +396,258 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	jobInfo.Step = importer.JobStepImporting
 	jobInfo.ErrorMessage = `occur an error when sort chunk.*`
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
+}
+
+func (s *mockGCSSuite) TestShowImportJobTimingAroundPrepare() {
+	if !kerneltype.IsNextGen() {
+		s.T().Skip("async prepare is only enabled in nextgen kernel")
+	}
+
+	s.prepareAndUseDB("show_job_prepare_timing")
+	s.tk.MustExec("CREATE TABLE t (i INT PRIMARY KEY);")
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "show-job-prepare-timing-source",
+			Name:       "t.csv",
+		},
+		Content: []byte("1\n2"),
+	})
+	// Ensure the sort bucket exists before scheduler writes prepared metadata.
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "show-job-prepare-timing-sort",
+			Name:       "seed",
+		},
+		Content: []byte("seed"),
+	})
+
+	do, err := session.GetDomain(s.store)
+	s.NoError(err)
+	tableID := do.MustGetTableID(s.T(), "show_job_prepare_timing", "t")
+
+	// Block scheduler manager so we can assert show import job before scheduler starts.
+	releaseScheduler := s.blockSchedulerBeforeGetSchedulableTasks()
+
+	importSQL := fmt.Sprintf(
+		`IMPORT INTO t FROM 'gs://show-job-prepare-timing-source/t.csv?endpoint=%s'
+		WITH DETACHED, cloud_storage_uri='gs://show-job-prepare-timing-sort/path?endpoint=%s'`,
+		gcsEndpoint,
+		gcsEndpoint,
+	)
+	result := s.tk.MustQuery(importSQL).Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+	jobID64 := int64(jobID)
+	createdBy := fmt.Sprintf("%v", result[0][fmap["CreatedBy"]])
+
+	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
+	s.Len(rows, 1)
+	// timing 1: before scheduler starts.
+	s.Equal(result, rows)
+	s.Equal("N/A", result[0][fmap["SourceFileSize"]])
+
+	reachedBeforePrepare := make(chan struct{})
+	releaseBeforePrepare := make(chan struct{})
+	var beforePrepareOnce sync.Once
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/syncBeforeJobStarted",
+		func(fpJobID int64) {
+			if fpJobID != jobID64 {
+				return
+			}
+			beforePrepareOnce.Do(func() {
+				close(reachedBeforePrepare)
+			})
+			<-releaseBeforePrepare
+		},
+	)
+
+	reachedPrepared := make(chan struct{})
+	releasePrepared := make(chan struct{})
+	var preparedOnce sync.Once
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/afterTaskPrepared",
+		func(task *proto.Task) {
+			if task.Key != importinto.TaskKey(jobID64) {
+				return
+			}
+			preparedOnce.Do(func() {
+				close(reachedPrepared)
+			})
+			<-releasePrepared
+		},
+	)
+
+	// Let scheduler pick the task.
+	releaseScheduler()
+
+	select {
+	case <-reachedBeforePrepare:
+	case <-time.After(maxWaitTime):
+		s.T().Fatal("timeout waiting scheduler-start-before-prepare timing point")
+	}
+
+	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
+	s.Len(rows, 1)
+	// timing 2: after scheduler starts but before prepare starts.
+	s.Equal(result, rows)
+	close(releaseBeforePrepare)
+
+	select {
+	case <-reachedPrepared:
+	case <-time.After(maxWaitTime):
+		s.T().Fatal("timeout waiting after-prepare-before-business timing point")
+	}
+
+	// timing 3: after prepare finishes but before the first business step starts.
+	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
+	s.Len(rows, 1)
+	jobInfo := &importer.JobInfo{
+		ID:          jobID64,
+		TableSchema: "show_job_prepare_timing",
+		TableName:   "t",
+		TableID:     tableID,
+		CreatedBy:   createdBy,
+		Parameters: importer.ImportParameters{
+			FileLocation: fmt.Sprintf(`gs://show-job-prepare-timing-source/t.csv?endpoint=%s`, gcsEndpoint),
+			Format:       importer.DataFormatCSV,
+		},
+		SourceFileSize: 3,
+		Status:         "running",
+		Step:           importer.JobStepPreparing,
+		ErrorMessage:   "",
+	}
+	s.Equal(strconv.FormatInt(jobID64, 10), rows[0][fmap["JobID"]])
+	s.Equal(importer.JobStatusRunning, rows[0][fmap["Status"]])
+	s.Equal(importer.JobStepPreparing, rows[0][fmap["Phase"]])
+	s.Equal(createdBy, rows[0][fmap["CreatedBy"]])
+	s.EqualValues("3B", rows[0][fmap["SourceFileSize"]])
+	close(releasePrepared)
+
+	s.Require().Eventually(func() bool {
+		curRows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
+		return curRows[0][fmap["Status"]] == importer.JobStatusFinished
+	}, maxWaitTime, 500*time.Millisecond)
+	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
+	s.Len(rows, 1)
+	jobInfo.Status = importer.JobStatusFinished
+	jobInfo.Step = ""
+	jobInfo.Summary = &importer.Summary{ImportedRows: 2}
+	s.compareJobInfoWithoutTime(jobInfo, rows[0])
+	s.tk.MustQuery("SELECT * FROM t ORDER BY i").Check(testkit.Rows("1", "2"))
+}
+
+func (s *mockGCSSuite) TestPrecheckFailureOnPrepareIsNotRetried() {
+	if !kerneltype.IsNextGen() {
+		s.T().Skip("async prepare is only enabled in nextgen kernel")
+	}
+
+	s.prepareAndUseDB("prepare_precheck_no_retry")
+	s.tk.MustExec("CREATE TABLE t (i INT PRIMARY KEY);")
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "prepare-precheck-no-retry-source",
+			Name:       "t.csv",
+		},
+		Content: []byte(""),
+	})
+	// Ensure the sort bucket exists before scheduler writes prepared metadata.
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "prepare-precheck-no-retry-sort",
+			Name:       "seed",
+		},
+		Content: []byte("seed"),
+	})
+
+	importSQL := fmt.Sprintf(
+		`IMPORT INTO t FROM 'gs://prepare-precheck-no-retry-source/t.csv?endpoint=%s'
+		WITH DETACHED, cloud_storage_uri='gs://prepare-precheck-no-retry-sort/path?endpoint=%s'`,
+		gcsEndpoint,
+		gcsEndpoint,
+	)
+	result := s.tk.MustQuery(importSQL).Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+	jobID64 := int64(jobID)
+
+	s.Require().Eventually(func() bool {
+		rows := s.tk.MustQuery(fmt.Sprintf("SHOW IMPORT JOB %d", jobID)).Rows()
+		return rows[0][fmap["Status"]] == "failed" &&
+			rows[0][fmap["Phase"]] == importer.JobStepPreparing
+	}, maxWaitTime, 500*time.Millisecond)
+
+	rows := s.tk.MustQuery(fmt.Sprintf("SHOW IMPORT JOB %d", jobID)).Rows()
+	s.Len(rows, 1)
+	s.Regexp("the file is empty", rows[0][fmap["ResultMessage"]])
+
+	ctx := util.WithInternalSourceType(context.Background(), "taskManager")
+	s.Require().Eventually(func() bool {
+		task := s.getTaskByJobID(ctx, jobID64)
+		return task.State == proto.TaskStateReverted
+	}, maxWaitTime, 500*time.Millisecond)
+}
+
+func (s *mockGCSSuite) TestDetachedJobWithoutPrepareModeStillSucceeds() {
+	if !kerneltype.IsNextGen() {
+		s.T().Skip("async prepare is only enabled in nextgen kernel")
+	}
+
+	dbName := fmt.Sprintf("detached_job_without_prepare_mode_%d", time.Now().UnixNano())
+	s.prepareAndUseDB(dbName)
+	s.T().Cleanup(func() {
+		s.tk.MustExec("drop database if exists " + dbName)
+	})
+	s.tk.MustExec("CREATE TABLE t (i INT PRIMARY KEY);")
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "detached-job-without-prepare-mode-source",
+			Name:       "t.csv",
+		},
+		Content: []byte("1\n2"),
+	})
+	// Ensure the sort bucket exists before scheduler writes external metadata.
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "detached-job-without-prepare-mode-sort",
+			Name:       "seed",
+		},
+		Content: []byte("seed"),
+	})
+
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/mockDisableAsyncPrepare", "return")
+	// Block scheduler so we can verify submitted task still has no prepare mode.
+	releaseScheduler := s.blockSchedulerBeforeGetSchedulableTasks()
+	s.False(importinto.ShouldUseAsyncPrepare(&importer.Plan{CloudStorageURI: "gs://mock-bucket/mock-path"}))
+	importSQL := fmt.Sprintf(
+		`IMPORT INTO t FROM 'gs://detached-job-without-prepare-mode-source/t.csv?endpoint=%s'
+		WITH DETACHED, cloud_storage_uri='gs://detached-job-without-prepare-mode-sort/path?endpoint=%s'`,
+		gcsEndpoint,
+		gcsEndpoint,
+	)
+	result := s.tk.MustQuery(importSQL).Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+	jobID64 := int64(jobID)
+	taskKey := importinto.TaskKey(jobID64)
+	// prepare_mode is 0 and omit when marshal to JSON, so "is null" return true.
+	s.tk.MustQuery(fmt.Sprintf(
+		"select json_extract(extra_params, '$.prepare_mode') is null from mysql.tidb_global_task where task_key = '%s'",
+		taskKey,
+	)).Check(testkit.Rows("1"))
+	releaseScheduler()
+
+	var finalStatus string
+	s.Require().Eventually(func() bool {
+		rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
+		finalStatus = rows[0][fmap["Status"]].(string)
+		return finalStatus == importer.JobStatusFinished
+	}, 3*maxWaitTime, 500*time.Millisecond)
+	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
+	s.Len(rows, 1)
+	s.Equal("", rows[0][fmap["Phase"]])
+	s.tk.MustQuery("SELECT * FROM t ORDER BY i").Check(testkit.Rows("1", "2"))
 }
 
 func (s *mockGCSSuite) getTaskByJobID(ctx context.Context, jobID int64) *proto.Task {

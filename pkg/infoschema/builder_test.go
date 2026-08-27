@@ -126,7 +126,7 @@ func TestTableName2IDCaseSensitive(t *testing.T) {
 	// Build infoschema
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	builder := NewBuilder(re, schemaCacheSize, nil, NewData(), schemaCacheSize > 0)
-	err := builder.InitWithDBInfos([]*model.DBInfo{dbInfo}, nil, nil, 1)
+	err := builder.InitWithDBInfos([]*model.DBInfo{dbInfo}, nil, nil, nil, 1)
 	require.NoError(t, err)
 
 	// After InitWithDBInfos, the table should be processed and removed from TableName2ID
@@ -173,7 +173,7 @@ func TestTableName2IDCaseSensitiveMultipleTables(t *testing.T) {
 	// Build infoschema
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	builder := NewBuilder(re, schemaCacheSize, nil, NewData(), schemaCacheSize > 0)
-	err := builder.InitWithDBInfos([]*model.DBInfo{dbInfo}, nil, nil, 1)
+	err := builder.InitWithDBInfos([]*model.DBInfo{dbInfo}, nil, nil, nil, 1)
 	require.NoError(t, err)
 
 	// All entries should be deleted from TableName2ID
@@ -212,7 +212,7 @@ func TestTableName2IDWithUnloadedTables(t *testing.T) {
 	// Build infoschema
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	builder := NewBuilder(re, schemaCacheSize, nil, NewData(), schemaCacheSize > 0)
-	err := builder.InitWithDBInfos([]*model.DBInfo{dbInfo}, nil, nil, 1)
+	err := builder.InitWithDBInfos([]*model.DBInfo{dbInfo}, nil, nil, nil, 1)
 	require.NoError(t, err)
 
 	// LoadedTable should be removed from TableName2ID

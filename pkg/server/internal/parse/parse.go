@@ -92,7 +92,10 @@ func HandshakeResponseBody(ctx context.Context, packet *handshake.Response41, da
 		if data[offset] == 0x1 { // No auth data
 			offset += 2
 		} else {
-			num, null, off := util2.ParseLengthEncodedInt(data[offset:])
+			num, null, off, err := util2.ParseLengthEncodedInt(data[offset:])
+			if err != nil {
+				return mysql.ErrMalformPacket
+			}
 			offset += off
 			if !null {
 				packet.Auth = data[offset : offset+int(num)]
@@ -133,7 +136,10 @@ func HandshakeResponseBody(ctx context.Context, packet *handshake.Response41, da
 			// Defend some ill-formated packet, connection attribute is not important and can be ignored.
 			return nil
 		}
-		num, null, intOff := util2.ParseLengthEncodedInt(data[offset:])
+		num, null, intOff, err := util2.ParseLengthEncodedInt(data[offset:])
+		if err != nil {
+			return mysql.ErrMalformPacket
+		}
 		offset += intOff // Length of variable length encoded integer itself in bytes
 		if !null {
 			if num > 1<<20 { // 1 MiB hard limit

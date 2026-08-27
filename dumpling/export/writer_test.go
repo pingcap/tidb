@@ -7,12 +7,14 @@ import (
 	"database/sql/driver"
 	"os"
 	"path"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/stretchr/testify/require"
@@ -198,6 +200,74 @@ func TestWriteTableDataWithFileSize(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, expected, string(bytes))
 	}
+
+	t.Run("parquet split files should keep parquet codec suffix", func(t *testing.T) {
+		parquetDir := t.TempDir()
+		parquetConfig := defaultConfigForTest(t)
+		parquetConfig.OutputDirPath = parquetDir
+		parquetConfig.FileType = FileFormatParquetString
+		parquetConfig.FileSize = 1
+		parquetConfig.ParquetCompressType = compressedio.Gzip
+
+		parquetWriter := createTestWriter(parquetConfig, t)
+		parquetData := [][]driver.Value{
+			{"1"},
+			{"2"},
+			{"3"},
+		}
+		colInfos := []*ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
+		parquetTableIR := newMockTableIRWithColumnInfo("test", "employee", parquetData, nil, colInfos)
+
+		require.NoError(t, parquetWriter.WriteTableData(parquetTableIR, parquetTableIR, 0))
+
+		entries, err := os.ReadDir(parquetDir)
+		require.NoError(t, err)
+		require.Greater(t, len(entries), 1)
+		for _, entry := range entries {
+			require.Truef(t, strings.HasSuffix(entry.Name(), ".gz.parquet"), "unexpected file name: %s", entry.Name())
+		}
+	})
+}
+
+func TestWriteTableDataCsvWithFileSize(t *testing.T) {
+	data := [][]driver.Value{
+		{"1", "male", "bob@mail.com", "020-1234", nil},
+		{"2", "female", "sarah@mail.com", "020-1253", "healthy"},
+		{"3", "male", "john@mail.com", "020-1256", "healthy"},
+		{"4", "female", "sarah@mail.com", "020-1235", "healthy"},
+	}
+	colTypes := []string{"INT", "SET", "VARCHAR", "VARCHAR", "TEXT"}
+
+	writeCSV := func(fileSize uint64) []string {
+		dir := t.TempDir()
+		config := defaultConfigForTest(t)
+		config.OutputDirPath = dir
+		config.FileType = FileFormatCSVString
+		config.NoHeader = true
+		config.FileSize = fileSize
+		writer := createTestWriter(config, t)
+		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
+		require.NoError(t, writer.WriteTableData(tableIR, tableIR, 0))
+		entries, err := os.ReadDir(dir) // ReadDir returns entries sorted by name.
+		require.NoError(t, err)
+		contents := make([]string, 0, len(entries))
+		for _, e := range entries {
+			b, err := os.ReadFile(path.Join(dir, e.Name()))
+			require.NoError(t, err)
+			contents = append(contents, string(b))
+		}
+		return contents
+	}
+
+	// A small FileSize forces rotation on row boundaries. Concatenating the split
+	// files in name order must reproduce the single unsplit file exactly: rows
+	// are cut on boundaries, never dropped or corrupted.
+	split := writeCSV(40)
+	whole := writeCSV(UnspecifiedSize)
+
+	require.Len(t, whole, 1)
+	require.Greater(t, len(split), 1, "small FileSize should split into multiple files")
+	require.Equal(t, whole[0], strings.Join(split, ""))
 }
 
 func TestWriteTableDataWithFileSizeAndRows(t *testing.T) {

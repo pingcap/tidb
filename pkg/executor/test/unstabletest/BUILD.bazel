@@ -16,6 +16,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/util",
         "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/intest",
         "//pkg/util/memory",
         "//pkg/util/skip",
         "@com_github_stretchr_testify//require",

@@ -238,6 +238,8 @@ const (
 	CollationLatin1 = "latin1_bin"
 	// CollationGBKBin is the default collation for CharsetGBK when new collation is disabled.
 	CollationGBKBin = "gbk_bin"
+	// CollationUTF8MB40900Bin is the utf8mb4_0900_bin collation (MySQL 8.0 binary collation for utf8mb4).
+	CollationUTF8MB40900Bin = "utf8mb4_0900_bin"
 	// CollationGBKChineseCI is the default collation for CharsetGBK when new collation is enabled.
 	CollationGBKChineseCI = "gbk_chinese_ci"
 	// CollationGB18030Bin is the default collation for CharsetGB18030 when new collation is disabled.

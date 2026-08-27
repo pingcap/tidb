@@ -82,6 +82,14 @@ type ParserConfig struct {
 	SkipPositionRecording       bool
 }
 
+const (
+	// maxASTDepthStmtOverhead leaves room for statement wrapper nodes on the
+	// visitor path, for example SelectStmt -> FieldList -> SelectField.
+	maxASTDepthStmtOverhead = 64
+	// maxASTDepth bounds user-controlled AST nesting before recursive visitors run.
+	maxASTDepth = maxParenthesesDepth + maxASTDepthStmtOverhead
+)
+
 //revive:enable:exported
 
 // Parser represents a parser instance. Some temporary objects are stored in it to reduce object allocation during Parse function.
@@ -201,6 +209,9 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 		return nil, warns, errors.Trace(errs[0])
 	}
 	for _, stmt := range parser.result {
+		if err := checkASTDepth(stmt); err != nil {
+			return nil, warns, errors.Trace(err)
+		}
 		ast.SetFlag(stmt)
 	}
 	return parser.result, warns, nil
@@ -214,6 +225,34 @@ func (parser *Parser) Parse(sql, charset, collation string) (stmt []ast.StmtNode
 
 func (parser *Parser) lastErrorAsWarn() {
 	parser.lexer.lastErrorAsWarn()
+}
+
+func checkASTDepth(stmt ast.StmtNode) error {
+	checker := astDepthChecker{}
+	_, _ = stmt.Accept(&checker)
+	if checker.exceeded {
+		return ErrParse.GenWithStackByArgs("AST nesting depth exceeds maximum", strconv.Itoa(maxASTDepth))
+	}
+	return nil
+}
+
+type astDepthChecker struct {
+	depth    int
+	exceeded bool
+}
+
+func (c *astDepthChecker) Enter(in ast.Node) (ast.Node, bool) {
+	c.depth++
+	if c.depth > maxASTDepth {
+		c.exceeded = true
+		return in, true
+	}
+	return in, false
+}
+
+func (c *astDepthChecker) Leave(in ast.Node) (ast.Node, bool) {
+	c.depth--
+	return in, !c.exceeded
 }
 
 // ParseOneStmt parses a query and returns an ast.StmtNode.

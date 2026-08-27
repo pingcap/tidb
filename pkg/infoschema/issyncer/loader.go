@@ -253,6 +253,11 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+
+	maskingPolicies, err := l.fetchMaskingPolicies(m)
+	if err != nil {
+		return nil, false, currentSchemaVersion, nil, err
+	}
 	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
 
 	data := l.infoCache.Data
@@ -267,7 +272,7 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	}
 	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, data, useV2).
 		WithCrossKS(l.crossKS)
-	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, maskingPolicies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -476,6 +481,12 @@ func (*Loader) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 		return nil, err
 	}
 	return allResourceGroups, nil
+}
+
+func (*Loader) fetchMaskingPolicies(_ meta.Reader) ([]*model.MaskingPolicyInfo, error) {
+	// Masking policies are loaded lazily from mysql.tidb_masking_policy in infoschema.
+	// Keep the loader API shape unchanged for minimal phase4 churn.
+	return nil, nil
 }
 
 func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader, schemaCacheSize uint64) error {

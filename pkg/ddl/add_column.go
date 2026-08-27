@@ -54,7 +54,7 @@ import (
 func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
-		ver, err = onDropColumn(jobCtx, job)
+		ver, err = w.onDropColumn(jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -218,6 +218,12 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 		if option.Tp == ast.ColumnOptionGenerated {
 			if err := checkIllegalFn4Generated(specNewColumn.Name.Name.L, typeColumn, option.Expr); err != nil {
 				return nil, errors.Trace(err)
+			}
+			if err := checkEmbedTextGeneratedColumn(specNewColumn.Name.Name.L, option.Expr, option.Stored); err != nil {
+				return nil, errors.Trace(err)
+			}
+			if option.Stored && expression.IsEmbedTextFuncCall(option.Expr) {
+				return nil, dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("adding a generated column using EMBED_TEXT() through ALTER TABLE")
 			}
 
 			if option.Stored {

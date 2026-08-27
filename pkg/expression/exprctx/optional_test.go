@@ -54,6 +54,7 @@ func TestOptionalPropKeySet(t *testing.T) {
 	// add all other keys
 	keySet4 = keySet3.
 		Add(OptPropSessionVars).
+		Add(OptPropSessionContext).
 		Add(OptPropInfoSchema).
 		Add(OptPropKVStore).
 		Add(OptPropSQLExecutor).

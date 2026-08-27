@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -229,52 +230,153 @@ func TestSchemaImporter(t *testing.T) {
 	})
 
 	t.Run("view: get existing schema err", func(t *testing.T) {
+		fileName := "test02.v-schema-view.sql"
+		require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), []byte("create view v as select 1;"), 0o644))
 		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
 			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01").AddRow("test02"))
-		mock.ExpectQuery("VIEWS WHERE TABLE_SCHEMA = 'test02'").
+		mock.ExpectQuery("^SELECT TABLE_NAME, TABLE_TYPE FROM information_schema\\.TABLES WHERE TABLE_SCHEMA = 'test02'$").
 			WillReturnError(errors.New("non retryable error"))
 		dbMetas := []*MDDatabaseMeta{
 			{Name: "test01"},
-			{Name: "test02", Views: []*MDTableMeta{{DB: "test02", Name: "v"}}},
+			{Name: "test02", Views: []*MDTableMeta{{DB: "test02", Name: "v", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileName}}}}},
 		}
 		require.ErrorContains(t, importer.Run(ctx, dbMetas), "non retryable error")
 		require.NoError(t, mock.ExpectationsWereMet())
+		require.NoError(t, os.Remove(path.Join(tempDir, fileName)))
 	})
 
 	t.Run("view: fail on create", func(t *testing.T) {
-		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
-			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01").AddRow("test02"))
-		mock.ExpectQuery("VIEWS WHERE TABLE_SCHEMA = 'test02'").
-			WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME"}))
-		fileNameV0 := "empty-file.sql"
 		fileNameV1 := "invalid-schema.sql"
 		fileNameV2 := "test02.v2-schema-view.sql"
-		require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameV0), []byte(""), 0o644))
 		require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameV1), []byte("xxxx;"), 0o644))
 		require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameV2), []byte("create view v2 as select * from t;"), 0o644))
 		dbMetas := []*MDDatabaseMeta{
 			{Name: "test01"},
 			{Name: "test02", Views: []*MDTableMeta{
-				{DB: "test02", Name: "V0", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV0}}},
 				{DB: "test02", Name: "v1", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV1}}},
 				{DB: "test02", Name: "V2", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV2}}}}},
 		}
 		require.ErrorContains(t, importer.Run(ctx, dbMetas), `line 1 column 4 near "xxxx;"`)
 		require.NoError(t, mock.ExpectationsWereMet())
 
-		// create view v2 downstream manually as workaround
+		// skip v1 because it already exists downstream and create v2 in dependency order
+		fileNameValidV1 := "test02.v1-schema-view.sql"
+		require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameValidV1), []byte("create view v1 as select * from t;"), 0o644))
+		validViews := []*MDDatabaseMeta{
+			{Name: "test01"},
+			{Name: "test02", Views: []*MDTableMeta{
+				{DB: "test02", Name: "v1", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameValidV1}}},
+				{DB: "test02", Name: "V2", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV2}}},
+			}},
+		}
 		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
 			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01").AddRow("test02"))
-		mock.ExpectQuery("VIEWS WHERE TABLE_SCHEMA = 'test02'").
-			WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME"}).AddRow("V1"))
+		mock.ExpectQuery("^SELECT TABLE_NAME, TABLE_TYPE FROM information_schema\\.TABLES WHERE TABLE_SCHEMA = 'test02'$").
+			WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME", "TABLE_TYPE"}).
+				AddRow("t", "BASE TABLE").
+				AddRow("v1", "VIEW"))
 		mock.ExpectExec("VIEW `test02`.`V2` AS SELECT").
 			WillReturnResult(sqlmock.NewResult(0, 0))
-		require.NoError(t, importer.Run(ctx, dbMetas))
+		require.NoError(t, importer.Run(ctx, validViews))
 		require.NoError(t, mock.ExpectationsWereMet())
-		require.NoError(t, os.Remove(path.Join(tempDir, fileNameV0)))
 		require.NoError(t, os.Remove(path.Join(tempDir, fileNameV1)))
 		require.NoError(t, os.Remove(path.Join(tempDir, fileNameV2)))
+		require.NoError(t, os.Remove(path.Join(tempDir, fileNameValidV1)))
 	})
+
+	t.Run("view: skip existing view with different case", func(t *testing.T) {
+		fileNameV2 := "test03.V2-schema-view.sql"
+		require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameV2), []byte("create view V2 as select * from t;"), 0o644))
+		dbMetas := []*MDDatabaseMeta{
+			{Name: "test03", Tables: []*MDTableMeta{{DB: "test03", Name: "t"}}},
+			{Name: "test03", Views: []*MDTableMeta{
+				{DB: "test03", Name: "V2", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV2}}},
+			}},
+		}
+
+		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
+			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test03"))
+		mock.ExpectQuery("SHOW CREATE TABLE `test03`.`t`").
+			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("t", "CREATE TABLE `t` (a int);"))
+		mock.ExpectQuery("^SELECT TABLE_NAME, TABLE_TYPE FROM information_schema\\.TABLES WHERE TABLE_SCHEMA = 'test03'$").
+			WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME", "TABLE_TYPE"}).
+				AddRow("t", "BASE TABLE").
+				AddRow("V2", "VIEW"))
+
+		require.NoError(t, importer.Run(ctx, dbMetas))
+		require.NoError(t, mock.ExpectationsWereMet())
+		require.NoError(t, os.Remove(path.Join(tempDir, fileNameV2)))
+	})
+}
+
+func TestNewSchemaImportPlan(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	mock.MatchExpectationsInOrder(false)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, mock.ExpectationsWereMet())
+		_ = db.Close()
+	})
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	store, err := objstore.NewLocalStorage(tempDir)
+	require.NoError(t, err)
+
+	fileNameV1 := "test.v1-schema-view.sql"
+	fileNameV2 := "test.v2-schema-view.sql"
+	require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameV1), []byte("create view v1 as select * from t;"), 0o644))
+	require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameV2), []byte("create view v2 as select * from v1;"), 0o644))
+
+	plan, err := NewSchemaImportPlan(ctx, store, mysql.SQLMode(0), []*MDDatabaseMeta{
+		{
+			Name: "test",
+			Views: []*MDTableMeta{
+				{DB: "test", Name: "v1", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV1}}},
+				{DB: "test", Name: "v2", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV2}}},
+			},
+			Tables: []*MDTableMeta{
+				{DB: "test", Name: "t", charSet: "auto"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, plan.viewPlan)
+	require.Len(t, plan.viewPlan.ordered, 2)
+	require.Equal(t, "v1", plan.viewPlan.ordered[0].key.Name)
+	require.Equal(t, "v2", plan.viewPlan.ordered[1].key.Name)
+	require.Empty(t, plan.viewPlan.ordered[0].externalDeps)
+}
+
+func TestLoaderSetupDefersViewSchemaValidationUntilRun(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	store, err := objstore.NewLocalStorage(tempDir)
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "db-schema-create.sql"), []byte("CREATE DATABASE db;"), 0o644))
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "db.v1-schema-view.sql"), nil, 0o644))
+
+	cfg := LoaderConfig{
+		SourceURL:        "file://" + filepath.ToSlash(tempDir),
+		CharacterSet:     "auto",
+		Filter:           []string{"*.*"},
+		DefaultFileRules: true,
+	}
+
+	mdl, err := NewLoaderWithStore(ctx, cfg, store)
+	require.NoError(t, err)
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, mock.ExpectationsWereMet())
+		_ = db.Close()
+	})
+	importer := NewSchemaImporter(log.Logger{Logger: zap.NewExample()}, mysql.SQLMode(0), db, store, 1)
+
+	err = importer.Run(ctx, mdl.GetDatabases())
+	require.ErrorContains(t, err, "missing create view statement for `db`.`v1`")
 }
 
 func TestSchemaImporterManyTables(t *testing.T) {
@@ -305,7 +407,7 @@ func TestSchemaImporterManyTables(t *testing.T) {
 		for j := range 50 {
 			tblName := fmt.Sprintf("t%03d", j)
 			fileName := fmt.Sprintf("%s.%s-schema.sql", dbName, tblName)
-			require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), fmt.Appendf(nil, "CREATE TABLE %s(a int);", tblName), 0o644))
+			require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), []byte(fmt.Sprintf("CREATE TABLE %s(a int);", tblName)), 0o644))
 			mock.ExpectExec(fmt.Sprintf("CREATE TABLE IF NOT EXISTS `%s`.`%s`", dbName, tblName)).
 				WillReturnResult(sqlmock.NewResult(0, 0))
 			dbMeta.Tables = append(dbMeta.Tables, &MDTableMeta{
@@ -420,4 +522,65 @@ func TestCreateTableIfNotExistsStmt(t *testing.T) {
 			SET character_set_results = @PREV_CHARACTER_SET_RESULTS;
 			SET collation_connection = @PREV_COLLATION_CONNECTION;
 		`, "m"))
+}
+
+func TestSchemaImporterImportsViewsInDependencyOrderAfterPlaceholderPrune(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, mock.ExpectationsWereMet())
+		_ = db.Close()
+	})
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	store, err := objstore.NewLocalStorage(tempDir)
+	require.NoError(t, err)
+	logger := log.Logger{Logger: zap.NewExample()}
+	importer := NewSchemaImporter(logger, mysql.SQLMode(0), db, store, 1)
+
+	fileNameT := "test.t-schema.sql"
+	fileNameV1View := "test.v1-schema-view.sql"
+	fileNameV2View := "test.v2-schema-view.sql"
+
+	require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameT), []byte("CREATE TABLE t(id INT PRIMARY KEY);"), 0o644))
+	require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameV1View), []byte(`
+/*!40101 SET NAMES binary*/;
+DROP TABLE IF EXISTS v1;
+DROP VIEW IF EXISTS v1;
+CREATE ALGORITHM=UNDEFINED DEFINER=`+"`root`@`%`"+` SQL SECURITY DEFINER VIEW v1 (`+"`id`"+`) AS SELECT `+"`id`"+` FROM `+"`test`.`t`"+`;
+`), 0o644))
+	require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameV2View), []byte(`
+/*!40101 SET NAMES binary*/;
+DROP TABLE IF EXISTS v2;
+DROP VIEW IF EXISTS v2;
+CREATE ALGORITHM=UNDEFINED DEFINER=`+"`root`@`%`"+` SQL SECURITY DEFINER VIEW v2 (`+"`id`"+`) AS SELECT `+"`id`"+` FROM `+"`test`.`v1`"+`;
+`), 0o644))
+
+	dbMetas := []*MDDatabaseMeta{
+		{
+			Name: "test",
+			Tables: []*MDTableMeta{
+				{DB: "test", Name: "t", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameT}}},
+			},
+			Views: []*MDTableMeta{
+				{DB: "test", Name: "v1", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV1View}}},
+				{DB: "test", Name: "v2", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV2View}}},
+			},
+		},
+	}
+
+	mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
+		sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test"))
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `test`.`t`").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("^SELECT TABLE_NAME, TABLE_TYPE FROM information_schema\\.TABLES WHERE TABLE_SCHEMA = 'test'$").
+		WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME", "TABLE_TYPE"}).
+			AddRow("t", "BASE TABLE"))
+	mock.ExpectExec("CREATE ALGORITHM = UNDEFINED DEFINER = `root`@`%` SQL SECURITY DEFINER VIEW `test`.`v1`").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CREATE ALGORITHM = UNDEFINED DEFINER = `root`@`%` SQL SECURITY DEFINER VIEW `test`.`v2`").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	require.NoError(t, importer.Run(ctx, dbMetas))
 }

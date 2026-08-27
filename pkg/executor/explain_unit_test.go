@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -44,6 +45,30 @@ type mockErrorOperator struct {
 	exec.BaseExecutor
 	toPanic bool
 	closed  bool
+}
+
+func TestInsertRowsColMultiplyRUV2Metrics(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx.StmtType = "Insert"
+	ctx.GetSessionVars().RUV2Metrics = execdetails.NewRUV2Metrics()
+
+	insertValues := &InsertValues{
+		BaseExecutor:              exec.NewBaseExecutor(ctx, nil, 0),
+		rowCount:                  4,
+		recordRUV2RowsColMultiply: true,
+		insertColumns:             make([]*table.Column, 3),
+	}
+	require.Equal(t, int64(12), insertValues.rowsColMultiply())
+
+	insertValues.recordRowsColMultiply2RUV2Metrics()
+	require.Equal(t, int64(12), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
+
+	insertValues.recordRowsColMultiply2RUV2Metrics()
+	require.Equal(t, int64(12), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
+
+	insertValues.rowCount = 5
+	insertValues.recordRowsColMultiply2RUV2Metrics()
+	require.Equal(t, int64(15), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
 }
 
 type mockEmptyOperator struct {
@@ -138,10 +163,9 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 	require.EqualError(t, err, "next panic, close error")
 	require.True(t, mockOpr.closed)
 
-	t.Run("insert ru snapshot is complete before finish and remains idempotent", func(t *testing.T) {
+	t.Run("insert ru snapshot is complete before finish", func(t *testing.T) {
 		ctx := mock.NewContext()
 		ctx.GetSessionVars().StmtCtx.StmtType = "Insert"
-		ctx.GetSessionVars().StmtCtx.AddAffectedRows(5)
 		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 
 		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
@@ -161,17 +185,17 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 			analyzeExec: analyzeExec,
 		}
 
+		recordInsertRowsColMultiply2Metrics(ctx.GetSessionVars(), 15)
 		require.NoError(t, explainExec.executeAnalyzeExec(goCtx))
 
 		metrics := ctx.GetSessionVars().RUV2Metrics
-		require.Equal(t, int64(5), metrics.ExecutorL5InsertRows())
+		require.Equal(t, int64(15), metrics.ExecutorL5InsertRows())
 		// DefaultRUVersion is v1 (no domain in unit test), so RU stats show RRU+WRU format.
 		// Verify the stats are registered and contain "RU:" prefix.
 		rootStatsStr := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(targetPlan.ID()).String()
 		require.Contains(t, rootStatsStr, "RU:")
 
-		recordInsertRows2Metrics(ctx.GetSessionVars())
-		require.Equal(t, int64(5), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
+		require.Equal(t, int64(15), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
 	})
 
 	t.Run("explain analyze drains pending raw ruv2 before snapshot", func(t *testing.T) {

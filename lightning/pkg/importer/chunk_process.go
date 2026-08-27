@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
+	"github.com/pingcap/tidb/pkg/dumpformat/parsedef"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -85,7 +87,7 @@ func openParser(
 	tblInfo *model.TableInfo,
 ) (mydump.Parser, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, compressedio.DecompressConfig{
+	openReader, reader, err := mydump.NewReaderOpener(ctx, &chunk.FileMeta, store, compressedio.DecompressConfig{
 		ZStdDecodeConcurrency: 1,
 	})
 	if err != nil {
@@ -108,7 +110,9 @@ func openParser(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path, chunk.FileMeta.ParquetMeta)
+		parser, err = parquetfile.NewParser(
+			ctx, store, openReader, chunk.FileMeta.Path, chunk.FileMeta.FileSize, chunk.FileMeta.ParquetMeta,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -526,7 +530,7 @@ func (cr *chunkProcessor) encodeLoop(
 // If the index is not found (which is not expected), an empty string will be returned.
 func (cr *chunkProcessor) getDuplicateMessage(
 	kvEncoder encode.Encoder,
-	lastRow mydump.Row,
+	lastRow parsedef.Row,
 	lastOffset int64,
 	encodedIdxID []byte,
 	tableInfo *model.TableInfo,

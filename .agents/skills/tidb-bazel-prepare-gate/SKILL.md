@@ -20,8 +20,8 @@ git status --short
 git diff --name-status
 git diff --name-status --cached
 git ls-files --others --exclude-standard
-git diff -U0 -- '*_test.go'
-git diff -U0 --cached -- '*_test.go'
+git diff -U0 -- '*.go'
+git diff -U0 --cached -- '*.go'
 ```
 
 ## Decision Rules
@@ -29,14 +29,25 @@ git diff -U0 --cached -- '*_test.go'
 Trigger conditions are defined in `AGENTS.md` -> `Build Flow` -> `When make bazel_prepare is required`.
 Compare the output from the commands above against those conditions.
 
-For the top-level test-function trigger in existing `*_test.go` files, inspect added lines in the
-`git diff -U0` output for patterns like:
+For the top-level test-function trigger in existing `*_test.go` files, inspect added lines in
+`git diff -U0 -- '*.go'` and `git diff -U0 --cached -- '*.go'` output for patterns like:
 
 ```diff
 +func TestXxx(t *testing.T) {
 ```
 
 and treat that as requiring `make bazel_prepare`.
+
+For import-section changes in existing Go files, inspect `git diff -U0 -- '*.go'` and
+`git diff -U0 --cached -- '*.go'` for added/removed import lines, for example:
+
+```diff
++import (
+-import "fmt"
++	"context"
+```
+
+and treat those changes as requiring `make bazel_prepare`.
 
 If any condition matches, run `make bazel_prepare`.
 If none of the rules match, continue without `make bazel_prepare` and report the evidence.

@@ -107,11 +107,18 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return GlobalMemoryLimitTuner.calcMemoryLimit(fallbackPercentage) == debug.SetMemoryLimit(-1)
 	}, 5*time.Second, 100*time.Millisecond)
-	gcNum = getNowGCNum()
+	memoryLimitGCTotal := memory.MemoryLimitGCTotal.Load()
 	memory100mb := allocator.alloc(100 << 20)
-	require.Eventually(t, func() bool {
-		return gcNum == getNowGCNum()
-	}, 5*time.Second, 100*time.Millisecond) // No GC
+	// This window used to assert "no GC at all" via NumGC, but that is inherently
+	// timing-sensitive: unrelated background GCs (or test harness GCs) can happen
+	// here without violating the intent of this test.
+	//
+	// What we really need to assert is: while MemoryLimit is in fallback mode,
+	// allocating more memory should not immediately cause an extra *memory-limit*
+	// GC/adjust cycle.
+	require.Never(t, func() bool {
+		return memoryLimitGCTotal != memory.MemoryLimitGCTotal.Load()
+	}, 500*time.Millisecond, 100*time.Millisecond)
 
 	allocator.free(memory210mb)
 	allocator.free(memory100mb)
@@ -247,6 +254,9 @@ func TestIssue48741(t *testing.T) {
 }
 
 func TestSetMemoryLimit(t *testing.T) {
+	originServerMemoryLimit := memory.ServerMemoryLimit.Load()
+	defer memory.ServerMemoryLimit.Store(originServerMemoryLimit)
+
 	GlobalMemoryLimitTuner.DisableAdjustMemoryLimit()
 	memory.ServerMemoryLimit.Store(1 << 30)   // 1GB
 	GlobalMemoryLimitTuner.SetPercentage(0.8) // 1GB * 80% = 800MB
@@ -255,4 +265,11 @@ func TestSetMemoryLimit(t *testing.T) {
 	GlobalMemoryLimitTuner.EnableAdjustMemoryLimit()
 	GlobalMemoryLimitTuner.UpdateMemoryLimit()
 	require.Equal(t, int64(1<<30*80/100), debug.SetMemoryLimit(-1))
+
+	memory.SetupGlobalMemArbitratorForTest(t.TempDir())
+	defer memory.CleanupGlobalMemArbitratorForTest()
+
+	require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModePriorityName))
+	require.Equal(t, int64(1<<30*95/100), GlobalMemoryLimitTuner.calcMemoryLimit(0.95))
+	require.Equal(t, int64(1<<30), GlobalMemoryLimitTuner.calcMemoryLimit(1.1))
 }

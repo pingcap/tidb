@@ -404,7 +404,7 @@ insert into t_prefix_len (short_prefix, long_prefix) values
 explain format='brief' select  /*+ force_index(t_prefix_len, idx_short) */  * from t_prefix_len order by short_prefix limit 3;
 
 # Long prefix (50 bytes)
-explain format='brief' select  /*+ force_index(t_prefix_len, long_prefix) */  * from t_prefix_len order by long_prefix limit 3;
+explain format='brief' select  /*+ force_index(t_prefix_len, idx_long) */  * from t_prefix_len order by long_prefix limit 3;
 
 # ==========================================
 # Section 7.4: Verify actual query results are correct

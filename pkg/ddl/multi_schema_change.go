@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -28,6 +29,19 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
+
+// updateParentJobFromProxy copies state discovered while executing a temporary
+// proxy job that belongs to the durable parent rather than the SubJob. ToProxyJob
+// gives each proxy a copy of the parent's ReorgMeta, and FromProxyJob does not
+// copy UseCloudStorage back. Without this step, later proxies can revert to local
+// sort, including after a DDL owner failover.
+// This cannot reconstruct a selection made by an older binary before the field
+// was copied to the parent, because neither the parent nor SubJob persists it.
+func updateParentJobFromProxy(parentJob, proxyJob *model.Job) {
+	if parentJob.ReorgMeta != nil && proxyJob.ReorgMeta != nil && proxyJob.ReorgMeta.UseCloudStorage {
+		parentJob.ReorgMeta.UseCloudStorage = true
+	}
+}
 
 func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	jobCtx.inInnerRunOneJobStep = true
@@ -46,11 +60,13 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				}
 				proxyJob := sub.ToProxyJob(job, i)
 				ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
+				updateParentJobFromProxy(job, &proxyJob)
 				err = handleRollbackException(err, proxyJob.Error)
 				if err != nil {
 					return ver, err
 				}
 				sub.FromProxyJob(&proxyJob, ver)
+				job.ResumeReason = proxyJob.ResumeReason
 				return ver, nil
 			}
 			// The last rollback/cancelling sub-job is done.
@@ -67,9 +83,15 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				// If a sub job is finished here, it should be a noop job.
 				continue
 			}
+			prevSubState := sub.State
 			proxyJob := sub.ToProxyJob(job, i)
 			ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
+			updateParentJobFromProxy(job, &proxyJob)
 			sub.FromProxyJob(&proxyJob, ver)
+			job.ResumeReason = proxyJob.ResumeReason
+			if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {
+				return ver, nil
+			}
 			handleRevertibleException(job, sub, proxyJob.Error)
 			return ver, err
 		}
@@ -96,16 +118,24 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				continue
 			}
 			subJobs[i] = *sub
+			prevSubState := sub.State
 			proxyJob := sub.ToProxyJob(job, i)
 			if schemaVersionGenerated {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
 			}
 			proxyJobVer, _, err := w.runOneJobStep(jobCtx, &proxyJob)
+			failpoint.InjectCall("beforeBatchedMultiSchemaParentJobUpdate", job, &proxyJob)
+			updateParentJobFromProxy(job, &proxyJob)
+			failpoint.InjectCall("afterBatchedMultiSchemaParentJobUpdate", job, &proxyJob)
 			if !schemaVersionGenerated && proxyJobVer != 0 {
 				schemaVersionGenerated = true
 				ver = proxyJobVer
 			}
 			sub.FromProxyJob(&proxyJob, proxyJobVer)
+			job.ResumeReason = proxyJob.ResumeReason
+			if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {
+				return ver, nil
+			}
 			if err != nil || proxyJob.Error != nil {
 				for j := i - 1; j >= 0; j-- {
 					// TODO if some sub-job is finished, this will empty them
@@ -148,12 +178,47 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		if sub.IsFinished() {
 			continue
 		}
+		prevSubState := sub.State
 		proxyJob := sub.ToProxyJob(job, i)
 		ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
+		updateParentJobFromProxy(job, &proxyJob)
 		sub.FromProxyJob(&proxyJob, ver)
+		job.ResumeReason = proxyJob.ResumeReason
+		if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {
+			return ver, nil
+		}
 		return ver, err
 	}
 	return finishMultiSchemaJob(job, metaMut)
+}
+
+func promoteProxyKVDiskFullPause(parentJob *model.Job, subJob *model.SubJob, prevSubState model.JobState, proxyJob *model.Job) bool {
+	if !proxyJob.IsPausingOrPausedBySystemForKVDiskFull() {
+		return false
+	}
+
+	// Persist the durable pause on the parent multi-schema job so the resume
+	// path can use the same state machine as a single add-index job. Keep the
+	// sub-job on its pre-pause state, otherwise the resumed proxy job would be
+	// recreated as paused/pausing and get stuck in processJobPausingRequest.
+	subJob.State = prevSubState
+	parentJob.State = proxyJob.State
+	parentJob.AdminOperator = proxyJob.AdminOperator
+	parentJob.ClearResumeReason()
+	if proxyJob.PauseReason != nil {
+		parentJob.SetPauseReason(proxyJob.PauseReason.Type, proxyJob.PauseReason.Message)
+	} else {
+		parentJob.ClearPauseReason()
+	}
+	parentJob.Error = proxyJob.Error
+	if parentJob.Error == nil {
+		message := ""
+		if parentJob.PauseReason != nil {
+			message = parentJob.PauseReason.Message
+		}
+		parentJob.Error = toTError(dbterror.ErrDDLAutoPausedByKVDiskFull.FastGenByArgs(parentJob.ID, message))
+	}
+	return true
 }
 
 func handleRevertibleException(job *model.Job, subJob *model.SubJob, err *terror.Error) {
@@ -267,7 +332,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 	case model.ActionAlterIndexVisibility:
 		idxName := job.JobArgs.(*model.AlterIndexVisibilityArgs).IndexName
 		info.AlterIndexes = append(info.AlterIndexes, idxName)
-	case model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate:
+	case model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate, model.ActionModifyEngineAttribute:
 	case model.ActionAddForeignKey:
 		fkInfo := job.JobArgs.(*model.AddForeignKeyArgs).FkInfo
 		info.AddForeignKeys = append(info.AddForeignKeys, model.AddForeignKeyInfo{
@@ -426,7 +491,7 @@ func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.T
 	}
 
 	for _, fk := range info.AddForeignKeys {
-		if droppingIdx := model.FindIndexByColumns(tbInfo, droppingIndexes, fk.Cols...); droppingIdx != nil && model.FindIndexByColumns(tbInfo, remainIndexes, fk.Cols...) == nil {
+		if droppingIdx := model.FindIndexByColumnsForForeignKey(tbInfo, droppingIndexes, fk.Cols...); droppingIdx != nil && model.FindIndexByColumnsForForeignKey(tbInfo, remainIndexes, fk.Cols...) == nil {
 			return dbterror.ErrDropIndexNeededInForeignKey.GenWithStackByArgs(droppingIdx.Name)
 		}
 	}

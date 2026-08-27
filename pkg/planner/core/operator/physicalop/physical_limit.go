@@ -114,8 +114,11 @@ func (p *PhysicalLimit) MemoryUsage() (sum int64) {
 
 	sum = p.PhysicalSchemaProducer.MemoryUsage() +
 		size.SizeOfUint64*2 + // Offset, Count
-		size.SizeOfInt64 + // PrefixColID
+		size.SizeOfPointer + // PrefixCol
 		size.SizeOfInt // PrefixLen
+	if p.PrefixCol != nil {
+		sum += p.PrefixCol.MemoryUsage()
+	}
 	return
 }
 

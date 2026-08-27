@@ -589,7 +589,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_SHA2:
 		f = &builtinSHA2Sig{base}
 	case tipb.ScalarFuncSig_Uncompress:
-		f = &builtinUncompressSig{base}
+		f = &builtinUncompressSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UncompressedLength:
 		f = &builtinUncompressedLengthSig{base}
 	case tipb.ScalarFuncSig_Database:
@@ -1158,6 +1158,13 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinVecL2NormSig{base}
 	case tipb.ScalarFuncSig_FTSMatchWord:
 		f = &builtinFtsMatchWordSig{base}
+	case tipb.ScalarFuncSig_FTSMatchExpression:
+		// NOTE: builtinFtsMysqlMatchAgainstSig.modifier is not serialized in the
+		// protobuf encoding because the tipb schema has no FTS metadata message.
+		// The reconstructed sig therefore uses the zero modifier value
+		// (FulltextSearchModifierNaturalLanguageMode). TiFlash must derive the
+		// search mode from other context when executing this expression.
+		f = &builtinFtsMysqlMatchAgainstSig{baseBuiltinFunc: base}
 	default:
 		e = ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
 		return nil, e

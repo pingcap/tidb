@@ -194,8 +194,20 @@ func TestWithTaskManager(t *testing.T) {
 	require.NoError(t, err)
 	defer p.ReleaseAndWait()
 	fnChan := make(chan func(), 10)
+	defer close(fnChan)
 	require.NoError(t, p.RunWithConcurrency(fnChan, 2), "submit when pool is not full shouldn't return error")
-	time.Sleep(100 * time.Microsecond)
+	workerReady := make(chan struct{})
+	fnChan <- func() {
+		close(workerReady)
+	}
+	require.Eventually(t, func() bool {
+		select {
+		case <-workerReady:
+			return true
+		default:
+			return false
+		}
+	}, 1*time.Second, 10*time.Millisecond)
 	require.Equal(t, int32(1), p.Running())
 
 	// increase the concurrency
@@ -210,5 +222,4 @@ func TestWithTaskManager(t *testing.T) {
 	require.Eventually(t, func() bool { return p.Running() == 2 }, 1*time.Second, 200*time.Millisecond)
 	p.Tune(1)
 	require.Eventually(t, func() bool { return p.Running() == 1 }, 1*time.Second, 200*time.Millisecond)
-	close(fnChan)
 }

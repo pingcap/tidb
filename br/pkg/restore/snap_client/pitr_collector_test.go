@@ -4,7 +4,10 @@ package snapclient
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -26,6 +30,46 @@ func tmp(t *testing.T) *objstore.LocalStorage {
 	require.NoError(t, err)
 	s.IgnoreEnoentForDelete = true
 	return s
+}
+
+type capturedLockWrite struct {
+	path string
+	meta objstore.LockMeta
+}
+
+type lockCaptureStorage struct {
+	storeapi.Storage
+	mu     sync.Mutex
+	writes []capturedLockWrite
+}
+
+func (s *lockCaptureStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	s.captureLockWrite(name, data)
+	return s.Storage.WriteFile(ctx, name, data)
+}
+
+func (s *lockCaptureStorage) captureLockWrite(name string, data []byte) {
+	if !strings.HasPrefix(name, "v1/LOCK") && !strings.HasPrefix(name, "v1/APPEND_LOCK") {
+		return
+	}
+
+	var meta objstore.LockMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return
+	}
+	if meta.OwnerID == "" || meta.LockType == "" {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.writes = append(s.writes, capturedLockWrite{path: name, meta: meta})
+}
+
+func (s *lockCaptureStorage) capturedLockWrites() []capturedLockWrite {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.writes)
 }
 
 type pitrCollectorT struct {
@@ -85,13 +129,14 @@ func (p *pitrCollectorT) MarkSuccess() {
 
 func (p *pitrCollectorT) Reopen() {
 	newColl := &pitrCollector{
-		enabled:        p.coll.enabled,
-		taskStorage:    p.coll.taskStorage,
-		restoreStorage: p.coll.restoreStorage,
-		name:           fmt.Sprintf("test-%s-%d", p.t.Name(), p.tsoCnt.Add(1)),
-		restoreUUID:    p.coll.restoreUUID,
-		tso:            p.coll.tso,
-		restoreSuccess: p.coll.restoreSuccess,
+		enabled:          p.coll.enabled,
+		taskStorage:      p.coll.taskStorage,
+		restoreStorage:   p.coll.restoreStorage,
+		name:             fmt.Sprintf("test-%s-%d", p.t.Name(), p.tsoCnt.Add(1)),
+		restoreUUID:      p.coll.restoreUUID,
+		operationContext: p.coll.operationContext,
+		tso:              p.coll.tso,
+		restoreSuccess:   p.coll.restoreSuccess,
 	}
 	p.success.Store(false)
 	p.coll = newColl
@@ -126,13 +171,17 @@ func (p pitrCollectorT) RequireRewrite(extBk backuppb.IngestedSSTs, rules ...uti
 func newPiTRCollForTest(t *testing.T) pitrCollectorT {
 	taskStorage := tmp(t)
 	restoreStorage := tmp(t)
+	opCtx, err := operation.NewContext("test pitr collector")
+	require.NoError(t, err)
+	opCtx.SetHintField("restore_id", "789")
 
 	coll := &pitrCollector{
-		enabled:        true,
-		taskStorage:    taskStorage,
-		restoreStorage: restoreStorage,
-		name:           "test-" + t.Name(),
-		restoreUUID:    uuid.New(),
+		enabled:          true,
+		taskStorage:      taskStorage,
+		restoreStorage:   restoreStorage,
+		name:             "test-" + t.Name(),
+		restoreUUID:      uuid.New(),
+		operationContext: opCtx,
 	}
 	tsoCnt := new(atomic.Uint64)
 	restoreSuccess := new(atomic.Bool)
@@ -149,6 +198,28 @@ func newPiTRCollForTest(t *testing.T) pitrCollectorT {
 		success: restoreSuccess,
 		cx:      context.Background(),
 	}
+}
+
+func TestPiTRCollectorPrepareMigWritesOperationMetadata(t *testing.T) {
+	coll := newPiTRCollForTest(t)
+	defer coll.Done()
+	capturingStorage := &lockCaptureStorage{Storage: coll.coll.taskStorage}
+	coll.coll.taskStorage = capturingStorage
+
+	require.NoError(t, coll.coll.prepareMig(coll.cx))
+	writes := capturingStorage.capturedLockWrites()
+
+	var appendLocks []capturedLockWrite
+	for _, write := range writes {
+		if write.meta.LockType == string(operation.LockResourceMigrationAppend) {
+			appendLocks = append(appendLocks, write)
+		}
+	}
+	require.Len(t, appendLocks, 1)
+	meta := appendLocks[0].meta
+	require.Equal(t, coll.coll.operationContext.OperationID, meta.OwnerID)
+	require.Contains(t, meta.Hint, "operation_started_at="+coll.coll.operationContext.StartedAt.Format(time.RFC3339))
+	require.Contains(t, meta.Hint, "restore_id=789")
 }
 
 type backupFileSetOp func(*restore.BackupFileSet)

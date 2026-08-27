@@ -26,30 +26,30 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	dxfstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-var _ scheduler.CleanUpRoutine = (*BackfillCleanUpS3)(nil)
+var _ scheduler.Cleaner = (*BackfillCleaner)(nil)
 
-// BackfillCleanUpS3 implements scheduler.CleanUpRoutine.
-type BackfillCleanUpS3 struct {
+// BackfillCleaner implements scheduler.Cleaner.
+type BackfillCleaner struct {
 }
 
-func newBackfillCleanUpS3() scheduler.CleanUpRoutine {
-	return &BackfillCleanUpS3{}
+func newBackfillCleaner() scheduler.Cleaner {
+	return &BackfillCleaner{}
 }
 
-// CleanUp implements the CleanUpRoutine.CleanUp interface.
-func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
+// Clean implements scheduler.Cleaner.
+func (*BackfillCleaner) Clean(ctx context.Context, task *proto.Task) error {
 	var taskMeta BackfillTaskMeta
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return err
 	}
-	// Not use cloud storage, no need to cleanUp.
+	// No cleanup is needed when the task does not use cloud storage.
 	if len(taskMeta.CloudStorageURI) == 0 {
 		return nil
 	}
@@ -65,7 +65,7 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 		return err
 	}
 	prefix := strconv.Itoa(int(task.ID))
-	err = external.CleanUpFiles(ctx, extStore, prefix)
+	err = globalsort.CleanUpFiles(ctx, extStore, prefix)
 	if err != nil {
 		logger.Warn("cannot cleanup cloud storage files", zap.Error(err))
 		return err
@@ -74,7 +74,7 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 	// for old task meta version, we use job ID as prefix to clean up files.
 	if taskMeta.Version < BackfillTaskMetaVersion1 {
 		oldPrefix := strconv.Itoa(int(taskMeta.Job.ID))
-		err = external.CleanUpFiles(ctx, extStore, oldPrefix)
+		err = globalsort.CleanUpFiles(ctx, extStore, oldPrefix)
 		if err != nil {
 			logger.Warn("cannot cleanup cloud storage files", zap.Error(err))
 			return err
@@ -83,7 +83,7 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 	// send metering data for nextgen kernel, only for succeed backfill tasks,
 	// we don't meter merge temp index tasks
 	if kerneltype.IsNextGen() && task.State == proto.TaskStateSucceed && !taskMeta.MergeTempIndex {
-		if err = sendMeterOnCleanUp(ctx, task, logger); err != nil {
+		if err = sendMeterOnClean(ctx, task, logger); err != nil {
 			logger.Warn("failed to send metering data on cleanup", zap.Error(err))
 			return err
 		}
@@ -93,7 +93,7 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 	return nil
 }
 
-func sendMeterOnCleanUp(ctx context.Context, task *proto.Task, logger *zap.Logger) error {
+func sendMeterOnClean(ctx context.Context, task *proto.Task, logger *zap.Logger) error {
 	taskManager, err := dxfstorage.GetTaskManager()
 	if err != nil {
 		return err

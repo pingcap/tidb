@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"text/template/parse"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -20,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -63,6 +65,8 @@ const (
 	flagCsvNullValue             = "csv-null-value"
 	flagSQL                      = "sql"
 	flagFilter                   = "filter"
+	flagColumnFilter             = "column-filter"
+	flagColumnFilterFile         = "column-filter-file"
 	flagCaseSensitive            = "case-sensitive"
 	flagDumpEmptyDatabase        = "dump-empty-database"
 	flagTidbMemQuotaQuery        = "tidb-mem-quota-query"
@@ -84,6 +88,9 @@ const (
 	flagClusterSSLCert           = "cluster-ssl-cert"
 	flagClusterSSLKey            = "cluster-ssl-key"
 	flagPartitions               = "partitions"
+	flagParquetCompress          = "parquet-compress"
+	flagParquetPageSize          = "parquet-page-size"
+	flagParquetRowGroupSize      = "parquet-row-group-size"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -173,6 +180,8 @@ type Config struct {
 	Databases         []string
 
 	TableFilter         filter.Filter `json:"-"`
+	columnFilter        columnFilterConfig
+	columnProjection    map[tableName]columnProjection
 	Where               string
 	FileType            string
 	ServerInfo          version.ServerInfo
@@ -208,6 +217,14 @@ type Config struct {
 	ClusterSSLCA   string
 	ClusterSSLCert string
 	ClusterSSLKey  string
+
+	// ParquetCompressType is the parquet row-group compression type.
+	ParquetCompressType compressedio.CompressType
+	// ParquetPageSize is the parquet data page size in bytes.
+	ParquetPageSize int64
+	// ParquetRowGroupSize is the parquet row-group flush threshold by accounted
+	// in-memory bytes.
+	ParquetRowGroupSize int64
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -265,6 +282,9 @@ func DefaultConfig() *Config {
 		ClusterSSLCA:             "",
 		ClusterSSLCert:           "",
 		ClusterSSLKey:            "",
+		ParquetCompressType:      parquetfile.DefaultCompressionType,
+		ParquetPageSize:          units.MiB,
+		ParquetRowGroupSize:      parquetfile.DefaultRowGroupMemoryLimitBytes,
 	}
 }
 
@@ -354,7 +374,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 		"If not specified, dumpling will dump table without inner-concurrency which could be relatively slow. default unlimited")
 	flags.String(flagWhere, "", "Dump only selected records")
 	flags.Bool(flagEscapeBackslash, true, "use backslash to escape special characters")
-	flags.String(flagFiletype, "", "The type of export file (sql/csv)")
+	flags.String(flagFiletype, "", "The type of export file (sql/csv/parquet)")
 	flags.Bool(flagNoHeader, false, "whether not to dump CSV table header")
 	flags.BoolP(flagNoSchemas, "m", false, "Do not dump table schemas with the data")
 	flags.BoolP(flagNoData, "d", false, "Do not dump table data")
@@ -362,6 +382,12 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagSQL, "S", "", "Dump data with given sql. This argument doesn't support concurrent dump")
 	_ = flags.MarkHidden(flagSQL)
 	flags.StringSliceP(flagFilter, "f", []string{"*.*", DefaultTableFilter}, "filter to select which tables to dump")
+	flags.StringArray(
+		flagColumnFilter,
+		nil,
+		`Inline TOML column filter rule for data output projection. Can be specified multiple times. Example: --column-filter '{ matcher = ["db.tbl"], columns = ["*", "!col"] }'. Unmatched tables are dumped with all columns; column rules are case-insensitive. Mutually exclusive with --column-filter-file. Requires --no-schemas/-m and cannot be used with --sql`,
+	)
+	flags.String(flagColumnFilterFile, "", "Path to the column filter TOML file for data output projection. Unmatched tables are dumped with all columns; column rules are case-insensitive. Requires --no-schemas/-m and cannot be used with --sql")
 	flags.Bool(flagCaseSensitive, false, "whether the filter should be case-sensitive")
 	flags.Bool(flagDumpEmptyDatabase, true, "whether to dump empty database")
 	flags.Uint64(flagTidbMemQuotaQuery, UnspecifiedSize, "The maximum memory limit for a single SQL statement, in bytes.")
@@ -371,7 +397,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagCsvSeparator, ",", "The separator for csv files, default ','")
 	flags.String(flagCsvDelimiter, "\"", "The delimiter for values in csv files, default '\"'")
 	flags.String(flagCsvLineTerminator, "\r\n", "The line terminator for csv files, default '\\r\\n'")
-	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension)")
+	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension). When used with --rows/-r or --filesize/-F in split mode, include {{.Index}} (for example: '{{.DB}}.{{.Table}}.{{.Index}}') to avoid overwriting chunk files")
 	flags.Bool(flagCompleteInsert, false, "Use complete INSERT statements that include column names")
 	flags.StringToString(flagParams, nil, `Extra session variables used while dumping, accepted format: --params "character_set_client=latin1,character_set_connection=latin1"`)
 	flags.Bool(FlagHelp, false, "Print help message and quit")
@@ -387,6 +413,13 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagClusterSSLCA, "", "CA certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --ca")
 	flags.String(flagClusterSSLCert, "", "Client certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --cert")
 	flags.String(flagClusterSSLKey, "", "Client private key path for TLS connections to PD endpoints used by GC control; if empty, reuse --key")
+	flags.String(flagParquetCompress, "snappy", "Compress algorithm for parquet file, support 'no-compression', 'snappy', 'gzip', 'zstd'")
+	flags.String(flagParquetPageSize, units.BytesSize(float64(units.MiB)), "Parquet page size in bytes, accepts human-readable units")
+	flags.String(
+		flagParquetRowGroupSize,
+		units.BytesSize(float64(parquetfile.DefaultRowGroupMemoryLimitBytes)),
+		"Parquet row-group memory limit in bytes (flush threshold by accounted in-memory bytes), accepts human-readable units",
+	)
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -578,6 +611,34 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	columnFilters, err := flags.GetStringArray(flagColumnFilter)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	columnFilterFile, err := flags.GetString(flagColumnFilterFile)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(columnFilters) > 0 && strings.TrimSpace(columnFilterFile) != "" {
+		return errors.New("can't specify both --column-filter and --column-filter-file at the same time")
+	}
+	if len(columnFilters) > 0 {
+		if err = validateColumnFilterOptions(conf, flagColumnFilter); err != nil {
+			return errors.Trace(err)
+		}
+		conf.columnFilter, err = parseColumnFilterArgs(columnFilters, caseSensitive)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else if strings.TrimSpace(columnFilterFile) != "" {
+		if err = validateColumnFilterOptions(conf, flagColumnFilterFile); err != nil {
+			return errors.Trace(err)
+		}
+		conf.columnFilter, err = parseColumnFilterConfig(columnFilterFile, caseSensitive)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	outputFilenameFormat, err := flags.GetString(flagOutputFilenameTemplate)
 	if err != nil {
 		return errors.Trace(err)
@@ -614,6 +675,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Errorf("failed to parse output filename template (--output-filename-template '%s')", outputFilenameFormat)
 	}
+	outputSplitIntoMultipleFiles := conf.Rows != UnspecifiedSize || conf.FileSize != UnspecifiedSize
+	if flags.Changed(flagOutputFilenameTemplate) && outputSplitIntoMultipleFiles && !outputTemplateUsesIndex(tmpl, outputFileTemplateData) {
+		return errors.New("--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F; otherwise chunk files may overwrite each other")
+	}
 	conf.OutputFileTemplate = tmpl
 
 	compressType, err := flags.GetString(flagCompress)
@@ -629,10 +694,27 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if dialect != "" && conf.FileType != "csv" {
+	if dialect != "" && !strings.EqualFold(conf.FileType, FileFormatCSVString) {
 		return errors.Errorf("%s is only supported when dumping whole table to csv, not compatible with %s", flagCsvOutputDialect, conf.FileType)
 	}
 	conf.CsvOutputDialect, err = ParseOutputDialect(dialect)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	parquetCompressType, err := flags.GetString(flagParquetCompress)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetCompressType, err = parseParquetCompressType(parquetCompressType)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetPageSize, err = parseSizeFlag(flags, flagParquetPageSize)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetRowGroupSize, err = parseSizeFlag(flags, flagParquetRowGroupSize)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -664,6 +746,125 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	return nil
+}
+
+func validateColumnFilterOptions(conf *Config, flagName string) error {
+	if conf.SQL != "" {
+		return errors.Errorf("can't specify both --sql and --%s at the same time", flagName)
+	}
+	if !conf.NoSchemas {
+		return errors.Errorf("--%s requires --no-schemas/-m", flagName)
+	}
+	return nil
+}
+
+func outputTemplateUsesIndex(tmpl *template.Template, templateName string) bool {
+	if tmpl == nil {
+		return false
+	}
+
+	type templateVisitState struct {
+		name          string
+		inConditional bool
+	}
+	visitedTemplate := make(map[templateVisitState]struct{})
+
+	var visitTemplate func(name string, inConditional bool) bool
+	var visitNode func(node parse.Node, inConditional bool) bool
+	visitTemplate = func(name string, inConditional bool) bool {
+		state := templateVisitState{name: name, inConditional: inConditional}
+		if _, ok := visitedTemplate[state]; ok {
+			return false
+		}
+		visitedTemplate[state] = struct{}{}
+
+		t := tmpl.Lookup(name)
+		if t == nil || t.Tree == nil || t.Tree.Root == nil {
+			return false
+		}
+
+		return visitNode(t.Tree.Root, inConditional)
+	}
+
+	visitNode = func(node parse.Node, inConditional bool) bool {
+		if node == nil {
+			return false
+		}
+
+		switch n := node.(type) {
+		case *parse.ListNode:
+			if n == nil {
+				return false
+			}
+			for _, child := range n.Nodes {
+				if visitNode(child, inConditional) {
+					return true
+				}
+			}
+		case *parse.ActionNode:
+			if n == nil {
+				return false
+			}
+			if inConditional {
+				return false
+			}
+			return isStandaloneOutputIndexAction(n)
+		case *parse.TemplateNode:
+			if n == nil {
+				return false
+			}
+			return visitTemplate(n.Name, inConditional)
+		case *parse.IfNode:
+			if n == nil {
+				return false
+			}
+			if visitNode(n.List, true) {
+				return true
+			}
+			return visitNode(n.ElseList, true)
+		case *parse.RangeNode:
+			if n == nil {
+				return false
+			}
+			if visitNode(n.List, true) {
+				return true
+			}
+			return visitNode(n.ElseList, true)
+		case *parse.WithNode:
+			if n == nil {
+				return false
+			}
+			if visitNode(n.List, true) {
+				return true
+			}
+			return visitNode(n.ElseList, true)
+		}
+
+		return false
+	}
+
+	return visitTemplate(templateName, false)
+}
+
+func isStandaloneOutputIndexAction(action *parse.ActionNode) bool {
+	if action == nil || action.Pipe == nil {
+		return false
+	}
+
+	// A standalone {{.Index}} must be a single command with a single argument.
+	if len(action.Pipe.Decl) != 0 || len(action.Pipe.Cmds) != 1 {
+		return false
+	}
+	cmd := action.Pipe.Cmds[0]
+	if cmd == nil || len(cmd.Args) != 1 {
+		return false
+	}
+
+	field, ok := cmd.Args[0].(*parse.FieldNode)
+	if !ok {
+		return false
+	}
+	return len(field.Ident) == 1 && field.Ident[0] == "Index"
 }
 
 // ParseFileSize parses file size from tables-list and filter arguments
@@ -724,7 +925,7 @@ func GetConfTables(tablesList []string) (DatabaseTables, error) {
 
 // ParseOutputDialect parses output dialect string to Dialect
 func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
-	switch outputDialect {
+	switch strings.ToLower(outputDialect) {
 	case "", "default":
 		return CSVDialectDefault, nil
 	case "snowflake":
@@ -736,6 +937,27 @@ func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
 	default:
 		return CSVDialectDefault, errors.Errorf("unknown output dialect %s", outputDialect)
 	}
+}
+
+func parseSizeFlag(flags *pflag.FlagSet, flagName string) (int64, error) {
+	size, err := flags.GetString(flagName)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	bytes, err := units.RAMInBytes(size)
+	if err != nil {
+		return 0, errors.Annotatef(err, "failed to parse --%s", flagName)
+	}
+	return bytes, nil
+}
+
+// parseParquetCompressType parses the parquet compression flag value.
+// Empty means the flag is not configured, so Dumpling uses the parquet default.
+func parseParquetCompressType(compressType string) (compressedio.CompressType, error) {
+	if compressType == "" {
+		return parquetfile.DefaultCompressionType, nil
+	}
+	return compressedio.ParseCompressType(compressType)
 }
 
 func (conf *Config) createExternalStorage(ctx context.Context) (storeapi.Storage, error) {
@@ -829,6 +1051,10 @@ func adjustFileFormat(conf *Config) error {
 			return errors.Errorf("unsupported config.FileType '%s' when we specify --sql, please unset --filetype or set it to 'csv'", conf.FileType)
 		}
 	case FileFormatCSVString:
+	case FileFormatParquetString:
+		if conf.CompressType != compressedio.NoCompression {
+			return errors.Errorf("parquet does not support --compress, please unset it or use --parquet-compress instead")
+		}
 	default:
 		return errors.Errorf("unknown config.FileType '%s'", conf.FileType)
 	}

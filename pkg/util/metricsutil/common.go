@@ -17,6 +17,7 @@ package metricsutil
 import (
 	"context"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -42,7 +43,6 @@ import (
 	ttlmetrics "github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/util"
 	topsqlreporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
-	tikvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
@@ -50,52 +50,21 @@ import (
 
 var componentName = caller.Component("tidb-metrics-util")
 
-// RegisterMetrics register metrics with const label 'keyspace_id' if keyspaceName set.
+const keyspaceIDLabel = "keyspace_id"
+
+// RegisterMetrics registers metrics with keyspace metadata labels when available.
 func RegisterMetrics() error {
 	cfg := config.GetGlobalConfig()
-	if keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) || cfg.Store != config.StoreTypeTiKV {
-		registerMetrics(nil) // register metrics without label 'keyspace_id'.
-		return nil
-	}
-
 	if kerneltype.IsNextGen() {
 		metricscommon.SetConstLabels("keyspace_name", cfg.KeyspaceName)
 	}
-
-	pdAddrs, _, _, err := tikvconfig.ParsePath("tikv://" + cfg.Path)
-	if err != nil {
-		return err
-	}
-
-	timeoutSec := time.Duration(cfg.PDClient.PDServerTimeout) * time.Second
-	// Note: for NextGen, we need to use the side effect of `NewClient` to init the metrics' builtin const labels
-	pdCli, err := pd.NewClient(componentName, pdAddrs, pd.SecurityOption{
-		CAPath:   cfg.Security.ClusterSSLCA,
-		CertPath: cfg.Security.ClusterSSLCert,
-		KeyPath:  cfg.Security.ClusterSSLKey,
-	}, opt.WithCustomTimeoutOption(timeoutSec), opt.WithMetricsLabels(metricscommon.GetConstLabels()))
-	if err != nil {
-		return err
-	}
-	defer pdCli.Close()
-
-	if kerneltype.IsNextGen() {
-		registerMetrics(nil) // metrics' const label already set
-	} else {
-		keyspaceMeta, err := getKeyspaceMeta(pdCli, cfg.KeyspaceName)
-		if err != nil {
-			return err
-		}
-		registerMetrics(keyspaceMeta)
-	}
-	return nil
+	return registerMetrics()
 }
 
-// RegisterMetricsForBR register metrics with const label keyspace_id for BR.
+// RegisterMetricsForBR registers metrics with keyspace metadata labels for BR.
 func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName string) error {
 	if keyspace.IsKeyspaceNameEmpty(keyspaceName) {
-		registerMetrics(nil) // register metrics without label 'keyspace_id'.
-		return nil
+		return registerMetrics()
 	}
 
 	if kerneltype.IsNextGen() {
@@ -107,24 +76,19 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 	if tls.IsEnabled() {
 		securityOpt = tls.ToPDSecurityOption()
 	}
-	// Note: for NextGen, pdCli is created to init the metrics' const labels
 	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt,
-		opt.WithCustomTimeoutOption(timeoutSec), opt.WithMetricsLabels(metricscommon.GetConstLabels()))
+		opt.WithCustomTimeoutOption(timeoutSec), opt.WithInitMetricsOption(false))
 	if err != nil {
 		return err
 	}
 	defer pdCli.Close()
 
-	if kerneltype.IsNextGen() {
-		registerMetrics(nil) // metrics' const label already set
-	} else {
-		keyspaceMeta, err := getKeyspaceMeta(pdCli, keyspaceName)
-		if err != nil {
-			return err
-		}
-		registerMetrics(keyspaceMeta)
+	keyspaceMeta, err := getKeyspaceMeta(pdCli, keyspaceName)
+	if err != nil {
+		return err
 	}
-	return nil
+	setKeyspaceIDConstLabel(keyspaceMeta.GetId())
+	return registerMetrics()
 }
 
 func initMetrics() {
@@ -150,11 +114,36 @@ func initMetrics() {
 	}
 }
 
-func registerMetrics(keyspaceMeta *keyspacepb.KeyspaceMeta) {
-	if keyspaceMeta != nil {
-		metricscommon.SetConstLabels("keyspace_id", fmt.Sprint(keyspaceMeta.GetId()))
+func registerMetrics() error {
+	labels := cloneConstLabels()
+	maps.Copy(labels, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
+	if len(labels) > 0 {
+		setConstLabels(labels)
 	}
 	initMetrics()
+	return nil
+}
+
+func cloneConstLabels() map[string]string {
+	labels := maps.Clone(metricscommon.GetConstLabels())
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	return labels
+}
+
+func setKeyspaceIDConstLabel(keyspaceID uint32) {
+	labels := cloneConstLabels()
+	labels[keyspaceIDLabel] = fmt.Sprint(keyspaceID)
+	setConstLabels(labels)
+}
+
+func setConstLabels(labels map[string]string) {
+	kv := make([]string, 0, len(labels)*2)
+	for k, v := range labels {
+		kv = append(kv, k, v)
+	}
+	metricscommon.SetConstLabels(kv...)
 }
 
 func getKeyspaceMeta(pdCli pd.Client, keyspaceName string) (*keyspacepb.KeyspaceMeta, error) {

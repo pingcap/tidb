@@ -1517,6 +1517,16 @@
         ]
       },
       {
+        "SQL": "explain format = 'plan_tree' select a from t union all select a from t",
+        "Plan": [
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Union mpp[tiflash]  ",
+          "    ├─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "explain format = 'plan_tree' select count(*) from (select a , b from t union all select a , b from t1 union all select a, b from t where false) tt",
         "Plan": [
           "HashAgg root  funcs:count(Column)->Column",

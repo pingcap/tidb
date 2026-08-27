@@ -66,6 +66,11 @@ func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		switch n.FnName.L {
 		case ast.DateFormat, ast.StrToDate, ast.TimeFormat, ast.FromUnixTime:
 			// skip the second format argument: date_format('2020', '%Y') --> date_format(?, '%Y')
+			if len(n.Args) == 0 {
+				// A malformed zero-arg call (wrong arity, rejected later during
+				// type checking); don't index Args here.
+				return in, true
+			}
 			ret, _ := n.Args[0].Accept(pr)
 			n.Args[0] = ret.(ast.ExprNode)
 			return in, true

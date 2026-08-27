@@ -128,7 +128,7 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 		sqlType:            label,
 		memTracker:         kvReq.MemTracker,
 		storeType:          kvReq.StoreType,
-		paging:             kvReq.Paging.Enable,
+		paging:             kvReq.Paging.Enable || kvReq.Paging.PagingSizeBytes > 0,
 		distSQLConcurrency: kvReq.Concurrency,
 	}, nil
 }

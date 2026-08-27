@@ -173,8 +173,8 @@ const (
 		count 						BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		snapshot        			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		last_stats_histograms_version 	BIGINT(64) UNSIGNED DEFAULT NULL,
-		INDEX idx_ver(version),
-		UNIQUE INDEX tbl(table_id)
+		PRIMARY KEY (table_id) CLUSTERED,
+		INDEX idx_ver(version)
 	);`
 
 	// CreateStatsHistogramsTable stores the statistics of table columns.
@@ -192,7 +192,7 @@ const (
 		flag 				BIGINT(64) NOT NULL DEFAULT 0,
 		correlation 		DOUBLE NOT NULL DEFAULT 0,
 		last_analyze_pos 	LONGBLOB DEFAULT NULL,
-		UNIQUE INDEX tbl(table_id, is_index, hist_id)
+		PRIMARY KEY (table_id, is_index, hist_id) CLUSTERED
 	);`
 
 	// CreateStatsBucketsTable stores the histogram info for every table columns.
@@ -206,7 +206,7 @@ const (
 		upper_bound LONGBLOB NOT NULL,
 		lower_bound LONGBLOB ,
 		ndv         BIGINT NOT NULL DEFAULT 0,
-		UNIQUE INDEX tbl(table_id, is_index, hist_id, bucket_id)
+		PRIMARY KEY (table_id, is_index, hist_id, bucket_id) CLUSTERED
 	);`
 
 	// CreateGCDeleteRangeTable stores schemas which can be deleted by DeleteRange.
@@ -293,7 +293,7 @@ const (
 		is_index 	TINYINT(2) NOT NULL,
 		hist_id 	BIGINT(64) NOT NULL,
 		value 		LONGBLOB,
-		INDEX tbl(table_id, is_index, hist_id)
+		PRIMARY KEY (table_id, is_index, hist_id) CLUSTERED
 	);`
 
 	// CreateExprPushdownBlacklistTable stores the expressions which are not allowed to be pushed down.
@@ -382,7 +382,7 @@ const (
 		seq_no bigint(64) NOT NULL comment 'sequence number of the gzipped data slice',
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
 		create_time datetime(6) NOT NULL,
-		UNIQUE KEY table_version_seq (table_id, version, seq_no),
+		PRIMARY KEY (table_id, version, seq_no) CLUSTERED,
 		KEY table_create_time (table_id, create_time, seq_no),
     	KEY idx_create_time (create_time)
 	);`
@@ -394,7 +394,7 @@ const (
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
     	source varchar(40) NOT NULL,
 		create_time datetime(6) NOT NULL,
-		UNIQUE KEY table_version (table_id, version),
+		PRIMARY KEY (table_id, version) CLUSTERED,
 		KEY table_create_time (table_id, create_time),
     	KEY idx_create_time (create_time)
 	);`
@@ -461,7 +461,7 @@ const (
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) UNSIGNED NOT NULL DEFAULT 0,
-		PRIMARY KEY (table_id));`
+		PRIMARY KEY (table_id) CLUSTERED);`
 
 	// CreatePasswordHistoryTable is a table save history passwd.
 	CreatePasswordHistoryTable = `CREATE TABLE  IF NOT EXISTS mysql.password_history (
@@ -791,6 +791,107 @@ const (
 		value json NOT NULL,
 		index idx_version_category_type (version, category, type),
 		index idx_table_id (table_id));`
+
+	// CreateTiDBMaskingPolicyTable is a table to store masking policy metadata.
+	CreateTiDBMaskingPolicyTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_masking_policy (
+		policy_id BIGINT(64) NOT NULL AUTO_INCREMENT,
+		policy_name VARCHAR(64) NOT NULL,
+		db_name VARCHAR(64) NOT NULL,
+		table_name VARCHAR(64) NOT NULL,
+		table_id BIGINT(64) NOT NULL,
+		column_name VARCHAR(64) NOT NULL,
+		column_id BIGINT(64) NOT NULL,
+		expression TEXT NOT NULL,
+		status VARCHAR(16) NOT NULL,
+		masking_type VARCHAR(32) NOT NULL,
+		restrict_on VARCHAR(256) NOT NULL DEFAULT 'NONE',
+		created_at DATETIME(6) NOT NULL,
+		updated_at DATETIME(6) NOT NULL,
+		created_by VARCHAR(288) NOT NULL DEFAULT '',
+		PRIMARY KEY(policy_id),
+		UNIQUE KEY uk_table_policy(table_id, policy_name),
+		UNIQUE KEY uk_table_column(table_id, column_id)
+		);`
+
+	// CreateTiDBMViewRefreshInfoTable is a table to store current refresh scheduling info for each materialized view.
+	CreateTiDBMViewRefreshInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_info (
+		MVIEW_ID bigint NOT NULL,
+		LAST_SUCCESS_READ_TSO bigint unsigned DEFAULT NULL,
+		LAST_SUCCESS_REFRESH_END_UNIX_SECONDS bigint DEFAULT NULL,
+		NEXT_REFRESH_UNIX_SECONDS bigint DEFAULT NULL,
+		PRIMARY KEY(MVIEW_ID))`
+
+	// CreateTiDBMLogPurgeInfoTable is a table to store current purge scheduling info for each materialized view log.
+	CreateTiDBMLogPurgeInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_info (
+		MLOG_ID bigint NOT NULL,
+		NEXT_PURGE_UNIX_SECONDS bigint DEFAULT NULL,
+		LAST_PURGED_TSO bigint unsigned DEFAULT NULL,
+		PRIMARY KEY(MLOG_ID))`
+
+	// CreateTiDBMViewRefreshHistTable is a table to store materialized view refresh history.
+	CreateTiDBMViewRefreshHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_hist (
+		REFRESH_JOB_ID bigint unsigned NOT NULL,
+		MVIEW_ID bigint NOT NULL,
+		MVIEW_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		MVIEW_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		REFRESH_METHOD varchar(32) NOT NULL,
+		REFRESH_START_TIME datetime(6) DEFAULT NULL,
+		REFRESH_END_TIME datetime(6) DEFAULT NULL,
+		REFRESH_DURATION_SEC decimal(18,6) DEFAULT NULL,
+		REFRESH_SCHEDULE_DURATION_SEC decimal(18,6) DEFAULT NULL,
+		REFRESH_STATUS varchar(16) DEFAULT NULL,
+		REFRESH_ROWS bigint DEFAULT NULL,
+		REFRESH_READ_TSO bigint unsigned DEFAULT NULL,
+		REFRESH_COMMIT_TSO bigint unsigned DEFAULT NULL,
+		REFRESH_FAILED_REASON text DEFAULT NULL,
+		CANCEL_REQUEST_TIME datetime(6) DEFAULT NULL,
+		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
+		LAST_HEARTBEAT_TIME datetime(6) DEFAULT NULL,
+		PRIMARY KEY(REFRESH_JOB_ID),
+		KEY idx_mview_start_time (MVIEW_ID, REFRESH_START_TIME),
+		KEY idx_mview_name_start_time (MVIEW_SCHEMA, MVIEW_NAME, REFRESH_START_TIME),
+		KEY idx_mview_name_commit_tso (MVIEW_SCHEMA, MVIEW_NAME, REFRESH_COMMIT_TSO),
+		KEY idx_mview_status_start_time (MVIEW_ID, REFRESH_STATUS, REFRESH_START_TIME),
+		KEY idx_refresh_duration_sec (REFRESH_DURATION_SEC),
+		KEY idx_refresh_schedule_duration_sec (REFRESH_SCHEDULE_DURATION_SEC),
+		KEY idx_refresh_start_time (REFRESH_START_TIME),
+		KEY idx_refresh_status_start_time (REFRESH_STATUS, REFRESH_START_TIME))`
+
+	// CreateTiDBMViewRefreshAlertTable is a table to store the current refresh alert level for each materialized view.
+	CreateTiDBMViewRefreshAlertTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_alert (
+		MVIEW_ID bigint NOT NULL,
+		MVIEW_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		MVIEW_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		ALERT_LEVEL varchar(16) DEFAULT NULL,
+		REFRESH_FAILED varchar(3) DEFAULT NULL,
+		LAST_SUCCESS_SNAPSHOT_TIME datetime(6) DEFAULT NULL,
+		UPDATE_TIME datetime(6) DEFAULT NULL,
+		PRIMARY KEY(MVIEW_ID))`
+
+	// CreateTiDBMLogPurgeHistTable is a table to store materialized view log purge history.
+	CreateTiDBMLogPurgeHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_hist (
+		PURGE_JOB_ID bigint unsigned NOT NULL,
+		MLOG_ID bigint NOT NULL,
+		BASE_TABLE_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		BASE_TABLE_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		PURGE_METHOD varchar(32) NOT NULL,
+		PURGE_START_TIME datetime(6) DEFAULT NULL,
+		PURGE_END_TIME datetime(6) DEFAULT NULL,
+		PURGE_DURATION_SEC decimal(18,6) DEFAULT NULL,
+		PURGE_ROWS bigint NOT NULL,
+		PURGE_STATUS varchar(16) DEFAULT NULL,
+		PURGE_CUTOFF_TSO bigint unsigned DEFAULT NULL,
+		PURGE_FAILED_REASON text DEFAULT NULL,
+		CANCEL_REQUEST_TIME datetime(6) DEFAULT NULL,
+		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
+		LAST_HEARTBEAT_TIME datetime(6) DEFAULT NULL,
+		PRIMARY KEY(PURGE_JOB_ID),
+		KEY idx_mlog_start_time (MLOG_ID, PURGE_START_TIME),
+		KEY idx_table_name_start_time (BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_START_TIME),
+		KEY idx_mlog_status_start_time (MLOG_ID, PURGE_STATUS, PURGE_START_TIME),
+		KEY idx_purge_duration_sec (PURGE_DURATION_SEC),
+		KEY idx_purge_start_time (PURGE_START_TIME),
+		KEY idx_purge_status_start_time (PURGE_STATUS, PURGE_START_TIME))`
 )
 
 // all below are related to DDL or DXF tables
