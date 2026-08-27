@@ -198,7 +198,7 @@ func (m *MemArbitrator) setLimitForTest(v int64) {
 
 func newMemArbitratorForTest(shardCount uint64, limit int64) (m *MemArbitrator) {
 	loadEvent := 0
-	m = NewMemArbitrator(limit, shardCount, 3, 0, &memStateRecorderForTest{
+	m = NewMemArbitrator(limit, shardCount, 3, &memStateRecorderForTest{
 		load: func() (*RuntimeMemStateV1, error) {
 			loadEvent++
 			return nil, nil
@@ -600,7 +600,7 @@ func TestTopNProfilesPersistence(t *testing.T) {
 	}
 
 	var stored *RuntimeMemStateV1
-	m := NewMemArbitrator(-1, 1, 3, 0, &memStateRecorderForTest{
+	m := NewMemArbitrator(-1, 1, 3, &memStateRecorderForTest{
 		load: func() (*RuntimeMemStateV1, error) {
 			return nil, nil
 		},
@@ -619,7 +619,7 @@ func TestTopNProfilesPersistence(t *testing.T) {
 	require.Equal(t, int64(1200), stored.Magnif)
 
 	persisted := *stored
-	m = NewMemArbitrator(-1, 1, 3, 0, &memStateRecorderForTest{
+	m = NewMemArbitrator(-1, 1, 3, &memStateRecorderForTest{
 		load: func() (*RuntimeMemStateV1, error) {
 			return &persisted, nil
 		},
@@ -638,7 +638,7 @@ func TestTopNProfilesPersistence(t *testing.T) {
 	t.Run("periodic top3 updates persist without other memory events", func(t *testing.T) {
 		storeCount := 0
 		var stored *RuntimeMemStateV1
-		m := NewMemArbitrator(-1, 1, 3, 0, &memStateRecorderForTest{
+		m := NewMemArbitrator(-1, 1, 3, &memStateRecorderForTest{
 			load: func() (*RuntimeMemStateV1, error) {
 				return nil, nil
 			},
@@ -661,7 +661,7 @@ func TestTopNProfilesPersistence(t *testing.T) {
 
 	t.Run("failed top3 persistence retries on the next tick", func(t *testing.T) {
 		storeCount := 0
-		m := NewMemArbitrator(-1, 1, 3, 0, &memStateRecorderForTest{
+		m := NewMemArbitrator(-1, 1, 3, &memStateRecorderForTest{
 			load: func() (*RuntimeMemStateV1, error) {
 				return nil, nil
 			},
@@ -696,7 +696,7 @@ func TestTopNProfilesPersistence(t *testing.T) {
 
 	t.Run("failed runtime persistence retries top3 profiles", func(t *testing.T) {
 		storeCount := 0
-		m := NewMemArbitrator(-1, 1, 3, 0, &memStateRecorderForTest{
+		m := NewMemArbitrator(-1, 1, 3, &memStateRecorderForTest{
 			load: func() (*RuntimeMemStateV1, error) {
 				return nil, nil
 			},
@@ -1434,7 +1434,7 @@ func TestMemArbitrator(t *testing.T) {
 
 	{
 		digestID := buildDigestIDForTest("persisted profile")
-		m := NewMemArbitrator(-1, 1, 3, 0, &memStateRecorderForTest{
+		m := NewMemArbitrator(-1, 1, 3, &memStateRecorderForTest{
 			load: func() (*RuntimeMemStateV1, error) {
 				return &RuntimeMemStateV1{
 					TopNProfiles: [3]Top3DigestData{{DigestID: digestID, Size: 1024, UtimeSec: 100}},
@@ -3046,7 +3046,6 @@ func TestBench(t *testing.T) {
 	m := NewMemArbitrator(
 		4*byteSizeGB,
 		defPoolStatusShards, defPoolQuotaShards,
-		64*byteSizeKB, /* 64k ~ */
 		&memStateRecorderForTest{
 			load: func() (*RuntimeMemStateV1, error) {
 				return nil, nil

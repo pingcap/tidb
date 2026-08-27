@@ -349,7 +349,6 @@ func SetupGlobalMemArbitratorForTest(baseDir string) {
 			0,
 			4,
 			defPoolQuotaShards,
-			64*byteSizeKB, /* 64k ~ */
 			newMemStateRecorder(baseDir),
 		)
 		m.AutoRun(
@@ -504,7 +503,6 @@ func initGlobalMemArbitrator() (m *MemArbitrator) {
 		int64(limit),
 		defPoolStatusShards,
 		defPoolQuotaShards,
-		64*byteSizeKB, /* 64k ~ */
 		newMemStateRecorder(baseDir),
 	)
 

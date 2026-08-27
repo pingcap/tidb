@@ -27,7 +27,7 @@ import (
 )
 
 func newHeapProfileArbitratorForTest(limit int64) *MemArbitrator {
-	m := NewMemArbitrator(limit, 1, 3, 0, &memStateRecorderForTest{
+	m := NewMemArbitrator(limit, 1, 3, &memStateRecorderForTest{
 		load: func() (*RuntimeMemStateV1, error) {
 			return nil, nil
 		},

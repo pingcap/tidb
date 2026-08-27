@@ -324,10 +324,9 @@ type entryMap struct {
 		sync.Map // map[uint64]*rootPoolEntry
 		num      atomic.Int64
 	}
-	shards                    []*entryMapShard
-	shardsMask                uint64
-	maxQuotaShardIndex        int // for quota >= `BaseQuotaUnit * 2^(maxQuotaShard - 1)`
-	minQuotaShardIndexToCheck int // ignore the pool with smaller quota
+	shards             []*entryMapShard
+	shardsMask         uint64
+	maxQuotaShardIndex int // for quota >= `BaseQuotaUnit * 2^(maxQuotaShard - 1)`
 }
 
 // controlled by arbitrator
@@ -425,11 +424,10 @@ func (m *entryMap) emplace(pool *ResourcePool) (*rootPoolEntry, bool) {
 	return s.emplace(key, tar)
 }
 
-func (m *entryMap) init(shardNum uint64, maxQuotaShard int, minQuotaForReclaim int64) {
+func (m *entryMap) init(shardNum uint64, maxQuotaShard int) {
 	m.shards = make([]*entryMapShard, shardNum)
 	m.shardsMask = shardNum - 1
 	m.maxQuotaShardIndex = maxQuotaShard
-	m.minQuotaShardIndexToCheck = getQuotaShard(minQuotaForReclaim, m.maxQuotaShardIndex)
 	for p := minArbitrationPriority; p < maxArbitrationPriority; p++ {
 		m.quotaShards[p] = make([]*entryQuotaShard, m.maxQuotaShardIndex)
 		for i := range m.maxQuotaShardIndex {
@@ -1536,7 +1534,7 @@ func (m *MemArbitrator) doReclaimMemByPriority(target *rootPoolEntry, remainByte
 	// task whose mode is wait_averse must have been cleaned
 
 	for prio := minArbitrationPriority; prio < target.ctx.memPriority; prio++ {
-		for pos := m.entryMap.maxQuotaShardIndex - 1; pos >= m.entryMap.minQuotaShardIndexToCheck; pos-- {
+		for pos := m.entryMap.maxQuotaShardIndex - 1; pos >= 0; pos-- {
 			for _, entry := range m.entryMap.quotaShards[prio][pos].entries {
 				if entry.arbitratorMu.underCancel.start || entry.notRunning() {
 					continue
@@ -1645,7 +1643,7 @@ func (m *MemArbitrator) arbitrate(target *rootPoolEntry) (bool, int64) {
 }
 
 // NewMemArbitrator creates a new mem-arbitrator heap instance
-func NewMemArbitrator(limit int64, shardNum uint64, maxQuotaShardNum int, minQuotaForReclaim int64, recorder RecordMemState) *MemArbitrator {
+func NewMemArbitrator(limit int64, shardNum uint64, maxQuotaShardNum int, recorder RecordMemState) *MemArbitrator {
 	if limit <= 0 {
 		limit = DefMaxLimit
 	}
@@ -1659,7 +1657,7 @@ func NewMemArbitrator(limit int64, shardNum uint64, maxQuotaShardNum int, minQuo
 	shardNum = nextPow2(shardNum)
 	m.tasks.fifoWaitAverse.init()
 	m.notifer = NewNotifer()
-	m.entryMap.init(shardNum, maxQuotaShardNum, minQuotaForReclaim)
+	m.entryMap.init(shardNum, maxQuotaShardNum)
 	m.resetDigestProfileCache(shardNum)
 	m.doSetLimit(limit)
 	m.resetStatistics()
@@ -2952,7 +2950,7 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 	}
 
 	for prio := minArbitrationPriority; prio < maxArbitrationPriority; prio++ {
-		for pos := m.entryMap.maxQuotaShardIndex - 1; pos >= m.entryMap.minQuotaShardIndexToCheck; pos-- {
+		for pos := m.entryMap.maxQuotaShardIndex - 1; pos >= 0; pos-- {
 			for uid, entry := range m.entryMap.quotaShards[prio][pos].entries {
 				if entry.arbitratorMu.underKill.start || entry.notRunning() {
 					continue
