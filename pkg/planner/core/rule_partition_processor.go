@@ -139,11 +139,18 @@ func generateHashPartitionExpr(ctx PlanContext, pi *model.PartitionInfo, columns
 func getPartColumnsForHashPartition(hashExpr expression.Expression) ([]*expression.Column, []int) {
 	partCols := expression.ExtractColumns(hashExpr)
 	colLen := make([]int, 0, len(partCols))
+	retCols := make([]*expression.Column, 0, len(partCols))
+	filled := make(map[int64]struct{})
 	for i := 0; i < len(partCols); i++ {
-		partCols[i].Index = i
-		colLen = append(colLen, types.UnspecifiedLength)
+		// Deal with same columns.
+		if _, done := filled[partCols[i].UniqueID]; !done {
+			partCols[i].Index = len(filled)
+			filled[partCols[i].UniqueID] = struct{}{}
+			colLen = append(colLen, types.UnspecifiedLength)
+			retCols = append(retCols, partCols[i])
+		}
 	}
-	return partCols, colLen
+	return retCols, colLen
 }
 
 func (s *partitionProcessor) getUsedHashPartitions(ctx PlanContext,
@@ -238,16 +245,15 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx PlanContext,
 			used = []int{FullRange}
 			break
 		}
-		if !r.HighVal[0].IsNull() {
-			if len(r.HighVal) != len(partCols) {
-				used = []int{-1}
-				break
-			}
+
+		// The code below is for the range `r` is a point.
+		if len(r.HighVal) != len(partCols) {
+			used = []int{FullRange}
+			break
 		}
-		highLowVals := make([]types.Datum, 0, len(r.HighVal)+len(r.LowVal))
-		highLowVals = append(highLowVals, r.HighVal...)
-		highLowVals = append(highLowVals, r.LowVal...)
-		pos, isNull, err := hashExpr.EvalInt(ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(highLowVals).ToRow())
+		vals := make([]types.Datum, 0, len(partCols))
+		vals = append(vals, r.HighVal...)
+		pos, isNull, err := hashExpr.EvalInt(ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(vals).ToRow())
 		if err != nil {
 			// If we failed to get the point position, we can just skip and ignore it.
 			continue
