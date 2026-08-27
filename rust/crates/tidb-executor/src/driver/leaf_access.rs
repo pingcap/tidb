@@ -208,7 +208,7 @@ pub(crate) fn leaf_index_path(
         None,
         stats,
         hints,
-        false,
+        wanted.is_some(),
         false,
         demand.statement_forces_an_index(),
         // A join leaf is a whole `DataSource` in Go, so `DeriveStats` runs

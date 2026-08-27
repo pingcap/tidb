@@ -1209,15 +1209,32 @@ fn rewrite_member_of_conjuncts(
     }
 }
 
+/// Whether the table handle ranges are Go's `ranger.HasFullRange`.
+///
+/// The range builder returns `Some([full])` when a predicate is present but
+/// does not constrain the handle, whereas Go still treats that path as a full
+/// range scan. Keeping this distinction out of `enumerate_paths` makes it
+/// explicit and gives the `None`/`Some([full])` boundary a regression test.
+fn has_full_handle_range(table: &KvTable, ranges: Option<&[IndexRange]>) -> bool {
+    let unsigned_handle = table
+        .pk_handle_offset()
+        .and_then(|offset| table.columns.get(offset))
+        .is_some_and(|column| column.field_type.is_unsigned());
+    ranges.is_none_or(|ranges| {
+        ranges.len() == 1 && ranges[0].is_full_range(unsigned_handle)
+    })
+}
+
 /// Every candidate way of reading `table` under `where_clause`.
 ///
 /// The table path is always a candidate -- Go's `tablePath` is built
 /// unconditionally in `DeriveStats` -- and each index contributes one
 /// candidate when the detacher produced ranges for it.
 ///
-/// The table path is a FULL scan only when the ranger built nothing over the
-/// clustered integer handle; with a handle bound it carries its own ranges
-/// (see [`crate::handle_range`]) and lowers to Go's `TableRangeScan`.
+/// The table path is a FULL scan when the ranger built nothing over the
+/// clustered integer handle, or returned one full range; a narrowed handle
+/// carries its own ranges (see [`crate::handle_range`]) and lowers to Go's
+/// `TableRangeScan`.
 ///
 /// `needed_columns` are the row offsets the statement actually reads, which
 /// decides whether an index path is covering (Go's `isCoveringIndex`): a
@@ -1276,6 +1293,13 @@ pub(crate) fn enumerate_paths(
         crate::handle_range::build_handle_ranges(table, clause, &resolver.time_zone())
     });
     let handle_ranges = handle.as_ref().map(|built| built.ranges.clone());
+    // `build_handle_ranges` returns a full range when the predicates do not
+    // constrain the handle (for example, a join predicate on another column),
+    // so `None` alone is not Go's `ranger.HasFullRange` test. Keep that
+    // distinction for both the scan penalty and the full-vs-range cost
+    // factor; otherwise every unbounded join leaf is priced as a cheap range
+    // scan and the join search over-selects IndexJoin.
+    let has_full_handle_range = has_full_handle_range(table, handle_ranges.as_deref());
     let table_order: Vec<usize> = if !table.common_handle_offsets().is_empty() {
         table.common_handle_offsets().to_vec()
     } else if let Some(offset) = table.pk_handle_offset() {
@@ -1311,15 +1335,18 @@ pub(crate) fn enumerate_paths(
         handle_ranges.as_deref(),
         limit,
         table_limit_matches_order,
-        // Go's `hasFullRangeScan`: only a table path the ranger narrowed
-        // NOTHING on is penalized -- with a handle bound the path carries its
-        // own ranges, and the range is the evidence the penalty demands.
-        handle_ranges
-            .is_none()
-            .then_some((index_force || hints.has_forced_path(), partition_scan)),
+        // Go's `hasFullRangeScan`: a full handle range is penalized, including
+        // the `Some([full])` spelling returned for an unrelated predicate.
+        // Keep the penalty inputs on every path; `table_scan_path` applies
+        // them only when this full-range fact holds. This preserves Go's
+        // pseudo-statistics risk penalty for unbounded join leaves, where a
+        // missing penalty otherwise makes a full scan look like its tiny
+        // estimated output and causes the join search to over-select
+        // IndexJoin.
+        has_full_handle_range.then_some((index_force || hints.has_forced_path(), partition_scan)),
     );
     // Go's `getTableCandidate`: a table path is always a single scan, and it
-    // is the full range exactly when the ranger built nothing. Its access
+    // is the full range when the ranger built nothing or one full range. Its access
     // columns are the handle KEY PARTS actually constrained by its access
     // conditions. A common handle `(w,d,o)` narrowed only on `w` must not
     // claim `d` and `o`: doing so lets the table path skyline-prune an index
@@ -1348,7 +1375,7 @@ pub(crate) fn enumerate_paths(
             index_columns: ColSet::new(),
             single_scan: true,
             eq_or_in_count: handle.as_ref().map_or(0, |built| built.eq_or_in_count),
-            full_range: handle_ranges.is_none(),
+            full_range: has_full_handle_range,
             count_after_access: table_scan.count_after_access,
             max_count_after_access: table_scan.risk.max,
             min_count_after_access: table_scan.risk.min,
@@ -4915,5 +4942,17 @@ mod tests {
         let printed = rewritten.1.restore();
         assert!(printed.contains("_V$_tags_0"), "{printed}");
         assert!(!printed.contains("MEMBER"), "{printed}");
+    }
+
+    #[test]
+    fn a_some_full_handle_range_is_still_a_go_full_scan() {
+        let mut table = table_with_index();
+        table.set_pk_handle_offset(0);
+        let full = IndexRange::full();
+        assert!(full.is_full_range(false));
+        assert!(has_full_handle_range(&table, Some(std::slice::from_ref(&full))));
+        assert!(has_full_handle_range(&table, None));
+        let point = point_range();
+        assert!(!has_full_handle_range(&table, Some(std::slice::from_ref(&point))));
     }
 }

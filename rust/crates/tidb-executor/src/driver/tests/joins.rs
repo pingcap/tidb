@@ -1414,6 +1414,87 @@ fn a_leaf_asked_for_an_index_order_walks_the_index_and_says_so() {
     );
 }
 
+/// A non-covering index must remain eligible when a parent asks the leaf for
+/// its order. Go's `skylinePruning` keeps such a path through the
+/// `!prop.IsSortItemEmpty()` arm, even though an unordered full index scan
+/// followed by one row lookup per entry could never beat the table scan.
+///
+/// TPC-DS Q64 reaches this shape on the non-clustered composite PRIMARY keys
+/// of `catalog_sales` and `catalog_returns`: the merge keys are in the index,
+/// while the aggregate inputs still require the table row. Dropping the
+/// ordered double-read candidates makes the merge verification fail and
+/// changes the upstream StreamAgg into a HashAgg.
+#[test]
+fn an_ordered_noncovering_primary_index_can_feed_a_merge_join() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    for ddl in [
+        "CREATE TABLE ncl (k BIGINT NOT NULL, o BIGINT NOT NULL, payload BIGINT, \
+         PRIMARY KEY (k, o) NONCLUSTERED)",
+        "CREATE TABLE ncr (k BIGINT NOT NULL, o BIGINT NOT NULL, payload BIGINT, \
+         PRIMARY KEY (k, o) NONCLUSTERED)",
+    ] {
+        crate::run_create_table_on(ddl, &mut catalog).unwrap();
+    }
+    let ctx = crate::StmtContext::for_query();
+    for insert in [
+        "INSERT INTO ncl VALUES (1, 1, 10), (2, 1, 20)",
+        "INSERT INTO ncr VALUES (1, 1, 100), (2, 1, 200)",
+    ] {
+        run_insert_on(insert, &mut catalog, &ctx).unwrap();
+    }
+
+    let sql = "SELECT /*+ TIDB_SMJ(l, r) */ l.payload, r.payload \
+               FROM ncl l JOIN ncr r ON l.k = r.k AND l.o = r.o";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    let plan = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        plan.iter().any(|line| line.contains("MergeJoin")),
+        "the two ordered PRIMARY double reads must feed the forced merge join: {plan:#?}"
+    );
+    for side in ["table:l", "table:r"] {
+        assert!(
+            plan.iter().any(|line| {
+                line.contains("IndexFullScan")
+                    && line.contains(side)
+                    && line.contains("index:PRIMARY(k, o)")
+                    && line.contains("keep order:true")
+            }),
+            "{side} must walk the non-covering PRIMARY in key order: {plan:#?}"
+        );
+    }
+
+    let mut got = run_select_on(sql, &catalog, &ctx).unwrap();
+    got.sort_by_key(|row| format!("{row:?}"));
+    assert_eq!(
+        got,
+        vec![
+            vec![Datum::Int(10), Datum::Int(100)],
+            vec![Datum::Int(20), Datum::Int(200)],
+        ]
+    );
+}
+
 /// THE HINT PIN: the same three statements, separated by nothing but their
 /// join hint, plan three different joins -- which is Go's
 /// `exhaustPhysicalPlans4LogicalJoin` reading `PreferJoinType` BEFORE it costs
