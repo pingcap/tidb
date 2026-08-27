@@ -57,6 +57,10 @@ mod in_func_decimal_collation_source;
 mod regexp_vec_cache_source;
 mod find_in_set_lookup_source;
 mod convert_using_signature_source;
+mod scalar_function_semantics_source;
+mod util_filter_condition_source;
+mod builtin_sig_infra_gaps_source;
+mod hash_group_key_codec_matrix_source;
 
 /// Parses and evaluates a constant expression to its label.
 pub(super) fn e(expr: &str) -> String {
