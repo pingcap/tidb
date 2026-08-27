@@ -2710,11 +2710,26 @@ fn tpcc_condition_two_orders_group_uses_the_covering_index_range() {
     );
 }
 
-/// Go accepts a pushdown-safe expression as the input of a global SUM. The
-/// cop HashAgg evaluates that expression after its Selection, and the root
-/// HashAgg merges one partial result per region.
+/// Go accepts a pushdown-safe expression as the input of a global SUM, and
+/// runs BOTH stages as a StreamAgg.
+///
+/// This test used to assert HashAgg at both stages. Go itself, asked on a
+/// v9.0.0 playground for this exact statement:
+///
+/// ```text
+/// StreamAgg_20     1.00   447292.13  root       funcs:sum(Column#8)->Column#6
+/// └─TableReader_21 1.00   447242.23  root       data:StreamAgg_9
+///   └─StreamAgg_9  1.00  6708475.00  cop[tikv]  funcs:sum(mul(revenue.price, revenue.discount))
+///     └─Selection_19  250.00  6696000.00  cop[tikv]  ge(revenue.k, 1), le(revenue.k, 3)
+///       └─TableFullScan_18  10000.00  5698000.00  cop[tikv]  table:revenue
+/// ```
+///
+/// The old expectation was pinning a divergence rather than a contract: a
+/// global aggregate whose partial stage TiKV runs hands its ROOT exactly one
+/// row, and over one row a root StreamAgg costs `1 * funcs * cpuFactor` while
+/// a root HashAgg still pays the undivided `10*3*cpuFactor` start cost.
 #[test]
-fn global_sum_expression_uses_partial_and_final_hash_agg() {
+fn global_sum_expression_uses_partial_and_final_stream_agg() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
     let mut catalog = Catalog::default();
@@ -2755,9 +2770,9 @@ fn global_sum_expression_uses_partial_and_final_hash_agg() {
     assert_eq!(
         (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
         vec![
-            "HashAgg",
+            "StreamAgg",
             "└─TableReader",
-            "  └─HashAgg",
+            "  └─StreamAgg",
             "    └─Selection",
             "      └─TableFullScan"
         ]

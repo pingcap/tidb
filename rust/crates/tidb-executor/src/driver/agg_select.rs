@@ -3681,8 +3681,33 @@ fn build_aggregation(
     // Go costs the AGGREGATION's input -- its child's cardinality -- which
     // here is the FROM scope's row estimate AFTER predicate pushdown
     // (`Selection estRows` in Go's plan).
+    // Go costs the ROOT aggregate over its CHILD's output, not over the scan.
+    // A global aggregate whose partial stage TiKV runs hands the root exactly
+    // ONE row, which is the whole decision: for
+    // `SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN 1 AND 100` Go's own
+    // `EXPLAIN FORMAT='verbose'` prices its root StreamAgg at 49.90 over the
+    // TableReader's 2330.21 -- exactly `1 row * 1 func * cpuFactor(49.9)` --
+    // against a root HashAgg's 1566.94, which is dominated by the
+    // `10*3*cpuFactor` start cost HashAgg pays at the root and StreamAgg does
+    // not (`getPlanCostVer24PhysicalHashAgg`, and note that start cost is NOT
+    // divided by the final concurrency). Comparing the two families at the
+    // SCAN's 99 rows instead prices them at a point neither root operator
+    // ever sees, and picks HashAgg where Go picks StreamAgg.
+    let global_partial_reaches_tikv = global_hash_partial_plan(
+        select,
+        state,
+        &group_by,
+        has_pre_agg_applies,
+        executed_where.is_none(),
+    )
+    .is_some();
+    let root_input_rows = if global_partial_reaches_tikv {
+        Some(1.0)
+    } else {
+        source_input_rows
+    };
     let global_decimal_sum_preferred = global_decimal_sum_shape
-        && source_input_rows.is_some_and(prefer_stream_agg_for_global_count);
+        && root_input_rows.is_some_and(prefer_stream_agg_for_global_count);
     let small_global_distinct = !complex_global_count
         && group_by.is_empty()
         && state.agg_funcs.len() == 1
@@ -3704,10 +3729,10 @@ fn build_aggregation(
             || (!complex_global_count
                 && !semi_join_source
                 && scan_consumed_where
-                && source_input_rows.is_none_or(prefer_stream_agg_for_global_count)
+                && root_input_rows.is_none_or(prefer_stream_agg_for_global_count)
                 && ((!source_is_index_reader
                     || select.where_clause.as_ref().is_some_and(contains_logic_or))
-                    || source_input_rows.is_some_and(prefer_stream_agg_for_global_count))))
+                    || root_input_rows.is_some_and(prefer_stream_agg_for_global_count))))
         && state.agg_funcs.len() == 1
         && select.fields.fields().len() == 1
     {
