@@ -50,6 +50,9 @@ func preSplitIndexRegions(
 	args *model.ModifyIndexArgs,
 	statsProvider autoPreSplitStatsProvider,
 ) error {
+	if _, ok := store.(kv.SplittableStore); !ok {
+		return context.Cause(ctx)
+	}
 	warnHandler := contextutil.NewStaticWarnHandler(0)
 	exprCtx, err := newReorgExprCtxWithReorgMeta(reorgMeta, warnHandler)
 	if err != nil {
@@ -61,7 +64,7 @@ func preSplitIndexRegions(
 	// normal index keyspace here.
 	splitOnTempIdx := reorgMeta.ReorgTp == model.ReorgTypeIngest ||
 		reorgMeta.ReorgTp == model.ReorgTypeTxnMerge
-	autoPreSplitBoundaryCache := make(map[int64][][]types.Datum)
+	autoPreSplitBoundaryCache := make(map[int64]autoPreSplitBoundaryCacheEntry)
 	for i, idxInfo := range allIndexInfos {
 		idxArg := args.IndexArgs[i]
 		logger := logutil.DDLLogger().With(
@@ -69,15 +72,33 @@ func preSplitIndexRegions(
 			zap.String("index", idxInfo.Name.L),
 		)
 		var splitResult splitIndexRegionResult
+		var skipReason string
 		if idxArg.AutoPreSplit {
-			var skipReason string
 			splitResult, skipReason, err = autoPreSplitIndexRegion(
 				ctx, sctx, store, tblInfo, idxInfo, statsProvider,
 				autoPreSplitBoundaryCache, splitOnTempIdx)
-			// Propagate DDL pause or cancellation before AUTO's best-effort handling swallows ordinary failures.
-			if ctxErr := context.Cause(ctx); ctxErr != nil {
-				return ctxErr
+		} else {
+			splitArgs, evalErr := evalSplitDatumFromArgs(exprCtx, tblInfo, idxInfo, idxArg)
+			if evalErr != nil {
+				return errors.Trace(evalErr)
 			}
+			if splitArgs == nil {
+				continue
+			}
+			splitKeys, buildErr := getSplitIdxKeys(sctx, tblInfo, idxInfo, splitArgs)
+			if buildErr != nil {
+				return errors.Trace(buildErr)
+			}
+			convertIndexSplitKeysForReorgInPlace(splitKeys, splitOnTempIdx)
+			failpoint.InjectCall("beforePresplitIndex", splitKeys)
+			splitResult, err = splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
+		}
+		// Propagate DDL pause or cancellation before handling AUTO's best-effort
+		// failures or manual split failures.
+		if ctxErr := context.Cause(ctx); ctxErr != nil {
+			return ctxErr
+		}
+		if idxArg.AutoPreSplit {
 			if err != nil {
 				// AUTO is an optional optimization, so ordinary planning or Region
 				// failures are logged and add-index continues. Explicit manual
@@ -90,20 +111,6 @@ func preSplitIndexRegions(
 				continue
 			}
 		} else {
-			splitArgs, err := evalSplitDatumFromArgs(exprCtx, tblInfo, idxInfo, idxArg)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if splitArgs == nil {
-				continue
-			}
-			splitKeys, err := getSplitIdxKeys(sctx, tblInfo, idxInfo, splitArgs)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			convertIndexSplitKeysForReorgInPlace(splitKeys, splitOnTempIdx)
-			failpoint.InjectCall("beforePresplitIndex", splitKeys)
-			splitResult, err = splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
 			if err != nil {
 				logger.Error("split table index region failed", zap.Error(err))
 				return errors.Trace(err)
@@ -126,7 +133,7 @@ func autoPreSplitIndexRegion(
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	statsProvider autoPreSplitStatsProvider,
-	boundaryCache map[int64][][]types.Datum,
+	boundaryCache map[int64]autoPreSplitBoundaryCacheEntry,
 	splitOnTempIdx bool,
 ) (splitResult splitIndexRegionResult, skipReason string, err error) {
 	plan, err := planAutoPreSplitWithCache(
@@ -135,11 +142,11 @@ func autoPreSplitIndexRegion(
 		return splitIndexRegionResult{}, "", err
 	}
 	switch plan.state {
-	case autoPreSplitPlanStateSkipped:
+	case autoPreSplitPlanSkipped:
 		return splitIndexRegionResult{}, plan.skipReason, nil
-	case autoPreSplitPlanStatePlanned:
+	case autoPreSplitPlanPlanned:
 		// Continue with the planned split keys below.
-	case autoPreSplitPlanStateInvalid:
+	case autoPreSplitPlanInvalid:
 		return splitIndexRegionResult{}, "", fmt.Errorf("invalid auto pre-split plan state")
 	default:
 		return splitIndexRegionResult{}, "", fmt.Errorf("unknown auto pre-split plan state %d", plan.state)

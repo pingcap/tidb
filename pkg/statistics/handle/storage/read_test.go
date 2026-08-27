@@ -57,15 +57,15 @@ func TestLoadStats(t *testing.T) {
 	h := dom.StatsHandle()
 
 	loaded, err := storage.ReadColumnDistributionStats(
-		context.Background(), testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 1)
+		context.Background(), testKit.Session(), tableInfo.ID, tableInfo.Columns[1])
 	require.NoError(t, err)
-	require.Len(t, loaded.TopN.TopN, 1)
+	require.Len(t, loaded.TopN.TopN, 2)
 	require.Equal(t, uint64(1), loaded.TopN.TopN[0].Count)
 	require.Len(t, loaded.Histogram.Buckets, 2)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err = storage.ReadColumnDistributionStats(
-		ctx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 1)
+		ctx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1])
 	require.ErrorIs(t, err, context.Canceled)
 
 	t.Run("negative NullCount aborts the whole load", func(t *testing.T) {
@@ -79,7 +79,7 @@ func TestLoadStats(t *testing.T) {
 		})
 
 		loaded, loadErr := storage.ReadColumnDistributionStats(
-			context.Background(), testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 1)
+			context.Background(), testKit.Session(), tableInfo.ID, tableInfo.Columns[1])
 		require.ErrorContains(t, loadErr, "negative null count")
 		require.Nil(t, loaded)
 	})
@@ -89,7 +89,7 @@ func TestLoadStats(t *testing.T) {
 		defer cancel()
 		const topNFailpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithParams"
 		require.NoError(t, failpoint.EnableCall(topNFailpointName,
-			func(tableID int64, _ int, _ int64, _ int) {
+			func(tableID int64, _ bool, _ int64, _ int) {
 				if tableID == tableInfo.ID {
 					cancel()
 				}
@@ -101,7 +101,7 @@ func TestLoadStats(t *testing.T) {
 		histogramQueried := false
 		const histogramFailpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeHistogramFromStorageWithParams"
 		require.NoError(t, failpoint.EnableCall(histogramFailpointName,
-			func(tableID int64, _ int, _ int64) {
+			func(tableID int64, _ bool, _ int64) {
 				if tableID == tableInfo.ID {
 					histogramQueried = true
 				}
@@ -111,7 +111,7 @@ func TestLoadStats(t *testing.T) {
 		})
 
 		loaded, loadErr := storage.ReadColumnDistributionStats(
-			loadCtx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 1)
+			loadCtx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1])
 		require.ErrorIs(t, loadErr, context.Canceled)
 		require.Nil(t, loaded)
 		require.False(t, histogramQueried)
@@ -122,7 +122,7 @@ func TestLoadStats(t *testing.T) {
 		defer cancel()
 		const failpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeHistogramFromStorageWithParams"
 		require.NoError(t, failpoint.EnableCall(failpointName,
-			func(tableID int64, _ int, _ int64) {
+			func(tableID int64, _ bool, _ int64) {
 				if tableID == tableInfo.ID {
 					cancel()
 				}
@@ -132,7 +132,7 @@ func TestLoadStats(t *testing.T) {
 		})
 
 		loaded, loadErr := storage.ReadColumnDistributionStats(
-			loadCtx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 0)
+			loadCtx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1])
 		require.ErrorIs(t, loadErr, context.Canceled)
 		require.Nil(t, loaded)
 	})
@@ -196,7 +196,7 @@ func TestReadColumnDistributionStatsUsesOneSnapshot(t *testing.T) {
 	tblInfo := tbl.Meta()
 	colInfo := tblInfo.Columns[1]
 	before, err := storage.ReadColumnDistributionStats(
-		context.Background(), tk.Session(), tblInfo.ID, colInfo, 2)
+		context.Background(), tk.Session(), tblInfo.ID, colInfo)
 	require.NoError(t, err)
 
 	entered := make(chan struct{})
@@ -210,7 +210,7 @@ func TestReadColumnDistributionStatsUsesOneSnapshot(t *testing.T) {
 	})
 	const failpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithParams"
 	require.NoError(t, failpoint.EnableCall(failpointName,
-		func(tableID int64, _ int, _ int64, _ int) {
+		func(tableID int64, _ bool, _ int64, _ int) {
 			if tableID != tblInfo.ID {
 				return
 			}
@@ -232,7 +232,7 @@ func TestReadColumnDistributionStatsUsesOneSnapshot(t *testing.T) {
 	resultCh := make(chan loadResult, 1)
 	go func() {
 		stats, loadErr := storage.ReadColumnDistributionStats(
-			context.Background(), tk.Session(), tblInfo.ID, colInfo, 2)
+			context.Background(), tk.Session(), tblInfo.ID, colInfo)
 		resultCh <- loadResult{stats: stats, err: loadErr}
 	}()
 	select {
@@ -252,7 +252,7 @@ func TestReadColumnDistributionStatsUsesOneSnapshot(t *testing.T) {
 	require.Equal(t, before.Histogram, result.stats.Histogram)
 
 	after, err := storage.ReadColumnDistributionStats(
-		context.Background(), tk.Session(), tblInfo.ID, colInfo, 2)
+		context.Background(), tk.Session(), tblInfo.ID, colInfo)
 	require.NoError(t, err)
 	require.NotEqual(t, before.LastUpdateVersion, after.LastUpdateVersion)
 	require.Equal(t, uint64(20), after.TopN.TopN[0].Count)

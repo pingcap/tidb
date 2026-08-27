@@ -144,14 +144,14 @@ func TestAddIndexAutoPreSplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 	tk.MustExec("analyze table t_auto_presplit all columns with 2 topn, 2 buckets")
 
 	type topNFromStorageArgs struct {
-		isIndex  int
+		isIndex  bool
 		histID   int64
 		priority int
 	}
 	var loadedTopNFromStorage atomic.Pointer[topNFromStorageArgs]
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoPresplitConfig", "return(5)")
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithParams",
-		func(_ int64, isIndex int, histID int64, priority int) {
+		func(_ int64, isIndex bool, histID int64, priority int) {
 			loadedTopNFromStorage.Store(&topNFromStorageArgs{
 				isIndex:  isIndex,
 				histID:   histID,
@@ -167,7 +167,7 @@ func TestAddIndexAutoPreSplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 	}
 	require.Equal(t, model.JobVersion2, jobVersion)
 	require.NotNil(t, loadedArgs)
-	require.Equal(t, 0, loadedArgs.isIndex)
+	require.False(t, loadedArgs.isIndex)
 	require.Equal(t, int64(2), loadedArgs.histID)
 	require.Equal(t, kv.PriorityNormal, loadedArgs.priority)
 }

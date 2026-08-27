@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -38,24 +37,22 @@ type autoPreSplitStatsProvider interface {
 		sctx sessionctx.Context,
 		physicalTableID int64,
 		colInfo *model.ColumnInfo,
-		maxTopNKeys int,
 	) (*statistics.Column, error)
 }
 
 type autoPreSplitConfig struct {
-	minTableRows           int64
-	maxTopNKeysPerPhysical int
-	statsLoadTimeout       time.Duration
-	minStatsHealthy        int64
-	boundaryRatioStep      float64
+	minTableRows      int64
+	statsLoadTimeout  time.Duration
+	minStatsHealthy   int64
+	boundaryRatioStep float64
 }
 
 type autoPreSplitPlanState uint8
 
 const (
-	autoPreSplitPlanStateInvalid autoPreSplitPlanState = iota
-	autoPreSplitPlanStatePlanned
-	autoPreSplitPlanStateSkipped
+	autoPreSplitPlanInvalid autoPreSplitPlanState = iota
+	autoPreSplitPlanPlanned
+	autoPreSplitPlanSkipped
 )
 
 type autoPreSplitPlanResult struct {
@@ -64,12 +61,29 @@ type autoPreSplitPlanResult struct {
 	skipReason string
 }
 
+type autoPreSplitBoundaryState uint8
+
+const (
+	autoPreSplitBoundaryReady autoPreSplitBoundaryState = iota
+	autoPreSplitBoundarySkipped
+	autoPreSplitBoundaryFailed
+)
+
+// Each cache entry preserves one original boundary-planning outcome for indexes
+// sharing a leading column: boundaryRows, skipReason, or err, selected by state.
+type autoPreSplitBoundaryCacheEntry struct {
+	state        autoPreSplitBoundaryState
+	boundaryRows [][]types.Datum
+	skipReason   string
+	err          error
+}
+
 func plannedAutoPreSplitResult(splitKeys [][]byte) (autoPreSplitPlanResult, error) {
 	if len(splitKeys) == 0 {
 		return autoPreSplitPlanResult{}, fmt.Errorf("planned auto pre-split has no split keys")
 	}
 	return autoPreSplitPlanResult{
-		state:     autoPreSplitPlanStatePlanned,
+		state:     autoPreSplitPlanPlanned,
 		splitKeys: splitKeys,
 	}, nil
 }
@@ -79,7 +93,7 @@ func skippedAutoPreSplitResult(reason string) (autoPreSplitPlanResult, error) {
 		return autoPreSplitPlanResult{}, fmt.Errorf("skipped auto pre-split has no reason")
 	}
 	return autoPreSplitPlanResult{
-		state:      autoPreSplitPlanStateSkipped,
+		state:      autoPreSplitPlanSkipped,
 		skipReason: reason,
 	}, nil
 }
@@ -89,9 +103,6 @@ func getAutoPreSplitConfig() autoPreSplitConfig {
 		// AUTO is intended for large tables, where distributing add-index writes
 		// outweighs the statistics loading and Region operation overhead.
 		minTableRows: 1_000_000,
-		// Use Analyze's supported maximum so all stored TopN entries can
-		// participate while the storage query remains bounded.
-		maxTopNKeysPerPhysical: int(vardef.MaxTiDBAnalyzeDefaultNumTopN),
 		// Bound the delay this optional optimization can add before add-index starts.
 		statsLoadTimeout: 30 * time.Second,
 		// Require statistics with no more than about 20% modified rows so stale
@@ -121,7 +132,7 @@ func planAutoPreSplitWithCache(
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	cfg autoPreSplitConfig,
-	boundaryCache map[int64][][]types.Datum,
+	boundaryCache map[int64]autoPreSplitBoundaryCacheEntry,
 ) (autoPreSplitPlanResult, error) {
 	statsTbl, leadingCol, reason := checkAutoPreSplitEligibility(
 		statsProvider, tblInfo, idxInfo, cfg)
@@ -129,18 +140,53 @@ func planAutoPreSplitWithCache(
 		return skippedAutoPreSplitResult(reason)
 	}
 
-	// Reuse sampled boundaries for indexes sharing a leading column, avoiding duplicate
-	// statistics loads within one add-index statement.
-	if boundaryRows, ok := boundaryCache[leadingCol.ID]; ok {
-		splitKeys, err := buildAutoPreSplitIndexKeys(sctx, tblInfo, idxInfo, boundaryRows)
-		if err != nil {
-			return autoPreSplitPlanResult{}, err
-		}
-		return plannedAutoPreSplitResult(splitKeys)
+	if _, ok := boundaryCache[leadingCol.ID]; !ok {
+		boundaryCache[leadingCol.ID] = planAutoPreSplitBoundaries(
+			ctx, sctx, statsProvider, tblInfo.ID, statsTbl, leadingCol, cfg)
 	}
+	boundaryResult := boundaryCache[leadingCol.ID]
+	switch boundaryResult.state {
+	case autoPreSplitBoundaryReady:
+		// Continue with the cached boundary rows below.
+	case autoPreSplitBoundarySkipped:
+		return skippedAutoPreSplitResult(boundaryResult.skipReason)
+	case autoPreSplitBoundaryFailed:
+		return autoPreSplitPlanResult{}, boundaryResult.err
+	}
+
+	splitKeys, err := buildAutoPreSplitIndexKeys(
+		sctx, tblInfo, idxInfo, boundaryResult.boundaryRows)
+	if err != nil {
+		return autoPreSplitPlanResult{}, err
+	}
+	return plannedAutoPreSplitResult(splitKeys)
+}
+
+func planAutoPreSplitBoundaries(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	statsProvider autoPreSplitStatsProvider,
+	physicalTableID int64,
+	statsTbl *statistics.Table,
+	leadingCol *model.ColumnInfo,
+	cfg autoPreSplitConfig,
+) autoPreSplitBoundaryCacheEntry {
+	skippedBoundary := func(reason string) autoPreSplitBoundaryCacheEntry {
+		return autoPreSplitBoundaryCacheEntry{
+			state:      autoPreSplitBoundarySkipped,
+			skipReason: reason,
+		}
+	}
+	failedBoundary := func(err error) autoPreSplitBoundaryCacheEntry {
+		return autoPreSplitBoundaryCacheEntry{
+			state: autoPreSplitBoundaryFailed,
+			err:   err,
+		}
+	}
+
 	colStats, loadNeeded, hasAnalyzed := statsTbl.ColumnIsLoadNeeded(leadingCol.ID, true)
 	if !hasAnalyzed {
-		return skippedAutoPreSplitResult("leading column stats missing or not analyzed")
+		return skippedBoundary("leading column stats missing or not analyzed")
 	}
 
 	loaded := colStats
@@ -148,76 +194,63 @@ func planAutoPreSplitWithCache(
 		loadCtx, cancel := context.WithTimeout(ctx, cfg.statsLoadTimeout)
 		var err error
 		loaded, err = statsProvider.ReadColumnDistributionStats(
-			loadCtx, sctx, tblInfo.ID, leadingCol, cfg.maxTopNKeysPerPhysical)
+			loadCtx, sctx, physicalTableID, leadingCol)
 		cancel()
 		if err != nil {
-			return autoPreSplitPlanResult{}, fmt.Errorf("failed to read leading column statistics from storage: %w", err)
+			return failedBoundary(
+				fmt.Errorf("failed to read leading column statistics from storage: %w", err))
 		}
 	}
 	if loaded == nil {
-		return skippedAutoPreSplitResult("leading column stats metadata missing")
+		return skippedBoundary("leading column stats metadata missing")
 	}
 	if loaded.StatsVer != statistics.Version2 {
-		return skippedAutoPreSplitResult(
+		return skippedBoundary(
 			fmt.Sprintf("leading column stats version %d is not Analyze V2", loaded.StatsVer))
 	}
 	if loaded.NullCount < 0 {
-		return autoPreSplitPlanResult{}, fmt.Errorf(
-			"leading column statistics have negative null count %d", loaded.NullCount)
+		return failedBoundary(fmt.Errorf(
+			"leading column statistics have negative null count %d", loaded.NullCount))
 	}
 
-	// The configured TopN maximum equals Analyze's supported maximum, so all valid
-	// TopN entries and Histogram buckets participate in boundary planning.
-	values := make([]autoPreSplitValue, 0, cfg.maxTopNKeysPerPhysical+loaded.Histogram.Len()+1)
+	values := make([]autoPreSplitValue, 0, loaded.TopN.Num()+loaded.Histogram.Len()+1)
 	if loaded.NullCount > 0 {
 		nullValue, err := newAutoPreSplitValue(
 			sctx, types.NewDatum(nil), uint64(loaded.NullCount), leadingCol)
 		if err != nil {
-			return autoPreSplitPlanResult{}, fmt.Errorf(
-				"failed to build NullCount auto pre-split value: %w", err)
+			return failedBoundary(fmt.Errorf(
+				"failed to build NullCount auto pre-split value: %w", err))
 		}
 		values = append(values, nullValue)
 	}
 
-	topNValues, err := buildAutoPreSplitTopNValues(
-		sctx, loaded.TopN, leadingCol, cfg.maxTopNKeysPerPhysical)
+	topNValues, err := buildAutoPreSplitTopNValues(sctx, loaded.TopN, leadingCol)
 	if err != nil {
-		return autoPreSplitPlanResult{}, fmt.Errorf(
-			"failed to build TopN auto pre-split values: %w", err)
+		return failedBoundary(fmt.Errorf(
+			"failed to build TopN auto pre-split values: %w", err))
 	}
 	values = append(values, topNValues...)
 
 	histogramValues, err := buildAutoPreSplitHistogramValues(
 		sctx, &loaded.Histogram, leadingCol)
 	if err != nil {
-		return autoPreSplitPlanResult{}, fmt.Errorf(
-			"failed to build Histogram auto pre-split values: %w", err)
+		return failedBoundary(fmt.Errorf(
+			"failed to build Histogram auto pre-split values: %w", err))
 	}
 	values = append(values, histogramValues...)
 
-	values, totalCount, err := mergeAutoPreSplitValues(values)
-	if err != nil {
-		return autoPreSplitPlanResult{}, err
-	}
+	values, totalCount := mergeAutoPreSplitValues(values)
 	if totalCount == 0 {
-		return skippedAutoPreSplitResult("no usable leading column distribution")
+		return skippedBoundary("no usable leading column distribution")
 	}
 	boundaryRows := sampleAutoPreSplitValues(values, totalCount, cfg.boundaryRatioStep)
 	if len(boundaryRows) == 0 {
-		return skippedAutoPreSplitResult("no internal distribution boundary")
+		return skippedBoundary("no internal distribution boundary")
 	}
-	splitKeys, err := buildAutoPreSplitIndexKeys(sctx, tblInfo, idxInfo, boundaryRows)
-	if err != nil {
-		return autoPreSplitPlanResult{}, err
+	return autoPreSplitBoundaryCacheEntry{
+		state:        autoPreSplitBoundaryReady,
+		boundaryRows: boundaryRows,
 	}
-	result, err := plannedAutoPreSplitResult(splitKeys)
-	if err != nil {
-		return autoPreSplitPlanResult{}, err
-	}
-	if boundaryCache != nil {
-		boundaryCache[leadingCol.ID] = boundaryRows
-	}
-	return result, nil
 }
 
 func checkAutoPreSplitEligibility(
@@ -239,20 +272,6 @@ func checkAutoPreSplitEligibility(
 	}
 
 	statsTbl := statsProvider.GetPhysicalTableStats(tblInfo.ID, tblInfo)
-	// Provider implementations may report an uninitialized cache entry as nil
-	// or pseudo statistics. Neither has a reliable distribution for AUTO.
-	if statsTbl == nil {
-		return nil, nil, "stats missing"
-	}
-	if statsTbl.Pseudo {
-		return nil, nil, "stats pseudo"
-	}
-	// Cached statistics can remain usable for query planning after substantial
-	// table changes, but AUTO skips them because its split boundaries cannot be
-	// corrected after add-index starts.
-	if statsTbl.IsOutdated() {
-		return nil, nil, "stats outdated"
-	}
 	healthy, ok := statsTbl.GetStatsHealthy()
 	if !ok {
 		return nil, nil, "stats health unavailable"
@@ -343,12 +362,11 @@ func buildAutoPreSplitTopNValues(
 	sctx sessionctx.Context,
 	topN *statistics.TopN,
 	colInfo *model.ColumnInfo,
-	limit int,
 ) ([]autoPreSplitValue, error) {
-	if limit <= 0 || topN == nil || topN.Num() == 0 {
+	if topN == nil || topN.Num() == 0 {
 		return nil, nil
 	}
-	num := min(topN.Num(), limit)
+	num := topN.Num()
 	values := make([]autoPreSplitValue, 0, num)
 	for i := range num {
 		item := topN.TopN[i]
@@ -392,7 +410,13 @@ func buildAutoPreSplitHistogramValues(
 		if delta == 0 {
 			continue
 		}
-		value, err := newAutoPreSplitValue(sctx, *histogram.GetUpper(i), uint64(delta), colInfo)
+		upper := *histogram.GetUpper(i)
+		if types.IsString(colInfo.GetType()) {
+			// String Histogram bounds are stored as collation comparison bytes.
+			// GetUpper returns KindString, so restore bytes before index encoding.
+			upper = types.NewBytesDatum(upper.GetBytes())
+		}
+		value, err := newAutoPreSplitValue(sctx, upper, uint64(delta), colInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -401,7 +425,7 @@ func buildAutoPreSplitHistogramValues(
 	return values, nil
 }
 
-func mergeAutoPreSplitValues(values []autoPreSplitValue) ([]autoPreSplitValue, uint64, error) {
+func mergeAutoPreSplitValues(values []autoPreSplitValue) ([]autoPreSplitValue, uint64) {
 	values = slices.DeleteFunc(values, func(value autoPreSplitValue) bool {
 		return value.count == 0
 	})
@@ -412,28 +436,13 @@ func mergeAutoPreSplitValues(values []autoPreSplitValue) ([]autoPreSplitValue, u
 	var total uint64
 	for _, value := range values {
 		if len(merged) > 0 && bytes.Equal(merged[len(merged)-1].encoded, value.encoded) {
-			count, overflow := addAutoPreSplitCount(merged[len(merged)-1].count, value.count)
-			if overflow {
-				return nil, 0, fmt.Errorf("auto presplit count overflows while merging equal values")
-			}
-			merged[len(merged)-1].count = count
+			merged[len(merged)-1].count += value.count
 		} else {
 			merged = append(merged, value)
 		}
-		var overflow bool
-		total, overflow = addAutoPreSplitCount(total, value.count)
-		if overflow {
-			return nil, 0, fmt.Errorf("auto presplit distribution count overflows")
-		}
+		total += value.count
 	}
-	return merged, total, nil
-}
-
-func addAutoPreSplitCount(a, b uint64) (uint64, bool) {
-	if math.MaxUint64-a < b {
-		return 0, true
-	}
-	return a + b, false
+	return merged, total
 }
 
 func sampleAutoPreSplitValues(

@@ -121,14 +121,12 @@ func histMetaFromStorage(
 // ReadColumnDistributionStats reads one column's metadata, TopN, and Histogram
 // from one MVCC snapshot with normal priority. Any read or decoding failure
 // aborts the whole read so callers never plan with a partial distribution.
-// maxTopNKeys limits how many TopN entries are read, while Histogram always
-// reads all buckets. It does not update the statistics cache.
+// It does not update the statistics cache.
 func ReadColumnDistributionStats(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalTableID int64,
 	colInfo *model.ColumnInfo,
-	maxTopNKeys int,
 ) (*statistics.Column, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	snapshot, err := sctx.GetStore().GetOracle().GetTimestamp(
@@ -166,8 +164,8 @@ func ReadColumnDistributionStats(
 		tableID:     physicalTableID,
 		histID:      colInfo.ID,
 		tp:          &colInfo.FieldType,
-		distinct:    histMeta.NDV,
-		isIndex:     0,
+		ndv:         histMeta.NDV,
+		isIndex:     false,
 		version:     histMeta.LastUpdateVersion,
 		nullCount:   column.NullCount,
 		totColSize:  histMeta.TotColSize,
@@ -175,21 +173,18 @@ func ReadColumnDistributionStats(
 		priority:    kv.PriorityNormal,
 		snapshot:    snapshot,
 	}
-	if maxTopNKeys > 0 {
-		topN, err := topNFromStorageWithParams(
-			ctx, sctx, topNLoadParams{
-				tableID:  physicalTableID,
-				isIndex:  0,
-				histID:   colInfo.ID,
-				priority: kv.PriorityNormal,
-				limit:    maxTopNKeys,
-				snapshot: snapshot,
-			})
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		column.TopN = topN
+	topN, err := topNFromStorageWithParams(
+		ctx, sctx, topNLoadParams{
+			tableID:  physicalTableID,
+			isIndex:  false,
+			histID:   colInfo.ID,
+			priority: kv.PriorityNormal,
+			snapshot: snapshot,
+		})
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
+	column.TopN = topN
 
 	histogram, err := histogramFromStorageWithParams(ctx, sctx, histogramParams)
 	if err != nil {
@@ -220,8 +215,8 @@ func HistogramFromStorageWithPriority(
 		tableID:     tableID,
 		histID:      colID,
 		tp:          tp,
-		distinct:    distinct,
-		isIndex:     isIndex,
+		ndv:         distinct,
+		isIndex:     isIndex == 1,
 		version:     ver,
 		nullCount:   nullCount,
 		totColSize:  totColSize,
@@ -234,8 +229,8 @@ type histogramLoadParams struct {
 	tp          *types.FieldType
 	tableID     int64
 	histID      int64
-	distinct    int64
-	isIndex     int
+	ndv         int64
+	isIndex     bool
 	version     uint64
 	nullCount   int64
 	totColSize  int64
@@ -261,7 +256,7 @@ func histogramFromStorageWithParams(
 	bucketSize := len(rows)
 	tp := params.tp
 	hg := statistics.NewHistogram(
-		params.histID, params.distinct, params.nullCount, params.version,
+		params.histID, params.ndv, params.nullCount, params.version,
 		tp, bucketSize, params.totColSize)
 	hg.Correlation = params.correlation
 	totalCount := int64(0)
@@ -269,7 +264,7 @@ func histogramFromStorageWithParams(
 		count := rows[i].GetInt64(0)
 		repeats := rows[i].GetInt64(1)
 		var upperBound, lowerBound types.Datum
-		if params.isIndex == 1 {
+		if params.isIndex {
 			lowerBound = rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			upperBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
 		} else {
@@ -334,7 +329,7 @@ func CMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, hist
 func TopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID int64) (_ *statistics.TopN, err error) {
 	return topNFromStorageWithParams(util.StatsCtx, sctx, topNLoadParams{
 		tableID:  tblID,
-		isIndex:  isIndex,
+		isIndex:  isIndex == 1,
 		histID:   histID,
 		priority: kv.PriorityHigh,
 	})
@@ -342,10 +337,9 @@ func TopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID i
 
 type topNLoadParams struct {
 	tableID  int64
-	isIndex  int
+	isIndex  bool
 	histID   int64
 	priority int
-	limit    int
 	snapshot uint64
 }
 
@@ -358,12 +352,8 @@ func topNFromStorageWithParams(
 		"beforeTopNFromStorageWithParams",
 		params.tableID, params.isIndex, params.histID, params.priority)
 	query := statsSelectPrefix(params.priority) + "value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?"
-	args := []any{params.tableID, params.isIndex, params.histID}
-	if params.limit > 0 {
-		query += " order by count desc, value limit %?"
-		args = append(args, params.limit)
-	}
-	rows, _, err := execRowsAtSnapshot(ctx, sctx, params.snapshot, query, args...)
+	rows, _, err := execRowsAtSnapshot(
+		ctx, sctx, params.snapshot, query, params.tableID, params.isIndex, params.histID)
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}

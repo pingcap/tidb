@@ -203,10 +203,9 @@ func (*Handle) ReadColumnDistributionStats(
 	sctx sessionctx.Context,
 	physicalTableID int64,
 	colInfo *model.ColumnInfo,
-	maxTopNKeys int,
 ) (*statistics.Column, error) {
 	return storage.ReadColumnDistributionStats(
-		ctx, sctx, physicalTableID, colInfo, maxTopNKeys)
+		ctx, sctx, physicalTableID, colInfo)
 }
 
 // GetNonPseudoPhysicalTableStats retrieves the statistics for a physical table from cache, but it will not return pseudo.
