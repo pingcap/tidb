@@ -3768,8 +3768,10 @@ pub(crate) fn choose_index_range_path(
             if let Ok(mut slot) = sink.lock() {
                 let shape = slot
                     .get_or_insert_with(crate::stmt_context::PinnedPlanShape::default);
-                shape.leaves.entry(name.to_owned()).or_insert_with(|| {
-                    match &best.index {
+                shape
+                    .leaves
+                    .entry(name.to_owned())
+                    .or_insert_with(|| match &best.index {
                         Some((index_id, _)) => {
                             crate::stmt_context::PinnedLeafAccess::IndexId(*index_id)
                         }
