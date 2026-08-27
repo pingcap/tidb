@@ -124,6 +124,21 @@ select t1.a from t1 join lateral (select b from t2 where t2.a = t1.a) as lat on 
 select t1.a from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true
   where t1.x > 0 or exists (select 1 from t4 where t4.a = t1.a) order by t1.a;
 
+## Cross-check the row counts above without relying on LATERAL at all: a LATERAL join whose
+## only correlation is an equality is semantically a plain join, so these must agree with the
+## always-true-WHERE results (INNER drops t1.a=4 and keeps t1.a=3 twice; LEFT keeps both).
+select t1.a from t1 join lateral (select b from t2 where t2.a = t1.a) as lat on true order by t1.a;
+select t1.a from t1 join t2 on t2.a = t1.a order by t1.a;
+select t1.a from t1 left join t2 on t2.a = t1.a order by t1.a;
+
+## A real predicate must still filter after the always-true cases above
+select t1.a from t1 join lateral (select b from t2 where t2.a = t1.a) as lat on true where t1.a >= 3 order by t1.a;
+select t1.a from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true where t1.a >= 3 order by t1.a;
+
+## Pruning a redundant Apply must still happen when no LATERAL is involved
+select t1.a from t1 where 1=1 or exists (select 1 from t4 where t4.a = t1.a) order by t1.a;
+explain format='plan_tree' select t1.a from t1 where 1=1 or exists (select 1 from t4 where t4.a = t1.a);
+
 ## An inner projection may only be pulled above the outer join when it stays NULL on the
 ## null-extended row. ifnull/coalesce/IS NULL must not turn a non-match into a real value.
 select t1.a, lat.bz from t1 left join lateral (select ifnull(b, 'z') as bz from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.bz;
