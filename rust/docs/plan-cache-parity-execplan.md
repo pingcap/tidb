@@ -392,18 +392,40 @@ Self-time for the in-transaction range workload: 55.4% `semaphore_wait_trap`
 
 ### What closing the rest would take
 
-Two structural items with evidence, neither sufficient alone:
+Two structural items with evidence, neither sufficient alone. Both are OS-
+thread boundaries, and the primitive cost is measured on this machine: a
+cross-thread rendezvous round trip is **3.858us** against **0.004us** for an
+uncontended mutex -- a factor of about a thousand. Go places goroutine
+boundaries where this tier places thread boundaries, which is why it can
+afford to parallelise a 100-row aggregation and this tier cannot.
 
-1. **The in-transaction read hop, 5.3us x 10 reads = 53us of 640.** Owning the
-   transaction on the connection worker (M3s extended to `SessionTransaction`)
-   would remove it. Measured BEFORE building it, which is what showed a
-   refactor the size of M3s buys about 2% here.
-2. **The transport worker hop on every coprocessor RPC.** `unary_send` ships a
-   `WorkerCommand::UnarySend` to the transport thread and blocks; the worker
-   exists only to serialise `ChannelPool` access, then spawns onto the runtime.
-   Go looks up a pooled channel under a mutex and calls on the caller's
-   goroutine. Our Cop RPC is ~120us against Go's ~110us, and ~5.6 cop RPCs per
-   `read_only` transaction makes that ~56us of 640.
+1. **The in-transaction read hop: 5.3us x 10 reads = 53us of 640.** Measured
+   directly in the workload (`caller_avg` 79.2us against `worker_avg` 73.9us,
+   `asks == served`). Owning the transaction on the connection worker -- M3s
+   extended to `SessionTransaction` -- removes it. Measured BEFORE building it,
+   which is what showed a refactor the size of M3s buys about 2% here.
+
+2. **The transport worker hop on every coprocessor RPC: ~10us x ~5.6 = ~56us
+   of 640.** `unary_send` sends a `WorkerCommand::UnarySend` to the transport
+   thread and blocks; the worker exists only to serialise `ChannelPool`
+   mutation, then spawns the call onto the same runtime. That is three
+   boundaries -- caller to worker, worker to runtime task, task back to caller
+   -- where Go takes a pooled `ClientConn` under a mutex and calls on the
+   caller's own goroutine. Our Cop RPC is ~120us against Go's ~110us, which is
+   the right size for it.
+
+   **Attempted 2026-08-27 and reverted.** Sharing the runtime and putting the
+   pool behind `Arc<Mutex<ChannelPool>>` so the caller does its own
+   `block_on` compiles and passes most of the suite, but
+   `tikv_tonic_coprocessor_source::unary_rpc_attaches_context_once_...` panics
+   with "Cannot start a runtime from within a runtime". A probe showed the
+   SAME test thread reporting `in_runtime=false` on the first two sends and
+   `true` on the third, so something leaks a runtime `EnterGuard` between
+   calls; the only two `.enter()` sites in the crate
+   (`channel_pool.rs:82`, `liveness.rs:75`) are both correctly scoped, so the
+   source was not found. Reverted rather than shipped: this is shared
+   transport infrastructure, the hazard was not understood, and the payoff is
+   ~9% of the remaining gap. Anyone resuming should start from that probe.
 
 Everything else is diffuse: ~8us per statement of SQL-layer overhead and the
 allocator/memmove traffic above. Closing it is an efficiency campaign across
