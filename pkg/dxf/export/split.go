@@ -54,10 +54,14 @@ func generateChunks(
 	if err != nil {
 		return nil, 0, err
 	}
+	regions, err := loadRegionIndex(ctx, store, refs)
+	if err != nil {
+		return nil, 0, err
+	}
 	chunks := make([]Chunk, 0, len(refs))
 	var total int64
 	for tableIdx, ref := range refs {
-		tableChunks, err := splitTable(ctx, store, ref.tableInfo, tableIdx)
+		tableChunks, err := splitTable(ref.tableInfo, tableIdx, regions)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -71,26 +75,113 @@ func generateChunks(
 
 // splitTable carves one table into ~chunkSize key-ordered chunks, with a
 // table-local ordinal spanning its partitions so file names stay unique.
-func splitTable(
-	ctx context.Context,
-	store kv.Storage,
-	tblInfo *model.TableInfo,
-	tableIdx int,
-) ([]Chunk, error) {
+func splitTable(tblInfo *model.TableInfo, tableIdx int, regions *regionIndex) ([]Chunk, error) {
 	pids := physicalIDs(tblInfo)
 	chunks := make([]Chunk, 0, len(pids))
 	ordinal := 0
 	for _, pid := range pids {
 		start, end := physicalTableRange(tblInfo, pid)
-		endKeys, sizes, err := loadRegionSizes(ctx, store, start, end)
-		if err != nil {
-			return nil, err
+		endKeys, sizes := regions.cover(start, end)
+		if len(sizes) == 0 {
+			return nil, errors.Errorf("export: PD returned no regions for table %d", pid)
 		}
 		tableChunks, nextOrdinal := chunksBySize(tableIdx, pid, start, end, endKeys, sizes, ordinal)
 		ordinal = nextOrdinal
 		chunks = append(chunks, tableChunks...)
 	}
 	return chunks, nil
+}
+
+const (
+	// maxPIDGapPerRun bounds how far apart two physical tables may sit in the id
+	// space before they are queried separately. Ids are handed out in order, so
+	// tables created together are adjacent and land in one query; a wide gap
+	// means unrelated tables sit in between, whose regions we would otherwise
+	// pay to fetch and discard.
+	maxPIDGapPerRun = 128
+	// maxRangesPerRun caps how many physical tables one query covers, so a
+	// single failure retries a bounded amount of work.
+	maxRangesPerRun = 1024
+)
+
+// regionIndex holds the regions covering every exported table, in key order, so
+// each table takes the slice that overlaps it instead of querying PD itself.
+type regionIndex struct {
+	endKeys []kv.Key
+	sizes   []int64
+}
+
+// cover returns the regions overlapping [start, end). chunksBySize ends the last
+// chunk at the caller's own end key, so a region reaching past end is included
+// whole rather than trimmed.
+func (r *regionIndex) cover(start, end kv.Key) ([]kv.Key, []int64) {
+	first := sort.Search(len(r.endKeys), func(i int) bool { return r.endKeys[i].Cmp(start) > 0 })
+	if first == len(r.endKeys) {
+		return nil, nil
+	}
+	last := sort.Search(len(r.endKeys), func(i int) bool { return r.endKeys[i].Cmp(end) >= 0 })
+	if last == len(r.endKeys) {
+		last = len(r.endKeys) - 1
+	}
+	return r.endKeys[first : last+1], r.sizes[first : last+1]
+}
+
+// loadRegionIndex fetches region sizes for every table up front. Splitting a
+// table used to cost one PD query each, which does not scale to a schema of many
+// tables; tables adjacent in the id space are contiguous in key space, so one
+// query over a run of them returns what they all need.
+func loadRegionIndex(ctx context.Context, store kv.Storage, refs []tableRef) (*regionIndex, error) {
+	ranges := physicalRanges(refs)
+	if len(ranges) == 0 {
+		return &regionIndex{}, nil
+	}
+	idx := &regionIndex{}
+	for _, run := range groupRangesIntoRuns(ranges) {
+		endKeys, sizes, err := loadRegionSizes(ctx, store, run[0].start, run[len(run)-1].end)
+		if err != nil {
+			return nil, err
+		}
+		idx.endKeys = append(idx.endKeys, endKeys...)
+		idx.sizes = append(idx.sizes, sizes...)
+	}
+	return idx, nil
+}
+
+// physicalRange is one physical table's key range, keyed by the id that decides
+// where it sits relative to the others.
+type physicalRange struct {
+	pid        int64
+	start, end kv.Key
+}
+
+// physicalRanges lists every exported physical table in key order.
+func physicalRanges(refs []tableRef) []physicalRange {
+	ranges := make([]physicalRange, 0, len(refs))
+	for _, ref := range refs {
+		for _, pid := range physicalIDs(ref.tableInfo) {
+			start, end := physicalTableRange(ref.tableInfo, pid)
+			ranges = append(ranges, physicalRange{pid: pid, start: start, end: end})
+		}
+	}
+	sort.Slice(ranges, func(i, j int) bool { return ranges[i].pid < ranges[j].pid })
+	return ranges
+}
+
+// groupRangesIntoRuns batches neighbouring physical tables so each run can be
+// covered by one PD query.
+func groupRangesIntoRuns(ranges []physicalRange) [][]physicalRange {
+	var runs [][]physicalRange
+	for start := 0; start < len(ranges); {
+		end := start + 1
+		for end < len(ranges) &&
+			end-start < maxRangesPerRun &&
+			ranges[end].pid-ranges[end-1].pid <= maxPIDGapPerRun {
+			end++
+		}
+		runs = append(runs, ranges[start:end])
+		start = end
+	}
+	return runs
 }
 
 // loadRegionSizes returns each region's end key and byte size over [start, end).

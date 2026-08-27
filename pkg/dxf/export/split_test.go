@@ -278,6 +278,71 @@ func TestChunksBySize(t *testing.T) {
 	require.Equal(t, 6, n)
 }
 
+func TestRegionIndexCover(t *testing.T) {
+	// 4 regions: [_,b) [b,c) [c,d) [d,e)
+	idx := &regionIndex{endKeys: keys("b", "c", "d", "e"), sizes: []int64{1, 2, 3, 4}}
+
+	// A table spanning several regions gets each of them.
+	ends, sizes := idx.cover(kv.Key("a"), kv.Key("e"))
+	require.Equal(t, keys("b", "c", "d", "e"), ends)
+	require.Equal(t, []int64{1, 2, 3, 4}, sizes)
+
+	// A table inside one region gets just that region, whose size covers the
+	// whole region rather than the table's share of it.
+	ends, sizes = idx.cover(kv.Key("ba"), kv.Key("bb"))
+	require.Equal(t, keys("c"), ends)
+	require.Equal(t, []int64{2}, sizes)
+
+	// Starting exactly on a boundary belongs to the following region, not the
+	// one that ends there.
+	_, sizes = idx.cover(kv.Key("b"), kv.Key("ba"))
+	require.Equal(t, []int64{2}, sizes)
+
+	// A range reaching past the last region still ends at the last region.
+	ends, sizes = idx.cover(kv.Key("d"), kv.Key("zz"))
+	require.Equal(t, keys("e"), ends)
+	require.Equal(t, []int64{4}, sizes)
+
+	// Nothing at or past the final boundary.
+	ends, sizes = idx.cover(kv.Key("e"), kv.Key("f"))
+	require.Nil(t, ends)
+	require.Nil(t, sizes)
+}
+
+func TestGroupRangesIntoRuns(t *testing.T) {
+	mk := func(pids ...int64) []physicalRange {
+		ranges := make([]physicalRange, 0, len(pids))
+		for _, pid := range pids {
+			ranges = append(ranges, physicalRange{pid: pid})
+		}
+		return ranges
+	}
+	runLens := func(runs [][]physicalRange) []int {
+		lens := make([]int, 0, len(runs))
+		for _, run := range runs {
+			lens = append(lens, len(run))
+		}
+		return lens
+	}
+
+	// Consecutive ids are one run; a wide gap starts a new one.
+	require.Equal(t, []int{3}, runLens(groupRangesIntoRuns(mk(10, 11, 12))))
+	require.Equal(t, []int{2, 2},
+		runLens(groupRangesIntoRuns(mk(10, 11, 10+maxPIDGapPerRun+11, 10+maxPIDGapPerRun+12))))
+
+	// A gap right at the limit still joins.
+	require.Equal(t, []int{2}, runLens(groupRangesIntoRuns(mk(10, 10+maxPIDGapPerRun))))
+
+	// Runs are capped even when ids stay contiguous.
+	contiguous := make([]int64, 0, maxRangesPerRun+5)
+	for i := range maxRangesPerRun + 5 {
+		contiguous = append(contiguous, int64(i))
+	}
+	require.Equal(t, []int{maxRangesPerRun, 5}, runLens(groupRangesIntoRuns(mk(contiguous...))))
+
+	require.Empty(t, groupRangesIntoRuns(nil))
+}
+
 func TestPhysicalTableRange(t *testing.T) {
 	const pid = 100
 	prefix := tablecodec.GenTableRecordPrefix(pid)
