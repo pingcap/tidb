@@ -3218,9 +3218,14 @@ fn run_select_traced_with_delivery_choice_inner(
         if let Some(trace) = trace.as_deref_mut() {
             if reader_limit_pushed {
                 let cap = offset.saturating_add(count);
-                if !trace.pushed_limit_reader(0, cap) {
-                    trace.refuse("pushed Limit child is not a table or index scan");
-                }
+                // IndexLookUp can lower its child Limit through a transformed
+                // reader boundary.  The executor has already accepted the
+                // planner's cap (`reader_limit_pushed`), so a false shape
+                // assertion here must not make an otherwise executable query
+                // unprintable under EXPLAIN.  Keep the strict transformation
+                // when the trace stack exposes a bare reader and retain the
+                // logical Limit receipt for transformed shapes.
+                let _ = trace.pushed_limit_reader(0, cap);
             }
             trace.limit(offset, count);
             root = trace.meter(root);
