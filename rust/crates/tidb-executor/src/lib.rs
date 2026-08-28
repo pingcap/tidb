@@ -89,6 +89,20 @@ mod tests_ddl_modify_column_reorg_gaps;
 mod tests_ddl_modify_column_types;
 #[cfg(test)]
 mod tests_ddl_multi_schema_change_cancel_gaps;
+#[cfg(test)]
+mod tests_ddl_multi_schema_change_job_gaps;
+#[cfg(test)]
+mod tests_ddl_multi_schema_change_sql;
+#[cfg(test)]
+mod tests_ddl_mv_index_online_ddl_gaps;
+#[cfg(test)]
+mod tests_ddl_notifier_pubsub_gaps;
+#[cfg(test)]
+mod tests_ddl_options_owner_manager_gaps;
+#[cfg(test)]
+mod tests_ddl_partition_operations_sql;
+#[cfg(test)]
+mod tests_ddl_partition_reorganize_exchange_gaps;
 pub mod ddl_sequence;
 pub mod deadlock_history;
 pub mod driver;
