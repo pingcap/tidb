@@ -12,313 +12,491 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Source-backed inventory for `pkg/executor.part21`, Go test items 661–720.
-//!
-//! This slice contains the slow-query SQL/parser suites, sort and TopN
-//! spill/failpoint suites, region-split key generation, and statement-RU
-//! session-lifecycle tests. `tidb-executor` has no slow-query file retriever,
-//! TiKV/PD region-splitting executor, failpoint harness, or statement-RU owner
-//! lifecycle. The crate does have lower-level sort/spill tests, but those do
-//! not reproduce the Go session and failpoint contracts, so the assigned Go
-//! tests remain explicit parity-gap carriers rather than being falsely marked
-//! as complete ports.
+//! Source-anchored carriers for `pkg/executor.part21`, items 1201–1260 of the
+//! deterministic `origin/master` executor-test enumeration. The Go sources
+//! exercise session/domain transactions, accounts and privileges, statistics,
+//! region metadata, and TiFlash/MPP execution in addition to executor calls.
+//! This executor-only crate has no equivalent live session, distributed KV/PD,
+//! TiFlash, or failpoint integration seam, so unsupported behavior is kept as
+//! explicit ignored parity evidence rather than approximated with local tests.
 
-/// `pkg/executor/slow_query_sql_test.go:214::TestSlowQuerySessionAlias` (item 661).
+/// `pkg/executor/test/seqtest/seq_executor_test.go:1196::TestInsertFromSelectConflictRetryAutoID`.
+/// The Go body runs concurrent `INSERT ... SELECT ... ON DUPLICATE KEY UPDATE`
+/// through `InsertValues.doBatchInsert` (`pkg/executor/insert_common.go:640`)
+/// and conflict prefetch (`pkg/executor/insert.go:156`), requiring concurrent
+/// session transaction retry and auto-ID allocation.
+// go-parity-gap: concurrent INSERT SELECT conflict retries and auto-ID allocation are not modeled by tidb-executor.
 #[test]
-#[ignore = "go-parity-gap: session alias state and information_schema slow-query retrieval are unported"]
-fn slow_query_records_session_alias() {}
+#[ignore = "go-parity-gap: concurrent INSERT SELECT conflict retries and auto-ID allocation are not modeled by tidb-executor"]
+fn insert_from_select_conflict_retry_preserves_auto_id() {}
 
-/// `pkg/executor/slow_query_sql_test.go:250::TestSlowQuery` (item 662).
+/// `pkg/executor/test/seqtest/seq_executor_test.go:1247::TestAutoRandRecoverTable`.
+/// The Go body recovers a dropped table and checks auto-random rebasing through
+/// the insert allocator (`pkg/executor/insert_common.go:1261`) and DDL recovery
+/// (`pkg/ddl/executor.go:6865`), with emulator-GC and failpoint state.
+// go-parity-gap: RECOVER TABLE, emulator GC, DDL history, failpoints, and auto-random rebasing require the session/domain DDL tier.
 #[test]
-#[ignore = "go-parity-gap: slow-log file parsing, time-zone filtering, and information_schema.slow_query are unported"]
-fn slow_query_retrieves_runtime_and_ru_fields() {}
+#[ignore = "go-parity-gap: RECOVER TABLE, emulator GC, DDL history, failpoints, and auto-random rebasing require the session/domain DDL tier"]
+fn auto_random_recover_table_rebases_handles() {}
 
-/// `pkg/executor/slow_query_sql_test.go:336::TestIssue37066` (item 663).
+/// `pkg/executor/test/seqtest/seq_executor_test.go:1298::TestOOMPanicInHashJoinWhenFetchBuildRows`.
+/// The Go body injects `errorFetchBuildSideRowsMockOOMPanic` in the hash-join
+/// build fetch path (`pkg/executor/join/hash_join_base.go:352`) and observes
+/// the error through the session result-set boundary.
+// go-parity-gap: the Go hash-join failpoint and session-level panic/error path are unavailable in tidb-executor.
 #[test]
-#[ignore = "go-parity-gap: slow-log index-name publication and statements_summary require session/domain runtime metadata"]
-fn issue_37066_keeps_slow_query_index_names_consistent() {}
+#[ignore = "go-parity-gap: the Go hash-join failpoint and session-level panic/error path are unavailable in tidb-executor"]
+fn hash_join_build_fetch_oom_is_reported() {}
 
-/// `pkg/executor/slow_query_sql_test.go:410::TestWarningsInSlowQuery` (item 664).
+/// `pkg/executor/test/seqtest/seq_executor_test.go:1315::TestIssue18744`.
+/// The Go body enables `testIndexHashJoinOuterWorkerErr` at the index-hash-join
+/// outer worker (`pkg/executor/join/index_lookup_hash_join.go:380`) and checks
+/// that the worker error reaches the query result.
+// go-parity-gap: index-hash-join failpoint injection and distributed worker error propagation are unported.
 #[test]
-#[ignore = "go-parity-gap: slow-query warning capture and the suite-backed information_schema reader are not modeled"]
-fn warnings_are_recorded_in_slow_query_rows() {}
+#[ignore = "go-parity-gap: index-hash-join failpoint injection and distributed worker error propagation are unported"]
+fn issue18744_index_hash_join_worker_error_is_returned() {}
 
-/// `pkg/executor/slow_query_sql_test.go:478::TestStorageEnginesInSlowQuery` (item 665).
+/// `pkg/executor/test/seqtest/seq_executor_test.go:1364::TestAnalyzeNextRawErrorNoLeak`.
+/// The Go body executes `AnalyzeExec` (`pkg/executor/analyze.go:300`) with the
+/// `distsql/mockNextRawError` failpoint and checks the returned raw-result error
+/// plus worker cleanup.
+// go-parity-gap: ANALYZE execution, distsql raw-result delivery, failpoints, and worker cleanup are not executor-local.
 #[test]
-#[ignore = "go-parity-gap: TiKV/TiFlash plan selection, slow-log storage fields, and mockstore RPC metadata require session/storage integration"]
-fn slow_query_records_storage_engines() {}
+#[ignore = "go-parity-gap: ANALYZE execution, distsql raw-result delivery, failpoints, and worker cleanup are not executor-local"]
+fn analyze_raw_result_error_does_not_leak_workers() {}
 
-/// `pkg/executor/slow_query_sql_test.go:573::TestReadPoolTaskDetailsInDiagnostics` (item 666).
+/// `pkg/executor/test/showtest/main_test.go:26::TestMain` only sets global test
+/// configuration, enables failpoints, and installs goleak before the suite.
+// skipped-reason: Go TestMain is suite bootstrap and has no behavior to port.
 #[test]
-#[ignore = "go-parity-gap: TiKV response exec details, failpoint hooks, slow-log diagnostics, and EXPLAIN ANALYZE are outside this crate"]
-fn slow_query_records_read_pool_task_details() {}
+#[ignore = "skipped-reason: Go TestMain is suite bootstrap and has no behavior to port"]
+fn showtest_main_is_bootstrap_only() {}
 
-/// `pkg/executor/slow_query_sql_test.go:710::TestSessionConnectAttrsInSlowQuery` (item 667).
+/// `pkg/executor/test/showtest/show_test.go:46::TestShowCreateTablePlacement`.
+/// The Go body checks placement-policy rendering in `ShowExec` (`pkg/executor/show.go:132`)
+/// after placement DDL has populated domain metadata.
+// go-parity-gap: placement-policy DDL, domain metadata, and SHOW CREATE rendering require the session/domain tier.
 #[test]
-#[ignore = "go-parity-gap: slow-log Session_connect_attrs parsing and JSON information_schema projection are unported"]
-fn slow_query_reads_session_connect_attrs() {}
+#[ignore = "go-parity-gap: placement-policy DDL, domain metadata, and SHOW CREATE rendering require the session/domain tier"]
+fn show_create_table_renders_placement_policies() {}
 
-/// `pkg/executor/slow_query_sql_test.go:756::TestSessionConnectAttrsMissingAndTruncatedInSlowQuery` (item 668).
+/// `pkg/executor/test/showtest/show_test.go:209::TestShowVisibility`.
+/// The Go body exercises `ShowExec.fetchShowDatabases` (`pkg/executor/show.go:446`)
+/// and table visibility after authenticated grants are changed.
+// go-parity-gap: authenticated users, grants, and SHOW DATABASES/TABLES visibility are not modeled by this crate.
 #[test]
-#[ignore = "go-parity-gap: slow-log Session_connect_attrs missing/truncated handling belongs to the unported slow-query retriever"]
-fn slow_query_handles_missing_and_truncated_connect_attrs() {}
+#[ignore = "go-parity-gap: authenticated users, grants, and SHOW DATABASES/TABLES visibility are not modeled by this crate"]
+fn show_visibility_tracks_table_privileges() {}
 
-/// `pkg/executor/slow_query_test.go:92::TestParseSlowLogPanic` (item 669).
+/// `pkg/executor/test/showtest/show_test.go:245::TestShowWarnings`.
+/// The Go body observes statement warnings produced by execution and consumed by
+/// SHOW through `ShowExec.Next` (`pkg/executor/show.go:132`), including warning
+/// count reset semantics.
+// go-parity-gap: session statement diagnostics and SHOW WARNINGS state are not exposed by tidb-executor.
 #[test]
-#[ignore = "go-parity-gap: the Go test injects errorMockParseSlowLogPanic into the unported slowQueryRetriever parser"]
-fn parse_slow_log_panic_is_returned_as_an_error() {}
+#[ignore = "go-parity-gap: session statement diagnostics and SHOW WARNINGS state are not exposed by tidb-executor"]
+fn show_warnings_renders_statement_diagnostics() {}
 
-/// `pkg/executor/slow_query_test.go:128::TestParseSlowLogFile` (item 670).
+/// `pkg/executor/test/showtest/show_test.go:279::TestShowWarningsForExprPushdown`.
+/// The Go body forces TiFlash planning and checks pushdown warnings emitted while
+/// `ShowExec`/planner execution handles unsupported expressions (`pkg/executor/show.go:132`).
+// go-parity-gap: TiFlash planner selection and session warning state have no equivalent Rust seam.
 #[test]
-#[ignore = "go-parity-gap: the full slow-log field parser and information_schema row factory have no Rust counterpart"]
-fn parse_slow_log_file_preserves_runtime_fields() {}
+#[ignore = "go-parity-gap: TiFlash planner selection and session warning state have no equivalent Rust seam"]
+fn show_warnings_reports_unsupported_tiflash_pushdown() {}
 
-/// `pkg/executor/slow_query_test.go:294::TestParseSlowLogSessionConnectAttrs` (item 671).
+/// `pkg/executor/test/showtest/show_test.go:315::TestShowGrantsPrivilege`.
+/// The Go body checks `SHOW GRANTS` authorization in the simple-statement path
+/// (`pkg/executor/simple.go:146`) for current and other users.
+// go-parity-gap: authenticated account metadata and SHOW GRANTS privilege checks are owned by tidb-session.
 #[test]
-#[ignore = "go-parity-gap: Session_connect_attrs parsing is implemented by the unported Go slowQueryRetriever"]
-fn parse_slow_log_session_connect_attrs() {}
+#[ignore = "go-parity-gap: authenticated account metadata and SHOW GRANTS privilege checks are owned by tidb-session"]
+fn show_grants_enforces_privilege_visibility() {}
 
-/// `pkg/executor/slow_query_test.go:346::TestParseSlowLogFileSerial` (item 672).
+/// `pkg/executor/test/showtest/show_test.go:330::TestShowStatsPrivilege`.
+/// The Go body checks authorization before the statistics SHOW executors are
+/// run (`pkg/executor/show_stats.go:1`), then grants access to mysql statistics tables.
+// go-parity-gap: session privilege management and domain statistics SHOW execution are unported.
 #[test]
-#[ignore = "go-parity-gap: the Go test exercises the retriever's MaxOfMaxAllowedPacket session-global and scanner limit"]
-fn parse_slow_log_file_enforces_the_line_limit() {}
+#[ignore = "go-parity-gap: session privilege management and domain statistics SHOW execution are unported"]
+fn show_stats_enforces_privileges() {}
 
-/// `pkg/executor/slow_query_test.go:372::TestSlowLogParseTime` (item 673).
+/// `pkg/executor/test/showtest/show_test.go:364::TestShowStatsExtendedRemoved`.
+/// The Go body asserts the removed-feature error from SHOW dispatch in
+/// `SimpleExec` (`pkg/executor/simple.go:146`).
+// go-parity-gap: the Go SHOW dispatcher and its MySQL-compatible removed-feature error are not exposed here.
 #[test]
-#[ignore = "go-parity-gap: ParseTime is a private slow-query reader helper with no tidb-executor equivalent"]
-fn slow_log_parse_time_accepts_tidb_formats() {}
+#[ignore = "go-parity-gap: the Go SHOW dispatcher and its MySQL-compatible removed-feature error are not exposed here"]
+fn show_stats_extended_reports_removed_feature() {}
 
-/// `pkg/executor/slow_query_test.go:389::TestFixParseSlowLogFile` (item 674).
+/// `pkg/executor/test/showtest/show_test.go:371::TestIssue18878`.
+/// The Go body changes authenticated identity and checks account matching in
+/// `SHOW GRANTS`, implemented by the simple executor (`pkg/executor/simple.go:146`).
+// go-parity-gap: authenticated/current-user identity and host-specific grant lookup require tidb-session.
 #[test]
-#[ignore = "go-parity-gap: rotated slow-log parsing and its warning path are not modeled by tidb-executor"]
-fn fix_parse_slow_log_file_accepts_legacy_time_and_warns() {}
+#[ignore = "go-parity-gap: authenticated/current-user identity and host-specific grant lookup require tidb-session"]
+fn issue18878_resolves_authenticated_grant_identity() {}
 
-/// `pkg/executor/slow_query_test.go:436::TestSlowQueryRetriever` (item 675).
+/// `pkg/executor/test/showtest/show_test.go:390::TestIssue17794`.
+/// The Go body selects grants by host pattern after authentication through the
+/// simple statement executor (`pkg/executor/simple.go:146`).
+// go-parity-gap: host-pattern account authentication and SHOW GRANTS are not modeled in tidb-executor.
 #[test]
-#[ignore = "go-parity-gap: plain/gzip slow-log file discovery, time-range filtering, and retriever iteration are unported"]
-fn slow_query_retriever_filters_rotated_files() {}
+#[ignore = "go-parity-gap: host-pattern account authentication and SHOW GRANTS are not modeled in tidb-executor"]
+fn issue17794_preserves_host_specific_grants() {}
 
-/// `pkg/executor/slow_query_test.go:619::TestSplitByColon` (item 676).
+/// `pkg/executor/test/showtest/show_test.go:402::TestIssue10549`.
+/// The Go body creates roles, default roles, and grants, then reads them through
+/// SHOW execution (`pkg/executor/simple.go:220` and `pkg/executor/show.go:132`).
+// go-parity-gap: role graph, default-role metadata, authenticated visibility, and SHOW GRANTS require tidb-session.
 #[test]
-#[ignore = "go-parity-gap: splitByColon is a private helper in pkg/executor/slow_query.go and no Rust slow-log parser exists"]
-fn split_slow_log_fields_by_colon() {}
+#[ignore = "go-parity-gap: role graph, default-role metadata, authenticated visibility, and SHOW GRANTS require tidb-session"]
+fn issue10549_renders_role_grants_and_database_visibility() {}
 
-/// `pkg/executor/slow_query_test.go:701::TestBatchLogForReversedScan` (item 677).
+/// `pkg/executor/test/showtest/show_test.go:419::TestIssue11165`.
+/// The Go body exercises SET DEFAULT ROLE handlers (`pkg/executor/simple.go:220`)
+/// for missing users and an authenticated manager.
+// go-parity-gap: account roles and SET DEFAULT ROLE session behavior are unported.
 #[test]
-#[ignore = "go-parity-gap: reverse scanning rotated slow logs is implemented only by the Go slowLogReverseScanner"]
-fn reverse_scan_batches_slow_log_records() {}
+#[ignore = "go-parity-gap: account roles and SET DEFAULT ROLE session behavior are unported"]
+fn issue11165_updates_default_roles() {}
 
-/// `pkg/executor/slow_query_test.go:831::TestSlowQueryRetrieverReversedScanWithLimit` (item 678).
+/// `pkg/executor/test/showtest/show_test.go:434::TestShow2`.
+/// The Go body combines global variables, columns, views, sequences, and table
+/// status through `ShowExec` (`pkg/executor/show.go:132`) and domain infoschema.
+// go-parity-gap: this broad SHOW suite requires session variables, domain metadata, views, sequences, and protocol formatting.
 #[test]
-#[ignore = "go-parity-gap: reverse slow-log block scanning, LIMIT pushdown, and file metrics are not modeled"]
-fn reverse_slow_query_scan_honors_limit() {}
+#[ignore = "go-parity-gap: this broad SHOW suite requires session variables, domain metadata, views, sequences, and protocol formatting"]
+fn show2_covers_metadata_and_variable_views() {}
 
-/// `pkg/executor/slow_query_test.go:923::TestSlowQueryRetrieverReversedScanWithTimeJitter` (item 679).
+/// `pkg/executor/test/showtest/show_test.go:561::TestShowCreateUser`.
+/// The Go body checks authentication plugins, TLS requirements, account state,
+/// password policy, and attributes rendered by SHOW (`pkg/executor/show.go:132`).
+// go-parity-gap: account/authentication metadata and SHOW CREATE USER are session account surfaces.
 #[test]
-#[ignore = "go-parity-gap: reverse slow-log scanning with time-range tolerance has no tidb-executor implementation"]
-fn reverse_slow_query_scan_handles_time_jitter() {}
+#[ignore = "go-parity-gap: account/authentication metadata and SHOW CREATE USER are session account surfaces"]
+fn show_create_user_renders_account_metadata() {}
 
-/// `pkg/executor/slow_query_test.go:998::TestPBPlanBuilderPushDownLimitToSlowQueryRetriever` (item 680).
+/// `pkg/executor/test/showtest/show_test.go:665::TestUnprivilegedShow`.
+/// The Go body verifies table-status visibility after authentication and grant
+/// changes via `ShowExec.fetchShowTableStatus` (`pkg/executor/show.go:636`).
+// go-parity-gap: authenticated table privileges and domain table metadata are not available here.
 #[test]
-#[ignore = "go-parity-gap: protobuf plan building and the slow-query memtable reader are session/infoschema surfaces absent here"]
-fn pb_plan_builder_pushes_limit_to_slow_query_retriever() {}
+#[ignore = "go-parity-gap: authenticated table privileges and domain table metadata are not available here"]
+fn unprivileged_show_hides_ungranted_tables() {}
 
-/// `pkg/executor/slow_query_test.go:1041::TestCancelParseSlowLog` (item 681).
+/// `pkg/executor/test/showtest/show_test.go:692::TestCollation`.
+/// The Go body checks SHOW COLLATION rows and MySQL result metadata through the
+/// SHOW executor (`pkg/executor/show.go:132`).
+// go-parity-gap: the session SHOW executor and protocol field metadata are unported.
 #[test]
-#[ignore = "go-parity-gap: cancellation of asynchronous slow-log parsing and goroutine leak checks require the Go failpoint/session harness"]
-fn cancel_parse_slow_log_stops_parser_workers() {}
+#[ignore = "go-parity-gap: the session SHOW executor and protocol field metadata are unported"]
+fn show_collation_reports_mysql_field_types() {}
 
-/// `pkg/executor/slow_query_test.go:1120::TestIssue54324` (item 682).
+/// `pkg/executor/test/showtest/show_test.go:708::TestShowTableStatus`.
+/// The Go body renders table timestamps, partition metadata, and comments through
+/// `ShowExec.fetchShowTableStatus` (`pkg/executor/show.go:636`).
+// go-parity-gap: schema lease/domain timestamps, partition metadata, and SHOW result formatting are unported.
 #[test]
-#[ignore = "go-parity-gap: readLastLines is a private slow-log reverse-reader helper with no Rust counterpart"]
-fn issue_54324_reads_lines_across_reverse_scan_chunks() {}
+#[ignore = "go-parity-gap: schema lease/domain timestamps, partition metadata, and SHOW result formatting are unported"]
+fn show_table_status_renders_table_and_partition_metadata() {}
 
-/// `pkg/executor/sortexec/benchmark_test.go:103::BenchmarkSortExec` (item 683).
+/// `pkg/executor/test/showtest/show_test.go:774::TestAutoRandomBase`.
+/// The Go body observes allocator metadata through SHOW TABLE/NEXT_ROW_ID and
+/// the auto-random insert path (`pkg/executor/insert_common.go:1261`).
+// go-parity-gap: domain auto-ID allocator state and SHOW NEXT_ROW_ID are not modeled by tidb-executor.
 #[test]
-#[ignore = "skipped-reason: Go testing.B performance benchmark; the assigned nextest gate excludes benchmark tests"]
-fn benchmark_sort_exec() {}
+#[ignore = "go-parity-gap: domain auto-ID allocator state and SHOW NEXT_ROW_ID are not modeled by tidb-executor"]
+fn show_auto_random_base_reports_allocator_state() {}
 
-/// `pkg/executor/sortexec/benchmark_test.go:109::BenchmarkSortExecSpillToDisk` (item 684).
+/// `pkg/executor/test/showtest/show_test.go:808::TestAutoRandomWithLargeSignedShowTableRegions`.
+/// The Go body combines signed auto-random handles with SHOW TABLE REGIONS and
+/// distributed region metadata (`pkg/executor/show.go:132`).
+// go-parity-gap: SHOW TABLE REGIONS, TiKV region metadata, and auto-ID allocator state are unported.
 #[test]
-#[ignore = "skipped-reason: Go testing.B performance benchmark; the assigned nextest gate excludes benchmark tests"]
-fn benchmark_sort_exec_spill_to_disk() {}
+#[ignore = "go-parity-gap: SHOW TABLE REGIONS, TiKV region metadata, and auto-ID allocator state are unported"]
+fn show_auto_random_regions_handles_large_signed_ids() {}
 
-/// `pkg/executor/sortexec/parallel_sort_spill_test.go:81::TestParallelSortSpillDisk` (item 685).
+/// `pkg/executor/test/showtest/show_test.go:828::TestShowEscape`.
+/// The Go body checks escaping in SHOW output generated by `ShowExec.Next`
+/// (`pkg/executor/show.go:132`).
+// go-parity-gap: session SHOW output and protocol result formatting are not exposed by this crate.
 #[test]
-#[ignore = "go-parity-gap: the Go test requires sortexec failpoints, session memory trackers, and repeated mock data-source execution; Rust core spill tests are not this session contract"]
-fn parallel_sort_spill_disk_preserves_rows() {}
+#[ignore = "go-parity-gap: session SHOW output and protocol result formatting are not exposed by this crate"]
+fn show_escape_preserves_special_characters() {}
 
-/// `pkg/executor/sortexec/parallel_sort_spill_test.go:119::TestParallelSortSpillDiskFailpoint` (item 686).
+/// `pkg/executor/test/showtest/show_test.go:858::TestShowClusterConfig`.
+/// The Go body reads configuration from discovered servers through SHOW
+/// dispatch (`pkg/executor/show.go:132`).
+// go-parity-gap: server discovery and cluster configuration RPC fan-out are unported.
 #[test]
-#[ignore = "go-parity-gap: sort worker/random-failure and ChunkInDiskError failpoints are not available in tidb-executor"]
-fn parallel_sort_spill_failures_close_cleanly() {}
+#[ignore = "go-parity-gap: server discovery and cluster configuration RPC fan-out are unported"]
+fn show_cluster_config_reads_server_configuration() {}
 
-/// `pkg/executor/sortexec/parallel_sort_spill_test.go:159::TestIssue59655` (item 687).
+/// `pkg/executor/test/showtest/show_test.go:893::TestShowConfig`.
+/// The Go body reads effective server configuration through SHOW dispatch
+/// (`pkg/executor/show.go:132`).
+// go-parity-gap: server configuration state is outside the executor-only crate.
 #[test]
-#[ignore = "go-parity-gap: Issue59655 is driven by a sort failpoint, session memory quota, and leak-file assertions absent from this crate boundary"]
-fn issue_59655_parallel_sort_does_not_hang() {}
+#[ignore = "go-parity-gap: server configuration state is outside the executor-only crate"]
+fn show_config_reads_effective_configuration() {}
 
-/// `pkg/executor/sortexec/parallel_sort_spill_test.go:190::TestIssue63216` (item 688).
+/// `pkg/executor/test/showtest/show_test.go:912::TestShowCreateTableWithIntegerDisplayLengthWarnings`.
+/// The Go body checks DDL warning publication and subsequent SHOW CREATE output
+/// (`pkg/executor/show.go:132`).
+// go-parity-gap: SQL mode/DDL warning state and SHOW CREATE session diagnostics are unported.
 #[test]
-#[ignore = "go-parity-gap: Issue63216 depends on the Go sort failpoint and session memory tracker lifecycle"]
-fn issue_63216_parallel_sort_failure_closes_cleanly() {}
+#[ignore = "go-parity-gap: SQL mode/DDL warning state and SHOW CREATE session diagnostics are unported"]
+fn show_create_table_reports_integer_display_length_warnings() {}
 
-/// `pkg/executor/sortexec/parallel_sort_test.go:100::TestParallelSort` (item 689).
+/// `pkg/executor/test/showtest/show_test.go:1001::TestShowVar`.
+/// The Go body enumerates system variables and checks session/global scope through
+/// SHOW dispatch (`pkg/executor/show.go:132`).
+// go-parity-gap: session/global sysvars and their SHOW VARIABLES surface are unported.
 #[test]
-#[ignore = "go-parity-gap: Go parallel-sort worker scheduling and failpoint checkpoints are not exposed as the same Rust test seam"]
-fn parallel_sort_workers_return_sorted_rows() {}
+#[ignore = "go-parity-gap: session/global sysvars and their SHOW VARIABLES surface are unported"]
+fn show_var_reads_session_and_global_variables() {}
 
-/// `pkg/executor/sortexec/parallel_sort_test.go:119::TestFailpoint` (item 690).
+/// `pkg/executor/test/showtest/show_test.go:1056::TestShowCreatePlacementPolicy`.
+/// The Go body creates, alters, drops, and renders placement policies through
+/// SHOW execution (`pkg/executor/show_placement.go:1777`).
+// go-parity-gap: placement-policy DDL/domain state and SHOW CREATE PLACEMENT POLICY are unported.
 #[test]
-#[ignore = "go-parity-gap: ParallelSortRandomFail/SlowSomeWorkers/SignalCheckpointForSort failpoints are Go-only"]
-fn parallel_sort_random_failure_does_not_leak() {}
+#[ignore = "go-parity-gap: placement-policy DDL/domain state and SHOW CREATE PLACEMENT POLICY are unported"]
+fn show_create_placement_policy_renders_policy_options() {}
 
-/// `pkg/executor/sortexec/parallel_sort_test.go:141::TestIssue55344` (item 691).
+/// `pkg/executor/test/showtest/show_test.go:1075::TestShowLimitReturnRow`.
+/// The Go body applies `sql_select_limit` to prepared SHOW and SELECT execution
+/// through `ShowExec.Next` (`pkg/executor/show.go:132`).
+// go-parity-gap: session SQL_SELECT_LIMIT and PREPARE/EXECUTE result filtering are unported.
 #[test]
-#[ignore = "go-parity-gap: the regression uses TiDB SQL planning, optimizer-rule blacklist state, and session TestKit"]
-fn issue_55344_sort_ordering_survives_constant_keys() {}
+#[ignore = "go-parity-gap: session SQL_SELECT_LIMIT and PREPARE/EXECUTE result filtering are unported"]
+fn show_limit_return_row_applies_to_show_and_select() {}
 
-/// `pkg/executor/sortexec/rank_topn_test.go:148::TestRankTopN` (item 692).
+/// `pkg/executor/test/simpletest/main_test.go:23::TestMain` installs goleak and
+/// suite hooks but does not assert SQL behavior.
+// skipped-reason: Go TestMain is suite bootstrap and has no behavior to port.
 #[test]
-#[ignore = "go-parity-gap: rank TopN prefix-key truncation/collation metadata and Go mock data-source execution are not exposed by tidb-executor"]
-fn rank_topn_preserves_prefix_groups() {}
+#[ignore = "skipped-reason: Go TestMain is suite bootstrap and has no behavior to port"]
+fn simpletest_main_is_bootstrap_only() {}
 
-/// `pkg/executor/sortexec/sort_spill_test.go:357::TestUnparallelSortSpillDisk` (item 693).
+/// `pkg/executor/test/simpletest/simple_test.go:43::TestStarterUsernamePolicyInSimpleExec`.
+/// The Go body exercises user/role creation and policy checks in `SimpleExec`
+/// (`pkg/executor/simple.go:146`) under starter deploy configuration.
+// go-parity-gap: starter deploy mode, accounts, roles, and privilege checks require tidb-session/server state.
 #[test]
-#[ignore = "go-parity-gap: the Go test combines serial sort mode, failpoint spill forcing, session quota trackers, and leak-file checks"]
-fn unparallel_sort_spill_disk_preserves_rows() {}
+#[ignore = "go-parity-gap: starter deploy mode, accounts, roles, and privilege checks require tidb-session/server state"]
+fn starter_username_policy_is_enforced() {}
 
-/// `pkg/executor/sortexec/sort_spill_test.go:381::TestFallBackAction` (item 694).
+/// `pkg/executor/test/simpletest/simple_test.go:109::TestUserWithSetNames`.
+/// The Go body changes session charset state before CREATE/ALTER/RENAME USER in
+/// `SimpleExec` (`pkg/executor/simple.go:146`).
+// go-parity-gap: SET NAMES, authentication encoding, and account DDL require session charset/privilege state.
 #[test]
-#[ignore = "go-parity-gap: memory Tracker ActionOnExceed fallback wiring is not the tidb-executor StatementMemory contract"]
-fn sort_fallback_action_runs_after_memory_exhaustion() {}
+#[ignore = "go-parity-gap: SET NAMES, authentication encoding, and account DDL require session charset/privilege state"]
+fn user_passwords_follow_set_names_encoding() {}
 
-/// `pkg/executor/sortexec/sort_test.go:34::TestSortInDisk` (item 695).
+/// `pkg/executor/test/simpletest/simple_test.go:130::TestTransaction`.
+/// The Go body checks BEGIN/COMMIT/ROLLBACK and implicit DDL commits through
+/// `SimpleExec` (`pkg/executor/simple.go:146`) and session transaction state.
+// go-parity-gap: session transaction state and implicit-commit coordination are not modeled by tidb-executor.
 #[test]
-#[ignore = "go-parity-gap: SQL sort execution, forced spill failpoint, session memory/disk trackers, and temporary-storage cleanup require the Go TestKit"]
-fn sort_in_disk_preserves_rows_and_releases_trackers() {}
+#[ignore = "go-parity-gap: session transaction state and implicit-commit coordination are not modeled by tidb-executor"]
+fn transaction_boundaries_commit_and_rollback_rows() {}
 
-/// `pkg/executor/sortexec/sort_test.go:103::TestIssue16696` (item 696).
+/// `pkg/executor/test/simpletest/simple_test.go:164::TestRole`.
+/// The Go body exercises CREATE/DROP/GRANT/REVOKE/SET ROLE handlers in
+/// `SimpleExec` (`pkg/executor/simple.go:220`) and mysql role tables.
+// go-parity-gap: role graph, default-role metadata, and authenticated SET ROLE state are unported.
 #[test]
-#[ignore = "go-parity-gap: the regression requires SQL hash join plus cross-operator sort/join spill failpoints and EXPLAIN ANALYZE"]
-fn issue_16696_reports_disk_usage_for_spilled_operators() {}
+#[ignore = "go-parity-gap: role graph, default-role metadata, and authenticated SET ROLE state are unported"]
+fn role_grants_and_default_roles_are_maintained() {}
 
-/// `pkg/executor/sortexec/sortexec_pkg_test.go:33::TestInterruptedDuringSort` (item 697).
+/// `pkg/executor/test/simpletest/simple_test.go:261::TestMaxUserConnections`.
+/// The Go body checks the max-user-connections sysvar and account DDL handled by
+/// `SimpleExec` (`pkg/executor/simple.go:146`).
+// go-parity-gap: global/session sysvars, account metadata, and CREATE USER privilege enforcement are unported.
 #[test]
-#[ignore = "go-parity-gap: SQLKiller cancellation of the package-private Go sort partition is not exposed by tidb-executor"]
-fn interrupted_during_sort_returns_query_interrupted() {}
+#[ignore = "go-parity-gap: global/session sysvars, account metadata, and CREATE USER privilege enforcement are unported"]
+fn max_user_connections_is_clamped_and_enforced() {}
 
-/// `pkg/executor/sortexec/sortexec_pkg_test.go:84::TestInterruptedDuringSpilling` (item 698).
+/// `pkg/executor/test/simpletest/simple_test.go:322::TestUser`.
+/// The Go body covers CREATE/ALTER/DROP USER, authentication plugins, warnings,
+/// and roles in `SimpleExec` (`pkg/executor/simple.go:146`).
+// go-parity-gap: account DDL, authentication plugins, warnings, and role metadata require tidb-session.
 #[test]
-#[ignore = "go-parity-gap: SQLKiller cancellation during Go sort-partition disk spilling and leak checks are not modeled here"]
-fn interrupted_during_spilling_returns_query_interrupted() {}
+#[ignore = "go-parity-gap: account DDL, authentication plugins, warnings, and role metadata require tidb-session"]
+fn user_account_ddl_matches_mysql_behavior() {}
 
-/// `pkg/executor/sortexec/topn_spill_test.go:383::TestGenerateTopNResultsWhenSpillOnlyOnce` (item 699).
+/// `pkg/executor/test/simpletest/simple_test.go:532::TestAlterUserPreservesRequire`.
+/// The Go body checks TLS/token requirements survive attribute-only ALTER USER
+/// operations in `SimpleExec` (`pkg/executor/simple.go:2022`).
+// go-parity-gap: account authentication/TLS metadata and ALTER USER persistence are unported.
 #[test]
-#[ignore = "go-parity-gap: the Go TopN helper is driven through package-private chunk DataInDiskByChunks fixtures"]
-fn generate_topn_results_after_one_spill_round() {}
+#[ignore = "go-parity-gap: account authentication/TLS metadata and ALTER USER persistence are unported"]
+fn alter_user_preserves_require_attributes() {}
 
-/// `pkg/executor/sortexec/topn_spill_test.go:400::TestTopNSpillDisk` (item 700).
+/// `pkg/executor/test/simpletest/simple_test.go:572::TestSetPwd`.
+/// The Go body checks SET PASSWORD handling and privilege errors in the simple
+/// executor (`pkg/executor/simple.go:2937`).
+// go-parity-gap: authenticated account state, password plugins, and privilege checks require tidb-session.
 #[test]
-#[ignore = "go-parity-gap: Go TopN parallel spill uses failpoints, session memory trackers, and mock data-source execution not available at this boundary"]
-fn topn_spill_disk_preserves_offset_and_limit() {}
+#[ignore = "go-parity-gap: authenticated account state, password plugins, and privilege checks require tidb-session"]
+fn set_password_updates_the_authenticated_account() {}
 
-/// `pkg/executor/sortexec/topn_spill_test.go:454::TestTopNSpillDiskFailpoint` (item 701).
+/// `pkg/executor/test/simpletest/simple_test.go:624::TestFlushPrivilegesPanic`.
+/// The Go body boots a session with SkipGrantTable and executes FLUSH PRIVILEGES
+/// through `SimpleExec` (`pkg/executor/simple.go:146`).
+// go-parity-gap: grant-table bootstrap configuration and FLUSH PRIVILEGES lifecycle are not executor-local.
 #[test]
-#[ignore = "go-parity-gap: TopNRandomFail, ParallelSortRandomFail, and ChunkInDiskError are Go failpoints absent from tidb-executor"]
-fn topn_spill_failures_close_cleanly() {}
+#[ignore = "go-parity-gap: grant-table bootstrap configuration and FLUSH PRIVILEGES lifecycle are not executor-local"]
+fn flush_privileges_is_safe_without_grant_tables() {}
 
-/// `pkg/executor/sortexec/topn_spill_test.go:514::TestIssue54206` (item 702).
+/// `pkg/executor/test/simpletest/simple_test.go:647::TestDropPartitionStats`.
+/// The Go body runs ANALYZE/DROP STATS against partition histograms through the
+/// analyze executor (`pkg/executor/analyze.go:300`) and statistics domain.
+// go-parity-gap: ANALYZE, persisted statistics histograms, partition stats, and DROP STATS require tidb-domain.
 #[test]
-#[ignore = "go-parity-gap: the regression is an SQL TestKit query over a join and TopN with a session temporary-storage variable"]
-fn issue_54206_topn_handles_empty_join_side() {}
+#[ignore = "go-parity-gap: ANALYZE, persisted statistics histograms, partition stats, and DROP STATS require tidb-domain"]
+fn drop_partition_stats_removes_partition_histograms() {}
 
-/// `pkg/executor/sortexec/topn_spill_test.go:527::TestIssue54541` (item 703).
+/// `pkg/executor/test/simpletest/simple_test.go:715::TestDropStats`.
+/// The Go body analyzes a table, drops its stats, and inspects the statistics
+/// handle updated by the executor (`pkg/executor/analyze.go:300`).
+// go-parity-gap: statistics handles, ANALYZE persistence, and DROP STATS are outside this crate boundary.
 #[test]
-#[ignore = "go-parity-gap: TopN kill-signal handling and temporary-storage cleanup require Go SQLKiller/session state"]
-fn issue_54541_topn_kill_signal_is_handled() {}
+#[ignore = "go-parity-gap: statistics handles, ANALYZE persistence, and DROP STATS are outside this crate boundary"]
+fn drop_stats_resets_table_statistics() {}
 
-/// `pkg/executor/sortexec/topn_spill_test.go:556::TestTopNFallBackAction` (item 704).
+/// `pkg/executor/test/simpletest/simple_test.go:770::TestDropStatsForMultipleTable`.
+/// The Go body analyzes and drops statistics for multiple tables through the
+/// analyze executor (`pkg/executor/analyze.go:300`).
+// go-parity-gap: multi-table statistics analysis and DROP STATS domain state are unported.
 #[test]
-#[ignore = "go-parity-gap: Go memory Tracker ActionOnExceed fallback behavior is not exposed by the Rust TopN API"]
-fn topn_fallback_action_runs_after_memory_exhaustion() {}
+#[ignore = "go-parity-gap: multi-table statistics analysis and DROP STATS domain state are unported"]
+fn drop_stats_resets_multiple_table_statistics() {}
 
-/// `pkg/executor/split_test.go:41::TestSplitIndex` (item 705).
+/// `pkg/executor/test/simpletest/simple_test.go:845::TestKillStmt`.
+/// The Go body routes KILL through the simple-statement executor
+/// (`pkg/executor/simple.go:146`) and live server sessions.
+// go-parity-gap: connection IDs, global-kill routing, and session statement cancellation are unported.
 #[test]
-#[ignore = "go-parity-gap: SplitIndexRegionExec and region-split key generation depend on Go tablecodec metadata and TiKV region integration"]
-fn split_index_generates_region_keys() {}
+#[ignore = "go-parity-gap: connection IDs, global-kill routing, and session statement cancellation are unported"]
+fn kill_statement_routes_connection_requests() {}
 
-/// `pkg/executor/split_test.go:244::TestSplitTable` (item 706).
+/// `pkg/executor/test/simpletest/simple_test.go:899::TestSelectWhereInvalidDSTTime`.
+/// The Go body checks timestamp conversion warnings during SELECT execution and
+/// session time-zone handling in the query path (`pkg/executor/show.go:132`).
+// go-parity-gap: session time zones, timestamp warning policy, and SHOW WARNINGS are not executor-local.
 #[test]
-#[ignore = "go-parity-gap: SplitTableRegionExec and table-region key generation are not implemented in tidb-executor"]
-fn split_table_generates_region_keys() {}
+#[ignore = "go-parity-gap: session time zones, timestamp warning policy, and SHOW WARNINGS are not executor-local"]
+fn select_where_handles_invalid_dst_timestamps() {}
 
-/// `pkg/executor/split_test.go:320::TestStepShouldLargeThanMinStep` (item 707).
+/// `pkg/executor/test/splittest/main_test.go:23::TestMain` only installs suite
+/// configuration and leak-detection hooks.
+// skipped-reason: Go TestMain is suite bootstrap and has no behavior to port.
 #[test]
-#[ignore = "go-parity-gap: the region split minimum-step validation belongs to the unported SplitTableRegionExec"]
-fn split_table_rejects_a_step_below_the_minimum() {}
+#[ignore = "skipped-reason: Go TestMain is suite bootstrap and has no behavior to port"]
+fn splittest_main_is_bootstrap_only() {}
 
-/// `pkg/executor/split_test.go:348::TestClusterIndexSplitTable` (item 708).
+/// `pkg/executor/test/splittest/split_table_test.go:41::TestClusterIndexShowTableRegion`.
+/// The Go body invokes split/table-region execution (`pkg/executor/split.go:222`)
+/// and reads TiKV region metadata for clustered indexes.
+// go-parity-gap: clustered-index region splitting, SHOW TABLE REGIONS, and TiKV metadata are unported.
 #[test]
-#[ignore = "go-parity-gap: clustered-handle region split key generation and regionsplit metadata are not modeled by tidb-executor"]
-fn clustered_index_split_table_generates_keys() {}
+#[ignore = "go-parity-gap: clustered-index region splitting, SHOW TABLE REGIONS, and TiKV metadata are unported"]
+fn cluster_index_show_table_region_reports_regions() {}
 
-/// `pkg/executor/statement_ru_plan_walk_bench_test.go:31::BenchmarkStatementRUExecStmtSetup` (item 709).
+/// `pkg/executor/test/splittest/split_table_test.go:84::TestShowTableRegion`.
+/// The Go body checks table/index/partition region output produced by split
+/// executors (`pkg/executor/split.go:45` and `pkg/executor/split.go:222`).
+// go-parity-gap: region split commands, PD/TiKV region metadata, and SHOW TABLE REGIONS are unported.
 #[test]
-#[ignore = "skipped-reason: Go testing.B allocation benchmark; the assigned nextest gate excludes benchmark tests"]
-fn benchmark_statement_ru_exec_stmt_setup() {}
+#[ignore = "go-parity-gap: region split commands, PD/TiKV region metadata, and SHOW TABLE REGIONS are unported"]
+fn show_table_region_reports_split_ranges() {}
 
-/// `pkg/executor/statement_ru_plan_walk_bench_test.go:40::BenchmarkStatementRUNilHooks` (item 710).
+/// `pkg/executor/test/splittest/split_table_test.go:613::BenchmarkLocateRegion`.
+/// The Go benchmark measures region-cache range splitting after SplitTableRegion
+/// operations (`pkg/executor/split.go:222`).
+// skipped-reason: Go benchmark measures PD/TiKV region location latency and the assigned gate excludes benchmarks.
 #[test]
-#[ignore = "skipped-reason: Go testing.B lifecycle-hook benchmark; the assigned nextest gate excludes benchmark tests"]
-fn benchmark_statement_ru_nil_hooks() {}
+#[ignore = "skipped-reason: Go benchmark measures PD/TiKV region location latency and the assigned gate excludes benchmarks"]
+fn benchmark_locate_region_is_storage_bound() {}
 
-/// `pkg/executor/statement_ru_plan_walk_bench_test.go:58::BenchmarkStatementRUOperatorCalculation` (item 711).
+/// `pkg/executor/test/splittest/split_table_test.go:644::TestBenchDaily` only
+/// invokes the benchmark helper `BenchmarkLocateRegion`.
+// skipped-reason: this Go test is a benchmark wrapper with no independent behavior to port.
 #[test]
-#[ignore = "skipped-reason: Go testing.B RU calculation benchmark; the assigned nextest gate excludes benchmark tests"]
-fn benchmark_statement_ru_operator_calculation() {}
+#[ignore = "skipped-reason: this Go test is a benchmark wrapper with no independent behavior to port"]
+fn split_table_daily_benchmark_is_storage_bound() {}
 
-/// `pkg/executor/statement_ru_plan_walk_bench_test.go:71::BenchmarkStatementRUTreeTraversal` (item 712).
+/// `pkg/executor/test/tiflashtest/main_test.go:27::TestMain` configures TiFlash
+/// test nodes, failpoints, and leak-detection hooks before the suite.
+// skipped-reason: Go TestMain is suite bootstrap and has no behavior to port.
 #[test]
-#[ignore = "skipped-reason: Go testing.B plan traversal benchmark; the assigned nextest gate excludes benchmark tests"]
-fn benchmark_statement_ru_tree_traversal() {}
+#[ignore = "skipped-reason: Go TestMain is suite bootstrap and has no behavior to port"]
+fn tiflashtest_main_is_bootstrap_only() {}
 
-/// `pkg/executor/statement_ru_plan_walk_bench_test.go:94::BenchmarkStatementRUFinalizePublication` (item 713).
+/// `pkg/executor/test/tiflashtest/tiflash_test.go:68::TestNonsupportCharsetTable`.
+/// The Go body checks TiFlash replica DDL validation in the DDL executor
+/// (`pkg/ddl/executor.go:4055`) for GBK and UTF-8 tables.
+// go-parity-gap: TiFlash replica metadata, DDL capability validation, and domain state are unported.
 #[test]
-#[ignore = "skipped-reason: Go testing.B RU publication benchmark; the assigned nextest gate excludes benchmark tests"]
-fn benchmark_statement_ru_finalize_publication() {}
+#[ignore = "go-parity-gap: TiFlash replica metadata, DDL capability validation, and domain state are unported"]
+fn nonsupport_charset_table_rejects_gbk_tiflash_replica() {}
 
-/// `pkg/executor/statement_ru_plan_walk_bench_test.go:118::BenchmarkStatementRUSyntheticTerminal` (item 714).
+/// `pkg/executor/test/tiflashtest/tiflash_test.go:83::TestReadPartitionTable`.
+/// The Go body reads partitioned rows from TiFlash with union scan, dynamic
+/// pruning, and batch cop through MPP table reads (`pkg/executor/mpp_gather.go:37`).
+// go-parity-gap: TiFlash replicas, MPP/storage reads, partition pruning, transactions, and union scan are unported.
 #[test]
-#[ignore = "skipped-reason: Go testing.B synthetic terminal benchmark; the assigned nextest gate excludes benchmark tests"]
-fn benchmark_statement_ru_synthetic_terminal() {}
+#[ignore = "go-parity-gap: TiFlash replicas, MPP/storage reads, partition pruning, transactions, and union scan are unported"]
+fn read_partition_table_uses_tiflash_and_union_scan() {}
 
-/// `pkg/executor/statement_ru_plan_walk_bench_test.go:152::BenchmarkStatementRUOwnerSetup` (item 715).
+/// `pkg/executor/test/tiflashtest/tiflash_test.go:122::TestAggPushDownApplyAll`.
+/// The Go body forces MPP and checks an aggregate/ALL query over TiFlash
+/// replicas via `useMPPExecution` (`pkg/executor/mpp_gather.go:37`).
+// go-parity-gap: TiFlash replica selection, aggregate pushdown, MPP, and correlated ALL execution are unported.
 #[test]
-#[ignore = "skipped-reason: Go testing.B owner-install benchmark; the assigned nextest gate excludes benchmark tests"]
-fn benchmark_statement_ru_owner_setup() {}
+#[ignore = "go-parity-gap: TiFlash replica selection, aggregate pushdown, MPP, and correlated ALL execution are unported"]
+fn agg_pushdown_apply_all_returns_matching_rows() {}
 
-/// `pkg/executor/statement_ru_plan_walk_integration_test.go:114::TestStatementRUResultSetTerminalOutcomes` (item 716).
+/// `pkg/executor/test/tiflashtest/tiflash_test.go:144::TestReadUnsigedPK`.
+/// The Go body reads unsigned clustered keys and range predicates from TiFlash
+/// through MPP table reads (`pkg/executor/mpp_gather.go:37`).
+// go-parity-gap: unsigned TiFlash clustered-key reads, replica metadata, and distributed joins are unported.
 #[test]
-#[ignore = "go-parity-gap: statement RU owner installation, flat-plan traversal, failpoint terminal paths, and session result-set lifecycle are unported"]
-fn statement_ru_result_set_terminal_outcomes() {}
+#[ignore = "go-parity-gap: unsigned TiFlash clustered-key reads, replica metadata, and distributed joins are unported"]
+fn read_unsigned_primary_keys_through_tiflash() {}
 
-/// `pkg/executor/statement_ru_plan_walk_integration_test.go:424::TestStatementRUFileTransferOutcomeHandoff` (item 717).
+/// `pkg/executor/test/tiflashtest/tiflash_test.go:185::TestJoinRace`.
+/// The Go body repeatedly executes grouped joins over TiFlash replicas through
+/// MPP gathering (`pkg/executor/mpp_gather.go:37`) to pin stable results.
+// go-parity-gap: TiFlash/MPP task scheduling, replica reads, and session planner variables are unported.
 #[test]
-#[ignore = "go-parity-gap: file-transfer handoff through session ExecStmt state and statement-RU terminal ownership are Go session surfaces"]
-fn statement_ru_file_transfer_outcome_handoff() {}
+#[ignore = "go-parity-gap: TiFlash/MPP task scheduling, replica reads, and session planner variables are unported"]
+fn join_race_is_stable_under_tiflash_mpp() {}
 
-/// `pkg/executor/statement_ru_plan_walk_integration_test.go:570::TestStatementRUPointGetTerminalPlanHandoff` (item 718).
+/// `pkg/executor/test/tiflashtest/tiflash_test.go:215::TestMppExecution`.
+/// The Go body exercises MPP joins, aggregation, projections, task IDs, and
+/// decimal comparisons through `useMPPExecution` (`pkg/executor/mpp_gather.go:37`).
+// go-parity-gap: MPP coordinator/task lifecycle, TiFlash replicas, and session execution state are unported.
 #[test]
-#[ignore = "go-parity-gap: prepared point-get terminal plan handoff and statement-RU observation failpoints require tidb-session"]
-fn statement_ru_point_get_terminal_plan_handoff() {}
+#[ignore = "go-parity-gap: MPP coordinator/task lifecycle, TiFlash replicas, and session execution state are unported"]
+fn mpp_execution_covers_join_agg_and_task_ids() {}
 
-/// `pkg/executor/statement_ru_plan_walk_integration_test.go:643::TestStatementRUScalarSubqueryTerminalLifecycle` (item 719).
+/// `pkg/executor/test/tiflashtest/tiflash_test.go:303::TestInjectExtraProj`.
+/// The Go body checks large-integer AVG and grouped projection results after
+/// TiFlash planning via `useMPPExecution` (`pkg/executor/mpp_gather.go:37`).
+// go-parity-gap: TiFlash replica execution and MPP projection injection are unported.
 #[test]
-#[ignore = "go-parity-gap: scalar-subquery flat plans, prepared execution, and RU owner lifecycle are not modeled by tidb-executor"]
-fn statement_ru_scalar_subquery_terminal_lifecycle() {}
+#[ignore = "go-parity-gap: TiFlash replica execution and MPP projection injection are unported"]
+fn inject_extra_projection_preserves_large_integer_avg() {}
 
-/// `pkg/executor/statement_ru_plan_walk_integration_test.go:756::TestStatementRUCursorExclusion` (item 720).
+/// `pkg/executor/test/tiflashtest/tiflash_test.go:324::TestTiFlashPartitionTableShuffledHashJoin` calls `t.Skip("too slow")`
+/// before its TiFlash partitioned shuffled-hash-join body.
+// skipped-reason: the authoritative Go test explicitly skips as too slow; no behavior is run to port.
 #[test]
-#[ignore = "go-parity-gap: restricted SQL, cursor result sets, and session status flags govern the Go statement-RU exclusion contract"]
-fn statement_ru_cursor_exclusion() {}
+#[ignore = "skipped-reason: the authoritative Go test explicitly skips as too slow; no behavior is run to port"]
+fn tiflash_partitioned_shuffled_hash_join_is_skipped_as_too_slow() {}
