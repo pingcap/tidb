@@ -619,16 +619,14 @@ impl IndexMergeReaderExec {
         self
     }
 
-    /// Applies selections retained inside the final table-side cop plan.
-    #[must_use]
-    pub(crate) fn with_table_filters(
-        mut self,
+    /// Applies one Selection retained inside the final table-side cop plan.
+    pub(crate) fn push_table_filters(
+        &mut self,
         filters: Vec<Expression>,
         context: crate::StmtContext,
-    ) -> Self {
-        self.table_filters = filters;
+    ) {
+        self.table_filters.extend(filters);
         self.filter_context = Some(context);
-        self
     }
 
     /// Go `byItems`; only meaningful for a union, because Go's

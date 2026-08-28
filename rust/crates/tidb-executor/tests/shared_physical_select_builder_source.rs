@@ -53,7 +53,8 @@ fn fresh_and_cached_selects_call_one_physical_executor_entrypoint() {
     );
     assert!(
         !physical_builder.contains("fn direct_reader_shape(")
-            && !physical_builder.contains("fn supports(plan: &PhysicalPlan)"),
+            && !physical_builder.contains("fn supports(plan: &PhysicalPlan)")
+            && !physical_builder.contains("fn collect_reader_conditions("),
         "fresh and cached execution must not be gated by Rust-only plan subsets"
     );
 }

@@ -32,6 +32,36 @@ both `oltp_read_only` and `oltp_read_write`.
 
 ## Progress
 
+- [x] 2026-08-28: rejected remote commit `e669a75c38`'s
+  `DriverError::Unsupported(reason) if reason.starts_with("a cached ")`
+  fallback. Go does not classify executor-builder errors by message prefix or
+  rerun a cached statement through a separate AST executor. Cache hits and
+  fresh plans both reach `executorBuilder.build`; unsupported physical nodes
+  must be implemented in that common builder. The merge records the remote
+  history while retaining this tree and therefore contains none of the
+  fallback.
+
+- [x] 2026-08-28: audited referenced commit `e2788410d8` against Go's common
+  INSERT builder/executor flow and removed it in full. Its
+  `fast_literal_shape` branch recognized `bulk_insert.lua` integer rows and
+  bypassed the ordinary expression preparation, assigned/default/generated
+  column walk, and row-level write path; it had no Go plan or executor
+  counterpart. The companion clustered-primary index-maintenance shortcut and
+  the benchmark claim based on that branch are also gone. A source regression
+  fails at the pushed checkpoint containing `e2788410d8` and passes after the
+  removal. The full executor suite improves from that checkpoint's 219 passed
+  / seven failed to 226 passed / one failed (including the new passing guard):
+  six INSERT, default, generated-column, and sequence regressions recover,
+  leaving only the unchanged common-handle `ADMIN CHECK` baseline failure.
+
+- [x] 2026-08-28: removed `collect_reader_conditions`, which flattened Go's
+  separate `IndexPlans` and `TablePlans` into one Rust post-lookup Selection.
+  IndexLookUp now lowers retained index-side and table-side Selection nodes in
+  child-to-parent execution order, and IndexMerge keeps its final table-plan
+  Selection order. Before the independent `e2788410d8` removal, this reader
+  batch had the exact pushed checkpoint's 219-pass, seven-failure result, so
+  it introduced no additional failures.
+
 - [x] 2026-08-28: removed cache-only `run_cached_select`. Ordinary SELECTs
   now retain the physical tree returned by the shared planner and,
   like cache-rebuilt SELECTs, enter one `physical_builder::execute_select`
@@ -551,6 +581,28 @@ both `oltp_read_only` and `oltp_read_write`.
 - [ ] Run correctness, compatibility, performance, and Ready validation.
 
 ## Surprises & Discoveries
+
+- Observation: commit `e2788410d8` was benchmark-shaped rather than
+  Go-shaped. It named `bulk_insert.lua` in production code, recognized only
+  all-integer VALUES lists on a narrow heap-table shape, and returned from a
+  private write loop after a batch duplicate proof. Go still constructs its
+  ordinary Insert executor and row pipeline for that statement shape. Exact
+  reversal restored the pre-commit INSERT sources, rather than preserving the
+  workaround behind a differently named admission gate.
+  Evidence: `git show e2788410d8`, `pkg/executor/builder.go::buildInsert`, and
+  `rust/crates/tidb-executor/tests/go_insert_execution_parity_source.rs`. The
+  full-suite A/B additionally shows that the workaround was the cause of six
+  correctness failures, not just a structural mismatch.
+
+- Observation: Go's `PhysicalIndexLookUpReader` retains two coprocessor DAG
+  lists, `IndexPlans` and `TablePlans`; `PhysicalIndexMergeReader` likewise
+  retains each partial plan plus a final table plan. Concatenating every
+  Selection condition into one Rust vector changed both placement and LIMIT
+  ordering. Recursive lowering now follows each retained tree independently,
+  so the physical planner remains the placement authority.
+  Evidence: `pkg/executor/builder.go::buildNoRangeIndexLookUpReader`,
+  `buildNoRangeIndexMergeReader`, and
+  `rust/crates/tidb-executor/src/driver/physical_builder.rs`.
 
 - Observation: the shared builtin pushdown catalog does not own comparison
   signatures; the typed predicate encoder does. Once the duplicate Selection

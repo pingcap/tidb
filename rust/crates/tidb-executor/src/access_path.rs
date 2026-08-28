@@ -3381,7 +3381,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
             // handles until `count` qualifying rows are produced. A non-zero
             // offset must remain above that filter, so keep the conservative
             // refusal there.
-            || (offset > 0 && self.filter.is_some())
+            || (offset > 0 && self.filter.is_some() && !self.index_filter)
             || self.partial_aggregate.is_some()
             || self.limit.is_some()
         {
@@ -3434,7 +3434,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
     }
 
     fn accept_index_filter(&mut self) -> bool {
-        if self.filter.is_none() || self.table.has_dirty_content() {
+        if self.filter.is_none() {
             return false;
         }
         // Go's `PhysicalIndexReader` evaluates a Selection in the coprocessor

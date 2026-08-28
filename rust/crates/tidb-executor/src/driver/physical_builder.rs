@@ -295,7 +295,7 @@ fn build_table_scan(
         .ok_or_else(|| DriverError::unsupported("physical table ID is absent from the catalog"))?;
     let (schema, keep, extra_handle_slot) = table_scan_schema(scan, table)?;
     let mut source = TableScanExec::new_with_context(
-        meta(plan, schema),
+        meta(plan, schema.clone()),
         table.clone(),
         RowDecodeContext::for_query(ctx),
         PushdownStatementContext::from_stmt(ctx),
@@ -566,13 +566,48 @@ fn embedded_index_scan(plan: &PhysicalPlan) -> Option<&PhysicalIndexScan> {
     }
 }
 
-fn collect_reader_conditions(plan: &PhysicalPlan, conditions: &mut Vec<Expression>) {
-    if let PhysicalPlan::Selection(selection) = plan {
-        conditions.extend(selection.conditions.iter().cloned());
-    }
+fn reader_has_selection(plan: &PhysicalPlan) -> bool {
+    matches!(plan, PhysicalPlan::Selection(_)) || plan.children().iter().any(reader_has_selection)
+}
+
+fn lower_index_lookup_selections(
+    plan: &PhysicalPlan,
+    source: &mut IndexRangeSourceExec,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
     for child in plan.children() {
-        collect_reader_conditions(child, conditions);
+        lower_index_lookup_selections(child, source, ctx)?;
     }
+    let PhysicalPlan::Selection(selection) = plan else {
+        return Ok(());
+    };
+    let filters = resolve_expressions(&selection.conditions, source.schema())?;
+    let pushed = crate::predicate_pushdown::PushedScanFilter::from_physical_conditions(filters);
+    if !source.accept_scan_filter(&pushed, ctx) {
+        return Err(DriverError::unsupported(
+            "a physical index lookup cannot apply its retained Selection",
+        ));
+    }
+    Ok(())
+}
+
+fn lower_index_merge_selections(
+    plan: &PhysicalPlan,
+    executor: &mut IndexMergeReaderExec,
+    schema: &Schema,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    for child in plan.children() {
+        lower_index_merge_selections(child, executor, schema, ctx)?;
+    }
+    let PhysicalPlan::Selection(selection) = plan else {
+        return Ok(());
+    };
+    executor.push_table_filters(
+        resolve_expressions(&selection.conditions, schema)?,
+        ctx.clone(),
+    );
+    Ok(())
 }
 
 fn reader_output_offsets(
@@ -676,6 +711,16 @@ fn build_index_reader(
     if let Some(rows) = scan.base.base.stats_info().map(|stats| stats.row_count()) {
         source.accept_scan_estimate(rows);
     }
+    lower_index_lookup_selections(index_plan, &mut source, ctx)?;
+    let has_table_selection = table_plan.is_some_and(reader_has_selection);
+    if !has_table_selection && reader_has_selection(index_plan) && !source.accept_index_filter() {
+        return Err(DriverError::unsupported(
+            "a physical index lookup cannot apply its index-side Selection",
+        ));
+    }
+    if let Some(table_plan) = table_plan {
+        lower_index_lookup_selections(table_plan, &mut source, ctx)?;
+    }
     if let Some(limit) = pushed_limit {
         if !source.accept_embedded_lookup_limit(limit.offset, limit.count) {
             return Err(DriverError::unsupported(
@@ -690,22 +735,7 @@ fn build_index_reader(
             ));
         }
     }
-    let mut conditions = Vec::new();
-    collect_reader_conditions(index_plan, &mut conditions);
-    if let Some(table_plan) = table_plan {
-        collect_reader_conditions(table_plan, &mut conditions);
-    }
-    if conditions.is_empty() {
-        return Ok(Box::new(source));
-    }
-    let filters = resolve_expressions(&conditions, &schema)?;
-    Ok(Box::new(SelectionExec::new(
-        meta(plan, schema),
-        filters,
-        Box::new(source),
-        ctx.clone(),
-        ctx.statement_memory(),
-    )))
+    Ok(Box::new(source))
 }
 
 fn join_kind(join_type: LogicalJoinType) -> Result<JoinKind, DriverError> {
@@ -1240,9 +1270,6 @@ fn build_index_merge_reader(
 
     let schema = plan_schema(plan)?;
     let output_columns = table_output_columns(&schema, table)?;
-    let mut table_conditions = Vec::new();
-    collect_reader_conditions(table_plan, &mut table_conditions);
-    let table_filters = resolve_expressions(&table_conditions, &schema)?;
     let by_items = reader
         .by_items
         .iter()
@@ -1252,15 +1279,15 @@ fn build_index_merge_reader(
         })
         .collect();
     let mut executor = IndexMergeReaderExec::new(
-        meta(plan, schema),
+        meta(plan, schema.clone()),
         table.clone(),
         RowDecodeContext::for_query(ctx),
         partials,
         reader.is_intersection_type,
     )
     .with_output_columns(output_columns)
-    .with_table_filters(table_filters, ctx.clone())
     .with_by_items(by_items);
+    lower_index_merge_selections(table_plan, &mut executor, &schema, ctx)?;
     if let Some(limit) = reader.pushed_limit {
         executor = executor.with_pushed_limit(ExecutorPushedDownLimit {
             offset: limit.offset,
