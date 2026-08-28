@@ -121,6 +121,22 @@ pub mod hash_agg;
 mod hash_agg_spill_tests;
 mod hash_join;
 pub mod hints_set;
+#[cfg(test)]
+mod tests_import_into_external_id_gaps;
+#[cfg(test)]
+mod tests_importer_chunk_process_gaps;
+#[cfg(test)]
+mod tests_importer_job_gaps;
+#[cfg(test)]
+mod tests_importer_kv_encode_gaps;
+#[cfg(test)]
+mod tests_importer_plan_options_gaps;
+#[cfg(test)]
+mod tests_importer_precheck_sampler_gaps;
+#[cfg(test)]
+mod tests_importer_table_import_gaps;
+#[cfg(test)]
+mod tests_importer_verify_postprocess_gaps;
 mod index_hints;
 pub mod index_lookup_hash_join;
 pub mod index_lookup_join;
@@ -132,6 +148,10 @@ pub mod join;
 pub mod joiner;
 pub mod keydecoder;
 pub mod kv_table;
+#[cfg(test)]
+mod tests_infoschema_cluster_table_gaps;
+#[cfg(test)]
+mod tests_infoschema_reader_source_gaps;
 pub mod limit;
 pub mod load_stats;
 pub mod mem_quota;
