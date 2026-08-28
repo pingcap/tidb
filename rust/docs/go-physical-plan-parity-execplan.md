@@ -277,6 +277,12 @@ both `oltp_read_only` and `oltp_read_write`.
   retained prepared AST plus its parameter slice. The prepared-only wrapper
   and its full-tree clone/bind pass were removed; writes and locking reads now
   resolve marker values through the same point-key walker.
+- [x] 2026-08-28: retained the exact statement memory tracker and chunk policy
+  used by execution as the row/cursor result authority. Rust no longer creates
+  a second tracker after execution or reconstructs a prepared statement's
+  authority from session variables after `SET_VAR` restoration; the next
+  statement boundary releases only the session's reference, matching Go's
+  retained `SessionVars.StmtCtx` ownership.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -1316,6 +1322,36 @@ reported zero ignored errors. Exact validation commands:
 
     cd rust
     cargo test -q -p tidb-session result_materialization_reuses_the_typed_statement_policy --lib
+    cargo test -q -p tidb-session tests_mem_quota:: --lib
+    cargo build -q -p tidb-server --bin tidb-server --release
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, retained result authority): Go row and cursor
+results retain the memory tracker already installed on `SessionVars.StmtCtx`.
+Rust instead built a second statement tracker in
+`result_materialization_authority` after the executor returned, and the server
+prepared path could do so after restoring a `SET_VAR` overlay. The session now
+retains one `ResultMaterializationAuthority` at context construction; execution
+and result materialization share its exact tracker, and direct PointGet paths
+create one authority lazily because they deliberately do not build a complete
+statement context. The tracker-identity source regression was observed failing
+before the implementation. Identity, prepared-server post-restoration, and the
+complete memory-quota group pass afterward (12/12), and the release server
+build succeeds.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`6440f1572e` and the same Go server over one TiKV/PD cluster. Read-only median
+TPS was 510.80 candidate, 509.01 baseline, and 475.38 Go. Read-write median TPS
+was 254.15 candidate, 239.10 baseline, and 213.85 Go; those samples remain
+latency-noisy, so no read-write increase is attributed to this change. All 18
+legs reported zero ignored errors. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session result_materialization_reuses_the_typed_statement_policy --lib
+    cargo test -q -p tidb-session prepared_server_result_retains_the_executing_statement_authority --lib
+    cargo test -q -p tidb-session result_materialization_retains_the_statement_context_tracker --lib
     cargo test -q -p tidb-session tests_mem_quota:: --lib
     cargo build -q -p tidb-server --bin tidb-server --release
     cd ..

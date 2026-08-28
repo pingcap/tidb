@@ -197,11 +197,30 @@ impl Session {
     /// `StmtContext` would also snapshot planner, expression, sequence, and
     /// user state that result materialization never reads.
     pub fn result_materialization_authority(&self) -> crate::ResultMaterializationAuthority {
+        if let Some(authority) = self.statement_result_authority.borrow().as_ref() {
+            return authority.clone();
+        }
         let snapshot = self.statement_var_snapshot();
         let (oom_action, tmp_storage_on_oom) = self.vars.statement_memory_policy();
+        let authority =
+            self.build_statement_result_authority(&snapshot, oom_action, tmp_storage_on_oom);
+        self.statement_result_authority
+            .replace(Some(authority.clone()));
+        authority
+    }
+
+    fn build_statement_result_authority(
+        &self,
+        snapshot: &StatementVarSnapshot,
+        oom_action: tidb_executor::OomAction,
+        tmp_storage_on_oom: bool,
+    ) -> crate::ResultMaterializationAuthority {
         self.session_memory
             .configure(snapshot.mem_quota, oom_action, tmp_storage_on_oom);
-        let memory = self.session_memory.statement();
+        let memory = self.session_memory.statement_with_arbitration(
+            snapshot.arbitrator_wait_averse,
+            snapshot.arbitrator_reserved,
+        );
         crate::ResultMaterializationAuthority::new(
             memory,
             snapshot.init_chunk_size,
@@ -757,13 +776,14 @@ impl Session {
         let hashagg_partial_concurrency = snapshot.hashagg_partial_concurrency;
         let hashagg_final_concurrency = snapshot.hashagg_final_concurrency;
         let block_encryption_mode = snapshot.block_encryption_mode;
-        let arbitrator_wait_averse = snapshot.arbitrator_wait_averse;
-        let arbitrator_reserved = snapshot.arbitrator_reserved;
         let global_sysvar_accessor = self.vars.global_sysvar_accessor();
         let (oom_action, tmp_storage_on_oom) = self.vars.statement_memory_policy();
         let optimizer_cost_env = self.optimizer_cost_env(mem_quota, tmp_storage_on_oom);
-        self.session_memory
-            .configure(mem_quota, oom_action, tmp_storage_on_oom);
+        let result_authority =
+            self.build_statement_result_authority(&snapshot, oom_action, tmp_storage_on_oom);
+        let statement_memory = result_authority.statement_memory();
+        self.statement_result_authority
+            .replace(Some(result_authority));
         // The SAME three bits on both branches: a query reads them for
         // `CAST(... AS DATE/DATETIME)`, a DML statement reads them for the
         // column write. They used to be attached only below, which left every
@@ -810,10 +830,7 @@ impl Session {
                 .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
                 .with_connection_id(self.connection_id)
                 .with_advisory_locks(self.advisory_locks.clone())
-                .with_statement_memory(
-                    self.session_memory
-                        .statement_with_arbitration(arbitrator_wait_averse, arbitrator_reserved),
-                )
+                .with_statement_memory(statement_memory.clone())
                 .with_rand_session(Arc::clone(&self.rand))
                 .with_last_insert_id_channel(Arc::clone(&self.published_last_insert_id))
                 .with_retry_auto_ids(Arc::clone(&self.retry_auto_ids))
@@ -857,10 +874,7 @@ impl Session {
         .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
         .with_connection_id(self.connection_id)
         .with_advisory_locks(self.advisory_locks.clone())
-        .with_statement_memory(
-            self.session_memory
-                .statement_with_arbitration(arbitrator_wait_averse, arbitrator_reserved),
-        )
+        .with_statement_memory(statement_memory)
         .with_rand_session(Arc::clone(&self.rand))
         .with_last_insert_id_channel(Arc::clone(&self.published_last_insert_id))
         .with_retry_auto_ids(Arc::clone(&self.retry_auto_ids))
@@ -1065,8 +1079,23 @@ mod tests {
 
         assert!(body.contains("statement_var_snapshot"));
         assert!(body.contains("statement_memory_policy"));
+        assert!(body.contains("statement_result_authority"));
         assert!(!body.contains("get_system"));
         assert!(!body.contains("get_global"));
+        assert!(!body.contains("self.session_memory.statement();"));
+    }
+
+    #[test]
+    fn result_materialization_retains_the_statement_context_tracker() {
+        let session = Session::new();
+        let context = session.statement_context(false);
+        let executing_memory = context.statement_memory();
+        let (retained_memory, _, _) = session.result_materialization_authority().into_parts();
+
+        assert!(Arc::ptr_eq(
+            executing_memory.stmt_tracker(),
+            retained_memory.stmt_tracker(),
+        ));
     }
 
     #[test]

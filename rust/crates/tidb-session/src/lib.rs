@@ -275,6 +275,12 @@ impl ResultMaterializationAuthority {
     pub fn into_parts(self) -> (tidb_executor::StatementMemory, usize, usize) {
         (self.memory, self.init_chunk_size, self.max_chunk_size)
     }
+
+    /// The statement tracker retained by this authority.
+    #[must_use]
+    pub(crate) fn statement_memory(&self) -> tidb_executor::StatementMemory {
+        self.memory.clone()
+    }
 }
 
 /// A process-wide catalog shared by every session, as Go's domain-owned
@@ -363,6 +369,13 @@ pub struct Session {
     /// fresh child below these roots, so an open cursor remains counted when
     /// the client starts its next command.
     session_memory: tidb_executor::SessionMemory,
+    /// The current statement's actual result-retention authority.
+    ///
+    /// Go retains `SessionVars.StmtCtx` until the next statement reset and a
+    /// cursor keeps that context's tracker. Rust used to construct a second
+    /// statement tracker after execution; this slot lets the result keep the
+    /// same tracker the executor used.
+    statement_result_authority: std::cell::RefCell<Option<ResultMaterializationAuthority>>,
     /// The open transaction, if any.
     txn: Option<Transaction>,
     /// Go `SessionVars.LocalTemporaryTables` (an `infoschema.SessionTables`):
@@ -656,6 +669,7 @@ impl Default for Session {
                 tidb_executor::OomAction::Cancel,
                 0,
             ),
+            statement_result_authority: std::cell::RefCell::new(None),
             txn: None,
             local_temporary_tables: Vec::new(),
             global_temporary_data: std::collections::HashMap::new(),
@@ -1346,6 +1360,7 @@ impl Session {
         capture_result_authority: bool,
         execute: impl FnOnce(&mut Self) -> Result<StmtOutput, DriverError>,
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
+        self.statement_result_authority.get_mut().take();
         self.check_sandbox_mode(sql)?;
         self.with_catalog_mut(|catalog| {
             catalog.advance_statistics_loads();

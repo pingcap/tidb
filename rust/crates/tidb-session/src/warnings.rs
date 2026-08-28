@@ -269,6 +269,7 @@ impl Session {
     }
 
     pub(crate) fn begin_cached_prepared_query_boundary(&mut self) {
+        self.statement_result_authority.get_mut().take();
         self.snapshot_previous_warning_counts();
         self.warnings.clear();
         self.in_show_warning = false;
