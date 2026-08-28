@@ -151,6 +151,20 @@ pub mod tblsession;
 mod tests_index_join;
 #[cfg(test)]
 mod tests_join_search;
+#[cfg(test)]
+mod tests_ddl_check_constraint_states_source;
+#[cfg(test)]
+mod tests_ddl_column_type_change_source;
+#[cfg(test)]
+mod tests_ddl_copr_fixed_collation_source;
+#[cfg(test)]
+mod tests_ddl_db_change_failpoints_source;
+#[cfg(test)]
+mod tests_ddl_db_change_states_source;
+#[cfg(test)]
+mod tests_ddl_modify_column_backfill_source;
+#[cfg(test)]
+mod tests_ddl_table_cache_source;
 pub mod tiflash_recorder;
 pub mod topn;
 pub mod topn_chunk_heap;
