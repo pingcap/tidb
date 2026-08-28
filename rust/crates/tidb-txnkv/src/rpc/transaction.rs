@@ -31,14 +31,13 @@ use tidb_proto::{
 
 use super::batch::{
     batch_get_entry, batch_rollback_entry, commit_entry, get_entry, pessimistic_lock_entry,
-    pessimistic_rollback_entry, prewrite_entry, scan_entry, txn_heart_beat_entry,
-    BatchCommandEntry, BatchCommandTag, BatchInflightError, BatchPublicationReceipt, BatchRoute,
-    OpaqueBatchCommand,
+    pessimistic_rollback_entry, prewrite_entry, scan_entry, synchronous_batch_completion_pair,
+    txn_heart_beat_entry, BatchCommandEntry, BatchCommandTag, BatchInflightError,
+    BatchPublicationReceipt, BatchRoute, OpaqueBatchCommand, SynchronousBatchPull,
 };
 use super::TonicCoprocessorClient;
 use super::{
-    completion_pair, CompletionError, CompletionPull, CompletionRunLoop, DirectUnaryClientError,
-    DirectUnaryConnectionError, UnaryCallContext,
+    CompletionError, DirectUnaryClientError, DirectUnaryConnectionError, UnaryCallContext,
 };
 
 /// Immutable identity assigned before one transaction command enters tonic.
@@ -137,7 +136,7 @@ pub struct TransactionBatchResponse<R> {
 /// Pull-side owner of one typed transaction command completion.
 pub struct TransactionBatchPending<R> {
     tag: BatchCommandTag,
-    completion: CompletionPull<OpaqueBatchCommand, BatchInflightError>,
+    completion: SynchronousBatchPull,
     publication: Option<TransactionBatchPublication>,
     /// The receipt this attempt was submitted under, not yet collected.
     ///
@@ -159,7 +158,7 @@ where
         encoded_request: Vec<u8>,
         forwarded_host: Option<&str>,
     ) -> (BatchCommandEntry, Self) {
-        let (completion, pull) = completion_pair(CompletionRunLoop::new(), || {});
+        let (completion, pull) = synchronous_batch_completion_pair();
         let mut entry =
             BatchCommandEntry::new(OpaqueBatchCommand::new(tag, encoded_request), completion);
         if let Some(forwarded_host) = forwarded_host {
@@ -489,6 +488,17 @@ mod tests {
         let error = TransactionBatchPublication::from_receipts(BatchCommandTag::Get, &[])
             .expect_err("an admitted transaction command cannot lose its publication receipt");
         assert!(matches!(error, DirectUnaryClientError::InvalidRequest(_)));
+    }
+
+    #[test]
+    fn transaction_commands_use_client_go_synchronous_batch_completion() {
+        let (_, pending) = TransactionBatchPending::<KvrpcGetResponse>::entry(
+            BatchCommandTag::Get,
+            Vec::new(),
+            None,
+        );
+
+        assert!(std::any::type_name_of_val(&pending.completion).ends_with("SynchronousBatchPull"));
     }
 
     #[test]

@@ -35,8 +35,18 @@
 
 fn assert_send<T: Send>() {}
 
+const TRANSACTION_RPC_SOURCE: &str = include_str!("../src/rpc/transaction.rs");
+
 #[test]
 fn a_production_transaction_can_be_owned_by_the_connection_worker() {
     assert_send::<tidb_txnkv::transaction::ProductionOptimisticTransaction>();
     assert_send::<tidb_txnkv::transaction::ProductionPessimisticTransaction>();
+}
+
+#[test]
+fn transaction_commands_use_client_go_synchronous_batch_completion() {
+    assert!(TRANSACTION_RPC_SOURCE.contains("completion: SynchronousBatchPull"));
+    assert!(TRANSACTION_RPC_SOURCE.contains("synchronous_batch_completion_pair()"));
+    assert!(!TRANSACTION_RPC_SOURCE.contains("CompletionPull<OpaqueBatchCommand"));
+    assert!(!TRANSACTION_RPC_SOURCE.contains("completion_pair(CompletionRunLoop::new()"));
 }

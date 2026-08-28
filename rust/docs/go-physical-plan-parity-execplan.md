@@ -187,6 +187,10 @@ both `oltp_read_only` and `oltp_read_write`.
   completion. One-region ordinary cop reads now use the synchronous
   `SendRequest` shape; the callback run loop remains only for the bounded
   multi-region overlap path that still lacks Go's cop worker pool.
+- [x] 2026-08-27: moved every typed transaction BatchCommands entry from the
+  asynchronous callback completion to Go's synchronous `SendRequest`
+  response-channel completion. Multi-region batches still overlap because
+  their independently published pending requests are collected afterward.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -543,6 +547,25 @@ both `oltp_read_only` and `oltp_read_write`.
   release benchmark, and
   `/private/tmp/tidb-rust-simple-parallel-syncbatch-fb2eceb2a9.sample.txt`.
 
+- Observation: the ordinary-cop correction did not cover transaction RPCs.
+  Go snapshot PointGet reaches client-go `RPCClient.SendRequest`, but Rust's
+  `publish_transaction_get` still constructed `CompletionPull` and drove a
+  private `CompletionRunLoop`; 2,390 of 2,617 sampled point-path frames waited
+  there. Stock alternating medians were Rust/Go 416.70/466.33 TPS (0.894x) for
+  read-only and 268.69/276.09 TPS (0.973x) for read-write. Making the generic
+  `TransactionBatchPending` carry `SynchronousBatchPull` fixes every typed
+  Get, BatchGet, Scan, lock, Prewrite, Commit, rollback, and heartbeat command
+  at one source boundary. The rebuilt read-only profile has all 2,584 sampled
+  point waits below `SynchronousBatchPull` and no callback loop below
+  `publish_transaction_get`; new medians are 443.15/454.04 TPS (0.976x) for
+  read-only and 263.09/274.27 TPS (0.959x) for read-write. The read-only root
+  mismatch is removed, while acceptance remains open below 1.0.
+  Evidence: fail-before/pass-after
+  `transaction_commands_use_client_go_synchronous_batch_completion`, the
+  transaction and completion unit suites, release build, stock alternating
+  benchmark, and
+  `/private/tmp/tidb-rust-oltp_read_only-txn-sync-44800c4f14.sample.txt`.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -633,6 +656,15 @@ both `oltp_read_only` and `oltp_read_write`.
   Rationale: switching to raw unary RPC would bypass BatchCommands and be a
   workaround. A completion variant preserves the source transport and retry
   ownership while deleting the callback executor from the ordinary path.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: use the synchronous completion variant for every typed
+  transaction command, not only snapshot Get.
+  Rationale: client-go's synchronous `RPCClient.SendRequest` is the common
+  command boundary for reads and two-phase-commit RPCs. Retaining asynchronous
+  pending objects would preserve a Rust-only callback loop; multi-region
+  overlap instead comes from publishing every independent request before
+  collecting their synchronous completions.
   Date/Author: 2026-08-27, Codex.
 
 - Decision: the PREPARE-time planner owns PointGet shape and access-path
@@ -782,6 +814,13 @@ index/partial completion rules, and restoring the index worker's
 existing noise band, while the change removes a concrete large-allocation and
 policy-ownership mismatch without regressing the adjacent aggregate/sort
 paths.
+
+Switching typed transaction commands to the same synchronous response-channel
+completion used by client-go removed the private callback run loop from the
+dominant prepared PointGet path. The fresh stock read-only ratio moved from
+0.894x to 0.976x; read-write measured 0.959x in the same post-change run. This
+closes the measured transaction-completion root cause but not the plan's 1.0x
+acceptance threshold.
 
 ## Context and Orientation
 

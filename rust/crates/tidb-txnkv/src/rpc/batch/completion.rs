@@ -129,7 +129,6 @@ pub struct SynchronousBatchPull {
 }
 
 impl SynchronousBatchPull {
-    #[cfg(test)]
     pub fn try_complete(&mut self) -> Result<Option<BatchResult>, CompletionError> {
         let mut inner = self
             .state
