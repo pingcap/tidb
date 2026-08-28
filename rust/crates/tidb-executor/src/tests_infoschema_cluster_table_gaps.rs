@@ -8,9 +8,8 @@
 //! On this tier the data sources live in Go's
 //! `pkg/executor/infoschema_reader.go` (`dataForTiDBClusterInfo` :1842,
 //! `setDataForTiKVRegionStatus` :2082, `tableStorageStatsRetriever` :2375)
-//! and need a PD HTTP endpoint plus the diagnostics RPC server; the Rust
-//! `memtable_reader.rs` ports only the cluster_config/log/hot-region fan-outs
-//! of `memtable_reader.go`, none of these tables.
+//! and need a PD HTTP endpoint plus the diagnostics RPC server. This tier has
+//! no wired cluster memtable reader or those remote transports.
 
 /// Go `pkg/executor/infoschema_cluster_table_test.go:240::TestSkipEmptyIPNodesForTiDBTypeCoprocessor`:
 /// with `AdvertiseAddress` set to `config.UnavailableIP`, a cluster-scoped

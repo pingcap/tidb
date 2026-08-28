@@ -394,6 +394,10 @@ both `oltp_read_only` and `oltp_read_write`.
   The live physical table-reader plan lowers through `TableScanExec` and
   `remote_scan`; documentation no longer describes the disconnected shell as
   a future storage integration point.
+- [x] 2026-08-28: deleted the self-only `memtable_reader` façade and its
+  unavailable-transport traits. No physical builder constructed it and no
+  PD HTTP or diagnostics RPC implementation backed it; cluster-table receipts
+  now record that full runtime gap directly.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer

@@ -151,7 +151,6 @@ pub mod load_stats;
 pub mod mem_quota;
 pub mod mem_reader;
 pub mod mem_table;
-pub mod memtable_reader;
 pub(crate) mod merge_join_plan;
 pub mod multi_way_merge;
 pub mod mutation_checker;
