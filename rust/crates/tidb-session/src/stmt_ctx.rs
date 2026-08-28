@@ -46,6 +46,7 @@ pub(crate) struct StatementVarSnapshot {
     connection_collation: String,
     allow_write_row_id: bool,
     sysdate_is_now: bool,
+    timestamp: Option<f64>,
     sql_mode: tidb_mysql::SqlMode,
     scanner_sql_mode: tidb_parser::SqlMode,
     allow_auto_random_explicit_insert: bool,
@@ -545,6 +546,12 @@ impl Session {
                 .unwrap_or_else(|_| "utf8mb4_bin".to_owned()),
             allow_write_row_id: on(tidb_vardef::tidb_vars::TIDB_OPT_WRITE_ROW_ID),
             sysdate_is_now: on(tidb_vardef::tidb_vars::TIDB_SYSDATE_IS_NOW),
+            timestamp: self
+                .vars
+                .get_system("timestamp")
+                .ok()
+                .filter(|value| value != "0")
+                .and_then(|value| value.parse::<f64>().ok()),
             allow_auto_random_explicit_insert: on(
                 tidb_vardef::tidb_vars::TIDB_ALLOW_AUTO_RAND_EXPLICIT_INSERT,
             ),
@@ -711,7 +718,6 @@ impl Session {
         let connection_charset = snapshot.connection_charset.clone();
         let connection_collation = snapshot.connection_collation.clone();
         let zone = snapshot.time_zone.clone();
-        let clock = self.statement_clock(&zone);
         let allow_write_row_id = snapshot.allow_write_row_id;
         let sysdate_is_now = snapshot.sysdate_is_now;
         let sql_mode = snapshot.sql_mode;
@@ -822,7 +828,7 @@ impl Session {
                 .with_default_string_match_selectivity(default_string_match_selectivity)
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_resource_group_name(self.active_resource_group.clone())
-                .with_clock(clock, zone);
+                .with_lazy_clock(snapshot.timestamp, zone);
             return ctx;
         }
         let (increment, offset) = self.auto_increment_step();
@@ -866,7 +872,7 @@ impl Session {
         .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
         .with_sysdate_is_now(sysdate_is_now)
         .with_resource_group_name(self.active_resource_group.clone())
-        .with_clock(clock, zone)
+        .with_lazy_clock(snapshot.timestamp, zone)
         .with_sql_mode(snapshot.scanner_sql_mode)
         .with_no_unsigned_subtraction(sql_mode.has_no_unsigned_subtraction_mode())
         .with_like_default_escape(like_default_escape)
@@ -1102,6 +1108,25 @@ mod tests {
         assert!(!builder.contains("current_role_text()"));
         assert!(!identity.contains("fn current_role_text"));
         assert!(executor.contains("active_roles: Option<Arc<Vec<(String, String)>>>"));
+    }
+
+    #[test]
+    fn statement_clock_is_initialized_only_when_an_expression_reads_it() {
+        let context = include_str!("stmt_ctx.rs");
+        let builder = context
+            .split_once("pub(crate) fn statement_context_ignoring(")
+            .expect("statement-context builder")
+            .1
+            .split_once("pub(crate) fn foreign_key_checks(")
+            .expect("statement-context boundary")
+            .0;
+        let executor = include_str!("../../tidb-executor/src/stmt_context.rs");
+
+        assert!(!builder.contains("self.statement_clock("));
+        assert!(builder.contains(".with_lazy_clock(snapshot.timestamp, zone)"));
+        assert!(executor.contains("pub fn with_lazy_clock("));
+        assert!(executor.contains("clock.get_or_init(|| {"));
+        assert!(executor.contains("resolve_statement_clock("));
     }
 
     #[test]

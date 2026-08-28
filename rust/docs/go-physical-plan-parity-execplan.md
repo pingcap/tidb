@@ -1524,6 +1524,42 @@ change. All 18 legs reported zero ignored errors. Exact validation commands:
     git diff --check
     EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
 
+Progress receipt (2026-08-28, lazy statement clock): Go's
+`getStmtTimestamp` reads `@@timestamp`, takes the wall clock, resolves the zone
+offset, and stores `StmtNowTsCacheKey` only when a temporal expression asks for
+the statement instant. Rust performed all four operations while constructing
+every SELECT and DML context. The generation-keyed statement-variable image
+now retains the optional parsed timestamp, and `StmtContext` owns a shared
+`OnceLock` that computes the exact existing clock tuple on its first `now()`
+read. Cloned parallel-worker contexts share that cell, while callers that
+already own a fixed instant keep the explicit `with_clock` path. The source
+regression was observed failing before the implementation and passing
+afterward; the behavior regression proves the cell is initially empty,
+preserves the captured 654320955ns fraction, and initializes once across
+clones. Existing pinned/wall-clock `NOW` and `SYSDATE` tests, the zoned temporal
+comparison regression, and all 34 timestamp-dependent column-default tests
+pass; the release server builds.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`334827e7d1` and the same Go server over one TiKV/PD cluster. Read-only median
+TPS was 518.12 candidate, 518.11 baseline, and 470.35 Go. Read-write median TPS
+was 269.38 candidate, 230.76 baseline, and 217.57 Go; those samples retain the
+same warm first-candidate pattern, so no read-write increase is attributed to
+the change. All 18 legs reported zero ignored errors. Exact validation
+commands:
+
+    cd rust
+    cargo test -q -p tidb-executor lazy_statement_clock_initializes_once_across_clones --lib
+    cargo test -q -p tidb-session statement_clock_is_initialized_only_when_an_expression_reads_it --lib
+    cargo test -q -p tidb-session sysdate_is_now_uses_the_statement_clock --lib
+    cargo test -q -p tidb-session sysdate_reads_the_wall_clock_and_not_the_statement_timestamp --lib
+    cargo test -q -p tidb-session a_duration_beside_a_temporal_literal_lands_on_the_statement_date --lib
+    cargo test -q -p tidb-session tests_column_defaults:: --lib
+    cargo build -q --release -p tidb-server --bin tidb-server
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
 Plan revision note (2026-08-27): created after the user confirmed the
 performance-preserving route to full Go parity across plan cache, aggregation,
 parallel execution, resource groups, sort, and coprocessor packages.

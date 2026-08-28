@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tidb_datatype::Datum;
 use tidb_distsql::{WarningCollector, WarningLevel};
@@ -309,10 +309,12 @@ pub struct StmtContext {
     tidb_decode_key_snapshot: Option<Arc<crate::TidbDecodeKeySnapshot>>,
     /// Go session advisory-lock map and its shared physical lock authority.
     advisory_locks: crate::advisory_lock_state::AdvisoryLockSession,
-    /// Go `StatementContext`'s fixed statement time as
-    /// `(utc_seconds, nanos, tz_offset_seconds)`: every `NOW()` in one
-    /// statement reads the same instant.
-    now: Option<(i64, u32, i32)>,
+    /// Go `StmtCtx.StmtNowTsCacheKey`: absent when there is no session clock,
+    /// otherwise initialized once when an expression first reads `NOW()`.
+    statement_clock: Option<Arc<OnceLock<(i64, u32, i32)>>>,
+    /// Non-zero `@@timestamp`, parsed with the statement-variable image and
+    /// consumed only if the lazy statement clock is initialized.
+    statement_timestamp: Option<f64>,
     sysdate_is_now: bool,
     time_zone: Option<tidb_expr::SessionTimeZone>,
     /// Go `StmtCtx.ResourceGroupName`: the statement hint's group when one
@@ -691,7 +693,8 @@ impl StmtContext {
             connection_id: None,
             tidb_decode_key_snapshot: None,
             advisory_locks: crate::advisory_lock_state::AdvisoryLockSession::default(),
-            now: None,
+            statement_clock: None,
+            statement_timestamp: None,
             sysdate_is_now: false,
             time_zone: None,
             resource_group_name: "default".to_owned(),
@@ -1588,15 +1591,30 @@ impl StmtContext {
         self
     }
 
-    /// Fixes the statement's clock, which Go does once per statement so
-    /// every `NOW()` in it agrees.
+    /// Fixes the statement's clock for tests and callers that already own an
+    /// exact instant.
     #[must_use]
     pub fn with_clock(
         mut self,
         now: (i64, u32, i32),
         time_zone: tidb_expr::SessionTimeZone,
     ) -> Self {
-        self.now = Some(now);
+        self.statement_clock = Some(Arc::new(OnceLock::from(now)));
+        self.statement_timestamp = None;
+        self.time_zone = Some(time_zone);
+        self
+    }
+
+    /// Attaches Go's lazy statement clock. The first time expression fixes
+    /// one instant in the shared cell; cloned worker contexts read it back.
+    #[must_use]
+    pub fn with_lazy_clock(
+        mut self,
+        timestamp: Option<f64>,
+        time_zone: tidb_expr::SessionTimeZone,
+    ) -> Self {
+        self.statement_clock = Some(Arc::new(OnceLock::new()));
+        self.statement_timestamp = timestamp;
         self.time_zone = Some(time_zone);
         self
     }
@@ -2203,6 +2221,41 @@ impl Drop for CopEvalGuard<'_> {
     }
 }
 
+fn resolve_statement_clock(
+    timestamp: Option<f64>,
+    zone: &tidb_expr::SessionTimeZone,
+) -> (i64, u32, i32) {
+    use chrono::TimeZone;
+    use tidb_expr::SessionTimeZone;
+
+    let utc = chrono::Utc::now();
+    let (seconds, nanos) = match timestamp {
+        #[expect(clippy::cast_possible_truncation, reason = "Go's int64(seconds)")]
+        #[expect(clippy::cast_sign_loss, reason = "@@timestamp's MinValue is 0")]
+        Some(timestamp) => (
+            timestamp.trunc() as i64,
+            (timestamp.fract() * 1e9) as u32 % 1_000_000_000,
+        ),
+        None => (utc.timestamp(), utc.timestamp_subsec_nanos()),
+    };
+    let offset = match zone {
+        SessionTimeZone::Local => {
+            let at = chrono::DateTime::from_timestamp(seconds, nanos)
+                .unwrap_or(utc)
+                .naive_utc();
+            chrono::Offset::fix(&chrono::Local.offset_from_utc_datetime(&at)).local_minus_utc()
+        }
+        SessionTimeZone::Fixed { offset_secs, .. } => *offset_secs,
+        SessionTimeZone::Named(zone) => {
+            let at = chrono::DateTime::from_timestamp(seconds, nanos)
+                .unwrap_or(utc)
+                .naive_utc();
+            chrono::Offset::fix(&zone.offset_from_utc_datetime(&at)).local_minus_utc()
+        }
+    };
+    (seconds, nanos, offset)
+}
+
 impl Columns for StmtContext {
     fn get(&self, _: &[String]) -> Option<Datum> {
         None
@@ -2217,7 +2270,15 @@ impl Columns for StmtContext {
     }
 
     fn now(&self) -> Option<(i64, u32, i32)> {
-        self.now
+        let clock = self.statement_clock.as_ref()?;
+        Some(*clock.get_or_init(|| {
+            resolve_statement_clock(
+                self.statement_timestamp,
+                self.time_zone
+                    .as_ref()
+                    .expect("a statement clock has a zone"),
+            )
+        }))
     }
 
     fn sysdate_is_now(&self) -> bool {
@@ -2648,6 +2709,27 @@ mod tests {
     #[test]
     fn connection_id_absent_by_default() {
         assert_eq!(StmtContext::for_query().connection_id(), None);
+    }
+
+    #[test]
+    fn lazy_statement_clock_initializes_once_across_clones() {
+        let ctx = StmtContext::for_query().with_lazy_clock(
+            Some(1_700_000_000.654_321),
+            tidb_expr::SessionTimeZone::Fixed {
+                name: "+00:00".to_owned(),
+                offset_secs: 0,
+            },
+        );
+        let shared = ctx.statement_clock.as_ref().unwrap();
+        assert!(shared.get().is_none());
+
+        let worker = ctx.clone();
+        assert_eq!(Columns::now(&ctx), Some((1_700_000_000, 654_320_955, 0)));
+        assert_eq!(Columns::now(&worker), Columns::now(&ctx));
+        assert!(Arc::ptr_eq(
+            ctx.statement_clock.as_ref().unwrap(),
+            worker.statement_clock.as_ref().unwrap()
+        ));
     }
 
     /// Go's `StaticWarnHandler` stops appending at `math.MaxUint16`, so a
