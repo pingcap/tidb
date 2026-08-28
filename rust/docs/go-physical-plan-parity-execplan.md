@@ -277,6 +277,13 @@ both `oltp_read_only` and `oltp_read_write`.
   size, and cop-side selections without re-running executor-local access-path
   selection. A focused covering/double-read test was observed failing before
   the constructors and passes for both the initial plan and cache-hit rebind.
+- [x] 2026-08-28: extended the cached physical constructor through Go's
+  `PhysicalUnionAll` and `PhysicalMaxOneRow` builder arms. The Union reuses the
+  existing streaming executor instead of the legacy row-fold path, while
+  MaxOneRow owns Go's two-row child window, NULL-on-empty result, and second-row
+  error. The focused regression first failed with the explicit unimplemented
+  UnionAll constructor and now passes both Union pulls and the 1242-class
+  MaxOneRow error.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
@@ -1700,9 +1707,11 @@ parameter/deferred marker after reading the rebuilt value. Both are fixed and
 the regression now passes for range/order, DISTINCT, scalar and grouped SUM,
 HashJoin, residual marker rebinding, and parameterized LIMIT. A second
 fail-before/pass-after regression covers both a covering IndexReader and an
-IndexLookUp double read across the initial plan and cache-hit rebind. Index
-merge, Apply, Union, Window, Lock, and DML SELECT children remain explicit
-constructor gaps; no fallback to the AST planner was added.
+IndexLookUp double read across the initial plan and cache-hit rebind. A third
+fail-before/pass-after regression covers recursive UnionAll construction and
+MaxOneRow's second-row error. Index merge, Apply, Window, Lock, and DML SELECT
+children remain explicit constructor gaps; no fallback to the AST planner was
+added.
 
 The corrected interleaved one-thread sysbench comparison used distinct SHA-1
 artifacts for this candidate (`4a87d7bf...`) and the immediate pre-builder
@@ -1725,6 +1734,7 @@ Exact WIP validation commands:
     cargo test -q -p tidb-executor cached_physical_plan_does_not_rerun_legacy_row_estimation --lib
     cargo test -q -p tidb-executor prepared_select_plan_reuses_shape_and_rebinds_parameters --lib
     cargo test -q -p tidb-executor cached_physical_index_readers_build_without_legacy_planner --lib
+    cargo test -q -p tidb-executor cached_physical_union_and_max_one_row_build_directly --lib
     cargo build -q --release -p tidb-server --bin tidb-server
     cd ..
     git diff --check

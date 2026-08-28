@@ -33,6 +33,7 @@ use crate::sort::{SortByItem, SortExec};
 use crate::table_access::TableAccess;
 use crate::table_dual::TableDualExec;
 use crate::topn::TopNExec;
+use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode};
 use tidb_expr::column::Column;
@@ -43,6 +44,88 @@ use tidb_planner::find_best_task::LogicalJoinType;
 use tidb_planner::physical::{PhysicalIndexScan, PhysicalPlan, PhysicalTableScan};
 
 use super::{Catalog, DriverError, SelectMeta, INIT_CAP, MAX_CHUNK_SIZE};
+
+/// Go `MaxOneRowExec`: emit one row (NULL when the child is empty) and reject
+/// a second row. The retained physical operator caps its child request at two;
+/// this executor still performs the second pull because not every child fills
+/// a requested chunk.
+struct MaxOneRowExec {
+    meta: ExecutorMeta,
+    child: Box<dyn Executor>,
+    evaluated: bool,
+}
+
+impl MaxOneRowExec {
+    fn new(meta: ExecutorMeta, child: Box<dyn Executor>) -> Self {
+        Self {
+            meta,
+            child,
+            evaluated: false,
+        }
+    }
+}
+
+impl Executor for MaxOneRowExec {
+    fn open(&mut self) -> Result<(), crate::ExecError> {
+        self.evaluated = false;
+        self.child.open()
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), crate::ExecError> {
+        req.reset();
+        if self.evaluated {
+            return Ok(());
+        }
+        self.evaluated = true;
+        self.child.next(req)?;
+        match req.num_rows() {
+            0 => {
+                if self.meta.schema().is_empty() {
+                    req.set_num_virtual_rows(1);
+                } else {
+                    for column in 0..self.meta.schema().len() {
+                        req.append_null(column);
+                    }
+                }
+                Ok(())
+            }
+            1 => {
+                let mut extra = self.child.new_chunk();
+                self.child.next(&mut extra)?;
+                if extra.num_rows() == 0 {
+                    Ok(())
+                } else {
+                    Err(crate::ExecError::SubqueryReturnsMoreThanOneRow)
+                }
+            }
+            _ => Err(crate::ExecError::SubqueryReturnsMoreThanOneRow),
+        }
+    }
+
+    fn close(&mut self) -> Result<(), crate::ExecError> {
+        self.child.close()
+    }
+
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
+}
 
 fn plan_schema(plan: &PhysicalPlan) -> Result<Schema, DriverError> {
     plan.base()
@@ -806,6 +889,23 @@ pub(super) fn build(
             meta(plan, plan_schema(plan)?),
             dual.row_count,
         ))),
+        PhysicalPlan::UnionAll(_) => {
+            let children = plan
+                .children()
+                .iter()
+                .map(|child| build(child, catalog, ctx))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Box::new(super::set_opr::UnionAllExec::new(
+                meta(plan, plan_schema(plan)?),
+                children,
+            )))
+        }
+        PhysicalPlan::MaxOneRow(_) => {
+            let child = build(only_child(plan)?, catalog, ctx)?;
+            let executor_meta =
+                ExecutorMeta::new(plan_schema(plan)?, i64::from(plan.base().base.id()), 2, 2);
+            Ok(Box::new(MaxOneRowExec::new(executor_meta, child)))
+        }
         PhysicalPlan::NominalSort(_) => build(only_child(plan)?, catalog, ctx),
         _ => Err(DriverError::unsupported(format!(
             "cached physical executor construction for {} is not implemented",
@@ -867,4 +967,64 @@ pub(super) fn run_cached_select(
     let root = build(physical, catalog, ctx)?;
     let columns = result_columns(select, root.schema());
     super::drain_root_executor(root, columns, ctx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_planner::physical::{
+        BasePhysicalPlan, PhysicalMaxOneRow, PhysicalTableDual, PhysicalUnionAll,
+    };
+
+    fn empty_schema() -> Schema {
+        Schema::new(Vec::new())
+    }
+
+    fn dual(id: i32, rows: usize) -> PhysicalPlan {
+        let mut base = BasePhysicalPlan::with_id(id, "TableDual", 0);
+        base.base.set_schema(Some(empty_schema()));
+        PhysicalPlan::TableDual(PhysicalTableDual {
+            base,
+            row_count: rows,
+        })
+    }
+
+    fn union(id: i32, children: Vec<PhysicalPlan>) -> PhysicalPlan {
+        let mut base = BasePhysicalPlan::with_id(id, "UnionAll", 0);
+        base.base.set_schema(Some(empty_schema()));
+        base.set_children(children);
+        PhysicalPlan::UnionAll(PhysicalUnionAll { base, mpp: false })
+    }
+
+    #[test]
+    fn cached_physical_union_and_max_one_row_build_directly() {
+        let catalog = Catalog::default();
+        let ctx = crate::StmtContext::default();
+
+        let mut union_executor = build(&union(3, vec![dual(1, 1), dual(2, 1)]), &catalog, &ctx)
+            .expect("build cached union");
+        union_executor.open().expect("open cached union");
+        let mut output = union_executor.new_chunk();
+        union_executor.next(&mut output).expect("first union row");
+        assert_eq!(output.num_rows(), 1);
+        union_executor.next(&mut output).expect("second union row");
+        assert_eq!(output.num_rows(), 1);
+        union_executor.next(&mut output).expect("union eof");
+        assert_eq!(output.num_rows(), 0);
+
+        let union = union(6, vec![dual(4, 1), dual(5, 1)]);
+        let mut base = BasePhysicalPlan::with_id(7, "MaxOneRow", 0);
+        base.base.set_schema(Some(empty_schema()));
+        base.set_children(vec![union]);
+        let max_one = PhysicalPlan::MaxOneRow(PhysicalMaxOneRow { base });
+        let mut max_executor = build(&max_one, &catalog, &ctx).expect("build cached max-one-row");
+        max_executor.open().expect("open cached max-one-row");
+        let error = max_executor
+            .next(&mut max_executor.new_chunk())
+            .expect_err("two union rows violate MaxOneRow");
+        assert!(matches!(
+            error,
+            crate::ExecError::SubqueryReturnsMoreThanOneRow
+        ));
+    }
 }

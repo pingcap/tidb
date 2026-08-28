@@ -58,14 +58,14 @@ use tidb_chunk::chunk::Chunk;
 /// union reader can stream the terms.  Keeping this as a separate, narrow
 /// executor lets a parent global `COUNT` ask each branch for an exact count
 /// without changing DISTINCT or mixed-type semantics.
-struct UnionAllExec {
+pub(super) struct UnionAllExec {
     meta: ExecutorMeta,
     children: Vec<Box<dyn Executor>>,
     current: usize,
 }
 
 impl UnionAllExec {
-    fn new(meta: ExecutorMeta, children: Vec<Box<dyn Executor>>) -> Self {
+    pub(super) fn new(meta: ExecutorMeta, children: Vec<Box<dyn Executor>>) -> Self {
         Self {
             meta,
             children,
