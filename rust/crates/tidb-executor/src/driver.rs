@@ -3467,15 +3467,65 @@ fn distinct_over(
     }
 }
 
-/// Evaluates a `LIMIT` bound, which must be a non-negative integer literal.
+/// Evaluates a `LIMIT` bound, which must be a non-negative integer literal or
+/// an execute-time integer parameter. Go keeps a `ParamMarkerExpr` in the
+/// prepared AST and resolves its value during execution; the Rust prepared
+/// path installs that same datum on [`tidb_ast::Expr::ParamMarker`].
 pub(crate) fn eval_limit_bound(expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
     match expr {
         tidb_ast::Expr::Int(text) => text
             .parse::<u64>()
             .map_err(|_| DriverError::unsupported("LIMIT bound must be a non-negative integer")),
+        tidb_ast::Expr::ParamMarker {
+            value: Some(Datum::Int(value)),
+            ..
+        } if *value >= 0 => Ok(*value as u64),
+        tidb_ast::Expr::ParamMarker {
+            value: Some(Datum::UInt(value)),
+            ..
+        } => Ok(*value),
         _ => Err(DriverError::unsupported(
             "LIMIT bound must be an integer literal",
         )),
+    }
+}
+
+#[cfg(test)]
+mod limit_bound_tests {
+    use super::eval_limit_bound;
+    use tidb_ast::Expr;
+    use tidb_datatype::Datum;
+
+    #[test]
+    fn accepts_execute_time_integer_parameter() {
+        let marker = Expr::ParamMarker {
+            offset: 0,
+            order: 0,
+            in_execute: true,
+            value: Some(Datum::Int(7)),
+            projection_offset: 0,
+        };
+        assert_eq!(eval_limit_bound(&marker).unwrap(), 7);
+    }
+
+    #[test]
+    fn rejects_unbound_or_negative_parameter() {
+        let unbound = Expr::ParamMarker {
+            offset: 0,
+            order: 0,
+            in_execute: false,
+            value: None,
+            projection_offset: 0,
+        };
+        assert!(eval_limit_bound(&unbound).is_err());
+        let negative = Expr::ParamMarker {
+            offset: 0,
+            order: 0,
+            in_execute: true,
+            value: Some(Datum::Int(-1)),
+            projection_offset: 0,
+        };
+        assert!(eval_limit_bound(&negative).is_err());
     }
 }
 
