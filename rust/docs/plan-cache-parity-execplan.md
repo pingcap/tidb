@@ -1,7 +1,7 @@
 # The node reuses an optimized plan, as Go's plan cache does
 
-Status: in progress (2026-08-26). Keep `Progress`, `Surprises & Discoveries`,
-and `Decision Log` current while implementing.
+Status: in progress (2026-08-28). M3s is landed; keep `Progress`,
+`Surprises & Discoveries`, and `Decision Log` current while implementing.
 
 ## Purpose / Big Picture
 
@@ -331,7 +331,7 @@ The shape divergence is still worth recording for its own sake: `SelectMeta` is
 -> wire) where Go's `writeChunk`/`dumpTextRow` copies once. That is a design
 difference; it is not, at these row counts, a measurable one.
 
-### M3s — Open a statement's snapshot on the connection worker (NEXT)
+### M3s — Open a statement's snapshot on the connection worker (DONE, `7c267b40ee`)
 
 The FIXED term has a concentrated home. On the same 200-row profile, 14% of
 the statement is snapshot acquisition: 326 samples waiting for a PD timestamp
@@ -345,6 +345,13 @@ The premise that forced the handshake is already disproved: three files claim
 `SharedReadRuntime` is `Arc<Mutex<C>>` + `BackgroundRegionCache<L>`, with no
 `Rc` or `thread_local` anywhere in `tidb-txnkv` (`tests/transaction_send_source.rs`
 asserts `Send` for both production transactions).
+
+The implementation now opens `RealOptimisticTransaction` inline after the PD
+timestamp arrives and calls `snapshot_get_at`, `snapshot_batch_get_at`, and
+`snapshot_scan_at` directly. It retains the absolute per-read deadline and the
+closed-snapshot error contract. The remaining explicit-transaction read path
+still uses `SessionSnapshot`'s request/reply channel; that is a separate,
+larger change and is tracked in the deep-review receipt below.
 
 ## Where the sysbench gap actually is (measured 2026-08-26, end of day)
 
@@ -472,6 +479,11 @@ Correctness gates, every milestone:
   doing real plan reuse for join leaves, which the first revision of this
   document missed, and `@@last_plan_from_cache` is a deliberate port of Go's
   observable contract rather than a bug.
+- 2026-08-26: M3s landed (`7c267b40ee`) — autocommit statement snapshots are
+  opened on the connection worker instead of a transaction worker. The
+  measured handshake was removed without changing the per-read deadline or
+  read timestamp semantics. It does not remove the explicit-transaction
+  `SessionSnapshot` request/reply hop.
 
 ## Surprises & Discoveries
 
