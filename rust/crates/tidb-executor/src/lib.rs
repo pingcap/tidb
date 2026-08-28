@@ -212,6 +212,14 @@ mod tests_aggfuncs_max_min_deque_gaps;
 #[cfg(test)]
 mod tests_aggfuncs_parallel_distinct_gaps;
 #[cfg(test)]
+mod tests_aggfuncs_max_min_count_gaps;
+#[cfg(test)]
+mod tests_aggfuncs_variance_sum_percentile_source;
+#[cfg(test)]
+mod tests_aggfuncs_mem_merge_slide_gaps;
+#[cfg(test)]
+mod tests_aggfuncs_spill_serialization_gaps;
+#[cfg(test)]
 mod tests_batch_point_get_locking_gaps;
 #[cfg(test)]
 mod tests_batch_point_get_temporary_source;
@@ -231,8 +239,6 @@ mod tests_table_part2_source;
 mod tests_table_part1_source;
 #[cfg(test)]
 mod tests_partition_table_sql_source;
-#[cfg(test)]
-mod tests_memtable_cluster_source;
 #[cfg(test)]
 mod tests_merge_join_in_disk_source;
 #[cfg(test)]
