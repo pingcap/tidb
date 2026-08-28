@@ -25,6 +25,25 @@ struct Binding {
     inner: bool,
 }
 
+#[cfg(test)]
+pub(crate) mod visit_count {
+    std::thread_local! {
+        static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    pub(crate) fn reset() {
+        VISITS.with(|visits| visits.set(0));
+    }
+
+    pub(crate) fn increment() {
+        VISITS.with(|visits| visits.set(visits.get() + 1));
+    }
+
+    pub(crate) fn get() -> usize {
+        VISITS.with(std::cell::Cell::get)
+    }
+}
+
 /// Returns a simplified clone when a WHERE/ancestor-ON predicate rejects the
 /// NULL-extended side of an outer join.
 pub(crate) fn simplify(
@@ -33,6 +52,8 @@ pub(crate) fn simplify(
     catalog: &Catalog,
     current_db: &str,
 ) -> Option<Join> {
+    #[cfg(test)]
+    visit_count::increment();
     let mut simplified = join.clone();
     let mut predicates = Vec::new();
     if let Some(predicate) = where_clause {

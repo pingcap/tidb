@@ -109,6 +109,13 @@ both `oltp_read_only` and `oltp_read_write`.
   transaction coordinator. Resolved/committed lock sets and failure/publication
   state remain; ordinary point, batch, and scan reads no longer append and
   clone a growing diagnostic vector that Go's `KVSnapshot` does not own.
+- [x] 2026-08-27: cached single-DataSource physical plans now instantiate from
+  their rebuilt access/aggregation/order receipt without re-running the
+  executor driver's outer-join simplifier, join reorderer, predicate-pushdown
+  planner, or `RowSource` statistics model. Planner-derived input/output row
+  counts are retained with the receipt. Cached join shapes keep their legacy
+  predicate-routing walk until the recursive physical join lowerer owns that
+  contract.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -238,6 +245,18 @@ both `oltp_read_only` and `oltp_read_write`.
   path even though it drove no correctness decision.
   Evidence: pinned client-go `txnkv/txnsnapshot/snapshot.go` and the removed
   `SnapshotReadReceipt` ownership in `tidb-txnkv`.
+
+- Observation: rebuilding the cached Rust physical tree was not sufficient to
+  match Go's cache-hit execution boundary. Rust passed the rebuilt receipt back
+  through `run_select_traced_with_delivery_choice_inner`, which recomputed
+  outer-join simplification, join reorder, predicate distribution, and a second
+  executor-local statistics tree before mechanically lowering the selected
+  access. Go returns the rebuilt `base.Plan` directly to `executorBuilder.build`.
+  A test-only visit receipt failed before the change (one simplifier visit) and
+  now proves all four legacy passes remain unvisited for a cached one-leaf plan.
+  Evidence: `pkg/planner/core/plan_cache.go::adjustCachedPlan`,
+  `pkg/executor/adapter.go::buildExecutor`, and
+  `driver::tests::point_get::cached_physical_plan_does_not_rerun_legacy_row_estimation`.
 
 ## Decision Log
 

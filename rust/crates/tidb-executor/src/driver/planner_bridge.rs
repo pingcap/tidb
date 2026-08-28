@@ -269,6 +269,13 @@ pub(crate) struct AggregationDecision {
     pub(crate) cop_family: Option<AggregationFamily>,
     pub(crate) join: Option<JoinDecision>,
     pub(crate) access: Vec<AccessDecision>,
+    /// Row count at the physical root's relational input, derived once by the
+    /// shared logical planner. Cached execution must not rebuild the legacy
+    /// executor-local `RowSource` merely to recover this estimate.
+    pub(crate) input_rows: Option<f64>,
+    /// Row count after the outer logical aggregation, or the relational input
+    /// count for a non-aggregate SELECT.
+    pub(crate) output_rows: Option<f64>,
     /// The selected physical tree discharged this SELECT's ORDER BY through
     /// a NominalSort, so executor lowering must preserve the chosen child
     /// order instead of installing and costing another Sort/TopN itself.
@@ -1104,6 +1111,15 @@ fn decision_from_plans(
 ) -> Option<AggregationDecision> {
     let aggregate_select = is_aggregate_select(select);
     let aggregation = outer_aggregation_plan(logical);
+    let input_rows = aggregation
+        .and_then(|aggregation| aggregation.children().first())
+        .or_else(|| logical_relational_input(logical))
+        .and_then(LogicalPlan::stats_info)
+        .map(StatsInfo::row_count);
+    let output_rows = aggregation
+        .or_else(|| logical_relational_input(logical))
+        .and_then(LogicalPlan::stats_info)
+        .map(StatsInfo::row_count);
     let join = join_decision_tree(&physical, &logical);
     let access = access_decisions(&physical, &logical)?;
     let order_satisfied = !select.order_by.is_empty() && !outer_order_is_enforced(&physical);
@@ -1170,6 +1186,8 @@ fn decision_from_plans(
             cop_family: None,
             join,
             access,
+            input_rows,
+            output_rows,
             order_satisfied,
         });
     }
@@ -1181,6 +1199,8 @@ fn decision_from_plans(
             cop_family: family.and_then(|(_, cop)| cop),
             join,
             access,
+            input_rows,
+            output_rows,
             order_satisfied,
         });
     }
@@ -1191,8 +1211,34 @@ fn decision_from_plans(
         cop_family: family.and_then(|(_, cop)| cop),
         join,
         access,
+        input_rows,
+        output_rows,
         order_satisfied,
     })
+}
+
+/// The logical node whose rows enter root projection/order/limit operators.
+/// Go keeps this estimate on the optimized logical/physical tree; walking
+/// through those unary wrappers is enough to recover it without reconstructing
+/// the executor driver's separate `RowSource` model.
+fn logical_relational_input(mut plan: &LogicalPlan) -> Option<&LogicalPlan> {
+    loop {
+        match plan {
+            LogicalPlan::Projection(_)
+            | LogicalPlan::Sort(_)
+            | LogicalPlan::Limit(_)
+            | LogicalPlan::TopN(_)
+            | LogicalPlan::Lock(_)
+            | LogicalPlan::MaxOneRow(_) => {
+                let [child] = plan.children() else {
+                    return Some(plan);
+                };
+                plan = child;
+            }
+            LogicalPlan::Aggregation(_) => return plan.children().first(),
+            _ => return Some(plan),
+        }
+    }
 }
 
 fn planner_optimized_select(

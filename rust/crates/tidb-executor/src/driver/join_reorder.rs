@@ -403,6 +403,25 @@ impl Ids {
 
 /// Reorders `join` the way Go's solvers would, or `None` to keep it as
 /// written.
+#[cfg(test)]
+pub(crate) mod reorder_visit_count {
+    std::thread_local! {
+        static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    pub(crate) fn reset() {
+        VISITS.with(|visits| visits.set(0));
+    }
+
+    pub(crate) fn increment() {
+        VISITS.with(|visits| visits.set(visits.get() + 1));
+    }
+
+    pub(crate) fn get() -> usize {
+        VISITS.with(std::cell::Cell::get)
+    }
+}
+
 pub(crate) fn reorder(
     join: &Join,
     select: &tidb_ast::SelectStmt,
@@ -411,6 +430,8 @@ pub(crate) fn reorder(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Option<Reordered> {
+    #[cfg(test)]
+    reorder_visit_count::increment();
     let threshold = ctx.join_reorder_threshold();
     let scope = Scope {
         outer_join_reorder: ctx.outer_join_reorder(),
@@ -3034,6 +3055,25 @@ fn modeled_grouped_select_leaf<'a>(
 ///
 /// The inputs are exactly [`reorder`]'s, and the work up to the models is the
 /// same work; only the DP is not run.
+#[cfg(test)]
+pub(crate) mod row_source_visit_count {
+    std::thread_local! {
+        static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    pub(crate) fn reset() {
+        VISITS.with(|visits| visits.set(0));
+    }
+
+    pub(crate) fn increment() {
+        VISITS.with(|visits| visits.set(visits.get() + 1));
+    }
+
+    pub(crate) fn get() -> usize {
+        VISITS.with(std::cell::Cell::get)
+    }
+}
+
 pub(crate) fn row_source(
     join: &Join,
     where_clause: Option<&Expr>,
@@ -3041,6 +3081,8 @@ pub(crate) fn row_source(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Option<RowSource> {
+    #[cfg(test)]
+    row_source_visit_count::increment();
     row_source_for_join_type(join, where_clause, catalog, current_db, ctx, false)
 }
 

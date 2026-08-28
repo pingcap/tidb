@@ -79,6 +79,25 @@ use tidb_expr::rewriter::ColumnResolver;
 /// through [`super::from::build_join`] directly, or a `FROM` with no filter.
 pub(crate) type Offered<'a> = &'a [Expr];
 
+#[cfg(test)]
+pub(crate) mod visit_count {
+    std::thread_local! {
+        static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    pub(crate) fn reset() {
+        VISITS.with(|visits| visits.set(0));
+    }
+
+    pub(crate) fn increment() {
+        VISITS.with(|visits| visits.set(visits.get() + 1));
+    }
+
+    pub(crate) fn get() -> usize {
+        VISITS.with(std::cell::Cell::get)
+    }
+}
+
 /// Predicates each base-table leaf may evaluate before its parent join.
 #[derive(Default)]
 pub(crate) struct Plan {
@@ -148,6 +167,8 @@ pub(crate) fn plan(
     current_db: &str,
     anti_semi: bool,
 ) -> Plan {
+    #[cfg(test)]
+    visit_count::increment();
     let Some(bindings) = bindings(&JoinNode::Join(Box::new(join.clone())), catalog, current_db)
     else {
         return Plan::default();

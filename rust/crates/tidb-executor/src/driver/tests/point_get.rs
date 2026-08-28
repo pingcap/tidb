@@ -8,6 +8,82 @@
 
 use super::*;
 
+#[test]
+fn cached_physical_plan_does_not_rerun_legacy_row_estimation() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE cache_no_replan (id BIGINT PRIMARY KEY, value BIGINT NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO cache_no_replan VALUES (1,10),(2,20),(3,30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let statement = tidb_parser::parse(
+        "SELECT value FROM cache_no_replan WHERE id BETWEEN ? AND ? ORDER BY id",
+    )
+    .unwrap();
+    let plan = std::sync::Arc::new(
+        build_prepared_select_plan(&statement, 2, &catalog, DEFAULT_DATABASE, &ctx)
+            .expect("the range statement is cacheable"),
+    );
+    let environment = PreparedPlanCacheEnvironment::default();
+    let first = plan
+        .bind(
+            &[Datum::Int(1), Datum::Int(2)],
+            &catalog,
+            DEFAULT_DATABASE,
+            &ctx,
+            &environment,
+        )
+        .expect("the first execution builds the cached physical tree");
+    assert!(!first.cache_hit());
+    drop(first);
+    let cached = plan
+        .bind(
+            &[Datum::Int(2), Datum::Int(3)],
+            &catalog,
+            DEFAULT_DATABASE,
+            &ctx,
+            &environment,
+        )
+        .expect("the second execution rebuilds the cached physical tree");
+    assert!(cached.cache_hit());
+
+    crate::driver::outer_join_simplify::visit_count::reset();
+    crate::driver::join_reorder::reorder_visit_count::reset();
+    crate::driver::predicate_push_down::visit_count::reset();
+    crate::driver::join_reorder::row_source_visit_count::reset();
+    let (_, rows) = run_prepared_select(&cached, &mut catalog, DEFAULT_DATABASE, &ctx)
+        .unwrap()
+        .expect("the schema is unchanged");
+    assert_eq!(rows, vec![vec![Datum::Int(20)], vec![Datum::Int(30)]]);
+    assert_eq!(
+        crate::driver::join_reorder::row_source_visit_count::get(),
+        0,
+        "a rebuilt physical cache entry must instantiate without legacy logical row estimation"
+    );
+    assert_eq!(
+        crate::driver::outer_join_simplify::visit_count::get(),
+        0,
+        "a rebuilt physical cache entry must not simplify the logical join tree"
+    );
+    assert_eq!(
+        crate::driver::join_reorder::reorder_visit_count::get(),
+        0,
+        "a rebuilt physical cache entry must not reorder the logical join tree"
+    );
+    assert_eq!(
+        crate::driver::predicate_push_down::visit_count::get(),
+        0,
+        "a rebuilt physical cache entry must not re-plan predicate pushdown"
+    );
+}
+
 /// A prepared SELECT cache retains the complete physical operator tree, not
 /// any one execution's rows or parameter bounds. Rebinding two different
 /// ranges must match ordinary planning for every root shape in the sysbench
