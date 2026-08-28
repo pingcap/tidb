@@ -931,6 +931,7 @@ func (is *infoschemaV2) IterateAllTableItemsFrom(
 	exclusiveStart *TableItem,
 	visit func(TableItem) bool,
 ) (last TableItem, hasLast bool, exhausted bool) {
+	is.keepAlive()
 	var start *tableItem
 	if exclusiveStart == nil {
 		maxv, ok := is.byName.Load().Max()

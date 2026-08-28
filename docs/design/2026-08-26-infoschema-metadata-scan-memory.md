@@ -37,6 +37,7 @@ connection pools and gRPC buffer policy.
 - [x] (2026-08-28) Made the API v2 adapter decode caller-owned Scan pairs in place and refresh the InfoSchema snapshot keepalive on every iterator advance and reopen.
 - [x] (2026-08-28) Refreshed the client-go dependency and Bazel metadata and reran the TiDB Ready profile, including focused SQL tests and `make lint`.
 - [x] (2026-08-28) Committed and pushed the TiDB review fixes and updated both Draft PRs with the findings and validation evidence.
+- [x] (2026-08-28) Reproduced the follow-up B-tree pagination keepalive gap, refreshed the InfoSchema V2 snapshot at every `IterateAllTableItemsFrom` call, and reran focused tests plus the Ready lint profile.
 
 ## Surprises & Discoveries
 
@@ -77,6 +78,12 @@ connection pools and gRPC buffer policy.
   30-second report interval.
   Evidence: resetting `recentMinTS` in `TestV2Basic` showed that constructor-only
   keepalive did not protect a persistent iterator after the first report.
+
+- Observation: the TABLES fast path pages directly over the InfoSchema V2
+  B-tree and does not advance through `TableInfoIterator.NextInto`.
+  Evidence: resetting `recentMinTS` before both the initial and resumed
+  `IterateAllTableItemsFrom` calls left it at `math.MaxUint64` until that paging
+  entry point acquired its own keepalive refresh.
 
 ## Decision Log
 
@@ -167,6 +174,12 @@ account the column type cache, remove API v2 pair clones on the owned reusable
 response, and renew snapshot GC protection during long scans. Focused TiDB SQL
 and package tests, client-go package tests, race checks, vet, Bazel generation,
 and TiDB Ready lint all pass with the refreshed dependency.
+
+A follow-up review correctly identified a separate keepalive entry point in
+the TABLES B-tree pager. `IterateAllTableItemsFrom` now refreshes the snapshot
+on every initial or resumed page, while the reported column-type cache issue is
+already covered by the 128-entry limit, statement-tracker accounting, and close
+release test added in the preceding review fix.
 
 ## Context and Orientation
 

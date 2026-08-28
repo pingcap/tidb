@@ -202,16 +202,20 @@ func TestV2Basic(t *testing.T) {
 	require.Equal(t, expectedIDs, persistentIDs)
 
 	var iteratedNames []string
+	is.Data.recentMinTS.Store(math.MaxUint64)
 	lastItem, hasLast, exhaustedItems := is.IterateAllTableItemsFrom(nil, func(item TableItem) bool {
 		iteratedNames = append(iteratedNames, item.TableName.L)
 		return len(iteratedNames) < 2
 	})
+	require.Equal(t, is.ts, is.Data.recentMinTS.Load())
 	require.True(t, hasLast)
 	require.False(t, exhaustedItems)
+	is.Data.recentMinTS.Store(math.MaxUint64)
 	lastItem, hasLast, exhaustedItems = is.IterateAllTableItemsFrom(&lastItem, func(item TableItem) bool {
 		iteratedNames = append(iteratedNames, item.TableName.L)
 		return true
 	})
+	require.Equal(t, is.ts, is.Data.recentMinTS.Load())
 	require.True(t, hasLast)
 	require.True(t, exhaustedItems)
 	var expectedNames []string
