@@ -348,15 +348,15 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 		notCoveredConds := make([]expression.Expression, 0, len(path.IndexFilters)+len(path.TableFilters))
 		// AccessConds can be covered by partial path.
 		coveredConds = append(coveredConds, path.AccessConds...)
-		for i, cond := range path.IndexFilters {
+		path.IndexFilters = slices.DeleteFunc(path.IndexFilters, func(cond expression.Expression) bool {
 			// IndexFilters can be covered by partial path if it can be pushed down to TiKV.
 			if !expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cond}, kv.TiKV) {
-				path.IndexFilters = append(path.IndexFilters[:i], path.IndexFilters[i+1:]...)
 				notCoveredConds = append(notCoveredConds, cond)
-			} else {
-				coveredConds = append(coveredConds, cond)
+				return true
 			}
-		}
+			coveredConds = append(coveredConds, cond)
+			return false
+		})
 		// TableFilters can't be covered by partial path.
 		notCoveredConds = append(notCoveredConds, path.TableFilters...)
 
@@ -637,7 +637,6 @@ func generateANDIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt
 
 	// Collect access paths that satisfy the hints, and make sure there is at least one MV index path.
 	var mvIndexPathCnt int
-	candidateAccessPaths := make([]*util.AccessPath, 0, len(ds.PossibleAccessPaths))
 	for idx := range normalPathCnt {
 		if (ds.PossibleAccessPaths[idx].IsTablePath() &&
 			!isInIndexMergeHints(ds, "primary")) ||
@@ -648,7 +647,6 @@ func generateANDIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt
 		if isMVIndexPath(ds.PossibleAccessPaths[idx]) {
 			mvIndexPathCnt++
 		}
-		candidateAccessPaths = append(candidateAccessPaths, ds.PossibleAccessPaths[idx])
 	}
 	if mvIndexPathCnt == 0 {
 		return nil
