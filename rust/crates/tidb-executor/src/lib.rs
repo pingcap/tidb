@@ -199,7 +199,6 @@ mod stmt_context;
 pub mod storage;
 pub mod table_access;
 pub mod table_dual;
-pub mod table_reader;
 #[cfg(test)]
 mod tests_index_join;
 pub mod tiflash_recorder;

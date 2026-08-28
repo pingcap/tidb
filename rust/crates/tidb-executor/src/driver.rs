@@ -24,10 +24,9 @@
 //! [`TableResolver`]), and wires `MemTableSource|TableDual ->
 //! [Selection] -> [Sort] -> Projection -> [Limit]`.
 //!
-//! DEFERRED (documented): joins and derived tables, `db.t` qualification
-//! (single-schema catalog), ordering by select alias/position, and everything
-//! the rewriter does not yet handle. The real storage-backed `TableReaderExec`
-//! replaces [`MemTableSourceExec`] when storage/tablecodec integration lands.
+//! Storage-backed reads use [`TableScanExec`] and [`crate::remote_scan`];
+//! [`MemTableSourceExec`] remains the source for catalog-backed in-memory
+//! tables.
 
 use crate::access_path::{HandleSourceExec, IndexRangeSourceExec};
 use crate::executor::{ExecError, Executor, ExecutorMeta};

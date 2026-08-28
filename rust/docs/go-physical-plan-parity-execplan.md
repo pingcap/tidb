@@ -390,6 +390,10 @@ both `oltp_read_only` and `oltp_read_write`.
   substitution rule. The wired planner owns `GcSubstituter` in its Go-order
   rule list but currently has no implementation, which is now documented as
   the actual parity gap instead of being obscured by self-only executor tests.
+- [x] 2026-08-28: deleted the unused executor-local `TableReaderExec` shell.
+  The live physical table-reader plan lowers through `TableScanExec` and
+  `remote_scan`; documentation no longer describes the disconnected shell as
+  a future storage integration point.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
