@@ -145,6 +145,11 @@ both `oltp_read_only` and `oltp_read_write`.
   runs now retain fetched chunks and merge only `(chunk, row)` cursors, as
   Go's `[]chunk.Row` does; the copied `OwnedRow` vector and reconstructed
   output chunks are gone from the unspilled path.
+- [x] 2026-08-27: fixed synchronous unordered coprocessor paging so one
+  logical task owns at most one ready-queue token. A continuation previously
+  enqueued the same task before and after its synchronous send, then panicked
+  when terminal close removed both entries. BatchCommands remains the
+  production-first path.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -369,6 +374,21 @@ both `oltp_read_only` and `oltp_read_write`.
   pass after the change, the multi-batch cursor-merge regression, all 16 Sort
   module tests, and the paired production benchmark with zero errors.
 
+- Observation: temporarily selecting the synchronous coprocessor send path
+  exposed a paging-continuation panic before the benchmark could prepare its
+  statement. The unordered pull loop retained one ready token while waiting
+  for a continuation, then synchronous dispatch appended a second token for
+  the same task. Terminal `Closed` removed both, invalidating the loop's
+  captured count. After enforcing one token per logical task, the diagnostic
+  completed with zero errors. Its Rust median was 2,644.03 TPS versus the
+  production BatchCommands median of 2,702.26 TPS, so disabling batching is
+  both non-parity and about 2.2% slower; BatchCommands is not the remaining
+  DISTINCT root cause.
+  Evidence: fail-before panic in
+  `synchronous_unordered_paging_keeps_one_ready_token_per_task`, its pass after
+  the ready-token guard, all five paging/close tests, and the alternating
+  synchronous diagnostic at 2,644.03/2,979.65 Rust/Go TPS.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -477,6 +497,14 @@ both `oltp_read_only` and `oltp_read_write`.
   without production mirrors.
   Date/Author: 2026-08-27, Codex.
 
+- Decision: retain production BatchCommands-first coprocessor dispatch and
+  use the synchronous path only as its Go-compatible fallback.
+  Rationale: the synchronous A/B is slower and therefore rules out batching
+  as the remaining performance root. The fallback still must be correct, so
+  its duplicate ready-token panic is fixed independently rather than hidden
+  by production admission policy.
+  Date/Author: 2026-08-27, Codex.
+
 ## Outcomes & Retrospective
 
 Work is in progress. After restoring point-plan precedence and removing the
@@ -514,7 +542,11 @@ The latter run measured simple 4,185.53/4,590.04 (0.912x), SUM
 errors. Removing the unspilled Sort row-copy/reconstruction path then measured
 focused DISTINCT medians of 2,702.26/2,933.89 TPS (0.921x), again with zero
 errors. DISTINCT's large regression is removed without a serial cutoff, but
-the acceptance gap remains open.
+the acceptance gap remains open. A synchronous-coprocessor diagnostic then
+measured Rust/Go medians of 2,644.03/2,979.65 TPS (0.887x), zero errors, after
+fixing the fallback's duplicate ready-token panic. Because synchronous Rust
+was about 2.2% slower than the production batched Rust median, the diagnostic
+was reverted and BatchCommands-first dispatch remains production behavior.
 
 ## Context and Orientation
 

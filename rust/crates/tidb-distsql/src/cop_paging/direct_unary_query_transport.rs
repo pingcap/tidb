@@ -1079,7 +1079,10 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 self.unordered_inflight.insert(logical_task_id);
             }
             self.dispatch_attempt(logical_task_id, attempt_id)?;
-            if !self.metadata.keep_order && !self.pending_batches.contains_key(&logical_task_id) {
+            if !self.metadata.keep_order
+                && !self.pending_batches.contains_key(&logical_task_id)
+                && !self.unordered_ready.contains(&logical_task_id)
+            {
                 self.unordered_ready.push_back(logical_task_id);
             }
         }
