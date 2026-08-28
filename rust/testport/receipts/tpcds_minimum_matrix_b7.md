@@ -78,6 +78,14 @@ select-field column to the physical base column, and Q43's injected CASE
 projection prints Go's `<nil>` spelling for a NULL result arm. Regression
 coverage includes `driver::tests::aggregates::tpcds_q43_injected_case_projection_spells_null_like_go`.
 
+The nine control-mode plan hashes that match are Q3, Q19, Q25, Q29, Q42,
+Q43, Q50, Q52, and Q55. The remaining control-mode mismatches are Q6, Q7,
+Q9, Q10, Q13, Q15, Q26, Q28, Q34, Q35, Q41, Q45, Q46, Q48, Q61, Q62, Q65,
+Q66, Q68, Q69, Q71, Q72, Q73, Q76, Q79, Q84, Q85, Q88, Q90, Q91, Q93, Q96,
+and Q99. Their normalized plan rows are retained per query in the JSON
+matrix; the differences are a mix of physical-plan shape (aggregate/join/
+Apply choice) and explain-expression alias text, not result differences.
+
 For the focused correction's no-regression check, comparing the pre-fix and
 post-fix Rust runs on the same fixture gives p50 geometric ratios of 1.03x
 source and 1.04x control; this is local run noise except for Q25, which was
