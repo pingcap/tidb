@@ -199,3 +199,32 @@ Receipt: `/tmp/tc8228803.JvwO2R/sysbench-random-ranges-fallback30`; benchmark
 window 61 seconds. The same full sweep receipt is
 `/tmp/tc8228803.JvwO2R/sysbench-fast-git-r1`; after the fallback, the remaining
 round-1 failures were `oltp_read_write`, `oltp_write_only`, and `bulk_insert`.
+
+## Post-fallback full five-minute round (2026-08-28)
+
+Using the same running cluster, restored data, and no BR restore, the full
+10-subtype round-1 sweep completed in 145 seconds. `select_random_ranges`
+completed normally after the cache-miss fallback; the current 2-second
+directional results were:
+
+| Subtype | Go QPS | Rust QPS | Rust/Go | Gate 0.80 |
+|---|---:|---:|---:|---:|
+| `oltp_read_write.lua` | 634.39 | 250.75 | 0.3953 | FAIL |
+| `oltp_read_only.lua` | 904.92 | 1055.97 | 1.1669 | PASS |
+| `oltp_write_only.lua` | 196.13 | 87.76 | 0.4475 | FAIL |
+| `oltp_point_select.lua` | 21409.02 | 29003.47 | 1.3547 | PASS |
+| `select_random_points.lua` | 4105.29 | 3836.35 | 0.9345 | PASS |
+| `select_random_ranges.lua` | 9486.74 | 10356.72 | 1.0917 | PASS |
+| `oltp_insert.lua` | 7401.30 | 8217.81 | 1.1103 | PASS |
+| `oltp_update_index.lua` | 1816.09 | 1300.51 | 0.7161 | FAIL |
+| `oltp_update_non_index.lua` | 6347.60 | 6931.48 | 1.0920 | PASS |
+| `bulk_insert.lua` | 192033.10 | 149616.29 | 0.7791 | FAIL |
+
+Receipt: `/tmp/tc8228803.JvwO2R/sysbench-fast-fallback-r1`. The short sweep
+is intentionally limited to one sample and remains directional; the benchmark
+window itself is within the requested five-minute cap.
+
+A fresh 30-second empty-table bulk-insert sample on the same `e669a75` binary
+measured Go 210447.42 QPS and Rust 182029.39 QPS (ratio 0.8650, gate PASS),
+receipt `/tmp/tc8228803.JvwO2R/sysbench-bulk-e669a75-30`, with a 105-second
+benchmark window. Existing `test.sbtest*` data remained untouched.
