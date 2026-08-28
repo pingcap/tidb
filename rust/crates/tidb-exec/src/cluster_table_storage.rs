@@ -70,7 +70,7 @@ use tidb_executor::cluster_storage::{
 use tidb_executor::storage::StorageError;
 use tidb_pd_client::PdClient;
 use tidb_txnkv::pd_capability::{CapabilityTimestampSource, TimestampFutureWait};
-use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext};
+use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext, UnaryCancellation};
 use tidb_txnkv::transaction::{
     CommitProtocol, LockKeepAlive, LockWaitTime, OptimisticCommitOutcome,
     OptimisticCoordinatorError, OptimisticMutation, PessimisticLockFailure,
@@ -385,6 +385,8 @@ where
     transaction: Option<RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>>,
     start_ts: u64,
     timeout: Duration,
+    /// Reused by all reads in this statement; see `SessionSnapshot`.
+    cancellation: UnaryCancellation,
 }
 
 /// One statement snapshot whose ordinary PD timestamp request is in flight.
@@ -418,6 +420,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
             transaction: Some(transaction),
             start_ts,
             timeout: self.timeout,
+            cancellation: UnaryCancellation::new(),
         })
     }
 }
@@ -486,7 +489,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> StatementSn
     /// when the snapshot opened would charge a later read for the wall-clock
     /// time the statement spent between them.
     fn call(&self) -> UnaryCallContext {
-        UnaryCallContext::with_timeout(self.timeout)
+        UnaryCallContext::with_deadline(Instant::now() + self.timeout, self.cancellation.clone())
     }
 
     fn reader(
@@ -568,6 +571,9 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
 pub struct MaxTsSnapshot<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient> {
     opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     timeout: Duration,
+    /// Reused for the one direct read (and retained for the defensive scan
+    /// path) so MaxTS does not allocate a cancellation channel per operation.
+    cancellation: UnaryCancellation,
     consumed: bool,
 }
 
@@ -578,6 +584,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> MaxTsSnapsh
         Self {
             opener,
             timeout,
+            cancellation: UnaryCancellation::new(),
             consumed: false,
         }
     }
@@ -606,7 +613,10 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
 {
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
         self.consume()?;
-        let call = UnaryCallContext::with_timeout(self.timeout);
+        let call = UnaryCallContext::with_deadline(
+            Instant::now() + self.timeout,
+            self.cancellation.clone(),
+        );
         self.opener
             .snapshot_get_at_max_ts(key.as_bytes(), &call)
             .map_err(classify)
@@ -622,7 +632,10 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
         // A bounded single-row statement still has a range-shaped plan. Keep
         // its MaxTS declaration, but use the direct range reader rather than
         // opening an ordinary timestamped transaction for every YCSB E operation.
-        let call = UnaryCallContext::with_timeout(self.timeout);
+        let call = UnaryCallContext::with_deadline(
+            Instant::now() + self.timeout,
+            self.cancellation.clone(),
+        );
         self.opener
             .snapshot_scan_at_max_ts(start.as_bytes(), end.as_bytes(), limit, &call)
             .map_err(classify)
@@ -936,6 +949,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
     pub fn snapshot_for(&self, locking: bool) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
         Ok(Box::new(SessionSnapshot {
             state: Arc::clone(&self.state),
+            cancellation: UnaryCancellation::new(),
             start_ts: self.start_ts,
             timeout: self.timeout,
             read_ts: None,
@@ -967,6 +981,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         }
         Ok(Box::new(SessionSnapshot {
             state: Arc::clone(&self.state),
+            cancellation: UnaryCancellation::new(),
             start_ts: self.start_ts,
             timeout: self.timeout,
             read_ts: Some(read_ts),
@@ -1117,6 +1132,10 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> Drop
 /// statement, and the transaction stays open for the next one.
 struct SessionSnapshot<C, L, P: StorePdCapability> {
     state: Arc<Mutex<SessionTransactionState<C, L, P>>>,
+    /// Reused by all reads in this statement.  The transport does not cancel
+    /// this carrier on an ordinary deadline, so sharing it avoids allocating
+    /// one watch channel/condvar pair per point Get.
+    cancellation: UnaryCancellation,
     /// The timestamp the transaction opened at, which every statement of it
     /// reads at; a remote scan has to name it.
     start_ts: u64,
@@ -1142,9 +1161,15 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
     for SessionSnapshot<C, L, P>
 {
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
-        let bytes = key.as_bytes().to_vec();
+        // `snapshot_get_at` owns the request bytes before it crosses the
+        // BatchCommands boundary. Keep the borrowed key through dispatch so
+        // a point read does not allocate a copy merely for lock-cache lookup.
+        let bytes = key.as_bytes();
         let read_ts = self.read_ts.unwrap_or(self.start_ts);
-        let call = UnaryCallContext::with_timeout(self.timeout);
+        let call = UnaryCallContext::with_deadline(
+            Instant::now() + self.timeout,
+            self.cancellation.clone(),
+        );
         let mut state = self
             .state
             .lock()
@@ -1164,7 +1189,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
                 ..
             } => {
                 if self.locking {
-                    if let Some(cached) = lock_values.get(&bytes) {
+                    if let Some(cached) = lock_values.get(bytes) {
                         return Ok(cached.clone());
                     }
                 }
@@ -1183,7 +1208,10 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
     fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
         let keys: Vec<Vec<u8>> = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
         let read_ts = self.read_ts.unwrap_or(self.start_ts);
-        let call = UnaryCallContext::with_timeout(self.timeout);
+        let call = UnaryCallContext::with_deadline(
+            Instant::now() + self.timeout,
+            self.cancellation.clone(),
+        );
         let mut state = self
             .state
             .lock()
@@ -1234,7 +1262,10 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
         limit: Option<usize>,
     ) -> Result<SnapshotPairs, StorageError> {
         let read_ts = self.read_ts.unwrap_or(self.start_ts);
-        let call = UnaryCallContext::with_timeout(self.timeout);
+        let call = UnaryCallContext::with_deadline(
+            Instant::now() + self.timeout,
+            self.cancellation.clone(),
+        );
         let mut state = self
             .state
             .lock()
@@ -1476,6 +1507,7 @@ mod tests {
             transaction: None,
             start_ts: 42,
             timeout: Duration::from_secs(1),
+            cancellation: UnaryCancellation::new(),
         };
         assert_eq!(snapshot.start_ts(), 42);
         assert!(
@@ -1534,6 +1566,7 @@ mod tests {
         ));
         let at_transaction = SessionSnapshot {
             state: Arc::clone(&state),
+            cancellation: UnaryCancellation::new(),
             start_ts: 100,
             timeout: Duration::from_secs(1),
             read_ts: None,
@@ -1547,6 +1580,7 @@ mod tests {
 
         let retried = SessionSnapshot {
             state,
+            cancellation: UnaryCancellation::new(),
             start_ts: 100,
             timeout: Duration::from_secs(1),
             read_ts: Some(200),

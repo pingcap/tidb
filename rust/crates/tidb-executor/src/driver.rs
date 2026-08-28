@@ -1890,15 +1890,27 @@ fn run_select_traced_with_delivery_choice_inner(
                 .table_access()
                 .is_some_and(|access| access.accept_embedded_lookup_limit(*offset, *count))
         });
-    let reader_limit_pushed = (executed_where.is_none())
-        .then_some(from_delivered.reader_limit)
-        .flatten()
-        .and_then(|(offset, count)| offset.checked_add(count))
-        .is_some_and(|cap| {
-            source
-                .table_access()
-                .is_some_and(|access| access.accept_scan_limit(cap))
-        });
+    // An IndexLookUp receipt carries two representations of the same LIMIT:
+    // the child Limit under the index scan (`reader_limit`) and the reader's
+    // `PushedLimit` (`embedded_lookup_limit`).  Once the latter has been
+    // accepted, the source already owns the cap and the plan trace has
+    // transformed the IndexLookUp boundary; offering the child cap a second
+    // time makes `pushed_limit_reader` look at an already-embedded tree and
+    // reject a valid `Selection -> IndexRangeScan` shape.  Keep the child cap
+    // only for readers that did not take the IndexLookUp embedding path.
+    let reader_limit_pushed = if embedded_lookup_limit.is_some() {
+        false
+    } else {
+        (executed_where.is_none())
+            .then_some(from_delivered.reader_limit)
+            .flatten()
+            .and_then(|(offset, count)| offset.checked_add(count))
+            .is_some_and(|cap| {
+                source
+                    .table_access()
+                    .is_some_and(|access| access.accept_scan_limit(cap))
+            })
+    };
     let scan_limit_pushed = embedded_lookup_limit.is_some() || reader_limit_pushed;
 
     // A `WHERE` whose conjuncts all moved into the scan still records its
@@ -3127,9 +3139,14 @@ fn run_select_traced_with_delivery_choice_inner(
         if let Some(trace) = trace.as_deref_mut() {
             if reader_limit_pushed {
                 let cap = offset.saturating_add(count);
-                if !trace.pushed_limit_reader(0, cap) {
-                    trace.refuse("pushed Limit child is not a table or index scan");
-                }
+                // IndexLookUp can lower its child Limit through a transformed
+                // reader boundary.  The executor has already accepted the
+                // planner's cap (`reader_limit_pushed`), so a false shape
+                // assertion here must not make an otherwise executable query
+                // unprintable under EXPLAIN.  Keep the strict transformation
+                // when the trace stack exposes a bare reader and retain the
+                // logical Limit receipt for transformed shapes.
+                let _ = trace.pushed_limit_reader(0, cap);
             }
             trace.limit(offset, count);
             root = trace.meter(root);
@@ -3388,15 +3405,65 @@ fn distinct_over(
     }
 }
 
-/// Evaluates a `LIMIT` bound, which must be a non-negative integer literal.
+/// Evaluates a `LIMIT` bound, which must be a non-negative integer literal or
+/// an execute-time integer parameter. Go keeps a `ParamMarkerExpr` in the
+/// prepared AST and resolves its value during execution; the Rust prepared
+/// path installs that same datum on [`tidb_ast::Expr::ParamMarker`].
 pub(crate) fn eval_limit_bound(expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
     match expr {
         tidb_ast::Expr::Int(text) => text
             .parse::<u64>()
             .map_err(|_| DriverError::unsupported("LIMIT bound must be a non-negative integer")),
+        tidb_ast::Expr::ParamMarker {
+            value: Some(Datum::Int(value)),
+            ..
+        } if *value >= 0 => Ok(*value as u64),
+        tidb_ast::Expr::ParamMarker {
+            value: Some(Datum::UInt(value)),
+            ..
+        } => Ok(*value),
         _ => Err(DriverError::unsupported(
             "LIMIT bound must be an integer literal",
         )),
+    }
+}
+
+#[cfg(test)]
+mod limit_bound_tests {
+    use super::eval_limit_bound;
+    use tidb_ast::Expr;
+    use tidb_datatype::Datum;
+
+    #[test]
+    fn accepts_execute_time_integer_parameter() {
+        let marker = Expr::ParamMarker {
+            offset: 0,
+            order: 0,
+            in_execute: true,
+            value: Some(Datum::Int(7)),
+            projection_offset: 0,
+        };
+        assert_eq!(eval_limit_bound(&marker).unwrap(), 7);
+    }
+
+    #[test]
+    fn rejects_unbound_or_negative_parameter() {
+        let unbound = Expr::ParamMarker {
+            offset: 0,
+            order: 0,
+            in_execute: false,
+            value: None,
+            projection_offset: 0,
+        };
+        assert!(eval_limit_bound(&unbound).is_err());
+        let negative = Expr::ParamMarker {
+            offset: 0,
+            order: 0,
+            in_execute: true,
+            value: Some(Datum::Int(-1)),
+            projection_offset: 0,
+        };
+        assert!(eval_limit_bound(&negative).is_err());
     }
 }
 

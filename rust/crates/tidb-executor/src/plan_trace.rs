@@ -4569,6 +4569,14 @@ impl PlanTrace {
                 self.stack.push(input);
                 return true;
             }
+            // An IndexLookUp may already contain the child reader cap when
+            // the executor lowers the planner's dual LIMIT representation.
+            // Keep that transformed lookup intact; the root LIMIT receipt is
+            // recorded by the caller and no second cop push is necessary.
+            "IndexLookUp" => {
+                self.stack.push(input);
+                return true;
+            }
             _ => {
                 self.stack.push(input);
                 return false;
