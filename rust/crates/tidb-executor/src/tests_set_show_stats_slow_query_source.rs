@@ -21,7 +21,7 @@
 //! those Go production surfaces are not present in `tidb-executor`, so each is
 //! retained as an explicit parity-gap test rather than an approximation.
 
-use tidb_chunk::Chunk;
+use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
