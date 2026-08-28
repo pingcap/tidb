@@ -58,6 +58,7 @@ fn cached_physical_plan_does_not_rerun_legacy_row_estimation() {
     crate::driver::join_reorder::reorder_visit_count::reset();
     crate::driver::predicate_push_down::visit_count::reset();
     crate::driver::join_reorder::row_source_visit_count::reset();
+    crate::driver::select_plan_visit_count::reset();
     let (_, rows) = run_prepared_select(&cached, &mut catalog, DEFAULT_DATABASE, &ctx)
         .unwrap()
         .expect("the schema is unchanged");
@@ -81,6 +82,11 @@ fn cached_physical_plan_does_not_rerun_legacy_row_estimation() {
         crate::driver::predicate_push_down::visit_count::get(),
         0,
         "a rebuilt physical cache entry must not re-plan predicate pushdown"
+    );
+    assert_eq!(
+        crate::driver::select_plan_visit_count::get(),
+        0,
+        "a rebuilt physical cache entry must instantiate without the legacy AST planner"
     );
 }
 

@@ -327,6 +327,7 @@ mod only_full_group_by;
 mod outer_join_elimination;
 pub(crate) mod outer_join_simplify;
 mod params;
+mod physical_builder;
 pub(crate) mod planner_bridge;
 pub(crate) mod point_get_key;
 mod predicate_push_down;
@@ -868,32 +869,6 @@ pub(crate) fn run_select_traced(
     )
 }
 
-/// Executes a prepared SELECT using the physical decision rebuilt from its
-/// cached planner tree.  The ordinary lowering pipeline is reused, but its
-/// planner seam consumes `decision` instead of invoking `findBestTask` again.
-pub(crate) fn run_select_with_cached_decision(
-    select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-    decision: &planner_bridge::AggregationDecision,
-) -> Result<SelectMeta, DriverError> {
-    stacker::maybe_grow(2 * 1024 * 1024, 16 * 1024 * 1024, || {
-        run_select_traced_with_delivery_choice_inner(
-            select,
-            catalog,
-            current_db,
-            ctx,
-            None,
-            &tidb_planner::physical_property::PhysicalProperty::default(),
-            None,
-            None,
-            false,
-            Some(decision),
-        )
-    })
-}
-
 #[cfg(test)]
 pub(crate) mod select_plan_visit_count {
     std::thread_local! {
@@ -976,7 +951,6 @@ fn run_select_traced_with_delivery_choice(
             output_delivered,
             deferred_exec,
             parent_duplicate_agnostic,
-            None,
         )
     })
 }
@@ -1020,7 +994,6 @@ fn run_select_traced_with_delivery_choice_inner(
     mut output_delivered: Option<&mut from::Delivered>,
     mut deferred_exec: Option<&mut Option<Box<dyn Executor>>>,
     parent_duplicate_agnostic: bool,
-    cached_planner_decision: Option<&planner_bridge::AggregationDecision>,
 ) -> Result<SelectMeta, DriverError> {
     #[cfg(test)]
     select_plan_visit_count::increment();
@@ -1356,8 +1329,6 @@ fn run_select_traced_with_delivery_choice_inner(
             (None, FromScope::for_statement(ctx), from::Delivered::new())
         }
         Some(join) => {
-            let cached_single_leaf = cached_planner_decision
-                .is_some_and(|decision| matches!(decision.access.as_slice(), [_]));
             // Go raises `ErrKeyDoesNotExist` (1176) from
             // `getPossibleAccessPaths`, once per `DataSource` and before any
             // path is costed -- so a `FORCE INDEX` naming an index no table
@@ -1366,92 +1337,71 @@ fn run_select_traced_with_delivery_choice_inner(
             // over the whole join tree, is what makes it independent of which
             // table that turns out to be.
             crate::index_hints::validate_join_index_hints(join, catalog, current_db)?;
-            let simplified = if cached_single_leaf {
-                None
-            } else {
-                outer_join_simplify::simplify(
-                    join,
-                    select.where_clause.as_ref(),
-                    catalog,
-                    current_db,
-                )
-            };
+            let simplified = outer_join_simplify::simplify(
+                join,
+                select.where_clause.as_ref(),
+                catalog,
+                current_db,
+            );
             let logical_join = simplified.as_ref().unwrap_or(join);
             // Go's logical join reorder runs before physical enumeration.
             // The shared planner receipt and executor lowering must therefore
             // see the same rebuilt FROM tree; generating a receipt from the
             // written tree and applying it to reordered child ordinals makes
             // every recursive join choice structurally ambiguous.
-            let reordered = if cached_single_leaf {
-                None
-            } else {
-                join_reorder::reorder(
-                    logical_join,
-                    select,
-                    select.where_clause.as_ref(),
-                    catalog,
-                    current_db,
-                    ctx,
-                )
-            };
+            let reordered = join_reorder::reorder(
+                logical_join,
+                select,
+                select.where_clause.as_ref(),
+                catalog,
+                current_db,
+                ctx,
+            );
             let planned = reordered.as_ref().map_or(logical_join, |plan| &plan.join);
-            let planner_select = cached_planner_decision.is_none().then(|| {
+            let planner_select = {
                 let mut planner_select = select.clone();
                 if let Some(reordered) = &reordered {
                     planner_select.from = Some(reordered.join.clone());
                 }
                 planner_select
-            });
+            };
             // Go's `rule_predicate_push_down`: the `WHERE` equalities are
             // offered to the joins below, so a comma join does not have to
             // build the cross product the filter would then throw away. See
             // `driver::predicate_push_down`.
-            let offered = if cached_single_leaf {
-                Vec::new()
-            } else {
-                predicate_push_down::offered_conjuncts(select.where_clause.as_ref())
-            };
-            let pushdown = (!cached_single_leaf).then(|| {
-                predicate_push_down::plan(
-                    logical_join,
-                    select.where_clause.as_ref(),
-                    catalog,
-                    current_db,
-                    false,
-                )
-            });
+            let offered = predicate_push_down::offered_conjuncts(select.where_clause.as_ref());
+            let pushdown = Some(predicate_push_down::plan(
+                logical_join,
+                select.where_clause.as_ref(),
+                catalog,
+                current_db,
+                false,
+            ));
             // Go's aggregation elimination runs before physical property
             // enforcement. Once a unique group becomes a projection, the
             // source no longer owes a group-key order; asking for it here
             // would make the eventual scan claim `keep order:true` for work
             // the executable plan does not require.
-            let planned_aggregation_decision;
-            let aggregation_decision = if let Some(cached) = cached_planner_decision {
-                Some(cached)
+            let planner_is_authoritative = !select.rollup
+                && !physical_source_names
+                && !decorrelate_exists::has_top_level_exists(select.where_clause.as_ref())
+                // The shared planner does not yet lower every scalar or
+                // correlated subquery shape. Keep the established executor
+                // path authoritative for those statements; otherwise a
+                // missing planner receipt turns a valid query into an
+                // internal 1105 before execution starts.
+                && !original_select_has_subquery;
+            let planned_aggregation_decision = if planner_is_authoritative {
+                // A planner receipt is an optimization hand-off, not a
+                // validity check. Some legal shapes are still outside the
+                // shared physical planner's lowering surface; keep the
+                // established executor path for those instead of turning a
+                // valid statement into an internal 1105.
+                planner_bridge::select_decision(&planner_select, catalog, current_db, ctx)
             } else {
-                let planner_is_authoritative = !select.rollup
-                    && !physical_source_names
-                    && !decorrelate_exists::has_top_level_exists(select.where_clause.as_ref())
-                    // The shared planner does not yet lower every scalar or
-                    // correlated subquery shape. Keep the established
-                    // executor path authoritative for those statements;
-                    // otherwise a missing planner receipt turns a valid
-                    // query into an internal 1105 before execution starts.
-                    && !original_select_has_subquery;
-                planned_aggregation_decision = if planner_is_authoritative {
-                    // A planner receipt is an optimization hand-off, not a
-                    // validity check. Some legal shapes are still outside
-                    // the shared physical planner's lowering surface; keep
-                    // the established executor path for those instead of
-                    // turning a valid statement into an internal 1105.
-                    planner_select.as_ref().and_then(|planner_select| {
-                        planner_bridge::select_decision(planner_select, catalog, current_db, ctx)
-                    })
-                } else {
-                    None
-                };
-                planned_aggregation_decision.as_ref()
+                None
             };
+            let aggregation_decision = planned_aggregation_decision.as_ref();
             aggregation_eliminated = aggregation_decision
                 .as_ref()
                 .is_some_and(|decision| decision.eliminated);
@@ -1474,31 +1424,6 @@ fn run_select_traced_with_delivery_choice_inner(
             let planner_access = aggregation_decision
                 .as_ref()
                 .map(|decision| decision.access.as_slice());
-            let cached_single_leaf_consumes_where = cached_planner_decision.is_some_and(|decision| {
-                matches!(decision.access.as_slice(), [access] if access.consumes_leaf_filter)
-            });
-            if let Some(decision) = cached_planner_decision {
-                joined_logical_rows = decision.input_rows;
-                if !select.group_by.is_empty()
-                    || select.distinct
-                    || select.fields.fields().iter().any(|field| {
-                        matches!(field, SelectField::Expr { expr, .. } if expr.has_aggregate_flag())
-                    })
-                    || select
-                        .having
-                        .as_ref()
-                        .is_some_and(tidb_ast::Expr::has_aggregate_flag)
-                    || select
-                        .order_by
-                        .iter()
-                        .any(|item| item.expr.has_aggregate_flag())
-                {
-                    grouped_logical_rows = decision.output_rows;
-                }
-                if select.distinct {
-                    distinct_logical_rows = decision.output_rows;
-                }
-            }
             // Go's `findBestTask` has selected the access path for every
             // DataSource, including an ordinary one-table SELECT. Lower that
             // exact receipt at the leaf; the statement-level TryFastPlan
@@ -1526,21 +1451,20 @@ fn run_select_traced_with_delivery_choice_inner(
             // need RowSource for predicate routing and EXPLAIN estimates.
             // Ordinary plans already have an access receipt, so this walk
             // cannot choose or re-cost a leaf path.
-            let needs_row_source_estimate = !cached_single_leaf
-                && (plan_at_leaf
-                    || !select.group_by.is_empty()
-                    || select.distinct
-                    || select.fields.fields().iter().any(|field| {
-                        matches!(field, SelectField::Expr { expr, .. } if expr.has_aggregate_flag())
-                    })
-                    || select
-                        .having
-                        .as_ref()
-                        .is_some_and(tidb_ast::Expr::has_aggregate_flag)
-                    || select
-                        .order_by
-                        .iter()
-                        .any(|item| item.expr.has_aggregate_flag()));
+            let needs_row_source_estimate = plan_at_leaf
+                || !select.group_by.is_empty()
+                || select.distinct
+                || select.fields.fields().iter().any(|field| {
+                    matches!(field, SelectField::Expr { expr, .. } if expr.has_aggregate_flag())
+                })
+                || select
+                    .having
+                    .as_ref()
+                    .is_some_and(tidb_ast::Expr::has_aggregate_flag)
+                || select
+                    .order_by
+                    .iter()
+                    .any(|item| item.expr.has_aggregate_flag());
             let row_source = needs_row_source_estimate
                 .then(|| {
                     join_reorder::row_source(
@@ -1570,7 +1494,7 @@ fn run_select_traced_with_delivery_choice_inner(
                 }
                 joined_logical_rows = rows.root_rows();
             }
-            if !cached_single_leaf && joined_logical_rows.is_none() {
+            if joined_logical_rows.is_none() {
                 joined_logical_rows = join_reorder::sole_derived_rows(
                     join,
                     select.where_clause.as_ref(),
@@ -1674,7 +1598,6 @@ fn run_select_traced_with_delivery_choice_inner(
                 .as_ref()
                 .is_some_and(subquery::expr_has_subquery);
             join_consumed_where |= exec.consumes_where() && !has_subquery_where;
-            join_consumed_where |= cached_single_leaf_consumes_where && !has_subquery_where;
             // Go's `restoreSchemaIfChanged`: the reordered join's schema is
             // the new leaf order, and the statement's output must stay the
             // written one. Go wraps a `Projection`; here the scope carries

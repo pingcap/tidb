@@ -695,10 +695,10 @@ impl PreparedSelectExecution {
             .cached_plan
             .lock()
             .expect("cached SELECT tree is available");
-        let (_, decision) = cached
+        let (_, physical) = cached
             .execution(self.generation)
             .expect("cached SELECT generation is current");
-        (decision.family, decision.cop_family)
+        super::planner_bridge::physical_aggregation_families(physical)
     }
 }
 
@@ -1142,11 +1142,10 @@ pub fn run_prepared_select(
         Ok(cached) => cached,
         Err(_) => return Ok(None),
     };
-    let Some((select, decision)) = cached.execution(execution.generation) else {
+    let Some((select, physical)) = cached.execution(execution.generation) else {
         return Ok(None);
     };
-    super::run_select_with_cached_decision(select, catalog, current_database, ctx, decision)
-        .map(Some)
+    super::physical_builder::run_cached_select(select, physical, catalog, ctx).map(Some)
 }
 
 /// One `column = ?`, `column = const`, or `column IS NULL` conjunct of a

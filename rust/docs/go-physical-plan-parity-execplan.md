@@ -259,6 +259,17 @@ both `oltp_read_only` and `oltp_read_write`.
   and read staleness into that same generation-keyed environment. Prepared
   SELECT and PointGet reuse no longer repeat three owned system-variable
   lookups on every hit; an inadmissible generation caches a typed refusal.
+- [x] 2026-08-28: cached general SELECT now recursively constructs executors
+  from the rebuilt `PhysicalPlan`, matching Go's `executorBuilder.build`
+  boundary. Table readers/scans, projection, selection, limit, sort, TopN,
+  root HashAgg/StreamAgg, HashJoin/MergeJoin, TableDual, and NominalSort no
+  longer re-enter the 39-KiB AST planning/lowering function. The obsolete
+  cached-decision entry point, its cached-single-leaf branches, duplicate
+  join reorder/predicate planning, retained logical tree, per-hit decision
+  extraction, and planner-row-count receipt fields are deleted. A focused
+  regression was observed failing before the constructor
+  switch and passing afterward; a broader cache-shape test covers range,
+  order, DISTINCT, scalar/grouped SUM, join, residual markers, and LIMIT.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
@@ -1659,6 +1670,37 @@ path. Exact validation commands:
     git diff --check
     EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
     PROFILE_ONLY=1 PROFILE_TAG=typed-prepared-cache EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, direct cached physical executor construction):
+Go's prepared-plan hit runs `RebuildPlan4CachedPlan` and hands the retained
+physical root directly to `executorBuilder.build`. Rust rebuilt the same
+physical tree but then converted it to an `AggregationDecision` and entered
+the complete AST planner/lowerer again. The new recursive constructor consumes
+stable table IDs and physical schemas, materializes current parameter values
+only in cloned executor expressions, and keeps markers on the retained tree
+for the next rebuild. It lowers table readers/scans, projections, selections,
+limits, sort/TopN, root HashAgg/StreamAgg, HashJoin/MergeJoin, TableDual, and
+NominalSort. The cached-decision bridge and its cached-only legacy planning
+branches are deleted. The cache no longer retains the logical tree or derives
+an executor receipt on every bind, and row-count fields that existed only to
+feed that receipt are gone.
+
+The focused regression first failed because one legacy AST planner visit was
+still observed and then passed with zero visits. The broad prepared-shape
+regression subsequently exposed two representation gaps: planner aggregate
+names use canonical `FIRSTROW`, and a cloned executor constant must detach its
+parameter/deferred marker after reading the rebuilt value. Both are fixed and
+the regression now passes for range/order, DISTINCT, scalar and grouped SUM,
+HashJoin, residual marker rebinding, and parameterized LIMIT. Index readers,
+index lookup/index merge, Apply, Union, Window, Lock, and DML SELECT children
+remain explicit constructor gaps; no fallback to the AST planner was added.
+Exact WIP validation commands:
+
+    cd rust
+    cargo test -q -p tidb-executor cached_physical_plan_does_not_rerun_legacy_row_estimation --lib
+    cargo test -q -p tidb-executor prepared_select_plan_reuses_shape_and_rebinds_parameters --lib
+    cd ..
+    git diff --check
 
 Plan revision note (2026-08-27): created after the user confirmed the
 performance-preserving route to full Go parity across plan cache, aggregation,

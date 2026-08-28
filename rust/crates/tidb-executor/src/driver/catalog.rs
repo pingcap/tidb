@@ -1248,6 +1248,24 @@ impl Catalog {
         self.get_in(database, name)
     }
 
+    /// The base table selected by a retained physical access node.
+    ///
+    /// Go's executor builder resolves a `PhysicalTableScan.Table.ID` through
+    /// the statement's InfoSchema. The cached Rust physical tree owns the
+    /// same stable ID, so executor construction must not recover the table by
+    /// walking SQL names or aliases again.
+    pub(crate) fn kv_table_by_id(&self, table_id: i64) -> Option<&crate::KvTable> {
+        self.databases.values().find_map(|database| {
+            database
+                .tables
+                .values()
+                .find_map(|entry| match entry.as_ref() {
+                    TableEntry::Kv(table) if table.table_id == table_id => Some(table),
+                    _ => None,
+                })
+        })
+    }
+
     /// A table of the default database, for tests that inspect the entry.
     #[must_use]
     pub fn get_table_for_test(&self, name: &str) -> Option<&TableEntry> {

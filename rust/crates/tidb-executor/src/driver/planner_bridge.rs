@@ -273,13 +273,6 @@ pub(crate) struct AggregationDecision {
     pub(crate) cop_family: Option<AggregationFamily>,
     pub(crate) join: Option<JoinDecision>,
     pub(crate) access: Vec<AccessDecision>,
-    /// Row count at the physical root's relational input, derived once by the
-    /// shared logical planner. Cached execution must not rebuild the legacy
-    /// executor-local `RowSource` merely to recover this estimate.
-    pub(crate) input_rows: Option<f64>,
-    /// Row count after the outer logical aggregation, or the relational input
-    /// count for a non-aggregate SELECT.
-    pub(crate) output_rows: Option<f64>,
     /// The selected physical tree discharged this SELECT's ORDER BY through
     /// a NominalSort, so executor lowering must preserve the chosen child
     /// order instead of installing and costing another Sort/TopN itself.
@@ -555,7 +548,7 @@ fn access_filter(conditions: &[Expression], logical: &LogicalPlan) -> Option<Acc
 /// in-place rebuild. The per-execution lowering receipt is private, so detach
 /// those markers from its cloned expressions after their current values have
 /// been materialized.
-fn materialize_cached_expression(expression: &mut Expression) {
+pub(super) fn materialize_cached_expression(expression: &mut Expression) {
     match expression {
         Expression::Column(_) | Expression::CorrelatedColumn(_) => {}
         Expression::Constant(constant) => {
@@ -898,6 +891,24 @@ fn outer_physical_aggregation(mut plan: &PhysicalPlan) -> Option<&PhysicalPlan> 
     }
 }
 
+pub(super) fn physical_aggregation_families(
+    plan: &PhysicalPlan,
+) -> (Option<AggregationFamily>, Option<AggregationFamily>) {
+    let Some(aggregation) = outer_physical_aggregation(plan) else {
+        return (None, None);
+    };
+    let root = match aggregation {
+        PhysicalPlan::HashAgg(_) => Some(AggregationFamily::Hash),
+        PhysicalPlan::StreamAgg(_) => Some(AggregationFamily::Stream),
+        _ => None,
+    };
+    let cop = aggregation
+        .children()
+        .first()
+        .and_then(|child| reader_aggregation_family(child));
+    (root, cop)
+}
+
 /// Whether the SELECT-level order still needs an executable enforcer. Merge
 /// join child sorts and aggregation input sorts are below the first physical
 /// aggregation/join/reader, so only the outer unary spine belongs to the
@@ -1150,15 +1161,6 @@ fn decision_from_plans(
 ) -> Option<AggregationDecision> {
     let aggregate_select = is_aggregate_select(select);
     let aggregation = outer_aggregation_plan(logical);
-    let input_rows = aggregation
-        .and_then(|aggregation| aggregation.children().first())
-        .or_else(|| logical_relational_input(logical))
-        .and_then(LogicalPlan::stats_info)
-        .map(StatsInfo::row_count);
-    let output_rows = aggregation
-        .or_else(|| logical_relational_input(logical))
-        .and_then(LogicalPlan::stats_info)
-        .map(StatsInfo::row_count);
     let join = join_decision_tree(&physical, &logical);
     let access = access_decisions(&physical, &logical)?;
     let order_satisfied = !select.order_by.is_empty() && !outer_order_is_enforced(&physical);
@@ -1225,8 +1227,6 @@ fn decision_from_plans(
             cop_family: None,
             join,
             access,
-            input_rows,
-            output_rows,
             order_satisfied,
         });
     }
@@ -1238,8 +1238,6 @@ fn decision_from_plans(
             cop_family: family.and_then(|(_, cop)| cop),
             join,
             access,
-            input_rows,
-            output_rows,
             order_satisfied,
         });
     }
@@ -1250,34 +1248,8 @@ fn decision_from_plans(
         cop_family: family.and_then(|(_, cop)| cop),
         join,
         access,
-        input_rows,
-        output_rows,
         order_satisfied,
     })
-}
-
-/// The logical node whose rows enter root projection/order/limit operators.
-/// Go keeps this estimate on the optimized logical/physical tree; walking
-/// through those unary wrappers is enough to recover it without reconstructing
-/// the executor driver's separate `RowSource` model.
-fn logical_relational_input(mut plan: &LogicalPlan) -> Option<&LogicalPlan> {
-    loop {
-        match plan {
-            LogicalPlan::Projection(_)
-            | LogicalPlan::Sort(_)
-            | LogicalPlan::Limit(_)
-            | LogicalPlan::TopN(_)
-            | LogicalPlan::Lock(_)
-            | LogicalPlan::MaxOneRow(_) => {
-                let [child] = plan.children() else {
-                    return Some(plan);
-                };
-                plan = child;
-            }
-            LogicalPlan::Aggregation(_) => return plan.children().first(),
-            _ => return Some(plan),
-        }
-    }
 }
 
 fn planner_optimized_select(
@@ -1435,9 +1407,7 @@ pub(crate) fn select_decision(
 #[derive(Debug)]
 pub(crate) struct CachedSelectPlan {
     select: tidb_ast::SelectStmt,
-    logical: LogicalPlan,
     physical: PhysicalPlan,
-    decision: Option<AggregationDecision>,
     generation: u64,
 }
 
@@ -1449,11 +1419,6 @@ impl CachedSelectPlan {
                 &tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values),
             )
             .ok()?;
-        self.decision = Some(decision_from_plans(
-            &self.select,
-            &self.logical,
-            &self.physical,
-        )?);
         self.generation = self.generation.wrapping_add(1);
         Some(self.generation)
     }
@@ -1461,8 +1426,8 @@ impl CachedSelectPlan {
     pub(crate) fn execution(
         &self,
         generation: u64,
-    ) -> Option<(&tidb_ast::SelectStmt, &AggregationDecision)> {
-        (self.generation == generation).then_some((&self.select, self.decision.as_ref()?))
+    ) -> Option<(&tidb_ast::SelectStmt, &PhysicalPlan)> {
+        (self.generation == generation).then_some((&self.select, &self.physical))
     }
 }
 
@@ -1499,9 +1464,7 @@ pub(crate) fn cached_select_plan(
     };
     Some(CachedSelectPlan {
         select: select.clone(),
-        logical,
         physical,
-        decision: None,
         generation: 0,
     })
 }
@@ -1607,10 +1570,15 @@ mod tests {
         let mut cached = cached_select_plan(select, &catalog, "test", &ctx)
             .expect("the prepared-plan cache accepts stock sysbench SUM");
         let generation = cached.bind(&[]).expect("the cached physical tree rebuilds");
-        let (_, decision) = cached
+        let (_, physical) = cached
             .execution(generation)
             .expect("the rebuilt generation is executable");
-        assert_eq!(decision.family, Some(AggregationFamily::Stream));
-        assert_eq!(decision.cop_family, Some(AggregationFamily::Stream));
+        assert_eq!(
+            super::physical_aggregation_families(physical),
+            (
+                Some(AggregationFamily::Stream),
+                Some(AggregationFamily::Stream)
+            )
+        );
     }
 }
