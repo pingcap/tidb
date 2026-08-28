@@ -1000,6 +1000,7 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	if !done {
 		return false, ver, nil
 	}
+<<<<<<< HEAD
 	for _, indexInfo := range allIndexInfos {
 		err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
 		if err != nil {
@@ -1025,6 +1026,17 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 func errorIsRetryable(err error, job *model.Job) bool {
 	if job.ErrorCount+1 >= variable.GetDDLErrorCountLimit() {
 		return false
+=======
+	return isRetryableError(err, true)
+}
+
+func isRetryableError(err error, retryUnknown bool) bool {
+	errMsg := err.Error()
+	for _, m := range dbterror.ReorgRetryableErrMsgs {
+		if strings.Contains(errMsg, m) {
+			return true
+		}
+>>>>>>> d15bed39426 (ddl: retry modify column reorg on transient errors (#67713))
 	}
 	originErr := errors.Cause(err)
 	if tErr, ok := originErr.(*terror.Error); ok {
@@ -1032,8 +1044,7 @@ func errorIsRetryable(err error, job *model.Job) bool {
 		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
 		return ok
 	}
-	// For the unknown errors, we should retry.
-	return true
+	return retryUnknown
 }
 
 func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
