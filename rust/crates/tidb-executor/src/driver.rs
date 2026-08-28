@@ -1969,15 +1969,27 @@ fn run_select_traced_with_delivery_choice_inner(
                 .table_access()
                 .is_some_and(|access| access.accept_embedded_lookup_limit(*offset, *count))
         });
-    let reader_limit_pushed = (executed_where.is_none())
-        .then_some(from_delivered.reader_limit)
-        .flatten()
-        .and_then(|(offset, count)| offset.checked_add(count))
-        .is_some_and(|cap| {
-            source
-                .table_access()
-                .is_some_and(|access| access.accept_scan_limit(cap))
-        });
+    // An IndexLookUp receipt carries two representations of the same LIMIT:
+    // the child Limit under the index scan (`reader_limit`) and the reader's
+    // `PushedLimit` (`embedded_lookup_limit`).  Once the latter has been
+    // accepted, the source already owns the cap and the plan trace has
+    // transformed the IndexLookUp boundary; offering the child cap a second
+    // time makes `pushed_limit_reader` look at an already-embedded tree and
+    // reject a valid `Selection -> IndexRangeScan` shape.  Keep the child cap
+    // only for readers that did not take the IndexLookUp embedding path.
+    let reader_limit_pushed = if embedded_lookup_limit.is_some() {
+        false
+    } else {
+        (executed_where.is_none())
+            .then_some(from_delivered.reader_limit)
+            .flatten()
+            .and_then(|(offset, count)| offset.checked_add(count))
+            .is_some_and(|cap| {
+                source
+                    .table_access()
+                    .is_some_and(|access| access.accept_scan_limit(cap))
+            })
+    };
     let scan_limit_pushed = embedded_lookup_limit.is_some() || reader_limit_pushed;
 
     // A `WHERE` whose conjuncts all moved into the scan still records its
