@@ -215,6 +215,10 @@ both `oltp_read_only` and `oltp_read_write`.
   rebuilds and discards the point-plan matcher before binding the cached plan;
   secondary-unique double reads remain reusable but now refuse MaxTS exactly
   as Go does. The two obsolete prepared read-shape classifiers were deleted.
+- [x] 2026-08-28: made binary PREPARE retain and route the one parsed AST it
+  already owns. The cluster protocol no longer reparses every DML and SELECT
+  after `Session::prepare_ast`, matching Go's single `PlanCacheStmt.PreparedAst`
+  authority and giving prepared DML lowering that same immutable input.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and

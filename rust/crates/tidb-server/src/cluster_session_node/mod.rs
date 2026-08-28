@@ -2067,7 +2067,8 @@ impl QuerySession for ClusterServerSession {
         let parameter_count = prepared_ast.parameter_count();
         let point_get_plan = prepared_ast.point_get_plan();
         let select_plan = prepared_ast.select_plan();
-        let kind = prepared_ast.statement_kind(&self.session);
+        let template = prepared_ast.statement().clone();
+        let kind = self.session.statement_kind_parsed(&template);
         if kind == StmtKind::Write {
             // A prepared DDL is admitted here and executed at EXECUTE, so a
             // refusal -- an unsupported shape, an unsupported column type --
@@ -2081,7 +2082,6 @@ impl QuerySession for ClusterServerSession {
             // work.  Routed schema/account/ANALYZE statements still use their
             // dedicated SQL route at EXECUTE and must not be run through the
             // ordinary statement driver.
-            let template = self.session.parse_statement(sql).map_err(map_error)?;
             if !matches!(template, tidb_ast::Stmt::Dml(_)) {
                 return Ok(PreparedGeneral::new(
                     sql.to_owned(),
@@ -2100,7 +2100,6 @@ impl QuerySession for ClusterServerSession {
         // by planning the statement with every marker bound to NULL. Planning
         // reads the catalog and may read rows, so it takes a snapshot like any
         // other statement.
-        let template = self.session.parse_statement(sql).map_err(map_error)?;
         let resource_group = self.session.statement_resource_group(&template).to_owned();
         // The PREPARE probe runs the statement with every marker NULL, which
         // is not the statement the client will execute; it declares nothing,

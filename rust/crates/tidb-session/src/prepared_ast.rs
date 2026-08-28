@@ -27,7 +27,7 @@ use tidb_executor::{
     PreparedSelectPlan,
 };
 
-use crate::{Session, StmtKind};
+use crate::Session;
 
 /// One statement parsed under the SQL mode in force at PREPARE time.
 #[derive(Clone, Debug)]
@@ -59,10 +59,10 @@ impl PreparedAst {
         self.parameter_count
     }
 
-    /// The protocol answer shape determined by this statement's parsed form.
+    /// The statement parsed under PREPARE-time SQL semantics.
     #[must_use]
-    pub fn statement_kind(&self, session: &Session) -> StmtKind {
-        session.statement_kind_parsed(&self.statement)
+    pub const fn statement(&self) -> &Stmt {
+        &self.statement
     }
 
     /// The immutable fast point-read plan compiled while the statement was
