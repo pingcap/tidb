@@ -141,6 +141,10 @@ both `oltp_read_only` and `oltp_read_write`.
   spill transition, matching Go's `prepareForSpill`. Parallel DISTINCT now
   constructs no spill-partition owner because Go's spill gate rejects
   DISTINCT before execution.
+- [x] 2026-08-27: removed the parallel Sort row-copy round trip. Worker-local
+  runs now retain fetched chunks and merge only `(chunk, row)` cursors, as
+  Go's `[]chunk.Row` does; the copied `OwnedRow` vector and reconstructed
+  output chunks are gone from the unspilled path.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -352,6 +356,19 @@ both `oltp_read_only` and `oltp_read_write`.
   lazy preparation, `parallel_hashagg_spills_partial_results_and_finishes`,
   the 12-test HashAgg module pass, and the paired benchmark with zero errors.
 
+- Observation: Rust's unspilled parallel Sort copied every fetched row into
+  an independently owned one-row chunk during worker-local completion and
+  then copied it again into a reconstructed result chunk. Go retains the
+  fetched chunks and sorts/merges lightweight `chunk.Row` cursors. Retaining
+  Rust's existing `SortPartition` chunks through the local K-way merge removes
+  both copies and deletes `from_sorted_owned_rows`; the focused DISTINCT
+  median moved from 2,668 to 2,702 TPS while the paired Go median was 2,934,
+  improving the ratio from 0.886x to 0.921x.
+  Evidence: fail-before 4 reconstructed chunks versus Go-compatible 64 source
+  chunks in `parallel_sort_workers_share_input_and_heap_merge_their_runs`, its
+  pass after the change, the multi-batch cursor-merge regression, all 16 Sort
+  module tests, and the paired production benchmark with zero errors.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -494,6 +511,8 @@ allocated spill chunks per parallel statement. After matching Go's lazy
 (0.890x); a second complete split measured 2,668.43/3,011.55 TPS (0.886x).
 The latter run measured simple 4,185.53/4,590.04 (0.912x), SUM
 4,707.43/4,903.58 (0.960x), and ORDER 3,468.13/3,817.57 (0.908x), with zero
+errors. Removing the unspilled Sort row-copy/reconstruction path then measured
+focused DISTINCT medians of 2,702.26/2,933.89 TPS (0.921x), again with zero
 errors. DISTINCT's large regression is removed without a serial cutoff, but
 the acceptance gap remains open.
 

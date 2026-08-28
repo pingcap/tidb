@@ -50,7 +50,6 @@ use tidb_expr::Columns;
 use tidb_util::memory::{ActionOnExceed, ArcAction, BaseOomAction, Tracker, DEF_SPILL_PRIORITY};
 
 use crate::mem_quota::StatementMemory;
-use crate::multi_way_merge::{MemorySource, MultiWayMerger};
 use crate::parallel_sort_spill_helper::{LocalSortWorker, ParallelSortSpillHelper};
 use crate::sort_partition::{spill_action, SortPartition, SPILL_CHUNK_SIZE};
 
@@ -156,28 +155,20 @@ where
     }
 
     fn sort_local_rows(&mut self) -> Result<Vec<OwnedRow>, ExecError> {
-        self.finish_batch()?;
-        let mut runs = Vec::with_capacity(self.batches.len());
-        for mut batch in std::mem::take(&mut self.batches) {
-            runs.push(batch.take_sorted_owned_rows());
-        }
-        if runs.len() <= 1 {
-            return Ok(runs.pop().unwrap_or_default());
-        }
+        let Some(mut run) = self.sort_local_partition()? else {
+            return Ok(Vec::new());
+        };
+        Ok(run.take_sorted_owned_rows())
+    }
 
-        let source = MemorySource::new(runs);
-        let by_items = &self.by_items;
-        let compare_funcs = &self.compare_funcs;
-        let ctx = &self.ctx;
-        let mut merger = MultiWayMerger::new(source, |left: &OwnedRow, right: &OwnedRow| {
-            compare_rows(by_items, compare_funcs, ctx, left.as_row(), right.as_row())
-        });
-        merger.init()?;
-        let mut rows = Vec::new();
-        while let Some(row) = merger.next()? {
-            rows.push(row);
-        }
-        Ok(rows)
+    fn sort_local_partition(&mut self) -> Result<Option<SortPartition>, ExecError> {
+        self.finish_batch()?;
+        SortPartition::merge_sorted_in_memory(
+            std::mem::take(&mut self.batches),
+            &self.by_items,
+            &self.compare_funcs,
+            &self.ctx,
+        )
     }
 
     fn take_total_memory_usage(&mut self) -> i64 {
@@ -193,6 +184,15 @@ struct SharedParallelSortWorker<C: Columns>(Arc<Mutex<ParallelSortWorker<C>>>);
 impl<C: Columns> Clone for SharedParallelSortWorker<C> {
     fn clone(&self) -> Self {
         Self(Arc::clone(&self.0))
+    }
+}
+
+impl<C: Columns> SharedParallelSortWorker<C> {
+    fn sort_local_partition(&mut self) -> Result<Option<SortPartition>, ExecError> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .sort_local_partition()
     }
 }
 
@@ -699,17 +699,14 @@ where
                 // No spill: each worker locally merges its sorted batches into
                 // one run, then the SortExec heap merges those worker runs.
                 for worker in &mut workers {
-                    let rows = LocalSortWorker::sort_local_rows(worker)?;
+                    let mut run = worker.sort_local_partition()?;
                     let released = LocalSortWorker::take_total_memory_usage(worker);
                     self.tracker.consume(-released);
-                    if !rows.is_empty() {
-                        self.partitions.push(SortPartition::from_sorted_owned_rows(
-                            fields.clone(),
-                            &self.tracker,
-                            Arc::clone(&spill_storage),
-                            rows,
-                            self.meta.max_chunk_size(),
-                        ));
+                    if let Some(run) = &mut run {
+                        run.attach_memory_to(&self.tracker);
+                    }
+                    if let Some(run) = run {
+                        self.partitions.push(run);
                     }
                 }
             }
@@ -1377,7 +1374,56 @@ mod tests {
             4,
             "the statement concurrency must create four independently sorted worker runs"
         );
+        assert_eq!(
+            exec.partitions
+                .iter()
+                .map(SortPartition::in_memory_chunk_count)
+                .sum::<usize>(),
+            64,
+            "Go retains the 64 fetched chunks and sorts lightweight row cursors instead of copying every row into new chunks"
+        );
         exec.close().unwrap();
+    }
+
+    /// Go `parallelSortWorker.multiWayMergeLocalSortedRows`: crossing the
+    /// worker's `maxChunkSize * 30` boundary creates more than one locally
+    /// sorted batch, then merges their row cursors without replacing the
+    /// fetched chunks.
+    #[test]
+    fn parallel_worker_merges_multiple_batches_without_copying_chunks() {
+        let fields = vec![long()];
+        let memory = StatementMemory::default();
+        let mut worker = ParallelSortWorker::new(
+            fields.clone(),
+            memory.spill_storage(),
+            SPILL_CHUNK_SIZE,
+            asc(),
+            NoColumns,
+            2,
+        );
+        for batch in 0..3i64 {
+            let mut chunk = Chunk::new_with_capacity(&fields, 32);
+            for row in 0..32i64 {
+                chunk.append_int64(0, 95 - (batch * 32 + row));
+            }
+            let rows = i64::try_from(chunk.num_rows()).unwrap();
+            let memory_usage = chunk.memory_usage() + tidb_chunk::row::ROW_SIZE * rows;
+            worker.add_chunk(chunk, memory_usage).unwrap();
+        }
+
+        let mut run = worker
+            .sort_local_partition()
+            .unwrap()
+            .expect("the worker received rows");
+        assert_eq!(run.in_memory_chunk_count(), 3);
+        let mut output = Chunk::new_with_capacity(&fields, 96);
+        run.append_sorted_rows_into(&mut output, 96).unwrap();
+        assert_eq!(
+            (0..output.num_rows())
+                .map(|row| output.get_row(row).get_int64(0))
+                .collect::<Vec<_>>(),
+            (0..96).collect::<Vec<_>>()
+        );
     }
 
     /// Go source of truth: `sortexec.TestParallelSortSpillDisk`.
