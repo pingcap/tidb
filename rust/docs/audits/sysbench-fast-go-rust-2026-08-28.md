@@ -125,3 +125,20 @@ printable under `EXPLAIN` (commit `827a0de`). A YCSB literal range `EXPLAIN`
 now succeeds, but the Rust cost model still selects a full table scan for a
 low `>=` bound where Go selects `IndexLookUp`; YCSB Workload E therefore remains
 an optimization target rather than a passing gate.
+
+## Latest three-round five-minute sweep
+
+Using the same long-lived cluster and restored data, each round covered all ten
+sysbench Lua subtypes with 10 threads, one 2-second sample per engine/subtype,
+and no BR restore. The benchmark windows were 145 seconds (round 1), 143
+seconds (round 2), and 146 seconds (round 3), all below the 300-second budget.
+
+| Round | Threshold | Failing subtypes | Receipt |
+|---:|---:|---|---|
+| 1 | 0.80 | `oltp_read_write`, `oltp_update_index`, `select_random_ranges`, `bulk_insert` | `/tmp/tc8228803.JvwO2R/sysbench-fast-latest-r1` |
+| 2 | 0.90 | `oltp_read_write`, `oltp_update_index`, `oltp_write_only`, `select_random_ranges`, `bulk_insert` | `/tmp/tc8228803.JvwO2R/sysbench-fast-latest-r2` |
+| 3 | 1.00 | `oltp_read_write`, `oltp_update_index`, `oltp_write_only`, `select_random_points`, `select_random_ranges`, `bulk_insert` | `/tmp/tc8228803.JvwO2R/sysbench-fast-latest-r3` |
+
+The insert subtype passed all three rounds (Rust/Go ratios 1.1143, 1.0815,
+and 1.1070). Batch insert remained below the first-round gate (0.6711, 0.6941,
+and 0.6889), so the overall three-round acceptance target is not yet met.
