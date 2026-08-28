@@ -975,7 +975,7 @@ fn build_batch_point_get(
             .pk_handle_offset()
             .and_then(|offset| table.columns.get(offset))
             .is_some_and(|column| column.field_type.is_unsigned());
-        sort_handles_for_keep_order(&mut handles, None, batch.desc, unsigned_pk_is_handle);
+        sort_handles_for_keep_order(&mut handles, batch.desc, unsigned_pk_is_handle);
     }
     Ok(Box::new(HandleSourceExec::new_mapped_with_context(
         meta(plan, schema),

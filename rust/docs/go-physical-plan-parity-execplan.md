@@ -323,6 +323,13 @@ both `oltp_read_only` and `oltp_read_write`.
   being misparsed as a clustered handle. Partitioned point plans remain an
   explicit gap until the physical nodes retain Go's per-key physical table
   identities; they are not guessed by the executor.
+- [x] 2026-08-28: removed the disconnected executor-local
+  `BatchPointGetExec` after the retained physical builder took ownership. The
+  dead wrapper had no production caller, omitted Go's unique-index, locking,
+  and snapshot branches, and retained a Rust-only physical-partition
+  permutation. Its unused per-handle partition source state and narrowing
+  tests are gone; only Go's signed/unsigned/common-handle keep-order
+  comparator remains, used directly by the physical builder.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer

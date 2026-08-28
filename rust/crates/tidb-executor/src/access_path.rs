@@ -721,8 +721,6 @@ pub struct HandleSourceExec {
     meta: ExecutorMeta,
     table: KvTable,
     handles: Vec<TableHandle>,
-    /// One physical table id per handle for a partitioned batch point get.
-    physical_ids: Option<Vec<i64>>,
     /// The next handle to read.
     cursor: usize,
     /// Rows produced so far, which the trace reads as this node's `actRows`.
@@ -763,7 +761,6 @@ impl HandleSourceExec {
             meta,
             table,
             handles,
-            physical_ids: None,
             cursor: 0,
             preloaded: None,
             produced: Rc::new(Cell::new(0)),
@@ -805,7 +802,6 @@ impl HandleSourceExec {
             meta,
             table,
             handles,
-            physical_ids: None,
             cursor: 0,
             produced: Rc::new(Cell::new(0)),
             decode_context,
@@ -815,43 +811,6 @@ impl HandleSourceExec {
                     .map(HandleOutputColumn::Stored)
                     .collect(),
             ),
-            extra_handle_slot: None,
-            preloaded: None,
-            single_point_get: false,
-        }
-    }
-
-    /// Builds Go's partitioned `BatchPointGetExec`, retaining the current
-    /// source-level projection while pairing every handle with its physical
-    /// table id.
-    #[must_use]
-    pub(crate) fn new_partitioned_projected_with_context(
-        meta: ExecutorMeta,
-        table: KvTable,
-        handles: Vec<TableHandle>,
-        physical_ids: Vec<i64>,
-        output_offsets: Option<Vec<usize>>,
-        decode_context: crate::kv_table::RowDecodeContext,
-    ) -> Self {
-        assert_eq!(
-            handles.len(),
-            physical_ids.len(),
-            "every batch-point handle needs one physical partition"
-        );
-        Self {
-            meta,
-            table,
-            handles,
-            physical_ids: Some(physical_ids),
-            cursor: 0,
-            produced: Rc::new(Cell::new(0)),
-            decode_context,
-            output_columns: output_offsets.map(|offsets| {
-                offsets
-                    .into_iter()
-                    .map(HandleOutputColumn::Stored)
-                    .collect()
-            }),
             extra_handle_slot: None,
             preloaded: None,
             single_point_get: false,
@@ -872,7 +831,6 @@ impl HandleSourceExec {
             meta,
             table,
             handles,
-            physical_ids: None,
             cursor: 0,
             produced: Rc::new(Cell::new(0)),
             decode_context,
@@ -897,7 +855,6 @@ impl HandleSourceExec {
             meta,
             table,
             handles: vec![handle],
-            physical_ids: None,
             cursor: 0,
             produced: Rc::new(Cell::new(0)),
             decode_context,
@@ -947,11 +904,7 @@ impl Executor for HandleSourceExec {
                 })?]
         } else {
             self.table
-                .stored_records_batched(
-                    &self.handles,
-                    self.physical_ids.as_deref(),
-                    &self.decode_context,
-                )
+                .stored_records_batched(&self.handles, None, &self.decode_context)
                 .map_err(|error| {
                     ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
                 })?
