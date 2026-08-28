@@ -202,7 +202,7 @@ fn executor_ranges(ranges: &tidb_planner::ranger::types::Ranges) -> Vec<IndexRan
 fn table_scan_schema(
     scan: &PhysicalTableScan,
     table: &crate::KvTable,
-) -> Result<(Schema, Vec<usize>), DriverError> {
+) -> Result<(Schema, Vec<usize>, Option<usize>), DriverError> {
     let output = scan
         .base
         .base
@@ -223,10 +223,19 @@ fn table_scan_schema(
         planned.index = index as i64;
         full.push(planned);
     }
-    let keep = output
-        .columns
-        .iter()
-        .map(|wanted| {
+    let mut keep = Vec::with_capacity(output.columns.len());
+    let mut extra_handle_slot = None;
+    for (output_offset, wanted) in output.columns.iter().enumerate() {
+        if wanted.id == tidb_model::column::EXTRA_HANDLE_ID {
+            if extra_handle_slot.is_some() || output_offset + 1 != output.columns.len() {
+                return Err(DriverError::unsupported(
+                    "a cached table-scan _tidb_rowid column is not its final output",
+                ));
+            }
+            extra_handle_slot = Some(keep.len());
+            continue;
+        }
+        keep.push(
             full.iter()
                 .position(|column| {
                     column.unique_id == wanted.unique_id
@@ -236,10 +245,10 @@ fn table_scan_schema(
                     DriverError::unsupported(
                         "a cached table-scan output column is absent from its table",
                     )
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok((Schema::new(full), keep))
+                })?,
+        );
+    }
+    Ok((Schema::new(full), keep, extra_handle_slot))
 }
 
 fn build_table_scan(
@@ -251,7 +260,7 @@ fn build_table_scan(
     let table = catalog
         .kv_table_by_id(scan.table_id)
         .ok_or_else(|| DriverError::unsupported("cached table ID is absent from the catalog"))?;
-    let (schema, keep) = table_scan_schema(scan, table)?;
+    let (schema, keep, extra_handle_slot) = table_scan_schema(scan, table)?;
     let mut source = TableScanExec::new_with_context(
         meta(plan, schema),
         table.clone(),
@@ -264,6 +273,13 @@ fn build_table_scan(
         if !source.accept_column_prune(&keep) {
             return Err(DriverError::unsupported(
                 "the cached table scan cannot apply its physical projection",
+            ));
+        }
+    }
+    if let Some(slot) = extra_handle_slot {
+        if !source.accept_extra_handle(slot) {
+            return Err(DriverError::unsupported(
+                "the cached table scan cannot emit its physical _tidb_rowid column",
             ));
         }
     }
@@ -1313,6 +1329,49 @@ mod tests {
             }],
             ..PhysicalTableScan::default()
         })
+    }
+
+    #[test]
+    fn cached_physical_table_scan_emits_only_extra_handle() {
+        let mut table = crate::KvTable::new(41, vec![long_column("value", 1)]);
+        for (row_id, value) in [(11, 100), (13, 200)] {
+            table
+                .insert_row_with_row_id(
+                    &[Datum::Int(value)],
+                    Some(row_id),
+                    0,
+                    &tidb_expr::NoColumns,
+                )
+                .expect("seed heap row");
+        }
+        let mut catalog = Catalog::default();
+        catalog.register_kv("heap", table);
+
+        let mut handle = Column::new(
+            tidb_model::column::EXTRA_HANDLE_ID,
+            FieldType::new(FieldTypeCode::LongLong),
+        );
+        handle.id = tidb_model::column::EXTRA_HANDLE_ID;
+        handle.index = 0;
+        let mut base = BasePhysicalPlan::with_id(9, "TableScan", 0);
+        base.base
+            .set_schema(Some(Schema::new(vec![handle.clone()])));
+        let plan = PhysicalPlan::TableScan(PhysicalTableScan {
+            base,
+            table_id: 41,
+            cost_columns: vec![handle],
+            ..PhysicalTableScan::default()
+        });
+
+        let ctx = crate::StmtContext::for_query();
+        let mut executor = build(&plan, &catalog, &ctx).expect("build cached table scan");
+        executor.open().expect("open cached table scan");
+        let mut output = executor.new_chunk();
+        executor.next(&mut output).expect("read cached table scan");
+        assert_eq!(output.num_cols(), 1);
+        assert_eq!(output.num_rows(), 2);
+        assert_eq!(output.get_row(0).get_int64(0), 11);
+        assert_eq!(output.get_row(1).get_int64(0), 13);
     }
 
     fn index_scan(id: i32, table_id: i64, index_id: i64, low: i64, high: i64) -> PhysicalPlan {

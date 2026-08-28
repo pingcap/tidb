@@ -4480,9 +4480,6 @@ impl crate::table_access::TableAccess for TableScanExec {
     /// in `keep`, so both executable and coprocessor descriptions can be
     /// remapped to the narrowed row without changing the predicate.
     fn accept_column_prune(&mut self, keep: &[usize]) -> bool {
-        if keep.is_empty() {
-            return false;
-        }
         // `_tidb_rowid` sits beside the stored columns rather than among
         // them, so a projection expressed in stored offsets can no longer
         // describe this row. The leaf offers the handle slot only after it

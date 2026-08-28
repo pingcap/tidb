@@ -305,6 +305,12 @@ both `oltp_read_only` and `oltp_read_write`.
   Partitioned IndexMerge remains explicit pending retention of Go's per-handle
   physical-partition identity; it is not guessed or routed through an
   executor-local alternative.
+- [x] 2026-08-28: completed retained heap-table scan projection for Go's
+  appended `_tidb_rowid`. A physical table scan may now prune every stored
+  column and emit only the integer record handle carried by the local cursor;
+  the regression first failed because the direct builder searched only the
+  table's stored columns, then passed without retaining a hidden payload
+  column or wrapping the scan in an executor-local projection.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
