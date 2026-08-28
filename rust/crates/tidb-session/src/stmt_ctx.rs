@@ -41,6 +41,7 @@ use crate::{DriverError, Session, StatementKind, StmtOutput};
 pub(crate) struct StatementVarSnapshot {
     generation: u64,
     version: Option<String>,
+    time_zone: tidb_executor::SessionTimeZone,
     connection_charset: String,
     connection_collation: String,
     allow_write_row_id: bool,
@@ -240,6 +241,10 @@ impl Session {
     /// validating it at SET time -- Go validates there instead, and that
     /// check is the deferred half of this port.
     pub fn session_time_zone(&self) -> tidb_executor::SessionTimeZone {
+        self.statement_var_snapshot().time_zone.clone()
+    }
+
+    fn resolve_session_time_zone(&self) -> tidb_executor::SessionTimeZone {
         use tidb_executor::SessionTimeZone;
         let written = self
             .vars
@@ -564,6 +569,7 @@ impl Session {
         let snapshot = std::rc::Rc::new(StatementVarSnapshot {
             generation,
             version: self.vars.get_system("version").ok(),
+            time_zone: self.resolve_session_time_zone(),
             connection_charset: self
                 .vars
                 .get_system("character_set_connection")
@@ -726,7 +732,7 @@ impl Session {
         let tidb_info = Some(self.vars.tidb_info());
         let connection_charset = snapshot.connection_charset.clone();
         let connection_collation = snapshot.connection_collation.clone();
-        let zone = self.session_time_zone();
+        let zone = snapshot.time_zone.clone();
         let clock = self.statement_clock(&zone);
         let allow_write_row_id = snapshot.allow_write_row_id;
         let sysdate_is_now = snapshot.sysdate_is_now;

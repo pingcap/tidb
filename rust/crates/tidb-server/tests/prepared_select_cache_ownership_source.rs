@@ -82,3 +82,19 @@ fn cached_select_key_reuses_the_typed_session_environment() {
     assert!(!binder.contains("TIDB_SNAPSHOT"));
     assert!(!binder.contains("TIDB_READ_STALENESS"));
 }
+
+#[test]
+fn prepared_execution_reuses_the_typed_session_time_zone() {
+    let source = include_str!("../../tidb-session/src/stmt_ctx.rs");
+    let accessor = source
+        .split_once("pub fn session_time_zone(")
+        .expect("session time-zone accessor")
+        .1
+        .split_once("fn resolve_session_time_zone(")
+        .expect("typed time-zone resolver")
+        .0;
+
+    assert!(accessor.contains("self.statement_var_snapshot().time_zone.clone()"));
+    assert!(!accessor.contains("get_system(\"time_zone\")"));
+    assert!(!accessor.contains("system_location()"));
+}

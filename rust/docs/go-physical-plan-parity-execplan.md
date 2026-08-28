@@ -263,6 +263,11 @@ both `oltp_read_only` and `oltp_read_write`.
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
   read, allocate, and clone password-policy strings they never evaluate.
+- [x] 2026-08-28: retained the session's parsed time zone in the
+  generation-keyed statement-variable snapshot. Prepared execution now clones
+  one typed `SessionTimeZone`, matching Go's typed `SessionVars.TimeZone`,
+  instead of re-reading `time_zone`, resolving `SYSTEM`, and parsing a named
+  zone at each statement-context construction.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -461,6 +466,20 @@ both `oltp_read_only` and `oltp_read_write`.
   all 29 global-variable tests, the password-policy regression,
   executor/session/server checks, release build, and the alternating exact
   A/B receipt.
+
+- Observation: Rust's prepared path repeatedly resolved `time_zone` from its
+  string system variable while Go retains a parsed `*time.Location` on
+  `SessionVars`. The generation-keyed Rust statement-variable snapshot already
+  had the correct invalidation boundary, so it now owns the typed zone and all
+  consumers clone that value. Exact one-cluster A/B medians against
+  `6b16b316fe` were 508.21 versus 503.96 TPS for stock read-only, with Go at
+  474.78 TPS. Read-write medians were 268.95, 224.44, and 224.46 TPS, but those
+  samples were highly variable; the three paired read-only legs were each
+  positive and every benchmark leg reported zero SQL errors.
+  Evidence: fail-before/pass-after
+  `prepared_execution_reuses_the_typed_session_time_zone`, the timestamp
+  time-zone regression, session/server checks, release build, and the
+  alternating exact A/B receipt.
 
 - Observation: Rust also retained one successful publication receipt per
   snapshot point/batch/scan read. Go's `KVSnapshot` retains lock-resolution,
