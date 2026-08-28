@@ -572,6 +572,42 @@ fn max_one_row_enumeration_needs_an_orderless_root_property() {
 }
 
 #[test]
+fn max_one_row_and_hash_agg_preserve_the_no_cop_requirement() {
+    use crate::logical::{BaseLogicalPlan, LogicalAggregation, LogicalMaxOneRow};
+    use crate::physical_property::CteProducerStatus;
+
+    let allocator = PlanIdAllocator::new();
+    let required = PhysicalProperty {
+        cte_producer_status: CteProducerStatus::AllCteCanMpp,
+        no_cop_push_down: true,
+        ..PhysicalProperty::default()
+    };
+
+    let max = LogicalMaxOneRow::new(BaseLogicalPlan::new(&allocator, LogicalMaxOneRow::TYPE, 0));
+    let plans = exhaust_physical_plans_4_logical_max_one_row(&max, &required, &allocator);
+    let PhysicalPlan::MaxOneRow(max) = &plans[0] else {
+        panic!("a PhysicalMaxOneRow, got {:?}", plans[0]);
+    };
+    let child = max.base.child_req_prop(0).expect("max child property");
+    assert_eq!(child.cte_producer_status, CteProducerStatus::AllCteCanMpp);
+    assert!(child.no_cop_push_down);
+
+    let aggregation = LogicalAggregation::new(
+        BaseLogicalPlan::new(&allocator, LogicalAggregation::TYPE, 0),
+        Vec::new(),
+        Vec::new(),
+    );
+    let plans = get_hash_aggs(&aggregation, &required, &allocator, 1.0);
+    assert_eq!(plans.len(), 1, "NoCopPushDown admits only root HashAgg");
+    let PhysicalPlan::HashAgg(hash) = &plans[0] else {
+        panic!("a PhysicalHashAgg, got {:?}", plans[0]);
+    };
+    let child = hash.base.child_req_prop(0).expect("hash child property");
+    assert_eq!(child.task_tp, TaskType::Root);
+    assert!(child.no_cop_push_down);
+}
+
+#[test]
 fn a_table_dual_is_born_inside_its_own_root_task() {
     // `findBestTask4LogicalTableDual` (`physical_table_dual.go:79`): a
     // 0/1-row dual satisfies any order vacuously, so only a required order
@@ -807,8 +843,12 @@ fn a_limit_enumerates_the_three_task_types_in_order() {
     let sorted = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
     assert!(exhaust_physical_plans_4_logical_limit(&limit, &sorted, &allocator).is_empty());
 
-    let plans =
-        exhaust_physical_plans_4_logical_limit(&limit, &PhysicalProperty::default(), &allocator);
+    let required = PhysicalProperty {
+        cte_producer_status: crate::physical_property::CteProducerStatus::AllCteCanMpp,
+        no_cop_push_down: true,
+        ..PhysicalProperty::default()
+    };
+    let plans = exhaust_physical_plans_4_logical_limit(&limit, &required, &allocator);
     assert_eq!(plans.len(), 3);
     let expected = [
         TaskType::CopSingleRead,
@@ -823,6 +863,11 @@ fn a_limit_enumerates_the_three_task_types_in_order() {
         assert_eq!(built.count, 20);
         let child = built.base.child_req_prop(0).expect("child prop");
         assert_eq!(child.task_tp, tp);
+        assert_eq!(
+            child.cte_producer_status,
+            crate::physical_property::CteProducerStatus::AllCteCanMpp
+        );
+        assert!(child.no_cop_push_down);
         assert!(
             (child.expected_cnt - 25.0).abs() < f64::EPSILON,
             "Count + Offset"
@@ -889,6 +934,8 @@ fn a_union_all_fans_one_child_property_per_child() {
 
     let prop = PhysicalProperty {
         expected_cnt: 7.0,
+        cte_producer_status: crate::physical_property::CteProducerStatus::AllCteCanMpp,
+        no_cop_push_down: true,
         ..PhysicalProperty::default()
     };
     let plans = exhaust_physical_plans_4_logical_union_all(&union, &prop, &allocator, 1.0);
@@ -899,6 +946,14 @@ fn a_union_all_fans_one_child_property_per_child() {
     assert!(!built.mpp);
     assert!(built.base.child_req_prop(0).is_some() && built.base.child_req_prop(1).is_some());
     assert!((built.base.child_req_prop(1).expect("prop").expected_cnt - 7.0).abs() < f64::EPSILON);
+    for child_idx in 0..2 {
+        let child = built.base.child_req_prop(child_idx).expect("child prop");
+        assert_eq!(
+            child.cte_producer_status,
+            crate::physical_property::CteProducerStatus::AllCteCanMpp
+        );
+        assert!(child.no_cop_push_down);
+    }
 
     let partition = LogicalPartitionUnionAll { union_all: union };
     let plans =

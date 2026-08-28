@@ -224,13 +224,11 @@ impl std::fmt::Display for SortItem {
 
 /// The physical property a parent requires of a child.
 ///
-/// `property.PhysicalProperty`.  This port carries the three fields that
-/// decide a plan's SHAPE -- the required order, the task type, and the row
-/// cap -- because those are the ones a required-order flow reads.  The
-/// source's MPP partitioning, CTE producer status, vector-search, index-join
-/// runtime, partial-order and advisory-order fields belong to planner layers
-/// that are not built here, and are deliberately absent rather than stubbed:
-/// an absent field cannot be read as a wrong answer.
+/// `property.PhysicalProperty`. This port carries the fields that decide a
+/// plan's shape -- including Go's root-only aggregation gate -- and the
+/// additional fields already consumed by the wired planner. The source's
+/// MPP partition columns, vector-search, partial-order, and advisory-order
+/// fields remain outside this layer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PhysicalProperty {
     /// The required sort attributes, outermost first.
@@ -249,6 +247,9 @@ pub struct PhysicalProperty {
     /// consumer builds, so a producer that cannot run MPP poisons the whole
     /// sequence's MPP choice.
     pub cte_producer_status: CteProducerStatus,
+    /// Go `NoCopPushDown`: force aggregation to stay at the root. This is an
+    /// essential property and must survive every child-property clone.
+    pub no_cop_push_down: bool,
     /// Go `IndexJoinProp`; present only while planning an index join's inner
     /// child and the pass-through operators admitted by Go.
     pub index_join_prop: Option<IndexJoinRuntimeProp>,
@@ -267,6 +268,7 @@ impl Default for PhysicalProperty {
             can_add_enforcer: false,
             sort_items_for_partition: Vec::new(),
             cte_producer_status: CteProducerStatus::default(),
+            no_cop_push_down: false,
             index_join_prop: None,
         }
     }
@@ -290,6 +292,7 @@ impl PhysicalProperty {
             can_add_enforcer: enforced,
             sort_items_for_partition: Vec::new(),
             cte_producer_status: CteProducerStatus::default(),
+            no_cop_push_down: false,
             index_join_prop: None,
         }
     }
@@ -298,7 +301,7 @@ impl PhysicalProperty {
     /// field set. Two absences are Go's own: `CanAddEnforcer` is NOT copied
     /// (the clone defaults to false — an enforcer admission never rides
     /// down to a child property), and `indexJoinProp` is "default not to
-    /// clone" (unported here anyway).
+    /// clone".
     #[must_use]
     pub fn clone_essential_fields(&self) -> Self {
         Self {
@@ -308,6 +311,7 @@ impl PhysicalProperty {
             expected_cnt: self.expected_cnt,
             can_add_enforcer: false,
             cte_producer_status: self.cte_producer_status,
+            no_cop_push_down: self.no_cop_push_down,
             index_join_prop: None,
         }
     }
@@ -387,7 +391,7 @@ impl std::fmt::Display for PhysicalProperty {
 
 #[cfg(test)]
 mod required_property_tests {
-    use super::{PhysicalProperty, SortItem, TaskType};
+    use super::{CteProducerStatus, PhysicalProperty, SortItem, TaskType};
 
     /// `AllSameOrder` answers `(true, false)` for the EMPTY property, which is
     /// what lets a parent with no order of its own still demand an ascending
@@ -437,5 +441,20 @@ mod required_property_tests {
             prop.to_string(),
             "Prop{cols: [{7 desc}], TaskTp: copSingleReadTask, expectedCount: 10}"
         );
+    }
+
+    #[test]
+    fn essential_clone_preserves_cte_and_no_cop_but_not_enforcer_or_index_join() {
+        let prop = PhysicalProperty {
+            can_add_enforcer: true,
+            cte_producer_status: CteProducerStatus::AllCteCanMpp,
+            no_cop_push_down: true,
+            ..PhysicalProperty::default()
+        };
+        let cloned = prop.clone_essential_fields();
+        assert_eq!(cloned.cte_producer_status, CteProducerStatus::AllCteCanMpp);
+        assert!(cloned.no_cop_push_down);
+        assert!(!cloned.can_add_enforcer);
+        assert!(cloned.index_join_prop.is_none());
     }
 }

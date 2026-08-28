@@ -520,8 +520,10 @@ pub fn exhaust_physical_plans_4_logical_sort(
         base.base.set_stats(stats.clone());
         base.base.set_schema(sort.base.base.schema().cloned());
         base.set_children_req_props(vec![Some(PhysicalProperty {
-            task_tp: TaskType::Root,
+            task_tp: prop.task_tp,
             expected_cnt: f64::MAX,
+            cte_producer_status: prop.cte_producer_status,
+            no_cop_push_down: prop.no_cop_push_down,
             ..PhysicalProperty::default()
         })]);
         plans.push(PhysicalPlan::Sort(PhysicalSort {
@@ -543,6 +545,7 @@ pub fn exhaust_physical_plans_4_logical_sort(
             task_tp: TaskType::Root,
             expected_cnt: prop.expected_cnt,
             sort_items: items,
+            no_cop_push_down: prop.no_cop_push_down,
             ..PhysicalProperty::default()
         })]);
         plans.push(PhysicalPlan::NominalSort(NominalSort {
@@ -593,8 +596,8 @@ pub struct PhysicalLimit {
 ///
 /// Go appends an MPP candidate when TiFlash is present and MPP allowed;
 /// with no TiFlash tier that guard evaluates false exactly as on a
-/// TiFlash-less Go cluster. `CTEProducerStatus`/`NoCopPushDown` narrow with
-/// the unported property fields.
+/// TiFlash-less Go cluster. Every child property also preserves the
+/// parent's `CTEProducerStatus` and `NoCopPushDown` requirements.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_limit(
     p: &crate::logical::LogicalLimit,
@@ -614,6 +617,8 @@ pub fn exhaust_physical_plans_4_logical_limit(
         let result_prop = PhysicalProperty {
             task_tp: tp,
             expected_cnt: (p.count + p.offset) as f64,
+            cte_producer_status: prop.cte_producer_status,
+            no_cop_push_down: prop.no_cop_push_down,
             ..PhysicalProperty::default()
         };
         let mut base = BasePhysicalPlan::new(
@@ -778,10 +783,8 @@ pub struct NominalSort {
 ///
 /// Go's second return value is `true` (enumeration complete) in both arms
 /// and its error is always nil, so the return narrows to the plan list.
-/// Narrowed with it: `RaiseWarningWhenMPPEnforced` on the refusing arm (no
-/// session-vars warning sink) and the `CTEProducerStatus` /
-/// `NoCopPushDown` child-property fields (unported on
-/// [`PhysicalProperty`]).
+/// `RaiseWarningWhenMPPEnforced` on the refusing arm narrows with the absent
+/// session-vars warning sink.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_max_one_row(
     p: &crate::logical::LogicalMaxOneRow,
@@ -799,6 +802,8 @@ pub fn exhaust_physical_plans_4_logical_max_one_row(
     base.base.set_stats(p.base.base.stats_info().cloned());
     base.set_children_req_props(vec![Some(PhysicalProperty {
         expected_cnt: 2.0,
+        cte_producer_status: prop.cte_producer_status,
+        no_cop_push_down: prop.no_cop_push_down,
         ..PhysicalProperty::default()
     })]);
     vec![PhysicalPlan::MaxOneRow(PhysicalMaxOneRow { base })]
@@ -1022,7 +1027,8 @@ pub struct PhysicalUnionAll {
 /// the extra `mppUA` beside the root candidate — are gated on
 /// `IsMPPAllowed` over a TiFlash-backed cluster; with no TiFlash tier they
 /// narrow away as in [`exhaust_physical_plans_4_logical_limit`].
-/// `CTEProducerStatus`/`NoCopPushDown` narrow with the unported fields.
+/// Every child property preserves the parent's `CTEProducerStatus` and
+/// `NoCopPushDown` requirements.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_union_all(
     p: &crate::logical::LogicalUnionAll,
@@ -1037,6 +1043,8 @@ pub fn exhaust_physical_plans_4_logical_union_all(
         .map(|_| {
             Some(PhysicalProperty {
                 expected_cnt: prop.expected_cnt,
+                cte_producer_status: prop.cte_producer_status,
+                no_cop_push_down: prop.no_cop_push_down,
                 ..PhysicalProperty::default()
             })
         })
@@ -1440,6 +1448,7 @@ pub fn match_items(prop: &PhysicalProperty, items: &[tidb_expr::aggregation::ByI
 #[must_use]
 pub fn get_phys_limits(
     topn: &crate::logical::LogicalTopN,
+    prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Vec<PhysicalPlan> {
     let Some(sort_items) = get_prop_by_order_by_items(&topn.by_items) else {
@@ -1456,6 +1465,8 @@ pub fn get_phys_limits(
             task_tp: tp,
             expected_cnt: (topn.count + topn.offset) as f64,
             sort_items: sort_items.clone(),
+            cte_producer_status: prop.cte_producer_status,
+            no_cop_push_down: prop.no_cop_push_down,
             ..PhysicalProperty::default()
         };
         let mut base = BasePhysicalPlan::new(
@@ -1505,6 +1516,7 @@ pub struct PhysicalTopN {
 #[must_use]
 pub fn get_phys_topn(
     topn: &crate::logical::LogicalTopN,
+    prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Vec<PhysicalPlan> {
     let all_task_types = [
@@ -1517,6 +1529,8 @@ pub fn get_phys_topn(
         let result_prop = PhysicalProperty {
             task_tp: tp,
             expected_cnt: f64::MAX,
+            cte_producer_status: prop.cte_producer_status,
+            no_cop_push_down: prop.no_cop_push_down,
             ..PhysicalProperty::default()
         };
         let mut base = BasePhysicalPlan::new(
@@ -1570,16 +1584,22 @@ pub fn get_hash_aggs(
     if !prop.is_sort_item_empty() {
         return Vec::new();
     }
-    let task_types = [
-        TaskType::CopSingleRead,
-        TaskType::CopMultiRead,
-        TaskType::Root,
-    ];
+    let task_types: &[TaskType] = if prop.no_cop_push_down {
+        &[TaskType::Root]
+    } else {
+        &[
+            TaskType::CopSingleRead,
+            TaskType::CopMultiRead,
+            TaskType::Root,
+        ]
+    };
     let mut hash_aggs = Vec::with_capacity(task_types.len());
-    for tp in task_types {
+    for &tp in task_types {
         let child_prop = PhysicalProperty {
             task_tp: tp,
             expected_cnt: f64::MAX,
+            cte_producer_status: prop.cte_producer_status,
+            no_cop_push_down: prop.no_cop_push_down,
             index_join_prop: prop.index_join_prop.clone(),
             ..PhysicalProperty::default()
         };
@@ -1674,7 +1694,7 @@ pub fn get_stream_aggs(
         if !prop.is_prefix(&child_prop_probe) {
             continue;
         }
-        let task_types: &[TaskType] = if agg.has_distinct() {
+        let task_types: &[TaskType] = if prop.no_cop_push_down || agg.has_distinct() {
             &[TaskType::Root]
         } else {
             &[TaskType::CopSingleRead, TaskType::Root]
@@ -1684,6 +1704,7 @@ pub fn get_stream_aggs(
                 task_tp: tp,
                 expected_cnt: expected,
                 sort_items: child_sort.clone(),
+                no_cop_push_down: prop.no_cop_push_down,
                 index_join_prop: prop.index_join_prop.clone(),
                 ..PhysicalProperty::default()
             };
@@ -1730,6 +1751,7 @@ pub fn get_stream_aggs(
                     expected_cnt: expected,
                     sort_items: child_sort.clone(),
                     can_add_enforcer: true,
+                    no_cop_push_down: prop.no_cop_push_down,
                     index_join_prop: prop.index_join_prop.clone(),
                     ..PhysicalProperty::default()
                 };

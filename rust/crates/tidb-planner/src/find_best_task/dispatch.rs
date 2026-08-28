@@ -309,11 +309,11 @@ fn exhaust_physical_plans(
             // Go's two preference slices, in order: the TopN operators
             // (`getPhysTopN`), then the LIMIT half (`getPhysLimits`).
             let mut slices = Vec::with_capacity(2);
-            let topns = physical::get_phys_topn(op, ctx.allocator);
+            let topns = physical::get_phys_topn(op, prop, ctx.allocator);
             if !topns.is_empty() {
                 slices.push(topns);
             }
-            let limits = physical::get_phys_limits(op, ctx.allocator);
+            let limits = physical::get_phys_limits(op, prop, ctx.allocator);
             if !limits.is_empty() {
                 slices.push(limits);
             }

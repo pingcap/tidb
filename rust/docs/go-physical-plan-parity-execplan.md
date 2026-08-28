@@ -422,6 +422,12 @@ both `oltp_read_only` and `oltp_read_write`.
   `PhysicalJoin` interface—is represented directly by the wired
   `PhysicalPlan::Apply` dispatch, and both the casetest and difftest now run
   against that real operator instead of a second test-only type.
+- [x] 2026-08-28: added Go's `PhysicalProperty.NoCopPushDown` to the wired
+  property and propagated it through the same active operator families as Go:
+  joins, Sort enforcers, Limit/TopN, MaxOneRow, UnionAll, HashAgg, and
+  StreamAgg. The fail-before regression observed MaxOneRow discard both the
+  CTE status and root-only aggregation requirement; after the fix HashAgg and
+  ordinary StreamAgg enumerate only root candidates under that property.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
@@ -528,6 +534,18 @@ both `oltp_read_only` and `oltp_read_write`.
   Evidence: `driver/planner_bridge.rs`, `driver/merge_decision.rs`,
   `driver/index_join_decision.rs`, and the targeted Go oracle tests recorded in
   this plan.
+
+- Observation: the disconnected `physical_max_one_row` facade carried a
+  `no_cop_push_down` boolean that the wired `PhysicalProperty` did not. The
+  missing field was not isolated metadata: Go copies it through pass-through
+  operators and join child properties, then uses it to suppress coprocessor
+  HashAgg and StreamAgg candidates. Deleting the facade without first moving
+  that contract onto the wired property would have erased a real planner
+  behavior.
+  Evidence: `pkg/planner/property/physical_property.go::CloneEssentialFields`,
+  Go's `physical_{hash_agg,stream_agg,max_one_row,limit,topn,union_all}.go`,
+  `physical_merge_join.go`, and the Rust fail-before/pass-after
+  `max_one_row_and_hash_agg_preserve_the_no_cop_requirement` regression.
 
 - Observation: Rust's previous `parallelism > 1` sort path drained the entire
   child into one partition and only distributed chunks after EOF. It could

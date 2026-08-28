@@ -52,7 +52,7 @@
 //!   Go's COST are different objectives -- fidelity is the objective here.
 //!
 use crate::logical::LogicalPlan;
-use crate::physical_property::{CteProducerStatus, PhysicalProperty, SortItem, TaskType};
+use crate::physical_property::{PhysicalProperty, SortItem, TaskType};
 use crate::plan_base::PlanError;
 use crate::plan_cost_ver2::IndexJoinKind;
 
@@ -278,10 +278,13 @@ fn merge_join_child_props(
             return None;
         }
     }
-    Some([
-        PhysicalProperty::new(TaskType::Root, left_keys, desc, f64::MAX, false),
-        PhysicalProperty::new(TaskType::Root, right_keys, desc, f64::MAX, false),
-    ])
+    let child_prop = |keys| {
+        let mut child = PhysicalProperty::new(TaskType::Root, keys, desc, f64::MAX, false);
+        child.cte_producer_status = prop.cte_producer_status;
+        child.no_cop_push_down = prop.no_cop_push_down;
+        child
+    };
+    Some([child_prop(left_keys), child_prop(right_keys)])
 }
 
 /// `getHashJoins`'s per-join-type shapes, with no build/probe hints.
@@ -383,7 +386,8 @@ fn enforced_merge_join_candidates(
         expected_cnt: f64::MAX,
         can_add_enforcer: true,
         sort_items_for_partition: Vec::new(),
-        cte_producer_status: CteProducerStatus::default(),
+        cte_producer_status: prop.cte_producer_status,
+        no_cop_push_down: prop.no_cop_push_down,
         index_join_prop: None,
     };
     vec![EnumeratedJoin {
@@ -470,8 +474,14 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
             expected_cnt: prop.expected_cnt,
             can_add_enforcer: false,
             sort_items_for_partition: Vec::new(),
-            cte_producer_status: CteProducerStatus::default(),
+            cte_producer_status: prop.cte_producer_status,
+            no_cop_push_down: prop.no_cop_push_down,
             index_join_prop: None,
+        };
+        child_props[1 - outer_idx] = PhysicalProperty {
+            cte_producer_status: prop.cte_producer_status,
+            no_cop_push_down: prop.no_cop_push_down,
+            ..PhysicalProperty::default()
         };
         // The inner side is planned under an empty property plus the index-join
         // runtime prop, which this port carries as the strategy's own
@@ -517,7 +527,8 @@ fn hash_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enum
         expected_cnt: f64::MAX,
         can_add_enforcer: false,
         sort_items_for_partition: Vec::new(),
-        cte_producer_status: CteProducerStatus::default(),
+        cte_producer_status: prop.cte_producer_status,
+        no_cop_push_down: prop.no_cop_push_down,
         index_join_prop: None,
     };
     let mut candidates = Vec::new();
@@ -604,3 +615,38 @@ pub(crate) fn project_one_join(
 
 pub mod coster;
 pub mod dispatch;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::physical_property::CteProducerStatus;
+
+    #[test]
+    fn every_join_candidate_preserves_cte_and_no_cop_requirements() {
+        let join = LogicalJoin {
+            join_type: LogicalJoinType::Inner,
+            left_keys: vec![1],
+            right_keys: vec![2],
+            left_schema: vec![1],
+            right_schema: vec![2],
+            left_properties: vec![vec![1]],
+            right_properties: vec![vec![2]],
+            force_merge: false,
+            has_null_eq: false,
+            keys_contain_enum_or_set: false,
+        };
+        let prop = PhysicalProperty {
+            cte_producer_status: CteProducerStatus::AllCteCanMpp,
+            no_cop_push_down: true,
+            ..PhysicalProperty::default()
+        };
+        let candidates = exhaust_join(&join, &prop);
+        assert!(!candidates.is_empty());
+        for candidate in candidates {
+            for child in candidate.child_props {
+                assert_eq!(child.cte_producer_status, CteProducerStatus::AllCteCanMpp);
+                assert!(child.no_cop_push_down);
+            }
+        }
+    }
+}
