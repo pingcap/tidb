@@ -16,10 +16,11 @@
 //!
 //! This is the Rust counterpart of Go
 //! `pkg/planner/core/plan_cache_rebuild.go`.  A cache entry retains one
-//! immutable [`PhysicalPlan`] tree.  A hit deep-clones that tree, resolves
-//! every `ParamMarker`/deferred constant for the current execution, and
-//! recursively rebuilds scan ranges in both ordinary child lists and the
-//! pushed-down plans owned by reader operators.
+//! [`PhysicalPlan`] tree. A hit resolves every `ParamMarker`/deferred constant
+//! on that retained tree and recursively rebuilds scan ranges in both ordinary
+//! child lists and the pushed-down plans owned by reader operators. The cache
+//! owner serializes this mutation, matching Go's in-place rebuild of a
+//! session-local cached plan.
 //!
 //! Range construction deliberately uses a zero memory limit.  Go does the
 //! same: the original plan already proved that the complete access range can
@@ -238,10 +239,10 @@ fn bind_expression(
                     .and_then(|order| context.parameters.get(order))
                     .ok_or(PlanCacheRebuildError::MissingParameter(marker.order))?;
                 constant.replace_cached_value(value.clone());
-                // This is a private execute-time clone. The executor has no
-                // session parameter store to consult, so materialize the
-                // marker as an ordinary literal after resolving it.
-                constant.param_marker = None;
+                // Keep the marker on the retained cached tree so the next
+                // execution can replace the value again. Go's Constant reads
+                // the current session parameter through the same persistent
+                // marker during every RebuildPlan4CachedPlan call.
                 return Ok(());
             }
             if let Some(deferred) = constant.deferred_expr.as_mut() {
@@ -252,7 +253,6 @@ fn bind_expression(
                 let value =
                     evaluator(deferred).map_err(PlanCacheRebuildError::DeferredEvaluation)?;
                 constant.replace_cached_value(value);
-                constant.deferred_expr = None;
             }
             Ok(())
         }
@@ -607,9 +607,9 @@ fn update_inner_scan_ranges(plan: &mut PhysicalPlan, ranges: &Ranges) -> bool {
     }
 }
 
-/// Recursively rebuilds every parameter-dependent range in one private plan
-/// clone.  Reader-owned pushed-down trees are walked explicitly because they
-/// are not ordinary `PhysicalPlan::children()` entries.
+/// Recursively rebuilds every parameter-dependent range in one retained plan.
+/// Reader-owned pushed-down trees are walked explicitly because they are not
+/// ordinary `PhysicalPlan::children()` entries.
 pub fn rebuild_ranges_for_cached_plan(
     plan: &mut PhysicalPlan,
     context: &CachedPlanRebuildContext<'_>,
@@ -699,14 +699,28 @@ pub fn rebuild_ranges_for_cached_plan(
 }
 
 impl PhysicalPlan {
-    /// Go `RebuildPlan4CachedPlan`: clone the cached physical tree and rebuild
-    /// its parameter-derived state for this execution.
+    /// Rebuilds this retained cached tree for the current execution.
+    ///
+    /// The caller must serialize access to the tree. This is Go's
+    /// `RebuildPlan4CachedPlan` ownership model: a session cache entry is
+    /// reused and its parameter-derived state is refreshed in place.
+    pub fn rebuild_plan_for_cache_in_place(
+        &mut self,
+        context: &CachedPlanRebuildContext<'_>,
+    ) -> Result<(), PlanCacheRebuildError> {
+        rebuild_ranges_for_cached_plan(self, context)
+    }
+
+    /// Produces a privately rebuilt copy without changing this template.
+    ///
+    /// This remains useful to callers that do not own a serialized cache
+    /// entry. The prepared-plan cache uses the in-place method above.
     pub fn rebuild_plan_for_cache(
         &self,
         context: &CachedPlanRebuildContext<'_>,
     ) -> Result<Self, PlanCacheRebuildError> {
         let mut rebuilt = self.deep_clone();
-        rebuild_ranges_for_cached_plan(&mut rebuilt, context)?;
+        rebuilt.rebuild_plan_for_cache_in_place(context)?;
         Ok(rebuilt)
     }
 }

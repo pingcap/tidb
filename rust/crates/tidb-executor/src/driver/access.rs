@@ -446,7 +446,7 @@ enum PreparedParameterType {
 }
 
 /// One cache hit: a privately bound AST plus the decision extracted from the
-/// privately cloned and recursively rebuilt physical tree.
+/// cache-owned, recursively rebuilt physical tree.
 #[derive(Clone, Debug)]
 pub struct PreparedSelectExecution {
     plan: Arc<PreparedSelectPlan>,
@@ -483,7 +483,7 @@ impl PreparedSelectPlan {
         let tidb_ast::Stmt::Query(query) = statement else {
             return None;
         };
-        let tidb_ast::QueryStmt::Select(select) = &*query else {
+        let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
             return None;
         };
         let parameter_types = values
@@ -502,7 +502,7 @@ impl PreparedSelectPlan {
         let schema_version = catalog.metadata_version();
         let stats_version_hash = self.stats_version_hash(catalog, environment);
         let mut cached_plans = self.cached_plans.lock().ok()?;
-        let cached = cached_plans.iter().find(|entry| {
+        let cached = cached_plans.iter().position(|entry| {
             entry.schema_version == schema_version
                 && entry.stats_version_hash == stats_version_hash
                 && entry.environment == *environment
@@ -510,15 +510,24 @@ impl PreparedSelectPlan {
                 && entry.limit_values == limit_values
         });
         let (decision, cache_hit) = match cached {
-            Some(entry) => (entry.plan.bind(values)?, true),
+            Some(index) => match cached_plans[index].plan.bind(values) {
+                Some(decision) => (decision, true),
+                None => {
+                    // Go rejects a cache entry whose in-place range rebuild
+                    // fails and generates a fresh plan. Do not leave a
+                    // partially rebuilt tree available to the next execute.
+                    cached_plans.remove(index);
+                    return None;
+                }
+            },
             None => {
                 cached_plans.retain(|entry| {
                     entry.schema_version == schema_version
                         && entry.stats_version_hash == stats_version_hash
                         && entry.environment == *environment
                 });
-                let plan = super::planner_bridge::cached_select_plan(
-                    select,
+                let mut plan = super::planner_bridge::cached_select_plan(
+                    &select,
                     catalog,
                     current_database,
                     ctx,
@@ -539,7 +548,7 @@ impl PreparedSelectPlan {
             plan: Arc::clone(self),
             schema_version,
             cache_hit,
-            select: (**select).clone(),
+            select: *select,
             decision,
         })
     }

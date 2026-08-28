@@ -502,10 +502,33 @@ fn access_filter(conditions: &[Expression], logical: &LogicalPlan) -> Option<Acc
             columns.push((column.unique_id, name));
         }
     }
+    let mut conditions = conditions.to_vec();
+    for condition in &mut conditions {
+        materialize_cached_expression(condition);
+    }
     Some(AccessFilter {
-        conditions: conditions.to_vec(),
+        conditions,
         columns,
     })
+}
+
+/// The retained physical tree keeps parameter/deferred markers for its next
+/// in-place rebuild. The per-execution lowering receipt is private, so detach
+/// those markers from its cloned expressions after their current values have
+/// been materialized.
+fn materialize_cached_expression(expression: &mut Expression) {
+    match expression {
+        Expression::Column(_) | Expression::CorrelatedColumn(_) => {}
+        Expression::Constant(constant) => {
+            constant.param_marker = None;
+            constant.deferred_expr = None;
+        }
+        Expression::ScalarFunction(function) => {
+            for argument in &mut function.args {
+                materialize_cached_expression(argument);
+            }
+        }
+    }
 }
 
 fn merge_filter(target: &mut AccessFilter, extra: AccessFilter) {
@@ -1332,14 +1355,13 @@ pub(crate) struct CachedSelectPlan {
 }
 
 impl CachedSelectPlan {
-    pub(crate) fn bind(&self, values: &[tidb_datatype::Datum]) -> Option<AggregationDecision> {
-        let physical = self
-            .physical
-            .rebuild_plan_for_cache(
+    pub(crate) fn bind(&mut self, values: &[tidb_datatype::Datum]) -> Option<AggregationDecision> {
+        self.physical
+            .rebuild_plan_for_cache_in_place(
                 &tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values),
             )
             .ok()?;
-        decision_from_plans(&self.select, &self.logical, &physical)
+        decision_from_plans(&self.select, &self.logical, &self.physical)
     }
 }
 

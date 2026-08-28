@@ -48,7 +48,7 @@ both `oltp_read_only` and `oltp_read_write`.
 - [x] 2026-08-27: discovered and selected the existing cloneable
   `tidb_planner::physical::PhysicalPlan` tree as the one representation to
   promote; rejected creation of a second executor-local tree.
-- [ ] Complete the existing immutable Rust physical-plan tree's operator and
+- [ ] Complete the existing reusable Rust physical-plan tree's operator and
   parameter-slot coverage. Cache-rebuild variants are present for every Go
   rebuild node, but the planner tree still contains explicit `Todo` operators.
 - [x] 2026-08-27: ordinary SELECT planning now builds and costs one shared
@@ -100,6 +100,15 @@ both `oltp_read_only` and `oltp_read_write`.
   Context/cache-key state is now completed before the catalog guard, and a
   cluster prepared-range regression completes through the shared physical
   tree and ordinary timestamped snapshot.
+- [x] 2026-08-27: changed prepared-cache hits from deep-cloning and discarding
+  the complete physical tree to Go-compatible in-place recursive rebuild under
+  the cache mutex. Parameter/deferred markers remain on the retained tree,
+  execution receipts receive marker-free expression clones, and a failed
+  rebuild evicts the partially rebuilt entry before ordinary replanning.
+- [x] 2026-08-27: removed Rust-only successful snapshot-read receipts from the
+  transaction coordinator. Resolved/committed lock sets and failure/publication
+  state remain; ordinary point, batch, and scan reads no longer append and
+  clone a growing diagnostic vector that Go's `KVSnapshot` does not own.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -213,6 +222,23 @@ both `oltp_read_only` and `oltp_read_write`.
   `a_prepared_range_executes_the_general_cached_plan` and its 0.02-second
   pass after reordering context construction.
 
+- Observation: Rust's supposedly general prepared cache rebuilt a deep clone
+  of the complete `PhysicalPlan` on every hit and discarded that clone after
+  extracting an executor receipt. Go mutates the session-local cached physical
+  plan in `RebuildPlan4CachedPlan`. Retaining parameter markers while rebuilding
+  the cache-owned tree removes the extra allocation/walk without changing the
+  chosen operator shape.
+  Evidence: `physical_plan_cache::bind_expression`,
+  `PreparedSelectPlan::bind`, and the consecutive-parameter rebuild regression.
+
+- Observation: Rust also retained one successful publication receipt per
+  snapshot point/batch/scan read. Go's `KVSnapshot` retains lock-resolution,
+  cache, request, and visibility state but no equivalent success-history
+  vector. That Rust-only state grew and cloned publication data on the read
+  path even though it drove no correctness decision.
+  Evidence: pinned client-go `txnkv/txnsnapshot/snapshot.go` and the removed
+  `SnapshotReadReceipt` ownership in `tidb-txnkv`.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -223,13 +249,13 @@ both `oltp_read_only` and `oltp_read_write`.
   Date/Author: 2026-08-27, Codex with user confirmation.
 
 - Decision: promote the existing `tidb_planner::physical::PhysicalPlan` as the
-  sole immutable physical-plan tree plus fresh runtime executor instantiation,
-  not cached live executor objects and not a new executor-local enum.
+  sole cache-owned physical-plan tree plus fresh runtime executor
+  instantiation, not cached live executor objects and not a new executor-local
+  enum. The prepared cache serializes range/expression rebuild of that tree.
   Rationale: executor cursors, chunks, memory trackers, cancellation handles,
   and transaction snapshots are statement-local. Caching them would leak state
-  across executions. Go's mutable physical nodes combine template and runtime
-  concerns; Rust ownership is safer when the reusable decisions are immutable
-  and execution state is rebuilt.
+  across executions. The cached tree may mutate parameter-derived planning
+  state, while runtime cursors and execution state are always rebuilt.
   Date/Author: 2026-08-27, Codex.
 
 - Decision: represent parameters as typed slots in scan/range expressions and
@@ -270,6 +296,13 @@ both `oltp_read_only` and `oltp_read_write`.
   mutex. Holding the guard while asking the session to snapshot sequences is
   necessarily recursive.
   Date/Author: 2026-08-27, Codex.
+
+- Decision: retain parameter and deferred-expression identity on the
+  cache-owned tree, materialize marker-free clones only when lowering a
+  statement execution, and evict the cache entry if in-place rebuild fails.
+  Rationale: later executions need the original binding source, executors must
+  not attempt session-parameter evaluation, and a failed recursive rebuild may
+  otherwise leave mixed old/new ranges in the retained tree.
   Date/Author: 2026-08-27, Codex.
 
 - Decision: tests must observe executor and transport behavior at their public
@@ -282,11 +315,15 @@ both `oltp_read_only` and `oltp_read_write`.
 
 ## Outcomes & Retrospective
 
-Work is in progress. The preceding performance phase established a paired
-baseline of 1.028x Go for read-only and 1.007x for a clean read-write pair, but
-left the five architectural gaps named in this plan. This section must be
-updated after every milestone with measured behavior, remaining inventory, and
-any rejected design.
+Work is in progress. After restoring point-plan precedence and removing the
+catalog-lock recursion, a one-sample root smoke measured Rust/Go ratios of
+1.095 for read-only and 0.827 for read-write. A decomposed read-write run then
+showed Rust already faster for the no-read write path, isolating the remaining
+gap to read work. After removing successful-read receipts and changing cached
+physical rebuild to in-place ownership, one immediate diagnostic sample moved
+the all-query ratio from 0.792 to 0.933 and the point-read ratio from 0.945 to
+1.014; the range control was noisy and these single samples are diagnostic,
+not acceptance evidence. Alternating multi-sample validation remains.
 
 ## Context and Orientation
 
@@ -307,13 +344,15 @@ retain that tree and recursively rebuild its parameter-dependent ranges.
 `tidb-executor/src/driver/planner_bridge.rs` converts the tree into stable
 receipts, and the executor driver instantiates fresh runtime state from them.
 
-In this plan, a “physical-plan tree” means an immutable value describing
+In this plan, a “physical-plan tree” means a reusable value describing
 chosen operators, schemas, access paths, pushed predicates and aggregates,
 required ordering, estimates, and typed parameter slots. It contains no open
-storage cursor or mutable executor state. “Instantiation” means turning that
-tree into fresh `Box<dyn Executor>` objects for one statement. “Rebuild” means
-binding current parameter values into typed slots and deriving ranges without
-changing access path, join order, aggregation family, or reader boundary.
+storage cursor or executor runtime state. A prepared cache owns and serializes
+its tree while rebuild mutates only parameter-derived constants and ranges.
+“Instantiation” means turning that tree into fresh `Box<dyn Executor>` objects
+for one statement. “Rebuild” means binding current parameter values into typed
+slots and deriving ranges without changing access path, join order,
+aggregation family, or reader boundary.
 
 Hash aggregation lives in `rust/crates/tidb-executor/src/hash_agg.rs` and
 `rust/crates/tidb-executor/src/hash_agg/parallel.rs`. Go's counterpart is
@@ -359,10 +398,11 @@ deleted.
 
 Milestone 3 stores the general physical plan in the prepared statement cache.
 A recursive rebuild visitor binds parameters and recomputes ranges for every
-Go-supported cache node. Rebuild returns a new bound plan or a typed refusal;
-it never mutates a plan shared by concurrent sessions. The execution route
-instantiates the bound plan, records metadata-lock tables, and preserves all
-session invalidation gates. Delete `PreparedRangeSelectPlan`,
+Go-supported cache node. Rebuild mutates the cache-owned tree under its mutex;
+a typed refusal evicts that entry before ordinary replanning so a partial
+rebuild is never reused. The execution route instantiates statement-local
+state, records metadata-lock tables, and preserves all session invalidation
+gates. Delete `PreparedRangeSelectPlan`,
 `PreparedRangeSelectRoot`, and their server/session special route after the
 general tests pass.
 
@@ -527,12 +567,13 @@ complete. Do not paste full logs.
 
 ## Interfaces and Dependencies
 
-The existing `tidb_planner::physical::PhysicalPlan` module should expose
-additional immutable types similar to:
+The existing `tidb_planner::physical::PhysicalPlan` module should expose a
+serialized cached-plan rebuild and statement-local instantiation boundary
+similar to:
 
     pub(crate) trait RebuildCachedPlan {
-        fn rebuild(&self, parameters: &[Datum], context: &RebuildContext)
-            -> Result<BoundPhysicalPlan, CacheRefusal>;
+        fn rebuild_in_place(&mut self, parameters: &[Datum], context: &RebuildContext)
+            -> Result<(), CacheRefusal>;
     }
 
     pub(crate) trait InstantiatePhysicalPlan {
@@ -541,8 +582,8 @@ additional immutable types similar to:
     }
 
 Exact names may change to match package conventions, but the separation among
-immutable decisions, bound parameter values, and statement-local executor
-state is mandatory.
+cache-owned planning state, bound parameter values, and statement-local
+executor state is mandatory.
 
 The scheduler must use existing repository dependencies where possible. Do not
 add a new runtime or queue crate without first proving that the existing

@@ -204,6 +204,40 @@ fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template()
 }
 
 #[test]
+fn cached_plan_rebuilds_the_same_tree_for_consecutive_parameter_sets() {
+    use crate::physical_plan_cache::{CachedPlanRebuildContext, TableRangeRebuild};
+
+    let int_type = FieldType::new(FieldTypeCode::LongLong);
+    let handle = Column::new(1, int_type.clone());
+    let mut cached = scan(31, &[1]);
+    let PhysicalPlan::TableScan(scan) = &mut cached else {
+        unreachable!();
+    };
+    scan.ranges = vec![point_range(0)];
+    scan.range_rebuild = Some(TableRangeRebuild::int_handle(
+        vec![parameter_condition("eq", handle, 0)],
+        int_type,
+        false,
+    ));
+
+    cached
+        .rebuild_plan_for_cache_in_place(&CachedPlanRebuildContext::new(&[Datum::Int(3)]))
+        .expect("the first cache hit rebuilds the retained tree");
+    let PhysicalPlan::TableScan(scan) = &cached else {
+        unreachable!();
+    };
+    assert_eq!(scan.ranges[0].low_val, vec![Datum::Int(3)]);
+
+    cached
+        .rebuild_plan_for_cache_in_place(&CachedPlanRebuildContext::new(&[Datum::Int(7)]))
+        .expect("parameter markers survive for the next cache hit");
+    let PhysicalPlan::TableScan(scan) = &cached else {
+        unreachable!();
+    };
+    assert_eq!(scan.ranges[0].low_val, vec![Datum::Int(7)]);
+}
+
+#[test]
 fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
     use crate::physical_plan_cache::{
         CachedPlanRebuildContext, IndexRangeRebuild, PointRangeRebuild, TableRangeRebuild,
