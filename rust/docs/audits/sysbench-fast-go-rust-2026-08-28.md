@@ -6,8 +6,8 @@
 - Shape: three Go TiDB listeners and three Rust listeners sharing three TiKV
   stores; `lbhover` listeners were used for engine selection.
 - Concurrency: 10 threads.
-- Rust source: `hparser-integration` at `2b7c08b6eab54fb7fc5da9e33f2f97a49dfce919`.
-- Rust release binary SHA256: `f948819c21f64b64fdf21a20f3c7b3acbbcfd7b61b61c2dc5b7b0f8e0622d11c`.
+- Rust source: `hparser-integration` at `1cd8fc3507e0070f532c2d5a50bbb7a5c07ff0ff`.
+- Rust release binary SHA256: `bb32f8ef92cf3a0ac42b624618ab02228dc7679271dba939be3030e001f00452`.
 
 ## Changes validated
 
@@ -41,9 +41,40 @@ The empty-table insert checks use isolated tables and do not touch `sbtest*`:
 | `oltp_insert.lua` (`insert_sbtestN`) | 8080.30 | 9088.08 | 1.1247 |
 | `bulk_insert.lua` (`bulk_sbtestN`) | 223028.16 | 153495.89 | 0.6882 |
 
-`FAST_MODE=1 FAST_RUN_SECONDS=2` covered all ten Lua subtypes in 143 seconds
+The prepared integer `LIMIT ?` execution path was then fixed and unit-tested
+(`tidb-executor`: 2 tests passed). A focused YCSB Workload E run now completes
+all 10,000 operations without `SCAN_ERROR`, but remains a performance failure:
+
+| Workload | Go QPS | Rust QPS | Rust/Go | Receipt |
+|---|---:|---:|---:|---|
+| `workloade` (95% scan) | 7814.5 | 602.4 | 0.0771 | `/tmp/tc8228803.JvwO2R/ycsb-workloade-postfix` |
+
+The remaining gap is scan/range execution (Rust scan latency is roughly 10 ms
+versus Go's 1.2 ms), not a parser or client accounting error.
+
+The first TPCC and BenchmarkSQL probes also remain failing: TPCC reports the
+Rust executor's unsupported `IndexJoin` lowering, while BenchmarkSQL does not
+complete a Rust transaction window and emits no final tpmC. Receipts:
+`/tmp/tc8228803.JvwO2R/tpcc-round1` and
+`/tmp/tc8228803.JvwO2R/benchmarksql-round1`.
+
+`FAST_MODE=1 FAST_RUN_SECONDS=2` covered all ten Lua subtypes in 162 seconds
 of benchmark-window time (one BR restore and cluster setup are outside this
-window). Its receipt is `/tmp/tc8228803.JvwO2R/sysbench-fast-final`.
+window). Its post-fix receipt is `/tmp/tc8228803.JvwO2R/sysbench-fast-postfix`:
+
+| Subtype | Go QPS | Rust QPS | Rust/Go | Gate 0.80 |
+|---|---:|---:|---:|---|
+| `oltp_read_write.lua` | 278.53 | 182.01 | 0.6535 | FAIL |
+| `oltp_read_only.lua` | 419.60 | 416.89 | 0.9935 | PASS |
+| `oltp_write_only.lua` | 146.36 | 129.64 | 0.8858 | PASS |
+| `oltp_point_select.lua` | 11640.29 | 14039.19 | 1.2061 | PASS |
+| `select_random_points.lua` | 4046.37 | 2626.20 | 0.6490 | FAIL |
+| `select_random_ranges.lua` | 3421.00 | 1980.36 | 0.5789 | FAIL |
+| `oltp_insert.lua` | 4637.02 | 5307.63 | 1.1446 | PASS |
+| `oltp_update_index.lua` | 485.63 | 282.79 | 0.5823 | FAIL |
+| `oltp_update_non_index.lua` | 509.79 | 565.87 | 1.1100 | PASS |
+| `bulk_insert.lua` | 118547.04 | 86417.38 | 0.7290 | FAIL |
+
 The fast sweep is an iteration signal, not a replacement for the formal
 30-second/multi-sample gates: write workloads share one dataset and can show
 lock or state contamination, while insert/bulk use the isolated empty tables
