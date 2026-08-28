@@ -792,7 +792,11 @@ impl Session {
                 )
                 .with_user(self.current_user.clone(), self.login_user.clone())
                 .with_global_sysvar_accessor(Arc::clone(&global_sysvar_accessor))
-                .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
+                .with_active_roles(
+                    self.current_user
+                        .as_ref()
+                        .map(|_| Arc::clone(&self.active_roles)),
+                )
                 .with_connection_id(self.connection_id)
                 .with_advisory_locks(self.advisory_locks.clone())
                 .with_statement_memory(statement_memory.clone())
@@ -836,7 +840,11 @@ impl Session {
         .with_connection_charset_info(connection_charset, connection_collation)
         .with_user(self.current_user.clone(), self.login_user.clone())
         .with_global_sysvar_accessor(global_sysvar_accessor)
-        .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
+        .with_active_roles(
+            self.current_user
+                .as_ref()
+                .map(|_| Arc::clone(&self.active_roles)),
+        )
         .with_connection_id(self.connection_id)
         .with_advisory_locks(self.advisory_locks.clone())
         .with_statement_memory(statement_memory)
@@ -1075,6 +1083,25 @@ mod tests {
         assert!(!splitter.contains("get_system(\"sql_mode\")"));
         assert!(prepared.contains("self.vars.sql_mode()"));
         assert!(!prepared.contains("get_system(\"sql_mode\")"));
+    }
+
+    #[test]
+    fn current_role_is_rendered_only_when_the_builtin_reads_it() {
+        let context = include_str!("stmt_ctx.rs");
+        let builder = context
+            .split_once("pub(crate) fn statement_context_ignoring(")
+            .expect("statement-context builder")
+            .1
+            .split_once("pub(crate) fn foreign_key_checks(")
+            .expect("statement-context boundary")
+            .0;
+        let identity = include_str!("identity.rs");
+        let executor = include_str!("../../tidb-executor/src/stmt_context.rs");
+
+        assert!(builder.contains(".with_active_roles("));
+        assert!(!builder.contains("current_role_text()"));
+        assert!(!identity.contains("fn current_role_text"));
+        assert!(executor.contains("active_roles: Option<Arc<Vec<(String, String)>>>"));
     }
 
     #[test]

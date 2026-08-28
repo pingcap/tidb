@@ -684,7 +684,7 @@ impl Session {
         if let Some((user, host)) = self.current_identity() {
             let account = (user.to_owned(), host.to_owned());
             if grantees.contains(&account) {
-                self.active_roles.retain(|role| !roles.contains(role));
+                Arc::make_mut(&mut self.active_roles).retain(|role| !roles.contains(role));
             }
         }
         Ok(StmtOutput::Affected(0))
@@ -728,7 +728,7 @@ impl Session {
                 self.granted_roles_or_error(&registry, &account, roles)?
             }
         };
-        self.active_roles = active;
+        self.active_roles = Arc::new(active);
         Ok(StmtOutput::Affected(0))
     }
 
@@ -1099,7 +1099,7 @@ impl Session {
         // A dropped role stops being active in THIS session too; the edge it
         // was activated through is gone, so keeping it would confer
         // privileges from a row that no longer exists.
-        self.active_roles.retain(|(role, host)| {
+        Arc::make_mut(&mut self.active_roles).retain(|(role, host)| {
             !users
                 .iter()
                 .any(|spec| &spec.user == role && &spec.host == host)
@@ -1731,7 +1731,7 @@ impl Session {
         };
         let roles = if show.roles.is_empty() {
             if is_own {
-                self.active_roles.clone()
+                self.active_roles.to_vec()
             } else {
                 Vec::new()
             }

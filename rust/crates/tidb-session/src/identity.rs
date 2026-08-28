@@ -22,6 +22,8 @@
 //! with no front end has none of it, which is why every check falls back to
 //! "unrestricted" rather than "denied".
 
+use std::sync::Arc;
+
 use tidb_ast::{SessionStmt, Stmt};
 use tidb_datatype::Datum;
 
@@ -404,7 +406,8 @@ impl Session {
         // first and the registry second.
         if !self.privilege_bypassed {
             if let Some((user, host)) = self.current_identity() {
-                self.active_roles = registry.default_roles(&(user.to_owned(), host.to_owned()));
+                self.active_roles =
+                    Arc::new(registry.default_roles(&(user.to_owned(), host.to_owned())));
             }
         }
         self.privileges = Some(registry);
@@ -415,7 +418,7 @@ impl Session {
     /// verification and role activation are bypassed.
     pub fn enable_privilege_bypass(&mut self) {
         self.privilege_bypassed = true;
-        self.active_roles.clear();
+        Arc::make_mut(&mut self.active_roles).clear();
     }
 
     /// Records that this connection completed a secure transport handshake.
@@ -501,22 +504,7 @@ impl Session {
     /// Go `SessionVars.ActiveRoles`, for the privilege checks and the
     /// `CURRENT_ROLE()` builtin.
     pub(crate) fn active_roles(&self) -> &[privilege::Account] {
-        &self.active_roles
-    }
-
-    /// The text `CURRENT_ROLE()` reports: Go's `builtinCurrentRoleSig` joins
-    /// each active role's `RoleIdentity.String()` (backtick-quoted
-    /// ``\`role\`@\`host\```) with a bare comma, and answers the literal
-    /// `NONE` when no role is active (captured, both forms).
-    pub(crate) fn current_role_text(&self) -> String {
-        if self.active_roles.is_empty() {
-            return "NONE".to_owned();
-        }
-        self.active_roles
-            .iter()
-            .map(|(role, host)| format!("`{role}`@`{host}`"))
-            .collect::<Vec<_>>()
-            .join(",")
+        self.active_roles.as_slice()
     }
 
     /// Splits the `CURRENT_USER()` identity (`user@host`) this session

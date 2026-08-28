@@ -461,7 +461,7 @@ pub struct Session {
     /// which every privilege check widens through and which `CURRENT_ROLE()`
     /// reports. A fresh session starts with its account's DEFAULT roles
     /// (Go activates them in `Auth`); `SET ROLE` replaces the set wholesale.
-    active_roles: Vec<privilege::Account>,
+    active_roles: Arc<Vec<privilege::Account>>,
     /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports.
     /// `None` for a session with no connection identity, where the builtin
     /// answers NULL like `CURRENT_USER()` does for an unauthenticated one.
@@ -682,7 +682,7 @@ impl Default for Session {
             sys_error_count: 0,
             current_user: None,
             login_user: None,
-            active_roles: Vec::new(),
+            active_roles: Arc::new(Vec::new()),
             connection_id: None,
             advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession::default(),
             last_insert_id: 0,

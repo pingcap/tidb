@@ -301,8 +301,9 @@ pub struct StmtContext {
     /// Go `SessionVars.GlobalVarsAccessor`, consulted by the expression
     /// builtins that need live GLOBAL state.
     global_sysvars: Option<Arc<dyn GlobalSysvarAccessor>>,
-    /// The already-rendered `CURRENT_ROLE()` text; see `Columns::current_role`.
-    current_role: Option<String>,
+    /// Go `SessionVars.ActiveRoles`; `CURRENT_ROLE()` renders this only when
+    /// the builtin is evaluated.
+    active_roles: Option<Arc<Vec<(String, String)>>>,
     connection_id: Option<u64>,
     /// Statement-version catalog metadata used by `TIDB_DECODE_KEY`.
     tidb_decode_key_snapshot: Option<Arc<crate::TidbDecodeKeySnapshot>>,
@@ -684,7 +685,7 @@ impl StmtContext {
             version: None,
             tidb_version_info: None,
             current_user: None,
-            current_role: None,
+            active_roles: None,
             login_user: None,
             global_sysvars: None,
             connection_id: None,
@@ -1542,11 +1543,10 @@ impl StmtContext {
         self
     }
 
-    /// Attaches the rendered `CURRENT_ROLE()` text, which Go derives from
-    /// `SessionVars.ActiveRoles`.
+    /// Attaches Go's typed `SessionVars.ActiveRoles` authority.
     #[must_use]
-    pub fn with_current_role(mut self, current_role: Option<String>) -> Self {
-        self.current_role = current_role;
+    pub fn with_active_roles(mut self, active_roles: Option<Arc<Vec<(String, String)>>>) -> Self {
+        self.active_roles = active_roles;
         self
     }
 
@@ -2246,7 +2246,16 @@ impl Columns for StmtContext {
     }
 
     fn current_role(&self) -> Option<String> {
-        self.current_role.clone()
+        let roles = self.active_roles.as_ref()?;
+        if roles.is_empty() {
+            return Some("NONE".to_owned());
+        }
+        let mut rendered = roles
+            .iter()
+            .map(|(role, host)| format!("`{role}`@`{host}`"))
+            .collect::<Vec<_>>();
+        rendered.sort_unstable();
+        Some(rendered.join(","))
     }
 
     fn connection_id(&self) -> Option<u64> {

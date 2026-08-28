@@ -1494,6 +1494,36 @@ legs reported zero ignored errors. Exact validation commands:
     git diff --check
     EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
 
+Progress receipt (2026-08-28, lazy active-role rendering): Go keeps
+`SessionVars.ActiveRoles` as role identities and `builtinCurrentRoleSig`
+formats and sorts them only when `CURRENT_ROLE()` is evaluated. Rust instead
+rendered the role list while building every query and DML statement context;
+an authenticated session with no active role allocated `"NONE"` even when the
+statement never referenced the builtin. The session now owns one copy-on-write
+`Arc<Vec<Account>>`, statement contexts clone only that shared typed authority,
+and `Columns::current_role` renders it lazily. The old `current_role_text`
+implementation and `with_current_role` rendered-string seam are deleted. The
+source regression was observed failing before the implementation and passing
+afterward. All 14 role/grant module tests and the expression builtin test pass,
+including SET ROLE forms, default activation, transitive privilege checks,
+revoke/drop cleanup, SHOW GRANTS, and sorted output; the release server builds.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`f1c247b63e` and the same Go server over one TiKV/PD cluster. Read-only median
+TPS was 511.50 candidate, 511.59 baseline, and 472.75 Go. Read-write median TPS
+was 260.94 candidate, 224.89 baseline, and 217.55 Go; those samples retain the
+same first-leg latency outlier, so no read-write increase is attributed to the
+change. All 18 legs reported zero ignored errors. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session current_role_is_rendered_only_when_the_builtin_reads_it --lib
+    cargo test -q -p tidb-session tests_grants::roles:: --lib
+    cargo test -q -p tidb-expr test_current_role --lib
+    cargo build -q --release -p tidb-server --bin tidb-server
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
 Plan revision note (2026-08-27): created after the user confirmed the
 performance-preserving route to full Go parity across plan cache, aggregation,
 parallel execution, resource groups, sort, and coprocessor packages.
