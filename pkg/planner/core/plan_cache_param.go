@@ -478,13 +478,103 @@ func (s *nonPreparedPlanCacheExprSelector) Enter(in ast.Node) (ast.Node, bool) {
 		return in, true
 	case *ast.FuncCallExpr:
 		switch node.FnName.L {
-		case ast.DateFormat, ast.StrToDate, ast.TimeFormat, ast.FromUnixTime:
+		case ast.DateFormat, ast.StrToDate, ast.TimeFormat:
 			if len(node.Args) > 0 {
 				s.selector.selectExpression(node.Args[0])
 			}
 			return in, true
+		case ast.WeightString:
+			// WEIGHT_STRING's AS CHAR/BINARY and length arguments are syntax
+			// parameters, not expressions. Preserve them so the restored
+			// parameterized SQL remains valid and the built-in keeps its padding
+			// mode and length.
+			if len(node.Args) > 0 {
+				s.selector.selectExpression(node.Args[0])
+			}
+			return in, true
+		case ast.FromUnixTime:
+			// FROM_UNIXTIME derives the one-argument result FSP from the first
+			// timestamp argument while building the function signature. Preserve
+			// all arguments so a different timestamp precision gets a new carrier.
+			return in, true
+		case ast.CharFunc:
+			// CHAR's last argument is the charset selected by USING. It is
+			// evaluated while building the function signature, so it must stay
+			// a constant in the parameterized AST.
+			for i, arg := range node.Args {
+				if i == len(node.Args)-1 {
+					continue
+				}
+				s.selector.selectExpression(arg)
+			}
+			return in, true
+		case ast.Lpad, ast.Rpad:
+			// LPAD/RPAD derive the result Flen from the length argument at
+			// build time. Preserve that argument while parameterizing the
+			// string and padding expressions.
+			if len(node.Args) > 0 {
+				s.selector.selectExpression(node.Args[0])
+			}
+			if len(node.Args) > 2 {
+				s.selector.selectExpression(node.Args[2])
+			}
+			return in, true
+		case ast.ConvertTz, ast.UnixTimestamp:
+			// These functions derive their result precision from the first
+			// argument's value/type while the plan is built. Preserve that
+			// argument so a later execution cannot reuse a signature with a
+			// different temporal precision.
+			for i, arg := range node.Args {
+				if i == 0 {
+					continue
+				}
+				s.selector.selectExpression(arg)
+			}
+			return in, true
+		case ast.Time, ast.CurrentTime, ast.Curtime, ast.LocalTime,
+			ast.Now, ast.CurrentTimestamp, ast.LocalTimestamp, ast.UTCTime,
+			ast.UTCTimestamp, ast.Sysdate:
+			// These functions derive their result FSP from a constant argument
+			// while building the function signature. Keep the argument in the
+			// statement identity instead of replacing it with a marker.
+			return in, true
+		case ast.TimeDiff, ast.Timestamp:
+			// Both arguments contribute to the temporal result type (FSP, and for
+			// TIMESTAMP the first argument's numeric-vs-string type).
+			return in, true
+		case ast.AddTime, ast.SubTime:
+			// ADDTIME and SUBTIME derive the result FSP and Flen from both
+			// arguments while building the function signature.
+			return in, true
+		case ast.Round, ast.Truncate:
+			// The value type and the requested scale are both used to construct
+			// the result type. Preserve the whole argument list so neither can be
+			// changed while reusing a cached signature.
+			return in, true
+		case ast.Rand:
+			// A constant RAND seed initializes the RNG when the signature is
+			// built. Preserve it so a different seed cannot reuse that state.
+			return in, true
+		case ast.Benchmark:
+			// BENCHMARK caches a positive constant loop count in its signature.
+			// Preserve that argument, but still select literals in the expression
+			// being benchmarked using the regular expression rules.
+			if len(node.Args) > 1 {
+				s.selector.selectExpression(node.Args[1])
+			}
+			return in, true
 		default:
 			return in, false
+		}
+	case *ast.AggregateFuncExpr:
+		if node.F == ast.AggFuncApproxPercentile {
+			// The percentage argument must remain a constant because the
+			// aggregate descriptor evaluates it while the plan is built.
+			// Parameterize only the data expression and preserve the percentage.
+			if len(node.Args) > 0 {
+				s.selector.selectExpression(node.Args[0])
+			}
+			return in, true
 		}
 	case *ast.FrameBound:
 		return in, true
@@ -507,7 +597,7 @@ func (s *nonPreparedPlanCacheExprSelector) Enter(in ast.Node) (ast.Node, bool) {
 		*ast.VariableExpr, *ast.MatchAgainst, *ast.SetCollationExpr,
 		*ast.TableNameExpr, *ast.ColumnNameExpr, *ast.DefaultExpr,
 		*ast.MaxValueExpr, *ast.FuncCastExpr, *ast.TrimDirectionExpr,
-		*ast.AggregateFuncExpr, *ast.WindowFuncExpr, *ast.TimeUnitExpr,
+		*ast.WindowFuncExpr, *ast.TimeUnitExpr,
 		*ast.GetFormatSelectorExpr:
 		return in, false
 	}

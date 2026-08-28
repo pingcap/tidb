@@ -200,7 +200,17 @@ func getPlanFromNonPreparedPlanCacheUnified(ctx context.Context, sctx sessionctx
 		recordNonPreparedPlanCacheBypass(stmtCtx, reason, true)
 		return nil, nil, false, nil
 	}
-
+	// A legacy execution may leave a non-cacheable carrier in the statement LRU
+	// before the unified checker is enabled. Rebuild it after the current AST
+	// check succeeds so a later physical-cacheable execution can recover.
+	if cachedStmt != nil && !cachedStmt.StmtCacheable {
+		cachedStmt = nil
+		paramStmt, err = core.ParseParameterizedSQL(sctx, result.ParamSQL)
+		if err != nil {
+			recordNonPreparedPlanCacheBypass(stmtCtx, "failed to parse parameterized SQL", true)
+			return nil, nil, false, nil
+		}
+	}
 	if cachedStmt == nil {
 		if err := core.SetParameterValuesIntoSCtx(sctx.GetPlanCtx(), true, nil, paramExprs); err != nil {
 			return nil, nil, false, err
@@ -232,13 +242,40 @@ func nonPreparedPlanCacheDMLAllowed(vars *variable.SessionVars, stmt ast.StmtNod
 	}
 	switch stmt := stmt.(type) {
 	case *ast.SelectStmt:
-		if stmt.LockInfo == nil {
+		if !containsLockingRead(stmt) {
 			return true, ""
 		}
 	case *ast.SetOprStmt:
-		return true, ""
+		if !containsLockingRead(stmt) {
+			return true, ""
+		}
 	}
 	return false, "not a SELECT statement"
+}
+
+type lockingReadFinder struct {
+	found bool
+}
+
+func (finder *lockingReadFinder) Enter(in ast.Node) (ast.Node, bool) {
+	if stmt, ok := in.(*ast.SelectStmt); ok && stmt.LockInfo != nil {
+		finder.found = true
+		return in, true
+	}
+	return in, false
+}
+
+func (*lockingReadFinder) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
+}
+
+func containsLockingRead(node ast.Node) bool {
+	if node == nil {
+		return false
+	}
+	finder := lockingReadFinder{}
+	node.Accept(&finder)
+	return finder.found
 }
 
 func recordNonPreparedPlanCacheBypass(stmtCtx *stmtctx.StatementContext, reason string, countUnsupported bool) {

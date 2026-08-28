@@ -241,10 +241,124 @@ func TestParameterizeForNonPreparedPlanCache(t *testing.T) {
 			params:   []any{"2020-02-02"},
 		},
 		{
+			name:     "weight string char syntax",
+			sql:      "select * from t where a=weight_string(b as char(5)) and c=1",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=weight_string(`b` AS CHAR(5)) AND `c`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "weight string binary syntax",
+			sql:      "select * from t where a=weight_string(b as binary(5)) and c=1",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=weight_string(`b` AS BINARY(5)) AND `c`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "char charset",
+			sql:      "select * from t where a=char(228 using utf8mb4) and b=1",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=char_func(?, 'utf8mb4') AND `b`=?",
+			params:   []any{int64(228), int64(1)},
+		},
+		{
+			name:     "lpad length",
+			sql:      "select * from t where a=lpad('x', 2, '0') and b=3",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=lpad(?, 2, ?) AND `b`=?",
+			params:   []any{"x", "0", int64(3)},
+		},
+		{
+			name:     "rpad length",
+			sql:      "select * from t where a=rpad('x', 2, '0') and b=3",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=rpad(?, 2, ?) AND `b`=?",
+			params:   []any{"x", "0", int64(3)},
+		},
+		{
+			name:     "convert tz precision",
+			sql:      "select * from t where a=convert_tz('2020-01-01 00:00:00.123','+00:00','+00:00') and b=1",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=convert_tz('2020-01-01 00:00:00.123', ?, ?) AND `b`=?",
+			params:   []any{"+00:00", "+00:00", int64(1)},
+		},
+		{
+			name:     "unix timestamp precision",
+			sql:      "select * from t where a=unix_timestamp('2020-01-01 00:00:00.123') and b=1",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=unix_timestamp('2020-01-01 00:00:00.123') AND `b`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "from unix time precision",
+			sql:      "select * from t where a=from_unixtime(0.123456) and b=1",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=from_unixtime(0.123456) AND `b`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "approx percentile preserves percentage",
+			sql:      "select a from t group by a having approx_percentile(a, 50)>1",
+			paramSQL: "SELECT a FROM `t` GROUP BY `a` HAVING approx_percentile(`a`, 50)>?",
+			params:   []any{int64(1)},
+		},
+		{
 			name:     "generic function",
 			sql:      "select * from t where coalesce(a, 1)=2",
 			paramSQL: "SELECT * FROM `t` WHERE coalesce(`a`, ?)=?",
 			params:   []any{int64(1), int64(2)},
+		},
+		{
+			name:     "time precision",
+			sql:      "select * from t where time('00:00:01.123456') > time('00:00:00') and a=1",
+			paramSQL: "SELECT * FROM `t` WHERE time('00:00:01.123456')>time('00:00:00') AND `a`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "timediff precision",
+			sql:      "select * from t where timediff('2020-01-01 00:00:00.123456', '2020-01-01 00:00:00') > 1",
+			paramSQL: "SELECT * FROM `t` WHERE timediff('2020-01-01 00:00:00.123456', '2020-01-01 00:00:00')>?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "timestamp precision",
+			sql:      "select * from t where timestamp('2020-01-01 00:00:00.123456') > '2020-01-01' and a=1",
+			paramSQL: "SELECT * FROM `t` WHERE timestamp('2020-01-01 00:00:00.123456')>? AND `a`=?",
+			params:   []any{"2020-01-01", int64(1)},
+		},
+		{
+			name:     "now precision",
+			sql:      "select * from t where now(6) is not null and a=1",
+			paramSQL: "SELECT * FROM `t` WHERE now(6) IS NOT NULL AND `a`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "round scale",
+			sql:      "select * from t where round(a, 2)=3",
+			paramSQL: "SELECT * FROM `t` WHERE round(`a`, 2)=?",
+			params:   []any{int64(3)},
+		},
+		{
+			name:     "truncate scale",
+			sql:      "select * from t where truncate(a, 2)=3",
+			paramSQL: "SELECT * FROM `t` WHERE truncate(`a`, 2)=?",
+			params:   []any{int64(3)},
+		},
+		{
+			name:     "rand seed",
+			sql:      "select * from t where rand(1)>0",
+			paramSQL: "SELECT * FROM `t` WHERE rand(1)>?",
+			params:   []any{int64(0)},
+		},
+		{
+			name:     "addtime precision",
+			sql:      "select * from t where a=addtime('2020-01-01 00:00:00', '00:00:00.123456') and b=1",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=addtime('2020-01-01 00:00:00', '00:00:00.123456') AND `b`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "subtime precision",
+			sql:      "select * from t where a=subtime('2020-01-01 00:00:00', '00:00:00.123456') and b=1",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=subtime('2020-01-01 00:00:00', '00:00:00.123456') AND `b`=?",
+			params:   []any{int64(1)},
+		},
+		{
+			name:     "benchmark loop count",
+			sql:      "select * from t where a=benchmark(1, coalesce(2, 3)) and b=4",
+			paramSQL: "SELECT * FROM `t` WHERE `a`=benchmark(1, coalesce(?, ?)) AND `b`=?",
+			params:   []any{int64(2), int64(3), int64(4)},
 		},
 		{
 			name:     "date format without arguments",
@@ -419,22 +533,19 @@ func TestNonPreparedPlanCacheSelectorPreservesUnknownExpressionChildren(t *testi
 
 func TestNonPreparedPlanCacheParameterizerSelectsMultiTableDML(t *testing.T) {
 	testCases := []struct {
-		name     string
-		sql      string
-		paramSQL string
-		params   []any
+		name   string
+		sql    string
+		reason string
 	}{
 		{
-			name:     "update",
-			sql:      "update t1 join t2 on t1.a=t2.a and t2.b=2 set t1.b=1 where t1.a=3",
-			paramSQL: "UPDATE `t1` JOIN `t2` ON `t1`.`a`=`t2`.`a` AND `t2`.`b`=? SET `t1`.`b`=? WHERE `t1`.`a`=?",
-			params:   []any{int64(2), int64(1), int64(3)},
+			name:   "update",
+			sql:    "update t1 join t2 on t1.a=t2.a and t2.b=2 set t1.b=1 where t1.a=3",
+			reason: "multiple-table UPDATE is not supported",
 		},
 		{
-			name:     "delete",
-			sql:      "delete t1 from t1 join t2 on t1.a=t2.a and t2.b=2 where t1.a=3",
-			paramSQL: "DELETE `t1` FROM `t1` JOIN `t2` ON `t1`.`a`=`t2`.`a` AND `t2`.`b`=? WHERE `t1`.`a`=?",
-			params:   []any{int64(2), int64(3)},
+			name:   "delete",
+			sql:    "delete t1 from t1 join t2 on t1.a=t2.a and t2.b=2 where t1.a=3",
+			reason: "multiple-table DELETE is not supported",
 		},
 	}
 
@@ -445,12 +556,10 @@ func TestNonPreparedPlanCacheParameterizerSelectsMultiTableDML(t *testing.T) {
 			originalSQL := restorePlanCacheParamTestStmt(t, stmt)
 			result, supported, reason, err := plannercore.ParameterizeForNonPreparedPlanCache(mock.NewContext().GetPlanCtx(), stmt)
 			require.NoError(t, err)
-			require.True(t, supported, reason)
-			require.Equal(t, testCase.paramSQL, result.ParamSQL)
-			require.Len(t, result.ParamValues, len(testCase.params))
-			for i, value := range result.ParamValues {
-				require.Equal(t, testCase.params[i], value.GetValue())
-			}
+			require.False(t, supported)
+			require.Equal(t, testCase.reason, reason)
+			require.Empty(t, result.ParamSQL)
+			require.Empty(t, result.ParamValues)
 			require.Equal(t, originalSQL, restorePlanCacheParamTestStmt(t, stmt))
 		})
 	}
