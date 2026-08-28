@@ -6,7 +6,7 @@ Run date: 2026-08-28 (Asia/Shanghai)
 
 - Go source of truth: nightly TiDB from `tiup playground nightly`, PD/TiKV
   shared by both SQL endpoints, Go port `17000`.
-- Rust revision: `b77e9332f73123115f7835a31e268336e3f4bc73` on
+- Rust revision: `600d6f0f399db5585732f0a52fec0e6b413da791` on
   `hparser-integration`, release binary on port `18000`.
 - Workload source: `pingcap/tidb-bench` commit
   `e9f058ae9bee089afdbf9b3397ed9948bf7e560b`; `genquery.sh` generated 42
@@ -40,7 +40,7 @@ PYTHONPATH=/private/tmp/pymysql \
   /Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 \
   rust/testport/tpcds/compare_workload.py \
   --queries /private/tmp/tidb-bench-tpcds/tpcds/queries \
-  --output /private/tmp/tpcds-matrix-plan-align-b77-q43.json \
+  --output /private/tmp/tpcds-matrix-latest-600d6f.json \
   --go-port 17000 --rust-port 18000 --warmups 1 --runs 3
 ```
 
@@ -49,15 +49,15 @@ broadcast thresholds, and all scan/lookup/join/aggregation/projection/window
 and optimizer concurrency variables to one. `source` requests
 `tikv,tiflash,tidb`; `control` permits only `tikv`.
 
-The refreshed matrix is `/private/tmp/tpcds-matrix-plan-align-b77-q43.json`
-(SHA-256 `d5213f67e4848dae6958f39d049c63f89d31018269e3f3a054c6f57437cd6731`).
+The refreshed matrix is `/private/tmp/tpcds-matrix-latest-600d6f.json`
+(SHA-256 `175507b422233f9084b73fd6099ed6e70ea440f0506a588243cd62b538fd6525`).
 
 ## Results
 
 | mode | Go plan errors | Rust plan errors | result hashes equal | normalized plan hashes equal | Go p50 median | Rust p50 median | Rust/Go p50 median |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| source (MPP requested) | 0 | 0 | 42/42 | 0/42 | 30.66 ms | 74.56 ms | 3.41x |
-| control (TiKV only) | 0 | 0 | 42/42 | 9/42 | 41.49 ms | 74.89 ms | 1.49x |
+| source (MPP requested) | 0 | 0 | 42/42 | 0/42 | 32.01 ms | 75.67 ms | 3.28x |
+| control (TiKV only) | 0 | 0 | 42/42 | 9/42 | 41.17 ms | 74.91 ms | 1.52x |
 
 All result hashes include row order and encoded values. No result errors were
 observed. Source-mode Go plans contain `mpp[tiflash]` operators (for example
