@@ -278,8 +278,8 @@ pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
 pub use stmt_context::{
-    RetryAutoIds, RowIdShardGenerator, SequenceSnapshot, StatementClass, StmtContext,
-    MAX_WARNING_COUNT,
+    GlobalSysvarAccessor, RetryAutoIds, RowIdShardGenerator, SequenceSnapshot, StatementClass,
+    StmtContext, MAX_WARNING_COUNT,
 };
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;

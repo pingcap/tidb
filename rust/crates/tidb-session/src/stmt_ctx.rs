@@ -35,10 +35,9 @@ use crate::{DriverError, Session, StatementKind, StmtOutput};
 /// Go statement reads fields where this port was doing twenty-six
 /// by-name string lookups and parses -- measured as the heaviest
 /// user-code frame on both the read and write paths once the metadata
-/// clones were gone. GLOBAL-scope reads (`tidb_mem_oom_action`,
-/// `tidb_enable_tmp_storage_on_oom`, the password-validation set) stay
-/// LIVE in the builder: a peer's `SET GLOBAL` moves them without this
-/// session's generation changing, so caching them here would be wrong.
+/// clones were gone. GLOBAL-scope statement policies
+/// (`tidb_mem_oom_action`, `tidb_enable_tmp_storage_on_oom`) stay LIVE in the
+/// builder, while expressions retain the shared global accessor itself.
 pub(crate) struct StatementVarSnapshot {
     generation: u64,
     version: Option<String>,
@@ -765,17 +764,7 @@ impl Session {
         let block_encryption_mode = snapshot.block_encryption_mode;
         let arbitrator_wait_averse = snapshot.arbitrator_wait_averse;
         let arbitrator_reserved = snapshot.arbitrator_reserved;
-        // GLOBAL-scope reads stay LIVE: a peer's `SET GLOBAL` moves them
-        // without this session's generation changing.
-        let password_validation_globals = tidb_util::password_validation::VALIDATE_PASSWORD_SYSVARS
-            .into_iter()
-            .map(|name| {
-                (
-                    name.to_owned(),
-                    self.vars.get_global(name).unwrap_or_default(),
-                )
-            })
-            .collect::<HashMap<_, _>>();
+        let global_sysvar_accessor = self.vars.global_sysvar_accessor();
         let tmp_storage_on_oom = {
             let value = self
                 .vars
@@ -834,7 +823,7 @@ impl Session {
                     connection_collation.clone(),
                 )
                 .with_user(self.current_user.clone(), self.login_user.clone())
-                .with_global_sysvars(password_validation_globals.clone())
+                .with_global_sysvar_accessor(Arc::clone(&global_sysvar_accessor))
                 .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
                 .with_connection_id(self.connection_id)
                 .with_advisory_locks(self.advisory_locks.clone())
@@ -881,7 +870,7 @@ impl Session {
         .with_session_state(current_db, version, tidb_info)
         .with_connection_charset_info(connection_charset, connection_collation)
         .with_user(self.current_user.clone(), self.login_user.clone())
-        .with_global_sysvars(password_validation_globals)
+        .with_global_sysvar_accessor(global_sysvar_accessor)
         .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
         .with_connection_id(self.connection_id)
         .with_advisory_locks(self.advisory_locks.clone())

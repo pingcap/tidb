@@ -259,6 +259,10 @@ both `oltp_read_only` and `oltp_read_write`.
   and read staleness into that same generation-keyed environment. Prepared
   SELECT and PointGet reuse no longer repeat three owned system-variable
   lookups on every hit; an inadmissible generation caches a typed refusal.
+- [x] 2026-08-28: replaced the statement context's eager eight-entry
+  password-validation GLOBAL-variable map with Go's live
+  `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
+  read, allocate, and clone password-policy strings they never evaluate.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -439,6 +443,24 @@ both `oltp_read_only` and `oltp_read_write`.
   `cached_select_key_reuses_the_typed_session_environment`, environment reuse
   and refusal tests, session/server checks, release build, and the alternating
   candidate/baseline/Go benchmark receipt.
+
+- Observation: Rust eagerly read every `validate_password.*` GLOBAL variable
+  and built a `HashMap<String, String>` while constructing every query and DML
+  context. Go's `builtinValidatePasswordStrengthSig` instead retains
+  `SessionVarsPropReader` and consults `SessionVars.GlobalVarsAccessor` only
+  when that builtin evaluates. Besides unconditional work, the Rust snapshot
+  was observably stale when a peer changed a GLOBAL after context creation.
+  The replacement holds one shared live accessor. An exact one-cluster A/B
+  against `4bb1933dbc` measured stock read-only medians of 499.68 TPS
+  candidate, 499.52 baseline, and 471.12 Go; read-write medians were 253.04,
+  222.72, and 212.12 TPS. Read-write variance was high, so the semantic
+  fail-before/pass-after and deleted unconditional ownership—not that noisy
+  delta—are the acceptance evidence. Every benchmark leg reported zero SQL
+  errors.
+  Evidence: `statement_context_reads_global_sysvars_through_the_live_accessor`,
+  all 29 global-variable tests, the password-policy regression,
+  executor/session/server checks, release build, and the alternating exact
+  A/B receipt.
 
 - Observation: Rust also retained one successful publication receipt per
   snapshot point/batch/scan read. Go's `KVSnapshot` retains lock-resolution,

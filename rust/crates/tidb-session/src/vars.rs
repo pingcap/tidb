@@ -126,6 +126,12 @@ impl Default for GlobalSysvars {
     }
 }
 
+impl tidb_executor::GlobalSysvarAccessor for GlobalSysvars {
+    fn get_global_sysvar(&self, name: &str) -> Option<String> {
+        self.get(name).ok()
+    }
+}
+
 /// One read-mostly image of the node-wide variable tables.
 ///
 /// [`GlobalSysvars::get`] used to answer through the authoritative
@@ -712,7 +718,7 @@ pub struct SessionVars {
     /// The shared GLOBAL-scope table this session's factory holds. Cloning a
     /// [`GlobalSysvars`] is cheap (one `Arc` bump), so every session shares
     /// the same underlying map.
-    globals: GlobalSysvars,
+    globals: Arc<GlobalSysvars>,
     /// Immutable server identity captured when this connection opened.
     version_info: VersionInfo,
 }
@@ -757,7 +763,7 @@ impl SessionVars {
         // row has been accepted. A stale/foreign cluster row can therefore
         // refuse the connection without partially reseeding this session.
         self.systems = systems;
-        self.globals = globals;
+        self.globals = Arc::new(globals);
         self.optimizer_fix_control = optimizer_fix_control;
         self.session_resolved = Self::build_session_image(&self.systems);
         // The wholesale replacement above is a mutation like any other; the
@@ -928,6 +934,10 @@ impl SessionVars {
         self.globals.get(name)
     }
 
+    pub(crate) fn global_sysvar_accessor(&self) -> Arc<dyn tidb_executor::GlobalSysvarAccessor> {
+        self.globals.clone()
+    }
+
     /// Sets a session system variable, validating the value as Go's
     /// `ValidateFromType` does: the stored value is the normalized one, and
     /// an out-of-range value is clamped exactly as Go clamps it.
@@ -1002,7 +1012,8 @@ impl SessionVars {
     /// read from the cluster before persisting it, and must be able to put
     /// the live table back unconditionally if the statement fails.
     pub fn swap_globals(&mut self, globals: GlobalSysvars) -> GlobalSysvars {
-        std::mem::replace(&mut self.globals, globals)
+        let previous = std::mem::replace(&mut self.globals, Arc::new(globals));
+        Arc::try_unwrap(previous).unwrap_or_else(|shared| (*shared).clone())
     }
 
     /// `SET GLOBAL name = DEFAULT`.

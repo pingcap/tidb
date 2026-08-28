@@ -220,6 +220,14 @@ impl RowIdShardGenerator {
     }
 }
 
+/// The live GLOBAL-variable reader Go exposes through
+/// `SessionVars.GlobalVarsAccessor`.
+pub trait GlobalSysvarAccessor: Send + Sync {
+    /// Reads the current GLOBAL value, or `None` when no session/global table
+    /// is attached to this evaluation context.
+    fn get_global_sysvar(&self, name: &str) -> Option<String>;
+}
+
 /// Go `stmtctx.StatementContext`, in the part evaluation actually reads: the
 /// warning buffer and the error levels that decide whether a tolerable
 /// condition warns or fails the statement.
@@ -290,9 +298,9 @@ pub struct StmtContext {
     tidb_info: Option<String>,
     current_user: Option<String>,
     login_user: Option<String>,
-    /// The small set of GLOBAL system-variable values expression builtins
-    /// read during this statement.
-    global_sysvars: Arc<HashMap<String, String>>,
+    /// Go `SessionVars.GlobalVarsAccessor`, consulted by the expression
+    /// builtins that need live GLOBAL state.
+    global_sysvars: Option<Arc<dyn GlobalSysvarAccessor>>,
     /// The already-rendered `CURRENT_ROLE()` text; see `Columns::current_role`.
     current_role: Option<String>,
     connection_id: Option<u64>,
@@ -678,7 +686,7 @@ impl StmtContext {
             current_user: None,
             current_role: None,
             login_user: None,
-            global_sysvars: Arc::default(),
+            global_sysvars: None,
             connection_id: None,
             tidb_decode_key_snapshot: None,
             advisory_locks: crate::advisory_lock_state::AdvisoryLockSession::default(),
@@ -1527,11 +1535,10 @@ impl StmtContext {
         self
     }
 
-    /// Attaches a statement snapshot of the GLOBAL variables used by
-    /// expression builtins.
+    /// Attaches the live GLOBAL-variable reader used by expression builtins.
     #[must_use]
-    pub fn with_global_sysvars(mut self, values: HashMap<String, String>) -> Self {
-        self.global_sysvars = Arc::new(values);
+    pub fn with_global_sysvar_accessor(mut self, accessor: Arc<dyn GlobalSysvarAccessor>) -> Self {
+        self.global_sysvars = Some(accessor);
         self
     }
 
@@ -2369,7 +2376,8 @@ impl Columns for StmtContext {
         if matches!(scope, Some(tidb_ast::SysVarScope::Global)) {
             return self
                 .global_sysvars
-                .get(&name.to_ascii_lowercase())
+                .as_ref()
+                .and_then(|accessor| accessor.get_global_sysvar(name))
                 .map(|value| Datum::Bytes(value.as_bytes().to_vec()));
         }
         None

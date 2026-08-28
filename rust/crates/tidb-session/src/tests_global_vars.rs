@@ -31,6 +31,30 @@ fn two_sessions_sharing_globals() -> (Session, Session, vars::GlobalSysvars) {
     (first, second, globals)
 }
 
+#[test]
+fn statement_context_reads_global_sysvars_through_the_live_accessor() {
+    let globals = vars::GlobalSysvars::new();
+    let mut session = Session::new();
+    session.attach_globals(globals.clone()).unwrap();
+    let context = session.statement_context(false);
+    let read = || {
+        tidb_executor::Columns::sysvar(
+            &context,
+            Some(tidb_ast::SysVarScope::Global),
+            tidb_util::password_validation::VALIDATE_PASSWORD_ENABLE,
+        )
+    };
+
+    assert_eq!(read(), Some(Datum::Bytes(b"OFF".to_vec())));
+    globals
+        .set(
+            tidb_util::password_validation::VALIDATE_PASSWORD_ENABLE,
+            "ON".to_owned(),
+        )
+        .unwrap();
+    assert_eq!(read(), Some(Datum::Bytes(b"ON".to_vec())));
+}
+
 /// The MySQL inheritance rule, captured end to end through `SET`/`SELECT`
 /// rather than the unit-level `vars` module: `SET GLOBAL` on one session is
 /// visible to a peer's `@@global.x` immediately, but the peer's own plain
