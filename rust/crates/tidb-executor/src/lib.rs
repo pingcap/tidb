@@ -151,6 +151,12 @@ pub mod tblsession;
 mod tests_index_join;
 #[cfg(test)]
 mod tests_join_search;
+#[cfg(test)]
+mod tests_ddl_db_integration;
+#[cfg(test)]
+mod tests_ddl_db_table;
+#[cfg(test)]
+mod tests_ddl_rename_table;
 pub mod tiflash_recorder;
 pub mod topn;
 pub mod topn_chunk_heap;
