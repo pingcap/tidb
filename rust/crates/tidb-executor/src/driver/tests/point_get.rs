@@ -334,8 +334,11 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
         .is_none());
 
     // A plan-affecting session-state change moves Go's NewPlanCacheKey.
-    let changed_environment =
-        PreparedPlanCacheEnvironment::new("ANSI_QUOTES".to_owned(), "+00:00".to_owned(), 1);
+    let changed_environment = PreparedPlanCacheEnvironment::new(
+        tidb_mysql::get_sql_mode("ANSI_QUOTES").unwrap(),
+        "+00:00".to_owned(),
+        1,
+    );
     let first_changed = plan
         .bind(
             &[Datum::Int(2)],

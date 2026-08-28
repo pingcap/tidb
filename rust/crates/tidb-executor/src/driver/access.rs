@@ -368,7 +368,7 @@ struct CachedSelectPlanEntry {
 /// planning without changing the statement, schema, or parameter types.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedPlanCacheEnvironment {
-    sql_mode: String,
+    sql_mode: tidb_mysql::SqlMode,
     time_zone: String,
     pushdown_blacklist_generation: u64,
     connection_charset: String,
@@ -383,14 +383,18 @@ pub struct PreparedPlanCacheEnvironment {
 
 impl Default for PreparedPlanCacheEnvironment {
     fn default() -> Self {
-        Self::new(String::new(), String::new(), 0)
+        Self::new(tidb_mysql::SqlMode::default(), String::new(), 0)
     }
 }
 
 impl PreparedPlanCacheEnvironment {
     /// Builds the non-schema portion of Go's plan-cache environment key.
     #[must_use]
-    pub fn new(sql_mode: String, time_zone: String, pushdown_blacklist_generation: u64) -> Self {
+    pub fn new(
+        sql_mode: tidb_mysql::SqlMode,
+        time_zone: String,
+        pushdown_blacklist_generation: u64,
+    ) -> Self {
         Self {
             sql_mode,
             time_zone,

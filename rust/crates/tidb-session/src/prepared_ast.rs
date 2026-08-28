@@ -133,7 +133,7 @@ impl Session {
         .then(|| {
             Arc::new(
                 tidb_executor::PreparedPlanCacheEnvironment::new(
-                    self.vars.get_system("sql_mode").unwrap_or_default(),
+                    self.vars.sql_mode(),
                     self.vars.get_system("time_zone").unwrap_or_default(),
                     blacklist_generation,
                 )

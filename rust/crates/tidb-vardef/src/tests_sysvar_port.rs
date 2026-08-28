@@ -152,12 +152,6 @@ fn status_var_unported() {}
 #[ignore]
 fn sql_select_limit_unported() {}
 
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestSQLModeVar`.
-// go-parity-gap: sql_mode SysVar validation over mysql.SQLMode not ported (parser/mysql layer)
-#[test]
-#[ignore]
-fn sql_mode_var_unported() {}
-
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBTraceEventSysVar`.
 // go-parity-gap: traceevent flight recorder + kernel-type-dependent SetGlobal not ported
 #[test]

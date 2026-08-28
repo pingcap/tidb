@@ -46,7 +46,8 @@ pub(crate) struct StatementVarSnapshot {
     connection_collation: String,
     allow_write_row_id: bool,
     sysdate_is_now: bool,
-    mode_upper: String,
+    sql_mode: tidb_mysql::SqlMode,
+    scanner_sql_mode: tidb_parser::SqlMode,
     allow_auto_random_explicit_insert: bool,
     shard_allocate_step: u64,
     like_default_escape: u8,
@@ -178,12 +179,8 @@ impl Session {
     pub(crate) fn prepared_point_get_context(
         &self,
     ) -> tidb_executor::kv_table::PreparedPointGetDecodeContext {
-        let mode = self.vars.get_system("sql_mode").unwrap_or_default();
-        let allow_invalid_dates = mode
-            .split(',')
-            .any(|part| part.trim().eq_ignore_ascii_case("ALLOW_INVALID_DATES"));
         tidb_executor::kv_table::PreparedPointGetDecodeContext::for_query(
-            allow_invalid_dates,
+            self.vars.sql_mode().has_allow_invalid_dates_mode(),
             self.session_time_zone(),
         )
     }
@@ -409,30 +406,7 @@ impl Session {
     /// [`tidb_executor::StmtContext`], which every executor entry already
     /// takes, rather than on ~30 separate parameters.
     pub(crate) fn scanner_sql_mode(&self) -> tidb_parser::SqlMode {
-        // Cached against the variable table's generation: Go keeps the
-        // parsed mode as `SessionVars.SQLMode`, a typed field the `SET` hook
-        // maintains, so the per-statement read is a field access there and a
-        // stamp check here.
-        let generation = self.vars.generation();
-        if let Some((cached_at, mode)) = self.scanner_sql_mode_cache.get() {
-            if cached_at == generation {
-                return mode;
-            }
-        }
-        // `SET sql_mode = 'ANSI'` is stored already expanded (captured from
-        // TiDB: `@@sql_mode` reads back
-        // `REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI`),
-        // so matching names against the stored text sees every flag a
-        // combination brought in.
-        let mode = scanner_sql_mode_of(
-            &self
-                .vars
-                .get_system("sql_mode")
-                .unwrap_or_default()
-                .to_ascii_uppercase(),
-        );
-        self.scanner_sql_mode_cache.set(Some((generation, mode)));
-        mode
+        scanner_sql_mode_of(self.vars.sql_mode())
     }
 
     /// Parses one statement of THIS session, under the `sql_mode` in force
@@ -529,12 +503,7 @@ impl Session {
                 return std::rc::Rc::clone(cached);
             }
         }
-        let mode_upper = self
-            .vars
-            .get_system("sql_mode")
-            .unwrap_or_default()
-            .to_ascii_uppercase();
-        let has = |flag: &str| mode_upper.split(',').any(|part| part.trim() == flag);
+        let sql_mode = self.vars.sql_mode();
         let on = |name: &str| {
             self.vars
                 .get_system(name)
@@ -585,7 +554,7 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(i64::MAX as u64),
-            like_default_escape: if has("NO_BACKSLASH_ESCAPES")
+            like_default_escape: if sql_mode.has_no_backslash_escapes_mode()
                 && not_off(tidb_vardef::tidb_vars::TIDB_ENABLE_NO_BACKSLASH_ESCAPES_IN_LIKE)
             {
                 0
@@ -715,7 +684,8 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or_default(),
-            mode_upper,
+            sql_mode,
+            scanner_sql_mode: scanner_sql_mode_of(sql_mode),
         });
         *self.statement_var_cache.borrow_mut() = Some(std::rc::Rc::clone(&snapshot));
         snapshot
@@ -744,12 +714,7 @@ impl Session {
         let clock = self.statement_clock(&zone);
         let allow_write_row_id = snapshot.allow_write_row_id;
         let sysdate_is_now = snapshot.sysdate_is_now;
-        let has = |flag: &str| {
-            snapshot
-                .mode_upper
-                .split(',')
-                .any(|part| part.trim() == flag)
-        };
+        let sql_mode = snapshot.sql_mode;
         let allow_auto_random_explicit_insert = snapshot.allow_auto_random_explicit_insert;
         let shard_allocate_step = snapshot.shard_allocate_step;
         let like_default_escape = snapshot.like_default_escape;
@@ -790,16 +755,16 @@ impl Session {
         // read with the all-false default -- and made `NO_ZERO_DATE` silently
         // inoperative on the read path.
         let date_modes = tidb_datatype::DateModes {
-            no_zero_date: has("NO_ZERO_DATE"),
-            no_zero_in_date: has("NO_ZERO_IN_DATE"),
-            allow_invalid_dates: has("ALLOW_INVALID_DATES"),
+            no_zero_date: sql_mode.has_no_zero_date_mode(),
+            no_zero_in_date: sql_mode.has_no_zero_in_date_mode(),
+            allow_invalid_dates: sql_mode.has_allow_invalid_dates_mode(),
         };
         if !is_dml {
             let ctx = tidb_executor::StmtContext::for_query()
                 // A read's error levels do not depend on the mode, but DDL
                 // takes this same context and Go's DDL checks DO read
                 // `SQLMode.HasStrictMode()`. See `StmtContext::with_strict`.
-                .with_strict(has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"))
+                .with_strict(sql_mode.has_strict_mode())
                 .with_date_modes(date_modes)
                 .with_cte_max_recursion_depth(cte_depth)
                 .with_join_reorder_threshold(join_reorder_threshold)
@@ -818,7 +783,7 @@ impl Session {
                 .with_planned_apply_channel(Arc::clone(&self.planned_apply))
                 .with_allow_write_row_id(allow_write_row_id)
                 .with_static_partition_prune(static_partition_prune)
-                .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
+                .with_only_full_group_by(sql_mode.has_only_full_group_by())
                 .with_new_only_full_group_by_check(new_only_full_group_by_check)
                 .with_session_state(current_db, version, tidb_version_info)
                 .with_connection_charset_info(
@@ -847,8 +812,8 @@ impl Session {
                 .with_block_encryption_mode(block_encryption_mode)
                 .with_sequences(self.sequence_snapshot())
                 .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
-                .with_sql_mode(scanner_sql_mode_of(&snapshot.mode_upper))
-                .with_no_unsigned_subtraction(has("NO_UNSIGNED_SUBTRACTION"))
+                .with_sql_mode(snapshot.scanner_sql_mode)
+                .with_no_unsigned_subtraction(sql_mode.has_no_unsigned_subtraction_mode())
                 .with_like_default_escape(like_default_escape)
                 .with_default_string_match_selectivity(default_string_match_selectivity)
                 .with_sysdate_is_now(sysdate_is_now)
@@ -858,14 +823,14 @@ impl Session {
         }
         let (increment, offset) = self.auto_increment_step();
         let ctx = tidb_executor::StmtContext::for_dml(
-            has("ERROR_FOR_DIVISION_BY_ZERO"),
-            has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"),
+            sql_mode.has_error_for_division_by_zero_mode(),
+            sql_mode.has_strict_mode(),
             ignore_err,
         )
         .with_date_modes(date_modes)
         .with_planned_apply_channel(Arc::clone(&self.planned_apply))
         .with_allow_write_row_id(allow_write_row_id)
-        .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
+        .with_only_full_group_by(sql_mode.has_only_full_group_by())
         .with_new_only_full_group_by_check(new_only_full_group_by_check)
         .with_session_state(current_db, version, tidb_version_info)
         .with_connection_charset_info(connection_charset, connection_collation)
@@ -894,12 +859,12 @@ impl Session {
         .with_sysdate_is_now(sysdate_is_now)
         .with_resource_group_name(self.active_resource_group.clone())
         .with_clock(clock, zone)
-        .with_sql_mode(scanner_sql_mode_of(&snapshot.mode_upper))
-        .with_no_unsigned_subtraction(has("NO_UNSIGNED_SUBTRACTION"))
+        .with_sql_mode(snapshot.scanner_sql_mode)
+        .with_no_unsigned_subtraction(sql_mode.has_no_unsigned_subtraction_mode())
         .with_like_default_escape(like_default_escape)
         .with_default_string_match_selectivity(default_string_match_selectivity)
         .with_auto_increment_step(increment, offset)
-        .with_auto_increment_zero_explicit(has("NO_AUTO_VALUE_ON_ZERO"))
+        .with_auto_increment_zero_explicit(sql_mode.has_no_auto_value_on_zero_mode())
         .with_foreign_key_checks(self.foreign_key_checks())
         .with_constraint_check_in_place(constraint_check_in_place)
         // Go `optimizeDupKeyCheckForNormalInsert` + `getPessimisticLazyCheckMode`
@@ -1048,23 +1013,69 @@ impl Session {
     }
 }
 
-/// The scanner flags Go's `Parser.SetSQLMode` consults, read off an
-/// already-uppercased, already-expanded `@@sql_mode` text.
-pub(crate) fn scanner_sql_mode_of(mode: &str) -> tidb_parser::SqlMode {
-    let has = |flag: &str| mode.split(',').any(|part| part.trim() == flag);
+/// The scanner flags Go's `Parser.SetSQLMode` consults, projected from the
+/// same typed `SessionVars.SQLMode` authority every other consumer reads.
+pub(crate) const fn scanner_sql_mode_of(mode: tidb_mysql::SqlMode) -> tidb_parser::SqlMode {
     tidb_parser::SqlMode {
-        real_as_float: has("REAL_AS_FLOAT"),
-        no_backslash_escapes: has("NO_BACKSLASH_ESCAPES"),
-        ansi_quotes: has("ANSI_QUOTES"),
-        high_not_precedence: has("HIGH_NOT_PRECEDENCE"),
-        ignore_space: has("IGNORE_SPACE"),
-        pipes_as_concat: has("PIPES_AS_CONCAT"),
+        real_as_float: mode.has_real_as_float_mode(),
+        no_backslash_escapes: mode.has_no_backslash_escapes_mode(),
+        ansi_quotes: mode.has_ansi_quotes_mode(),
+        high_not_precedence: mode.has_high_not_precedence_mode(),
+        ignore_space: mode.has_ignore_space_mode(),
+        pipes_as_concat: mode.has_pipes_as_concat_mode(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sql_mode_consumers_use_go_typed_session_state() {
+        let vars = include_str!("vars.rs");
+        let context = include_str!("stmt_ctx.rs");
+        let session = include_str!("lib.rs");
+        let prepared = include_str!("prepared_ast.rs");
+        let point_context = context
+            .split_once("pub(crate) fn prepared_point_get_context(")
+            .expect("prepared point context")
+            .1
+            .split_once("pub fn result_materialization_authority(")
+            .expect("prepared point context boundary")
+            .0;
+        let snapshot = context
+            .split_once("fn statement_var_snapshot(")
+            .expect("statement-variable snapshot")
+            .1
+            .split_once("pub(crate) fn statement_context_ignoring(")
+            .expect("statement-variable snapshot boundary")
+            .0;
+        let builder = context
+            .split_once("pub(crate) fn statement_context_ignoring(")
+            .expect("statement-context builder")
+            .1
+            .split_once("pub(crate) const fn scanner_sql_mode_of(")
+            .expect("statement-context builder boundary")
+            .0;
+        let splitter = session
+            .split_once("pub fn split_statements(")
+            .expect("multi-statement parser")
+            .1
+            .split_once("pub fn run(")
+            .expect("multi-statement parser boundary")
+            .0;
+
+        assert!(vars.contains("sql_mode: tidb_mysql::SqlMode"));
+        assert!(!session.contains("scanner_sql_mode_cache"));
+        assert!(!point_context.contains("get_system(\"sql_mode\")"));
+        assert!(snapshot.contains("self.vars.sql_mode()"));
+        assert!(!snapshot.contains("mode_upper"));
+        assert!(!builder.contains("scanner_sql_mode_of("));
+        assert!(splitter.contains("self.scanner_sql_mode()"));
+        assert!(!splitter.contains("get_system(\"sql_mode\")"));
+        assert!(prepared.contains("self.vars.sql_mode()"));
+        assert!(!prepared.contains("get_system(\"sql_mode\")"));
+    }
 
     #[test]
     fn result_materialization_reuses_the_typed_statement_policy() {

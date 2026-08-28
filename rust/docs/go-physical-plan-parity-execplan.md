@@ -1450,6 +1450,50 @@ legs reported zero ignored errors. Exact validation commands:
     git diff --check
     EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
 
+Progress receipt (2026-08-28, typed session SQL mode): Go maintains
+`SessionVars.SQLMode` as a bitset in the sql_mode sysvar's `SetSession` hook;
+its parser, statement context, prepared point decoder, and prepared-plan cache
+key all read that one authority. Rust kept only the normalized string, plus a
+separate generation-keyed scanner cache, and repeatedly split or uppercased the
+string for other consumers. `SessionVars` now maintains the existing
+Go-compatible `tidb_mysql::SqlMode` bitset across default construction,
+inherited GLOBAL state, ordinary SET, and statement-scoped restore. Parser and
+executor consumers project directly from it, the redundant scanner cache and
+string parsing are gone, and the obsolete ignored `TestSQLModeVar` parity-gap
+stub is removed. The source regression was observed failing before the typed
+field existed and passing afterward. The typed-state test also covers Go's
+case normalization, invalid-mode refusal without state drift, composite mode,
+restore, and inherited GLOBAL behavior. Targeted scanner, prepared-cache key,
+and environment-reuse tests pass; `tidb-vardef` passes 43/43 runnable tests;
+the complete `tidb-mysql` generated-source oracle passes 18/18 with the pinned
+Go 1.26.0 toolchain; and the release server builds. The complete SQL-mode
+scanner module remains 13/14 because the unchanged indexed-LIKE range test
+also fails at baseline `8366ff70bd`; equality, stored bytes, and the same LIKE
+semantics without that indexed range all pass, so this pre-existing planner
+defect is outside this typed-state change.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`f87395b719` and the same Go server over one TiKV/PD cluster. Read-only median
+TPS was 508.97 candidate, 509.11 baseline, and 475.64 Go. Read-write median TPS
+was 245.41 candidate, 238.46 baseline, and 212.22 Go; those samples remain
+latency-noisy, so no read-write increase is attributed to this change. All 18
+legs reported zero ignored errors. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session session_sql_mode_uses_go_typed_state --lib
+    cargo test -q -p tidb-session sql_mode_consumers_use_go_typed_session_state --lib
+    cargo test -q -p tidb-session tests_sql_mode_scanner::the_ansi_composite_carries_its_scanner_flags_through --lib
+    cargo test -q -p tidb-session tests_sql_mode_scanner::no_backslash_escapes_changes_like_default_escape_only_when_enabled --lib
+    cargo test -q -p tidb-session tests_sql_mode_scanner::no_unsigned_subtraction_changes_the_result_domain_and_value --lib
+    cargo test -q -p tidb-session unchanged_session_reuses_the_prepared_plan_cache_environment --lib
+    cargo test -q -p tidb-executor prepared_select_plan_reuses_shape_and_rebinds_parameters --lib
+    cargo test -q -p tidb-vardef
+    env GOTOOLCHAIN=go1.26.0 cargo test -q -p tidb-mysql
+    cargo build -q --release -p tidb-server --bin tidb-server
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
 Plan revision note (2026-08-27): created after the user confirmed the
 performance-preserving route to full Go parity across plan cache, aggregation,
 parallel execution, resource groups, sort, and coprocessor packages.

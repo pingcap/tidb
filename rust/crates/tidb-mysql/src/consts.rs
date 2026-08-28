@@ -480,6 +480,10 @@ impl SqlMode {
     pub const fn has_no_backslash_escapes_mode(self) -> bool {
         self.has(ModeNoBackslashEscapes)
     }
+    /// Tests `NO_AUTO_VALUE_ON_ZERO`.
+    pub const fn has_no_auto_value_on_zero_mode(self) -> bool {
+        self.has(ModeNoAutoValueOnZero)
+    }
     /// Tests `IGNORE_SPACE`.
     pub const fn has_ignore_space_mode(self) -> bool {
         self.has(ModeIgnoreSpace)

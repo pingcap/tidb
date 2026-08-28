@@ -750,9 +750,12 @@ pub struct SessionVars {
     /// transaction, planner-cache, process-list, and wire-status consumers
     /// read this field exactly as Go reads `SessionVars.status`.
     autocommit: bool,
+    /// Go's typed `SessionVars.SQLMode`, maintained by the sql_mode sysvar's
+    /// `SetSession` hook and read directly by parser and executor consumers.
+    sql_mode: tidb_mysql::SqlMode,
     /// Bumped by every mutation of `systems`, so a caller can cache what it
-    /// PARSES out of the raw text -- the scanner's `sql_mode` bits, the
-    /// optimizer's cost environment -- and re-derive only when a `SET`
+    /// PARSES out of the raw text -- chiefly the optimizer's cost environment
+    /// -- and re-derive only when a `SET`
     /// actually happened. Go holds the same products as typed fields on
     /// `SessionVars` updated by each variable's `SetSession` hook; a
     /// generation stamp buys that read cost without a hook per variable.
@@ -781,6 +784,8 @@ impl Default for SessionVars {
         Self {
             systems: HashMap::new(),
             autocommit: true,
+            sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
+                .expect("the compiled default SQL mode is valid"),
             generation: 0,
             optimizer_fix_control: OptimizerFixControl::default(),
             session_resolved: ResolvedGlobals::default(),
@@ -827,6 +832,8 @@ impl SessionVars {
             .map_err(|error| VarError::ValidationRefused(error.to_string()))?
             .0;
         let autocommit = Self::autocommit_from_systems(&systems);
+        let sql_mode = Self::sql_mode_from_systems(&systems)
+            .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
         // Commit all authorities only after the inherited fix-control
         // row has been accepted. A stale/foreign cluster row can therefore
         // refuse the connection without partially reseeding this session.
@@ -834,6 +841,7 @@ impl SessionVars {
         self.globals = Arc::new(globals);
         self.optimizer_fix_control = optimizer_fix_control;
         self.autocommit = autocommit;
+        self.sql_mode = sql_mode;
         self.session_resolved = Self::build_session_image(&self.systems);
         // The wholesale replacement above is a mutation like any other; the
         // parsed-product caches keyed on `generation` must not survive it.
@@ -847,10 +855,26 @@ impl SessionVars {
         })
     }
 
+    fn sql_mode_from_systems(
+        systems: &HashMap<String, String>,
+    ) -> Result<tidb_mysql::SqlMode, tidb_mysql::InvalidSqlMode> {
+        tidb_mysql::get_sql_mode(
+            systems
+                .get("sql_mode")
+                .map_or(tidb_mysql::DefaultSQLMode, String::as_str),
+        )
+    }
+
     /// Go `SessionVars.IsAutocommit`, backed by its typed server-status bit.
     #[must_use]
     pub const fn is_autocommit(&self) -> bool {
         self.autocommit
+    }
+
+    /// Go `SessionVars.SQLMode`, parsed once when its sysvar changes.
+    #[must_use]
+    pub const fn sql_mode(&self) -> tidb_mysql::SqlMode {
+        self.sql_mode
     }
 
     /// Updates ONE registry-indexed slot of the session image after the
@@ -979,7 +1003,9 @@ impl SessionVars {
         if snapshot.is_empty() {
             return;
         }
+        let mut restores_sql_mode = false;
         for (key, previous) in snapshot {
+            restores_sql_mode |= key == "sql_mode";
             match previous {
                 Some(value) => {
                     self.session_resolved
@@ -994,6 +1020,10 @@ impl SessionVars {
         }
         self.generation += 1;
         self.autocommit = Self::autocommit_from_systems(&self.systems);
+        if restores_sql_mode {
+            self.sql_mode = Self::sql_mode_from_systems(&self.systems)
+                .expect("a saved SQL mode was validated before it was stored");
+        }
         self.refresh_optimizer_fix_control();
     }
 
@@ -1065,6 +1095,14 @@ impl SessionVars {
         } else {
             None
         };
+        let parsed_sql_mode = if key == "sql_mode" {
+            Some(
+                tidb_mysql::get_sql_mode(&validated.value)
+                    .map_err(|error| VarError::ValidationRefused(error.to_string()))?,
+            )
+        } else {
+            None
+        };
         // Go `SetSessionFromHook`: the alias takes the SAME stored value, with
         // its own validation skipped -- `tx_isolation` and
         // `transaction_isolation` are one value under two spellings.
@@ -1079,6 +1117,9 @@ impl SessionVars {
         }
         if key == "autocommit" {
             self.autocommit = validated.value == "ON";
+        }
+        if let Some(parsed) = parsed_sql_mode {
+            self.sql_mode = parsed;
         }
         self.generation += 1;
         if let Some(parsed) = parsed_fix_control {
@@ -1231,6 +1272,45 @@ mod tests {
         let mut inherited = SessionVars::new();
         inherited.seed_from_globals(globals).unwrap();
         assert!(!inherited.is_autocommit());
+    }
+
+    #[test]
+    fn session_sql_mode_uses_go_typed_state() {
+        let mut vars = SessionVars::new();
+        assert!(vars.sql_mode().has_strict_mode());
+        assert!(vars.sql_mode().has_only_full_group_by());
+
+        let restore = vars.snapshot_system("sql_mode");
+        vars.set_system("sql_mode", "strict_trans_tabLES  ".to_owned())
+            .unwrap();
+        assert_eq!(vars.get_system("sql_mode").unwrap(), "STRICT_TRANS_TABLES");
+        assert!(vars.sql_mode().has_strict_mode());
+        let error = vars
+            .set_system("sql_mode", "strict_trans_tabLES,nonsense_option".to_owned())
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            VarError::WrongValueForVar(ref name, ref value)
+                if name == "sql_mode" && value == "NONSENSE_OPTION"
+        ));
+        assert!(vars.sql_mode().has_strict_mode());
+
+        vars.set_system("sql_mode", "ANSI".to_owned()).unwrap();
+        assert!(vars.sql_mode().has_ansi_quotes_mode());
+        assert!(vars.sql_mode().has_pipes_as_concat_mode());
+        assert!(!vars.sql_mode().has_strict_mode());
+        vars.restore_system(restore);
+        assert!(vars.sql_mode().has_strict_mode());
+        assert!(!vars.sql_mode().has_ansi_quotes_mode());
+
+        let globals = GlobalSysvars::new();
+        globals
+            .set("sql_mode", "NO_UNSIGNED_SUBTRACTION".to_owned())
+            .unwrap();
+        let mut inherited = SessionVars::new();
+        inherited.seed_from_globals(globals).unwrap();
+        assert!(inherited.sql_mode().has_no_unsigned_subtraction_mode());
+        assert!(!inherited.sql_mode().has_strict_mode());
     }
 
     #[test]

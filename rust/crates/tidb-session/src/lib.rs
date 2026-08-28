@@ -516,7 +516,6 @@ pub struct Session {
     /// through string lookups; the generation stamp buys the same read cost
     /// without a hook per variable. Measured before the cache: the two were
     /// the hottest user-code frames under sysbench, ahead of the parser.
-    scanner_sql_mode_cache: std::cell::Cell<Option<(u64, tidb_parser::SqlMode)>>,
     statement_var_cache:
         std::cell::RefCell<Option<std::rc::Rc<crate::stmt_ctx::StatementVarSnapshot>>>,
     cost_env_cache:
@@ -696,7 +695,6 @@ impl Default for Session {
             server_info_syncer: None,
             cluster_schema_version: None,
             mdl_related_tables: None,
-            scanner_sql_mode_cache: std::cell::Cell::new(None),
             statement_var_cache: std::cell::RefCell::new(None),
             cost_env_cache: std::cell::RefCell::new(None),
             prepared_plan_cache_environment_cache: std::cell::RefCell::new(None),
@@ -1265,9 +1263,7 @@ impl Session {
         if tidb_parser::is_sole_statement(sql) {
             return Ok(vec![sql.to_owned()]);
         }
-        let mode = crate::stmt_ctx::scanner_sql_mode_of(
-            &self.vars().get_system("sql_mode").unwrap_or_default(),
-        );
+        let mode = self.scanner_sql_mode();
         let Ok(statements) = tidb_parser::parse_multi_with_sql_mode(sql, mode) else {
             return Ok(vec![sql.to_owned()]);
         };
