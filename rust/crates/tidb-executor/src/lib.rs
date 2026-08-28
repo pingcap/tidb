@@ -167,6 +167,12 @@ pub mod partition_routing;
 pub(crate) mod ranger_detacher;
 mod tidb_decode_key;
 #[cfg(test)]
+mod tests_adapter_recordset_lockkeys_gaps;
+#[cfg(test)]
+mod tests_adapter_slow_log_ru_gaps;
+#[cfg(test)]
+mod tests_adapter_topsql_profiling_gaps;
+#[cfg(test)]
 mod tests_admin_checksum_gaps;
 #[cfg(test)]
 mod tests_analyze_broadcast_flush_gaps;
@@ -174,6 +180,22 @@ mod tests_analyze_broadcast_flush_gaps;
 mod tests_analyze_kill_save_gaps;
 #[cfg(test)]
 mod tests_analyze_panic_recovery_source;
+#[cfg(test)]
+mod tests_aggfuncs_approx_pushdown_source;
+#[cfg(test)]
+mod tests_aggfuncs_avg_bit_count_gaps;
+#[cfg(test)]
+mod tests_aggfuncs_cume_dist_first_row_gaps;
+#[cfg(test)]
+mod tests_aggfuncs_group_concat_gaps;
+#[cfg(test)]
+mod tests_aggfuncs_json_aggs_gaps;
+#[cfg(test)]
+mod tests_aggfuncs_lead_lag_gaps;
+#[cfg(test)]
+mod tests_aggfuncs_max_min_deque_gaps;
+#[cfg(test)]
+mod tests_aggfuncs_parallel_distinct_gaps;
 #[cfg(test)]
 mod tests_batch_point_get_locking_gaps;
 #[cfg(test)]
