@@ -170,6 +170,11 @@ both `oltp_read_only` and `oltp_read_write`.
   every DAG, append it under a shared mutex, or update a shared atomic for
   every response chunk; wire-shape tests observe the decoded fake-region
   request instead.
+- [x] 2026-08-27: removed the table reader's Rust-only second small-chunk
+  threshold. `SelectResponseIter` already owns Go `readFromChunk`'s 80%
+  reuse/coalescing decision, so every completed exact-width response batch now
+  moves into the executor output instead of copying small range responses a
+  second time.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -474,6 +479,20 @@ both `oltp_read_only` and `oltp_read_write`.
   both affected unistore SQL tests, smoke-binary check, release build, and the
   paired benchmark receipt.
 
+- Observation: Rust implemented Go `readFromChunk`'s 80% intermediate-chunk
+  reuse rule in `SelectResponseIter`, but `RemoteRowCursor` then applied a
+  second 75% threshold before accepting the completed executor-facing batch.
+  A typical 100-row sysbench range result under a 1,024-row request therefore
+  copied every cell after the Go-equivalent response decoder had already
+  finished it. Deleting the duplicate gate made the ownership regression pass
+  and moved a fresh simple-range benchmark to Rust 4,072.57 TPS versus Go
+  4,256.84 TPS (0.957x median, zero errors), from the preceding 0.942x
+  checkpoint.
+  Evidence: fail-before/pass-after
+  `clean_remote_cursor_moves_a_small_completed_batch_into_the_output`, all
+  five `clean_remote_cursor_` tests, release build, and the paired benchmark
+  receipt.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -624,6 +643,15 @@ both `oltp_read_only` and `oltp_read_write`.
   live path.
   Date/Author: 2026-08-27, Codex.
 
+- Decision: keep one response-size reuse policy at the Go-equivalent decoder
+  boundary and move every completed exact-width batch at the table-reader
+  boundary.
+  Rationale: `SelectResponseIter` has already decided whether to reuse or
+  coalesce its decoder-owned intermediate chunk. A second executor-local
+  threshold is neither Go behavior nor useful ownership policy; it turns an
+  already completed response into per-cell copy work.
+  Date/Author: 2026-08-27, Codex.
+
 ## Outcomes & Retrospective
 
 Work is in progress. After restoring point-plan precedence and removing the
@@ -678,9 +706,10 @@ therefore below the projection boundary, in request/response execution or
 decoding rather than planner shape alone. Sharing one completion loop then
 measured 4,142.42/4,584.00 TPS (0.904x). Removing the production scan receipt
 graph produced fresh medians of 4,063.71/4,314.51 TPS (0.942x), zero errors.
-The remaining simple-range gap is now about 5.8%; request construction,
-response decoding, and query-worker wake/scheduling remain the active profile
-targets.
+Removing the duplicate table-reader chunk threshold then measured
+4,072.57/4,256.84 TPS (0.957x), zero errors. The remaining simple-range gap is
+now about 4.3%; request construction, response decoding, and query-worker
+wake/scheduling remain the active profile targets.
 
 ## Context and Orientation
 

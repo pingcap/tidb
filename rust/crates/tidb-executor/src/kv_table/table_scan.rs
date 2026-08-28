@@ -2617,14 +2617,12 @@ impl RemoteRowCursor {
                     .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
                 if output.num_rows() == 0 {
                     if let Some(batch) = next.as_ref() {
-                        // TiKV commonly terminates a page a few rows below
-                        // the executor chunk cap. Returning that owned batch
-                        // still preserves the source boundary and avoids
-                        // copying a million-row ordered scan one cell at a
-                        // time; tiny pages are coalesced below.
-                        let direct_min_rows = target_rows.saturating_mul(3) / 4;
+                        // `SelectResponseIter` already applies Go
+                        // `readFromChunk`'s 80% reuse/coalescing rule. What it
+                        // returns is the completed executor-facing batch, so
+                        // move every exact-width batch instead of applying a
+                        // second size gate and copying small range results.
                         if batch.num_cols() == self.width
-                            && batch.num_rows() >= direct_min_rows
                             && (allow_oversized || batch.num_rows() <= target_rows)
                         {
                             let rows = batch.num_rows();
@@ -5383,6 +5381,51 @@ mod remote_cursor_tests {
         );
         assert_eq!(output.get_row(0).get_int64(0), 7);
         assert_eq!(output.get_row(1).get_int64(0), 8);
+    }
+
+    /// `SelectResponseIter` has already applied Go `readFromChunk`'s
+    /// small-chunk coalescing rule. The table reader must hand that completed
+    /// batch to its executor output even when it is well below the executor's
+    /// requested row count; copying it here applies Go's reuse threshold a
+    /// second time.
+    #[test]
+    fn clean_remote_cursor_moves_a_small_completed_batch_into_the_output() {
+        let source_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
+        let mut batch = Chunk::new_with_capacity(&source_types, 1);
+        batch.append_int64(0, 7);
+        let source_column = batch.column_handle(0);
+        let mut source_identity = Chunk::new_with_capacity(&source_types, 1);
+        source_identity.set_col(0, source_column);
+        let mut cursor = RemoteRowCursor {
+            stream: Box::new(ChunkStream {
+                chunks: std::collections::VecDeque::from([batch]),
+                returned: 0,
+            }),
+            staged: Vec::new().into_iter(),
+            pending_staged: None,
+            pending_remote: None,
+            pending_chunk: None,
+            pending_chunk_row: 0,
+            field_types: Vec::new(),
+            width: 1,
+            handle_index: None,
+            table_id: 0,
+            merge_staged: false,
+            descending: false,
+            noted_rows: 0,
+            predicates_applied: true,
+        };
+        let mut output = Chunk::new_with_capacity(&source_types, 4);
+
+        assert_eq!(
+            cursor.append_clean_chunk(&mut output, 4, false).unwrap(),
+            Some(1)
+        );
+        assert_eq!(output.get_row(0).get_int64(0), 7);
+        assert!(
+            output.columns_share_identity(0, &source_identity, 0),
+            "the completed response batch was copied instead of moved"
+        );
     }
 
     #[test]
