@@ -2210,6 +2210,13 @@ fn grouped_projection_expression_text_as(
                         .map(|converted| converted.value)
                 })
                 .unwrap_or_else(|| constant.value.clone());
+            // Go formats the NULL result arm of an injected CASE projection
+            // through `%v`, which prints `<nil>`. Result encoding deliberately
+            // stringifies NULL as an empty byte string, so handle it before
+            // using the shared encoding helper (TPC-DS Q43).
+            if value == Datum::Null {
+                return Some("<nil>".to_owned());
+            }
             value
                 .truncated_stringify()
                 .ok()

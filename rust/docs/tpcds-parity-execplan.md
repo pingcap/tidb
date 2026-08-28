@@ -20,6 +20,7 @@ The Go source of truth in this checkout is `pkg/planner/core/casetest/tpcds/tpcd
 - [x] (2026-08-27 10:00Z) Classified the observed differences: source-mode plan/store-tier mismatch is the unsupported Rust TiFlash/MPP execution tier; control-mode differences are Rust physical-plan/cost choices; all 42 result hashes match; Q6 was an EXPLAIN-only DISTINCT trace failure.
 - [x] (2026-08-27 10:00Z) Implemented and tested the Q6 trace fallback in `tidb-executor` with a scalar-DISTINCT regression test. This is a focused Rust behavior unit, not a claim of complete Go package transcreation.
 - [x] (2026-08-27 10:00Z) Re-ran the full 42-query comparison after the correction and recorded the final receipt; no plan or result errors remain.
+- [x] (2026-08-28 01:10Z) Corrected grouped TopN direct-field aliases and injected CASE NULL rendering, covered both with focused Rust tests, and re-ran the full 42-query matrix; TiKV-only exact plan matches increased from 6/42 to 9/42 and result hashes remain 42/42.
 - [ ] Complete the Ready verification profile, including `make lint`, before claiming the entire goal complete.
 
 ## Surprises & Discoveries
@@ -36,7 +37,7 @@ The Go source of truth in this checkout is `pkg/planner/core/casetest/tpcds/tpcd
 - Observation: the earlier Q64 source-setting plan cannot yet be identical because Go produces TiFlash/MPP nodes while Rust produces none.
   Evidence: Go produced 156 plan rows, including 147 MPP rows; Rust produced 76 rows and zero MPP rows. Under a TiKV-only one-concurrency control, Go produced 84 rows and Rust 77, with the same two MergeJoin, one IndexHashJoin, and one HashJoin choices.
 
-- Observation: with TiFlash replicas available, all 42 benchmark statements execute successfully and produce byte-identical result hashes on Go and Rust, but Rust still emits no MPP operators. The source-mode normalized plan hash matches 0/42; the TiKV-only control-mode hash matches 6/42.
+- Observation: with TiFlash replicas available, all 42 benchmark statements execute successfully and produce byte-identical result hashes on Go and Rust, but Rust still emits no MPP operators. The source-mode normalized plan hash matches 0/42; the TiKV-only control-mode hash now matches 9/42 after plan-trace corrections for Q3, Q43, and Q52.
   Evidence: `/private/tmp/tpcds-matrix-final-b7.json`; Go source Q3 begins `TableReader -> ExchangeSender (mpp[tiflash])`, while Rust source Q3 remains a TiKV `IndexJoin` tree.
 
 - Observation: the Rust endpoint is substantially slower on this minimum fixture even with every relevant concurrency variable set to one. This is an outstanding performance requirement, not a waiver: source-mode Rust/Go p50 median is 3.13x and control-mode is 1.46x in this run. The focused Q6 correction itself did not introduce a broad regression relative to the pre-fix run (Rust p50 geometric ratio 1.03x source, 1.04x control, within local run noise except Q25).
@@ -55,13 +56,20 @@ The Go source of truth in this checkout is `pkg/planner/core/casetest/tpcds/tpcd
   Rationale: the user asked for plan alignment, and the Go source test enforces MPP. Printing MPP-looking rows without planning and executing the corresponding task would preserve a different end state and be incorrect.
   Date/Author: 2026-08-27 / Codex.
 
+- Decision: Treat direct-field aliases and NULL arms in injected grouped projections as
+  plan-trace formatting bugs only when the underlying executor shape is already the
+  same, and cover each correction with a plan-producing regression test.
+  Rationale: Q3/Q52 and Q43 have identical TiKV operator trees and results; changing
+  planner choices would add risk without moving the physical execution toward Go.
+  Date/Author: 2026-08-28 / Codex.
+
 - Decision: Use one client and set all exposed scan, lookup, join, aggregation, projection, window, stream aggregation, and optimizer concurrency variables to one for comparable measurements.
   Rationale: this directly implements the user's one-concurrency constraint and removes default parallelism as a source of latency variance.
   Date/Author: 2026-08-27 / Codex.
 
 ## Outcomes & Retrospective
 
-The full minimum-fixture matrix now covers all 42 generated statements in both requested source and TiKV-only control modes. Result correctness is complete for this fixture (42/42 hashes equal in each mode), and the Q6 explain-only failure is fixed with a regression test. Plan parity remains incomplete (0/42 source, 6/42 control) because the Rust tree still lacks TiFlash/MPP execution; the absolute Rust latency is also higher (3.13x/1.46x median p50 versus Go). The exact Q64 Go unit-test MPP oracle is likewise still unmet. The plan therefore remains active: the next implementation unit must be an explicitly scoped MPP package boundary or another measured cost/executor correction, followed by the Ready profile.
+The full minimum-fixture matrix now covers all 42 generated statements in both requested source and TiKV-only control modes. Result correctness is complete for this fixture (42/42 hashes equal in each mode), Q6 has no EXPLAIN error, and three formatting mismatches (Q3, Q43, Q52) are corrected with regression coverage. Plan parity remains incomplete (0/42 source, 9/42 control) because the Rust tree still lacks TiFlash/MPP execution; the absolute Rust latency is also higher (3.41x/1.49x median p50 versus Go). The exact Q64 Go unit-test MPP oracle is likewise still unmet. The plan therefore remains active: the next implementation unit must be an explicitly scoped MPP package boundary or another measured cost/executor correction, followed by the Ready profile.
 
 ## Context and Orientation
 

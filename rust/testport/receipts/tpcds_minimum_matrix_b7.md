@@ -1,12 +1,12 @@
 # TPC-DS minimum-fixture parity receipt
 
-Run date: 2026-08-27 (Asia/Shanghai)
+Run date: 2026-08-28 (Asia/Shanghai)
 
 ## Inputs
 
 - Go source of truth: nightly TiDB from `tiup playground nightly`, PD/TiKV
   shared by both SQL endpoints, Go port `17000`.
-- Rust revision: `b7e5a7e770082c1fd9a89cae1c337d63dbca7e28` on
+- Rust revision: `b77e9332f73123115f7835a31e268336e3f4bc73` on
   `hparser-integration`, release binary on port `18000`.
 - Workload source: `pingcap/tidb-bench` commit
   `e9f058ae9bee089afdbf9b3397ed9948bf7e560b`; `genquery.sh` generated 42
@@ -40,7 +40,7 @@ PYTHONPATH=/private/tmp/pymysql \
   /Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 \
   rust/testport/tpcds/compare_workload.py \
   --queries /private/tmp/tidb-bench-tpcds/tpcds/queries \
-  --output /private/tmp/tpcds-matrix-final-b7.json \
+  --output /private/tmp/tpcds-matrix-plan-align-b77-q43.json \
   --go-port 17000 --rust-port 18000 --warmups 1 --runs 3
 ```
 
@@ -49,12 +49,15 @@ broadcast thresholds, and all scan/lookup/join/aggregation/projection/window
 and optimizer concurrency variables to one. `source` requests
 `tikv,tiflash,tidb`; `control` permits only `tikv`.
 
+The refreshed matrix is `/private/tmp/tpcds-matrix-plan-align-b77-q43.json`
+(SHA-256 `d5213f67e4848dae6958f39d049c63f89d31018269e3f3a054c6f57437cd6731`).
+
 ## Results
 
 | mode | Go plan errors | Rust plan errors | result hashes equal | normalized plan hashes equal | Go p50 median | Rust p50 median | Rust/Go p50 median |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| source (MPP requested) | 0 | 0 | 42/42 | 0/42 | 31.45 ms | 78.50 ms | 3.13x |
-| control (TiKV only) | 0 | 0 | 42/42 | 6/42 | 42.17 ms | 79.87 ms | 1.46x |
+| source (MPP requested) | 0 | 0 | 42/42 | 0/42 | 30.66 ms | 74.56 ms | 3.41x |
+| control (TiKV only) | 0 | 0 | 42/42 | 9/42 | 41.49 ms | 74.89 ms | 1.49x |
 
 All result hashes include row order and encoded values. No result errors were
 observed. Source-mode Go plans contain `mpp[tiflash]` operators (for example
@@ -69,6 +72,12 @@ when a residual Selection prevents the trace-only partial rewrite. Regression
 test: `driver::tests::aggregates::explain_distinct_scalar_subquery_with_filter`.
 The final matrix has no Q6 plan error.
 
+The focused plan-trace corrections also align Q3, Q52, and Q43 in the
+TiKV-only control mode. Q3/Q52 order-by aliases now resolve through a direct
+select-field column to the physical base column, and Q43's injected CASE
+projection prints Go's `<nil>` spelling for a NULL result arm. Regression
+coverage includes `driver::tests::aggregates::tpcds_q43_injected_case_projection_spells_null_like_go`.
+
 For the focused correction's no-regression check, comparing the pre-fix and
 post-fix Rust runs on the same fixture gives p50 geometric ratios of 1.03x
 source and 1.04x control; this is local run noise except for Q25, which was
@@ -79,7 +88,7 @@ MPP/performance implementation unit.
 
 - Minimum-fixture result correctness: **met for all 42 statements**.
 - Q6 EXPLAIN regression: **fixed and covered by a Rust unit test**.
-- Exact Go physical-plan parity: **not met** (source 0/42; control 6/42).
+- Exact Go physical-plan parity: **not met** (source 0/42; control 9/42).
 - Rust no-performance-regression requirement: **not met as an absolute
   Go-vs-Rust target**; source and control medians above are recorded for the
   next implementation unit.

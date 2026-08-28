@@ -6,6 +6,65 @@
 
 use super::*;
 
+/// TPC-DS q43 injects CASE expressions below the grouped aggregate. Go's
+/// physical Projection spells each NULL result arm as `<nil>` rather than an
+/// empty string.
+#[test]
+fn tpcds_q43_injected_case_projection_spells_null_like_go() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE date_dim (d_date_sk INT, d_day_name VARCHAR(9))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE store_sales (ss_sold_date_sk INT, ss_store_sk INT, \
+            ss_sales_price DECIMAL(7,2))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE store (s_store_sk INT, s_store_id INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let sql = "SELECT s_store_id, \
+        SUM(CASE WHEN d_day_name = 'Sunday' THEN ss_sales_price ELSE NULL END) AS sun_sales \
+        FROM date_dim, store_sales, store \
+        WHERE d_date_sk = ss_sold_date_sk AND s_store_sk = ss_store_sk \
+        GROUP BY s_store_id ORDER BY s_store_id, sun_sales LIMIT 100";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let ctx = crate::StmtContext::for_query();
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let projection = rows
+        .iter()
+        .find_map(|row| match (&row[0], &row[4]) {
+            (Datum::Bytes(operator), Datum::Bytes(info))
+                if String::from_utf8_lossy(operator)
+                    .trim_start_matches(&[' ', '│', '├', '└', '─'][..])
+                    == "Projection"
+                    && String::from_utf8_lossy(info).contains("case(") =>
+            {
+                Some(String::from_utf8_lossy(info).into_owned())
+            }
+            _ => None,
+        })
+        .expect("q43 shape injects a CASE Projection below HashAgg");
+    assert!(
+        projection.contains(", <nil>)->Column#"),
+        "Go-compatible CASE NULL spelling is retained: {projection}"
+    );
+}
+
 /// TPC-H q1 is Go's complete grouped partial-aggregation contract: AVG is a
 /// count/sum pair in TiKV, the root AVG merges both partial columns, and the
 /// restoring projection stays below the final group-key sort.
