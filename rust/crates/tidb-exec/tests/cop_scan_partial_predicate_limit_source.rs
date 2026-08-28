@@ -46,6 +46,28 @@ use tidb_executor::StmtContext;
 use tidb_proto::tipb::{Chunk, DagRequest, ExecType, Expr, ExprType, SelectResponse};
 use tidb_txnkv::Key;
 
+/// Go's table readers do not retain a process-lifetime history of every DAG
+/// they dispatch. Wire-shape tests observe the fake region below instead of
+/// charging every production scan for test-only counters, formatting, and a
+/// node-wide mutex.
+#[test]
+fn production_cop_scans_do_not_retain_test_receipts() {
+    let source = include_str!("../src/cop_scan.rs");
+    for receipt in [
+        "CopScanStats",
+        "rows_returned: Arc<AtomicU64>",
+        "scans_served: Arc<AtomicU64>",
+        "scans_refused: Arc<AtomicU64>",
+        "requests: Arc<Mutex<Vec<String>>>",
+        "fn dag_summary(",
+    ] {
+        assert!(
+            !source.contains(receipt),
+            "production cop scans still retain the test receipt `{receipt}`"
+        );
+    }
+}
+
 /// Rows the region holds, as `(id, tag)`. Every id is positive, so the one
 /// conjunct that lowers (`id > 0`) admits all of them; only every fourth row
 /// carries the tag the query asks for.

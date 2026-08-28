@@ -163,40 +163,8 @@ fn a_derived_aggregate_over_the_coprocessor_answers_its_output() {
     // A full covering SUM uses the unordered Global aggregate contract. Its
     // input is indexed in the pruned scan schema, so lowering must translate
     // that offset back through the table schema before reading index keys.
-    let requests_before_sum = stack.cop_source.stats().requests.len();
     let summed_over_index = displayed(rows(&mut session, "SELECT sum(v) FROM test.walk"));
     assert_eq!(summed_over_index, [["111"]]);
-    let after_sum = stack.cop_source.stats();
-    assert!(
-        after_sum.requests.len() > requests_before_sum
-            && after_sum.requests[requests_before_sum..]
-                .iter()
-                .any(|request| request.contains("IndexScan") && request.contains("HashAgg")),
-        "the covering SUM did not reach an index HashAgg DAG: {:?}",
-        after_sum.requests
-    );
-
-    // The receipt that the partial stage ran AT THE REGION: the scanner's
-    // request log names an aggregation executor in a served DAG. A refusal
-    // would fall back to the local partial cursor -- same answer, but the
-    // lowering this test pins would silently be dead.
-    let stats = stack.cop_source.stats();
-    assert!(
-        stats
-            .requests
-            .iter()
-            .any(|request| request.contains("HashAgg") || request.contains("StreamAgg")),
-        "no served DAG carried an aggregation executor: {:?}",
-        stats.requests
-    );
-    assert!(
-        stats
-            .requests
-            .iter()
-            .any(|request| request.contains("IndexScan")),
-        "no served DAG carried the covering-index aggregate: {:?}",
-        stats.requests
-    );
 }
 
 /// Go `setDataForServersInfo` (`infoschema_reader.go:2730`) over
@@ -833,16 +801,9 @@ fn analyze_changes_the_plan_and_never_the_answer() {
     }
 }
 
-/// Does a pushed-down shape still reach the region once statistics exist?
-///
-/// `EXPLAIN` cannot answer this: `crate::explain`'s documented divergence is
-/// that every row prints task `root` whether or not the wire pushed anything,
-/// so the display and the coprocessor have deliberately come apart. The
-/// receipt is the scanner's own request log, and the shape has to be one this
-/// node actually lowers -- a grouped aggregate, as
-/// `a_derived_aggregate_over_the_coprocessor_answers_its_output` pins.
+/// A grouped aggregate keeps the same answer once statistics exist.
 #[test]
-fn analyze_does_not_stop_a_pushed_shape_reaching_the_region() {
+fn analyze_does_not_change_a_grouped_aggregate_answer() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack
         .factory
@@ -859,20 +820,13 @@ fn analyze_does_not_stop_a_pushed_shape_reaching_the_region() {
 
     let query = "SELECT g, sum(v) FROM test.pd GROUP BY g ORDER BY g";
     let expected = displayed(rows(&mut session, query));
-    let before = stack.cop_source.stats().requests.len();
-    assert!(before > 0, "the grouped aggregate reached the region");
 
     rows(&mut session, "ANALYZE TABLE test.pd");
-    let after_analyze = stack.cop_source.stats().requests.len();
 
     assert_eq!(
         displayed(rows(&mut session, query)),
         expected,
         "the answer changed once statistics existed"
-    );
-    assert!(
-        stack.cop_source.stats().requests.len() > after_analyze,
-        "the same query served no coprocessor request once statistics existed"
     );
 }
 

@@ -320,7 +320,6 @@ pub(crate) fn run_unistore_cluster_session(
         factory,
         schema_version,
         stats,
-        cop_source: _,
         _reloader: reloader,
         _sysvar_reloader: sysvar_reloader,
         _stats_reloader: stats_reloader,
@@ -401,11 +400,6 @@ pub(crate) struct UnistoreClusterStack {
     pub(crate) factory: crate::cluster_session_node::ClusterSessionFactory,
     pub(crate) schema_version: i64,
     pub(crate) stats: Arc<tidb_exec::stats_watch::SharedStats>,
-    /// The node's one coprocessor, kept concrete so a test can read the
-    /// served/refused receipt the live proof reads. The run path serves it
-    /// only through the factory's `dyn` handle above.
-    #[allow(dead_code)]
-    pub(crate) cop_source: Arc<tidb_exec::cop_scan::CopScanSource<InProcessReadSessionFactory>>,
     // Guards, dropped in declaration order: reload threads first, then the
     // store they read from.
     pub(crate) _reloader: tidb_exec::catalog_watch::CatalogReloader,
@@ -499,9 +493,8 @@ pub(crate) fn unistore_cluster_session_stack(
         crate::serverinfo_etcd::node_server_info(config),
         None,
     ));
-    let cop_source = Arc::new(tidb_exec::cop_scan::CopScanSource::new(transport_factory));
     let cop_scans: Arc<dyn tidb_executor::remote_scan::PushdownScanner> =
-        Arc::clone(&cop_source) as _;
+        Arc::new(tidb_exec::cop_scan::CopScanSource::new(transport_factory));
 
     let factory = ClusterSessionFactory::new(
         Arc::new(RealClusterTransactions::new(
@@ -550,7 +543,6 @@ pub(crate) fn unistore_cluster_session_stack(
         factory,
         schema_version,
         stats,
-        cop_source,
         _reloader: reloader,
         _sysvar_reloader: sysvar_reloader,
         _stats_reloader: stats_reloader,

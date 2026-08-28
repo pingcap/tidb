@@ -165,6 +165,11 @@ both `oltp_read_only` and `oltp_read_write`.
   every pending BatchCommands region, and unordered delivery scans the
   completed attempts after each callback batch. Region rebuild, admission,
   retry, cancellation, and bounded-window regressions pass.
+- [x] 2026-08-27: removed `CopScanSource`'s Rust-only node-lifetime request
+  history and served/refused/row counters. Production scans no longer format
+  every DAG, append it under a shared mutex, or update a shared atomic for
+  every response chunk; wire-shape tests observe the decoded fake-region
+  request instead.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -454,6 +459,21 @@ both `oltp_read_only` and `oltp_read_write`.
   library regression, all six `unordered_` distsql tests, focused
   admission/retry tests, and the release benchmark receipt.
 
+- Observation: `CopScanSource` retained a process-lifetime `Vec<String>` of
+  every DAG solely for a smoke binary and three tests. Every successful open
+  formatted the executor tree and appended it under one node-wide mutex, and
+  every decoded chunk incremented a shared atomic. Go's table readers own no
+  corresponding request history; its diagnostics are external metrics/runtime
+  statistics rather than test receipts in the scan object. Deleting this state
+  moved the fresh simple-range benchmark to Rust 4,063.71 TPS versus Go
+  4,314.51 TPS (0.942x median, zero errors), from the preceding 0.904x
+  checkpoint. Dedicated fake-region tests continue to decode and assert the
+  actual DAG at the transport boundary.
+  Evidence: fail-before/pass-after
+  `production_cop_scans_do_not_retain_test_receipts`, the COUNT DAG wire test,
+  both affected unistore SQL tests, smoke-binary check, release build, and the
+  paired benchmark receipt.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -595,6 +615,15 @@ both `oltp_read_only` and `oltp_read_write`.
   redundant executor layer and fails closed for every unsupported shape.
   Date/Author: 2026-08-27, Codex.
 
+- Decision: production scan objects retain only state required to build or
+  execute requests; tests inspect encoded DAGs at a fake transport/region
+  boundary instead of adding node-wide counters or request histories.
+  Rationale: the removed receipt changed every production scan and grew
+  without bound, while the lower boundary already proves exact executors,
+  offsets, limits, direction, and aggregate arguments without perturbing the
+  live path.
+  Date/Author: 2026-08-27, Codex.
+
 ## Outcomes & Retrospective
 
 Work is in progress. After restoring point-plan precedence and removing the
@@ -646,7 +675,12 @@ Lowering the selected cop projection then produced narrow remote rows for the
 same simple-range query, but the fresh alternating medians were
 3,953.16/4,314.64 TPS (0.916x), also with zero errors. The remaining delta is
 therefore below the projection boundary, in request/response execution or
-decoding rather than planner shape alone.
+decoding rather than planner shape alone. Sharing one completion loop then
+measured 4,142.42/4,584.00 TPS (0.904x). Removing the production scan receipt
+graph produced fresh medians of 4,063.71/4,314.51 TPS (0.942x), zero errors.
+The remaining simple-range gap is now about 5.8%; request construction,
+response decoding, and query-worker wake/scheduling remain the active profile
+targets.
 
 ## Context and Orientation
 

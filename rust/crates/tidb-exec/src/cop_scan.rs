@@ -59,7 +59,6 @@
 //! never changes the answer.
 
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tidb_chunk::chunk::Chunk;
@@ -137,16 +136,6 @@ const INDEX_BATCH_ROWS: usize = 1024;
 /// same worker: neither the transport nor the iterator crosses threads.
 pub struct CopScanSource<F> {
     factory: Arc<F>,
-    /// Rows this node has received from coprocessor scans, for the receipt a
-    /// live proof reads.
-    rows_returned: Arc<AtomicU64>,
-    /// Scans this node served remotely, against the ones it refused.
-    scans_served: Arc<AtomicU64>,
-    scans_refused: Arc<AtomicU64>,
-    /// The executor list of each DAG this node sent, read back from the
-    /// encoded request. This is the receipt that the Selection and the cap
-    /// really travelled, rather than a claim that they did.
-    requests: Arc<Mutex<Vec<String>>>,
     /// The same table lookup opens several region scans with identical
     /// columns and predicates. Keep the lowered Selection for that request
     /// shape so a large `IN` list is encoded once per node instead of once per
@@ -166,24 +155,8 @@ impl<F> fmt::Debug for CopScanSource<F> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("CopScanSource")
-            .field("rows_returned", &self.rows_returned.load(Ordering::Relaxed))
-            .field("scans_served", &self.scans_served.load(Ordering::Relaxed))
-            .field("scans_refused", &self.scans_refused.load(Ordering::Relaxed))
-            .finish()
+            .finish_non_exhaustive()
     }
-}
-
-/// What a node's coprocessor scans have done so far, as plain counters.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CopScanStats {
-    /// Rows the coprocessor sent to this node.
-    pub rows_returned: u64,
-    /// Scans served remotely.
-    pub scans_served: u64,
-    /// Scans refused, which fell back to the byte-level cursor.
-    pub scans_refused: u64,
-    /// One line per sent request, naming its DAG executors.
-    pub requests: Vec<String>,
 }
 
 impl<F> CopScanSource<F> {
@@ -199,26 +172,7 @@ impl<F> CopScanSource<F> {
     pub fn new(factory: Arc<F>) -> Self {
         Self {
             factory,
-            rows_returned: Arc::new(AtomicU64::new(0)),
-            scans_served: Arc::new(AtomicU64::new(0)),
-            scans_refused: Arc::new(AtomicU64::new(0)),
-            requests: Arc::new(Mutex::new(Vec::new())),
             selection_cache: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    /// The node's live coprocessor-scan counters.
-    #[must_use]
-    pub fn stats(&self) -> CopScanStats {
-        CopScanStats {
-            rows_returned: self.rows_returned.load(Ordering::Relaxed),
-            scans_served: self.scans_served.load(Ordering::Relaxed),
-            scans_refused: self.scans_refused.load(Ordering::Relaxed),
-            requests: self
-                .requests
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .clone(),
         }
     }
 }
@@ -232,10 +186,7 @@ where
         &self,
         request: &PushdownScanRequest,
     ) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError> {
-        let refuse = |reason: &str| {
-            self.scans_refused.fetch_add(1, Ordering::Relaxed);
-            PushdownScannerError::Unsupported(reason.to_owned())
-        };
+        let refuse = |reason: &str| PushdownScannerError::Unsupported(reason.to_owned());
         if request.snapshot_ts == 0 {
             return Err(refuse("the statement's snapshot has no timestamp"));
         }
@@ -578,7 +529,6 @@ where
             });
         }
 
-        let summary = dag_summary(&dag);
         let key_ranges: Vec<KeyRange> = request
             .ranges
             .iter()
@@ -624,97 +574,16 @@ where
         };
         let iter = open_scan(&self.factory, plan)
             .map_err(|error| PushdownScannerError::Backend(StorageError::Backend(error)))?;
-        self.scans_served.fetch_add(1, Ordering::Relaxed);
-        self.requests
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .push(summary);
         Ok(Box::new(CopRowStream {
             iter: Some(iter),
             pending: None,
             pending_row: 0,
             field_types,
             batch_rows,
-            node_rows: Arc::clone(&self.rows_returned),
             returned: 0,
             predicates_applied,
         }))
     }
-}
-
-/// The DAG's executor list, read back out of the built request.
-///
-/// A receipt is worth more than an assertion here: this reads what is about to
-/// be encoded, so it cannot claim a Selection the request does not carry.
-fn dag_summary(dag: &tidb_proto::tipb::DagRequest) -> String {
-    let executors: Vec<String> = dag
-        .executors
-        .iter()
-        .map(|executor| match executor.tp {
-            Some(tp) if tp == ExecType::TypeTableScan as i32 => {
-                let columns = executor
-                    .tbl_scan
-                    .as_ref()
-                    .map_or(0, |scan| scan.columns.len());
-                let table = executor
-                    .tbl_scan
-                    .as_ref()
-                    .and_then(|scan| scan.table_id)
-                    .unwrap_or_default();
-                format!("TableScan(table {table}, {columns} columns)")
-            }
-            Some(tp) if tp == ExecType::TypeIndexScan as i32 => {
-                let (table, index, columns) =
-                    executor.idx_scan.as_ref().map_or((0, 0, 0), |scan| {
-                        (scan.table_id(), scan.index_id(), scan.columns.len())
-                    });
-                format!("IndexScan(table {table}, index {index}, {columns} columns)")
-            }
-            Some(tp) if tp == ExecType::TypeSelection as i32 => format!(
-                "Selection({} conditions)",
-                executor
-                    .selection
-                    .as_ref()
-                    .map_or(0, |selection| selection.conditions.len())
-            ),
-            Some(tp) if tp == ExecType::TypeAggregation as i32 => format!(
-                "HashAgg({} functions)",
-                executor
-                    .aggregation
-                    .as_ref()
-                    .map_or(0, |aggregation| aggregation.agg_func.len())
-            ),
-            Some(tp) if tp == ExecType::TypeLimit as i32 => format!(
-                "Limit({})",
-                executor
-                    .limit
-                    .as_ref()
-                    .and_then(|limit| limit.limit)
-                    .unwrap_or_default()
-            ),
-            Some(tp)
-                if tp == ExecType::TypeAggregation as i32
-                    || tp == ExecType::TypeStreamAgg as i32 =>
-            {
-                let (functions, groups) = executor
-                    .aggregation
-                    .as_ref()
-                    .map_or((0, 0), |agg| (agg.agg_func.len(), agg.group_by.len()));
-                let name = if tp == ExecType::TypeStreamAgg as i32 {
-                    "StreamAgg"
-                } else {
-                    "HashAgg"
-                };
-                format!("{name}({functions} functions, {groups} group keys)")
-            }
-            other => format!("executor {other:?}"),
-        })
-        .collect();
-    format!(
-        "{} -> output offsets {:?}",
-        executors.join(" | "),
-        dag.output_offsets
-    )
 }
 
 /// Everything needed to open one response on the query worker.
@@ -835,7 +704,6 @@ struct CopRowStream {
     pending_row: usize,
     field_types: Vec<FieldType>,
     batch_rows: usize,
-    node_rows: Arc<AtomicU64>,
     returned: u64,
     predicates_applied: bool,
 }
@@ -856,8 +724,6 @@ impl CopRowStream {
             if batch.row.num_rows() == 0 {
                 continue;
             }
-            self.node_rows
-                .fetch_add(batch.row.num_rows() as u64, Ordering::Relaxed);
             return Ok(Some(batch.row));
         }
     }
