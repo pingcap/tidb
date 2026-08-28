@@ -569,6 +569,8 @@ name = "difftest-planner-tests"
 version = "0.0.0"
 dependencies = [
  "tidb-ast",
+ "tidb-datatype",
+ "tidb-expr",
  "tidb-planner",
 ]
 

@@ -775,6 +775,34 @@ pub struct PhysicalTableDual {
 }
 
 impl PhysicalTableDual {
+    /// Constructs the wired physical dual from its already-initialized base.
+    ///
+    /// Go's `PhysicalTableDual.Init` initializes this same base before the
+    /// row count is installed. Keeping construction here prevents bounded
+    /// datasource paths from inventing a second TableDual representation.
+    #[must_use]
+    pub const fn new(base: BasePhysicalPlan, row_count: usize) -> Self {
+        Self { base, row_count }
+    }
+
+    /// Go `plancodec.TypeDual` stored by `PhysicalTableDual.Init`.
+    #[must_use]
+    pub fn plan_type(&self) -> &str {
+        self.base.base.tp()
+    }
+
+    /// The query-block offset installed by `PhysicalTableDual.Init`.
+    #[must_use]
+    pub const fn query_block_offset(&self) -> i32 {
+        self.base.base.query_block_offset()
+    }
+
+    /// Go `PhysicalTableDual.RowCount`.
+    #[must_use]
+    pub const fn row_count(&self) -> usize {
+        self.row_count
+    }
+
     /// Go `PhysicalTableDual.ExplainInfo()`: `rows:N`, overriding the base
     /// body's empty string.
     #[must_use]

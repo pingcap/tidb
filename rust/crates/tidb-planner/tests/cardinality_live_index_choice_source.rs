@@ -18,8 +18,8 @@ use tidb_planner::{
     logical_data_source_task::IndexTaskProperty,
     physical_index_scan::PhysicalIndexScanPlan,
     physical_property::IndexOrderingRequirement,
-    tikv_scan_spec::TiKvTableScanSpec,
     task_type::TaskType,
+    tikv_scan_spec::TiKvTableScanSpec,
 };
 
 fn range(low: RangeBoundKind, high: RangeBoundKind) -> IndexRangeShape {
@@ -143,6 +143,12 @@ fn source_empty_range_returns_table_dual_before_candidate_enumeration() {
         point_path(candidate(2)),
     ])
     .build_index_task(IndexTaskProperty::new(TaskType::CopSingleRead));
+    assert_eq!(
+        task.table_dual()
+            .expect("empty range is TableDual")
+            .plan_type(),
+        "TableDual"
+    );
     assert_eq!(
         task.table_dual()
             .expect("empty range is TableDual")

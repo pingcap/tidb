@@ -15,8 +15,8 @@
 //! Typed task shapes for the dependency-closed index-only planner branch.
 
 use crate::{
+    physical::PhysicalTableDual,
     physical_index_scan::PhysicalIndexScanPlan,
-    physical_table_dual::PhysicalTableDualPlan,
     physical_table_reader::{MissingTableDescriptorError, PhysicalTableReaderPlan},
     physical_table_scan::PhysicalTableScanPlan,
     tikv_scan_spec::UnsupportedScanFeature,
@@ -151,14 +151,14 @@ impl CopTableTask {
 }
 
 /// A dependency-closed table/index scan task returned by a datasource.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum ScanReadTask {
     /// The existing source-admitted index-only Cop task.
     Index(CopIndexTask),
     /// One TiKV table Cop task converted to a root TableReader.
     TableReader(PhysicalTableReaderPlan),
     /// An empty ranger result returned before any task construction.
-    TableDual(PhysicalTableDualPlan),
+    TableDual(PhysicalTableDual),
     /// A deliberately unsupported path/property combination.
     Invalid(ScanReadTaskRejection),
 }
@@ -195,9 +195,9 @@ impl ScanReadTask {
 
     /// Returns the zero-row TableDual when ranger proved a path empty.
     #[must_use]
-    pub const fn table_dual(&self) -> Option<PhysicalTableDualPlan> {
+    pub const fn table_dual(&self) -> Option<&PhysicalTableDual> {
         match self {
-            Self::TableDual(plan) => Some(*plan),
+            Self::TableDual(plan) => Some(plan),
             Self::Index(_) | Self::TableReader(_) | Self::Invalid(_) => None,
         }
     }
@@ -219,12 +219,12 @@ impl ScanReadTask {
 }
 
 /// A task returned from the bounded datasource index path.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum IndexTask {
     /// An index scan retained as a single-read Cop task.
     CopSingleRead(CopIndexTask),
     /// An empty ranger result returned as Go's zero-row TableDual root task.
-    TableDual(PhysicalTableDualPlan),
+    TableDual(PhysicalTableDual),
     /// A deliberately unsupported path or property.
     Invalid(IndexTaskRejection),
 }
@@ -241,9 +241,9 @@ impl IndexTask {
 
     /// Returns the zero-row TableDual when ranger proved the path empty.
     #[must_use]
-    pub const fn table_dual(&self) -> Option<PhysicalTableDualPlan> {
+    pub const fn table_dual(&self) -> Option<&PhysicalTableDual> {
         match self {
-            Self::TableDual(plan) => Some(*plan),
+            Self::TableDual(plan) => Some(plan),
             Self::CopSingleRead(_) | Self::Invalid(_) => None,
         }
     }

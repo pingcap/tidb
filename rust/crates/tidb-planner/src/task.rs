@@ -766,7 +766,6 @@ impl Task {
 mod tests {
     use super::*;
     use crate::physical::PhysicalPlan;
-    use crate::physical_table_dual::PLAN_TYPE as DUAL_TYPE;
     use crate::plan_base::PlanIdAllocator;
     use crate::stats_info::StatsInfo;
 
@@ -777,7 +776,8 @@ mod tests {
     fn dual_with_rows(rows: f64) -> PhysicalPlan {
         let allocator = PlanIdAllocator::new();
         let mut base = crate::physical::BasePhysicalPlan::default();
-        base.base = crate::plan_base::BasePlan::new(&allocator, DUAL_TYPE, 0);
+        base.base =
+            crate::plan_base::BasePlan::new(&allocator, crate::logical::LogicalTableDual::TYPE, 0);
         base.base.set_stats(Some(StatsInfo::new(rows, [])));
         base.base
             .set_schema(Some(tidb_expr::schema::Schema::new(vec![

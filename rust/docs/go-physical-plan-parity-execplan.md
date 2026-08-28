@@ -32,6 +32,14 @@ both `oltp_read_only` and `oltp_read_write`.
 
 ## Progress
 
+- [x] Removed the duplicate bounded `PhysicalTableDualPlan`. Empty-range
+  datasource tasks now carry the wired `physical::PhysicalTableDual`, so the
+  same operator owns plan identity, query-block offset, row count, explain,
+  cache cloning, and executor construction. This also fixes the facade's
+  incorrect `"Dual"` type name to Go's `plancodec.TypeDual` value,
+  `"TableDual"`; the migrated difftest now exercises the real logical-to-root
+  task path.
+
 - [x] Removed duplicate Projection, Limit, Sort, and TopN metadata facades.
   Their tests now construct the wired `physical::PhysicalPlan` operators;
   Limit redaction and Sort memory accounting moved onto those real operators,
