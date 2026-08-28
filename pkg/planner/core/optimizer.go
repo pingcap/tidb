@@ -417,20 +417,10 @@ func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
 		zap.Duration("Cost", time.Since(startRFGenerator)))
 }
 
-// tryEnableLateMaterialization tries to push down some filter conditions to the table scan operator
-// @brief: push down some filter conditions to the table scan operator
-// @param: sctx: session context
-// @param: plan: the physical plan to be pruned
-// @note: this optimization is only applied when the TiFlash is used.
-// @note: the following conditions should be satisfied:
-//   - Only the filter conditions with high selectivity should be pushed down.
-//   - The filter conditions which contain heavy cost functions should not be pushed down.
-//   - Filter conditions that apply to the same column are either pushed down or not pushed down at all.
-func tryEnableLateMaterialization(sctx base.PlanContext, plan base.PhysicalPlan) {
-	// check if EnableLateMaterialization is set
-	if sctx.GetSessionVars().EnableLateMaterialization && !sctx.GetSessionVars().TiFlashFastScan {
-		predicatePushDownToTableScan(sctx, plan)
-	}
+// tryEnableLateMaterialization keeps the FastScan compatibility warning. The
+// actual predicate pushdown is done while building table scan tasks so it can
+// participate in CBO.
+func tryEnableLateMaterialization(sctx base.PlanContext, _ base.PhysicalPlan) {
 	if sctx.GetSessionVars().EnableLateMaterialization && sctx.GetSessionVars().TiFlashFastScan {
 		sc := sctx.GetSessionVars().StmtCtx
 		sc.AppendWarning(errors.NewNoStackError("FastScan is not compatible with late materialization, late materialization is disabled"))
