@@ -381,6 +381,11 @@ both `oltp_read_only` and `oltp_read_write`.
   traits were used only by one another and self-contained mocks; live DML
   continues through `driver/dml`, `KvTable`, transaction buffers, and
   tablecodec.
+- [x] 2026-08-28: deleted the unreachable executor-local index lookup hash
+  and merge join implementations plus their self-only tests. Neither the
+  planner nor physical builder constructed those types; the live index join
+  remains `index_lookup_join`, so unsupported variants are no longer exposed
+  as apparent runtime coverage.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
