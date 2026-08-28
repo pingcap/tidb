@@ -344,21 +344,3 @@ func (e *collectConflictsStepExecutor) RealtimeSummary() *execute.SubtaskSummary
 func (e *collectConflictsStepExecutor) ResetSummary() {
 	e.summary.Reset()
 }
-
-<<<<<<< HEAD
-// getConflictRowFilenamePrefix returns the file name prefix to store the conflict
-// rows for the given task and subtask.
-func getConflictRowFilenamePrefix(taskID, subtaskID int64, uuid string) string {
-	// we need to keep this file for the user to check the conflict rows, so we
-	// don't put it under '<task-id>/' directory to avoid it being deleted by the
-	// cleanup process.
-	return path.Join("conflicted-rows", fmt.Sprintf("%d", taskID), fmt.Sprintf("%d-%s", subtaskID, uuid))
-=======
-// Accepted implements Collector.Accepted interface.
-func (*collectConflictsStepExecutor) Accepted(_ int64) {}
-
-// Processed implements Collector.Processed interface.
-func (e *collectConflictsStepExecutor) Processed(processedConflictKVs, _ int64) {
-	e.summary.Processed.Add(processedConflictKVs)
->>>>>>> 57e57c75e72 (importinto: add conflict-row cleanup package (#70623))
-}
