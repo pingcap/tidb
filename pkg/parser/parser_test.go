@@ -433,6 +433,32 @@ func RunTest(t *testing.T, table []testCase, enableWindowFunc bool, MariaDB bool
 	}
 }
 
+func TestMaterializedViewDDLStatements(t *testing.T) {
+	table := []testCase{
+		{"CREATE MATERIALIZED VIEW mv (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) AS SELECT 1"},
+		{"CREATE MATERIALIZED VIEW mv (a) COMMENT = 'c1' REFRESH FAST NEXT 300 ATTRIBUTES = 'x' SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 3 AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) COMMENT = 'c1' REFRESH FAST NEXT 300 SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 3 ATTRIBUTES='x' AS SELECT 1"},
+		{"CREATE MATERIALIZED VIEW LOG ON t (a,b) PURGE IMMEDIATE ALERT ROWS 10", true, "CREATE MATERIALIZED VIEW LOG ON \x60t\x60 (\x60a\x60, \x60b\x60) PURGE IMMEDIATE ALERT ROWS 10"},
+		{"CREATE MATERIALIZED VIEW LOG ON t (a) PURGE NEXT 300", true, "CREATE MATERIALIZED VIEW LOG ON \x60t\x60 (\x60a\x60) PURGE NEXT 300"},
+		{"ALTER MATERIALIZED VIEW mv COMMENT = 'c2', REFRESH START WITH now() NEXT 300, ATTRIBUTES = 'y'", true, "ALTER MATERIALIZED VIEW \x60mv\x60 COMMENT = 'c2', REFRESH START WITH NOW() NEXT 300, ATTRIBUTES='y'"},
+		{"ALTER MATERIALIZED VIEW LOG ON t PURGE, ADD COLUMN (b,c)", true, "ALTER MATERIALIZED VIEW LOG ON \x60t\x60 PURGE, ADD COLUMN (\x60b\x60, \x60c\x60)"},
+		{"DROP MATERIALIZED VIEW IF EXISTS mv", true, "DROP MATERIALIZED VIEW IF EXISTS \x60mv\x60"},
+		{"DROP MATERIALIZED VIEW LOG IF EXISTS ON t", true, "DROP MATERIALIZED VIEW LOG IF EXISTS ON \x60t\x60"},
+	}
+	RunTest(t, table, false, false)
+	wantTypes := []ast.StmtNode{
+		&ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{},
+		&ast.CreateMaterializedViewLogStmt{}, &ast.CreateMaterializedViewLogStmt{},
+		&ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewLogStmt{},
+		&ast.DropMaterializedViewStmt{}, &ast.DropMaterializedViewLogStmt{},
+	}
+	p := parser.New()
+	for i, tc := range table {
+		stmt, err := p.ParseOneStmt(tc.src, "", "")
+		require.NoError(t, err, tc.src)
+		require.IsType(t, wantTypes[i], stmt, tc.src)
+	}
+}
+
 func RunRestoreTest(t *testing.T, sourceSQLs, expectSQLs string, enableWindowFunc bool, MariaDB bool) {
 	var sb strings.Builder
 	p := parser.New()

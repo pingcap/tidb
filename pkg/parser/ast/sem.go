@@ -563,6 +563,26 @@ func (n *CreateViewStmt) SEMCommand() string {
 }
 
 // SEMCommand returns the command string for the statement.
+func (n *CreateMaterializedViewStmt) SEMCommand() string {
+	return "CREATE MATERIALIZED VIEW"
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *CreateMaterializedViewLogStmt) SEMCommand() string {
+	return "CREATE MATERIALIZED VIEW LOG"
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *AlterMaterializedViewStmt) SEMCommand() string {
+	return "ALTER MATERIALIZED VIEW"
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *AlterMaterializedViewLogStmt) SEMCommand() string {
+	return "ALTER MATERIALIZED VIEW LOG"
+}
+
+// SEMCommand returns the command string for the statement.
 func (n *DropDatabaseStmt) SEMCommand() string {
 	return DropDatabaseCommand
 }
@@ -593,6 +613,16 @@ func (n *DropTableStmt) SEMCommand() string {
 		return DropViewCommand
 	}
 	return DropTableCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *DropMaterializedViewStmt) SEMCommand() string {
+	return "DROP MATERIALIZED VIEW"
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *DropMaterializedViewLogStmt) SEMCommand() string {
+	return "DROP MATERIALIZED VIEW LOG"
 }
 
 // SEMCommand returns the command string for the statement.

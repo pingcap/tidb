@@ -291,6 +291,165 @@ func (n *CreateViewStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	return v.Leave(n)
 }
 
+func (n *CreateMaterializedViewStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if n.ViewName != nil {
+		if !n.ViewName.AcceptInPlace(v) {
+			return false
+		}
+	}
+	if n.Refresh != nil {
+		if n.Refresh.StartWith != nil {
+			if !n.Refresh.StartWith.AcceptInPlace(v) {
+				return false
+			}
+		}
+		if n.Refresh.Next != nil {
+			if !n.Refresh.Next.AcceptInPlace(v) {
+				return false
+			}
+		}
+	}
+	for _, option := range n.Options {
+		if !option.AcceptInPlace(v) {
+			return false
+		}
+	}
+	if n.Select != nil {
+		if !n.Select.AcceptInPlace(v) {
+			return false
+		}
+	}
+	return v.Leave(n)
+}
+
+func (n *CreateMaterializedViewLogStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if n.Table != nil {
+		if !n.Table.AcceptInPlace(v) {
+			return false
+		}
+	}
+	for _, option := range n.Options {
+		if !option.AcceptInPlace(v) {
+			return false
+		}
+	}
+	if n.Purge != nil {
+		if n.Purge.StartWith != nil {
+			if !n.Purge.StartWith.AcceptInPlace(v) {
+				return false
+			}
+		}
+		if n.Purge.Next != nil {
+			if !n.Purge.Next.AcceptInPlace(v) {
+				return false
+			}
+		}
+	}
+	return v.Leave(n)
+}
+
+func (n *AlterMaterializedViewAction) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if n.Refresh != nil {
+		if n.Refresh.StartWith != nil {
+			if !n.Refresh.StartWith.AcceptInPlace(v) {
+				return false
+			}
+		}
+		if n.Refresh.Next != nil {
+			if !n.Refresh.Next.AcceptInPlace(v) {
+				return false
+			}
+		}
+	}
+	return v.Leave(n)
+}
+
+func (n *AlterMaterializedViewStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if n.ViewName != nil {
+		if !n.ViewName.AcceptInPlace(v) {
+			return false
+		}
+	}
+	for _, action := range n.Actions {
+		if !action.AcceptInPlace(v) {
+			return false
+		}
+	}
+	return v.Leave(n)
+}
+
+func (n *AlterMaterializedViewLogAction) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if n.Purge != nil {
+		if n.Purge.StartWith != nil {
+			if !n.Purge.StartWith.AcceptInPlace(v) {
+				return false
+			}
+		}
+		if n.Purge.Next != nil {
+			if !n.Purge.Next.AcceptInPlace(v) {
+				return false
+			}
+		}
+	}
+	return v.Leave(n)
+}
+
+func (n *AlterMaterializedViewLogStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if n.Table != nil {
+		if !n.Table.AcceptInPlace(v) {
+			return false
+		}
+	}
+	for _, action := range n.Actions {
+		if !action.AcceptInPlace(v) {
+			return false
+		}
+	}
+	return v.Leave(n)
+}
+
+func (n *DropMaterializedViewStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if n.ViewName != nil {
+		if !n.ViewName.AcceptInPlace(v) {
+			return false
+		}
+	}
+	return v.Leave(n)
+}
+
+func (n *DropMaterializedViewLogStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if n.Table != nil {
+		if !n.Table.AcceptInPlace(v) {
+			return false
+		}
+	}
+	return v.Leave(n)
+}
+
 func (n *CreatePlacementPolicyStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
