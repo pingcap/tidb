@@ -381,11 +381,11 @@ both `oltp_read_only` and `oltp_read_write`.
   traits were used only by one another and self-contained mocks; live DML
   continues through `driver/dml`, `KvTable`, transaction buffers, and
   tablecodec.
-- [x] 2026-08-28: deleted the unreachable executor-local index lookup hash
-  and merge join implementations plus their self-only tests. Neither the
-  planner nor physical builder constructed those types; the live index join
-  remains `index_lookup_join`, so unsupported variants are no longer exposed
-  as apparent runtime coverage.
+- [x] 2026-08-28: deleted the unreachable executor-local index lookup join,
+  hash-join, and merge-join implementations plus their self-only tests.
+  Neither the planner nor physical builder constructed those types; the live
+  index-lookup implementation is `join` plus `access_path::IndexJoinLookupExec`,
+  so duplicate variants are no longer exposed as apparent runtime coverage.
 - [x] 2026-08-28: deleted the unreachable executor-local generated-column
   substitution rule. The wired planner owns `GcSubstituter` in its Go-order
   rule list but currently has no implementation, which is now documented as
