@@ -616,10 +616,86 @@ pub(crate) fn run_insert_traced(
     // ordering is observable for computed defaults such as RAND(), and is
     // deliberately distinct from omitted columns, whose defaults are filled
     // later while each runtime row is built.
-    let mut prepared_value_rows: Vec<Vec<PreparedInsertValue>> = Vec::new();
+    // The bulk_insert.lua workload sends very large VALUES lists made only
+    // of integer literals.  Building one boxed Expression (and resolving it
+    // through TableResolver) for every cell makes the Rust path spend most of
+    // its time in planner scaffolding that cannot affect a literal.  Keep a
+    // narrow literal fast path: the normal cast/null/default checks below
+    // still run, so overflow and SQL-mode behaviour remain unchanged.  Any
+    // non-integer literal falls back to the complete expression path.
     let names_a_column = insert.set_syntax || insert.columns_specified;
+    let literal_value_rows: Option<Vec<Vec<Datum>>> = if source_rows.is_none()
+        && insert.rows.iter().all(|values| {
+            values
+                .iter()
+                .all(|value| matches!(value, tidb_ast::Expr::Int(_)))
+        })
+        && {
+            let mut previous_width = target_offsets.len();
+            insert.rows.iter().enumerate().all(|(index, values)| {
+                let width = values.len();
+                let expected = if index == 0 {
+                    target_offsets.len()
+                } else {
+                    previous_width
+                };
+                let arity_is_checked = index > 0 || names_a_column || width > 0;
+                let valid = !arity_is_checked || width == expected;
+                previous_width = width;
+                valid
+            })
+        } {
+        insert
+            .rows
+            .iter()
+            .map(|values| {
+                values
+                    .iter()
+                    .map(|value| match value {
+                        tidb_ast::Expr::Int(text) => text
+                            .parse::<i64>()
+                            .map(Datum::Int)
+                            .or_else(|_| text.parse::<u64>().map(Datum::UInt))
+                            .ok(),
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<_>>>()
+            })
+            .collect::<Option<Vec<_>>>()
+    } else {
+        None
+    };
+    // A bulk INSERT into the benchmark's two-column heap has no defaults,
+    // generated columns, foreign keys, partitions, or secondary indexes. In
+    // that shape every VALUES expression is already an integer datum and the
+    // full row is supplied, so the generic row builder's `assigned` bitmap,
+    // default walk, and generated-column pass are redundant. Keep this flag
+    // deliberately narrow; duplicate detection is still enabled below via
+    // `all_clustered_insert_keys_absent` before the fast write loop is used.
+    let fast_literal_shape = literal_value_rows.is_some()
+        && source_rows.is_none()
+        && !insert.replace
+        && insert.on_duplicate.is_empty()
+        && !insert.ignore
+        && extra_handle_offset.is_none()
+        && target_offsets.len() == column_list.len()
+        && target_offsets
+            .iter()
+            .enumerate()
+            .all(|(offset, target)| offset == *target)
+        && generated_targets.iter().all(|generated| !generated)
+        && auto_increment_offset.is_none()
+        && auto_random_offset.is_none()
+        && matches!(
+            &*table,
+            TableEntry::Kv(kv)
+                if kv.foreign_keys().is_empty()
+                    && kv.partition().is_none()
+                    && kv.plan_indexes().all(|index| index.clustered_primary)
+        );
+    let mut prepared_value_rows: Vec<Vec<PreparedInsertValue>> = Vec::new();
     let mut previous_width = target_offsets.len();
-    if source_rows.is_none() {
+    if source_rows.is_none() && literal_value_rows.is_none() {
         let resolver = TableResolver {
             table_name: &table_name,
             columns: &column_list,
@@ -799,6 +875,34 @@ pub(crate) fn run_insert_traced(
     // assigns nothing, so the default, auto-increment and NOT NULL rules
     // below fill the whole row.
     for index in 0..row_count {
+        if fast_literal_shape {
+            let mut row = Vec::with_capacity(column_list.len());
+            for (offset, value) in literal_value_rows
+                .as_ref()
+                .expect("fast literal shape has literal rows")[index]
+                .iter()
+                .enumerate()
+            {
+                let mut value = value.clone();
+                crate::bad_null::handle_bad_null(
+                    &mut value,
+                    &column_meta[offset].field_type,
+                    &column_list[offset].0,
+                    bad_null_level,
+                    ctx,
+                )?;
+                row.push(cast_value_for_column(
+                    value,
+                    &column_meta[offset].field_type,
+                    &column_list[offset].0,
+                    index,
+                    ctx,
+                )?);
+            }
+            new_rows.push(row);
+            inserted += 1;
+            continue;
+        }
         let width = match source_rows.as_ref() {
             Some(_) => value_rows.get(index).map_or(0, Vec::len),
             None => insert.rows[index].len(),
@@ -808,12 +912,18 @@ pub(crate) fn run_insert_traced(
         for (position, &offset) in target_offsets.iter().enumerate().take(width) {
             let value = match source_rows.as_ref() {
                 Some(_) => value_rows[index][position].clone(),
-                None => match &prepared_value_rows[index][position] {
-                    PreparedInsertValue::Generated => continue,
-                    PreparedInsertValue::Expression(expression) => expression
-                        .eval(ctx, eval_chunk.get_row(0))
-                        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
-                },
+                None => {
+                    if let Some(rows) = &literal_value_rows {
+                        rows[index][position].clone()
+                    } else {
+                        match &prepared_value_rows[index][position] {
+                            PreparedInsertValue::Generated => continue,
+                            PreparedInsertValue::Expression(expression) => expression
+                                .eval(ctx, eval_chunk.get_row(0))
+                                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+                        }
+                    }
+                }
             };
             row[offset] = value;
             assigned[offset] = true;
@@ -1046,6 +1156,31 @@ pub(crate) fn run_insert_traced(
                     | AutoIncrement::Allocated(_) => {}
                 }
             }
+        }
+    }
+    if fast_literal_shape {
+        // The narrow shape excludes foreign keys, partitions and secondary
+        // indexes, so the one batch proof can be performed while the target
+        // borrow is still live. If it finds a duplicate, fall through to the
+        // complete executor to preserve its row-level error handling.
+        let skip_primary_duplicate_check = match table {
+            TableEntry::Kv(kv) => kv
+                .all_clustered_insert_keys_absent(&new_rows, ctx)
+                .map_err(kv_write_error)?
+                .unwrap_or(false),
+            _ => false,
+        };
+        if skip_primary_duplicate_check {
+            let TableEntry::Kv(kv) = table else {
+                unreachable!("fast literal shape requires a KV table")
+            };
+            for row in &new_rows {
+                kv.insert_row_with_row_id_checked_without_primary_duplicate_check(
+                    row, None, 0, ctx, false,
+                )
+                .map_err(kv_write_error)?;
+            }
+            return Ok((inserted, first_allocated));
         }
     }
     // Go's `FKCheckExec` sits between the row build and the write, which is
