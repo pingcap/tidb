@@ -70,9 +70,7 @@ pub mod column_default;
 pub(crate) mod column_prune;
 pub mod cte_storage;
 pub mod ddl;
-pub mod ddl_algorithm;
 pub mod ddl_label;
-pub mod ddl_running_jobs;
 #[cfg(test)]
 mod tests_ddl_job_submitter_worker_gaps;
 #[cfg(test)]

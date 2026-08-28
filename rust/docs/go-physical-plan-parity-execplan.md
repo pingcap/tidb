@@ -409,6 +409,10 @@ both `oltp_read_only` and `oltp_read_write`.
 - [x] 2026-08-28: deleted the unconstructed `ddl_exec` façade. Session DDL
   dispatch uses `ddl` and `tidb-exec::cluster_ddl`; recover/flashback remains
   wholly unwired, and its gap receipt no longer credits a self-only precheck.
+- [x] 2026-08-28: deleted the self-only `ddl_algorithm` and
+  `ddl_running_jobs` one-file ports. Live ALTER lowering does not consult the
+  algorithm resolver and this tier has no DDL priority-queue scheduler, so
+  those gaps are no longer obscured by isolated unit-test implementations.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
