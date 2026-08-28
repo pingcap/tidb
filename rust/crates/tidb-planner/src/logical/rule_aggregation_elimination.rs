@@ -277,7 +277,6 @@ impl OwnedRewrite for AggregationEliminate<'_, '_> {
                 MemTable,
                 Show,
                 ShowDDLJobs,
-                Todo,
             ] => Descend::Children((0..node.children().len()).map(|_| ()).collect()),
         }
     }

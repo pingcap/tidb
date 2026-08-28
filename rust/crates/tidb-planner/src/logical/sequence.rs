@@ -17,7 +17,7 @@
 //! tree".
 //!
 //! SEED of `pkg/planner/core`. This operator was a
-//! [`crate::logical::TodoLogicalOp`] before this batch.
+//! `LogicalPlan` placeholder arm before this batch.
 //!
 //! # The child order is the contract
 //!

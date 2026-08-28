@@ -17,7 +17,7 @@
 //! from inner executor according to outer row".
 //!
 //! SEED of `pkg/planner/core`. `LogicalApply` was a
-//! [`crate::logical::TodoLogicalOp`] before this batch.
+//! `LogicalPlan` placeholder arm before this batch.
 //!
 //! # Built ON [`LogicalJoin`], not beside it
 //!
@@ -437,8 +437,7 @@ pub fn find_child_full_schema(plan: &LogicalPlan) -> Option<&Schema> {
             | LogicalPlan::Expand(_)
             | LogicalPlan::MemTable(_)
             | LogicalPlan::Show(_)
-            | LogicalPlan::ShowDDLJobs(_)
-            | LogicalPlan::Todo(_) => return None,
+            | LogicalPlan::ShowDDLJobs(_) => return None,
         }
     }
 }

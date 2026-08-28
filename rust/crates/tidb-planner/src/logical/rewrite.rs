@@ -511,7 +511,6 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 TableScan,
                 IndexScan,
                 ShowDDLJobs,
-                Todo,
             ] => {
                 self.stash.push(PendingPredicates::AddSelection(Vec::new()));
                 if child_count == 0 {
@@ -810,7 +809,6 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
                 IndexScan,
                 Show,
                 ShowDDLJobs,
-                Todo,
             ] => {
                 if child_count == 0 {
                     return Descend::Stop(());
@@ -1221,7 +1219,6 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 TableDual,
                 Show,
                 ShowDDLJobs,
-                Todo,
             ] => {
                 self.stash
                     .push(topn.map_or(PendingTopN::Nothing, PendingTopN::Reattach));
@@ -1668,11 +1665,6 @@ impl OwnedRewrite for DeriveStatsFold {
                  deriveStatsByFilter, ranger.FullRange and \
                  util.IndexInfo2Cols — the access-path/selectivity machinery",
             )),
-            LogicalPlan::Todo(op) => {
-                let go_operator = op.go_operator.clone();
-                StatsOutcome::Done(unported_stats(&go_operator))
-            }
-
             // -- Go inherits the base body ---------------------------------
             // `logical_expand.go:133` says so explicitly; the others have no
             // DeriveStats in their files.

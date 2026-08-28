@@ -132,9 +132,9 @@ fn schema_falls_through_to_the_first_child() {
         vec![11, 12]
     );
     // A childless node with no schema of its own has none.
-    let bare = LogicalPlan::Todo(TodoLogicalOp {
-        base: BaseLogicalPlan::with_id(1, "LogicalWindow", 0),
-        go_operator: "logicalop.LogicalWindow".to_owned(),
+    let bare = LogicalPlan::TableDual(LogicalTableDual {
+        base: BaseLogicalPlan::with_id(1, "TableDual", 0),
+        row_count: 1,
     });
     assert!(bare.schema().is_none());
     tree.dismantle();

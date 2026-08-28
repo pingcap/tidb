@@ -17,7 +17,7 @@
 //! `pkg/planner/core/operator/logicalop/logical_cte_table.go`:
 //! `LogicalCTETable`, the reference to a materialised CTE.
 //!
-//! SEED of `pkg/planner/core`. Both were [`crate::logical::TodoLogicalOp`]
+//! SEED of `pkg/planner/core`. Both were `LogicalPlan` placeholder arms
 //! before this batch.
 //!
 //! # Where this port DOES share, and why

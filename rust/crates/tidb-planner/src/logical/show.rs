@@ -17,7 +17,7 @@
 //! also declares.
 //!
 //! SEED of `pkg/planner/core`. `LogicalShow` was a
-//! [`crate::logical::TodoLogicalOp`] before this batch.
+//! `LogicalPlan` placeholder arm before this batch.
 //!
 //! The crate's `logical_show` identity leaf is KEPT rather than merged:
 //! `difftests/planner-tests/tests/logical_show.rs` consumes its

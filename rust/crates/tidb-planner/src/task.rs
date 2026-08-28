@@ -1812,10 +1812,6 @@ pub fn attach2_task(
              task by findBestTask4LogicalShow{,DDLJobs} (physical_show.go), \
              never attached",
         )),
-        PhysicalPlan::Todo(op) => Err(PlanError::internal(format!(
-            "attach2_task: {} is not ported",
-            op.go_operator
-        ))),
     }
 }
 

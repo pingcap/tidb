@@ -404,9 +404,9 @@ fn schema_falls_through_to_the_first_child() {
     let schema = tree.schema().expect("inherited from the scan");
     assert_eq!(schema.columns.len(), 2);
 
-    let bare = PhysicalPlan::Todo(TodoPhysicalOp {
-        base: BasePhysicalPlan::with_id(1, "PhysicalWindow", 0),
-        go_operator: "physicalop.PhysicalWindow".to_owned(),
+    let bare = PhysicalPlan::TableDual(PhysicalTableDual {
+        base: BasePhysicalPlan::with_id(1, "TableDual", 0),
+        row_count: 1,
     });
     assert!(bare.schema().is_none());
     tree.dismantle();

@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `FROM` and `JOIN`: the half of the SELECT spine batch 6a left as a `Todo`
-//! arm.
+//! `FROM` and `JOIN`: the half of the SELECT spine batch 6a completed as typed
+//! logical operators.
 //!
 //! Go sources, by symbol:
 //!

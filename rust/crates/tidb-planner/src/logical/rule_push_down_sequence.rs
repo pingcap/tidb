@@ -189,7 +189,6 @@ impl OwnedRewrite for PushDownSequence<'_, '_> {
                 MemTable,
                 Show,
                 ShowDDLJobs,
-                Todo,
             ] => {
                 let Some(pushed) = pushed else {
                     // Unreachable: the `pushed.is_none()` early return above

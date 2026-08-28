@@ -16,7 +16,7 @@
 //! `LogicalMemTable`, the memory / virtual table scan.
 //!
 //! SEED of `pkg/planner/core`. `LogicalMemTable` was a
-//! [`crate::logical::TodoLogicalOp`] before this batch.
+//! `LogicalPlan` placeholder arm before this batch.
 //!
 //! The crate's `logical_mem_table` identity leaf is KEPT rather than merged:
 //! `difftests/planner-tests/tests/logical_mem_table.rs` consumes its

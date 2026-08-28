@@ -68,10 +68,8 @@
 //! * [`table_dual::LogicalTableDual`] — `logical_table_dual.go`
 //!
 //! That is the WHOLE of `pkg/planner/core/operator/logicalop`'s operator set:
-//! no operator is skeletal and none is a [`TodoLogicalOp`] any more. The
-//! variant is kept because the enum's rule is that an unmodelled operator must
-//! be a distinct arm rather than a default one, and a later Go operator lands
-//! against it rather than against a `_ =>`.
+//! no operator is skeletal. There is no placeholder variant; a later Go
+//! operator must add a typed arm and update every exhaustive match.
 //!
 //! Four of those operators have an identity leaf elsewhere in this crate —
 //! [`crate::logical_mem_table`], [`crate::logical_show`],
@@ -397,20 +395,6 @@ pub use union_all::{LogicalPartitionUnionAll, LogicalUnionAll};
 pub use union_scan::LogicalUnionScan;
 pub use window::LogicalWindow;
 
-/// A logical operator whose own port is a later batch.
-///
-/// This is the SEED's honest placeholder: it names the Go operator it stands
-/// for so a `match` arm reads as "not yet ported", never as "handled". It is
-/// deliberately a distinct variant rather than a default arm, so filling the
-/// operator set is a mechanical, checkable change.
-#[derive(Clone, Debug, Default)]
-pub struct TodoLogicalOp {
-    /// The shared logical base.
-    pub base: BaseLogicalPlan,
-    /// The Go type this node stands in for, e.g. `"logicalop.LogicalWindow"`.
-    pub go_operator: String,
-}
-
 /// The return of [`LogicalPlan::get_join_child_stats_and_schema`]: both
 /// children's stats and schemas, in Go's `(stats0, stats1, schema0, schema1)`
 /// order.
@@ -478,8 +462,6 @@ pub enum LogicalPlan {
     Show(LogicalShow),
     /// Go `logicalop.LogicalShowDDLJobs`.
     ShowDDLJobs(LogicalShowDDLJobs),
-    /// An operator whose port is a later batch; see [`TodoLogicalOp`].
-    Todo(TodoLogicalOp),
 }
 
 impl LogicalPlan {
@@ -513,7 +495,6 @@ impl LogicalPlan {
             Self::MemTable(op) => &op.base,
             Self::Show(op) => &op.base,
             Self::ShowDDLJobs(op) => &op.base,
-            Self::Todo(op) => &op.base,
         }
     }
 
@@ -546,7 +527,6 @@ impl LogicalPlan {
             Self::MemTable(op) => &mut op.base,
             Self::Show(op) => &mut op.base,
             Self::ShowDDLJobs(op) => &mut op.base,
-            Self::Todo(op) => &mut op.base,
         }
     }
 
@@ -774,8 +754,7 @@ impl LogicalPlan {
             | Self::UnionScan(_)
             | Self::MemTable(_)
             | Self::Show(_)
-            | Self::ShowDDLJobs(_)
-            | Self::Todo(_) => {
+            | Self::ShowDDLJobs(_) => {
                 schema_producer::propagate_child_keys(self_schema, child_schema);
             }
         }
@@ -863,8 +842,7 @@ impl LogicalPlan {
             | Self::Expand(_)
             | Self::MemTable(_)
             | Self::Show(_)
-            | Self::ShowDDLJobs(_)
-            | Self::Todo(_) => Vec::new(),
+            | Self::ShowDDLJobs(_) => Vec::new(),
         }
     }
 
@@ -970,8 +948,7 @@ impl LogicalPlan {
             | Self::Expand(_)
             | Self::MemTable(_)
             | Self::Show(_)
-            | Self::ShowDDLJobs(_)
-            | Self::Todo(_) => Vec::new(),
+            | Self::ShowDDLJobs(_) => Vec::new(),
         }
     }
 
@@ -1041,8 +1018,7 @@ impl LogicalPlan {
             | Self::TableDual(_)
             | Self::MemTable(_)
             | Self::Show(_)
-            | Self::ShowDDLJobs(_)
-            | Self::Todo(_) => Vec::new(),
+            | Self::ShowDDLJobs(_) => Vec::new(),
         }
     }
 
@@ -1082,8 +1058,7 @@ impl LogicalPlan {
             | Self::Expand(_)
             | Self::MemTable(_)
             | Self::Show(_)
-            | Self::ShowDDLJobs(_)
-            | Self::Todo(_) => BaseLogicalPlan::explain_info().to_owned(),
+            | Self::ShowDDLJobs(_) => BaseLogicalPlan::explain_info().to_owned(),
         }
     }
 
@@ -1226,10 +1201,6 @@ impl LogicalPlan {
             Self::MemTable(op) => Self::MemTable(op.clone_shallow()),
             Self::Show(op) => Self::Show(op.clone_shallow()),
             Self::ShowDDLJobs(op) => Self::ShowDDLJobs(op.clone_shallow()),
-            Self::Todo(op) => Self::Todo(TodoLogicalOp {
-                base: op.base.shell(),
-                go_operator: op.go_operator.clone(),
-            }),
         }
     }
 

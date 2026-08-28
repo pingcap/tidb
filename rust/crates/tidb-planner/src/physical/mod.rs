@@ -1757,16 +1757,6 @@ pub fn get_stream_aggs(
     stream_aggs
 }
 
-/// A physical operator whose own port is a later batch; the physical twin of
-/// [`crate::logical::TodoLogicalOp`].
-#[derive(Clone, Debug, Default)]
-pub struct TodoPhysicalOp {
-    /// The shared physical base.
-    pub base: BasePhysicalPlan,
-    /// The Go type this node stands in for, e.g. `"physicalop.PhysicalWindow"`.
-    pub go_operator: String,
-}
-
 /// Go `base.PhysicalPlan`: a tree of physical operators.
 #[derive(Clone, Debug)]
 pub enum PhysicalPlan {
@@ -1829,8 +1819,6 @@ pub enum PhysicalPlan {
     HashAgg(PhysicalHashAgg),
     /// Go `physicalop.PhysicalStreamAgg` (planning slice).
     StreamAgg(PhysicalStreamAgg),
-    /// An operator whose port is a later batch; see [`TodoPhysicalOp`].
-    Todo(TodoPhysicalOp),
 }
 
 impl PhysicalPlan {
@@ -1867,7 +1855,6 @@ impl PhysicalPlan {
             Self::TopN(op) => &op.base,
             Self::HashAgg(op) => &op.base,
             Self::StreamAgg(op) => &op.base,
-            Self::Todo(op) => &op.base,
         }
     }
 
@@ -1903,7 +1890,6 @@ impl PhysicalPlan {
             Self::TopN(op) => &mut op.base,
             Self::HashAgg(op) => &mut op.base,
             Self::StreamAgg(op) => &mut op.base,
-            Self::Todo(op) => &mut op.base,
         }
     }
 
@@ -2416,10 +2402,6 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 agg_funcs: op.agg_funcs.clone(),
                 group_by_items: op.group_by_items.clone(),
-            }),
-            Self::Todo(op) => Self::Todo(TodoPhysicalOp {
-                base: base_of(&op.base),
-                go_operator: op.go_operator.clone(),
             }),
         }
     }

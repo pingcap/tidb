@@ -15,7 +15,7 @@
 //! Go `pkg/planner/core/operator/logicalop/logical_top_n.go`: `LogicalTopN`,
 //! the fused `ORDER BY ... LIMIT` operator.
 //!
-//! SEED of `pkg/planner/core`. `LogicalTopN` was a [`crate::logical::TodoLogicalOp`]
+//! SEED of `pkg/planner/core`. `LogicalTopN` was a `LogicalPlan` placeholder arm
 //! before this batch. It shares its `ByItems` handling with
 //! [`crate::logical::sort`] and its limit arithmetic with
 //! [`crate::logical::limit`]; neither is restated here.

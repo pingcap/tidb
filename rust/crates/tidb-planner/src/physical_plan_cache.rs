@@ -358,8 +358,7 @@ fn bind_plan_expressions(
         | PhysicalPlan::PointGet(_)
         | PhysicalPlan::BatchPointGet(_)
         | PhysicalPlan::IndexMergeReader(_)
-        | PhysicalPlan::Dml(_)
-        | PhysicalPlan::Todo(_) => {}
+        | PhysicalPlan::Dml(_) => {}
     }
     Ok(())
 }

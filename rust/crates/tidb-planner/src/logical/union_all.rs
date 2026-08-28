@@ -17,7 +17,7 @@
 //! `pkg/planner/core/operator/logicalop/logical_partition_union_all.go`:
 //! `LogicalPartitionUnionAll`, the same operator over a partitioned table.
 //!
-//! SEED of `pkg/planner/core`. Both were [`crate::logical::TodoLogicalOp`]
+//! SEED of `pkg/planner/core`. Both were `LogicalPlan` placeholder arms
 //! before this batch.
 //!
 //! # Why one file and an embedded struct

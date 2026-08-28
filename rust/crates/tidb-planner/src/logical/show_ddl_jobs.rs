@@ -16,7 +16,7 @@
 //! `LogicalShowDDLJobs`, the `ADMIN SHOW DDL JOBS` leaf.
 //!
 //! SEED of `pkg/planner/core`. `LogicalShowDDLJobs` was a
-//! [`crate::logical::TodoLogicalOp`] before this batch.
+//! `LogicalPlan` placeholder arm before this batch.
 //!
 //! The crate's `logical_show_ddl_jobs` identity leaf is KEPT rather than
 //! merged: `difftests/planner-tests/tests/logical_show_ddl_jobs.rs` consumes its

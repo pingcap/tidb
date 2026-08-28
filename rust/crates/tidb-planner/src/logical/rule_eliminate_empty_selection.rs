@@ -92,7 +92,6 @@ impl OwnedRewrite for EmptySelection {
                 MemTable,
                 Show,
                 ShowDDLJobs,
-                Todo,
             ] => Descend::Children(
                 (0..node.children().len())
                     .map(|_| children_are_tested)

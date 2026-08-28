@@ -209,7 +209,6 @@ impl OwnedRewrite for ResultReorderRewrite<'_, '_> {
                 MemTable,
                 Show,
                 ShowDDLJobs,
-                Todo,
                 // The four keepers are answered above, before this match; they
                 // are listed so the arm set stays exhaustive when a keeper
                 // stops being one.

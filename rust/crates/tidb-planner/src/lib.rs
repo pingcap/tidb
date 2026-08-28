@@ -30,9 +30,8 @@
 //! passes over.
 //!
 //! It is an incremental transcreation of `pkg/planner/core`: the ordinary
-//! SELECT path now builds and costs this tree, while every operator not yet
-//! ported remains an explicit `Todo` variant naming its Go type rather than a
-//! default arm.
+//! SELECT path now builds and costs this tree, with typed variants for the
+//! logical and physical operators rather than a silent default arm.
 //!
 //! # One tree is the truth
 //!

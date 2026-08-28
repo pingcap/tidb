@@ -48,9 +48,11 @@ both `oltp_read_only` and `oltp_read_write`.
 - [x] 2026-08-27: discovered and selected the existing cloneable
   `tidb_planner::physical::PhysicalPlan` tree as the one representation to
   promote; rejected creation of a second executor-local tree.
-- [ ] Complete the existing reusable Rust physical-plan tree's operator and
-  parameter-slot coverage. Cache-rebuild variants are present for every Go
-  rebuild node, but the planner tree still contains explicit `Todo` operators.
+- [ ] Complete the existing reusable Rust physical-plan tree's executor and
+  parameter-slot coverage. The logical and physical enums now contain only
+  typed operators, and cache-rebuild variants are present for every Go rebuild
+  node; direct executor construction is still incomplete for several typed
+  roots.
 - [x] 2026-08-27: ordinary SELECT planning now builds and costs one shared
   logical/physical tree; executor construction lowers exact aggregation,
   access, join, child-property, and Sort-enforcer receipts.
@@ -351,6 +353,14 @@ both `oltp_read_only` and `oltp_read_write`.
   observed zero BatchGets and now observes exactly one. The same reader now
   uses the statement's write decode context for point, range, batch, index,
   and full-table arms instead of the legacy query-default row wrapper.
+- [x] 2026-08-28: deleted the disconnected logical and physical `Todo` plan
+  variants. No builder, rule, or task conversion produced either placeholder;
+  only tree tests constructed them. The closed enums now force every future
+  Go operator to add a typed variant and update every exhaustive planner,
+  cache-rebuild, task-attachment, and clone match at compile time. All 26
+  physical-tree tests and both schema tests pass; the full planner suite ran
+  792/794, with both remaining failures reproduced unchanged in the retained
+  `8366ff70bd` baseline worktree.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
