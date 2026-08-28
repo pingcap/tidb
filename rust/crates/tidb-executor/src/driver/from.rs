@@ -4143,7 +4143,14 @@ fn build_join_inner(
         None if kind_override.is_some() => Some(JoinChoice::Hash {
             build_is_left: kind == JoinKind::Right,
         }),
-        None => None,
+        // A statement containing a subquery may intentionally bypass the
+        // shared SELECT receipt while it is lowered through the established
+        // Apply/decorrelation path.  Its ordinary join nodes still need an
+        // executable family; use the same stats-free hash fallback used by
+        // rewritten semi joins instead of surfacing an internal 1105.
+        None => Some(JoinChoice::Hash {
+            build_is_left: kind == JoinKind::Right,
+        }),
     };
     let Some(winning_choice) = winning_choice else {
         return Err(DriverError::unsupported(format!(

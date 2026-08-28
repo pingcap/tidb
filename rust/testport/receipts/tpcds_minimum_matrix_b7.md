@@ -6,8 +6,10 @@ Run date: 2026-08-28 (Asia/Shanghai)
 
 - Go source of truth: nightly TiDB from `tiup playground nightly`, PD/TiKV
   shared by both SQL endpoints, Go port `17000`.
-- Rust revision: `5e37abd605cfc45ee851eb1330d05eb89dad8ddf` on
+- Rust revision for the complete matrix snapshot: `5e37abd605cfc45ee851eb1330d05eb89dad8ddf` on
   `hparser-integration`, release binary on port `18000`.
+- Follow-up fix rebased and pushed as `b001970c44` on top of remote tip
+  `0dedc2fe0d8c6b5c0c19f40ee36f18dd3edb9451`.
 - Workload source: `pingcap/tidb-bench` commit
   `e9f058ae9bee089afdbf9b3397ed9948bf7e560b`; `genquery.sh` generated 42
   statements: `3, 6, 7, 9, 10, 13, 15, 19, 25, 26, 28, 29, 34, 35, 41,
@@ -113,3 +115,35 @@ to 80.58 ms (0.97x); its result hash stayed equal to Go.
   be closed. Absolute Rust latency remains higher than Go, as shown above.
 - Exact Q64 Go casetest MPP oracle: **not met**; the earlier Q64 receipt remains
   the focused TiKV-only baseline.
+
+## Follow-up fix (not a replacement matrix)
+
+The shared planner alignment advanced while this work was in progress. The
+follow-up Rust fix keeps the original subquery shape as the planner gate,
+falls back when a legal statement has no shared planner receipt, preserves
+full-width leaves for correlated outer references, and lowers ordinary joins
+in that fallback through hash execution. It also guards the grouped
+predicate-aggregate rewrite to single-source outer scopes. The added regression
+case is `driver::tests::subqueries::correlated_subqueries`; it passes and now
+executes a three-table correlated aggregate query with the expected two rows.
+
+On the rebuilt release server, TPC-DS Q6 `EXPLAIN FORMAT='plan_tree'` and
+execution both succeeded (0 rows on this fixture) after previously returning
+Rust 1054/1105 errors. A new full matrix was started against the rebased tip
+but intentionally interrupted at Q62 to honor the request to pause; no partial
+matrix counts are used as acceptance evidence. The complete matrix and its
+42/42 result-equality, 11/42 control-plan-match, and 0/42 source-plan-match
+figures above remain the reproducible snapshot.
+
+Validation after the rebase:
+
+```text
+OPENSSL_DIR=/tmp/tidb-tpcds-full-target/release/build/openssl-sys/af76bd54616b9895/out/openssl-build/install \
+  LC_ALL=POSIX LANG=POSIX CARGO_TARGET_DIR=/tmp/tidb-tpcds-replay-target \
+  CARGO_NET_OFFLINE=true rustup run nightly-2026-08-22 cargo test \
+  --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-executor \
+  driver::tests::subqueries::correlated_subqueries --lib
+```
+
+The Ready profile is not complete: `make lint` could not start in the replay
+worktree because the environment has no `go` binary and no `GOPATH`.

@@ -2263,6 +2263,24 @@ fn subqueries() {
     ] {
         crate::run_create_table_on(table, &mut catalog).unwrap();
     }
+    run_insert_on(
+        "INSERT INTO outer_a VALUES (1), (2)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO outer_b VALUES (1, 5), (2, 10), (2, 20)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO outer_c VALUES (1), (2)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
     let sql = "SELECT outer_a.id FROM outer_a, outer_b, outer_c \
         WHERE outer_a.id = outer_b.id AND outer_b.id = outer_c.id \
         AND outer_b.v = (SELECT MIN(v) FROM outer_b \
@@ -2282,6 +2300,11 @@ fn subqueries() {
         crate::explain::ExplainFormat::Brief,
     )
     .expect("the correlated scalar subquery remains a residual until Apply rewriting");
+    assert_eq!(
+        run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap(),
+        vec![vec![Datum::Int(1)], vec![Datum::Int(2)]],
+        "a multi-table correlated aggregate must execute through the fallback join path"
+    );
 
     for table in [
         "CREATE TABLE tpch_orders (o_orderkey BIGINT PRIMARY KEY CLUSTERED, \

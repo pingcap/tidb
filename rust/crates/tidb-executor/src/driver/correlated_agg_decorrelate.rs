@@ -228,6 +228,14 @@ fn rewrite_predicate_aggregate(
         return None;
     }
     let outer_scope = super::subquery::select_outer_scope(select, catalog, current_db, ctx);
+    // The grouped predicate-aggregate rewrite currently relies on a
+    // single-source outer scope when it rebuilds the surrounding relation.
+    // Multi-source callers keep the original correlated Apply shape; this
+    // avoids manufacturing a derived join whose qualified outer references
+    // no longer bind after join reordering.
+    if outer_scope.tables.len() != 1 {
+        return None;
+    }
     let relation_alias = "__decorrelated_predicate_0";
     let value_alias = "__decorrelated_value_0";
     let value = Expr::Column(vec![relation_alias.to_owned(), value_alias.to_owned()]);
