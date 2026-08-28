@@ -356,6 +356,12 @@ mod tests_executor_suite_statements_source;
 #[cfg(test)]
 mod tests_fktest_source;
 #[cfg(test)]
+mod tests_admin_check_admintest_source;
+#[cfg(test)]
+mod tests_hashagg_aggregate_suite_source;
+#[cfg(test)]
+mod tests_analyze_suite_source;
+#[cfg(test)]
 pub(crate) mod test_temp_storage {
     use std::path::Path;
     use std::path::PathBuf;
