@@ -22,21 +22,27 @@ use crate::Session;
 #[test]
 fn unchanged_session_reuses_the_prepared_plan_cache_environment() {
     let mut session = Session::new();
-    let first = session.prepared_plan_cache_environment();
-    let second = session.prepared_plan_cache_environment();
+    let first = session.prepared_plan_cache_environment().unwrap();
+    let second = session.prepared_plan_cache_environment().unwrap();
     assert!(std::sync::Arc::ptr_eq(&first, &second));
 
     session.run("SET time_zone = '+00:00'").unwrap();
-    let changed = session.prepared_plan_cache_environment();
+    let changed = session.prepared_plan_cache_environment().unwrap();
     assert!(!std::sync::Arc::ptr_eq(&second, &changed));
     assert!(std::sync::Arc::ptr_eq(
         &changed,
-        &session.prepared_plan_cache_environment()
+        &session.prepared_plan_cache_environment().unwrap()
     ));
 
     session.run("BEGIN").unwrap();
-    let transaction = session.prepared_plan_cache_environment();
+    let transaction = session.prepared_plan_cache_environment().unwrap();
     assert!(!std::sync::Arc::ptr_eq(&changed, &transaction));
+
+    session
+        .run("SET sql_select_limit = 100")
+        .expect("set a plan-cache-incompatible limit");
+    assert!(session.prepared_plan_cache_environment().is_none());
+    assert!(session.prepared_plan_cache_environment().is_none());
 }
 
 fn cache_flag(session: &mut Session) -> String {

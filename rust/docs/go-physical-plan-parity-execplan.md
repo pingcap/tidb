@@ -255,6 +255,10 @@ both `oltp_read_only` and `oltp_read_write`.
   variable, pushdown-blacklist, transaction, and autocommit generations. A
   cache hit now borrows the same typed environment Go reads from `SessionVars`
   instead of cloning eight system-variable strings before every lookup.
+- [x] 2026-08-28: folded prepared-cache admission for SELECT limit, snapshot,
+  and read staleness into that same generation-keyed environment. Prepared
+  SELECT and PointGet reuse no longer repeat three owned system-variable
+  lookups on every hit; an inadmissible generation caches a typed refusal.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -419,6 +423,22 @@ both `oltp_read_only` and `oltp_read_write`.
   profile confirms one pushed partial StreamAgg and one root final StreamAgg;
   its remaining local overhead is statement-context memory/tracker setup and
   teardown, not aggregation re-planning.
+
+- Observation: after the typed environment was cached, the SELECT and
+  PointGet binders still re-read SELECT limit, snapshot, and read-staleness
+  strings before consulting it. Go's reuse decision consumes the current
+  `SessionVars`/plan-cache key state rather than rebuilding an independent
+  string gate at each binder. Caching either the typed environment or a typed
+  refusal for the current variable/blacklist/transaction generation deletes
+  both copies. In one-cluster exact A/B testing, stock read-only medians were
+  503.18 TPS candidate, 502.73 TPS at exact baseline `8366ff70bd`, and 476.68
+  TPS Go; stock read-write medians were 246.08, 233.27, and 218.83 TPS. The
+  read-write samples were visibly noisy, but both candidate medians remained
+  above Go and every leg reported zero SQL errors.
+  Evidence: fail-before/pass-after
+  `cached_select_key_reuses_the_typed_session_environment`, environment reuse
+  and refusal tests, session/server checks, release build, and the alternating
+  candidate/baseline/Go benchmark receipt.
 
 - Observation: Rust also retained one successful publication receipt per
   snapshot point/batch/scan read. Go's `KVSnapshot` retains lock-resolution,

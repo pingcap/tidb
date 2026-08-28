@@ -78,4 +78,7 @@ fn cached_select_key_reuses_the_typed_session_environment() {
 
     assert!(binder.contains("self.prepared_plan_cache_environment()"));
     assert!(!binder.contains("PreparedPlanCacheEnvironment::new("));
+    assert!(!binder.contains("get_system(\"sql_select_limit\")"));
+    assert!(!binder.contains("TIDB_SNAPSHOT"));
+    assert!(!binder.contains("TIDB_READ_STALENESS"));
 }

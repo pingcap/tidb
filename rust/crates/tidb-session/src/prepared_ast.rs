@@ -44,7 +44,7 @@ pub(crate) struct PreparedPlanCacheEnvironmentCache {
     blacklist_generation: u64,
     in_transaction: bool,
     autocommit: bool,
-    environment: Arc<tidb_executor::PreparedPlanCacheEnvironment>,
+    environment: Option<Arc<tidb_executor::PreparedPlanCacheEnvironment>>,
 }
 
 impl PreparedAst {
@@ -107,7 +107,7 @@ impl PreparedAst {
 impl Session {
     pub(crate) fn prepared_plan_cache_environment(
         &self,
-    ) -> Arc<tidb_executor::PreparedPlanCacheEnvironment> {
+    ) -> Option<Arc<tidb_executor::PreparedPlanCacheEnvironment>> {
         let vars_generation = self.vars.generation();
         let blacklist_generation = self.pushdown_blacklists.generation();
         let in_transaction = self.in_transaction();
@@ -118,44 +118,57 @@ impl Session {
                 && cached.in_transaction == in_transaction
                 && cached.autocommit == autocommit
             {
-                return Arc::clone(&cached.environment);
+                return cached.environment.clone();
             }
         }
-        let environment = Arc::new(
-            tidb_executor::PreparedPlanCacheEnvironment::new(
-                self.vars.get_system("sql_mode").unwrap_or_default(),
-                self.vars.get_system("time_zone").unwrap_or_default(),
-                blacklist_generation,
+        let sql_select_limit = self.vars.get_system("sql_select_limit");
+        let snapshot = self.vars.get_system(tidb_vardef::tidb_vars::TIDB_SNAPSHOT);
+        let read_staleness = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS);
+        let environment = (sql_select_limit.as_deref() == Ok("18446744073709551615")
+            && !snapshot.is_ok_and(|value| !value.is_empty())
+            && !read_staleness
+                .is_ok_and(|value| value.trim().parse::<i64>().is_ok_and(|value| value != 0)))
+        .then(|| {
+            Arc::new(
+                tidb_executor::PreparedPlanCacheEnvironment::new(
+                    self.vars.get_system("sql_mode").unwrap_or_default(),
+                    self.vars.get_system("time_zone").unwrap_or_default(),
+                    blacklist_generation,
+                )
+                .with_session_state(
+                    self.vars
+                        .get_system("character_set_connection")
+                        .unwrap_or_default(),
+                    self.vars
+                        .get_system("collation_connection")
+                        .unwrap_or_default(),
+                    self.vars
+                        .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+                        .unwrap_or_default(),
+                    self.vars
+                        .get_system(tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES)
+                        .unwrap_or_default(),
+                    sql_select_limit.unwrap_or_default(),
+                    in_transaction,
+                    autocommit,
+                    self.vars
+                        .get_system(
+                            tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_INVALIDATION_ON_FRESH_STATS,
+                        )
+                        .as_deref()
+                        != Ok("OFF"),
+                ),
             )
-            .with_session_state(
-                self.vars
-                    .get_system("character_set_connection")
-                    .unwrap_or_default(),
-                self.vars
-                    .get_system("collation_connection")
-                    .unwrap_or_default(),
-                self.vars
-                    .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
-                    .unwrap_or_default(),
-                self.vars
-                    .get_system(tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES)
-                    .unwrap_or_default(),
-                self.vars.get_system("sql_select_limit").unwrap_or_default(),
-                in_transaction,
-                autocommit,
-                self.vars
-                    .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_INVALIDATION_ON_FRESH_STATS)
-                    .as_deref()
-                    != Ok("OFF"),
-            ),
-        );
+        });
         *self.prepared_plan_cache_environment_cache.borrow_mut() =
             Some(PreparedPlanCacheEnvironmentCache {
                 vars_generation,
                 blacklist_generation,
                 in_transaction,
                 autocommit,
-                environment: Arc::clone(&environment),
+                environment: environment.clone(),
             });
         environment
     }
@@ -216,15 +229,7 @@ impl Session {
             .vars
             .optimizer_fix_control()
             .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
-            || self.vars.get_system("sql_select_limit").as_deref() != Ok("18446744073709551615")
-            || self
-                .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_SNAPSHOT)
-                .is_ok_and(|value| !value.is_empty())
-            || self
-                .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS)
-                .is_ok_and(|value| value.trim().parse::<i64>().is_ok_and(|value| value != 0))
+            || self.prepared_plan_cache_environment().is_none()
         {
             return false;
         }
@@ -280,19 +285,10 @@ impl Session {
                 .vars
                 .optimizer_fix_control()
                 .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
-            || self.vars.get_system("sql_select_limit").as_deref() != Ok("18446744073709551615")
-            || self
-                .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_SNAPSHOT)
-                .is_ok_and(|value| !value.is_empty())
-            || self
-                .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS)
-                .is_ok_and(|value| value.trim().parse::<i64>().is_ok_and(|value| value != 0))
         {
             return None;
         }
-        let environment = self.prepared_plan_cache_environment();
+        let environment = self.prepared_plan_cache_environment()?;
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(execution) =
