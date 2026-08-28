@@ -775,6 +775,13 @@ fn constant_value(expr: &Expr, zone: &tidb_datatype::SessionTimeZone) -> Option<
         expr,
         &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
     ) {
+        // Go's Constant.Eval reads the execute-time datum through
+        // `ParamMarker.GetUserVar`. The Rust rewriter has already copied that
+        // current datum into `Constant::value`; keep the marker metadata for
+        // cached-plan rebuilds, but use the installed value for this range.
+        Ok(Expression::Constant(constant)) if constant.param_marker.is_some() => {
+            Some(constant.value)
+        }
         Ok(Expression::Constant(constant)) => constant.eval().ok(),
         // The rewriter only folds a bare literal into a `Constant`; anything
         // built out of literals -- `-100` is `unaryminus(100)`, and Go folds it

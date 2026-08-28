@@ -84,6 +84,45 @@ fn cached_physical_plan_does_not_rerun_legacy_row_estimation() {
     );
 }
 
+#[test]
+fn prepared_sysbench_sum_retains_gos_stream_aggregation_receipt() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE sbtest1 (\
+            id INTEGER NOT NULL AUTO_INCREMENT, \
+            k INTEGER DEFAULT 0 NOT NULL, \
+            c CHAR(120) DEFAULT '' NOT NULL, \
+            pad CHAR(60) DEFAULT '' NOT NULL, \
+            PRIMARY KEY (id), INDEX k_1(k))",
+        &mut catalog,
+    )
+    .unwrap();
+    let statement =
+        tidb_parser::parse("SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN ? AND ?").unwrap();
+    let plan = std::sync::Arc::new(
+        build_prepared_select_plan(&statement, 2, &catalog, DEFAULT_DATABASE, &ctx)
+            .expect("stock sysbench SUM is cacheable"),
+    );
+    let execution = plan
+        .bind(
+            &[Datum::Int(1), Datum::Int(100)],
+            &catalog,
+            DEFAULT_DATABASE,
+            &ctx,
+            &PreparedPlanCacheEnvironment::default(),
+        )
+        .expect("the first execution builds its cached physical tree");
+
+    assert_eq!(
+        execution.aggregation_families(),
+        (
+            Some(crate::driver::planner_bridge::AggregationFamily::Stream),
+            Some(crate::driver::planner_bridge::AggregationFamily::Stream),
+        )
+    );
+}
+
 /// A prepared SELECT cache retains the complete physical operator tree, not
 /// any one execution's rows or parameter bounds. Rebinding two different
 /// ranges must match ordinary planning for every root shape in the sysbench

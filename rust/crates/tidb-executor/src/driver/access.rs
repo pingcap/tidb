@@ -465,8 +465,8 @@ impl PreparedSelectPlan {
 
     /// On the first execution for a schema and parameter-type key, runs the
     /// shared optimizer with the real parameter values and retains its entire
-    /// physical tree. A hit clones that tree and recursively rebuilds every
-    /// parameter-dependent range before extracting its lowering receipt.
+    /// physical tree. A hit recursively rebuilds every parameter-dependent
+    /// range in place before extracting its lowering receipt.
     #[must_use]
     pub fn bind(
         self: &Arc<Self>,
@@ -622,6 +622,16 @@ impl PreparedSelectExecution {
     #[must_use]
     pub fn select(&self) -> &tidb_ast::SelectStmt {
         &self.select
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn aggregation_families(
+        &self,
+    ) -> (
+        Option<super::planner_bridge::AggregationFamily>,
+        Option<super::planner_bridge::AggregationFamily>,
+    ) {
+        (self.decision.family, self.decision.cop_family)
     }
 }
 

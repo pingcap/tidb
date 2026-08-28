@@ -121,6 +121,11 @@ both `oltp_read_only` and `oltp_read_write`.
   point planner and its duplicate predicate/handle/row-decoder implementation
   were deleted. Execute-time privilege checks, fresh mutable executor state,
   and first-miss/later-hit `@@last_plan_from_cache` semantics remain.
+- [x] 2026-08-27: execute-bound parameter constants now expose their installed
+  datum to the shared AST ranger and statistics estimator, as Go's
+  `ParamMarker.GetUserVar` does. Stock prepared SUM therefore keeps the same
+  99-row estimate and root/cop StreamAgg tree as literal SQL instead of
+  selecting a full-range root HashAgg.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -276,6 +281,21 @@ both `oltp_read_only` and `oltp_read_write`.
   the exact stock-sysbench regression, and paired alternating measurements:
   read-only improved from 0.798x to 0.855x; read-write from 0.882x to 0.897x.
 
+- Observation: the stock prepared SUM's planner expression carried both the
+  current value and its parameter-marker identity, but the executor AST ranger
+  passed that `Constant` through the plain-literal evaluator. That evaluator
+  correctly refuses parameter constants without an evaluation context, so
+  the statistics ranger dropped both BETWEEN bounds, estimated 8,000 logical
+  input rows and adjusted the physical scan to 10,000 rows. The shared cost
+  search then selected root HashAgg with no cop aggregation. Go evaluates the
+  same constant through `ParamMarker.GetUserVar`; using the already-installed
+  current datum restores the 99-row estimate and root/cop StreamAgg receipt.
+  Evidence: fail-before `(Some(Hash), None)` in
+  `prepared_sysbench_sum_retains_gos_stream_aggregation_receipt`, fail-before
+  selectivity `0.8` in
+  `execute_bound_markers_use_the_same_handle_selectivity_as_literals`, and
+  both passing after the general ranger correction.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -374,7 +394,13 @@ of 360.43/451.39 TPS (0.798x) and read-write 249.66/283.15 TPS (0.882x).
 After the retained planner-built PointGet became the only point implementation,
 the same harness measured 403.71/472.00 TPS (0.855x) and 255.89/285.32 TPS
 (0.897x), all with zero SQL errors. This is a material root fix but not yet the
-1.0 acceptance result; profiling of the remaining read work continues.
+1.0 acceptance result. The next fresh alternating range split isolated the
+stock SUM root mismatch: before the parameter-ranger fix Rust/Go SUM medians
+were 3,054.54/4,572.17 TPS (0.668x); afterward they were 4,467.34/4,359.14 TPS
+(1.025x), with zero errors. The same post-fix run measured simple range at
+4,149.08/4,342.42 (0.955x), ordered range at 3,210.28/3,533.63 (0.909x), and
+distinct ordered range at 2,129.20/2,758.29 (0.772x). DISTINCT/ORDER lowering
+is now the largest remaining read-only target.
 
 ## Context and Orientation
 

@@ -1389,9 +1389,9 @@ pub(crate) fn select_decision(
     decision_from_plans(select, &logical, &physical)
 }
 
-/// The complete physical tree retained by the prepared-plan cache.  A hit
-/// clones this tree, recursively rebuilds every parameter-dependent range,
-/// and derives the executor receipt from that rebuilt tree.  No access,
+/// The complete physical tree retained by the prepared-plan cache. A hit
+/// recursively rebuilds every parameter-dependent range in place and derives
+/// the executor receipt from that rebuilt tree. No access,
 /// aggregation, join, sort, or reader policy is re-run in the executor.
 #[derive(Clone, Debug)]
 pub(crate) struct CachedSelectPlan {
@@ -1484,7 +1484,10 @@ pub(crate) fn aggregation_eliminated(
 
 #[cfg(test)]
 mod tests {
-    use super::{outer_aggregation, planner_optimized_select, select_decision, AggregationFamily};
+    use super::{
+        cached_select_plan, outer_aggregation, planner_optimized_select, select_decision,
+        AggregationFamily,
+    };
     use crate::Catalog;
 
     #[test]
@@ -1517,6 +1520,36 @@ mod tests {
         );
         let decision = select_decision(select, &catalog, "test", &ctx)
             .expect("the shared physical search answers");
+        assert_eq!(decision.family, Some(AggregationFamily::Stream));
+        assert_eq!(decision.cop_family, Some(AggregationFamily::Stream));
+    }
+
+    #[test]
+    fn cached_sysbench_sum_uses_gos_stream_aggregation() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE sbtest1 (\
+                id INTEGER NOT NULL AUTO_INCREMENT, \
+                k INTEGER DEFAULT 0 NOT NULL, \
+                c CHAR(120) DEFAULT '' NOT NULL, \
+                pad CHAR(60) DEFAULT '' NOT NULL, \
+                PRIMARY KEY (id), INDEX k_1(k))",
+            &mut catalog,
+        )
+        .unwrap();
+        let ctx = crate::StmtContext::for_query();
+        let stmt =
+            tidb_parser::parse("SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN 1 AND 100").unwrap();
+        let tidb_ast::Stmt::Query(query) = &stmt else {
+            panic!("not a query");
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            panic!("not a SELECT");
+        };
+
+        let mut cached = cached_select_plan(select, &catalog, "test", &ctx)
+            .expect("the prepared-plan cache accepts stock sysbench SUM");
+        let decision = cached.bind(&[]).expect("the cached physical tree rebuilds");
         assert_eq!(decision.family, Some(AggregationFamily::Stream));
         assert_eq!(decision.cop_family, Some(AggregationFamily::Stream));
     }
