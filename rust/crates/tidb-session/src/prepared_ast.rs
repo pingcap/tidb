@@ -23,8 +23,8 @@ use std::sync::Arc;
 use tidb_ast::Stmt;
 use tidb_datatype::Datum;
 use tidb_executor::{
-    DriverError, PreparedPointGetExecution, PreparedPointGetPlan, PreparedSelectExecution,
-    PreparedSelectPlan,
+    DriverError, PreparedPointGetExecution, PreparedPointGetPlan, PreparedPointUpdateExecution,
+    PreparedPointUpdatePlan, PreparedSelectExecution, PreparedSelectPlan,
 };
 
 use crate::Session;
@@ -35,6 +35,7 @@ pub struct PreparedAst {
     statement: Stmt,
     parameter_count: usize,
     point_get_plan: Option<Arc<PreparedPointGetPlan>>,
+    point_update_plan: Option<Arc<PreparedPointUpdatePlan>>,
     select_plan: Option<Arc<PreparedSelectPlan>>,
 }
 
@@ -43,12 +44,14 @@ impl PreparedAst {
         statement: Stmt,
         parameter_count: usize,
         point_get_plan: Option<PreparedPointGetPlan>,
+        point_update_plan: Option<PreparedPointUpdatePlan>,
         select_plan: Option<PreparedSelectPlan>,
     ) -> Self {
         Self {
             statement,
             parameter_count,
             point_get_plan: point_get_plan.map(Arc::new),
+            point_update_plan: point_update_plan.map(Arc::new),
             select_plan: select_plan.map(Arc::new),
         }
     }
@@ -72,6 +75,13 @@ impl PreparedAst {
         self.point_get_plan.clone()
     }
 
+    /// The immutable point-update plan compiled while the statement was
+    /// prepared, when Go's `tryUpdatePointPlan` admits the shape.
+    #[must_use]
+    pub fn point_update_plan(&self) -> Option<Arc<PreparedPointUpdatePlan>> {
+        self.point_update_plan.clone()
+    }
+
     /// The prepared SELECT descriptor whose full physical tree is generated
     /// on the first EXECUTE and rebuilt on later cache hits.
     #[must_use]
@@ -93,7 +103,7 @@ impl Session {
         let statement = self.parse_statement(sql)?;
         let parameter_count = tidb_executor::parsed_parameter_count(&statement);
         let planner_context = self.statement_context(false);
-        let (point_get_plan, select_plan) = {
+        let (point_get_plan, point_update_plan, select_plan) = {
             let catalog = self.lock_catalog()?;
             (
                 tidb_executor::build_prepared_point_get_plan(
@@ -103,6 +113,12 @@ impl Session {
                     self.current_database(),
                     &self.session_time_zone(),
                 ),
+                tidb_executor::build_prepared_point_update_plan(
+                    &statement,
+                    parameter_count,
+                    &catalog,
+                    self.current_database(),
+                )?,
                 tidb_executor::build_prepared_select_plan(
                     &statement,
                     parameter_count,
@@ -116,6 +132,7 @@ impl Session {
             statement,
             parameter_count,
             point_get_plan,
+            point_update_plan,
             select_plan,
         ))
     }
@@ -165,6 +182,26 @@ impl Session {
             return None;
         }
         plan.bind(values, &self.session_time_zone())
+    }
+
+    /// Binds fresh values into Go's cached point-update plan after applying
+    /// the prepared-cache, binding, fix-control, database, and schema gates.
+    pub fn bind_cached_prepared_point_update(
+        &self,
+        plan: &Arc<PreparedPointUpdatePlan>,
+        values: &[Datum],
+    ) -> Option<PreparedPointUpdateExecution> {
+        if !self.prepared_plan_cache_enabled()
+            || !self.session_bindings.is_empty()
+            || self
+                .vars
+                .optimizer_fix_control()
+                .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
+        {
+            return None;
+        }
+        let catalog = self.lock_catalog().ok()?;
+        plan.bind(values, &catalog, self.current_database())
     }
 
     /// Binds the current values into a retained SELECT after applying the

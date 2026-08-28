@@ -587,11 +587,11 @@ fn update_and_delete_rows() {
     }
 }
 
-/// The fast prepared UPDATE keeps a table WITH secondary indexes on the fast
-/// arm -- `update_row_with_old` maintains the entries -- and its residual
-/// equalities answer against the OLD row before any assignment lands.
+/// The cached prepared point UPDATE keeps a table WITH secondary indexes on
+/// the admitted plan -- `update_row_with_old` maintains the entries -- and its
+/// residual equalities answer against the OLD row before any assignment lands.
 #[test]
-fn fast_prepared_update_maintains_indexes_and_answers_residuals() {
+fn prepared_point_update_maintains_indexes_and_answers_residuals() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
         "CREATE TABLE upi (\
@@ -609,22 +609,24 @@ fn fast_prepared_update_maintains_indexes_and_answers_residuals() {
     )
     .unwrap();
 
-    let parse_update = |sql: &str| -> tidb_ast::UpdateStmt {
-        let stmt = tidb_parser::parse(sql).unwrap();
-        match &stmt {
-            Stmt::Dml(dml) => match &**dml {
-                tidb_ast::DmlStmt::Update(update) => update.as_ref().clone(),
-                _ => panic!("expected an update"),
-            },
-            _ => panic!("expected a dml"),
-        }
-    };
     let ctx = crate::StmtContext::for_query();
     let run = |sql: &str, params: &[Datum], catalog: &mut Catalog| {
-        let update = parse_update(sql);
-        run_fast_prepared_update(&update, params, catalog, DEFAULT_DATABASE, &ctx)
+        let statement = tidb_parser::parse(sql).unwrap();
+        let parameter_count = parsed_parameter_count(&statement);
+        let plan = Arc::new(
+            build_prepared_point_update_plan(
+                &statement,
+                parameter_count,
+                catalog,
+                DEFAULT_DATABASE,
+            )
             .unwrap()
-            .expect("the fast prepared update")
+            .expect("the cached prepared point update"),
+        );
+        let execution = plan.bind(params, catalog, DEFAULT_DATABASE).expect("bind");
+        run_prepared_point_update(&execution, catalog, DEFAULT_DATABASE, &ctx)
+            .unwrap()
+            .expect("the plan remains valid")
     };
 
     // Handle pin plus a residual the row answers: one row updated.

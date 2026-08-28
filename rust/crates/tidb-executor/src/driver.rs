@@ -345,7 +345,6 @@ pub(crate) use agg_build::*;
 pub(crate) use agg_select::*;
 pub use catalog::*;
 pub(crate) use clause_resolve::*;
-pub use dml::run_fast_prepared_update;
 pub use dml::*;
 pub(crate) use from::*;
 pub(crate) use grouping::*;

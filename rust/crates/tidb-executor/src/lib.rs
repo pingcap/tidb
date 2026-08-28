@@ -245,13 +245,14 @@ pub use driver::{
         run_prepared_select, PreparedPlanCacheEnvironment, PreparedPointGetExecution,
         PreparedPointGetPlan, PreparedSelectExecution, PreparedSelectPlan,
     },
-    bind_parameters, bind_prepared_statement, bind_statement, parameter_count,
-    parsed_parameter_count, plan_select_meta_stmt, run_delete_in, run_delete_on, run_delete_stmt,
-    run_fast_prepared_insert, run_fast_prepared_update, run_insert_in, run_insert_on,
-    run_insert_reporting, run_insert_stmt, run_select, run_select_meta_in, run_select_meta_on,
+    bind_parameters, bind_prepared_statement, bind_statement, build_prepared_point_update_plan,
+    parameter_count, parsed_parameter_count, plan_select_meta_stmt, run_delete_in, run_delete_on,
+    run_delete_stmt, run_fast_prepared_insert, run_insert_in, run_insert_on, run_insert_reporting,
+    run_insert_stmt, run_prepared_point_update, run_select, run_select_meta_in, run_select_meta_on,
     run_select_meta_stmt, run_select_on, run_set_opr_stmt, run_update_in, run_update_on,
-    run_update_stmt, Catalog, DriverError, MemTable, MysqlError, SchemaErrorKind, SelectMeta,
-    TableEntry, TxnErrorKind, VarErrorKind, ViewDef, DEFAULT_DATABASE,
+    run_update_stmt, Catalog, DriverError, MemTable, MysqlError, PreparedPointUpdateExecution,
+    PreparedPointUpdatePlan, SchemaErrorKind, SelectMeta, TableEntry, TxnErrorKind, VarErrorKind,
+    ViewDef, DEFAULT_DATABASE,
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use explain::{

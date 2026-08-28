@@ -1749,15 +1749,121 @@ pub fn run_update_stmt(
     run_update_traced(update, catalog, current_db, ctx, None)
 }
 
-/// Prepared counterpart for the narrow clustered common-handle UPDATE used by
-/// go-ycsb. Any shape not admitted here returns `None` for the normal planner.
-pub fn run_fast_prepared_update(
-    update: &tidb_ast::UpdateStmt,
-    params: &[Datum],
-    catalog: &mut Catalog,
+/// The immutable point-update plan produced for a cacheable prepared UPDATE.
+///
+/// This is Rust's counterpart of Go `tryUpdatePointPlan`: name resolution,
+/// clustered-handle discovery, residual classification, and assignment
+/// lowering happen once. Each EXECUTE only binds values and creates fresh
+/// mutation state.
+#[derive(Debug)]
+pub struct PreparedPointUpdatePlan {
+    schema_version: u64,
+    current_database: String,
+    database: String,
+    table: String,
+    table_id: i64,
+    int_handle: bool,
+    handle_parameter_orders: Vec<usize>,
+    residual_eqs: Vec<(usize, ResidualEq)>,
+    assignments: Vec<PreparedPointAssignment>,
+    field_types: Vec<FieldType>,
+    column_names: Vec<String>,
+    cache_ready: std::sync::atomic::AtomicBool,
+}
+
+/// One execution of a retained prepared point-update plan.
+#[derive(Clone, Debug)]
+pub struct PreparedPointUpdateExecution {
+    plan: Arc<PreparedPointUpdatePlan>,
+    params: Vec<Datum>,
+}
+
+#[derive(Clone, Debug)]
+struct PreparedPointAssignment {
+    offset: usize,
+    value: PreparedPointAssignmentValue,
+}
+
+#[derive(Clone, Debug)]
+enum PreparedPointAssignmentValue {
+    Parameter(usize),
+    Arithmetic { sign: i8, delta: PreparedPointDelta },
+}
+
+#[derive(Clone, Debug)]
+enum PreparedPointDelta {
+    Parameter(usize),
+    Literal(Datum),
+}
+
+impl PreparedPointUpdatePlan {
+    /// The resolved table identity used for privileges and MDL tracking.
+    #[must_use]
+    pub fn names(&self) -> (&str, &str) {
+        (&self.database, &self.table)
+    }
+
+    /// Whether one successful execution has admitted this plan to the cache.
+    #[must_use]
+    pub fn cache_ready(&self) -> bool {
+        self.cache_ready.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Admits the plan after its first successful execution.
+    pub fn mark_cache_ready(&self) {
+        self.cache_ready
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Binds one EXECUTE's values after checking that DDL has not invalidated
+    /// the plan compiled at PREPARE.
+    #[must_use]
+    pub fn bind(
+        self: &Arc<Self>,
+        params: &[Datum],
+        catalog: &Catalog,
+        current_database: &str,
+    ) -> Option<PreparedPointUpdateExecution> {
+        if self.schema_version != catalog.metadata_version()
+            || !self.current_database.eq_ignore_ascii_case(current_database)
+            || !matches!(
+                catalog.get_in(&self.database, &self.table),
+                Some(TableEntry::Kv(table)) if table.table_id == self.table_id
+            )
+        {
+            return None;
+        }
+        Some(PreparedPointUpdateExecution {
+            plan: Arc::clone(self),
+            params: params.to_vec(),
+        })
+    }
+}
+
+impl PreparedPointUpdateExecution {
+    /// The immutable plan this execution rebuilt with fresh values.
+    #[must_use]
+    pub fn plan(&self) -> &PreparedPointUpdatePlan {
+        &self.plan
+    }
+}
+
+/// Builds Go's cacheable clustered point-update shape from a retained AST.
+pub fn build_prepared_point_update_plan(
+    statement: &Stmt,
+    parameter_count: usize,
+    catalog: &Catalog,
     current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<Option<u64>, DriverError> {
+) -> Result<Option<PreparedPointUpdatePlan>, DriverError> {
+    if parsed_parameter_count(statement) != parameter_count {
+        return Ok(None);
+    }
+    let Stmt::Dml(dml) = statement else {
+        return Ok(None);
+    };
+    let tidb_ast::DmlStmt::Update(update) = dml.as_ref() else {
+        return Ok(None);
+    };
     if update.ignore
         || !update.order_by.is_empty()
         || update.limit.is_some()
@@ -1769,24 +1875,17 @@ pub fn run_fast_prepared_update(
     let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
         return Ok(None);
     };
-    let (database, name) = single_table_name(table_ref, current_db)?;
-    let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
+    let (database, table_name) = single_table_name(table_ref, current_db)?;
+    let Some(TableEntry::Kv(table)) = catalog.get_in(&database, &table_name) else {
         return Ok(None);
     };
-    // Two clustered shapes reach this arm, and Go's cached point-update plan
-    // (`tryUpdatePointPlan`, pkg/planner/core/point_get_plan.go) admits both:
-    // go-ycsb's COMPOSITE COMMON handle and sbtest's INT `PKIsHandle`. The
-    // key columns are whichever offsets pin the record handle; secondary
-    // indexes are maintained by `update_row_with_old` itself (old entries
-    // deleted, new written, rolled back on failure), matching Go's cached
-    // point-update keeping every index of the table up to date.
-    let int_pk_offset = kv.pk_handle_offset();
-    let mut handles = kv.common_handle_offsets().to_vec();
+    let int_pk_offset = table.pk_handle_offset();
+    let mut handles = table.common_handle_offsets().to_vec();
     if let Some(offset) = int_pk_offset {
         handles = vec![offset];
     }
     if handles.is_empty()
-        || kv
+        || table
             .visible_columns()
             .iter()
             .any(|column| column.generated.is_some())
@@ -1797,7 +1896,7 @@ pub fn run_fast_prepared_update(
         .alias
         .as_deref()
         .or_else(|| table_ref.name.last().map(String::as_str));
-    let columns = kv.visible_columns().to_vec();
+    let columns = table.visible_columns();
     let mut assignment_offsets = Vec::with_capacity(update.assignments.len());
     for assignment in &update.assignments {
         let Some(offset) = columns.iter().position(|column| {
@@ -1808,30 +1907,20 @@ pub fn run_fast_prepared_update(
         }) else {
             return Ok(None);
         };
-        // Assigning a clustered-key column MOVES the row, and duplicate
-        // targets would make an arithmetic assignment order-dependent. Both
-        // keep the ordinary planner.
         if handles.contains(&offset) || assignment_offsets.contains(&offset) {
             return Ok(None);
         }
         assignment_offsets.push(offset);
     }
-    // An assignment touching a FOREIGN-KEY column of this table (`fk.cols`)
-    // changes a referential fact; the full planner runs that check. An
-    // assignment touching a UNIQUE secondary-index column keeps the planner
-    // so the duplicate-key answer stays the planner's; a NON-unique index's
-    // entry pair carries no constraint, and `update_row_in` already rewrites
-    // exactly that pair (old deleted, new written, restored on failure), so
-    // handing it here is Go's own cached-point-update behavior.
-    if kv.indexes().iter().any(|index| {
+    if table.indexes().iter().any(|index| {
         index.unique
             && !index.clustered_primary
             && index
                 .column_offsets
                 .iter()
                 .any(|offset| assignment_offsets.contains(offset))
-    }) || kv.foreign_keys().iter().any(|fk| {
-        fk.cols.iter().any(|column| {
+    }) || table.foreign_keys().iter().any(|foreign_key| {
+        foreign_key.cols.iter().any(|column| {
             update.assignments.iter().any(|assignment| {
                 assignment
                     .col
@@ -1842,127 +1931,165 @@ pub fn run_fast_prepared_update(
     }) {
         return Ok(None);
     }
-    // The WHERE flattens into conjunction leaves: EACH clustered-key column
-    // is pinned exactly once by one `col = ?`, and every other leaf filters
-    // the OLD row as a simple equality (`WHERE prdaccno = ? AND stsrcd = ?`
-    // reads exactly one row or none).
+
     let mut residual_eqs = Vec::new();
-    let Some(key_exprs) = point_update_where(
+    let Some(handle_expressions) = point_update_where(
         update.where_clause.as_ref(),
         &handles,
         qualifier,
-        &columns,
+        columns,
         &mut residual_eqs,
     ) else {
         return Ok(None);
     };
-    let mut key_values = Vec::with_capacity(handles.len());
-    for key_expr in key_exprs {
-        let Some(key_value) = prepared_or_literal(key_expr, params)? else {
+    let mut handle_parameter_orders = Vec::with_capacity(handle_expressions.len());
+    for expression in handle_expressions {
+        let tidb_ast::Expr::ParamMarker { order, .. } = unparen(expression) else {
             return Ok(None);
         };
-        key_values.push(key_value);
-    }
-    let handle = match int_pk_offset {
-        // An INT `PKIsHandle`: the pinned value IS the record handle -- the
-        // same identity Go's PointGetPlan carries as an IntHandle.
-        Some(_) => {
-            let value = match &key_values[0] {
-                Datum::Int(value) => *value,
-                Datum::UInt(value) => *value as i64,
-                _ => return Ok(None),
-            };
-            TableHandle::Int(value)
+        if *order >= parameter_count {
+            return Ok(None);
         }
-        None => {
-            let encoded = tidb_codec::encode_key_in_timezone(&ctx.session_zone(), &key_values)
-                .map_err(|error| {
-                    DriverError::unsupported(format!("cannot encode common handle: {error:?}"))
-                })?;
-            let handle = tidb_txnkv::CommonHandle::new(encoded).map_err(|error| {
+        handle_parameter_orders.push(*order);
+    }
+    let assignments = update
+        .assignments
+        .iter()
+        .zip(assignment_offsets)
+        .map(|(assignment, offset)| {
+            prepare_point_assignment(&assignment.value, &assignment.col, qualifier, offset)
+                .map(|value| PreparedPointAssignment { offset, value })
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(assignments) = assignments else {
+        return Ok(None);
+    };
+
+    Ok(Some(PreparedPointUpdatePlan {
+        schema_version: catalog.metadata_version(),
+        current_database: current_db.to_owned(),
+        database,
+        table: table_name,
+        table_id: table.table_id,
+        int_handle: int_pk_offset.is_some(),
+        handle_parameter_orders,
+        residual_eqs,
+        assignments,
+        field_types: columns
+            .iter()
+            .map(|column| column.field_type.clone())
+            .collect(),
+        column_names: columns.iter().map(|column| column.name.clone()).collect(),
+        cache_ready: std::sync::atomic::AtomicBool::new(false),
+    }))
+}
+
+/// Executes one rebound prepared point update. `None` means DDL invalidated
+/// the retained plan before the mutation began.
+pub fn run_prepared_point_update(
+    execution: &PreparedPointUpdateExecution,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<u64>, DriverError> {
+    let plan = execution.plan();
+    if plan.schema_version != catalog.metadata_version()
+        || !plan.current_database.eq_ignore_ascii_case(current_db)
+    {
+        return Ok(None);
+    }
+    let Some(TableEntry::Kv(table)) = catalog.get_mut_in(&plan.database, &plan.table) else {
+        return Ok(None);
+    };
+    if table.table_id != plan.table_id {
+        return Ok(None);
+    }
+    let key_values = plan
+        .handle_parameter_orders
+        .iter()
+        .map(|order| execution.params.get(*order).cloned())
+        .collect::<Option<Vec<_>>>()
+        .ok_or(DriverError::WrongParamCount)?;
+    let handle = if plan.int_handle {
+        let value = match key_values.first() {
+            Some(Datum::Int(value)) => *value,
+            Some(Datum::UInt(value)) => *value as i64,
+            // A string/decimal comparison against an integer handle needs
+            // the ordinary expression coercion rules. Decline before any
+            // mutation so the complete UPDATE path can answer it.
+            _ => return Ok(None),
+        };
+        TableHandle::Int(value)
+    } else {
+        let encoded = tidb_codec::encode_key_in_timezone(&ctx.session_zone(), &key_values)
+            .map_err(|error| {
                 DriverError::unsupported(format!("cannot encode common handle: {error:?}"))
             })?;
-            TableHandle::Common(handle.encoded().to_vec())
-        }
+        let handle = tidb_txnkv::CommonHandle::new(encoded).map_err(|error| {
+            DriverError::unsupported(format!("cannot encode common handle: {error:?}"))
+        })?;
+        TableHandle::Common(handle.encoded().to_vec())
     };
-    let old_row = match kv
+    let Some(old_row) = table
         .get_row_by_handle(&handle, &ctx.session_zone())
         .map_err(kv_write_error)?
-    {
-        Some(row) => row,
-        None => return Ok(Some(0)),
+    else {
+        return Ok(Some(0));
     };
-    let field_types: Vec<FieldType> = columns
-        .iter()
-        .map(|column| column.field_type.clone())
-        .collect();
-    let names: Vec<String> = columns.iter().map(|column| column.name.clone()).collect();
-    for (offset, bound) in &residual_eqs {
+    for (offset, bound) in &plan.residual_eqs {
         let expected = match bound {
-            ResidualEq::Param(order) => params.get(*order).cloned(),
+            ResidualEq::Param(order) => execution.params.get(*order).cloned(),
             ResidualEq::Constant(value) => Some(value.clone()),
         };
         let Some(mut expected) = expected else {
-            return Ok(None);
+            return Err(DriverError::WrongParamCount);
         };
         if expected.is_null() || old_row.get(*offset).is_none_or(Datum::is_null) {
-            // `<column> = NULL` matches nothing under SQL semantics.
             return Ok(Some(0));
         }
         expected = cast_value_for_update_assignment(
             expected,
-            &field_types[*offset],
-            &names[*offset],
+            &plan.field_types[*offset],
+            &plan.column_names[*offset],
             0,
             ctx,
         )?;
-        match old_row[*offset].compare(&expected, field_types[*offset].collation()) {
+        match old_row[*offset].compare(&expected, plan.field_types[*offset].collation()) {
             Ok(std::cmp::Ordering::Equal) => {}
             _ => return Ok(Some(0)),
         }
     }
     let mut row = old_row.clone();
-    for (assignment, offset) in update.assignments.iter().zip(assignment_offsets) {
-        // Go's plan cache serves `SET col = col + ?` shapes unchanged; the
-        // arithmetic evaluates against the selected row's own column.
-        let Some(value) = assignment_new_value(
-            &assignment.value,
-            &assignment.col,
-            qualifier,
-            offset,
-            &row,
-            params,
-        )?
+    for assignment in &plan.assignments {
+        let Some(value) = assignment
+            .value
+            .evaluate(&row, assignment.offset, &execution.params)
         else {
             return Ok(None);
         };
-        row[offset] =
-            cast_value_for_update_assignment(value, &field_types[offset], &names[offset], 0, ctx)?;
+        row[assignment.offset] = cast_value_for_update_assignment(
+            value,
+            &plan.field_types[assignment.offset],
+            &plan.column_names[assignment.offset],
+            0,
+            ctx,
+        )?;
     }
     let level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
-    for ((value, field_type), name) in row.iter_mut().zip(field_types.iter()).zip(names.iter()) {
+    for ((value, field_type), name) in row
+        .iter_mut()
+        .zip(plan.field_types.iter())
+        .zip(plan.column_names.iter())
+    {
         crate::bad_null::handle_bad_null(value, field_type, name, level, ctx)?;
     }
     if row == old_row {
         return Ok(Some(0));
     }
-    kv.update_row_with_old(&handle, Some(&old_row), &row, ctx)
+    table
+        .update_row_with_old(&handle, Some(&old_row), &row, ctx)
         .map_err(kv_write_error)?;
     Ok(Some(1))
-}
-
-fn prepared_or_literal(
-    expr: &tidb_ast::Expr,
-    params: &[Datum],
-) -> Result<Option<Datum>, DriverError> {
-    let tidb_ast::Expr::ParamMarker { order, .. } = expr else {
-        return Ok(None);
-    };
-    params
-        .get(*order)
-        .cloned()
-        .map(Some)
-        .ok_or(DriverError::WrongParamCount)
 }
 
 fn unparen(expr: &tidb_ast::Expr) -> &tidb_ast::Expr {
@@ -1991,93 +2118,83 @@ fn operand_is_assigned_column(
     }
 }
 
-/// One UPDATE assignment's new value: a `?` parameter, or Go
-/// plan-cache-eligible arithmetic `col = col +/- ?|integer-literal`
-/// evaluated against the row being updated. Any other shape declines the
-/// narrow path; overflow declines too, so the ordinary planner reports it
-/// exactly as Go would.
-#[allow(clippy::too_many_arguments)]
-fn assignment_new_value(
+fn prepare_point_assignment(
     expr: &tidb_ast::Expr,
     target_path: &[String],
     qualifier: Option<&str>,
-    target_offset: usize,
-    row: &[Datum],
-    params: &[Datum],
-) -> Result<Option<Datum>, DriverError> {
+    _target_offset: usize,
+) -> Option<PreparedPointAssignmentValue> {
     match unparen(expr) {
-        tidb_ast::Expr::ParamMarker { .. } => return prepared_or_literal(expr, params),
+        tidb_ast::Expr::ParamMarker { order, .. } => {
+            Some(PreparedPointAssignmentValue::Parameter(*order))
+        }
         tidb_ast::Expr::Binary(
             op @ (tidb_ast::BinaryOp::Plus | tidb_ast::BinaryOp::Minus),
             left,
             right,
         ) => {
             let sign = if matches!(op, tidb_ast::BinaryOp::Plus) {
-                1i8
+                1
             } else {
-                -1i8
+                -1
             };
-            // Exactly one side may name THE assigned column; naming a
-            // DIFFERENT column declines (reading another row column is the
-            // planner's job).
             let delta_expr = if operand_is_assigned_column(left, target_path, qualifier)
                 && !operand_is_assigned_column(right, target_path, qualifier)
             {
-                right
-            } else if operand_is_assigned_column(right, target_path, qualifier)
+                right.as_ref()
+            } else if matches!(op, tidb_ast::BinaryOp::Plus)
+                && operand_is_assigned_column(right, target_path, qualifier)
                 && !operand_is_assigned_column(left, target_path, qualifier)
             {
-                left
+                left.as_ref()
             } else {
-                return Ok(None);
+                return None;
             };
             let delta = match unparen(delta_expr) {
-                tidb_ast::Expr::ParamMarker { order, .. } => params
-                    .get(*order)
-                    .cloned()
-                    .ok_or(DriverError::WrongParamCount)?,
+                tidb_ast::Expr::ParamMarker { order, .. } => PreparedPointDelta::Parameter(*order),
                 tidb_ast::Expr::Int(text) => match text.parse::<i64>() {
-                    Ok(value) => Datum::Int(value),
-                    Err(_) => match text.parse::<u64>() {
-                        Ok(value) => Datum::UInt(value),
-                        Err(_) => return Ok(None),
-                    },
+                    Ok(value) => PreparedPointDelta::Literal(Datum::Int(value)),
+                    Err(_) => PreparedPointDelta::Literal(Datum::UInt(text.parse().ok()?)),
                 },
-                _ => return Ok(None),
+                _ => return None,
             };
-            let current = row.get(target_offset).ok_or(DriverError::unsupported(
-                "assignment offset escaped the visible row",
-            ))?;
-            if current.is_null() || delta.is_null() {
-                // SQL three-valued arithmetic: NULL propagates.
-                return Ok(Some(Datum::Null));
-            }
-            let as_i128 = |datum: &Datum| -> Option<i128> {
-                match datum {
+            Some(PreparedPointAssignmentValue::Arithmetic { sign, delta })
+        }
+        _ => None,
+    }
+}
+
+impl PreparedPointAssignmentValue {
+    fn evaluate(&self, row: &[Datum], target_offset: usize, params: &[Datum]) -> Option<Datum> {
+        match self {
+            Self::Parameter(order) => params.get(*order).cloned(),
+            Self::Arithmetic { sign, delta } => {
+                let current = row.get(target_offset)?;
+                let delta = match delta {
+                    PreparedPointDelta::Parameter(order) => params.get(*order)?.clone(),
+                    PreparedPointDelta::Literal(value) => value.clone(),
+                };
+                if current.is_null() || delta.is_null() {
+                    return Some(Datum::Null);
+                }
+                let as_i128 = |datum: &Datum| match datum {
                     Datum::Int(value) => Some(i128::from(*value)),
                     Datum::UInt(value) => Some(i128::from(*value)),
                     _ => None,
+                };
+                let base = as_i128(current)?;
+                let shift = as_i128(&delta)?;
+                let value = if *sign == 1 {
+                    base.checked_add(shift)?
+                } else {
+                    base.checked_sub(shift)?
+                };
+                match current {
+                    Datum::UInt(_) => u64::try_from(value).ok().map(Datum::UInt),
+                    _ => i64::try_from(value).ok().map(Datum::Int),
                 }
-            };
-            let Some(base) = as_i128(current) else {
-                return Ok(None);
-            };
-            let Some(shift) = as_i128(&delta) else {
-                return Ok(None);
-            };
-            let value = if sign == 1 {
-                base.checked_add(shift)
-            } else {
-                base.checked_sub(shift)
-            };
-            let Some(value) = value else { return Ok(None) };
-            let narrowed = match current {
-                Datum::UInt(_) => u64::try_from(value).ok().map(Datum::UInt),
-                _ => i64::try_from(value).ok().map(Datum::Int),
-            };
-            Ok(narrowed)
+            }
         }
-        _ => Ok(None),
     }
 }
 

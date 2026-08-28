@@ -219,6 +219,12 @@ both `oltp_read_only` and `oltp_read_write`.
   already owns. The cluster protocol no longer reparses every DML and SELECT
   after `Session::prepare_ast`, matching Go's single `PlanCacheStmt.PreparedAst`
   authority and giving prepared DML lowering that same immutable input.
+- [x] 2026-08-28: replaced the per-EXECUTE prepared UPDATE matcher with one
+  retained `tryUpdatePointPlan`-style descriptor. Clustered-handle pins,
+  residual predicates, target offsets, and assignment programs are lowered at
+  PREPARE; EXECUTE only rebuilds values and fresh mutation state. The old fast
+  UPDATE dispatcher, structural matcher, and duplicate assignment evaluator
+  were deleted, and first-miss/later-hit reporting now matches Go.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and

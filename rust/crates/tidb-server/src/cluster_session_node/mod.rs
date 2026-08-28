@@ -2066,6 +2066,7 @@ impl QuerySession for ClusterServerSession {
         let prepared_ast = self.session.prepare_ast(sql).map_err(map_error)?;
         let parameter_count = prepared_ast.parameter_count();
         let point_get_plan = prepared_ast.point_get_plan();
+        let point_update_plan = prepared_ast.point_update_plan();
         let select_plan = prepared_ast.select_plan();
         let template = prepared_ast.statement().clone();
         let kind = self.session.statement_kind_parsed(&template);
@@ -2089,11 +2090,12 @@ impl QuerySession for ClusterServerSession {
                     Vec::new(),
                 ));
             }
-            return Ok(PreparedGeneral::with_template(
+            return Ok(PreparedGeneral::with_template_and_point_update_plan(
                 sql.to_owned(),
                 parameter_count,
                 Vec::new(),
                 template,
+                point_update_plan,
             ));
         }
         // Go reports a query's result columns at PREPARE time, which it gets
@@ -2234,17 +2236,22 @@ impl QuerySession for ClusterServerSession {
                 .and_then(|plan| self.session.bind_cached_prepared_select(plan, &params))
         };
         let fast_select = cached_select.is_some();
+        let point_update_cache_hit = statement
+            .point_update_plan()
+            .is_some_and(|plan| plan.cache_ready());
+        let cached_point_update = statement.point_update_plan().and_then(|plan| {
+            self.session
+                .bind_cached_prepared_point_update(plan, &params)
+        });
+        let fast_update = cached_point_update.is_some();
         let fast_dml = retained
             .filter(|_| !self.session.has_session_bindings())
             .map(|template| match template {
-                tidb_ast::Stmt::Dml(dml) => matches!(
-                    dml.as_ref(),
-                    tidb_ast::DmlStmt::Insert(_) | tidb_ast::DmlStmt::Update(_)
-                ),
+                tidb_ast::Stmt::Dml(dml) => matches!(dml.as_ref(), tidb_ast::DmlStmt::Insert(_)),
                 _ => false,
             })
             .unwrap_or(false);
-        let direct = fast || fast_select || fast_dml;
+        let direct = fast || fast_select || fast_update || fast_dml;
         let bound_template = if direct {
             None
         } else {
@@ -2257,15 +2264,10 @@ impl QuerySession for ClusterServerSession {
             point_read_shape.unwrap_or(StatementReadShape::Unknown)
         } else if fast_select {
             StatementReadShape::Unknown
+        } else if fast_update {
+            StatementReadShape::AutocommitWrite
         } else if fast_dml {
-            match retained {
-                Some(tidb_ast::Stmt::Dml(dml))
-                    if matches!(dml.as_ref(), tidb_ast::DmlStmt::Update(_)) =>
-                {
-                    StatementReadShape::AutocommitWrite
-                }
-                _ => StatementReadShape::Unknown,
-            }
+            StatementReadShape::Unknown
         } else {
             bound_template.as_ref().map_or_else(
                 || self.session.statement_read_shape(&sql, &params),
@@ -2299,6 +2301,7 @@ impl QuerySession for ClusterServerSession {
             }
             _ => Vec::new(),
         };
+        let execution_resource_group = resource_group.clone();
         let output =
             self.with_prelocked_statement(shape, prelock_keys, &resource_group, move |session| {
                 if fast_select {
@@ -2359,6 +2362,39 @@ impl QuerySession for ClusterServerSession {
                         .run_parsed_bound_owned_with_sql(bound, &sql)
                         .map_err(map_error);
                 }
+                if fast_update {
+                    if let Some(cached) = cached_point_update.clone() {
+                        match session.execute_prepared_point_update(
+                            cached,
+                            point_update_cache_hit,
+                            &execution_resource_group,
+                        ) {
+                            Ok(output) => {
+                                cached_point_update
+                                    .as_ref()
+                                    .expect("cached point update carries its plan")
+                                    .plan()
+                                    .mark_cache_ready();
+                                return Ok(output);
+                            }
+                            Err(error)
+                                if error
+                                    .to_string()
+                                    .contains("prepared point-update cache was invalidated") => {}
+                            Err(error) => return Err(map_error(error)),
+                        }
+                    }
+                    let bound = tidb_executor::bind_statement(
+                        retained
+                            .expect("cached prepared point update has a retained template")
+                            .clone(),
+                        &params,
+                    )
+                    .map_err(map_error)?;
+                    return session
+                        .run_parsed_bound_owned_with_sql(bound, &sql)
+                        .map_err(map_error);
+                }
                 if fast_dml {
                     let template = retained.expect("fast prepared DML has a retained template");
                     let output = match template {
@@ -2367,13 +2403,6 @@ impl QuerySession for ClusterServerSession {
                         {
                             session
                                 .execute_fast_prepared_insert(template, &params)
-                                .map_err(map_error)?
-                        }
-                        tidb_ast::Stmt::Dml(dml)
-                            if matches!(dml.as_ref(), tidb_ast::DmlStmt::Update(_)) =>
-                        {
-                            session
-                                .execute_fast_prepared_update(template, &params)
                                 .map_err(map_error)?
                         }
                         _ => None,

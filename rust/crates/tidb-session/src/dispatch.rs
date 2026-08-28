@@ -485,50 +485,6 @@ impl Session {
         Ok(Some(StmtOutput::Affected(affected)))
     }
 
-    /// Executes the conservative one-row prepared UPDATE path.  A refusal
-    /// returns `None`, allowing the complete bound AST path to answer it.
-    pub fn execute_fast_prepared_update(
-        &mut self,
-        stmt: &Stmt,
-        params: &[tidb_datatype::Datum],
-    ) -> Result<Option<StmtOutput>, DriverError> {
-        self.activate_statement_resource_group(stmt);
-        if !self.in_transaction() {
-            self.lock_catalog()?.clear_dirty_content();
-        }
-        if let Some((path, privilege)) = fast_table_privilege_target(stmt) {
-            self.require_fast_table_privilege(path, privilege)?;
-        } else {
-            self.require_statement_table_privileges(stmt)?;
-        }
-        self.refuse_pinned_historical_read()?;
-        let Stmt::Dml(dml) = stmt else {
-            return Ok(None);
-        };
-        let DmlStmt::Update(update) = &**dml else {
-            return Ok(None);
-        };
-        // Same MDL duty as the insert arm above: this fast path skips the
-        // preprocess walk that would otherwise record the target table.
-        if let tidb_ast::UpdateKind::Single(table_ref) = &update.kind {
-            let (db, table) = match table_ref.name.as_slice() {
-                [table] => (String::new(), table.clone()),
-                [db, table] => (db.clone(), table.clone()),
-                slice => (String::new(), slice.last().cloned().unwrap_or_default()),
-            };
-            self.record_mdl_related_table_names(&[(db, table)]);
-        }
-        let current_db = self.current_db.clone();
-        let ctx = self
-            .fast_statement_context(true, update.ignore)
-            .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
-        let result = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_fast_prepared_update(update, params, catalog, &current_db, &ctx)
-        })?;
-        self.drain_eval_warnings(&ctx);
-        Ok(result.map(StmtOutput::Affected))
-    }
-
     /// Executes a statement tree already parsed and bound by the prepared
     /// protocol path.  The surrounding session lifecycle is still applied by
     /// `run_with_columns_using`; this seam only avoids reparsing the SQL text.
@@ -624,6 +580,45 @@ impl Session {
         };
         self.found_in_plan_cache = cache_hit;
         Ok(StmtOutput::Rows { columns, rows })
+    }
+
+    /// Executes one reusable clustered point-update plan. The plan already
+    /// owns name resolution, handle pins, residuals, and assignment lowering;
+    /// this method supplies the ordinary statement lifecycle and fresh write
+    /// context only.
+    pub fn execute_prepared_point_update(
+        &mut self,
+        execution: tidb_executor::PreparedPointUpdateExecution,
+        cache_hit: bool,
+        resource_group: &str,
+    ) -> Result<StmtOutput, DriverError> {
+        self.active_resource_group = resource_group.to_ascii_lowercase();
+        self.begin_cached_prepared_query_boundary();
+        if !self.in_transaction() {
+            self.lock_catalog()?.clear_dirty_content();
+        }
+        let plan = execution.plan();
+        let (database, table) = plan.names();
+        self.require_named_table_privilege(database, table, privilege::GlobalPriv::Update)?;
+        self.refuse_pinned_historical_read()?;
+        self.record_mdl_related_table_names(&[(database.to_owned(), table.to_owned())]);
+        self.statement_insert_id = 0;
+        self.statement_kind = StatementKind::Dml;
+        let current_db = self.current_db.clone();
+        let ctx = self
+            .fast_statement_context(true, false)
+            .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
+        let result = self.with_catalog_mut(|catalog| {
+            tidb_executor::run_prepared_point_update(&execution, catalog, &current_db, &ctx)
+        })?;
+        self.drain_eval_warnings(&ctx);
+        let Some(affected) = result else {
+            return Err(DriverError::unsupported(
+                "prepared point-update cache was invalidated during the statement",
+            ));
+        };
+        self.found_in_plan_cache = cache_hit;
+        Ok(StmtOutput::Affected(affected))
     }
 
     /// Records one cached point read's table on the transaction's metadata-
