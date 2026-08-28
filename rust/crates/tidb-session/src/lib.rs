@@ -1562,6 +1562,16 @@ mod tests_derived_agg_pruning;
 #[cfg(test)]
 mod tests_dml_lock_keys;
 #[cfg(test)]
+mod tests_domain_plan_replayer_source;
+#[cfg(test)]
+mod tests_domain_ru_stats_source;
+#[cfg(test)]
+mod tests_domain_schema_checker_source;
+#[cfg(test)]
+mod tests_domain_serverinfo_syncer_source;
+#[cfg(test)]
+mod tests_domain_topn_slow_query_source;
+#[cfg(test)]
 mod tests_enum_index_range;
 #[cfg(test)]
 mod tests_eval_bool;
