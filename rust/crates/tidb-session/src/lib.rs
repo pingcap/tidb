@@ -1562,11 +1562,35 @@ mod tests_derived_agg_pruning;
 #[cfg(test)]
 mod tests_dml_lock_keys;
 #[cfg(test)]
+mod tests_domain_affinity_manager_source;
+#[cfg(test)]
+mod tests_domain_crossks_source;
+#[cfg(test)]
+mod tests_domain_db_session_pool_source;
+#[cfg(test)]
+mod tests_domain_domain_source;
+#[cfg(test)]
+mod tests_domain_domain_utils_source;
+#[cfg(test)]
+mod tests_domain_domainctx_source;
+#[cfg(test)]
+mod tests_domain_extract_source;
+#[cfg(test)]
+mod tests_domain_globalconfigsync_source;
+#[cfg(test)]
+mod tests_domain_infosync_source;
+#[cfg(test)]
+mod tests_domain_plan_replayer_handle_source;
+#[cfg(test)]
+mod tests_domain_plan_replayer_slow_log_source;
+#[cfg(test)]
 mod tests_domain_plan_replayer_source;
 #[cfg(test)]
 mod tests_domain_ru_stats_source;
 #[cfg(test)]
 mod tests_domain_schema_checker_source;
+#[cfg(test)]
+mod tests_domain_serverinfo_info_source;
 #[cfg(test)]
 mod tests_domain_serverinfo_syncer_source;
 #[cfg(test)]
