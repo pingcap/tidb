@@ -2480,8 +2480,11 @@ impl KvTable {
         let explicit_handle = match row_id {
             Some(0) => Some(TableHandle::Int(0)),
             Some(value) => {
+                // Go's `adjustImplicitRowID` rebases with allocIDs=true, so an
+                // ascending run of explicit row ids crosses to the counter's
+                // home once per reserved window.
                 self.auto_id
-                    .rebase(value as u64)
+                    .rebase_allocating(value as u64)
                     .map_err(|error| KvTableError::Storage(error.0))?;
                 Some(TableHandle::Int(value))
             }
@@ -2821,8 +2824,10 @@ impl KvTable {
                 Some(Datum::UInt(value)) => *value,
                 _ => 0,
             };
+            // Same arm Go's insert arms use: the rebase reserves a window on
+            // its one store crossing, matching `Rebase(..., true)`.
             self.auto_id
-                .rebase(assigned)
+                .rebase_allocating(assigned)
                 .map_err(|error| KvTableError::Storage(error.0))?;
         }
         self.rebase_auto_random_from_row(row)?;

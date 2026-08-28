@@ -4263,6 +4263,40 @@ impl PlanTrace {
         );
     }
 
+    /// A TopN above a global aggregate. Go resolves a direct aggregate in
+    /// `ORDER BY` to the single output column of the aggregate before
+    /// rendering `LogicalTopN.ExplainInfo`, so `ORDER BY COUNT(*)` is shown
+    /// as `Column` rather than `count(1)`.
+    pub(crate) fn global_aggregate_topn(
+        &mut self,
+        order_by: &[tidb_ast::OrderItem],
+        qualify: &Qualifier<'_>,
+        offset: u64,
+        count: u64,
+    ) {
+        let items = order_by
+            .iter()
+            .map(|item| {
+                let expression = if matches!(item.expr, tidb_ast::Expr::Aggregate { .. }) {
+                    "Column".to_owned()
+                } else {
+                    qualify.expr(&item.expr)
+                };
+                if item.desc {
+                    format!("{expression}:desc")
+                } else {
+                    expression
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.wrap(
+            "TopN",
+            Est::CapAt(count as f64),
+            format!("{items}, offset:{offset}, count:{count}"),
+        );
+    }
+
     /// A TopN pushed below the final projection of a grouped aggregate.
     /// Aggregate aliases resolve to the aggregation's result columns, while
     /// ordinary order items retain their qualified source names.
@@ -4305,14 +4339,36 @@ impl PlanTrace {
                 let order_aggregates = aggregate_exprs(&item.expr);
                 let expression = match &item.expr {
                     tidb_ast::Expr::Column(path) if path.len() == 1 => {
-                        let candidates = if internal_columns { &visible } else { &aliases };
-                        candidates
+                        if internal_columns {
+                            visible
+                                .iter()
+                                .find(|(name, _)| name.eq_ignore_ascii_case(&path[0]))
+                                .map_or_else(
+                                    || qualify.expr_with_physical_columns(&item.expr, column_names),
+                                    |(_, index)| format!("Column#{index}"),
+                                )
+                        } else if let Some((_, index)) = aliases
                             .iter()
                             .find(|(name, _)| name.eq_ignore_ascii_case(&path[0]))
-                            .map_or_else(
-                                || qualify.expr_with_physical_columns(&item.expr, column_names),
-                                |(_, index)| format!("Column#{index}"),
-                            )
+                        {
+                            format!("Column#{index}")
+                        } else if let Some((_, field_index)) = visible
+                            .iter()
+                            .find(|(name, _)| name.eq_ignore_ascii_case(&path[0]))
+                        {
+                            match select.fields.fields().get(*field_index) {
+                                Some(tidb_ast::SelectField::Expr {
+                                    expr: tidb_ast::Expr::Column(source),
+                                    ..
+                                }) => qualify.expr_with_physical_columns(
+                                    &tidb_ast::Expr::Column(source.clone()),
+                                    column_names,
+                                ),
+                                _ => qualify.expr_with_physical_columns(&item.expr, column_names),
+                            }
+                        } else {
+                            qualify.expr_with_physical_columns(&item.expr, column_names)
+                        }
                     }
                     _ => field_aggregates
                         .iter()
@@ -6733,6 +6789,82 @@ mod tests {
         assert_eq!(
             PlanTrace::aggregation_pushdown_by_items(select, select, &qualify, &[]),
             "Column#0:desc"
+        );
+    }
+
+    #[test]
+    fn grouped_topn_resolves_a_direct_field_alias_to_its_source_column() {
+        let stmt = tidb_parser::parse(
+            "select y, brand_id as brand, sum(price) as total from t \
+             group by y, brand_id order by y, total desc, brand limit 100",
+        )
+        .expect("grouped TopN SQL parses");
+        let tidb_ast::Stmt::Query(query) = stmt else {
+            panic!("expected query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            panic!("expected select")
+        };
+        let scope = PlanTrace::single_table_scope(
+            "t",
+            Some("test".to_owned()),
+            vec![
+                (
+                    "y".to_owned(),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                ),
+                (
+                    "brand_id".to_owned(),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                ),
+                (
+                    "price".to_owned(),
+                    FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal),
+                ),
+            ],
+        );
+        let qualify = Qualifier {
+            db: "test",
+            scope: &scope,
+            catalog: None,
+        };
+        let mut trace = PlanTrace::planning();
+        trace.stack.push(PlanNode::new(
+            "HashAgg",
+            Some(1.0),
+            String::new(),
+            String::new(),
+        ));
+        trace.grouped_aggregate_topn(select, &qualify, false, &[], 0, 100);
+        assert_eq!(
+            trace.stack.last().expect("TopN").info,
+            "test.t.y, Column#0:desc, test.t.brand_id, offset:0, count:100"
+        );
+    }
+
+    #[test]
+    fn global_topn_resolves_direct_aggregate_to_output_column() {
+        let stmt = tidb_parser::parse(
+            "select count(*) from t order by count(*) desc limit 100",
+        )
+        .expect("global aggregate TopN SQL parses");
+        let tidb_ast::Stmt::Query(query) = stmt else {
+            panic!("expected query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            panic!("expected select")
+        };
+        let scope = PlanTrace::single_table_scope("t", Some("test".to_owned()), vec![]);
+        let qualify = Qualifier {
+            db: "test",
+            scope: &scope,
+            catalog: None,
+        };
+        let mut trace = PlanTrace::planning();
+        trace.global_aggregate_topn(&select.order_by, &qualify, 0, 100);
+        assert_eq!(
+            trace.stack.last().expect("TopN").info,
+            "Column:desc, offset:0, count:100"
         );
     }
 

@@ -254,8 +254,10 @@ impl KvTable {
             }
             let negative = matches!(row.get(spec.offset), Some(Datum::Int(value)) if *value < 0);
             if !negative {
+                // The insert arm (`insert_common.go:1141`) rebases with
+                // allocIDs=true, reserving a window on the store crossing.
                 self.auto_random_id
-                    .rebase(current & spec.incremental_mask())
+                    .rebase_allocating(current & spec.incremental_mask())
                     .map_err(|error| AutoRandomError::AutoId(AutoIdError::Store(error)))?;
             }
             return Ok(AutoRandom::Given(current));
@@ -292,8 +294,10 @@ impl KvTable {
             Some(Datum::UInt(value)) => *value,
             _ => return Ok(()),
         };
+        // A write arm in Go (`updateRecord` through `Rebase(..., true)`):
+        // reserve a window on the one store crossing.
         self.auto_random_id
-            .rebase(value & spec.incremental_mask())
+            .rebase_allocating(value & spec.incremental_mask())
             .map_err(|error| super::KvTableError::Storage(error.0))
     }
 }

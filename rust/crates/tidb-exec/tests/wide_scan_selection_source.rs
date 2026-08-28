@@ -29,6 +29,7 @@ use tidb_exec::wide_scan_selection::{
 use tidb_executor::predicate_pushdown::{
     ScanColumnComparison, ScanComparison, ScanComparisonOp, ScanPredicate,
 };
+use tidb_expr::pushdown_catalog::{build_call, PbScalar};
 use tidb_planner::{
     physical_table_scan::PhysicalTableScanPlan,
     tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec},
@@ -186,6 +187,87 @@ fn a_column_date_comparison_lowers_to_two_time_column_refs() {
         .all(|child| child.tp == Some(ExprType::ColumnRef as i32)));
 }
 
+/// Temporal and JSON calls admitted by the Go TiKV whitelist make it through
+/// the actual wide-scan Selection boundary, rather than only resolving in the
+/// expression catalog. The condition tree therefore carries the exact Go
+/// scalar signatures on the request path.
+#[test]
+fn temporal_and_json_builtins_lower_through_wide_selection() {
+    let columns = vec![
+        ScanColumnInfo {
+            column_id: 1,
+            tp: FieldTypeCode::Datetime.mysql_type().into(),
+            collation: 63,
+            column_len: 26,
+            decimal: 6,
+            ..ScanColumnInfo::default()
+        },
+        ScanColumnInfo {
+            column_id: 2,
+            tp: FieldTypeCode::Json.mysql_type().into(),
+            collation: 63,
+            column_len: 1024,
+            decimal: 0,
+            ..ScanColumnInfo::default()
+        },
+        ScanColumnInfo {
+            column_id: 3,
+            tp: FieldTypeCode::VarString.mysql_type().into(),
+            collation: 45,
+            column_len: 32,
+            decimal: 0,
+            ..ScanColumnInfo::default()
+        },
+    ];
+    let datetime = PbScalar::Column {
+        offset: 0,
+        field_type: FieldType::new(FieldTypeCode::Datetime)
+            .with_flen(26)
+            .with_decimal(6),
+    };
+    let date_add = build_call("date_add_year", vec![datetime, PbScalar::IntLiteral(1)])
+        .expect("Go's DATE_ADD overload resolves");
+    let json = PbScalar::Column {
+        offset: 1,
+        field_type: FieldType::new(FieldTypeCode::Json),
+    };
+    let path = PbScalar::Column {
+        offset: 2,
+        field_type: FieldType::new(FieldTypeCode::VarString)
+            .with_collation_name("utf8mb4_bin")
+            .with_flen(32),
+    };
+    let json_replace = build_call(
+        "json_replace",
+        vec![json.clone(), path.clone(), json.clone(), path, json],
+    )
+    .expect("Go's JSON_REPLACE overload resolves");
+
+    let conditions = wide_scan_selection_conditions(
+        &[
+            ScanPredicate::Builtin(date_add),
+            ScanPredicate::Builtin(json_replace),
+        ],
+        &columns,
+    )
+    .expect("the wide Selection lowering admits both builtins");
+    assert_eq!(conditions.len(), 2);
+    assert_eq!(
+        conditions[0].sig,
+        Some(ScalarFuncSig::AddDateDatetimeInt as i32)
+    );
+    assert_eq!(
+        conditions[1].sig,
+        Some(ScalarFuncSig::JsonReplaceSig as i32)
+    );
+    assert_eq!(conditions[1].children.len(), 5);
+    assert_eq!(
+        conditions[1].children[1].tp,
+        Some(ExprType::ColumnRef as i32),
+        "path stays an explicitly typed string child"
+    );
+}
+
 /// TPC-H q6's complete coprocessor shape: temporal and decimal
 /// predicates all travel before the global partial aggregation. Go's
 /// `PbConverter` keeps source operand order, encodes DECIMAL with
@@ -229,7 +311,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
     let upper_discount = Decimal::from_literal("0.07");
     let predicates = vec![
         ScanPredicate::Compare(ScanComparison {
-        collation: tidb_datatype::Collation::Utf8Mb4Bin,
+            collation: tidb_datatype::Collation::Utf8Mb4Bin,
             column_offset: 0,
             column_type: FieldType::new(FieldTypeCode::Date),
             literal_type: FieldType::new(FieldTypeCode::Datetime)
@@ -240,7 +322,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
             column_on_left: true,
         }),
         ScanPredicate::Compare(ScanComparison {
-        collation: tidb_datatype::Collation::Utf8Mb4Bin,
+            collation: tidb_datatype::Collation::Utf8Mb4Bin,
             column_offset: 0,
             column_type: FieldType::new(FieldTypeCode::Date),
             literal_type: FieldType::new(FieldTypeCode::Datetime)
@@ -252,7 +334,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
         }),
         ScanPredicate::And(vec![
             ScanPredicate::Compare(ScanComparison {
-        collation: tidb_datatype::Collation::Utf8Mb4Bin,
+                collation: tidb_datatype::Collation::Utf8Mb4Bin,
                 column_offset: 1,
                 column_type: FieldType::new(FieldTypeCode::NewDecimal)
                     .with_flen(5)
@@ -265,7 +347,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
                 column_on_left: true,
             }),
             ScanPredicate::Compare(ScanComparison {
-        collation: tidb_datatype::Collation::Utf8Mb4Bin,
+                collation: tidb_datatype::Collation::Utf8Mb4Bin,
                 column_offset: 1,
                 column_type: FieldType::new(FieldTypeCode::NewDecimal)
                     .with_flen(5)
@@ -279,7 +361,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
             }),
         ]),
         ScanPredicate::Compare(ScanComparison {
-        collation: tidb_datatype::Collation::Utf8Mb4Bin,
+            collation: tidb_datatype::Collation::Utf8Mb4Bin,
             column_offset: 2,
             column_type: FieldType::new(FieldTypeCode::NewDecimal)
                 .with_flen(15)
@@ -901,7 +983,7 @@ fn the_string_lowering_refuses_every_comparison_whose_collation_it_cannot_derive
     assert_eq!(
         wide_scan_selection_conditions(
             &[ScanPredicate::In {
-        collation: tidb_datatype::Collation::Binary,
+                collation: tidb_datatype::Collation::Binary,
                 column_offset: 0,
                 column_type: FieldType::new(FieldTypeCode::Varchar),
                 literals: vec![Datum::Bytes(b"a".to_vec())],

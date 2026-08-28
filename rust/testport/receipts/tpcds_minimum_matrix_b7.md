@@ -1,12 +1,12 @@
 # TPC-DS minimum-fixture parity receipt
 
-Run date: 2026-08-27 (Asia/Shanghai)
+Run date: 2026-08-28 (Asia/Shanghai)
 
 ## Inputs
 
 - Go source of truth: nightly TiDB from `tiup playground nightly`, PD/TiKV
   shared by both SQL endpoints, Go port `17000`.
-- Rust revision: `b7e5a7e770082c1fd9a89cae1c337d63dbca7e28` on
+- Rust revision: `5e37abd605cfc45ee851eb1330d05eb89dad8ddf` on
   `hparser-integration`, release binary on port `18000`.
 - Workload source: `pingcap/tidb-bench` commit
   `e9f058ae9bee089afdbf9b3397ed9948bf7e560b`; `genquery.sh` generated 42
@@ -40,7 +40,7 @@ PYTHONPATH=/private/tmp/pymysql \
   /Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 \
   rust/testport/tpcds/compare_workload.py \
   --queries /private/tmp/tidb-bench-tpcds/tpcds/queries \
-  --output /private/tmp/tpcds-matrix-final-b7.json \
+  --output /private/tmp/tpcds-matrix-5e37abd.json \
   --go-port 17000 --rust-port 18000 --warmups 1 --runs 3
 ```
 
@@ -49,12 +49,15 @@ broadcast thresholds, and all scan/lookup/join/aggregation/projection/window
 and optimizer concurrency variables to one. `source` requests
 `tikv,tiflash,tidb`; `control` permits only `tikv`.
 
+The refreshed matrix is `/private/tmp/tpcds-matrix-5e37abd.json`
+(SHA-256 `eefa2fc906790f3155bd6690e2ed5b4e95528c17cb4b67cb6f25a6b8e075e04c`).
+
 ## Results
 
 | mode | Go plan errors | Rust plan errors | result hashes equal | normalized plan hashes equal | Go p50 median | Rust p50 median | Rust/Go p50 median |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| source (MPP requested) | 0 | 0 | 42/42 | 0/42 | 31.45 ms | 78.50 ms | 3.13x |
-| control (TiKV only) | 0 | 0 | 42/42 | 6/42 | 42.17 ms | 79.87 ms | 1.46x |
+| source (MPP requested) | 0 | 0 | 42/42 | 0/42 | 30.92 ms | 123.20 ms | 4.42x |
+| control (TiKV only) | 0 | 0 | 42/42 | 11/42 | 41.00 ms | 70.19 ms | 1.38x |
 
 All result hashes include row order and encoded values. No result errors were
 observed. Source-mode Go plans contain `mpp[tiflash]` operators (for example
@@ -69,19 +72,44 @@ when a residual Selection prevents the trace-only partial rewrite. Regression
 test: `driver::tests::aggregates::explain_distinct_scalar_subquery_with_filter`.
 The final matrix has no Q6 plan error.
 
+The focused plan-trace corrections also align Q3, Q52, Q43, and Q96 in the
+TiKV-only control mode. Q3/Q52 order-by aliases now resolve through a direct
+select-field column to the physical base column, and Q43's injected CASE
+projection prints Go's `<nil>` spelling for a NULL result arm. Regression
+coverage includes `driver::tests::aggregates::tpcds_q43_injected_case_projection_spells_null_like_go`
+and `plan_trace::tests::global_topn_resolves_direct_aggregate_to_output_column`.
+
+The eleven control-mode plan hashes that match are Q3, Q19, Q25, Q29, Q42,
+Q43, Q48, Q50, Q52, Q55, and Q96. Q48 now follows Go's root StreamAgg choice for
+a single integer SUM above a joined source. The remaining control-mode
+mismatches are Q6, Q7, Q9, Q10, Q13, Q15, Q26, Q28, Q34, Q35, Q41, Q45,
+Q46, Q61, Q62, Q65, Q66, Q68, Q69, Q71, Q72, Q73, Q76, Q79, Q84, Q85,
+Q88, Q90, Q91, Q93, and Q99. Their normalized plan rows are retained per query in the JSON
+matrix; the differences are a mix of physical-plan shape (aggregate/join/
+Apply choice) and explain-expression alias text, not result differences.
+
 For the focused correction's no-regression check, comparing the pre-fix and
 post-fix Rust runs on the same fixture gives p50 geometric ratios of 1.03x
 source and 1.04x control; this is local run noise except for Q25, which was
 1.53x. Absolute Rust latency remains higher than Go and requires a separate
 MPP/performance implementation unit.
 
+This rerun's absolute source-mode ratio is 4.42x (control 1.38x); the
+variation from the prior 2.00x/1.40x snapshot reinforces that Rust-vs-Go
+latency is not yet a passing criterion and needs repeated baseline runs.
+
+For the Q48 StreamAgg correction specifically, Rust control p50 changed from
+80.19 ms to 82.13 ms (1.02x) while the source-mode p50 changed from 82.71 ms
+to 80.58 ms (0.97x); its result hash stayed equal to Go.
+
 ## Acceptance status
 
 - Minimum-fixture result correctness: **met for all 42 statements**.
 - Q6 EXPLAIN regression: **fixed and covered by a Rust unit test**.
-- Exact Go physical-plan parity: **not met** (source 0/42; control 6/42).
-- Rust no-performance-regression requirement: **not met as an absolute
-  Go-vs-Rust target**; source and control medians above are recorded for the
-  next implementation unit.
+- Exact Go physical-plan parity: **not met** (source 0/42; control 11/42).
+- Rust no-performance-regression check: **no broad regression established**
+  (post/fix-to-pre-fix p50 geometric ratios 1.03x source and 1.04x control),
+  but Q25 was a 1.53x outlier and needs a repeated baseline run before it can
+  be closed. Absolute Rust latency remains higher than Go, as shown above.
 - Exact Q64 Go casetest MPP oracle: **not met**; the earlier Q64 receipt remains
   the focused TiKV-only baseline.

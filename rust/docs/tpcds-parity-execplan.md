@@ -20,6 +20,9 @@ The Go source of truth in this checkout is `pkg/planner/core/casetest/tpcds/tpcd
 - [x] (2026-08-27 10:00Z) Classified the observed differences: source-mode plan/store-tier mismatch is the unsupported Rust TiFlash/MPP execution tier; control-mode differences are Rust physical-plan/cost choices; all 42 result hashes match; Q6 was an EXPLAIN-only DISTINCT trace failure.
 - [x] (2026-08-27 10:00Z) Implemented and tested the Q6 trace fallback in `tidb-executor` with a scalar-DISTINCT regression test. This is a focused Rust behavior unit, not a claim of complete Go package transcreation.
 - [x] (2026-08-27 10:00Z) Re-ran the full 42-query comparison after the correction and recorded the final receipt; no plan or result errors remain.
+- [x] (2026-08-28 01:10Z) Corrected grouped TopN direct-field aliases and injected CASE NULL rendering, covered both with focused Rust tests, and re-ran the full 42-query matrix; TiKV-only exact plan matches increased from 6/42 to 9/42 and result hashes remain 42/42.
+- [x] (2026-08-28 02:00Z) Matched Go's root StreamAgg choice for a single integer SUM above a joined source (TPC-DS Q48), including the joined-child explain trace and a result/plan regression test; the release matrix now reports 10/42 TiKV-only plan matches and 42/42 result matches.
+- [x] (2026-08-28 02:10Z) Matched Go's global aggregate TopN explain text for TPC-DS Q96 (`Column` instead of `count(1)`), covered by a plan-trace regression test, and re-ran the 42-query matrix; TiKV-only exact plan matches increased to 11/42 and result hashes remain 42/42.
 - [ ] Complete the Ready verification profile, including `make lint`, before claiming the entire goal complete.
 
 ## Surprises & Discoveries
@@ -36,10 +39,10 @@ The Go source of truth in this checkout is `pkg/planner/core/casetest/tpcds/tpcd
 - Observation: the earlier Q64 source-setting plan cannot yet be identical because Go produces TiFlash/MPP nodes while Rust produces none.
   Evidence: Go produced 156 plan rows, including 147 MPP rows; Rust produced 76 rows and zero MPP rows. Under a TiKV-only one-concurrency control, Go produced 84 rows and Rust 77, with the same two MergeJoin, one IndexHashJoin, and one HashJoin choices.
 
-- Observation: with TiFlash replicas available, all 42 benchmark statements execute successfully and produce byte-identical result hashes on Go and Rust, but Rust still emits no MPP operators. The source-mode normalized plan hash matches 0/42; the TiKV-only control-mode hash matches 6/42.
-  Evidence: `/private/tmp/tpcds-matrix-final-b7.json`; Go source Q3 begins `TableReader -> ExchangeSender (mpp[tiflash])`, while Rust source Q3 remains a TiKV `IndexJoin` tree.
+- Observation: with TiFlash replicas available, all 42 benchmark statements execute successfully and produce byte-identical result hashes on Go and Rust, but Rust still emits no MPP operators. The source-mode normalized plan hash matches 0/42; the TiKV-only control-mode hash now matches 11/42 after plan-trace corrections for Q3, Q43, Q52, Q48, and Q96.
+  Evidence: `/private/tmp/tpcds-matrix-5e37abd.json`; Go source Q3 begins `TableReader -> ExchangeSender (mpp[tiflash])`, while Rust source Q3 remains a TiKV `IndexJoin` tree.
 
-- Observation: the Rust endpoint is substantially slower on this minimum fixture even with every relevant concurrency variable set to one. This is an outstanding performance requirement, not a waiver: source-mode Rust/Go p50 median is 3.13x and control-mode is 1.46x in this run. The focused Q6 correction itself did not introduce a broad regression relative to the pre-fix run (Rust p50 geometric ratio 1.03x source, 1.04x control, within local run noise except Q25).
+- Observation: the Rust endpoint is substantially slower on this minimum fixture even with every relevant concurrency variable set to one. This is an outstanding performance requirement, not a waiver: the latest source-mode Rust/Go p50 median is 4.42x and control-mode is 1.38x. The focused Q6 and Q48 corrections did not establish a broad regression relative to their pre-fix runs (Q6 correction p50 geometric ratio 1.03x source, 1.04x control; Q48 control 1.02x), although Q25 remains a 1.53x outlier.
 
 ## Decision Log
 
@@ -55,13 +58,20 @@ The Go source of truth in this checkout is `pkg/planner/core/casetest/tpcds/tpcd
   Rationale: the user asked for plan alignment, and the Go source test enforces MPP. Printing MPP-looking rows without planning and executing the corresponding task would preserve a different end state and be incorrect.
   Date/Author: 2026-08-27 / Codex.
 
+- Decision: Treat direct-field aliases and NULL arms in injected grouped projections as
+  plan-trace formatting bugs only when the underlying executor shape is already the
+  same, and cover each correction with a plan-producing regression test.
+  Rationale: Q3/Q52 and Q43 have identical TiKV operator trees and results; changing
+  planner choices would add risk without moving the physical execution toward Go.
+  Date/Author: 2026-08-28 / Codex.
+
 - Decision: Use one client and set all exposed scan, lookup, join, aggregation, projection, window, stream aggregation, and optimizer concurrency variables to one for comparable measurements.
   Rationale: this directly implements the user's one-concurrency constraint and removes default parallelism as a source of latency variance.
   Date/Author: 2026-08-27 / Codex.
 
 ## Outcomes & Retrospective
 
-The full minimum-fixture matrix now covers all 42 generated statements in both requested source and TiKV-only control modes. Result correctness is complete for this fixture (42/42 hashes equal in each mode), and the Q6 explain-only failure is fixed with a regression test. Plan parity remains incomplete (0/42 source, 6/42 control) because the Rust tree still lacks TiFlash/MPP execution; the absolute Rust latency is also higher (3.13x/1.46x median p50 versus Go). The exact Q64 Go unit-test MPP oracle is likewise still unmet. The plan therefore remains active: the next implementation unit must be an explicitly scoped MPP package boundary or another measured cost/executor correction, followed by the Ready profile.
+The full minimum-fixture matrix now covers all 42 generated statements in both requested source and TiKV-only control modes. Result correctness is complete for this fixture (42/42 hashes equal in each mode), Q6 has no EXPLAIN error, and Q3, Q43, Q48, Q52, and Q96 now have focused regression coverage for their aligned control plans. Plan parity remains incomplete (0/42 source, 11/42 control) because the Rust tree still lacks TiFlash/MPP execution; the latest absolute Rust latency is also higher (4.42x/1.38x median p50 versus Go). The exact Q64 Go unit-test MPP oracle is likewise still unmet. The plan therefore remains active: the next implementation unit must be an explicitly scoped MPP package boundary or another measured cost/executor correction, followed by the Ready profile.
 
 ## Context and Orientation
 
@@ -69,7 +79,7 @@ The full minimum-fixture matrix now covers all 42 generated statements in both r
 
 `rust/crates/tidb-executor/src/driver.rs` and its `driver/` modules lower parsed statements into runnable Rust executors and build the Rust explain trace. `rust/crates/tidb-executor/src/access_cost.rs` prices table and index access. `rust/crates/tidb-planner/src/task.rs`, `physical_property.rs`, and the physical operator modules model Go physical properties and tasks, including partially transcreated MPP metadata. `rust/testport/receipts/tpcds_q64.md` records the current focused Q64 evidence.
 
-The external workload checkout is `/private/tmp/tidb-bench-tpcds`; it is an evidence workspace and must not be committed into TiDB. Generated query and data files are ignored by that repository. The implementation workspace is `/private/tmp/tidb-tpcds-full`, a detached clean worktree created from the current remote `hparser-integration` tip so the user's large dirty primary worktree remains untouched.
+The external workload checkout is `/private/tmp/tidb-bench-tpcds`; it is an evidence workspace and must not be committed into TiDB. Generated query and data files are ignored by that repository. The implementation workspace is `/private/tmp/tidb-tpcds-replay`, a detached clean worktree created from the current remote `hparser-integration` tip so the user's large dirty primary worktree remains untouched.
 
 A minimum fixture means the smallest deterministic rows needed to make the supported statements exercise meaningful branches. Empty tables are not sufficient because an empty-result equality can hide expression, aggregation, join, and ordering defects. The fixture may be derived from a prefix or selected relational slice of SF1, but its generation rule, row counts, and checksum must be recorded so the same rows can be recreated.
 
@@ -92,7 +102,7 @@ After the focused test passes, rebuild the Rust server, repeat the complete matr
 
 ## Concrete Steps
 
-Run all TiDB commands from `/private/tmp/tidb-tpcds-full` unless stated otherwise.
+Run all TiDB commands from `/private/tmp/tidb-tpcds-replay` unless stated otherwise.
 
 Generate the supported statements from the pinned workload checkout:
 
@@ -135,7 +145,7 @@ The full goal is accepted only after targeted regression tests, a release build,
 
 Query generation deletes only `/private/tmp/tidb-bench-tpcds/tpcds/queries`, which is ignored and reproducible. Playground data uses the explicit tag `codex-tpcds-full-20260827`; stop the owning TiUP process normally before deleting any tagged data. Never run a recursive deletion against a repository root or a home directory.
 
-All implementation work stays in the detached `/private/tmp/tidb-tpcds-full` worktree until it is committed. If the remote branch advances, create another clean worktree at the new tip and cherry-pick the focused commits; never force-push. The primary worktree has hundreds of unrelated user changes and must not be reset, cleaned, or reformatted.
+All implementation work stays in the detached `/private/tmp/tidb-tpcds-replay` worktree until it is committed. If the remote branch advances, create another clean worktree at the new tip and cherry-pick the focused commits; never force-push. The primary worktree has hundreds of unrelated user changes and must not be reset, cleaned, or reformatted.
 
 If a cargo build requires vendored OpenSSL, restore `rust/third_party/tikv-client-rs/Cargo.toml` before staging and verify `git diff -- rust/third_party/tikv-client-rs/Cargo.toml` is empty.
 

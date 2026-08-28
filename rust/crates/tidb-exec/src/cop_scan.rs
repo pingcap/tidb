@@ -49,16 +49,14 @@
 //!
 //! # What it refuses
 //!
-//! A column whose coprocessor descriptor this module cannot build faithfully
-//! -- anything outside the signed and unsigned integer family
-//! (`BIGINT`/`INT`/`MEDIUMINT`/`SMALLINT`/`TINYINT`) and the character-string
-//! family (`VARCHAR`/`CHAR`/the `BLOB`s and their `BINARY` spellings) today --
-//! makes the whole scan fall back to the byte-level cursor. Note that this is
-//! a *projection* gate, separate from the predicate lowering's own type gate:
-//! a table with one `DECIMAL` column in the `SELECT` list cannot be scanned
-//! remotely at all, however pushable its `WHERE` is. The refusal is
-//! [`PushdownScannerError::Unsupported`], which the storage turns into "use
-//! `iter`", so a refused shape is slower and never wrong.
+//! The scan descriptor follows Go `util.ColumnToProto`: every concrete
+//! MySQL/TiDB field type carries its wire type code, declared length/scale,
+//! flags, collation, and (for `ENUM`/`SET`) element names. Only an unknown or
+//! unresolved type is refused. This projection gate is separate from the
+//! predicate lowering's own type gate: a supported column may still leave a
+//! `WHERE` expression above the scan when TiKV cannot evaluate that function.
+//! A refused shape falls back to the byte-level cursor, so it is slower but
+//! never changes the answer.
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -949,45 +947,22 @@ impl Drop for CopRowStream {
 }
 
 fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
-    // The integer family, with MySQL's default display width for each. The
-    // width is metadata TiKV does not evaluate with -- the value is an integer
-    // either way -- but it is what the catalog declares, so it is what the
-    // descriptor carries.
     let code = column.field_type.code();
-    let (tp, column_len, decimal) = match code {
-        FieldTypeCode::LongLong => (MYSQL_TYPE_LONGLONG, 20, 0),
-        FieldTypeCode::Long => (MYSQL_TYPE_LONG, 11, 0),
-        FieldTypeCode::Int24 => (MYSQL_TYPE_INT24, 9, 0),
-        FieldTypeCode::Short => (MYSQL_TYPE_SHORT, 6, 0),
-        FieldTypeCode::Tiny => (MYSQL_TYPE_TINY, 4, 0),
-        FieldTypeCode::NewDecimal => (
-            i32::from(code.mysql_type()),
-            i32::try_from(column.field_type.flen()).ok()?,
-            i32::try_from(column.field_type.decimal()).ok()?,
-        ),
-        FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => (
-            i32::from(code.mysql_type()),
-            i32::try_from(column.field_type.flen()).ok()?,
-            i32::try_from(column.field_type.decimal()).ok()?,
-        ),
-        // The character-string family. Unlike the integer widths above, a
-        // string column's declared LENGTH is not decoration TiKV ignores: it
-        // is what a `VARCHAR(n)` value is checked and compared against, so it
-        // is copied from the catalog rather than defaulted. Go's
-        // `util.ColumnToProto` copies `c.GetFlen()` for every family alike.
-        FieldTypeCode::Varchar
-        | FieldTypeCode::VarString
-        | FieldTypeCode::String
-        | FieldTypeCode::TinyBlob
-        | FieldTypeCode::Blob
-        | FieldTypeCode::MediumBlob
-        | FieldTypeCode::LongBlob => (
-            i32::from(code.mysql_type()),
-            i32::try_from(column.field_type.flen()).unwrap_or(-1),
-            i32::try_from(column.field_type.decimal()).unwrap_or(-1),
-        ),
-        _ => return None,
-    };
+    // `FieldTypeCode::Unknown` and `Unspecified` have no stable TiPB
+    // interpretation. Every named code below is accepted by Go's
+    // `ColumnToProto`, including the integer, temporal, floating-point,
+    // JSON, ENUM/SET, BIT, geometry and vector families.
+    if matches!(code, FieldTypeCode::Unknown(_) | FieldTypeCode::Unspecified) {
+        return None;
+    }
+    let tp = i32::from(code.mysql_type());
+    // Go writes `int32(c.GetFlen())`/`int32(c.GetDecimal())` verbatim.  The
+    // parser deliberately leaves some concrete types (for example a bare
+    // `GEOMETRY`) at `-1`, and very wide lengths such as JSON's max width also
+    // narrow to `-1` in the protobuf field.  Preserve that metadata instead
+    // of treating it as an unsupported column.
+    let column_len = i32::try_from(column.field_type.flen()).unwrap_or(-1);
+    let decimal = i32::try_from(column.field_type.decimal()).unwrap_or(-1);
     let mut flag = i32::try_from(column.field_type.flags()).ok()?;
     if column.is_handle {
         flag |= NOT_NULL_FLAG | PRI_KEY_FLAG;
@@ -1000,7 +975,18 @@ fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
     // predicate lowering reads this very field back
     // (`tidb_exec::wide_scan_selection`), so the leaf and the scan descriptor
     // cannot disagree about the collator by construction.
-    let collation = if column.field_type.is_string() {
+    let collation = if matches!(
+        code,
+        FieldTypeCode::Varchar
+            | FieldTypeCode::VarString
+            | FieldTypeCode::String
+            | FieldTypeCode::TinyBlob
+            | FieldTypeCode::Blob
+            | FieldTypeCode::MediumBlob
+            | FieldTypeCode::LongBlob
+            | FieldTypeCode::Enum
+            | FieldTypeCode::Set
+    ) {
         tidb_datatype::collation_to_proto(column.field_type.collation_name())
     } else {
         BINARY_COLLATION_ID
@@ -1019,9 +1005,15 @@ fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
         column_len,
         decimal,
         flag,
+        elems: column
+            .field_type
+            .elems_snapshot()
+            .into_iter()
+            .map(|elem| elem.to_string())
+            .collect(),
         pk_handle: column.is_handle,
         default_val,
-        ..ScanColumnInfo::default()
+        array: column.field_type.is_array(),
     })
 }
 
@@ -1040,6 +1032,8 @@ fn scan_column_descriptor(
         decimal: column.decimal,
         charset,
         collation,
+        elems: column.elems.clone(),
+        array: column.array,
     })
 }
 

@@ -19,6 +19,7 @@ use std::collections::HashMap;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_util::ColumnSwapHelper;
+use tidb_datatype::Datum;
 
 use crate::context::{Columns, EvalError};
 use crate::expression::Expression;
@@ -65,6 +66,155 @@ pub fn vectorizable(expressions: &[Expression]) -> bool {
     }
 
     !((nextval > 0 && (lastval > 0 || setval > 0)) || nextval > 1)
+}
+
+/// Go `expression.VecEvalBool`/`VectorizedFilterConsiderNull`.
+///
+/// The returned mask is indexed by the physical rows of `input`, just like
+/// Go's `selected` slice. The caller-supplied `selected` and `nulls` vectors
+/// are output buffers (their previous contents are discarded); the input
+/// chunk's selection vector is the only pre-existing selection. `nulls`
+/// records which surviving filter evaluations were SQL NULL, while NULL
+/// itself never remains selected.
+///
+/// The expression model does not yet expose Go's typed `VecEval*` trait. The
+/// vector evaluator nevertheless preserves the important vectorized contract:
+/// filters run filter-major, rejected rows are removed before the next filter,
+/// and direct column/constant expressions are materialized column-wise. A
+/// scalar-function node uses its row evaluator as the explicit fallback,
+/// without evaluating rows that an earlier filter already rejected.
+pub fn vectorized_filter_consider_null<C: Columns>(
+    ctx: &C,
+    vec_enabled: bool,
+    filters: &[Expression],
+    input: &Chunk,
+    mut selected: Vec<bool>,
+    mut nulls: Vec<bool>,
+) -> Result<(Vec<bool>, Vec<bool>), EvalError> {
+    // `Chunk::num_rows` is selection-aware in Rust. Go's VecEvalBool instead
+    // clears the input selection while evaluating and returns a mask sized to
+    // all physical rows, then reapplies the original selection. Derive that
+    // physical width without mutating the caller's chunk.
+    let original_sel = input.sel().map(ToOwned::to_owned);
+    let physical_rows = if original_sel.is_some() {
+        let mut unselected = input.clone();
+        unselected.set_sel(None);
+        unselected.num_rows()
+    } else {
+        input.num_rows()
+    };
+    selected.clear();
+    selected.resize(physical_rows, true);
+    nulls.clear();
+    nulls.resize(physical_rows, false);
+    if let Some(sel) = &original_sel {
+        let mut in_selection = vec![false; physical_rows];
+        for &physical in sel {
+            if physical < physical_rows {
+                in_selection[physical] = true;
+            }
+        }
+        for (physical, selected) in selected.iter_mut().enumerate() {
+            *selected = in_selection[physical];
+        }
+    }
+    if filters.is_empty() {
+        return Ok((selected, nulls));
+    }
+
+    // Go falls back to rowBasedFilter when vectorization is disabled or any
+    // filter is not vectorizable. Keep the same filter-major order and
+    // three-valued truth handling in that branch.
+    if !vec_enabled || !vectorizable(filters) {
+        let mut unselected = input.clone();
+        unselected.set_sel(None);
+        for filter in filters {
+            for row_index in 0..physical_rows {
+                if !selected[row_index] {
+                    continue;
+                }
+                let value = filter.eval(ctx, unselected.get_row(row_index))?;
+                let truth = crate::truthy_of(&value)?;
+                if truth.is_none() {
+                    nulls[row_index] = true;
+                }
+                selected[row_index] = truth == Some(true);
+            }
+        }
+        return Ok((selected, nulls));
+    }
+
+    // Preserve the physical row mapping while shrinking the working chunk's
+    // selection before each filter. This is the same operation Go performs by
+    // installing `input.Sel()` and letting each VecEval method inspect only
+    // the currently live rows.
+    for filter in filters {
+        let active: Vec<(usize, usize)> = selected
+            .iter()
+            .enumerate()
+            .filter_map(|(physical, is_selected)| (*is_selected).then_some((physical, physical)))
+            .collect();
+        if active.is_empty() {
+            break;
+        }
+        let mut working = input.clone();
+        working.set_sel(Some(active.iter().map(|(_, physical)| *physical).collect()));
+        let values = eval_vectorized_expression(ctx, filter, &working)?;
+        debug_assert_eq!(values.len(), active.len());
+        for ((physical, _), value) in active.into_iter().zip(values) {
+            let truth = crate::truthy_of(&value)?;
+            if truth.is_none() {
+                nulls[physical] = true;
+            }
+            selected[physical] = truth == Some(true);
+        }
+    }
+    Ok((selected, nulls))
+}
+
+/// Convenience form matching Go `VectorizedFilter` when the caller does not
+/// need the per-row NULL mask.
+pub fn vectorized_filter<C: Columns>(
+    ctx: &C,
+    vec_enabled: bool,
+    filters: &[Expression],
+    input: &Chunk,
+    selected: Vec<bool>,
+) -> Result<Vec<bool>, EvalError> {
+    vectorized_filter_consider_null(ctx, vec_enabled, filters, input, selected, Vec::new())
+        .map(|(selected, _)| selected)
+}
+
+/// Evaluates one expression over the working selection. Bare columns and
+/// constants avoid rebuilding a scalar-function argument tree; functions keep
+/// the scalar evaluator as the documented fallback until typed VecEval kernels
+/// are added to `tidb-expr`.
+fn eval_vectorized_expression<C: Columns>(
+    ctx: &C,
+    expression: &Expression,
+    input: &Chunk,
+) -> Result<Vec<Datum>, EvalError> {
+    match expression {
+        Expression::Column(column) => {
+            let field_type = column
+                .get_static_type()
+                .ok_or(EvalError::Unsupported("column has no field type"))?;
+            let column_index = usize::try_from(column.index)
+                .map_err(|_| EvalError::Unsupported("column has no resolved index"))?;
+            Ok((0..input.num_rows())
+                .map(|row| input.get_row(row).get_datum(column_index, field_type))
+                .collect())
+        }
+        Expression::Constant(constant) => Ok(std::iter::repeat_with(|| constant.eval())
+            .take(input.num_rows())
+            .collect::<Result<Vec<_>, _>>()?),
+        Expression::CorrelatedColumn(column) => Ok(std::iter::repeat_with(|| Ok(column.eval()))
+            .take(input.num_rows())
+            .collect::<Result<Vec<_>, EvalError>>()?),
+        Expression::ScalarFunction(_) => (0..input.num_rows())
+            .map(|row| expression.eval(ctx, input.get_row(row)))
+            .collect(),
+    }
 }
 
 /// A failure from [`EvaluatorSuite::run`].
@@ -312,6 +462,45 @@ mod tests {
 
         let nested_nextval = scalar("plus", vec![scalar("nextval", vec![]), int_const(1)]);
         assert!(vectorizable(&[nested_nextval]));
+    }
+
+    #[test]
+    fn vectorized_filter_preserves_selection_and_null_mask() {
+        let mut input = Chunk::new_with_capacity(std::slice::from_ref(&long()), 5);
+        for value in [0, 1, 2, 3] {
+            input.append_int64(0, value);
+        }
+        input.append_null(0);
+        // Go's VectorizedFilter returns a physical-row mask while the input
+        // selection points at only the rows to evaluate. The NULL physical
+        // row is deliberately in the middle of this selection.
+        input.set_sel(Some(vec![3, 2, 1]));
+        let filter = scalar("gt", vec![input_column(0), int_const(1)]);
+        let (selected, nulls) = vectorized_filter_consider_null(
+            &NoColumns,
+            true,
+            &[filter],
+            &input,
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(selected, vec![false, false, true, true, false]);
+        assert_eq!(nulls, vec![false, false, false, false, false]);
+
+        input.set_sel(Some(vec![3, 4, 1]));
+        let filter = scalar("gt", vec![input_column(0), int_const(1)]);
+        let (selected, nulls) = vectorized_filter_consider_null(
+            &NoColumns,
+            true,
+            &[filter],
+            &input,
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(selected, vec![false, false, false, true, false]);
+        assert_eq!(nulls, vec![false, false, false, false, true]);
     }
 
     #[test]

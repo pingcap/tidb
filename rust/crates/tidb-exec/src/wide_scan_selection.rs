@@ -46,6 +46,15 @@
 //! against non-NULL string constants, deriving its collator from that tested
 //! scalar exactly as Go does.
 //!
+//! Builtin predicates use the same catalog as the expression pushdown split.
+//! Numeric functions and the Go TiKV-whitelisted DATE/JSON families
+//! (including `DATE_FORMAT`, `DATE_ADD`/`DATE_SUB`, `FROM_UNIXTIME`,
+//! `TIMESTAMPDIFF`, `UNIX_TIMESTAMP`, and JSON modification calls) are
+//! lowered with their resolved `ScalarFuncSig` and implicit cast field
+//! metadata. A builtin is refused only when one of its leaves cannot be
+//! represented faithfully on this wire (for example an unresolved collation),
+//! in which case the local Selection still evaluates it.
+//!
 //! Two refusals are deliberate and are not "not implemented yet":
 //!
 //! * **A negative or zero constant against an unsigned column.** Go does not
@@ -376,6 +385,8 @@ fn scan_column_descriptor(
         decimal: column.decimal,
         charset,
         collation,
+        elems: column.elems.clone(),
+        array: column.array,
     })
 }
 

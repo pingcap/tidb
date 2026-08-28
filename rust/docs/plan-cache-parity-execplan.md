@@ -336,7 +336,7 @@ The shape divergence is still worth recording for its own sake: `SelectMeta` is
 -> wire) where Go's `writeChunk`/`dumpTextRow` copies once. That is a design
 difference; it is not, at these row counts, a measurable one.
 
-### M3s — Open a statement's snapshot on the connection worker (NEXT)
+### M3s — Open a statement's snapshot on the connection worker (DONE, `7c267b40ee`)
 
 The FIXED term has a concentrated home. On the same 200-row profile, 14% of
 the statement is snapshot acquisition: 326 samples waiting for a PD timestamp
@@ -350,6 +350,13 @@ The premise that forced the handshake is already disproved: three files claim
 `SharedReadRuntime` is `Arc<Mutex<C>>` + `BackgroundRegionCache<L>`, with no
 `Rc` or `thread_local` anywhere in `tidb-txnkv` (`tests/transaction_send_source.rs`
 asserts `Send` for both production transactions).
+
+The implementation now opens `RealOptimisticTransaction` inline after the PD
+timestamp arrives and calls `snapshot_get_at`, `snapshot_batch_get_at`, and
+`snapshot_scan_at` directly. It retains the absolute per-read deadline and the
+closed-snapshot error contract. The remaining explicit-transaction read path
+still uses `SessionSnapshot`'s request/reply channel; that is a separate,
+larger change and is tracked in the deep-review receipt below.
 
 ## Where the sysbench gap actually is (measured 2026-08-26, end of day)
 

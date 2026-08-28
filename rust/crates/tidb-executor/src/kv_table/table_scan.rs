@@ -484,12 +484,19 @@ impl KvTable {
         if common_handle && (self.has_dirty_content() || common_primary.is_none()) {
             return Ok(None);
         }
-        // A pushdown request names ONE physical table id. A partitioned table
-        // has several, so the request cannot describe it and the local scan
-        // (which spans the whole partition block) serves the read instead.
-        if self.partition.is_some() {
+        // The row-level merger below reconstructs an integer record key. A
+        // common handle needs the complete tuple encoding (and its collation)
+        // to merge partitions, so keep this less common ordered shape on the
+        // proven byte-level path until that encoder is carried through the
+        // remote stream seam.
+        if common_handle && self.partition.is_some() && keep_order {
             return Ok(None);
         }
+        // A TiKV TableScan names one PHYSICAL table id.  A partitioned table
+        // therefore needs one request per selected partition; sending the
+        // logical table id (or a range spanning several partition ids) makes
+        // the region scan read the wrong record namespace.  The requests are
+        // assembled below after the handle ranges have been split.
         // An ORDERED read of an unsigned handle whose domain wraps the int64
         // boundary cannot travel as one ascending range list: Go opens TWO
         // results -- `firstPartGroupedRanges then `secondPartGroupedRanges
@@ -582,19 +589,25 @@ impl KvTable {
                     })
             })
             .collect();
-        // One request PER group. Both open up front -- Go builds both parts'
-        // responses before reading either (`buildRespForGroupedRanges) -- and
-        // the rows are consumed strictly part by part.
+        // One request PER physical table and unsigned-handle group. Both open
+        // up front -- Go builds all partition/part responses before reading
+        // either (`buildRespForGroupedRanges`) -- and the rows are consumed
+        // partition by partition (or merged for an ordered integer-handle
+        // read).
         // Go's `SetTableHandles` supplies hints only for the single grouped
         // handle request. A straddling unsigned range is split into two
         // requests above, so do not attach hints to those unrelated groups.
-        let request_range_hints = if groups.len() == 1 {
+        let partitioned = self.partition.is_some();
+        let physical_ids = self.record_physical_ids();
+        let request_range_hints = if !partitioned && groups.len() == 1 {
             range_hints.filter(|hints| hints.len() == groups[0].len())
         } else {
             None
         };
-        let build_request = |ranges: Vec<(Key, Key)>| PushdownScanRequest {
-            table_id: self.table_id,
+        let build_request = |table_id: i64, ranges: Vec<(Key, Key)>| PushdownScanRequest {
+            // `table_id` is the physical partition id for a partitioned read
+            // and the logical id for an ordinary table.
+            table_id,
             index: None,
             columns: columns.clone(),
             handle_index,
@@ -626,10 +639,27 @@ impl KvTable {
                 return Ok(None);
             };
             let mut scan = scan.map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            // Cluster storage can expose staged writes together with a remote
+            // snapshot.  The integer merge below reconstructs keys with one
+            // table id, so a partitioned staged row would be keyed under the
+            // logical table and could shadow the wrong partition.  Refuse the
+            // whole partitioned remote read in that case; the byte-level
+            // cursor has the exact UnionScan semantics and is safe.
+            if partitioned && !scan.staged.is_empty() {
+                scan.stream.close();
+                for (_, opened_parts) in partition_scans.drain(..) {
+                    for mut opened in opened_parts {
+                        opened.stream.close();
+                    }
+                }
+                return Ok(None);
+            }
             if common_handle && !scan.staged.is_empty() {
                 scan.stream.close();
-                for mut opened in scans.drain(..) {
-                    opened.stream.close();
+                for (_, opened_parts) in partition_scans.drain(..) {
+                    for mut opened in opened_parts {
+                        opened.stream.close();
+                    }
                 }
                 return Ok(None);
             }
@@ -638,7 +668,14 @@ impl KvTable {
             // an `Unsupported` the caller turned into a byte-level cursor) is
             // not recorded as a coprocessor read.
             crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
-            scans.push(scan);
+            if let Some((_, parts)) = partition_scans
+                .iter_mut()
+                .find(|(id, _)| *id == physical_id)
+            {
+                parts.push(scan);
+            } else {
+                partition_scans.push((physical_id, vec![scan]));
+            }
         }
         let decoder = self.row_decoder_projected(Some(keep), context)?;
         let mut staged = Vec::new();
@@ -646,23 +683,63 @@ impl KvTable {
         // in part order, so concatenating them preserves the key order the
         // merge below walks -- ascending for an ascending read, descending for
         // a descending one (`open_remote_scan already reverses to match).
-        for scan in &mut scans {
-            for (key, value) in std::mem::take(&mut scan.staged) {
-                let row = match value {
-                    Some(value) => Some(decoder.decode_record(key.as_bytes(), &value)?.1),
-                    None => None,
-                };
-                staged.push((key.into_bytes(), row));
+        for (_, parts) in &mut partition_scans {
+            for scan in parts {
+                for (key, value) in std::mem::take(&mut scan.staged) {
+                    let row = match value {
+                        Some(value) => Some(decoder.decode_record(key.as_bytes(), &value)?.1),
+                        None => None,
+                    };
+                    staged.push((key.into_bytes(), row));
+                }
             }
         }
         let merge_staged = !staged.is_empty();
-        let predicates_applied = scans.iter().all(|scan| scan.stream.predicates_applied());
-        let stream: Box<dyn crate::remote_scan::PushdownRowStream> = if scans.len() == 1 {
-            scans.pop().expect("exactly one scan").stream
+        let predicates_applied = partition_scans
+            .iter()
+            .all(|(_, parts)| parts.iter().all(|scan| scan.stream.predicates_applied()));
+        let stream: Box<dyn crate::remote_scan::PushdownRowStream> = if partitioned {
+            let mut per_partition = Vec::with_capacity(partition_scans.len());
+            for (physical_id, mut parts) in partition_scans {
+                let streams = parts.drain(..).map(|scan| scan.stream).collect::<Vec<_>>();
+                let stream = if streams.len() == 1 {
+                    streams.into_iter().next().expect("one partition stream")
+                } else {
+                    crate::remote_scan::ChainedPushdownStream::new(streams)
+                };
+                per_partition.push((physical_id, stream));
+            }
+            if keep_order {
+                Box::new(PartitionMergedPushdownStream::new(
+                    per_partition,
+                    handle_index.expect("integer partition merge has a handle"),
+                    self.unsigned_pk_handle(),
+                    descending,
+                ))
+            } else if per_partition.len() == 1 {
+                per_partition
+                    .into_iter()
+                    .next()
+                    .expect("one partition stream")
+                    .1
+            } else {
+                crate::remote_scan::ChainedPushdownStream::new(
+                    per_partition
+                        .into_iter()
+                        .map(|(_, stream)| stream)
+                        .collect(),
+                )
+            }
         } else {
-            crate::remote_scan::ChainedPushdownStream::new(
-                scans.into_iter().map(|scan| scan.stream).collect(),
-            )
+            let streams = partition_scans
+                .into_iter()
+                .flat_map(|(_, parts)| parts.into_iter().map(|scan| scan.stream))
+                .collect::<Vec<_>>();
+            if streams.len() == 1 {
+                streams.into_iter().next().expect("one scan stream")
+            } else {
+                crate::remote_scan::ChainedPushdownStream::new(streams)
+            }
         };
         Ok(Some(RemoteRowCursor {
             stream,
@@ -2308,6 +2385,114 @@ pub(crate) enum FinishedLookup {
     Chunk(FinishedLookupChunk),
     /// The compatibility path for row-only streams.
     Rows(Vec<(TableHandle, Vec<Datum>)>, bool, u64),
+}
+
+/// Merges clean remote streams from several physical partitions by their
+/// integer record keys.  A partitioned TableScan cannot name more than one
+/// physical table id in a single TiPB executor, so ordered reads open one
+/// stream per partition.  The byte-level cursor already performs this merge;
+/// this small row-level adapter preserves the same order for the remote path.
+struct PartitionMergedPushdownStream {
+    parts: Vec<(i64, Box<dyn PushdownRowStream>)>,
+    pending: Vec<Option<(Vec<u8>, Vec<Datum>)>>,
+    handle_index: usize,
+    unsigned_handle: bool,
+    descending: bool,
+}
+
+impl PartitionMergedPushdownStream {
+    fn new(
+        parts: Vec<(i64, Box<dyn PushdownRowStream>)>,
+        handle_index: usize,
+        unsigned_handle: bool,
+        descending: bool,
+    ) -> Self {
+        let pending = (0..parts.len()).map(|_| None).collect();
+        Self {
+            parts,
+            pending,
+            handle_index,
+            unsigned_handle,
+            descending,
+        }
+    }
+
+    fn row_key(&self, physical_id: i64, row: &[Datum]) -> Result<Vec<u8>, StorageError> {
+        let value = match row.get(self.handle_index) {
+            Some(Datum::Int(value)) => *value,
+            // The row codec stores an unsigned PK handle using the signed
+            // int64 record-key codec; preserving the bits reproduces Go's
+            // `Handle()` ordering at the transport boundary.
+            Some(Datum::UInt(value)) => *value as i64,
+            other => {
+                return Err(StorageError::Backend(format!(
+                    "a partition coprocessor row carried no integer handle, got {other:?}"
+                )));
+            }
+        };
+        Ok(record_merge_key(
+            &encode_row_key_with_handle(physical_id, &RecordHandle::Int(value)),
+            self.unsigned_handle,
+        ))
+    }
+}
+
+impl PushdownRowStream for PartitionMergedPushdownStream {
+    fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
+        for index in 0..self.parts.len() {
+            if self.pending[index].is_none() {
+                if let Some(row) = self.parts[index].1.next_row()? {
+                    let key = self.row_key(self.parts[index].0, &row)?;
+                    self.pending[index] = Some((key, row));
+                }
+            }
+        }
+        let mut selected: Option<usize> = None;
+        for (index, pending) in self.pending.iter().enumerate() {
+            let Some((key, _)) = pending else {
+                continue;
+            };
+            let better = selected.is_none_or(|current| {
+                let current_key = self.pending[current]
+                    .as_ref()
+                    .expect("selected partition has a pending row")
+                    .0
+                    .as_slice();
+                if self.descending {
+                    key.as_slice() > current_key
+                } else {
+                    key.as_slice() < current_key
+                }
+            });
+            if better {
+                selected = Some(index);
+            }
+        }
+        let Some(index) = selected else {
+            return Ok(None);
+        };
+        Ok(self.pending[index].take().map(|(_, row)| row))
+    }
+
+    fn rows_returned(&self) -> u64 {
+        self.parts
+            .iter()
+            .map(|(_, stream)| stream.rows_returned())
+            .sum()
+    }
+
+    fn predicates_applied(&self) -> bool {
+        self.parts
+            .iter()
+            .all(|(_, stream)| stream.predicates_applied())
+    }
+
+    fn close(&mut self) {
+        for (_, stream) in &mut self.parts {
+            stream.close();
+        }
+        self.pending.fill(None);
+    }
 }
 
 pub struct RemoteRowCursor {
@@ -4358,6 +4543,66 @@ mod remote_cursor_tests {
         }
     }
 
+    /// Serves an empty stream while retaining every request.  A partitioned
+    /// table must open one coprocessor request per physical table id; a
+    /// logical-table request would make TiKV scan the wrong record namespace.
+    #[derive(Debug)]
+    struct PartitionRequestCapture {
+        captured: std::sync::Arc<std::sync::Mutex<Vec<crate::remote_scan::PushdownScanRequest>>>,
+    }
+
+    impl TableStorage for PartitionRequestCapture {
+        fn get(&mut self, _key: &Key) -> Result<Vec<u8>, StorageError> {
+            Err(StorageError::NotFound)
+        }
+
+        fn set(&mut self, _key: Key, _value: Vec<u8>) -> Result<(), StorageError> {
+            Err(StorageError::Backend("unused".to_owned()))
+        }
+
+        fn delete(&mut self, _key: Key) -> Result<(), StorageError> {
+            Err(StorageError::Backend("unused".to_owned()))
+        }
+
+        fn iter(
+            &mut self,
+            _start: Option<&Key>,
+            _upper_bound: Option<&Key>,
+        ) -> Result<Box<dyn StorageIterator>, StorageError> {
+            Err(StorageError::Backend("unused".to_owned()))
+        }
+
+        fn open_remote_scan(
+            &mut self,
+            request: &crate::remote_scan::PushdownScanRequest,
+        ) -> Option<Result<crate::remote_scan::PushdownScan, StorageError>> {
+            self.captured
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .push(request.clone());
+            Some(Ok(crate::remote_scan::PushdownScan {
+                stream: Box::new(VecStream {
+                    rows: std::collections::VecDeque::new(),
+                    returned: 0,
+                    predicates_applied: true,
+                }),
+                staged: Vec::new(),
+            }))
+        }
+
+        fn key_count(&self) -> usize {
+            0
+        }
+
+        fn clear(&mut self) {}
+
+        fn clone_box(&self) -> Box<dyn TableStorage> {
+            Box::new(Self {
+                captured: std::sync::Arc::clone(&self.captured),
+            })
+        }
+    }
+
     fn bigint_column(id: i64, name: &str) -> KvColumn {
         KvColumn {
             name: name.to_owned(),
@@ -4368,6 +4613,81 @@ mod remote_cursor_tests {
             origin_default: None,
             comment: String::new(),
             generated: None,
+        }
+    }
+
+    #[test]
+    fn partitioned_remote_scan_opens_one_request_per_physical_table() {
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut table = KvTable::with_storage(
+            91,
+            vec![bigint_column(1, "id")],
+            Box::new(PartitionRequestCapture {
+                captured: std::sync::Arc::clone(&captured),
+            }),
+        );
+        table.set_pk_handle_offset(0);
+        table.set_partition(crate::partition_routing::PartitionSpec {
+            kind: crate::partition_routing::PartitionKind::Hash,
+            expr_text: "id".to_owned(),
+            expr: tidb_expr::expression::Expression::Constant(
+                tidb_expr::expression::Constant::new(
+                    Datum::Int(0),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                ),
+            ),
+            dependencies: vec!["id".to_owned()],
+            definitions: vec![
+                crate::partition_routing::PartitionDef {
+                    id: 101,
+                    name: "p0".to_owned(),
+                    ..Default::default()
+                },
+                crate::partition_routing::PartitionDef {
+                    id: 102,
+                    name: "p1".to_owned(),
+                    ..Default::default()
+                },
+            ],
+            is_empty_columns: false,
+        });
+
+        let cursor = table
+            .pushdown_row_cursor_with_context(
+                &[0],
+                &[],
+                None,
+                None,
+                None,
+                None,
+                None,
+                false,
+                false,
+                1,
+                &RowDecodeContext::legacy_default(&SessionTimeZone::utc()),
+                &PushdownStatementContext::default(),
+            )
+            .expect("remote scan construction succeeds")
+            .expect("the capture backend serves the requests");
+        assert!(cursor.predicates_applied());
+
+        let requests = captured
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clone();
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| request.table_id)
+                .collect::<Vec<_>>(),
+            vec![101, 102],
+            "each physical partition gets its own coprocessor request"
+        );
+        for request in requests {
+            assert!(request
+                .ranges
+                .iter()
+                .all(|(start, _)| { decode_table_id(start.as_bytes()) == request.table_id }));
         }
     }
 
@@ -4479,6 +4799,107 @@ mod remote_cursor_tests {
         }
 
         fn close(&mut self) {}
+    }
+
+    #[test]
+    fn partitioned_remote_stream_merges_by_handle_not_physical_id() {
+        let mut cursor = PartitionMergedPushdownStream::new(
+            vec![
+                (
+                    101,
+                    Box::new(VecStream {
+                        rows: std::collections::VecDeque::from([vec![Datum::Int(5)]]),
+                        returned: 0,
+                        predicates_applied: true,
+                    }),
+                ),
+                (
+                    102,
+                    Box::new(VecStream {
+                        rows: std::collections::VecDeque::from([vec![Datum::Int(1)]]),
+                        returned: 0,
+                        predicates_applied: true,
+                    }),
+                ),
+            ],
+            0,
+            false,
+            false,
+        );
+        assert_eq!(cursor.next_row().unwrap(), Some(vec![Datum::Int(1)]));
+        assert_eq!(cursor.next_row().unwrap(), Some(vec![Datum::Int(5)]));
+        assert_eq!(cursor.next_row().unwrap(), None);
+    }
+
+    #[test]
+    fn partitioned_remote_stream_preserves_unsigned_handle_order() {
+        let mut cursor = PartitionMergedPushdownStream::new(
+            vec![
+                (
+                    101,
+                    Box::new(VecStream {
+                        rows: std::collections::VecDeque::from([vec![Datum::UInt(1)]]),
+                        returned: 0,
+                        predicates_applied: true,
+                    }),
+                ),
+                (
+                    102,
+                    Box::new(VecStream {
+                        rows: std::collections::VecDeque::from([vec![Datum::UInt(1u64 << 63)]]),
+                        returned: 0,
+                        predicates_applied: true,
+                    }),
+                ),
+            ],
+            0,
+            true,
+            false,
+        );
+        assert_eq!(cursor.next_row().unwrap(), Some(vec![Datum::UInt(1)]));
+        assert_eq!(
+            cursor.next_row().unwrap(),
+            Some(vec![Datum::UInt(1u64 << 63)])
+        );
+        assert_eq!(cursor.next_row().unwrap(), None);
+    }
+
+    #[test]
+    fn partitioned_remote_stream_merges_descending_handle_order() {
+        let mut cursor = PartitionMergedPushdownStream::new(
+            vec![
+                (
+                    101,
+                    Box::new(VecStream {
+                        rows: std::collections::VecDeque::from([
+                            vec![Datum::Int(5)],
+                            vec![Datum::Int(1)],
+                        ]),
+                        returned: 0,
+                        predicates_applied: true,
+                    }),
+                ),
+                (
+                    102,
+                    Box::new(VecStream {
+                        rows: std::collections::VecDeque::from([
+                            vec![Datum::Int(4)],
+                            vec![Datum::Int(2)],
+                        ]),
+                        returned: 0,
+                        predicates_applied: true,
+                    }),
+                ),
+            ],
+            0,
+            false,
+            true,
+        );
+        assert_eq!(cursor.next_row().unwrap(), Some(vec![Datum::Int(5)]));
+        assert_eq!(cursor.next_row().unwrap(), Some(vec![Datum::Int(4)]));
+        assert_eq!(cursor.next_row().unwrap(), Some(vec![Datum::Int(2)]));
+        assert_eq!(cursor.next_row().unwrap(), Some(vec![Datum::Int(1)]));
+        assert_eq!(cursor.next_row().unwrap(), None);
     }
 
     /// Go's covering `PhysicalIndexReader` returns the requested projection

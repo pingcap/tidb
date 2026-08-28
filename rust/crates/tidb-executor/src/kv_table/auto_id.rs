@@ -112,6 +112,33 @@ pub trait AutoIdStore: fmt::Debug + Send + Sync {
     /// no-op on every tier.
     fn rebase(&self, required: u64, unsigned: bool) -> Result<(), AutoIdStoreError>;
 
+    /// Go `rebase4Signed`/`rebase4Unsigned` with `allocIDs == true`
+    /// (`pkg/meta/autoid/autoid.go:348`, `:408`): raise the stored value past
+    /// `required` AND RESERVE the next `step` ids above it, atomically -- one
+    /// transaction does both, reading the stored counter first so ids already
+    /// handed out are never covered twice.
+    ///
+    /// This is the arm every DML write takes (an explicit auto-increment id,
+    /// an assigned `_tidb_rowid`, an UPDATE writing the auto column), because
+    /// a monotonic run of such writes must cost the store at most one
+    /// transaction per reserved window rather than one per row. Returns the
+    /// `(base, end)` the allocator caches: `end >= base + step`, clamped to
+    /// the domain's end.
+    ///
+    /// The default delegates to [`Self::rebase`] plus [`Self::reserve`], which
+    /// keeps the observable range but drops the atomicity between the two;
+    /// implementations over shared storage SHOULD override it with a single
+    /// read-modify-write of the counter key.
+    fn rebase_alloc(
+        &self,
+        required: u64,
+        step: u64,
+        unsigned: bool,
+    ) -> Result<(u64, u64), AutoIdStoreError> {
+        self.rebase(required, unsigned)?;
+        self.reserve(step, unsigned)
+    }
+
     /// Go `Allocator.Rebase` with `allocIDs == true`: replace the stored
     /// counter even when that moves it down. `FORCE AUTO_INCREMENT` needs one
     /// atomic store operation; spelling it as reset followed by rebase would
@@ -237,6 +264,32 @@ impl AutoIdStore for LocalAutoIdStore {
             }
         }
         Ok(())
+    }
+
+    /// Go `rebase4Signed`'s `allocIDs == true` txn, atomically:
+    /// `newBase = max(currentEnd, requiredBase)`,
+    /// `newEnd = min(domain_end - step, newBase) + step`.
+    fn rebase_alloc(
+        &self,
+        required: u64,
+        step: u64,
+        unsigned: bool,
+    ) -> Result<(u64, u64), AutoIdStoreError> {
+        let mut last = self.last.load(Ordering::SeqCst);
+        loop {
+            let base = if exceeds(required, last, unsigned) {
+                required
+            } else {
+                last
+            };
+            // `advance` clamps exactly where Go's
+            // `min(math.MaxInt64-step, newBase) + step` lands: the domain's end.
+            let end = advance(base, step, unsigned);
+            match self.last.compare_exchange_weak(last, end, Ordering::SeqCst, Ordering::SeqCst) {
+                Ok(_) => return Ok((base, end)),
+                Err(observed) => last = observed,
+            }
+        }
     }
 
     fn force_rebase(&self, required: u64, _unsigned: bool) -> Result<(), AutoIdStoreError> {
@@ -504,10 +557,13 @@ impl AutoIdAllocator {
         let offset_base = offset.saturating_sub(1);
         if exceeds(offset_base, cache.base, self.unsigned) {
             if exceeds(offset_base, cache.end, self.unsigned) {
-                self.store
-                    .rebase(offset_base, self.unsigned)
+                // Go `alloc4Signed`'s offset arm rebases with allocIDs=true,
+                // reserving a window in the same transaction.
+                let (_, end) = self
+                    .store
+                    .rebase_alloc(offset_base, cache.step, self.unsigned)
                     .map_err(AutoIdError::Store)?;
-                cache.end = offset_base;
+                cache.end = end;
             }
             cache.base = offset_base;
         }
@@ -592,6 +648,40 @@ impl AutoIdAllocator {
             last_reserve_at: Instant::now(),
         };
         Ok(end)
+    }
+
+    /// Go `Allocator.Rebase` with `allocIDs == true`: the arm every DML write
+    /// path takes (`pkg/executor/insert_common.go:897`, `:993` for an explicit
+    /// auto-increment id, `table.go`'s `adjustImplicitRowID` for an assigned
+    /// `_tidb_rowid`). A value above this cache's end crosses to the store ONCE
+    /// and comes back owning a FRESH RESERVED WINDOW of `step` ids above it
+    /// (`rebase4Signed`: `newEnd = min(MaxInt64-step, newBase) + alloc.step`).
+    /// That reservation is why a bulk load of rows whose ids climb pays the
+    /// store once per window instead of once per row: the next `step` values
+    /// sit inside `(base, end]` and settle in the cache alone.
+    ///
+    /// A value inside the reserved range is settled in the cache alone, and a
+    /// value the counter is already past is ignored, both as before.
+    pub(crate) fn rebase_allocating(&self, value: u64) -> Result<(), AutoIdStoreError> {
+        let mut cache = self.cache.lock().expect("auto id cache poisoned");
+        if !exceeds(value, cache.base, self.unsigned) {
+            return Ok(());
+        }
+        if exceeds(value, cache.end, self.unsigned) {
+            // Go commits BOTH movements in one transaction: the counter passes
+            // `value` and this allocator alone owns what lies above it. Setting
+            // base from the STORED read (not `value`) is load-bearing -- if a
+            // peer's reservation moved the counter past `value` meanwhile, the
+            // ids up to that mark are already somebody else's.
+            let (base, end) = self.store.rebase_alloc(value, cache.step, self.unsigned)?;
+            cache.end = end;
+            cache.base = base;
+        } else {
+            // Satisfied by the current reservation: cache-only, no store txn
+            // (`rebase4Signed`: "Satisfied by alloc.end, need to update alloc.base").
+            cache.base = value;
+        }
+        Ok(())
     }
 
     /// Go `Allocator.Rebase`: moves the counter so the next id exceeds
@@ -910,6 +1000,105 @@ mod tests {
     #[derive(Debug)]
     struct FailingStore;
 
+    /// Wraps [`LocalAutoIdStore`] and counts how often the shared home was
+    /// asked to move the counter.
+    #[derive(Debug, Default)]
+    struct CountingStore {
+        inner: LocalAutoIdStore,
+        crossings: std::sync::atomic::AtomicUsize,
+    }
+
+    impl AutoIdStore for CountingStore {
+        fn reserve(&self, step: u64, unsigned: bool) -> Result<(u64, u64), AutoIdStoreError> {
+            self.inner.reserve(step, unsigned)
+        }
+
+        fn next_global(&self) -> Result<u64, AutoIdStoreError> {
+            self.inner.next_global()
+        }
+
+        fn rebase(&self, required: u64, unsigned: bool) -> Result<(), AutoIdStoreError> {
+            self.crossings
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.rebase(required, unsigned)
+        }
+
+        fn rebase_alloc(
+            &self,
+            required: u64,
+            step: u64,
+            unsigned: bool,
+        ) -> Result<(u64, u64), AutoIdStoreError> {
+            self.crossings
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.rebase_alloc(required, step, unsigned)
+        }
+
+        fn force_rebase(&self, required: u64, unsigned: bool) -> Result<(), AutoIdStoreError> {
+            self.inner.force_rebase(required, unsigned)
+        }
+
+        fn reset(&self) -> Result<(), AutoIdStoreError> {
+            self.inner.reset()
+        }
+    }
+
+    /// Source: Go `lazyAdjustAutoIncrementDatum` rebasing per row
+    /// (`pkg/executor/insert_common.go:897`) through `Rebase(..., allocIDs
+    /// =true)`, whose store arm RESERVES a whole window (`autoid.go:408`,
+    /// `newEnd = min(MaxInt64-step, newBase) + step`). A monotonic run of
+    /// explicit ids therefore crosses to the shared home once per reserved
+    /// window, NOT once per row: measured before this fix, every row paid one
+    /// meta-key transaction and a 80-statement x 1000-row bulk insert ran ~23x
+    /// slower than Go.
+    #[test]
+    fn an_ascending_run_of_explicit_ids_crosses_the_store_once_per_window() {
+        let store = Arc::new(CountingStore::default());
+        let mut allocator = AutoIdAllocator::over(store.clone(), 10);
+        allocator.set_unsigned(false);
+        for id in 1..=35_u64 {
+            allocator.rebase_allocating(id).unwrap();
+        }
+        // Windows crossed at 1..=10, 11..=20, 21..=30, 31..=40.
+        assert_eq!(store.crossings.load(std::sync::atomic::Ordering::SeqCst), 4);
+    }
+
+    /// The allocating rebase leaves the counter ABOVE the explicit value: the
+    /// next id comes from this node's own window, and a peer reading the home
+    /// (`next_global`) sees the reserved end -- Go's post-txn
+    /// `alloc.base, alloc.end = newBase, newEnd`.
+    #[test]
+    fn an_allocating_rebase_returns_owning_the_window_above_the_value() {
+        let store = Arc::new(CountingStore::default());
+        let mut allocator = AutoIdAllocator::over(store.clone(), 10);
+        allocator.set_unsigned(false);
+        allocator.rebase_allocating(100).unwrap();
+        // Window = (100, 110]; the next allocation is 101, still local.
+        assert_eq!(allocator.alloc(1, 1), Ok(101));
+        assert_eq!(store.crossings.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(allocator.next_global(), Ok(111));
+        // Values INSIDE the window settle in the cache alone.
+        allocator.rebase_allocating(105).unwrap();
+        assert_eq!(store.crossings.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // A value PAST the end owns the next window, from one more crossing.
+        allocator.rebase_allocating(118).unwrap();
+        assert_eq!(store.crossings.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(allocator.next_global(), Ok(129));
+    }
+
+    /// The DDL arm keeps Go's `allocIDs == false` semantics (`ddl/table.go:698`,
+    /// ALTER TABLE ... AUTO_INCREMENT=n): the counter lands exactly on the
+    /// requested base and NOTHING is reserved beyond it.
+    #[test]
+    fn a_plain_rebase_still_reserves_nothing() {
+        let store = Arc::new(CountingStore::default());
+        let mut allocator = AutoIdAllocator::over(store.clone(), 10);
+        allocator.set_unsigned(false);
+        allocator.rebase(500).unwrap();
+        assert_eq!(store.crossings.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(allocator.next_global(), Ok(501));
+    }
+
     impl AutoIdStore for FailingStore {
         fn reserve(&self, _step: u64, _unsigned: bool) -> Result<(u64, u64), AutoIdStoreError> {
             Err(AutoIdStoreError("injected".to_owned()))
@@ -918,6 +1107,7 @@ mod tests {
         fn next_global(&self) -> Result<u64, AutoIdStoreError> {
             Err(AutoIdStoreError("injected".to_owned()))
         }
+
 
         fn rebase(&self, _required: u64, _unsigned: bool) -> Result<(), AutoIdStoreError> {
             Err(AutoIdStoreError("injected".to_owned()))

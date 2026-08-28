@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{Decimal, DecimalIntegerWarning, DecimalParseError};
+use crate::mydecimal::RoundMode;
 use crate::MyDecimal;
 
 #[test]
@@ -994,6 +995,29 @@ fn test_round_with_ceil() {
                 .to_string(),
             *output,
             "round_ceiling_to_scale({scale}) of {input}"
+        );
+    }
+}
+
+/// The fixed-word `MyDecimal::round` path must inspect every discarded digit
+/// for `ModeCeiling`, not only the first digit after the requested scale.  Go's
+/// source marks this branch as a TODO; keeping the complete remainder here
+/// avoids silently losing a non-zero tail such as `1.0001 -> 1.001`.
+#[test]
+fn test_my_decimal_round_ceiling_checks_the_discarded_tail() {
+    for (input, expected) in [("1.0001", "1.001"), ("-1.0001", "-1.001")] {
+        let (decimal, error) = MyDecimal::from_string(input.as_bytes());
+        assert!(error.is_none(), "{input} parses");
+        let mut rounded = MyDecimal::default();
+        assert_eq!(
+            decimal.round(&mut rounded, 3, RoundMode::Ceiling),
+            None,
+            "{input} rounds without a warning"
+        );
+        assert_eq!(
+            String::from_utf8(rounded.to_string_bytes()).unwrap(),
+            expected,
+            "{input}"
         );
     }
 }
