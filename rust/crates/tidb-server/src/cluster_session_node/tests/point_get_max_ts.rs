@@ -199,6 +199,50 @@ fn a_prepared_point_get_reuses_the_plan_with_each_executions_handle() {
     );
 }
 
+/// A non-point prepared read must take the general cached physical tree and
+/// finish the ordinary timestamped snapshot. This is the first range shape in
+/// sysbench's prepared `oltp_read_only` transaction.
+#[test]
+fn a_prepared_range_executes_the_general_cached_plan() {
+    use tidb_protocol::PreparedValue;
+
+    let (mut session, node) = open_session();
+    seed(&mut session);
+    let statement = session
+        .prepare_general("SELECT v FROM t WHERE id BETWEEN ? AND ? ORDER BY id")
+        .expect("prepare");
+
+    let mut answer = Vec::new();
+    let opens = opens_of(&node, || {
+        let outcome = session
+            .execute_general(
+                &statement,
+                &[
+                    PreparedValue::SignedLongLong(1),
+                    PreparedValue::SignedLongLong(2),
+                ],
+            )
+            .expect("execute");
+        let GeneralExecuteOutcome::Rows(mut result) = outcome else {
+            panic!("a query must answer with rows");
+        };
+        let source = result.source();
+        loop {
+            let batch = source.next_batch(8).expect("batch");
+            if batch.is_empty() {
+                break;
+            }
+            answer.extend(batch);
+        }
+        source.finish().expect("finish");
+        source.close().expect("close");
+    });
+
+    assert_eq!(answer, vec![vec![Datum::Int(10)], vec![Datum::Int(20)]]);
+    assert_eq!(opens, PAID);
+    assert_eq!(node.live.load(Ordering::Acquire), 0);
+}
+
 /// The benchmark's aggregate root is not eligible for MaxTS. Go nevertheless
 /// starts its ordinary TSO future after planning and waits for that same future
 /// at the PointGet below StreamAgg.

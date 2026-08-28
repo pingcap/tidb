@@ -94,6 +94,12 @@ both `oltp_read_only` and `oltp_read_write`.
   The first successful execution now admits the point plan as a cache miss and
   later executions rebuild its handle as cache hits, matching Go's
   `generateNewPlan`/`TryFastPlan` followed by point-executor reuse.
+- [x] 2026-08-27: removed the general prepared-cache self-deadlock. Rust took
+  the catalog mutex before building `StmtContext`; context construction takes
+  its sequence snapshot through the same catalog and blocked recursively.
+  Context/cache-key state is now completed before the catalog guard, and a
+  cluster prepared-range regression completes through the shared physical
+  tree and ordinary timestamped snapshot.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -197,6 +203,16 @@ both `oltp_read_only` and `oltp_read_write`.
   `point_get_max_ts::{a_prepared_point_get_takes_no_timestamp_either,
   a_prepared_point_get_reuses_the_plan_with_each_executions_handle}`.
 
+- Observation: the generic prepared SELECT did not reach planning at all.
+  A one-second process sample showed the test thread blocked in
+  `Session::statement_context_ignoring -> sequence_snapshot -> Mutex::lock`
+  while `bind_cached_prepared_select` already held that catalog mutex. This
+  explains why prepared point-select (while it incorrectly chose the generic
+  descriptor) and then prepared sysbench range-select both waited forever.
+  Evidence: fail-before stack sample for
+  `a_prepared_range_executes_the_general_cached_plan` and its 0.02-second
+  pass after reordering context construction.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -245,6 +261,14 @@ both `oltp_read_only` and `oltp_read_write`.
   subsequent rebuilt-handle executions.
   Rationale: this preserves both the hot point-executor route and Go's
   externally visible cache state without adding a workload-specific bypass.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: construct all plan-cache session context and environment state
+  before acquiring the catalog guard passed into planner binding.
+  Rationale: Go's planning context and infoschema snapshot are separately
+  owned; Rust must preserve that ordering when both views share one catalog
+  mutex. Holding the guard while asking the session to snapshot sequences is
+  necessarily recursive.
   Date/Author: 2026-08-27, Codex.
   Date/Author: 2026-08-27, Codex.
 

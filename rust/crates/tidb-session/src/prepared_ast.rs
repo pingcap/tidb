@@ -327,7 +327,6 @@ impl Session {
         {
             return None;
         }
-        let catalog = self.lock_catalog().ok()?;
         let ctx = self.statement_context(false);
         let environment = tidb_executor::PreparedPlanCacheEnvironment::new(
             self.vars.get_system("sql_mode").unwrap_or_default(),
@@ -355,6 +354,10 @@ impl Session {
                 .as_deref()
                 != Ok("OFF"),
         );
+        // `statement_context` takes its sequence snapshot from the catalog.
+        // Build it before holding the catalog guard; taking the guard first
+        // would recursively lock the same mutex on every general cache bind.
+        let catalog = self.lock_catalog().ok()?;
         plan.bind(
             values,
             &catalog,
