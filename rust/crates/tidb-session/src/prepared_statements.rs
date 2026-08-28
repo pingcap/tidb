@@ -276,7 +276,19 @@ impl Session {
                 .as_ref()
                 .and_then(|plan| self.bind_cached_prepared_select(plan, &values))
             {
-                return self.execute_cached_prepared_select(&cached);
+                match self.execute_cached_prepared_select(&cached) {
+                    Ok(output) => return Ok(output),
+                    // A retained physical tree can be valid for admission but
+                    // still be outside the executor builder's supported
+                    // shape (for example, an OR-range index reader). Go's
+                    // plan-cache path treats that as a cache miss and rebuilds
+                    // the statement; do the same instead of exposing the
+                    // internal cache limitation as a SQL 1105 error. Keep
+                    // non-cache errors fatal so real execution failures are
+                    // not hidden by a fallback.
+                    Err(DriverError::Unsupported(reason)) if reason.starts_with("a cached ") => {}
+                    Err(error) => return Err(error),
+                }
             }
         }
         let sql = if values.is_empty() {
