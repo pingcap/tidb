@@ -321,5 +321,3 @@ fn fold_list_value(
         _ => Err(DriverError::PartitionValuesNotInt(partition.to_owned())),
     }
 }
-
-

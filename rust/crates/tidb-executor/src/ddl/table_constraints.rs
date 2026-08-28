@@ -70,6 +70,7 @@ pub(crate) fn table_indexes(
     create: &tidb_ast::CreateTableStmt,
     columns: &[ColumnInfo],
     clustered: bool,
+    common_handle: bool,
     ctx: &crate::StmtContext,
 ) -> Result<(Vec<KvIndex>, Vec<HiddenIndexColumn>), DriverError> {
     let zone = &ctx.session_zone();
@@ -168,7 +169,11 @@ pub(crate) fn table_indexes(
         }
         crate::ddl::indexes::reject_duplicate_index_columns(&index.parts)?;
         match index.kind {
-            tidb_ast::IndexConstraintKind::PrimaryKey if clustered => continue,
+            // Go omits the physical PRIMARY index only for PKIsHandle.  A
+            // common handle stores no separate index entries either, but its
+            // PRIMARY metadata remains in TableInfo.Indices so the planner
+            // can range and order the table path through that key.
+            tidb_ast::IndexConstraintKind::PrimaryKey if clustered && !common_handle => continue,
             tidb_ast::IndexConstraintKind::PrimaryKey
             | tidb_ast::IndexConstraintKind::Unique
             | tidb_ast::IndexConstraintKind::UniqueKey
@@ -290,7 +295,8 @@ pub(crate) fn table_indexes(
             prefix_lengths,
             visible: is_visible(&index.options),
             global: index.options.global,
-            clustered_primary: false,
+            clustered_primary: common_handle
+                && index.kind == tidb_ast::IndexConstraintKind::PrimaryKey,
         });
     }
     for def in &create.columns {
@@ -327,7 +333,7 @@ pub(crate) fn table_indexes(
                     tidb_ast::InlineKeyKind::Primary { .. } => {
                         let offset = offset_of(&def.name)?;
                         reserved.push(anonymous_index_name(&indexes, &reserved, &def.name));
-                        if !clustered {
+                        if !clustered || common_handle {
                             indexes.push(KvIndex {
                                 id: (indexes.len() + 1) as i64,
                                 name: "PRIMARY".to_owned(),
@@ -337,7 +343,7 @@ pub(crate) fn table_indexes(
                                 prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                                 visible: true,
                                 global: false,
-                                clustered_primary: false,
+                                clustered_primary: common_handle,
                             });
                         }
                     }

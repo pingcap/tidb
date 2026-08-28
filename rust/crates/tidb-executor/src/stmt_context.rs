@@ -232,63 +232,6 @@ impl RowIdShardGenerator {
 /// DEFERRED (documented): the rest of `StatementContext` -- the remaining
 /// error groups (bad NULL, no default), the resource tracker and runtime
 /// stats.
-/// One prepared statement's committed access path for ONE named leaf --
-/// Go's prepared plan cache reduced to the decision this tier reuses safely.
-///
-/// Go caches a whole physical plan and rebinds its ranges per execute. This
-/// tier keeps every range, constant fold and residual split freshly derived
-/// from the CURRENT parameters, and pins only the SHAPE decision -- which
-/// access path won the cost race at the statement's first execution -- so a
-/// later execution whose literals would flip that race replays the original
-/// winner instead, exactly as a cache hit does in Go. Correctness never
-/// depends on the pin: every candidate is built from the same pushed
-/// conditions with the same residual handling, so forcing one changes only
-/// what it costs, never what it reads.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PinnedLeafAccess {
-    /// The whole-table handle scan won (`TableFullScan`/`TableRangeScan`).
-    TableScan,
-    /// An index read won, by catalog index id (stable within one schema
-    /// version; a DDL that drops or recreates the index fails the pin and
-    /// the statement replans freely).
-    IndexId(i64),
-}
-
-/// Which physical aggregation family won a statement's cost race.
-///
-/// Go's cached plan already HAS its aggregation operator: a hit executes
-/// whichever of `getStreamAggs`/`getHashAggs` won when the plan was first
-/// optimized, and never re-costs the pair. This tier plans the whole select
-/// once per family to compare them, so replaying the winner is what turns
-/// three planning passes into one -- the same saving Go's cache gets, by the
-/// same reasoning.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PinnedAggregation {
-    /// `StreamAgg` over ordered input.
-    Stream,
-    /// `HashAgg`.
-    Hash,
-}
-
-/// One prepared statement's committed plan SHAPE, replayed on its next
-/// execution. Ranges, constant folds and residual splits are still derived
-/// fresh from the current parameters; only the decisions are pinned.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct PinnedPlanShape {
-    /// The access path each join leaf committed to, by leaf name.
-    pub leaves: HashMap<String, PinnedLeafAccess>,
-    /// The aggregation family the statement committed to, when it has one.
-    pub aggregation: Option<PinnedAggregation>,
-}
-
-impl PinnedPlanShape {
-    /// Nothing was pinned, so there is no shape worth storing.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.leaves.is_empty() && self.aggregation.is_none()
-    }
-}
-
 #[derive(Clone, Default)]
 pub struct StmtContext {
     /// Go's `StaticWarnHandler` entries: a LEVEL, a code and a message.
@@ -363,6 +306,9 @@ pub struct StmtContext {
     now: Option<(i64, u32, i32)>,
     sysdate_is_now: bool,
     time_zone: Option<tidb_expr::SessionTimeZone>,
+    /// Go `StmtCtx.ResourceGroupName`: the statement hint's group when one
+    /// is present, otherwise the connection's selected resource group.
+    resource_group_name: String,
     /// Go `BuildContext.GetCharsetInfo`: the statement snapshot of
     /// `@@character_set_connection` and `@@collation_connection`.
     connection_charset: String,
@@ -492,6 +438,12 @@ pub struct StmtContext {
     /// fraction of an order-preserving access range expected to be scanned
     /// before the first LIMIT row is found.
     ordering_index_selectivity_ratio: f64,
+    /// Go `SessionVars.AllowProjectionPushDown`
+    /// (`@@tidb_opt_projection_push_down`, default `ON`).
+    allow_projection_push_down: bool,
+    /// Go `SessionVars.LimitPushDownThreshold`
+    /// (`@@tidb_opt_limit_push_down_threshold`, default `5000`).
+    limit_push_down_threshold: u64,
     /// The statement snapshot of Go `SessionVars.OptimizerFixControl`.
     ///
     /// Keeping the parsed map on the context makes planner decisions consume
@@ -499,9 +451,10 @@ pub struct StmtContext {
     /// statement-local `SET_VAR(tidb_opt_fix_control=...)` overlay.
     optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl,
     /// The statement snapshot of every session value read by cost model v2.
-    optimizer_cost_env: tidb_planner::candidate_cost::CostEnv,
-    /// Resolved `tidb_hash_join_concurrency` for physical hash-join costing.
-    hash_join_concurrency: f64,
+    optimizer_cost_env: tidb_planner::find_best_task::coster::CostEnv,
+    /// Go `SessionVars.ExecutorConcurrency`, shared by executor families that
+    /// do not have a more specific concurrency variable, including Sort.
+    executor_concurrency: usize,
     /// Go `SessionVars.TiDBOptJoinReorderThroughProj`
     /// (`@@tidb_opt_join_reorder_through_proj`, default `OFF`): whether
     /// `extractJoinGroup` may look THROUGH a `Projection` sitting on a join
@@ -526,12 +479,6 @@ pub struct StmtContext {
     /// prepared-statement layer that reads it is outside the driver that
     /// knows.
     planned_apply: Arc<AtomicBool>,
-    /// Prepared plan cache, the reusable half: this execution's pins
-    /// (apply) and/or its capture sink, installed by
-    /// [`crate::Session::begin_prepared_path_pins`]. `None` outside the
-    /// prepared funnel leaves planning exactly as before.
-    prepared_path_pins: Option<Arc<PinnedPlanShape>>,
-    prepared_pin_capture: Option<Arc<Mutex<Option<PinnedPlanShape>>>>,
     /// Go `SessionVars.AllowWriteRowID` (`tidb_opt_write_row_id`): whether an
     /// `INSERT`/`REPLACE`/`UPDATE` may name `_tidb_rowid` and write it.
     allow_write_row_id: bool,
@@ -732,6 +679,7 @@ impl StmtContext {
             now: None,
             sysdate_is_now: false,
             time_zone: None,
+            resource_group_name: "default".to_owned(),
             connection_charset: "utf8mb4".to_owned(),
             connection_collation: "utf8mb4_bin".to_owned(),
             rand_session: None,
@@ -762,9 +710,12 @@ impl StmtContext {
                 as i32,
             advanced_join_reorder: tidb_vardef::defaults::DEF_TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
             ordering_index_selectivity_ratio: 0.01,
+            allow_projection_push_down: true,
+            limit_push_down_threshold: tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD
+                as u64,
             optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl::default(),
-            optimizer_cost_env: tidb_planner::candidate_cost::CostEnv::default(),
-            hash_join_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as f64,
+            optimizer_cost_env: tidb_planner::find_best_task::coster::CostEnv::default(),
+            executor_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
             // Go `vardef.DefTiDBOptJoinReorderThroughProj`.
             join_reorder_through_proj: false,
             // Go `vardef.DefTiDBOptJoinReorderThroughSel`.
@@ -774,8 +725,6 @@ impl StmtContext {
             // Go `vardef.DefTiDBEnableIndexMerge = true`.
             index_merge: true,
             planned_apply: Arc::default(),
-            prepared_path_pins: None,
-            prepared_pin_capture: None,
             allow_write_row_id: false,
             expr_pushdown_blacklist: std::sync::Arc::default(),
             disabled_logical_rules: std::sync::Arc::default(),
@@ -835,7 +784,8 @@ impl StmtContext {
     /// Records the same physical-reader fact Go records by appending to
     /// `StmtCtx.TableIDs` in `executorBuilder`.
     pub(crate) fn mark_physical_table_reader(&self) {
-        self.has_physical_table_reader.store(true, Ordering::Relaxed);
+        self.has_physical_table_reader
+            .store(true, Ordering::Relaxed);
     }
 
     /// The sink a coprocessor request must be given so the warnings TiKV
@@ -1186,6 +1136,32 @@ impl StmtContext {
         self.ordering_index_selectivity_ratio
     }
 
+    /// Sets `@@tidb_opt_projection_push_down` for this statement.
+    #[must_use]
+    pub fn with_projection_push_down(mut self, allow: bool) -> Self {
+        self.allow_projection_push_down = allow;
+        self
+    }
+
+    /// Go `SessionVars.AllowProjectionPushDown`.
+    #[must_use]
+    pub fn allow_projection_push_down(&self) -> bool {
+        self.allow_projection_push_down
+    }
+
+    /// Sets `@@tidb_opt_limit_push_down_threshold` for this statement.
+    #[must_use]
+    pub fn with_limit_push_down_threshold(mut self, threshold: u64) -> Self {
+        self.limit_push_down_threshold = threshold;
+        self
+    }
+
+    /// Go `SessionVars.LimitPushDownThreshold`.
+    #[must_use]
+    pub fn limit_push_down_threshold(&self) -> u64 {
+        self.limit_push_down_threshold
+    }
+
     /// Attaches the validated statement snapshot of
     /// `@@tidb_opt_fix_control`.
     #[must_use]
@@ -1207,24 +1183,23 @@ impl StmtContext {
     #[must_use]
     pub fn with_optimizer_cost_env(
         mut self,
-        env: tidb_planner::candidate_cost::CostEnv,
-        hash_join_concurrency: f64,
+        env: tidb_planner::find_best_task::coster::CostEnv,
     ) -> Self {
+        self.executor_concurrency = env.session.union_concurrency.max(1.0) as usize;
         self.optimizer_cost_env = env;
-        self.hash_join_concurrency = hash_join_concurrency;
         self
     }
 
     /// The statement's cost-model-v2 environment.
     #[must_use]
-    pub const fn optimizer_cost_env(&self) -> &tidb_planner::candidate_cost::CostEnv {
+    pub const fn optimizer_cost_env(&self) -> &tidb_planner::find_best_task::coster::CostEnv {
         &self.optimizer_cost_env
     }
 
-    /// Resolved `tidb_hash_join_concurrency`.
+    /// Resolved `tidb_executor_concurrency` for this statement.
     #[must_use]
-    pub const fn hash_join_concurrency(&self) -> f64 {
-        self.hash_join_concurrency
+    pub const fn executor_concurrency(&self) -> usize {
+        self.executor_concurrency
     }
 
     /// Go `SessionVars.TiDBOptJoinReorderThreshold`. Non-positive -- and `0`
@@ -1326,63 +1301,8 @@ impl StmtContext {
     /// Records that this statement's plan contains an Apply (Go
     /// `PhysicalApply`), which `isPhysicalPlanCacheable` refuses to cache.
     pub fn report_planned_apply(&self) {
-        self.planned_apply.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// Installs this execution's access-path pins (Go's cached plan, read
-    /// side). A pin names the access path a leaf committed to on an earlier
-    /// execution of the same prepared statement.
-    #[must_use]
-    pub fn with_prepared_path_pins(mut self, pins: Arc<PinnedPlanShape>) -> Self {
-        self.prepared_path_pins = Some(pins);
-        self
-    }
-
-    /// Installs the capture sink this execution records its winners into
-    /// (Go's cache STORE side): the session reads it back after the
-    /// statement succeeds and keeps it as the statement's pins.
-    #[must_use]
-    pub fn with_prepared_pin_capture(
-        mut self,
-        sink: Arc<Mutex<Option<PinnedPlanShape>>>,
-    ) -> Self {
-        self.prepared_pin_capture = Some(sink);
-        self
-    }
-
-    /// The pin recorded for THIS named leaf on the statement's first
-    /// execution, when the current execution replays it.
-    #[must_use]
-    pub fn prepared_path_pin_for(&self, leaf: &str) -> Option<PinnedLeafAccess> {
-        self.prepared_path_pins.as_ref()?.leaves.get(leaf).cloned()
-    }
-
-    /// The aggregation family this statement committed to on an earlier
-    /// execution, when the current one replays it.
-    #[must_use]
-    pub fn prepared_aggregation_pin(&self) -> Option<PinnedAggregation> {
-        self.prepared_path_pins.as_ref()?.aggregation
-    }
-
-    /// Records the aggregation family that won this statement's cost race,
-    /// for its next execution to replay. The FIRST family recorded stands:
-    /// an outer statement's choice must not be overwritten by a derived
-    /// select's, exactly as the leaf pins keep their first writer.
-    pub(crate) fn capture_aggregation_pin(&self, family: PinnedAggregation) {
-        let Some(sink) = self.prepared_pin_capture.as_ref() else {
-            return;
-        };
-        if let Ok(mut slot) = sink.lock() {
-            let shape = slot.get_or_insert_with(PinnedPlanShape::default);
-            shape.aggregation.get_or_insert(family);
-        }
-    }
-
-    /// The capture sink, when this execution records pins.
-    pub(crate) fn prepared_pin_capture(
-        &self,
-    ) -> Option<Arc<Mutex<Option<PinnedPlanShape>>>> {
-        self.prepared_pin_capture.clone()
+        self.planned_apply
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Installs the two published blacklists. See
@@ -1666,6 +1586,20 @@ impl StmtContext {
     pub fn with_time_zone(mut self, time_zone: tidb_expr::SessionTimeZone) -> Self {
         self.time_zone = Some(time_zone);
         self
+    }
+
+    /// Attaches Go `StmtCtx.ResourceGroupName` to every storage request this
+    /// statement creates.
+    #[must_use]
+    pub fn with_resource_group_name(mut self, name: impl Into<String>) -> Self {
+        self.resource_group_name = name.into();
+        self
+    }
+
+    /// The resource group selected for this statement.
+    #[must_use]
+    pub fn resource_group_name(&self) -> &str {
+        &self.resource_group_name
     }
 
     /// Attaches the connection charset/collation captured for this statement.
@@ -2204,9 +2138,9 @@ impl StmtContext {
             // message) pair and drops the rest, so a cast that fails once per
             // row of a whole scan reports once.
             if batch.len() < MAX_WARNING_COUNT
-                && !batch
-                    .iter()
-                    .any(|(_, seen_code, seen_message)| *seen_code == code && seen_message == message)
+                && !batch.iter().any(|(_, seen_code, seen_message)| {
+                    *seen_code == code && seen_message == message
+                })
             {
                 batch.push((level, code, message.to_owned()));
             }
@@ -2232,9 +2166,7 @@ pub struct CopEvalGuard<'a> {
 
 impl Drop for CopEvalGuard<'_> {
     fn drop(&mut self) {
-        self.context
-            .cop_eval_depth
-            .fetch_sub(1, Ordering::Relaxed);
+        self.context.cop_eval_depth.fetch_sub(1, Ordering::Relaxed);
     }
 }
 

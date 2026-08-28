@@ -988,8 +988,7 @@ mod tests {
         let limit = chk.memory_usage() + (8 * chk.num_rows()) as i64 + 1;
         rc.mem_tracker().set_bytes_limit(limit);
         let action = rc.action_spill();
-        rc.mem_tracker()
-            .fallback_old_and_set_new_action(action);
+        rc.mem_tracker().fallback_old_and_set_new_action(action);
 
         assert!(!rc.already_spilled());
         rc.add(chk.clone()).expect("add");
@@ -1051,8 +1050,7 @@ mod tests {
         rc.mem_tracker()
             .set_bytes_limit(chk.memory_usage() + (8 * chk.num_rows()) as i64 + 1);
         let action = rc.action_spill();
-        rc.mem_tracker()
-            .fallback_old_and_set_new_action(action);
+        rc.mem_tracker().fallback_old_and_set_new_action(action);
 
         assert!(!rc.already_spilled());
         rc.add(chk.clone()).expect("add");

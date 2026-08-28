@@ -41,7 +41,7 @@
 //! * `MemoryUsage` returns a source-shaped estimate over the Rust layout; see
 //!   [`crate::plan_base`].
 
-use tidb_expr::expression::CorrelatedColumn;
+use tidb_expr::expression::{Column, CorrelatedColumn};
 use tidb_expr::schema::Schema;
 
 use crate::cost_usage::{CostVer2, PlanCostOption};
@@ -210,7 +210,8 @@ pub fn exhaust_physical_plans_4_logical_selection(
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
 ) -> Vec<PhysicalPlan> {
-    let child_prop = prop.clone_essential_fields();
+    let mut child_prop = prop.clone_essential_fields();
+    child_prop.index_join_prop = prop.index_join_prop.clone();
     let stats = p
         .base
         .base
@@ -252,19 +253,17 @@ pub struct PhysicalProjection {
 ///
 /// `TryToGetChildProp` decides admission: a required order that runs
 /// through a computed expression cannot cross a projection, and the
-/// enumeration returns empty. Go's MPP and cop-pushdown candidates narrow
-/// away by name: both are gated on `expression.CanExprsPushDown`, which is
-/// unported — the TiFlash guard also evaluates false with no TiFlash tier,
-/// exactly as on a TiFlash-less Go cluster, but the TiKV cop candidate is
-/// a genuine narrowing (this enumeration offers FEWER candidates than Go's
-/// when projection pushdown is allowed). `admitIndexJoinProps` narrows as
-/// in [`exhaust_physical_plans_4_logical_selection`].
+/// enumeration returns empty. The TiKV candidate follows Go's
+/// `AllowProjectionPushDown`, expression-pushdown, virtual-column, and
+/// performance-benefit gates. The TiFlash candidate remains absent with no
+/// TiFlash tier, exactly as on a TiFlash-less Go cluster.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_projection(
     p: &crate::logical::LogicalProjection,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
+    allow_projection_push_down: bool,
 ) -> Vec<PhysicalPlan> {
     let Some(child_prop) = p.try_to_get_child_prop(prop) else {
         return Vec::new();
@@ -274,20 +273,49 @@ pub fn exhaust_physical_plans_4_logical_projection(
         .base
         .stats_info()
         .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
-    let mut base = BasePhysicalPlan::new(
-        allocator,
-        crate::logical::LogicalProjection::TYPE,
-        p.base.base.query_block_offset(),
-    );
-    base.base.set_stats(stats);
-    base.base.set_schema(p.base.base.schema().cloned());
-    base.set_children_req_props(vec![Some(child_prop)]);
-    vec![PhysicalPlan::Projection(PhysicalProjection {
-        base,
-        exprs: p.exprs.clone(),
-        calculate_no_delay: p.calculate_no_delay,
-        avoid_column_evaluator: false,
-    })]
+    let mut child_props = vec![child_prop.clone()];
+    let child_schema_len = p
+        .base
+        .children()
+        .first()
+        .and_then(crate::logical::LogicalPlan::schema)
+        .map_or(0, Schema::len);
+    let contains_virtual_column = p.exprs.iter().any(|expr| {
+        tidb_expr::simple_expr::extract_columns(expr)
+            .iter()
+            .any(|column| column.virtual_expr.is_some())
+    });
+    if child_prop.task_tp != TaskType::CopSingleRead
+        && allow_projection_push_down
+        && crate::pushdown::can_exprs_push_down_tikv(&p.exprs)
+        && !contains_virtual_column
+        && tidb_expr::expr_util::projection_benefits_from_pushed_down(&p.exprs, child_schema_len)
+    {
+        let mut cop_prop = child_prop.clone_essential_fields();
+        cop_prop.task_tp = TaskType::CopSingleRead;
+        child_props.push(cop_prop);
+    }
+
+    child_props
+        .into_iter()
+        .map(|mut child_prop| {
+            child_prop.index_join_prop = prop.index_join_prop.clone();
+            let mut base = BasePhysicalPlan::new(
+                allocator,
+                crate::logical::LogicalProjection::TYPE,
+                p.base.base.query_block_offset(),
+            );
+            base.base.set_stats(stats.clone());
+            base.base.set_schema(p.base.base.schema().cloned());
+            base.set_children_req_props(vec![Some(child_prop)]);
+            PhysicalPlan::Projection(PhysicalProjection {
+                base,
+                exprs: p.exprs.clone(),
+                calculate_no_delay: p.calculate_no_delay,
+                avoid_column_evaluator: false,
+            })
+        })
+        .collect()
 }
 
 /// Go `physicalop.PhysicalHashJoin`.
@@ -295,18 +323,138 @@ pub fn exhaust_physical_plans_4_logical_projection(
 pub struct PhysicalHashJoin {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
+    /// Go `PhysicalHashJoin.Concurrency`, copied from the session when this
+    /// candidate is created and retained as part of the cached plan.
+    pub concurrency: usize,
     /// Go `BasePhysicalJoin.JoinType`.
     pub join_type: LogicalJoinType,
     /// Go `BasePhysicalJoin.InnerChildIdx`.
     pub inner_child_idx: usize,
+    /// Go `PhysicalHashJoin.UseOuterToBuild`.
+    pub use_outer_to_build: bool,
+    /// Go `BasePhysicalJoin.LeftJoinKeys`.
+    pub left_join_keys: Vec<tidb_expr::column::Column>,
+    /// Go `BasePhysicalJoin.RightJoinKeys`.
+    pub right_join_keys: Vec<tidb_expr::column::Column>,
+    /// Go `BasePhysicalJoin.LeftConditions`.
+    pub left_conditions: Vec<tidb_expr::expression::Expression>,
+    /// Go `BasePhysicalJoin.RightConditions`.
+    pub right_conditions: Vec<tidb_expr::expression::Expression>,
+    /// Go `BasePhysicalJoin.OtherConditions`.
+    pub other_conditions: Vec<tidb_expr::expression::Expression>,
+}
+
+/// Go `physicalop.PhysicalMergeJoin`.
+#[derive(Clone, Debug)]
+pub struct PhysicalMergeJoin {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `BasePhysicalJoin.JoinType`.
+    pub join_type: LogicalJoinType,
+    /// Go `BasePhysicalJoin.LeftJoinKeys`, in merge order.
+    pub left_join_keys: Vec<tidb_expr::column::Column>,
+    /// Go `BasePhysicalJoin.RightJoinKeys`, in merge order.
+    pub right_join_keys: Vec<tidb_expr::column::Column>,
+    /// Go `BasePhysicalJoin.LeftConditions`.
+    pub left_conditions: Vec<tidb_expr::expression::Expression>,
+    /// Go `BasePhysicalJoin.RightConditions`.
+    pub right_conditions: Vec<tidb_expr::expression::Expression>,
+    /// Go `BasePhysicalJoin.OtherConditions`.
+    pub other_conditions: Vec<tidb_expr::expression::Expression>,
+    /// Go `PhysicalMergeJoin.Desc`.
+    pub desc: bool,
+}
+
+impl Default for PhysicalMergeJoin {
+    fn default() -> Self {
+        Self {
+            base: BasePhysicalPlan::default(),
+            join_type: LogicalJoinType::Inner,
+            left_join_keys: Vec::new(),
+            right_join_keys: Vec::new(),
+            left_conditions: Vec::new(),
+            right_conditions: Vec::new(),
+            other_conditions: Vec::new(),
+            desc: false,
+        }
+    }
+}
+
+/// The cache-rebuild slice shared by Go's `PhysicalIndexJoin`,
+/// `PhysicalIndexHashJoin`, and `PhysicalIndexMergeJoin`.
+///
+/// Index-join ranges are mutable: execute-time parameters rebuild the range
+/// template and the resulting ranges must also be copied into the inner
+/// reader's pushed-down scan.  Keeping that state on the physical node makes
+/// cached replay independent of another optimizer pass.
+#[derive(Clone, Debug)]
+pub struct PhysicalIndexJoin {
+    /// The shared physical base and its two ordinary children.
+    pub base: BasePhysicalPlan,
+    /// Go `BasePhysicalJoin.JoinType`.
+    pub join_type: LogicalJoinType,
+    /// Go `BasePhysicalJoin.InnerChildIdx`.
+    pub inner_child_idx: usize,
+    /// Which of Go's index-join executor variants this candidate uses.
+    pub kind: crate::plan_cost_ver2::IndexJoinKind,
+    /// Go `PhysicalIndexHashJoin.KeepOuterOrder` (the plain index join also
+    /// preserves its outer order by construction).
+    pub keep_outer_order: bool,
+    /// The table selected by the inner data source while answering the
+    /// index-join runtime property. Go transports the complete choice through
+    /// `IndexJoinInfo`; this identity lets the executor lower the chosen
+    /// physical access after logical join reorder has changed child ordinals.
+    pub inner_access_table_id: Option<i64>,
+    /// The selected secondary index. `None` denotes a table/common-handle
+    /// probe.
+    pub inner_access_index_id: Option<i64>,
+    /// Go `BasePhysicalJoin.LeftJoinKeys`.
+    pub left_join_keys: Vec<tidb_expr::column::Column>,
+    /// Go `BasePhysicalJoin.RightJoinKeys`.
+    pub right_join_keys: Vec<tidb_expr::column::Column>,
+    /// Go `BasePhysicalJoin.LeftConditions`.
+    pub left_conditions: Vec<tidb_expr::expression::Expression>,
+    /// Go `BasePhysicalJoin.RightConditions`.
+    pub right_conditions: Vec<tidb_expr::expression::Expression>,
+    /// The current mutable ranges owned by the index join.
+    pub ranges: crate::ranger::types::Ranges,
+    /// Parameter-dependent range metadata retained for cache rebuilding.
+    pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
+}
+
+impl Default for PhysicalIndexJoin {
+    fn default() -> Self {
+        Self {
+            base: BasePhysicalPlan::default(),
+            join_type: LogicalJoinType::Inner,
+            inner_child_idx: 1,
+            kind: crate::plan_cost_ver2::IndexJoinKind::IndexJoin,
+            keep_outer_order: false,
+            inner_access_table_id: None,
+            inner_access_index_id: None,
+            left_join_keys: Vec::new(),
+            right_join_keys: Vec::new(),
+            left_conditions: Vec::new(),
+            right_conditions: Vec::new(),
+            ranges: crate::ranger::types::Ranges::default(),
+            range_rebuild: None,
+        }
+    }
 }
 
 impl Default for PhysicalHashJoin {
     fn default() -> Self {
         Self {
             base: BasePhysicalPlan::default(),
+            concurrency: 5,
             join_type: LogicalJoinType::Inner,
             inner_child_idx: 1,
+            use_outer_to_build: false,
+            left_join_keys: Vec::new(),
+            right_join_keys: Vec::new(),
+            left_conditions: Vec::new(),
+            right_conditions: Vec::new(),
+            other_conditions: Vec::new(),
         }
     }
 }
@@ -325,6 +473,94 @@ pub struct PhysicalSort {
     /// globally; `EnforceProperty` sets it from
     /// `prop.IsSortItemAllForPartition()`.
     pub is_partial_sort: bool,
+}
+
+/// Go `ExhaustPhysicalPlans4LogicalSort` for the root task. A physical Sort
+/// requests an unordered root child and does the work itself; a column-only
+/// NominalSort requests the written order from its child and disappears when
+/// that child can provide it. Costing both is what lets an ordered scan or
+/// StreamAgg win without an executor-side ORDER BY heuristic.
+#[must_use]
+pub fn exhaust_physical_plans_4_logical_sort(
+    sort: &crate::logical::LogicalSort,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+) -> Vec<PhysicalPlan> {
+    if prop.task_tp != TaskType::Root || !match_items(prop, &sort.by_items) {
+        return Vec::new();
+    }
+    let sort_items = sort
+        .by_items
+        .iter()
+        .map(|item| {
+            let column = item.expr.as_column()?;
+            Some(crate::physical_property::SortItem::new(
+                column.unique_id,
+                item.desc,
+            ))
+        })
+        .collect::<Option<Vec<_>>>();
+    let stats = sort
+        .base
+        .base
+        .stats_info()
+        .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
+    let mut plans = Vec::with_capacity(2);
+
+    // PhysicalSort can represent the exact item list in this enum when every
+    // item is a column. Scalar ORDER BY expressions remain fail-closed until
+    // PhysicalSort carries expression-valued ByItems instead of SortItems.
+    if let Some(items) = &sort_items {
+        let mut base = BasePhysicalPlan::new(
+            allocator,
+            crate::logical::LogicalSort::TYPE,
+            sort.base.base.query_block_offset(),
+        );
+        base.base.set_stats(stats.clone());
+        base.base.set_schema(sort.base.base.schema().cloned());
+        base.set_children_req_props(vec![Some(PhysicalProperty {
+            task_tp: TaskType::Root,
+            expected_cnt: f64::MAX,
+            ..PhysicalProperty::default()
+        })]);
+        plans.push(PhysicalPlan::Sort(PhysicalSort {
+            base,
+            by_items: items.clone(),
+            is_partial_sort: false,
+        }));
+    }
+
+    if let Some(items) = sort_items {
+        let mut base = BasePhysicalPlan::new(
+            allocator,
+            crate::logical::LogicalSort::TYPE,
+            sort.base.base.query_block_offset(),
+        );
+        base.base.set_stats(stats);
+        base.base.set_schema(sort.base.base.schema().cloned());
+        base.set_children_req_props(vec![Some(PhysicalProperty {
+            task_tp: TaskType::Root,
+            expected_cnt: prop.expected_cnt,
+            sort_items: items,
+            ..PhysicalProperty::default()
+        })]);
+        plans.push(PhysicalPlan::NominalSort(NominalSort {
+            base,
+            by_items: sort
+                .by_items
+                .iter()
+                .filter_map(|item| {
+                    Some(crate::physical_property::SortItem::new(
+                        item.expr.as_column()?.unique_id,
+                        item.desc,
+                    ))
+                })
+                .collect(),
+            only_column: true,
+        }));
+    }
+    plans
 }
 
 /// Go `physicalop.PhysicalLimit` (`physical_limit.go`, whole file).
@@ -407,6 +643,10 @@ pub struct PhysicalTableScan {
     pub base: BasePhysicalPlan,
     /// Go `Table.ID`.
     pub table_id: i64,
+    /// Go `TableAsName`: the query-visible alias, when one was written.
+    pub table_as_name: Option<String>,
+    /// Go `TblCols`: all original table columns used by scan costing.
+    pub cost_columns: Vec<Column>,
     /// Go `StoreType`: which engine serves this scan. `CopTask.GetStoreType`
     /// reads it at the leaf.
     pub store_type: crate::physical_table_reader::StoreType,
@@ -417,6 +657,11 @@ pub struct PhysicalTableScan {
     /// Go `Ranges`: the scan's key ranges (`ranger.Ranges`). Empty means
     /// the builder predates range filling and reads as the full scan.
     pub ranges: crate::ranger::types::Ranges,
+    /// Access conditions and handle metadata retained for execute-time plan
+    /// cache range rebuild.
+    pub range_rebuild: Option<crate::physical_plan_cache::TableRangeRebuild>,
+    /// Go `getTableScanPenalty`'s table/session inputs.
+    pub table_scan_penalty: crate::plan_cost_ver2::TableScanPenaltyInput,
 }
 
 /// Go `physicalop.PhysicalTableDual` (`physical_table_dual.go`, whole
@@ -1008,6 +1253,11 @@ pub struct PhysicalIndexScan {
     pub base: BasePhysicalPlan,
     /// Go `Table.ID`.
     pub table_id: i64,
+    /// Go `TableAsName`: the query-visible alias, when one was written.
+    pub table_as_name: Option<String>,
+    /// Go's physical index-scan schema used by scan costing: all index
+    /// columns plus the encoded handle when it is not already present.
+    pub cost_columns: Vec<Column>,
     /// Go `Index.ID`.
     pub index_id: i64,
     /// Go `Index.Name.O`, for explain identity.
@@ -1018,6 +1268,9 @@ pub struct PhysicalIndexScan {
     pub desc: bool,
     /// Go `Ranges` (`ranger.Ranges`); empty reads as the full range.
     pub ranges: crate::ranger::types::Ranges,
+    /// Access conditions and index metadata retained for execute-time plan
+    /// cache range rebuild.
+    pub range_rebuild: Option<crate::physical_plan_cache::IndexRangeRebuild>,
 }
 
 /// Go `physicalop.PhysicalIndexReader` (`physical_index_reader.go:34`): the
@@ -1052,9 +1305,70 @@ pub struct PhysicalIndexLookUpReader {
     /// Go `ExpectedCnt`, from the cop task's `ExpectCnt` — the paging
     /// decision in the ver2 cost reads it.
     pub expect_cnt: u64,
+    /// Go `Paging`, selected by the reader cost path when paging is enabled
+    /// and `ExpectedCnt` is at most `paging.Threshold`.
+    pub paging: bool,
     /// Go `PushedLimit` (`physicalop.PushedDownLimit`), sunk by
     /// `sinkIntoIndexLookUp` after conversion.
     pub pushed_limit: Option<PushedDownLimit>,
+}
+
+/// Go `physicalop.PointGetPlan`: one table-handle or unique-index key read.
+/// The runtime-specific decoder and lock state stay outside the reusable plan;
+/// this node retains the chosen key shape and its execute-time range source.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalPointGet {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// The selected table.
+    pub table_id: i64,
+    /// The selected index, or `None` for a table handle.
+    pub index_id: Option<i64>,
+    /// The single point range represented by this plan.
+    pub ranges: crate::ranger::types::Ranges,
+    /// Parameter-dependent range metadata retained for cache rebuilding.
+    pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
+}
+
+/// Go `physicalop.BatchPointGetPlan`: a fixed-shape set of point keys.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalBatchPointGet {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// The selected table.
+    pub table_id: i64,
+    /// The selected index, or `None` for table handles.
+    pub index_id: Option<i64>,
+    /// One range per retained point key.
+    pub ranges: crate::ranger::types::Ranges,
+    /// Parameter-dependent range metadata retained for cache rebuilding.
+    pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
+}
+
+/// Go `physicalop.PhysicalIndexMergeReader`. Each partial access path owns a
+/// pushed-down plan tree; its table side has no parameter-dependent range but
+/// is retained for a complete immutable operator shape.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalIndexMergeReader {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `PartialPlans`.
+    pub partial_plans: Vec<Vec<PhysicalPlan>>,
+    /// Go `TablePlan`.
+    pub table_plan: Option<Box<PhysicalPlan>>,
+}
+
+/// The cached physical root of an INSERT/UPDATE/DELETE whose source is a
+/// SELECT. Go's rebuild visitor descends into `SelectPlan` and otherwise has
+/// no DML-local range state to update.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalDmlRoot {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go operator identity (`Insert`, `Update`, or `Delete`).
+    pub go_operator: String,
+    /// The DML source plan, when present.
+    pub select_plan: Option<Box<PhysicalPlan>>,
 }
 
 /// Go `physicalop.PushedDownLimit`.
@@ -1252,6 +1566,7 @@ pub fn get_hash_aggs(
         let child_prop = PhysicalProperty {
             task_tp: tp,
             expected_cnt: f64::MAX,
+            index_join_prop: prop.index_join_prop.clone(),
             ..PhysicalProperty::default()
         };
         let stats = agg
@@ -1294,11 +1609,9 @@ pub struct PhysicalStreamAgg {
 /// root (a double read cannot promise the order, Go's own comment).
 ///
 /// Narrowings by name: the TiFlash arm, `admitIndexJoinProp`/`Types`, the
-/// distinct push-down gate (`AllowDistinctAggPushDown` defaults OFF, so
-/// Go's default skips a distinct aggregate's candidates only when the
-/// distinct args miss the property — with the sysvar unported the
-/// distinct case refuses conservatively), and the `STREAM_AGG`-hint
-/// enforced candidates (`getEnforcedStreamAggs`).
+/// distinct push-down gate (`AllowDistinctAggPushDown` defaults OFF, so a
+/// distinct aggregate is root-only), and the `STREAM_AGG`-hint enforced
+/// candidates (`getEnforcedStreamAggs`).
 #[must_use]
 pub fn get_stream_aggs(
     agg: &crate::logical::LogicalAggregation,
@@ -1315,9 +1628,6 @@ pub fn get_stream_aggs(
         .iter()
         .any(|func| func.mode == tidb_expr::aggregation::AggFunctionMode::Final)
     {
-        return Vec::new();
-    }
-    if agg.has_distinct() {
         return Vec::new();
     }
     let group_by_cols = agg.get_group_by_cols();
@@ -1350,11 +1660,17 @@ pub fn get_stream_aggs(
         if !prop.is_prefix(&child_prop_probe) {
             continue;
         }
-        for tp in [TaskType::CopSingleRead, TaskType::Root] {
+        let task_types: &[TaskType] = if agg.has_distinct() {
+            &[TaskType::Root]
+        } else {
+            &[TaskType::CopSingleRead, TaskType::Root]
+        };
+        for &tp in task_types {
             let child_prop = PhysicalProperty {
                 task_tp: tp,
                 expected_cnt: expected,
                 sort_items: child_sort.clone(),
+                index_join_prop: prop.index_join_prop.clone(),
                 ..PhysicalProperty::default()
             };
             let stats = agg
@@ -1372,6 +1688,56 @@ pub fn get_stream_aggs(
                 agg_funcs: agg.agg_funcs.clone(),
                 group_by_items: agg.group_by_items.clone(),
             }));
+        }
+    }
+    // Go appends `getEnforcedStreamAggs` when STREAM_AGG is present. The
+    // child's `CanAddEnforcer` is the essential difference: findBestTask may
+    // install the group-key Sort below the StreamAgg when no access path
+    // delivers that order naturally.
+    if agg.prefer_agg_type & crate::expression_rewriter::PREFER_STREAM_AGG != 0
+        && prop.index_join_prop.is_none()
+    {
+        let child_sort = group_by_cols
+            .iter()
+            .map(|column| crate::physical_property::SortItem::new(column.unique_id, desc))
+            .collect::<Vec<_>>();
+        let child_prop_probe = PhysicalProperty {
+            sort_items: child_sort.clone(),
+            ..PhysicalProperty::default()
+        };
+        if prop.is_prefix(&child_prop_probe) {
+            for tp in [
+                TaskType::CopSingleRead,
+                TaskType::CopMultiRead,
+                TaskType::Root,
+            ] {
+                let child_prop = PhysicalProperty {
+                    task_tp: tp,
+                    expected_cnt: expected,
+                    sort_items: child_sort.clone(),
+                    can_add_enforcer: true,
+                    index_join_prop: prop.index_join_prop.clone(),
+                    ..PhysicalProperty::default()
+                };
+                let stats = agg
+                    .base
+                    .base
+                    .stats_info()
+                    .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
+                let mut base = BasePhysicalPlan::new(
+                    allocator,
+                    "StreamAgg",
+                    agg.base.base.query_block_offset(),
+                );
+                base.base.set_stats(stats);
+                base.base.set_schema(agg.base.base.schema().cloned());
+                base.set_children_req_props(vec![Some(child_prop)]);
+                stream_aggs.push(PhysicalPlan::StreamAgg(PhysicalStreamAgg {
+                    base,
+                    agg_funcs: agg.agg_funcs.clone(),
+                    group_by_items: agg.group_by_items.clone(),
+                }));
+            }
         }
     }
     stream_aggs
@@ -1396,6 +1762,11 @@ pub enum PhysicalPlan {
     Projection(PhysicalProjection),
     /// Go `physicalop.PhysicalHashJoin`.
     HashJoin(PhysicalHashJoin),
+    /// Go `physicalop.PhysicalMergeJoin`.
+    MergeJoin(PhysicalMergeJoin),
+    /// Go's three index-join execution variants, which share cache-rebuild
+    /// behavior.
+    IndexJoin(PhysicalIndexJoin),
     /// Go `physicalop.PhysicalSort`.
     Sort(PhysicalSort),
     /// Go `physicalop.PhysicalLimit`.
@@ -1430,6 +1801,14 @@ pub enum PhysicalPlan {
     IndexReader(PhysicalIndexReader),
     /// Go `PhysicalIndexLookUpReader`.
     IndexLookUpReader(PhysicalIndexLookUpReader),
+    /// Go `physicalop.PointGetPlan`.
+    PointGet(PhysicalPointGet),
+    /// Go `physicalop.BatchPointGetPlan`.
+    BatchPointGet(PhysicalBatchPointGet),
+    /// Go `physicalop.PhysicalIndexMergeReader`.
+    IndexMergeReader(PhysicalIndexMergeReader),
+    /// Go `Insert`/`Update`/`Delete` cached roots.
+    Dml(PhysicalDmlRoot),
     /// Go `physicalop.PhysicalTopN` (planning slice).
     TopN(PhysicalTopN),
     /// Go `physicalop.PhysicalHashAgg` (planning slice).
@@ -1448,6 +1827,8 @@ impl PhysicalPlan {
             Self::Selection(op) => &op.base,
             Self::Projection(op) => &op.base,
             Self::HashJoin(op) => &op.base,
+            Self::MergeJoin(op) => &op.base,
+            Self::IndexJoin(op) => &op.base,
             Self::Sort(op) => &op.base,
             Self::Limit(op) => &op.base,
             Self::TableScan(op) => &op.base,
@@ -1465,6 +1846,10 @@ impl PhysicalPlan {
             Self::IndexScan(op) => &op.base,
             Self::IndexReader(op) => &op.base,
             Self::IndexLookUpReader(op) => &op.base,
+            Self::PointGet(op) => &op.base,
+            Self::BatchPointGet(op) => &op.base,
+            Self::IndexMergeReader(op) => &op.base,
+            Self::Dml(op) => &op.base,
             Self::TopN(op) => &op.base,
             Self::HashAgg(op) => &op.base,
             Self::StreamAgg(op) => &op.base,
@@ -1478,6 +1863,8 @@ impl PhysicalPlan {
             Self::Selection(op) => &mut op.base,
             Self::Projection(op) => &mut op.base,
             Self::HashJoin(op) => &mut op.base,
+            Self::MergeJoin(op) => &mut op.base,
+            Self::IndexJoin(op) => &mut op.base,
             Self::Sort(op) => &mut op.base,
             Self::Limit(op) => &mut op.base,
             Self::TableScan(op) => &mut op.base,
@@ -1495,6 +1882,10 @@ impl PhysicalPlan {
             Self::IndexScan(op) => &mut op.base,
             Self::IndexReader(op) => &mut op.base,
             Self::IndexLookUpReader(op) => &mut op.base,
+            Self::PointGet(op) => &mut op.base,
+            Self::BatchPointGet(op) => &mut op.base,
+            Self::IndexMergeReader(op) => &mut op.base,
+            Self::Dml(op) => &mut op.base,
             Self::TopN(op) => &mut op.base,
             Self::HashAgg(op) => &mut op.base,
             Self::StreamAgg(op) => &mut op.base,
@@ -1766,6 +2157,8 @@ impl PhysicalPlan {
     pub const fn join_type(&self) -> Option<LogicalJoinType> {
         match self {
             Self::HashJoin(join) => Some(join.join_type),
+            Self::MergeJoin(join) => Some(join.join_type),
+            Self::IndexJoin(join) => Some(join.join_type),
             _ => None,
         }
     }
@@ -1775,6 +2168,7 @@ impl PhysicalPlan {
     pub const fn inner_child_idx(&self) -> Option<usize> {
         match self {
             Self::HashJoin(join) => Some(join.inner_child_idx),
+            Self::IndexJoin(join) => Some(join.inner_child_idx),
             _ => None,
         }
     }
@@ -1812,8 +2206,40 @@ impl PhysicalPlan {
             }),
             Self::HashJoin(op) => Self::HashJoin(PhysicalHashJoin {
                 base: base_of(&op.base),
+                concurrency: op.concurrency,
                 join_type: op.join_type,
                 inner_child_idx: op.inner_child_idx,
+                use_outer_to_build: op.use_outer_to_build,
+                left_join_keys: op.left_join_keys.clone(),
+                right_join_keys: op.right_join_keys.clone(),
+                left_conditions: op.left_conditions.clone(),
+                right_conditions: op.right_conditions.clone(),
+                other_conditions: op.other_conditions.clone(),
+            }),
+            Self::MergeJoin(op) => Self::MergeJoin(PhysicalMergeJoin {
+                base: base_of(&op.base),
+                join_type: op.join_type,
+                left_join_keys: op.left_join_keys.clone(),
+                right_join_keys: op.right_join_keys.clone(),
+                left_conditions: op.left_conditions.clone(),
+                right_conditions: op.right_conditions.clone(),
+                other_conditions: op.other_conditions.clone(),
+                desc: op.desc,
+            }),
+            Self::IndexJoin(op) => Self::IndexJoin(PhysicalIndexJoin {
+                base: base_of(&op.base),
+                join_type: op.join_type,
+                inner_child_idx: op.inner_child_idx,
+                kind: op.kind,
+                keep_outer_order: op.keep_outer_order,
+                inner_access_table_id: op.inner_access_table_id,
+                inner_access_index_id: op.inner_access_index_id,
+                left_join_keys: op.left_join_keys.clone(),
+                right_join_keys: op.right_join_keys.clone(),
+                left_conditions: op.left_conditions.clone(),
+                right_conditions: op.right_conditions.clone(),
+                ranges: op.ranges.clone(),
+                range_rebuild: op.range_rebuild.clone(),
             }),
             Self::Sort(op) => Self::Sort(PhysicalSort {
                 base: base_of(&op.base),
@@ -1833,8 +2259,12 @@ impl PhysicalPlan {
                 keep_order: op.keep_order,
                 desc: op.desc,
                 table_id: op.table_id,
+                table_as_name: op.table_as_name.clone(),
+                cost_columns: op.cost_columns.clone(),
                 store_type: op.store_type,
                 ranges: op.ranges.clone(),
+                range_rebuild: op.range_rebuild.clone(),
+                table_scan_penalty: op.table_scan_penalty,
             }),
             Self::TableDual(op) => Self::TableDual(PhysicalTableDual {
                 base: base_of(&op.base),
@@ -1878,8 +2308,15 @@ impl PhysicalPlan {
             Self::Apply(op) => Self::Apply(PhysicalApply {
                 hash_join: PhysicalHashJoin {
                     base: base_of(&op.hash_join.base),
+                    concurrency: op.hash_join.concurrency,
                     join_type: op.hash_join.join_type,
                     inner_child_idx: op.hash_join.inner_child_idx,
+                    use_outer_to_build: op.hash_join.use_outer_to_build,
+                    left_join_keys: op.hash_join.left_join_keys.clone(),
+                    right_join_keys: op.hash_join.right_join_keys.clone(),
+                    left_conditions: op.hash_join.left_conditions.clone(),
+                    right_conditions: op.hash_join.right_conditions.clone(),
+                    other_conditions: op.hash_join.other_conditions.clone(),
                 },
                 can_use_cache: op.can_use_cache,
                 concurrency: op.concurrency,
@@ -1896,11 +2333,14 @@ impl PhysicalPlan {
             Self::IndexScan(op) => Self::IndexScan(PhysicalIndexScan {
                 base: base_of(&op.base),
                 table_id: op.table_id,
+                table_as_name: op.table_as_name.clone(),
+                cost_columns: op.cost_columns.clone(),
                 index_id: op.index_id,
                 index_name: op.index_name.clone(),
                 keep_order: op.keep_order,
                 desc: op.desc,
                 ranges: op.ranges.clone(),
+                range_rebuild: op.range_rebuild.clone(),
             }),
             Self::IndexReader(op) => Self::IndexReader(PhysicalIndexReader {
                 base: base_of(&op.base),
@@ -1912,7 +2352,32 @@ impl PhysicalPlan {
                 table_plan: op.table_plan.clone(),
                 keep_order: op.keep_order,
                 expect_cnt: op.expect_cnt,
+                paging: op.paging,
                 pushed_limit: op.pushed_limit,
+            }),
+            Self::PointGet(op) => Self::PointGet(PhysicalPointGet {
+                base: base_of(&op.base),
+                table_id: op.table_id,
+                index_id: op.index_id,
+                ranges: op.ranges.clone(),
+                range_rebuild: op.range_rebuild.clone(),
+            }),
+            Self::BatchPointGet(op) => Self::BatchPointGet(PhysicalBatchPointGet {
+                base: base_of(&op.base),
+                table_id: op.table_id,
+                index_id: op.index_id,
+                ranges: op.ranges.clone(),
+                range_rebuild: op.range_rebuild.clone(),
+            }),
+            Self::IndexMergeReader(op) => Self::IndexMergeReader(PhysicalIndexMergeReader {
+                base: base_of(&op.base),
+                partial_plans: op.partial_plans.clone(),
+                table_plan: op.table_plan.clone(),
+            }),
+            Self::Dml(op) => Self::Dml(PhysicalDmlRoot {
+                base: base_of(&op.base),
+                go_operator: op.go_operator.clone(),
+                select_plan: op.select_plan.clone(),
             }),
             Self::TopN(op) => Self::TopN(PhysicalTopN {
                 base: base_of(&op.base),

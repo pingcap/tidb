@@ -521,9 +521,18 @@ fn sec_to_time_source_vectors() {
         // Go sets the constant's field-type decimal per row
         // (`SetDecimal(test.inputDecimal)`): 1, 1, then 5. A DECIMAL datum
         // carries that scale; a bare Real would be the unspecified case.
-        (Datum::Decimal(crate::Decimal::from_literal("86401.4")), "24:00:01.4"),
-        (Datum::Decimal(crate::Decimal::from_literal("-86401.4")), "-24:00:01.4"),
-        (Datum::Decimal(crate::Decimal::from_literal("86401.54321")), "24:00:01.54321"),
+        (
+            Datum::Decimal(crate::Decimal::from_literal("86401.4")),
+            "24:00:01.4",
+        ),
+        (
+            Datum::Decimal(crate::Decimal::from_literal("-86401.4")),
+            "-24:00:01.4",
+        ),
+        (
+            Datum::Decimal(crate::Decimal::from_literal("86401.54321")),
+            "24:00:01.54321",
+        ),
         (string_datum("123.4"), "00:02:03.400000"),
         (string_datum("123.4567891"), "00:02:03.456789"),
         (string_datum("123"), "00:02:03.000000"),

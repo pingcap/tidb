@@ -34,9 +34,10 @@
 //!   serialized, and no two partial results for one key ever have to be
 //!   merged: a group is opened in exactly one round and completed there.
 //!
-//! This tier's [`crate::hash_agg::HashAggExec`] is Go's `unparallelExec`, so
-//! it is this arm that is ported -- the same choice the join's spill made when
-//! it took Go's v1 container.
+//! [`crate::hash_agg::HashAggExec`] implements both arms. Serial execution
+//! registers [`AggSpillDiskAction`]; parallel execution registers
+//! [`ParallelAggSpillDiskAction`] under Go's aggregate-memory, temporary
+//! storage, spill-sysvar and non-DISTINCT gate.
 //!
 //! # The soft limit, not the hard one
 //!
@@ -78,6 +79,85 @@ pub struct AggSpillDiskAction {
     spill_times: AtomicU32,
     /// Go `a.e.memTracker`: the aggregation's own tracker.
     agg_tracker: Arc<Tracker>,
+}
+
+/// Go `ParallelAggSpillDiskAction`: asks the partial workers to serialize
+/// their current result maps. Unlike [`AggSpillDiskAction`], this never
+/// changes group admission; the parallel executor drains the in-flight
+/// chunks, partitions the partial states, and then resumes with empty maps.
+pub struct ParallelAggSpillDiskAction {
+    base: BaseOomAction,
+    need_spill: Arc<AtomicBool>,
+    spill_times: AtomicU32,
+    agg_tracker: Arc<Tracker>,
+}
+
+impl ParallelAggSpillDiskAction {
+    /// Builds the action and the flag polled by the pipeline fetcher.
+    #[must_use]
+    pub fn new(agg_tracker: &Arc<Tracker>) -> (Arc<ParallelAggSpillDiskAction>, Arc<AtomicBool>) {
+        let need_spill = Arc::new(AtomicBool::new(false));
+        let action = Arc::new(ParallelAggSpillDiskAction {
+            base: BaseOomAction::default(),
+            need_spill: Arc::clone(&need_spill),
+            spill_times: AtomicU32::new(0),
+            agg_tracker: Arc::clone(agg_tracker),
+        });
+        (action, need_spill)
+    }
+
+    /// Number of spill requests raised for diagnostics. Go applies
+    /// `maxSpillTimes` only to the serial action, not this parallel action.
+    #[must_use]
+    pub fn spill_times(&self) -> u32 {
+        self.spill_times.load(SeqCst)
+    }
+}
+
+impl ActionOnExceed for ParallelAggSpillDiskAction {
+    fn action(&self, triggered: &Arc<Tracker>) {
+        if self.need_spill.load(SeqCst) {
+            // Go waits for the active spill to finish before trying to set a
+            // new request. The Rust pipeline drains synchronously at the next
+            // epoch boundary, so an already-pending request is successful and
+            // must not fall through to cancellation.
+            return;
+        }
+        if has_enough_data_to_spill(&self.agg_tracker, triggered) {
+            self.spill_times.fetch_add(1, SeqCst);
+            self.need_spill.store(true, SeqCst);
+            tracing::info!(
+                spill_times = self.spill_times.load(SeqCst),
+                consumed = triggered.bytes_consumed(),
+                quota = triggered.get_bytes_limit(),
+                "memory exceeds quota, set parallel aggregate mode to spill-mode"
+            );
+            return;
+        }
+        if let Some(fallback) = self.get_fallback() {
+            fallback.action(triggered);
+        }
+    }
+
+    fn set_fallback(&self, action: Option<ArcAction>) {
+        self.base.set_fallback(action);
+    }
+
+    fn get_fallback(&self) -> Option<ArcAction> {
+        self.base.get_fallback()
+    }
+
+    fn get_priority(&self) -> i64 {
+        DEF_SPILL_PRIORITY
+    }
+
+    fn set_finished(&self) {
+        self.base.set_finished();
+    }
+
+    fn is_finished(&self) -> bool {
+        self.base.is_finished()
+    }
 }
 
 impl AggSpillDiskAction {

@@ -872,7 +872,10 @@ mod tests {
                 chk.append_int64(3, data);
                 if chk_idx % 2 == 0 {
                     let s = gen_string((next() % 5) as usize);
-                    chk.append_json(4, &tidb_datatype::BinaryJSON::parse(&format!("\"{s}\"")).unwrap());
+                    chk.append_json(
+                        4,
+                        &tidb_datatype::BinaryJSON::parse(&format!("\"{s}\"")).unwrap(),
+                    );
                 } else {
                     chk.append_null(4);
                 }
@@ -881,7 +884,11 @@ mod tests {
             chk.required_rows = (next() % 100) as usize;
             chk.num_virtual_rows = (next() % 100) as usize;
             let sel_len = (next() % 50 + 1) as usize;
-            chk.sel = Some((0..sel_len).map(|_| (next() % 1_000_000) as usize).collect());
+            chk.sel = Some(
+                (0..sel_len)
+                    .map(|_| (next() % 1_000_000) as usize)
+                    .collect(),
+            );
             chunks.push(chk);
         }
         (chunks, fields)
@@ -930,7 +937,10 @@ mod tests {
     fn go_test_data_in_disk_by_chunks() {
         let (num_chk, num_row) = (100usize, 1000usize);
         let (chunks, fields) = init_chunks_with_aux(num_chk, num_row);
-        let storage = isolated_storage("go_test_data_in_disk_by_chunks", SpillEncryptionMethod::Plaintext);
+        let storage = isolated_storage(
+            "go_test_data_in_disk_by_chunks",
+            SpillEncryptionMethod::Plaintext,
+        );
         let mut data_in_disk_by_chunks =
             DataInDiskByChunks::new(fields.clone(), "", Arc::clone(&storage));
 
@@ -949,7 +959,9 @@ mod tests {
         let mut chk = Chunk::new_empty(&fields);
         for i in 0..num_chk {
             chk.reset();
-            data_in_disk_by_chunks.fill_chunk(i, &mut chk).expect("fill_chunk");
+            data_in_disk_by_chunks
+                .fill_chunk(i, &mut chk)
+                .expect("fill_chunk");
             check_aux_data(&chk, &chunks[i]);
             check_chunk_payload(&chk, &chunks[i]);
         }

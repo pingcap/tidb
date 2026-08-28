@@ -35,7 +35,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub use tidb_planner::cardinality::derive_stats::ColumnId;
 use tidb_planner::cardinality::derive_stats::{
-    estimate_cols_ndv_with_matched_len, scale_ndv, StatsInfo, DEF_SCALE_NDV_SKEW_RATIO,
+    estimate_cols_ndv_with_matched_len, StatsInfo, DEF_SCALE_NDV_SKEW_RATIO,
 };
 use tidb_planner::cardinality::join::{
     estimate_full_join_row_count, FullJoinRowCountInput, JoinKeyEstimate,
@@ -519,10 +519,7 @@ fn derive_stats_with_groups(
                 }
             }
             DerivedNode {
-                stats: StatsInfo::new(
-                    row_count,
-                    columns.iter().copied().zip(ndvs),
-                ),
+                stats: StatsInfo::new(row_count, columns.iter().copied().zip(ndvs)),
                 children: derived,
                 injected: false,
             }

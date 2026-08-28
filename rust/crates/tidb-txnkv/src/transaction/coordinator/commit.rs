@@ -174,7 +174,6 @@ where
                 }
             };
 
-
             // Every admitted attempt went on the wire, so its keys may hold a
             // prewrite even if a sibling batch fails this round first. A
             // BeforePublication attempt never left this process and is added
@@ -584,19 +583,22 @@ where
         // `SecondaryLockCleanupFailureCounterCommit` because the committed
         // primary has already decided the transaction. A client that cannot
         // take ownership falls back to the awaited path below.
-        let secondary_failures =
-            if self.detach_commit_secondaries(&secondary_keys, &primary_key, receipt.commit_ts, false)
-            {
-                Vec::new()
-            } else {
-                self.commit_secondaries(
-                    &secondary_keys,
-                    &primary_key,
-                    receipt.commit_ts,
-                    false,
-                    &mut receipt,
-                )
-            };
+        let secondary_failures = if self.detach_commit_secondaries(
+            &secondary_keys,
+            &primary_key,
+            receipt.commit_ts,
+            false,
+        ) {
+            Vec::new()
+        } else {
+            self.commit_secondaries(
+                &secondary_keys,
+                &primary_key,
+                receipt.commit_ts,
+                false,
+                &mut receipt,
+            )
+        };
         self.state
             .transition(CoordinatorState::Committed)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;

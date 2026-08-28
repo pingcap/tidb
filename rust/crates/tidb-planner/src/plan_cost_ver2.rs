@@ -270,6 +270,9 @@ impl Ver2Factors {
 /// already applied here.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CostSessionOpts {
+    /// `tidb_hash_join_concurrency`, resolved and stamped on each
+    /// `PhysicalHashJoin` candidate when it is built.
+    pub hash_join_concurrency: f64,
     /// `tidb_distsql_scan_concurrency`.
     pub distsql_scan_concurrency: f64,
     /// `tidb_index_lookup_concurrency`, resolved.
@@ -301,6 +304,7 @@ pub struct CostSessionOpts {
 impl Default for CostSessionOpts {
     fn default() -> Self {
         Self {
+            hash_join_concurrency: 5.0,
             distsql_scan_concurrency: 15.0,
             index_lookup_concurrency: 5.0,
             index_lookup_join_concurrency: 5.0,

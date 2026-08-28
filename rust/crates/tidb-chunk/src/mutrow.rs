@@ -1085,11 +1085,8 @@ mod tests {
         // raw cell as `Chunk.AppendDuration`.
         let ret_types = vec![ft(C::Duration)];
         let mut chk = Chunk::new(&ret_types, 1, 1);
-        let dur = MySqlDuration::from_nanoseconds(
-            (1 * 3_600 + 23 * 60 + 45) * 1_000_000_000,
-            0,
-        )
-        .expect("01:23:45");
+        let dur = MySqlDuration::from_nanoseconds((1 * 3_600 + 23 * 60 + 45) * 1_000_000_000, 0)
+            .expect("01:23:45");
         chk.append_duration(0, dur);
         let mut mut_row = MutRow::from_types(&ret_types);
         mut_row.set_value(0, &Datum::Duration(dur));
@@ -1127,7 +1124,10 @@ mod tests {
         mut_row.shallow_copy_partial_row(0, &mut row_chunk, 0);
         let copied = mut_row.to_row();
         let row = row_chunk.get_row(0);
-        assert_eq!(copied.get_string(0).as_bytes(), row.get_string(0).as_bytes());
+        assert_eq!(
+            copied.get_string(0).as_bytes(),
+            row.get_string(0).as_bytes()
+        );
         assert_eq!(copied.get_int64(1), row.get_int64(1));
         assert_eq!(copied.get_time(2), row.get_time(2));
 
@@ -1151,7 +1151,10 @@ mod tests {
         assert_eq!(copied.get_string(0).as_bytes(), b"dfg");
         assert_eq!(copied.get_int64(1), 567);
         let row = row_chunk.get_row(0);
-        assert_eq!(copied.get_string(0).as_bytes(), row.get_string(0).as_bytes());
+        assert_eq!(
+            copied.get_string(0).as_bytes(),
+            row.get_string(0).as_bytes()
+        );
         assert_eq!(copied.get_int64(1), row.get_int64(1));
         assert_eq!(copied.get_time(2), row.get_time(2));
     }
@@ -1172,8 +1175,9 @@ mod tests {
             (data, elem_buf)
         }
 
-        let before: Vec<(Vec<u8>, Option<Vec<u8>>)> =
-            (0..mut_row.len()).map(|index| snapshot(&mut_row, index)).collect();
+        let before: Vec<(Vec<u8>, Option<Vec<u8>>)> = (0..mut_row.len())
+            .map(|index| snapshot(&mut_row, index))
+            .collect();
 
         for index in 0..mut_row.len() {
             mut_row.set_datum(index, &Datum::Null);

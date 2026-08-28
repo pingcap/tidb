@@ -308,8 +308,9 @@ fn an_expression_join_key_gets_an_injected_column() {
     // the plain-session 5, where the hash side prices below them). The
     // sibling test below already runs the same session for the same reason.
     let recorded_session = |through_proj: bool| {
-        ctx(through_proj, 10)
-            .with_optimizer_cost_env(tidb_planner::candidate_cost::CostEnv::default(), 1.0)
+        let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
+        env.session.hash_join_concurrency = 1.0;
+        ctx(through_proj, 10).with_optimizer_cost_env(env)
     };
     let dissolved = plan(sql, &catalog, &recorded_session(true));
     assert_ne!(
@@ -413,10 +414,9 @@ fn the_index_joins_outer_leaf_is_asked_for_the_order_through_the_derived_table()
     // at the plain-session 5 the hash alternative is charged what five
     // workers share and WINS this comparison -- a different session's plan.
     // The chooser now reads the session value, so the session must say 1.
-    let ctx = ctx(true, 10).with_optimizer_cost_env(
-        tidb_planner::candidate_cost::CostEnv::default(),
-        1.0,
-    );
+    let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
+    env.session.hash_join_concurrency = 1.0;
+    let ctx = ctx(true, 10).with_optimizer_cost_env(env);
     let (_, rows) = crate::explain::explain_select_stmt(
         select,
         &catalog,
@@ -481,10 +481,9 @@ fn the_injected_wrapper_is_pruned_and_its_leaf_takes_the_covering_index() {
     let sql = "SELECT t1.*, dt.* FROM t1, \
         (SELECT t2.a AS key_a, t2.b * 2 AS doubled_b FROM t2 JOIN t3 ON t2.a = t3.a) dt \
         WHERE t1.b = dt.doubled_b";
-    let ctx = ctx(true, 0).with_optimizer_cost_env(
-        tidb_planner::candidate_cost::CostEnv::default(),
-        1.0,
-    );
+    let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
+    env.session.hash_join_concurrency = 1.0;
+    let ctx = ctx(true, 0).with_optimizer_cost_env(env);
     let stmt = tidb_parser::parse(sql).unwrap();
     let Stmt::Query(query) = &stmt else {
         panic!("not a query");

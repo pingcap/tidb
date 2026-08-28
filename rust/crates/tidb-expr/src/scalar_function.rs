@@ -304,6 +304,20 @@ impl ScalarFunction {
         }
     }
 
+    /// Invalidates memoized state derived from this function's arguments.
+    ///
+    /// Cached physical-plan rebuild replaces parameter constants inside the
+    /// argument tree.  The expression node itself is retained, so every
+    /// argument-derived cache must be discarded before the rebound tree is
+    /// used by ranger or executor code.
+    pub fn invalidate_cached_arguments(&mut self) {
+        self.hashcode.clear();
+        self.in_string_hash_set = None;
+        self.in_string_non_const_args.clear();
+        self.in_string_has_null = false;
+        self.json_schema_cache = Default::default();
+    }
+
     /// Go `GetStaticType` / `GetType` (which ignores its `EvalContext`).
     #[must_use]
     pub fn get_static_type(&self) -> Option<&FieldType> {
@@ -457,9 +471,8 @@ impl ScalarFunction {
         // literal-list capacity up front, matching the source map's intended
         // read-mostly shape without changing its collision-resistant hasher or
         // any membership/collation semantics.
-        let mut hash_set = std::collections::HashSet::with_capacity(
-            self.args.len().saturating_sub(1),
-        );
+        let mut hash_set =
+            std::collections::HashSet::with_capacity(self.args.len().saturating_sub(1));
         let mut non_const_args = Vec::new();
         let mut has_null = false;
         for (index, argument) in self.args.iter().enumerate().skip(1) {
@@ -643,9 +656,7 @@ impl ScalarFunction {
                     // (`builtin_arithmetic.go:700,716`). The bare datum-level
                     // overflow becomes the source-shaped message here, where
                     // the argument expressions are still at hand.
-                    EvalError::IntOverflow => {
-                        arithmetic_overflow_error(self, op)
-                    }
+                    EvalError::IntOverflow => arithmetic_overflow_error(self, op),
                     other => other,
                 });
             }
@@ -2472,9 +2483,8 @@ mod tests {
         use tidb_chunk::chunk::Chunk;
         use tidb_datatype::Collation;
 
-        let string = |value: &str| {
-            Expression::Constant(Constant::new(Datum::new_string(value), text_ft()))
-        };
+        let string =
+            |value: &str| Expression::Constant(Constant::new(Datum::new_string(value), text_ft()));
         let chunk = Chunk::new_with_capacity(&[], 1);
 
         // Go's `builtinInStringSig.buildHashMapForConstArgs` stores the
@@ -2544,8 +2554,11 @@ mod tests {
         // Joined row: ol_o_id = 100, d_next_o_id = 105 -> minus(...) = 85 ->
         // 100 >= 85 is true. One below the join boundary: ol_o_id = 84 ->
         // 84 >= 85 is false.
-        let inner =
-            ScalarFunction::new(CiString::new("minus"), ft(), vec![build_col(), konst(Datum::Int(20))]);
+        let inner = ScalarFunction::new(
+            CiString::new("minus"),
+            ft(),
+            vec![build_col(), konst(Datum::Int(20))],
+        );
         let ge = ScalarFunction::new(
             CiString::new("ge"),
             ft(),
@@ -2555,7 +2568,10 @@ mod tests {
         let mut above = Chunk::new_with_capacity(&[ft(), ft()], 1);
         above.append_int64(0, 100);
         above.append_int64(1, 105);
-        assert_eq!(ge.eval(&NoColumns, above.get_row(0)).unwrap(), Datum::Int(1));
+        assert_eq!(
+            ge.eval(&NoColumns, above.get_row(0)).unwrap(),
+            Datum::Int(1)
+        );
 
         let mut below = Chunk::new_with_capacity(&[ft(), ft()], 1);
         below.append_int64(0, 84);
@@ -2686,7 +2702,10 @@ mod tests {
         let function = ScalarFunction::new(
             CiString::new("minus"),
             unsigned_type.clone(),
-            vec![Expression::Column(col), konst(Datum::Int(2), &unsigned_type)],
+            vec![
+                Expression::Column(col),
+                konst(Datum::Int(2), &unsigned_type),
+            ],
         );
         let error = function
             .eval(&NoColumns, row)

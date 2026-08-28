@@ -121,20 +121,19 @@ pub mod partition_routing;
 pub(crate) mod ranger_detacher;
 mod tidb_decode_key;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
+pub mod fts_like_rewrite;
 pub mod plan_hints;
 mod plan_trace;
 pub mod point_get;
-pub mod fts_like_rewrite;
 pub mod predicate_pushdown;
-mod pushdown_blacklist;
 pub mod projection;
+mod pushdown_blacklist;
 pub mod qb_hint;
 pub mod remote_scan;
 pub mod selection;
 pub mod sequence;
 pub mod show_stats;
 pub mod shuffle;
-mod skyline;
 pub mod sort;
 pub mod sort_partition;
 pub mod sort_util;
@@ -149,8 +148,6 @@ pub mod tblctx;
 pub mod tblsession;
 #[cfg(test)]
 mod tests_index_join;
-#[cfg(test)]
-mod tests_join_search;
 pub mod tiflash_recorder;
 pub mod topn;
 pub mod topn_chunk_heap;
@@ -165,13 +162,11 @@ pub mod zero_date;
 pub use apply::ApplyExec;
 pub use cte_storage::{CteStorage, CteTable};
 pub use ddl::{
-    added_check_constraint_actions, check_constraint_count, discarded_check_constraint_actions,
-    append_partition_defs, escape_partition_name, linear_partitioning_warning,
-    partition_placement_text,
-    resolve_database_charset,
-    run_alter_placement_policy, run_alter_table_in, run_create_index_in,
-    run_create_placement_policy, run_drop_placement_policy,
-    run_create_table_in, run_create_table_on, run_drop_index_in, run_drop_table_in,
+    added_check_constraint_actions, append_partition_defs, check_constraint_count,
+    discarded_check_constraint_actions, escape_partition_name, linear_partitioning_warning,
+    partition_placement_text, resolve_database_charset, run_alter_placement_policy,
+    run_alter_table_in, run_create_index_in, run_create_placement_policy, run_create_table_in,
+    run_create_table_on, run_drop_index_in, run_drop_placement_policy, run_drop_table_in,
     run_rename_table_in, run_truncate_table_in, CreateTableSettings,
 };
 pub use ddl_sequence::{
@@ -180,19 +175,19 @@ pub use ddl_sequence::{
 pub use driver::infoschema_meta;
 pub use driver::{
     access::{
-        build_prepared_point_get_plan, run_prepared_point_get, PreparedPointGetExecution,
-        PreparedPointGetPlan,
+        build_prepared_point_get_plan, build_prepared_select_plan, run_prepared_point_get,
+        run_prepared_select, PreparedPlanCacheEnvironment, PreparedPointGetExecution,
+        PreparedPointGetPlan, PreparedSelectExecution, PreparedSelectPlan,
     },
     bind_parameters, bind_prepared_statement, bind_statement, parameter_count,
     parsed_parameter_count, plan_select_meta_stmt, run_delete_in, run_delete_on, run_delete_stmt,
     run_fast_point_get, run_fast_prepared_insert, run_fast_prepared_point_get,
-    run_fast_prepared_point_get_with_decode_context,
-    run_fast_prepared_update, run_fast_single_row_scan, run_insert_in, run_insert_on,
-    run_insert_reporting, run_insert_stmt, run_select, run_select_meta_in, run_select_meta_on,
-    run_select_meta_stmt, run_select_on, run_set_opr_stmt, run_update_in, run_update_on,
-    run_update_stmt,
-    Catalog, DriverError, MemTable, MysqlError, SchemaErrorKind, SelectMeta,
-    TableEntry, TxnErrorKind, VarErrorKind, ViewDef, DEFAULT_DATABASE,
+    run_fast_prepared_point_get_with_decode_context, run_fast_prepared_update,
+    run_fast_single_row_scan, run_insert_in, run_insert_on, run_insert_reporting, run_insert_stmt,
+    run_select, run_select_meta_in, run_select_meta_on, run_select_meta_stmt, run_select_on,
+    run_set_opr_stmt, run_update_in, run_update_on, run_update_stmt, Catalog, DriverError,
+    MemTable, MysqlError, SchemaErrorKind, SelectMeta, TableEntry, TxnErrorKind, VarErrorKind,
+    ViewDef, DEFAULT_DATABASE,
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use explain::{
@@ -219,8 +214,8 @@ pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
 pub use stmt_context::{
-    PinnedAggregation, PinnedLeafAccess, PinnedPlanShape, RetryAutoIds, RowIdShardGenerator, SequenceSnapshot, StatementClass,
-    StmtContext, MAX_WARNING_COUNT,
+    RetryAutoIds, RowIdShardGenerator, SequenceSnapshot, StatementClass, StmtContext,
+    MAX_WARNING_COUNT,
 };
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;

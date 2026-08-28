@@ -643,6 +643,21 @@ fn aggregation_derive_stats_uses_the_group_ndv() {
     assert!((agg_plan.input_count - 1000.0).abs() < 1e-9);
 }
 
+/// Go's production `EstimateColsNDVWithMatchedLen` uses the largest scalar
+/// NDV for a multi-column group when no exact GroupNDV exists.
+#[test]
+fn aggregation_derive_stats_does_not_multiply_group_column_ndvs() {
+    let mut agg_plan = LogicalAggregation::new(
+        BaseLogicalPlan::with_id(1, LogicalAggregation::TYPE, 0),
+        vec![],
+        vec![col_expr(1), col_expr(2)],
+    );
+    let output = schema(&[100]);
+    let child = StatsInfo::new(1000.0, [(1, 25.0), (2, 40.0)]);
+    let (stats, _) = agg_plan.derive_stats(&[child], &output, &[true]).unwrap();
+    assert!((stats.row_count() - 40.0).abs() < 1e-9);
+}
+
 /// A scalar aggregate is exactly one row.
 #[test]
 fn aggregation_derive_stats_for_a_scalar_aggregate_is_one_row() {
@@ -1119,6 +1134,67 @@ fn data_source_build_key_info_adds_the_int_primary_key() {
     source.build_key_info(&mut output, Vec::new());
     assert!(output.pk_or_uk.is_empty());
     assert!(source.get_pk_is_handle_col(&output).is_none());
+}
+
+#[test]
+fn data_source_unique_index_keys_keep_nullability_and_pruning_semantics() {
+    let mut source = DataSource::new(BaseLogicalPlan::default(), 7, "t");
+    source.columns = vec![
+        DataSourceColumn {
+            id: 1,
+            name: "a".to_owned(),
+            is_primary_key: false,
+        },
+        DataSourceColumn {
+            id: 2,
+            name: "b".to_owned(),
+            is_primary_key: false,
+        },
+    ];
+    source.indexes = vec![crate::plan_builder::catalog::SourceIndex {
+        columns: vec![
+            crate::plan_builder::catalog::SourceIndexColumn {
+                name: "a".to_owned(),
+                ..Default::default()
+            },
+            crate::plan_builder::catalog::SourceIndexColumn {
+                name: "b".to_owned(),
+                ..Default::default()
+            },
+        ],
+        unique: true,
+        is_public: true,
+        ..Default::default()
+    }];
+    let mut output = schema(&[1, 2]);
+    for column in &mut output.columns {
+        column
+            .ret_type
+            .as_mut()
+            .unwrap()
+            .add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    }
+    let (strong, nullable) = source.index_keys(&output);
+    assert_eq!(
+        strong[0]
+            .iter()
+            .map(|column| column.unique_id)
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert!(nullable.is_empty());
+
+    output.columns[1]
+        .ret_type
+        .as_mut()
+        .unwrap()
+        .del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    let (strong, nullable) = source.index_keys(&output);
+    assert!(strong.is_empty());
+    assert_eq!(nullable.len(), 1);
+
+    let (strong, nullable) = source.index_keys(&schema(&[1]));
+    assert!(strong.is_empty() && nullable.is_empty());
 }
 
 /// Go `DataSource.PreparePossibleProperties` (`logical_datasource.go:343`):

@@ -8,6 +8,50 @@
 
 use super::*;
 
+fn planner_index_path(
+    sql: &str,
+    catalog: &Catalog,
+    table: &KvTable,
+    visible: &str,
+) -> Option<(i64, Vec<IndexRange>)> {
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query")
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a select")
+    };
+    let decision = crate::driver::planner_bridge::select_decision(
+        select,
+        catalog,
+        "test",
+        &crate::StmtContext::for_query(),
+    )?;
+    let access = crate::driver::planner_bridge::AccessDecision::for_leaf(
+        &decision.access,
+        table.table_id,
+        visible,
+    )?;
+    let crate::driver::planner_bridge::AccessPath::Index {
+        index_id, ranges, ..
+    } = &access.path
+    else {
+        return None;
+    };
+    Some((
+        *index_id,
+        ranges
+            .iter()
+            .map(|range| IndexRange {
+                low: range.low_val.clone(),
+                high: range.high_val.clone(),
+                low_exclusive: range.low_exclude,
+                high_exclusive: range.high_exclude,
+            })
+            .collect(),
+    ))
+}
+
 /// Go `AdjustRowCountForTableScanByLimit`: an ordered LIMIT over a matching
 /// common-handle prefix expects the first qualifying row near the start of
 /// the remaining range, then applies the shipped 0.01 ordering-risk ratio.
@@ -33,17 +77,20 @@ fn ordered_limit_adjusts_the_common_handle_scan_estimate() {
     let TableEntry::Kv(table) = catalog.get_mut_in("test", "new_order").unwrap() else {
         panic!("new_order is not a KV table");
     };
-    table.add_index(crate::kv_table::KvIndex {
-        id: 1,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
-        column_offsets: vec![2, 1, 0],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
+    table.add_index(
+        crate::kv_table::KvIndex {
+            id: 1,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+            column_offsets: vec![2, 1, 0],
+            visible: true,
+            global: false,
+            clustered_primary: false,
+        },
+        false,
+    );
     scale_analyzed_tpcc_table(
         &mut catalog,
         "new_order",
@@ -462,44 +509,7 @@ fn index_ranges_are_built_the_way_go_builds_them() {
     let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("q") else {
         panic!("expected a kv table");
     };
-    let columns = table
-        .columns
-        .iter()
-        .map(|c| (c.name.clone(), c.field_type.clone()))
-        .collect::<Vec<_>>();
-    let ranges = |sql: &str| {
-        let stmt = tidb_parser::parse(sql).unwrap();
-        let Stmt::Query(query) = &stmt else {
-            panic!("not a query")
-        };
-        let QueryStmt::Select(select) = &**query else {
-            panic!("not a select")
-        };
-        let scope = crate::plan_trace::PlanTrace::single_table_scope("q", None, columns.clone());
-        // This case is about INDEX paths; a table path chosen here would be a
-        // different assertion and must not be silently read as one.
-        match choose_index_range_path(
-            select,
-            &catalog,
-            &scope,
-            table,
-            &columns,
-            &crate::index_hints::AvailablePaths::unrestricted(),
-            false,
-            &crate::StmtContext::for_query(),
-            None,
-            None,
-        ) {
-            Some(crate::driver::access::ChosenPath::Index(id, ranges, _, _, _, _)) => {
-                Some((id, ranges))
-            }
-            Some(crate::driver::access::ChosenPath::HandleRange(ranges, _, _, _)) => {
-                panic!("expected an index path, got a handle range {ranges:?}")
-            }
-            Some(crate::driver::access::ChosenPath::FullTable(_, _)) => None,
-            None => None,
-        }
-    };
+    let ranges = |sql: &str| planner_index_path(sql, &catalog, table, "q");
 
     // Go: GT is (v, MaxValue], LT is [MinNotNull, v).
     assert_eq!(
@@ -706,42 +716,8 @@ fn a_non_unique_index_ranges_on_the_clustered_handle_too() {
     let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("t1") else {
         panic!("expected a kv table");
     };
-    let columns = table
-        .columns
-        .iter()
-        .map(|c| (c.name.clone(), c.field_type.clone()))
-        .collect::<Vec<_>>();
-    let ranges = |sql: &str| {
-        let stmt = tidb_parser::parse(sql).unwrap();
-        let Stmt::Query(query) = &stmt else {
-            panic!("not a query")
-        };
-        let QueryStmt::Select(select) = &**query else {
-            panic!("not a select")
-        };
-        let scope = crate::plan_trace::PlanTrace::single_table_scope("t1", None, columns.clone());
-        match choose_index_range_path(
-            select,
-            &catalog,
-            &scope,
-            table,
-            &columns,
-            &crate::index_hints::AvailablePaths::unrestricted(),
-            false,
-            &crate::StmtContext::for_query(),
-            None,
-            None,
-        ) {
-            Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _, _, _)) => Some(ranges),
-            Some(crate::driver::access::ChosenPath::HandleRange(ranges, _, _, _)) => {
-                panic!("expected an index path, got a handle range {ranges:?}")
-            }
-            Some(crate::driver::access::ChosenPath::FullTable(_, _)) => {
-                panic!("expected an index path, got the whole-table scan")
-            }
-            None => panic!("expected an index path, got the whole-table scan"),
-        }
-    };
+    let ranges =
+        |sql: &str| planner_index_path(sql, &catalog, table, "t1").map(|(_, ranges)| ranges);
 
     // `(1 1,1 +inf]`: the point on the declared key part, the handle's range
     // appended behind it.
@@ -873,34 +849,12 @@ fn a_unique_index_gets_no_handle_dimension() {
     let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("u") else {
         panic!("expected a kv table");
     };
-    let columns = table
-        .columns
-        .iter()
-        .map(|c| (c.name.clone(), c.field_type.clone()))
-        .collect::<Vec<_>>();
-    let stmt =
-        tidb_parser::parse("SELECT * FROM u USE INDEX (uc2) WHERE c2 = 20 AND c1 > 1").unwrap();
-    let Stmt::Query(query) = &stmt else {
-        panic!("not a query")
-    };
-    let QueryStmt::Select(select) = &**query else {
-        panic!("not a select")
-    };
-    let scope = crate::plan_trace::PlanTrace::single_table_scope("u", None, columns.clone());
-    if let Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _, _, _)) =
-        choose_index_range_path(
-            select,
-            &catalog,
-            &scope,
-            table,
-            &columns,
-            &crate::index_hints::AvailablePaths::unrestricted(),
-            false,
-            &crate::StmtContext::for_query(),
-            None,
-            None,
-        )
-    {
+    if let Some((_, ranges)) = planner_index_path(
+        "SELECT * FROM u USE INDEX (uc2) WHERE c2 = 20 AND c1 > 1",
+        &catalog,
+        table,
+        "u",
+    ) {
         assert!(
             ranges.iter().all(|range| range.low.len() == 1),
             "a unique index must not range on the handle: {ranges:?}"
@@ -990,34 +944,12 @@ fn a_handle_that_is_already_a_key_part_is_not_appended_again() {
     let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("hd") else {
         panic!("expected a kv table");
     };
-    let columns = table
-        .columns
-        .iter()
-        .map(|c| (c.name.clone(), c.field_type.clone()))
-        .collect::<Vec<_>>();
-    let stmt =
-        tidb_parser::parse("SELECT * FROM hd USE INDEX (c2c1) WHERE c2 = 1 AND c1 > 1").unwrap();
-    let Stmt::Query(query) = &stmt else {
-        panic!("not a query")
-    };
-    let QueryStmt::Select(select) = &**query else {
-        panic!("not a select")
-    };
-    let scope = crate::plan_trace::PlanTrace::single_table_scope("hd", None, columns.clone());
-    let Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _, _, _)) =
-        choose_index_range_path(
-            select,
-            &catalog,
-            &scope,
-            table,
-            &columns,
-            &crate::index_hints::AvailablePaths::unrestricted(),
-            false,
-            &crate::StmtContext::for_query(),
-            None,
-            None,
-        )
-    else {
+    let Some((_, ranges)) = planner_index_path(
+        "SELECT * FROM hd USE INDEX (c2c1) WHERE c2 = 1 AND c1 > 1",
+        &catalog,
+        table,
+        "hd",
+    ) else {
         panic!("expected an index path");
     };
     assert_eq!(

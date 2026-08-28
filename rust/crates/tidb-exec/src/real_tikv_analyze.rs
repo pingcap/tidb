@@ -263,8 +263,8 @@ mod tests {
     use std::thread;
     use std::time::Duration;
     use tidb_stats::row_sample_collector::adjusted_sample_rate;
-    use tidb_txnkv::rpc::UnaryCallContext;
     use tidb_txnkv::region::RegionBackoffKind;
+    use tidb_txnkv::rpc::UnaryCallContext;
     use tidb_txnkv::transaction::{
         OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction,
         TransactionCause,

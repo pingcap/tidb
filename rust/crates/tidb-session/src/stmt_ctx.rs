@@ -58,6 +58,8 @@ pub(crate) struct StatementVarSnapshot {
     advanced_join_reorder: bool,
     constraint_check_in_place: bool,
     ordering_index_selectivity_ratio: f64,
+    allow_projection_push_down: bool,
+    limit_push_down_threshold: u64,
     join_reorder_through_proj: bool,
     join_reorder_through_sel: bool,
     outer_join_reorder: bool,
@@ -78,19 +80,19 @@ impl Session {
         &self,
         mem_quota: i64,
         tmp_storage_on_oom: bool,
-    ) -> (tidb_planner::candidate_cost::CostEnv, f64) {
+    ) -> tidb_planner::find_best_task::coster::CostEnv {
         // Everything below derives from the session's variable table, except
         // the two per-statement arguments, which are patched onto the cached
         // copy -- so a statement pays one stamp check and one clone instead
         // of thirty-odd string lookups and parses. Go's equivalents are
         // typed `SessionVars` fields maintained at `SET`.
         let generation = self.vars.generation();
-        if let Some((cached_at, env, join_concurrency)) = self.cost_env_cache.borrow().as_ref() {
+        if let Some((cached_at, env)) = self.cost_env_cache.borrow().as_ref() {
             if *cached_at == generation {
                 let mut env = env.clone();
                 env.session.mem_quota = mem_quota;
                 env.session.enable_tmp_storage_on_oom = tmp_storage_on_oom;
-                return (env, *join_concurrency);
+                return env;
             }
         }
         let number = |name: &str, default: f64| {
@@ -120,7 +122,8 @@ impl Session {
             }
         };
 
-        let mut env = tidb_planner::candidate_cost::CostEnv::default();
+        let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
+        env.session.hash_join_concurrency = resolved_concurrency("tidb_hash_join_concurrency");
         env.session.distsql_scan_concurrency = number("tidb_distsql_scan_concurrency", 15.0);
         env.session.index_lookup_concurrency =
             resolved_concurrency("tidb_index_lookup_concurrency");
@@ -158,9 +161,8 @@ impl Session {
         env.cost_factors.hash_join = number("tidb_opt_hash_join_cost_factor", 1.0);
         env.cost_factors.index_join = number("tidb_opt_index_join_cost_factor", 1.0);
 
-        let join_concurrency = resolved_concurrency("tidb_hash_join_concurrency");
-        *self.cost_env_cache.borrow_mut() = Some((generation, env.clone(), join_concurrency));
-        (env, join_concurrency)
+        *self.cost_env_cache.borrow_mut() = Some((generation, env.clone()));
+        env
     }
 
     /// The expression context used by an immutable prepared PointGet plan.
@@ -612,6 +614,13 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<f64>().ok())
                 .unwrap_or(0.01),
+            allow_projection_push_down: on("tidb_opt_projection_push_down"),
+            limit_push_down_threshold: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_LIMIT_PUSH_DOWN_THRESHOLD)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD as u64),
             join_reorder_through_proj: on(
                 tidb_vardef::tidb_vars::TIDB_OPT_JOIN_REORDER_THROUGH_PROJ,
             ),
@@ -719,6 +728,8 @@ impl Session {
         let advanced_join_reorder = snapshot.advanced_join_reorder;
         let constraint_check_in_place = snapshot.constraint_check_in_place;
         let ordering_index_selectivity_ratio = snapshot.ordering_index_selectivity_ratio;
+        let allow_projection_push_down = snapshot.allow_projection_push_down;
+        let limit_push_down_threshold = snapshot.limit_push_down_threshold;
         let join_reorder_through_proj = snapshot.join_reorder_through_proj;
         let join_reorder_through_sel = snapshot.join_reorder_through_sel;
         let outer_join_reorder = snapshot.outer_join_reorder;
@@ -750,8 +761,7 @@ impl Session {
                 .unwrap_or_default();
             !(value.eq_ignore_ascii_case("off") || value == "0")
         };
-        let (optimizer_cost_env, hash_join_concurrency) =
-            self.optimizer_cost_env(mem_quota, tmp_storage_on_oom);
+        let optimizer_cost_env = self.optimizer_cost_env(mem_quota, tmp_storage_on_oom);
         let oom_action = tidb_executor::OomAction::parse(
             &self
                 .vars
@@ -781,8 +791,10 @@ impl Session {
                 .with_join_reorder_threshold(join_reorder_threshold)
                 .with_advanced_join_reorder(advanced_join_reorder)
                 .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
+                .with_projection_push_down(allow_projection_push_down)
+                .with_limit_push_down_threshold(limit_push_down_threshold)
                 .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
-                .with_optimizer_cost_env(optimizer_cost_env.clone(), hash_join_concurrency)
+                .with_optimizer_cost_env(optimizer_cost_env.clone())
                 .with_join_reorder_through_proj(join_reorder_through_proj)
                 .with_join_reorder_through_sel(join_reorder_through_sel)
                 .with_outer_join_reorder(outer_join_reorder)
@@ -828,19 +840,8 @@ impl Session {
                 .with_like_default_escape(like_default_escape)
                 .with_default_string_match_selectivity(default_string_match_selectivity)
                 .with_sysdate_is_now(sysdate_is_now)
+                .with_resource_group_name(self.active_resource_group.clone())
                 .with_clock(clock, zone);
-            // Prepared plan cache, the reusable half: hand the in-flight
-            // statement its replay pins and/or capture sink.
-            if let Some(state) = self.active_prepared_pin.borrow().as_ref() {
-                let mut ctx = ctx;
-                if let Some(pins) = &state.apply {
-                    ctx = ctx.with_prepared_path_pins(Arc::clone(pins));
-                }
-                if let Some(sink) = &state.capture {
-                    ctx = ctx.with_prepared_pin_capture(Arc::clone(sink));
-                }
-                return ctx;
-            }
             return ctx;
         }
         let (increment, offset) = self.auto_increment_step();
@@ -882,6 +883,7 @@ impl Session {
         .with_sequences(self.sequence_snapshot())
         .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
         .with_sysdate_is_now(sysdate_is_now)
+        .with_resource_group_name(self.active_resource_group.clone())
         .with_clock(clock, zone)
         .with_sql_mode(scanner_sql_mode_of(&snapshot.mode_upper))
         .with_no_unsigned_subtraction(has("NO_UNSIGNED_SUBTRACTION"))
@@ -906,8 +908,10 @@ impl Session {
         .with_join_reorder_threshold(join_reorder_threshold)
         .with_advanced_join_reorder(advanced_join_reorder)
         .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
+        .with_projection_push_down(allow_projection_push_down)
+        .with_limit_push_down_threshold(limit_push_down_threshold)
         .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
-        .with_optimizer_cost_env(optimizer_cost_env, hash_join_concurrency)
+        .with_optimizer_cost_env(optimizer_cost_env)
         .with_join_reorder_through_proj(join_reorder_through_proj)
         .with_join_reorder_through_sel(join_reorder_through_sel)
         .with_outer_join_reorder(outer_join_reorder)

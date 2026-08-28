@@ -12,404 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Which side of a join, if either, can be READ ONCE PER OUTER KEY rather
-//! than read whole: Go's `getIndexJoinBuildHelper` reduced to the shapes
-//! this tier can both execute and print.
+//! Lowers an exact physical IndexJoin receipt into executor lookup metadata.
 //!
-//! # What Go decides here, and what this decides
-//!
-//! Go asks this question inside `findBestTask`: an `IndexJoinProp` travels
-//! down to the inner `DataSource`, which answers with the access path its
-//! ranger can build from the outer join keys
-//! (`buildDataSource2IndexScanByIndexJoinProp` for an index,
-//! `buildDataSource2TableScanByIndexJoinProp` for the clustered handle), and
-//! the resulting task is COSTED against the hash and merge alternatives.
-//!
-//! This tier has no join cost model and no physical-plan IR to cost (see
-//! `crate::driver::merge_decision` for the same seam on the merge side), so
-//! the choice here is STRUCTURAL, and deliberately narrower than Go's:
-//!
-//! * the looked-up side is a single base table read whole -- not a derived
-//!   table, not a nested join, not a partitioned table, and not a side column
-//!   pruning has narrowed (its offsets would no longer be the table's);
-//! * every probe column's type must be EXACTLY the indexed column's type, so
-//!   the outer value IS the index probe. Go instead converts each outer value
-//!   to the inner column's type and drops the row when the round trip changes
-//!   it (`constructDatumLookupKey`'s `ConvertTo` + `Compare`); requiring the
-//!   types to agree removes that whole branch rather than reimplementing it,
-//!   at the cost of refusing the mixed-type joins Go accepts. NAMED RESIDUE.
-//! * the looked-up side is never the outer-join-PRESERVED side, which is Go's
-//!   rule too: an index join reads its inner side per outer row, and a
-//!   preserved side must be read whole.
-//!
-//! # Why this is not an over-eager chooser
-//!
-//! The structural conditions above are necessary for Go to pick an index
-//! join, but they are NOT sufficient: Go picks between the three strategies
-//! by cost, and a join over an indexed key whose outer side is large is
-//! usually a hash join in Go. So one more condition is imposed, and it is the
-//! one the recordings support: the driving side must NOT itself be a single
-//! base table. Every recorded plan this tier can currently reach an
-//! `IndexJoin` for drives from a DERIVED table -- a projection over a join,
-//! whose join key is a computed expression that only an index probe can use
-//! -- and every recorded plan whose two sides are both base tables is a hash
-//! or merge join in Go. See `docs` on [`index_join_decision`].
-
-//! # THE MEASUREMENT HISTORY OF THIS DECISION
-//!
-//! Every rule tried here was falsified against the recordings, and the
-//! sections below are those measurements in the order they were made. They
-//! are kept because each one names a prerequisite the next one refuted.
-//!
-//! ## The structural rules, and what falsified them
-//!
-//! Every structural rule tried here was falsified against
-//! `r/planner/core/join_reorder_through_projection.result`, which records the
-//! same statements twice -- once under `tidb_opt_join_reorder_through_proj =
-//! off` and once under `on`:
-//!
-//! * "the inner side is a base table with an index on the join key" fires on
-//!   `jt_ab`/`jt_ch` and on `t5`, where TiDB reads the table WHOLE and merge-
-//!   or hash-joins it. Replay: 13 -> 18 divergences.
-//! * "...and the outer join key is a projected EXPRESSION (Go's bare
-//!   `Column`), the one key no index can pre-sort" is the narrowest rule the
-//!   recordings suggest, and it is still wrong: `select t1.*, dt.* from t1,
-//!   (select t2.a, t2.b * 2 from t2 join t3 ...) dt where t1.b =
-//!   dt.doubled_b` has exactly that shape and TiDB plans a `HashJoin` over a
-//!   `TableFullScan` of `t1` under BOTH settings of the variable
-//!   (result:1584 and result:1607). Replay: 13 -> 22 divergences.
-//!
-//! What separates the recorded index joins from the recorded hash joins over
-//! the same shape is not a property this decision can read at all: it is
-//! WHICH JOIN TREE the statement was reordered into before any strategy was
-//! costed. The section below measures that. A structural chooser here can
-//! only trade one recorded instance of a statement for the other, never
-//! reduce the divergence count.
-//!
-//! Everything BELOW this switch is exercised by
-//! `crate::tests_index_join`: the decision, the executor
-//! ([`crate::join::IndexLookupPlan`]) and the plan text. It is not thereby
-//! PROVEN -- running the replay with the switch on is what found the range
-//! text naming an inner table by its alias instead of by its own name (Go's
-//! `OrigName`, see [`JoinSide::origin`]), which no test below reached.
-//!
-//! # What the cost model is, and what it turns out not to decide
-//!
-//! Half of it exists and is validated:
-//! [`tidb_planner::plan_cost_ver2`] is Go's `plan_cost_ver2.go` -- the
-//! DEFAULT cost model -- reproducing every `estCost` in
-//! `r/planner/core/plan_cost_ver2.result` to the printed digit, including
-//! `getIndexJoinCostVer24PhysicalIndexJoin` and `compareTaskCost`.
-//!
-//! # `gorun` is NOT an oracle for these statements, and why
-//!
-//! Read the paragraph below with this correction in front of it. `gorun` runs
-//! a plain session; mysql-tester, which RECORDED every `.result` this tier
-//! replays, puts extra variables in the DSN of every connection it opens, and
-//! one of them decides exactly this question:
-//!
-//! ```text
-//! tidb_hash_join_concurrency = 1     (a plain session resolves to 5)
-//! ```
-//!
-//! `getPlanCostVer24PhysicalHashJoin` divides the probe filter and the probe
-//! hash by `p.Concurrency`, so at 1 a hash join is charged what five workers
-//! would have shared. Measured against a `tidb-server` built from this tree
-//! (`make server`), replaying `planner/core/join_reorder_through_projection`
-//! reproduces 87 of its 94 recorded plans at concurrency 5 and 94 of 94 at
-//! concurrency 1; the SEVEN it gets wrong at 5 are seven of the eight
-//! `IndexHashJoin`/`IndexJoin` plans this switch exists to reach. On the
-//! three-join shape of `result:1042` the same statement costs `3943972.48` at
-//! concurrency 1 and `2969908.48` at 5, and at 5 the join even swaps which
-//! side it builds. `gorun` and `goeval` therefore print the plan of a
-//! DIFFERENT session than the one the recording was made in, and a per-node
-//! cost table taken from them is a table for another plan. The replay
-//! harness issues the variables (see the mysql-tester setup list in
-//! `difftests/result-tests/tests/mysqltest_connections.rs`); anything else
-//! asking Go what it costs must set them by hand.
-//!
-//! # A cost evaluator is NOT the missing piece. Join reorder is.
-//!
-//! The paragraph above named the missing piece as "a recursive plan-cost
-//! evaluator over THIS tier's plan tree". That is now FALSIFIED, by asking a
-//! `tidb-server` built from this tree the one question that separates the two
-//! explanations: hold the statement, the data, the session variables and the
-//! statistics fixed, and move only `tidb_opt_join_reorder_through_proj`.
-//!
-//! The subject is `result:1042`'s statement, on a COLD database (so pseudo
-//! statistics answer 10000 rows, as they did when the file was recorded):
-//!
-//! ```text
-//! OFF  HashJoin(Projection(MergeJoin(MergeJoin(t3,t2), t4)), t1)
-//!        t1: TableFullScan                       <- read WHOLE
-//! ON   MergeJoin(t4, MergeJoin(t3, IndexHashJoin(Projection(t2), t1)))
-//!        t1: IndexRangeScan range: decided by [eq(<db>.t1.b, Column)]
-//! ```
-//!
-//! The two plans are not two strategies over one join tree; they are two
-//! JOIN TREES. Under `on`, Go's `join_reorder` looks through the projection,
-//! pulls the `t1` join out of the derived table and lands it at the BOTTOM of
-//! a left-deep chain -- and only in that position does the index join win.
-//! Under `off` the tree is the one THIS TIER builds, and on that tree TiDB's
-//! own cost model chooses the hash join over a whole-table read of `t1`,
-//! which is exactly what this switch's `false` already produces.
-//!
-//! So a faithful cost evaluator over this tier's tree would agree with TiDB
-//! about this tier's tree, and this tier's tree is the `off` one. The
-//! evaluator cannot reach the `on` plan because the join it would have to
-//! cost does not exist here.
-//!
-//! Measured end to end, at commit `250d117`: flipping this switch to `true`
-//! takes `planner/core/join_reorder_through_projection` from 13 divergences
-//! to 22 and fixes ZERO of the eight targets. The topic records every
-//! statement under BOTH settings of the variable and this decision is blind
-//! to it, so the gate fires on both instances -- right on the `on` one, wrong
-//! on the `off` one -- and the `on` instances still diverge for their own
-//! reasons (`t5`'s covering-index choice, and TiDB reading `t1` whole under a
-//! shape this tier plans differently). "Trades one recorded instance of a
-//! statement for the other" was the right prediction; the count is 13 -> 22
-//! with a FIXED column of zero.
-//!
-//! The named prerequisite is therefore `tidb_opt_join_reorder_through_proj`
-//! itself -- `pkg/planner/core/rule_join_reorder.go`'s projection inlining
-//! and its `colExprMap` substitution -- not [`tidb_planner::plan_cost_ver2`].
-//! A cost comparison becomes the deciding input only AFTER the reordered tree
-//! exists to compare over.
-//!
-//! # That prerequisite has since LANDED, and the switch still cannot flip
-//!
-//! `driver::through_proj::inject_expressions` now materializes Go's
-//! `injectExpr` column, so the `on` tree above is a tree this tier BUILDS:
-//! for `result:1319`'s statement it reaches `t5` on top, `t3` next, and
-//! `Projection(t2)` joined against `t1` at the bottom -- the recorded leaf
-//! order, the one the paragraph above said the evaluator could not reach.
-//!
-//! Re-measured on that tree, flipping this switch to `true` is WORSE than it
-//! was before the reorder existed:
-//!
-//! | | `false` | `true` |
-//! | --- | --- | --- |
-//! | topic divergences | `13` | `25` (was `22` at `250d117`) |
-//! | corpus divergences | `24` | `36` |
-//! | `join_shape` agreements | `105` | `91` |
-//! | topic join plans | `68` of `82` | `54` of `82` |
-//!
-//! Those `false` figures are the ones that commit measured; the corpus has
-//! moved under them since, so read them as a BEFORE/AFTER pair and not as a
-//! current baseline. Re-measured with the switch still `false`, the replay
-//! reports `planner/core/join_reorder_through_projection: 311 matched, 15
-//! diverged, 20 skipped of 346` and `70 of 84 join plans agree`, under a
-//! corpus-wide `join shape over 106 topics: 137 of 231 join plans agree on
-//! BOTH`.
-//!
-//! So the tree was necessary and is not sufficient. What the numbers now
-//! isolate is the thing the paragraph above deferred and nothing has supplied:
-//! the COMPARISON. [`index_join_decision`] answers "could an index join be
-//! built here", and with the switch on that structural answer becomes the
-//! decision -- so the index join is taken wherever it is possible rather than
-//! wherever it is cheaper, which is why the agreements fall on a tree that
-//! otherwise got closer to TiDB's. The missing input is a recursive
-//! [`tidb_planner::plan_cost_ver2`] evaluation of both candidate plans.
-//!
-//! # The evaluator EXISTS now, and "the only missing input" was wrong twice
-//!
-//! [`tidb_planner::candidate_cost`] is that recursion: `GetPlanCostVer2` over
-//! a whole candidate plan, children first. It is validated node by node
-//! against `EXPLAIN FORMAT='cost_trace'` from a `tidb-server` built from this
-//! tree in a session carrying mysql-tester's DSN variables -- every node of
-//! `result:1042`'s recorded `IndexHashJoin`, every node of `result:1169`'s
-//! recorded `IndexJoin`, and every node of the HASH-JOIN ALTERNATIVE a
-//! `hash_join()` hint makes the same server print at the same join. All three
-//! reproduce to the printed digit.
-//!
-//! The paragraph above then called that evaluation the ONLY missing input.
-//! Building it falsified the claim twice over.
-//!
-//! ## First: the evaluator needs a row count this tier cannot supply
-//!
-//! `getCardinality(p)` is read at EVERY node, and the dominant index-join
-//! term is `buildRows*10*tidb_cpu_factor` -- `3,992,000` of `result:1042`'s
-//! `4,606,578.48`. This tier derives a per-node row estimate in exactly one
-//! place, [`crate::plan_trace::PlanTrace`], which the driver constructs only
-//! for `EXPLAIN`. A comparison wired to it would make the STRATEGY depend on
-//! whether the statement is being explained -- `EXPLAIN` printing an index
-//! join over a pipeline that hash-joins. The prerequisite is an estimate
-//! owner both the recorder and the chooser read, which `PlanTrace` is not.
-//!
-//! ## Second: a comparison AT THIS JOIN is not the comparison Go makes
-//!
-//! Measured on the same server, holding the statement, the data and the
-//! session fixed, and moving only a `hash_join()` hint:
-//!
-//! | | `result:1042` (pseudo) | `result:1169` (ANALYZEd) |
-//! | --- | --- | --- |
-//! | Go's recorded join | `IndexHashJoin_51 10000.00 4606578.48` | `IndexJoin_31 2.00 4106.23` |
-//! | the hash alternative | `HashJoin_94 10000.00 2373179.65` | `HashJoin_38 2.00 2423.24` |
-//! | cheaper AT THE JOIN | hash, by `2233398.83` | hash, by `1682.99` |
-//! | Go's whole tree | `Projection_23 15625.00 5540964.75` | `Projection_15 2.00 4578.26` |
-//! | the alternative's tree | `Projection_23 15625.00 7196543.24` | `Projection_15 2.00 3007.87` |
-//! | cheaper AS A TREE | index, by `1655578.49` | hash, by `1570.39` |
-//! | Go's actual choice | INDEX | INDEX |
-//!
-//! Both columns refute a local comparison, and for different reasons.
-//!
-//! On `result:1042` the hash join is cheaper at the join and the index join
-//! is cheaper as a tree, because the index-join task PRESERVES the outer
-//! side's order: the two parent `MergeJoin`s stay merge joins. Drop the
-//! order and they become hash joins over whole re-reads
-//! (`HashJoin_78`, `HashJoin_24`), and even the CHILDREN change -- the
-//! index-join build reads `t2` in order (`TableReader_55 8000.00 435671.93`)
-//! while the hash-join build reads `t2`'s index unordered
-//! (`IndexReader_67 8000.00 236517.33`). The two candidates are not two
-//! strategies over one pair of children; Go's `findBestTask` re-plans each
-//! side under the required property and compares whole TASKS.
-//!
-//! On `result:1169` the hash tree is cheaper at the join AND as a tree
-//! (`2987.11` against `4557.50` at the parent `MergeJoin_18`, the extra
-//! `Sort_57 2.00 2535.84` included), and Go still records the index join.
-//! So on that statement not even a whole-task comparison reproduces Go's
-//! choice: the cheaper plan is one the unhinted enumeration never generates.
-//! Reproducing Go's recorded CHOICE and minimising Go's cost are not the
-//! same objective.
-//!
-//! The named prerequisite is therefore `findBestTask`'s required-property
-//! propagation -- the thing that decides which child plans each candidate is
-//! even allowed to compare over -- and not a bigger evaluator. The evaluator
-//! is done and is not the blocker; it is kept, validated, and unused by this
-//! switch.
-//!
-//! Two further inputs stay true and are kept:
-//!
-//! * the leaf half of the model is NOT a second cost model. [`crate::access_cost`]
-//!   is `plan_cost_ver2.go` too -- same `MinNumRows`/`MinRowSize`/
-//!   `MaxPenaltyRowCount`, same `tikv_scan_factor` `40.70` and
-//!   `tidb_kv_net_factor` `3.96`, same `getTableScanPenalty` -- reached
-//!   through a private copy of the leaf formulas rather than through
-//!   [`tidb_planner::plan_cost_ver2`]. A join chooser built on
-//!   [`tidb_planner::plan_cost_ver2`] therefore extends the leaf choosers'
-//!   model, it does not fork one.
-//! * `gorun` is still not an oracle for these statements, but the SERVER is:
-//!   `make server`, then a session issuing mysql-tester's seven setup
-//!   variables, then `EXPLAIN FORMAT='cost_trace'`. Every number in the table
-//!   above was read that way, and `format='verbose'` alone is not enough --
-//!   an index join's inner subtree PRINTS total rows and is COSTED per outer
-//!   row, so only the trace shows which one a formula used.
-//!
-//! # The comparison EXISTS now, and it is an ENUMERATION rule, not a cost one
-//!
-//! [`tidb_planner::find_best_task`] is the `(logical plan, required property)`
-//! recursion the section above named as the prerequisite, ported for
-//! `LogicalJoin`. It reproduces BOTH rows of the table above, and the reason
-//! is not a cost comparison at all -- it is which candidates Go enumerates:
-//!
-//! * `getHashJoins` opens with "hash join doesn't promise any orders" and
-//!   returns NOTHING under a non-empty `prop.SortItems`. On `result:1042` the
-//!   join sits under a parent `MergeJoin`'s key order, so the cheaper
-//!   `HashJoin_94 2373179.65` is not a candidate there; the search picks
-//!   `IndexHashJoin_51 4606578.48`, and the SAME site under the empty property
-//!   picks the hash join. The property, not the cost, is the difference.
-//! * `constructIndexJoinStatic` hands the OUTER child `prop.SortItems`
-//!   unchanged, which is what keeps the parent merge joins alive and what
-//!   makes the outer side take its DEARER ordered read
-//!   (`Projection_52 517108.73` rather than `Projection_61 317954.13`).
-//! * `getEnforcedMergeJoin` is reached only under a `MERGE_JOIN` hint or with
-//!   hash join disabled, so the `Sort`-enforced merge that beats Go's own plan
-//!   on `result:1169` is a plan no unhinted enumeration generates.
-//! * `findBestTask`'s enforcer branch runs only when `prop.CanAddEnforcer`,
-//!   and `PhysicalMergeJoin.tryToGetChildReqProp` builds its children's
-//!   properties with `enforced: false`. A join under a merge-join parent
-//!   therefore never prices a `Sort` of its own -- so "the enforcer-Sort
-//!   alternative is always in the comparison" was wrong.
-//!
-//! The switch still stays `false`, and for the ONE reason that survived:
-//! nothing calls the search. [`tidb_planner::find_best_task`] takes its row
-//! counts through a caller-supplied cost model, and this tier's only per-node
-//! row estimate still lives in [`crate::plan_trace::PlanTrace`], which the
-//! driver builds for `EXPLAIN` alone. Re-measured at the commit that landed
-//! the search, flipping this switch -- which would put the STRUCTURAL gate
-//! below back in charge, not the search -- moves every control the wrong way:
-//!
-//! | | `false` | `true` |
-//! | --- | --- | --- |
-//! | `join_reorder_through_projection` diverged | `15` of `346` | `27` of `346` |
-//! | topic join plans agreeing | `70` of `84` | `56` of `84` |
-//! | corpus `join shape` agreeing on BOTH | `137` of `231` | `123` of `231` |
-//!
-//! The named prerequisite is now exactly one thing: an estimate owner both
-//! `EXPLAIN` and the chooser read, so the driver can hand
-//! [`tidb_planner::find_best_task`] the rows its candidates need.
-//!
-//! # THE ESTIMATE OWNER EXISTS NOW, AND IT WAS NOT THE PREREQUISITE EITHER
-//!
-//! [`crate::driver::join_reorder::RowSource`] is that owner:
-//! [`tidb_planner::cardinality::derive_stats`] over the models the DP solver
-//! already builds, read off the statement, the catalog and the statistics and
-//! NOTHING ELSE. It reproduces every row count TiDB records for
-//! `result:1042`'s plan -- `9990.00` for the `t1` side, `8000.00` for the
-//! `t2` side, `10000.00` at the `IndexHashJoin`, `12500.00` above it and
-//! `15625.00` at the root -- and it answers identically whether or not the
-//! statement is being explained. Both halves are pinned by
-//! `crate::tests_join_search`.
-//!
-//! The switch is GONE with it. [`crate::driver::join_search`] now stands
-//! between `build_join` and this decision, and it asks Go's own enumeration
-//! (`exhaustPhysicalPlans4LogicalJoin`, through
-//! [`tidb_planner::find_best_task::exhaust_join`]) which strategies the
-//! property this site was asked for even admits. The structural gate that
-//! used to sit inside [`index_join_decision`] -- "some outer key must be a
-//! bare `Column`" -- is gone too: it was a proxy for the enumeration, and the
-//! enumeration is here.
-//!
-//! ## What the wired search measures, and what it refuses
-//!
-//! Over the 106-topic replay the chooser answers at 1109 join sites:
-//!
-//! | answer | sites |
-//! | --- | --- |
-//! | `HashAlsoEnumerated` -- the required property is EMPTY | `543` |
-//! | `NoRowSource` -- this `FROM` shape has no estimate owner | `385` |
-//! | `NoEquiKeys` -- a cross join | `140` |
-//! | `MergeAlsoEnumerated` -- ordered property, merge join also enumerated | `41` |
-//! | `Index` -- the choice by elimination | `0` |
-//!
-//! Zero. Every control therefore holds EXACTLY where it was, and that is the
-//! result: `planner/core/join_reorder_through_projection: 311 matched, 15
-//! diverged, 20 skipped of 346` and `70 of 84 join plans agree`, under
-//! `join shape over 106 topics: 137 of 229 join plans agree on BOTH` and
-//! `integrationtest replay over 106 topics: 7885 of 10747 statements
-//! compared`, per topic identical to the commit before this one. The switch
-//! and the gate were removed without moving a single plan, which is what
-//! "the search is now the only path" is worth on its own.
-//!
-//! ## The prerequisite this falsifies, and the one it names
-//!
-//! The row source was NOT what stood between this tier and Go's recorded
-//! choice. It exists, it is exact, and the search still never chooses the
-//! index join -- because at `result:1042`'s site, and at 542 others, the
-//! property the site is asked for is EMPTY, so `getHashJoins` answers too.
-//!
-//! The property is empty for a reason this file can name precisely.
-//! [`crate::driver::merge_decision::join_properties`] reports the order a
-//! join's OWN CHOSEN PLAN produces -- a deliberate narrowing of Go's
-//! `LogicalJoin.PreparePossibleProperties`, which reports the LOGICAL union
-//! of both children's orders. On `result:1042` the bottom join's key is the
-//! projected expression, no order covers it, so this tier plans a hash join
-//! there, so the join reports NO order, so no parent merge join is formed, so
-//! nothing ever requires an order of the site where TiDB puts the index join.
-//! Go escapes the circle because a parent that wants one of those logical
-//! orders RE-ASKS the child through `findBestTask(prop)`; there the index
-//! join's `constructIndexJoinStatic` hands the outer child `prop.SortItems`
-//! unchanged and the order is delivered.
-//!
-//! So the named prerequisite is now: Go's LOGICAL
-//! `PreparePossibleProperties` union, plus a way for a parent to VERIFY that
-//! the child delivered the order it promised. This tier builds executors
-//! bottom-up and cannot re-plan a built child, so reporting the union today
-//! would promise an order a hash join then fails to deliver and the merge
-//! executor would silently drop rows -- which is exactly why the narrowing
-//! was made. The increment is a second planning pass (or a promise/verify
-//! protocol between `build_join` and its children), not another estimator and
-//! not a bigger cost model.
+//! The shared planner owns join-family, inner-child, access-object, order,
+//! aggregation-family, and cost decisions. This module must not enumerate or
+//! re-cost alternatives. It only validates that the selected table/index can
+//! be represented by the executor and builds Go-compatible range metadata.
+//! Probe values are converted at runtime to the inner key type and retained
+//! only when comparison with the original value is equal, matching Go's
+//! `constructDatumLookupKey`.
 
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
@@ -435,13 +46,12 @@ pub(crate) struct IndexJoinDecision {
     /// The complete object key assembled from dynamic join keys and static
     /// access conditions.
     pub(crate) probe_parts: Vec<crate::access_path::LookupProbePart>,
-    /// Number of equality join keys retained by the logical join. The access
-    /// path may use only a subset of them to build its dynamic range.
-    pub(crate) join_key_count: usize,
     /// The table the probes read.
     pub(crate) table: KvTable,
     /// The object the probes read: an index, or the clustered handle.
     pub(crate) object: crate::access_path::LookupObject,
+    /// The root reader selected on the completed physical inner task.
+    pub(crate) reader: super::planner_bridge::AccessReader,
     /// The looked-up table's visible columns, which are this side's whole
     /// physical row layout.
     pub(crate) columns: Vec<(String, FieldType)>,
@@ -464,12 +74,6 @@ pub(crate) struct IndexJoinDecision {
     /// Selectivity of the filter residue not already represented by a static
     /// object-key part.
     pub(crate) filter_selectivity: f64,
-    /// The selectivity of only those filters the INDEX side can evaluate --
-    /// Go's `pushDownIndexConds` half of `constructDS2IndexScanTask`
-    /// (`exhaust_physical_plans.go:1029`). It turns the probe's access count
-    /// into `CountAfterIndex`, which is what the double read actually carries
-    /// to the table side. `1.0` for an object with no index/table split.
-    pub(crate) index_filter_selectivity: f64,
     /// Selectivity of every predicate on the base-table source, including
     /// predicates represented by static lookup-key parts. Go uses this when
     /// an IndexJoin runtime property crosses a retained aggregation: the
@@ -486,14 +90,13 @@ pub(crate) struct IndexJoinDecision {
     /// Go's partial aggregation payload pushed onto the table side of a
     /// double-read lookup.
     pub(crate) aggregation_partial_info: Option<String>,
+    /// The aggregation family selected on the physical inner subtree. This
+    /// is a planner receipt, not an executor inference from lookup order.
+    pub(crate) aggregation_family: Option<super::planner_bridge::AggregationFamily>,
     /// The lookup target is nested below another join on this side. The
     /// executor rebuilds that subtree with a shared probe channel instead of
     /// replacing the whole side with a bare table reader.
     pub(crate) composite: bool,
-    /// Whether a local equality constrains a dynamically probed object-key
-    /// column. For a grouped lookup this means at most one distinct outer key
-    /// can produce base rows; every other probe is empty.
-    pub(crate) constant_constrained_probe: bool,
     /// Whether those leaf filters plus the join equalities cover the complete
     /// written WHERE.
     pub(crate) consumes_where: bool,
@@ -609,177 +212,6 @@ impl IndexJoinDecision {
             .map(|(offset, _)| offset)
             .collect()
     }
-
-    /// `TableStats.RowCount / NDV(usable join-key prefix)` -- Go's
-    /// `rowCountUpperBound` (`exhaust_physical_plans.go:1123-1141`).
-    ///
-    /// CITATION CORRECTED, AND A DIVERGENCE RECORDED WITH IT. This carried
-    /// the name `indexJoinProbeAccessRowsFloor` and a reference to Go
-    /// "#70176"; no such function, and no `TestIndexJoinInnerRowCountUses
-    /// UsableJoinKeys`, exists anywhere in the Go tree. What does exist is
-    /// the quantity above, and Go uses it in two ways this does not:
-    ///
-    /// * as an UPPER bound -- `rowCount = math.Min(rowCount,
-    ///   rowCountUpperBound)` (`:1144`), never a lower one;
-    /// * on the inner INDEX-scan task only, and even there behind
-    ///   `fixcontrol.Fix44855`, which DEFAULTS TO FALSE. Go's inner
-    ///   TABLE-scan task (`constructDS2TableScanTask`, `:832-874`) bounds
-    ///   `AvgInnerRowCnt / selectivity` in neither direction.
-    ///
-    /// The remaining callers use it as a `> 0.0` switch between estimate
-    /// sources rather than as a bound. Removing it outright is gate-neutral
-    /// except for `index_join_probe_rows_use_only_the_access_paths_join_keys`,
-    /// whose expectation was written from the same missing Go test -- so the
-    /// mechanism is left in place, and settling it needs a plan captured from
-    /// a running Go TiDB rather than another reading of this tree.
-    ///
-    /// The one place it had inverted Go's direction outright -- `.max()` on
-    /// the printed access estimate for a table-scan probe -- is fixed; see
-    /// `driver::from`'s `estimated_access_rows`.
-    pub(crate) fn probe_access_rows_floor(
-        &self,
-        stats: Option<&crate::access_cost::TableStatistics>,
-    ) -> f64 {
-        let used_join_keys = self
-            .probe_keys
-            .iter()
-            .copied()
-            .collect::<std::collections::BTreeSet<_>>()
-            .len();
-        if self.max_one_row() || used_join_keys >= self.join_key_count {
-            return 0.0;
-        }
-        let Some(stats) = stats.filter(|stats| !stats.pseudo && stats.row_count > 0) else {
-            return 0.0;
-        };
-        let key_offsets = self.key_offsets();
-        let used_column_ids = key_offsets
-            .iter()
-            .take(self.probe_parts.len())
-            .map(|offset| self.table.columns.get(*offset).map(|column| column.id))
-            .collect::<Option<Vec<_>>>()
-            .unwrap_or_default();
-        if used_column_ids.is_empty() {
-            return 0.0;
-        }
-
-        let full_loaded_columns = stats.columns.keys().copied().collect();
-        let full_loaded_indexes = stats.indexes.keys().copied().collect();
-        let column_ndvs = self
-            .table
-            .columns
-            .iter()
-            .filter_map(|column| {
-                stats
-                    .estimate_column_ndv(column.id, &full_loaded_columns, &full_loaded_indexes)
-                    .map(|ndv| (column.id, ndv))
-            })
-            .collect::<Vec<_>>();
-        // Go's one-column path estimate is `EstimateColumnNDV`, including its
-        // analyzed/realtime increase factor. A GroupNDV is useful only for a
-        // genuinely multi-column prefix; admitting a one-column index here
-        // would replace that scaled NDV with the raw index histogram NDV.
-        let group_ndvs = if used_column_ids.len() > 1 {
-            self.table
-                .indexes()
-                .iter()
-                .filter_map(|index| {
-                    let index_stats = stats.indexes.get(&index.id)?;
-                    let columns = index
-                        .column_offsets
-                        .iter()
-                        .map(|offset| self.table.columns.get(*offset).map(|column| column.id))
-                        .collect::<Option<Vec<_>>>()?;
-                    Some(tidb_planner::cardinality::ndv::GroupNdv {
-                        columns,
-                        ndv: index_stats.histogram.ndv as f64,
-                    })
-                })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        let (used_ndv, _) = tidb_planner::cardinality::ndv::estimate_cols_ndv_with_matched_len(
-            &used_column_ids,
-            &column_ndvs,
-            stats.row_count as f64,
-            &group_ndvs,
-            0.0,
-        );
-        if used_ndv > 0.0 {
-            stats.row_count as f64 / used_ndv
-        } else {
-            0.0
-        }
-    }
-
-    /// The selected index's analyzed/realtime row-count ratio. Go's rebuilt
-    /// partial-key task derives `CountAfterIndex` from that index's analyzed
-    /// distribution, while the access floor starts from realtime rows.
-    pub(crate) fn probe_analyzed_scale(
-        &self,
-        stats: Option<&crate::access_cost::TableStatistics>,
-    ) -> f64 {
-        let Some(stats) = stats.filter(|stats| !stats.pseudo && stats.row_count > 0) else {
-            return 1.0;
-        };
-        let crate::access_path::LookupObject::Index(id) = self.object else {
-            return 1.0;
-        };
-        let analyzed_rows = stats
-            .indexes
-            .get(&id)
-            .map(|index| index.total_row_count())
-            .unwrap_or(0.0);
-        if analyzed_rows > 0.0 {
-            analyzed_rows / stats.row_count as f64
-        } else {
-            1.0
-        }
-    }
-
-    /// Whether the dynamic lookup path groups identical keys contiguously,
-    /// allowing Go's physical StreamAgg candidate for a retained derived
-    /// aggregation.
-    pub(crate) fn aggregation_stream_ordered(&self) -> bool {
-        let Some(aggregation) = &self.aggregation else {
-            return false;
-        };
-        if self.max_one_row() {
-            return true;
-        }
-        let key_offsets = match self.object {
-            crate::access_path::LookupObject::Handle => self
-                .table
-                .pk_handle_offset()
-                .map(|offset| vec![offset])
-                .unwrap_or_default(),
-            crate::access_path::LookupObject::CommonHandle => {
-                self.table.common_handle_offsets().to_vec()
-            }
-            crate::access_path::LookupObject::Index(id) => self
-                .table
-                .indexes()
-                .iter()
-                .find(|index| index.id == id)
-                .map(|index| index.column_offsets.clone())
-                .unwrap_or_default(),
-        };
-        let fixed_len = self.probe_parts.len().min(key_offsets.len());
-        let fixed = &key_offsets[..fixed_len];
-        let remaining = aggregation
-            .group_offsets
-            .iter()
-            .copied()
-            .filter(|offset| !fixed.contains(offset))
-            .collect::<std::collections::BTreeSet<_>>();
-        let ordered = key_offsets[fixed_len..]
-            .iter()
-            .take(remaining.len())
-            .copied()
-            .collect::<std::collections::BTreeSet<_>>();
-        remaining == ordered
-    }
 }
 
 /// One join side reduced to what the decision reads about it.
@@ -821,105 +253,108 @@ pub(crate) struct JoinSide<'a> {
     pub(crate) composite: bool,
 }
 
-/// The looked-up side of `join`, or `None` when neither side qualifies.
+/// Lowers the exact inner access selected by the shared physical planner.
 ///
-/// Reached ONLY through [`crate::driver::join_search`], which asks Go's own
-/// enumeration whether the index strategy is this site's at all. This function
-/// answers the second question: WHICH side, WHICH object, and WHICH ranges.
-///
-/// `keys` are the join's equality conjuncts as
-/// [`crate::hash_join::split_equi`] produced them: `left` is an offset in the
-/// LEFT child's row and `right` an offset in the RIGHT child's.
-#[cfg(test)]
-pub(crate) fn index_join_decision(
+/// Go carries this choice in `IndexJoinInfo` from the inner `DataSource` to
+/// `completePhysicalIndexJoin`.  Once that receipt exists, executor lowering
+/// must not enumerate the other child or another handle/index and choose a
+/// look-alike candidate locally.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn index_join_decision_for_planner(
     kind: crate::join::JoinKind,
     keys: &[EquiKey],
     left: &JoinSide<'_>,
     right: &JoinSide<'_>,
-    merge_chosen: bool,
+    inner_child_idx: usize,
+    inner_table_id: Option<i64>,
+    inner_index_id: Option<i64>,
+    inner_reader: Option<super::planner_bridge::AccessReader>,
+    inner_aggregation: Option<super::planner_bridge::AggregationFamily>,
+    rows: Option<&crate::driver::join_reorder::RowSource>,
+    catalog: Option<&crate::driver::Catalog>,
+    ctx: &crate::StmtContext,
 ) -> Option<IndexJoinDecision> {
-    index_join_decision_with_context(
-        kind,
+    if keys.is_empty() || inner_child_idx > 1 {
+        return None;
+    }
+    let side_has_table = |side: &JoinSide<'_>, table_id: i64| {
+        side.table.is_some_and(|table| table.table_id == table_id)
+    };
+    let lookup_is_left = inner_table_id.map_or(inner_child_idx == 0, |table_id| {
+        match (
+            side_has_table(left, table_id),
+            side_has_table(right, table_id),
+        ) {
+            (true, false) => true,
+            (false, true) => false,
+            _ => inner_child_idx == 0,
+        }
+    });
+    let side_is_admitted = match kind {
+        crate::join::JoinKind::Inner => true,
+        crate::join::JoinKind::Left => !lookup_is_left,
+        crate::join::JoinKind::Right => lookup_is_left,
+        crate::join::JoinKind::Semi
+        | crate::join::JoinKind::LeftOuterSemi
+        | crate::join::JoinKind::AntiSemi => !lookup_is_left,
+    };
+    if !side_is_admitted {
+        return None;
+    }
+    let (inner, outer) = if lookup_is_left {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    let table = inner.table?;
+    if inner_table_id.is_some_and(|table_id| table.table_id != table_id) {
+        return None;
+    }
+    let object = match inner_index_id {
+        Some(index_id) => crate::access_path::LookupObject::Index(index_id),
+        None if table.pk_handle_offset().is_some() => crate::access_path::LookupObject::Handle,
+        None if !table.common_handle_offsets().is_empty() => {
+            crate::access_path::LookupObject::CommonHandle
+        }
+        None => return None,
+    };
+    let reader = inner_reader?;
+    if !matches!(
+        (&object, reader),
+        (
+            crate::access_path::LookupObject::Index(_),
+            super::planner_bridge::AccessReader::Index
+                | super::planner_bridge::AccessReader::IndexLookup
+        ) | (
+            crate::access_path::LookupObject::Handle
+                | crate::access_path::LookupObject::CommonHandle,
+            super::planner_bridge::AccessReader::Table
+        )
+    ) {
+        return None;
+    }
+    let statistics =
+        catalog.and_then(|catalog| catalog.table_statistics(table.stats_physical_id()));
+    lower_selected_access(
+        table,
+        lookup_is_left,
         keys,
-        left,
-        right,
-        merge_chosen,
-        None,
-        None,
-        &crate::StmtContext::for_query(),
+        inner,
+        outer,
+        rows,
+        statistics.as_deref().map(AsRef::as_ref),
+        ctx,
+        &object,
+        reader,
+        inner_aggregation,
     )
 }
 
-/// The production decision with the statement's derived leaf predicates and
-/// evaluation context.
-#[cfg(test)]
-pub(crate) fn index_join_decision_with_context(
-    kind: crate::join::JoinKind,
-    keys: &[EquiKey],
-    left: &JoinSide<'_>,
-    right: &JoinSide<'_>,
-    merge_chosen: bool,
-    rows: Option<&crate::driver::join_reorder::RowSource>,
-    catalog: Option<&crate::driver::Catalog>,
-    ctx: &crate::StmtContext,
-) -> Option<IndexJoinDecision> {
-    index_join_decisions_with_context(kind, keys, left, right, merge_chosen, rows, catalog, ctx)
-        .into_iter()
-        .next()
-}
-
-/// Every structurally valid looked-up side, in Go's outer-left then
-/// outer-right enumeration order.
-pub(crate) fn index_join_decisions_with_context(
-    kind: crate::join::JoinKind,
-    keys: &[EquiKey],
-    left: &JoinSide<'_>,
-    right: &JoinSide<'_>,
-    merge_chosen: bool,
-    rows: Option<&crate::driver::join_reorder::RowSource>,
-    catalog: Option<&crate::driver::Catalog>,
-    ctx: &crate::StmtContext,
-) -> Vec<IndexJoinDecision> {
-    if keys.is_empty() || merge_chosen {
-        return Vec::new();
-    }
-    // The looked-up side is never the preserved one.
-    let sides: &[bool] = match kind {
-        crate::join::JoinKind::Inner => &[false, true],
-        crate::join::JoinKind::Left => &[false],
-        crate::join::JoinKind::Right => &[true],
-        crate::join::JoinKind::Semi
-        | crate::join::JoinKind::LeftOuterSemi
-        | crate::join::JoinKind::AntiSemi => &[false],
-    };
-    let mut decisions = Vec::with_capacity(sides.len() * 2);
-    for lookup_is_left in sides.iter().copied() {
-        let (inner, outer) = if lookup_is_left {
-            (left, right)
-        } else {
-            (right, left)
-        };
-        let Some(table) = inner.table else {
-            continue;
-        };
-        let statistics =
-            catalog.and_then(|catalog| catalog.table_statistics(table.stats_physical_id()));
-        decisions.extend(decide_over(
-            table,
-            lookup_is_left,
-            keys,
-            inner,
-            outer,
-            rows,
-            statistics.as_deref().map(AsRef::as_ref),
-            ctx,
-        ));
-    }
-    decisions
-}
-
-/// The decision for one candidate side, once it is known to be a base table.
-fn decide_over(
+/// Lowers one exact access object from the shared planner's index-join
+/// receipt. It validates that the object can be probed by the received join
+/// keys and never enumerates an alternative side, handle, or index.
+#[allow(clippy::too_many_arguments)]
+fn lower_selected_access(
     table: &KvTable,
     lookup_is_left: bool,
     keys: &[EquiKey],
@@ -928,12 +363,15 @@ fn decide_over(
     rows: Option<&crate::driver::join_reorder::RowSource>,
     statistics: Option<&crate::access_cost::TableStatistics>,
     ctx: &crate::StmtContext,
-) -> Vec<IndexJoinDecision> {
+    selected_object: &crate::access_path::LookupObject,
+    selected_reader: super::planner_bridge::AccessReader,
+    selected_aggregation: Option<super::planner_bridge::AggregationFamily>,
+) -> Option<IndexJoinDecision> {
     // A partitioned table's probe would have to name the partition the key
     // falls in; Go refuses `keepOrder` there and prunes per probe, neither of
     // which this reads. Refuse it whole.
     if table.partition().is_some() {
-        return Vec::new();
+        return None;
     }
     let Some(database) = inner
         .origin
@@ -941,7 +379,7 @@ fn decide_over(
         .and_then(|origin| origin.rsplit_once('.'))
         .map(|(database, _)| database.to_owned())
     else {
-        return Vec::new();
+        return None;
     };
     // Every bare output must map back to the physical table. A grouped
     // derived side may also contain computed aggregate outputs, which are
@@ -951,7 +389,7 @@ fn decide_over(
     // so they must run BEFORE the per-column name/type clones below (the
     // unconditional build profiled at several percent of process CPU).
     if inner.output_to_source.len() != inner.types.len() {
-        return Vec::new();
+        return None;
     }
     let output_offsets = inner
         .output_to_source
@@ -959,7 +397,7 @@ fn decide_over(
         .copied()
         .collect::<Option<Vec<_>>>();
     if inner.aggregation.is_none() && output_offsets.is_none() && !inner.composite {
-        return Vec::new();
+        return None;
     }
     let output_offsets = output_offsets.unwrap_or_default();
     let columns: Vec<(String, FieldType)> = table
@@ -976,7 +414,6 @@ fn decide_over(
                 .output_to_source
                 .get(inner_at(key))
                 .is_some_and(|offset| *offset == Some(column))
-                && probe_compatible(&inner.types[inner_at(key)], &outer.types[outer_at(key)])
         })
     };
     let outer_filters = rows
@@ -989,7 +426,7 @@ fn decide_over(
             .map(|filter| rewrite_derived_filter_to_source(filter, inner, &columns))
             .collect::<Option<Vec<_>>>()
         else {
-            return Vec::new();
+            return None;
         };
         filters
     } else {
@@ -1003,12 +440,12 @@ fn decide_over(
         .collect::<Vec<_>>();
     for filter in &mut filters {
         if normalize_source_filter(filter, &inner.source_visible, &columns).is_none() {
-            return Vec::new();
+            return None;
         }
     }
     filters.dedup();
     let Some(filter_exprs) = rewrite_inner_filters(inner, &columns, &filters, ctx) else {
-        return Vec::new();
+        return None;
     };
     let source_filter_selectivity = residual_filter_selectivity(
         &filters,
@@ -1067,67 +504,69 @@ fn decide_over(
         ))
     };
 
-    let mut decisions = Vec::new();
+    let build =
+        |object, probe_keys, probe_parts, static_columns: &[usize], range_info| IndexJoinDecision {
+            lookup_is_left,
+            probe_keys,
+            probe_parts,
+            table: table.clone(),
+            object,
+            reader: selected_reader,
+            filter_selectivity: residual_filter_selectivity(
+                &filters,
+                static_columns,
+                &columns,
+                table,
+                &inner.source_visible,
+                statistics,
+                &ctx.session_zone(),
+            ),
+            source_filter_selectivity,
+            aggregation: inner.aggregation.clone(),
+            aggregation_info: inner.aggregation_info.clone(),
+            aggregation_final_info: inner.aggregation_final_info.clone(),
+            aggregation_partial_info: inner.aggregation_partial_info.clone(),
+            aggregation_family: selected_aggregation,
+            composite: inner.composite,
+            columns: columns.clone(),
+            database: database.clone(),
+            output_offsets: output_offsets.clone(),
+            visible: inner.source_visible.clone(),
+            range_info,
+            filters: filters.clone(),
+            filter_exprs: filter_exprs.clone(),
+            consumes_where,
+            probe_cast: None,
+            probe_bounds: Vec::new(),
+        };
 
-    // The clustered integer handle is Go's table-range candidate. It is
-    // enumerated beside, rather than instead of, the secondary-index candidate
-    // built below.
-    let int_handle = (0..columns.len()).find(|at| table.is_clustered_handle_column(*at));
-    if let Some(pk) = int_handle {
-        if let Some(key) = key_of_column(pk) {
-            decisions.push(IndexJoinDecision {
-                lookup_is_left,
-                probe_keys: vec![key],
-                probe_parts: vec![crate::access_path::LookupProbePart::Dynamic(0)],
-                join_key_count: keys.len(),
-                table: table.clone(),
-                object: crate::access_path::LookupObject::Handle,
-                index_filter_selectivity: 1.0,
-                filter_selectivity: residual_filter_selectivity(
-                    &filters,
-                    &[],
-                    &columns,
-                    table,
-                    &inner.source_visible,
-                    statistics,
-                    &ctx.session_zone(),
-                ),
-                source_filter_selectivity,
-                aggregation: inner.aggregation.clone(),
-                aggregation_info: inner.aggregation_info.clone(),
-                aggregation_final_info: inner.aggregation_final_info.clone(),
-                aggregation_partial_info: inner.aggregation_partial_info.clone(),
-                composite: inner.composite,
-                constant_constrained_probe: constants[pk].is_some(),
-                columns: columns.clone(),
-                database: database.clone(),
-                output_offsets: output_offsets.clone(),
-                visible: inner.source_visible.clone(),
-                // Go `indexJoinIntPKRangeInfo`: the OUTER keys, bare.
-                range_info: format!(
-                    "[{}]",
-                    if inner.composite {
-                        outer.names[outer_at(&keys[key])].clone()
-                    } else {
-                        physical_outer_column_name(outer, outer_at(&keys[key]))
-                    }
-                ),
-                filters: filters.clone(),
-                filter_exprs: filter_exprs.clone(),
-                consumes_where,
-                probe_cast: None,
-                probe_bounds: Vec::new(),
-            });
+    match selected_object {
+        crate::access_path::LookupObject::Handle => {
+            let handle = (0..columns.len()).find(|at| table.is_clustered_handle_column(*at))?;
+            let key = key_of_column(handle)?;
+            let range_info = format!(
+                "[{}]",
+                if inner.composite {
+                    outer.names[outer_at(&keys[key])].clone()
+                } else {
+                    physical_outer_column_name(outer, outer_at(&keys[key]))
+                }
+            );
+            Some(build(
+                crate::access_path::LookupObject::Handle,
+                vec![key],
+                vec![crate::access_path::LookupProbePart::Dynamic(0)],
+                &[],
+                range_info,
+            ))
         }
-    }
-
-    // A clustered composite primary key is a table path, not a secondary
-    // PRIMARY index. Constants and join keys may fix any non-empty leading
-    // prefix; the resulting record-key range covers every remaining suffix.
-    if !table.common_handle_offsets().is_empty() {
-        if let Some((probe_keys, probe_parts, dynamic, static_parts, static_columns)) =
-            probe_for(table.common_handle_offsets())
-        {
+        crate::access_path::LookupObject::CommonHandle => {
+            let offsets = table.common_handle_offsets();
+            if offsets.is_empty() {
+                return None;
+            }
+            let (probe_keys, probe_parts, dynamic, static_parts, static_columns) =
+                probe_for(offsets)?;
             let range_info = format!(
                 "[{}]",
                 dynamic
@@ -1136,164 +575,43 @@ fn decide_over(
                     .collect::<Vec<_>>()
                     .join(" ")
             );
-            let constant_constrained_probe = table
-                .common_handle_offsets()
-                .iter()
-                .zip(&probe_parts)
-                .any(|(offset, part)| {
-                    matches!(part, crate::access_path::LookupProbePart::Dynamic(_))
-                        && constants[*offset].is_some()
-                });
-            decisions.push(IndexJoinDecision {
-                lookup_is_left,
+            Some(build(
+                crate::access_path::LookupObject::CommonHandle,
                 probe_keys,
                 probe_parts,
-                join_key_count: keys.len(),
-                table: table.clone(),
-                object: crate::access_path::LookupObject::CommonHandle,
-                index_filter_selectivity: 1.0,
-                filter_selectivity: residual_filter_selectivity(
-                    &filters,
-                    &static_columns,
-                    &columns,
-                    table,
-                    &inner.source_visible,
-                    statistics,
-                    &ctx.session_zone(),
-                ),
-                source_filter_selectivity,
-                aggregation: inner.aggregation.clone(),
-                aggregation_info: inner.aggregation_info.clone(),
-                aggregation_final_info: inner.aggregation_final_info.clone(),
-                aggregation_partial_info: inner.aggregation_partial_info.clone(),
-                composite: inner.composite,
-                constant_constrained_probe,
-                columns: columns.clone(),
-                database: database.clone(),
-                output_offsets: output_offsets.clone(),
-                visible: inner.source_visible.clone(),
+                &static_columns,
                 range_info,
-                filters: filters.clone(),
-                filter_exprs: filter_exprs.clone(),
-                consumes_where,
-                probe_cast: None,
-                probe_bounds: Vec::new(),
-            });
+            ))
         }
-    }
-
-    // Otherwise the longest LEADING run of an index's columns that are all
-    // join keys -- Go's `indexJoinPathTmpInit` walk, which stops at the first
-    // index column no inner key covers.
-    type IndexCandidate = (
-        i64,
-        Vec<usize>,
-        Vec<crate::access_path::LookupProbePart>,
-        Vec<String>,
-        Vec<String>,
-        Vec<usize>,
-    );
-    let mut best: Option<IndexCandidate> = None;
-    for index in table.indexes() {
-        if !index.visible
-            || index.has_prefix()
-            || (index.name.eq_ignore_ascii_case("PRIMARY")
-                && (table.pk_handle_offset().is_some()
-                    || !table.common_handle_offsets().is_empty()))
-        {
-            continue;
-        }
-        let Some((probe_keys, probe_parts, dynamic, static_parts, static_columns)) =
-            probe_for(&index.column_offsets)
-        else {
-            continue;
-        };
-        if best
-            .as_ref()
-            .is_none_or(|(_, best, ..)| best.len() < probe_keys.len())
-        {
-            best = Some((
-                index.id,
+        crate::access_path::LookupObject::Index(index_id) => {
+            let index = table.indexes().iter().find(|index| index.id == *index_id)?;
+            if !index.visible
+                || index.has_prefix()
+                || (index.name.eq_ignore_ascii_case("PRIMARY")
+                    && (table.pk_handle_offset().is_some()
+                        || !table.common_handle_offsets().is_empty()))
+            {
+                return None;
+            }
+            let (probe_keys, probe_parts, dynamic, static_parts, static_columns) =
+                probe_for(&index.column_offsets)?;
+            let range_info = format!(
+                "[{}]",
+                dynamic
+                    .into_iter()
+                    .chain(static_parts)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            Some(build(
+                crate::access_path::LookupObject::Index(*index_id),
                 probe_keys,
                 probe_parts,
-                dynamic,
-                static_parts,
-                static_columns,
-            ));
+                &static_columns,
+                range_info,
+            ))
         }
     }
-    let Some((index_id, probe_keys, probe_parts, dynamic, static_parts, static_columns)) = best
-    else {
-        return decisions;
-    };
-    let Some(index) = table.indexes().iter().find(|index| index.id == index_id) else {
-        return decisions;
-    };
-    let constant_constrained_probe =
-        index
-            .column_offsets
-            .iter()
-            .zip(&probe_parts)
-            .any(|(offset, part)| {
-                matches!(part, crate::access_path::LookupProbePart::Dynamic(_))
-                    && constants[*offset].is_some()
-            });
-    // Go `indexJoinPathRangeInfo`: `eq(<index column>, <outer key>)` per
-    // covered index column, in index order. The index column is Go's
-    // `OrigName`, which an alias does not rename -- see [`JoinSide::origin`].
-    let range_info = format!(
-        "[{}]",
-        dynamic
-            .into_iter()
-            .chain(static_parts)
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
-    decisions.push(IndexJoinDecision {
-        lookup_is_left,
-        probe_keys,
-        probe_parts,
-        join_key_count: keys.len(),
-        table: table.clone(),
-        object: crate::access_path::LookupObject::Index(index_id),
-        index_filter_selectivity: index_side_filter_selectivity(
-            &filters,
-            &static_columns,
-            &columns,
-            table,
-            index_id,
-            &inner.source_visible,
-            statistics,
-            &ctx.session_zone(),
-        ),
-        filter_selectivity: residual_filter_selectivity(
-            &filters,
-            &static_columns,
-            &columns,
-            table,
-            &inner.source_visible,
-            statistics,
-            &ctx.session_zone(),
-        ),
-        source_filter_selectivity,
-        aggregation: inner.aggregation.clone(),
-        aggregation_info: inner.aggregation_info.clone(),
-        aggregation_final_info: inner.aggregation_final_info.clone(),
-        aggregation_partial_info: inner.aggregation_partial_info.clone(),
-        composite: inner.composite,
-        constant_constrained_probe,
-        columns,
-        database,
-        output_offsets,
-        visible: inner.source_visible.clone(),
-        range_info,
-        filters,
-        filter_exprs,
-        consumes_where,
-        probe_cast: None,
-                probe_bounds: Vec::new(),
-    });
-    decisions
 }
 
 /// One rewritten mismatched equality mapped onto a concrete lookup side --
@@ -1313,7 +631,8 @@ pub(crate) struct CastLookupKey {
 /// side's clustered handle) with a STRING column, made probeable by the
 /// rule's `cast(str AS SIGNED)` key.
 ///
-/// Deliberately NARROWER than `decide_over`, each refusal fail-closed:
+/// Deliberately narrower than ordinary receipt lowering, each refusal
+/// fail-closed:
 ///
 /// * INNER joins only. Go's rule skips a preserved string side, and the
 ///   lookup refuses a preserved lookup side, so an outer join never
@@ -1330,8 +649,11 @@ pub(crate) fn cast_lookup_decision(
     key: CastLookupKey,
     inner: &JoinSide<'_>,
     rows: Option<&crate::driver::join_reorder::RowSource>,
+    selected_reader: super::planner_bridge::AccessReader,
 ) -> Option<IndexJoinDecision> {
-    if kind != crate::join::JoinKind::Inner {
+    if kind != crate::join::JoinKind::Inner
+        || selected_reader != super::planner_bridge::AccessReader::Table
+    {
         return None;
     }
     let table = inner.table?;
@@ -1378,18 +700,17 @@ pub(crate) fn cast_lookup_decision(
         lookup_is_left,
         probe_keys: Vec::new(),
         probe_parts: vec![crate::access_path::LookupProbePart::Dynamic(0)],
-        join_key_count: 1,
         table: table.clone(),
         object: crate::access_path::LookupObject::Handle,
-        index_filter_selectivity: 1.0,
+        reader: selected_reader,
         filter_selectivity: 1.0,
         source_filter_selectivity: 1.0,
         aggregation: None,
         aggregation_info: None,
         aggregation_final_info: None,
         aggregation_partial_info: None,
+        aggregation_family: None,
         composite: false,
-        constant_constrained_probe: false,
         columns,
         database,
         output_offsets,
@@ -1402,8 +723,9 @@ pub(crate) fn cast_lookup_decision(
         range_info: format!("[{UNNAMED_COLUMN}]"),
         filters: Vec::new(),
         filter_exprs: Vec::new(),
-        consumes_where: rows
-            .is_some_and(crate::driver::join_reorder::RowSource::all_where_is_leaf_or_join_equality),
+        consumes_where: rows.is_some_and(
+            crate::driver::join_reorder::RowSource::all_where_is_leaf_or_join_equality,
+        ),
         probe_cast: Some(crate::join::IndexProbeCast {
             outer_offset: key.outer_offset,
             inner_offset: key.inner_offset,
@@ -1584,85 +906,6 @@ fn static_equalities(
     values
 }
 
-/// Pseudo selectivity of the inner filters not already represented by static
-/// key parts. Go leaves the static equality visible in the cop Selection but
-/// prices it in the range only once.
-/// [`residual_filter_selectivity`] over only the filters an INDEX scan can
-/// evaluate itself: every column the filter mentions is a column of that
-/// index.
-///
-/// Go splits the inner filters in `constructDS2IndexScanTask`
-/// (`exhaust_physical_plans.go:1029`) into `pushDownIndexConds` and
-/// `pushDownTblConds`, and applies only the former before `CountAfterIndex`.
-/// The double read then carries `CountAfterIndex` rows to the table side --
-/// `getCardinality(p.IndexPlan)` in
-/// `getPlanCostVer24PhysicalIndexLookUpReader` reads the index side's OUTPUT,
-/// which is the Selection above the range scan when there is one.
-fn index_side_filter_selectivity(
-    filters: &[tidb_ast::Expr],
-    static_columns: &[usize],
-    columns: &[(String, FieldType)],
-    table: &KvTable,
-    index_id: i64,
-    visible: &str,
-    statistics: Option<&crate::access_cost::TableStatistics>,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> f64 {
-    let Some(index) = table.indexes().iter().find(|index| index.id == index_id) else {
-        return 1.0;
-    };
-    let index_names = index
-        .column_offsets
-        .iter()
-        .filter_map(|offset| table.visible_columns().get(*offset))
-        .map(|column| column.name.to_lowercase())
-        .collect::<std::collections::BTreeSet<_>>();
-    let index_side = filters
-        .iter()
-        .filter(|filter| {
-            let mut names = Vec::new();
-            collect_filter_column_names(filter, &mut names);
-            !names.is_empty()
-                && names
-                    .iter()
-                    .all(|name| index_names.contains(&name.to_lowercase()))
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    residual_filter_selectivity(
-        &index_side,
-        static_columns,
-        columns,
-        table,
-        visible,
-        statistics,
-        zone,
-    )
-}
-
-/// Every column name a filter mentions, unqualified and in traversal order.
-fn collect_filter_column_names(filter: &tidb_ast::Expr, out: &mut Vec<String>) {
-    let mut filter = filter.clone();
-    struct Names<'a> {
-        out: &'a mut Vec<String>,
-    }
-    impl tidb_ast::Visitor for Names<'_> {
-        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-            if let Some(tidb_ast::Expr::Column(path)) = node.downcast_mut::<tidb_ast::Expr>() {
-                if let Some(name) = path.last() {
-                    self.out.push(name.clone());
-                }
-            }
-            false
-        }
-
-        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-            true
-        }
-    }
-    tidb_ast::Visitable::accept(&mut filter, &mut Names { out });
-}
-
 pub(crate) fn residual_filter_selectivity(
     filters: &[tidb_ast::Expr],
     static_columns: &[usize],
@@ -1738,10 +981,7 @@ fn inner_column_name(inner: &JoinSide<'_>, column: usize) -> String {
 
 /// Go's dynamic IndexJoin range text uses the outer column's `OrigName`, not
 /// the relation alias through which SQL name resolution reached it.
-pub(crate) fn physical_outer_column_name(
-    outer: &JoinSide<'_>,
-    output: usize,
-) -> String {
+pub(crate) fn physical_outer_column_name(outer: &JoinSide<'_>, output: usize) -> String {
     outer
         .origin
         .as_ref()
@@ -1756,51 +996,6 @@ pub(crate) fn physical_outer_column_name(
         .unwrap_or_else(|| outer.names[output].clone())
 }
 
-/// Whether an outer value of type `outer` IS a probe of an indexed column of
-/// type `inner`, with no conversion in between.
-///
-/// See the module doc: this replaces Go's `ConvertTo` + `Compare` per value
-/// with a type check made once. `flen` and `decimal` are deliberately NOT
-/// compared -- an `int` column and `t.b * 2` differ there and encode
-/// identically -- while the type code, the signedness and, for strings, the
-/// collation decide the bytes an index entry was written with.
-fn probe_compatible(inner: &FieldType, outer: &FieldType) -> bool {
-    if inner.code().is_type_integer() && outer.code().is_type_integer() {
-        // Every integer width shares ONE index encoding, so a `BIGINT`
-        // expression probes an `INT` column's index with its own value. A
-        // value the narrower column cannot hold simply has no entry.
-        //
-        // Differing SIGNEDNESS is admitted here too, because the probe value
-        // is converted to the inner column's type BEFORE it is encoded, which
-        // is Go's `constructDatumLookupKey`
-        // (`index_lookup_merge_join.go:658`) verbatim:
-        //
-        //   innerValue, err := outerValue.ConvertTo(sc.TypeCtx(), innerColType)
-        //   if ErrOverflow / ErrWarnDataOutOfRange { return nil, nil }   // skip
-        //   cmp, _ := outerValue.Compare(sc.TypeCtx(), &innerValue, ...)
-        //   if cmp != 0 { return nil, nil }                              // skip
-        //
-        // Both halves already exist on the probe path:
-        // `IndexJoinLookupExec::probe_in_key_domain` runs
-        // `point_get_key::point_get_value`, which is that convert-then-
-        // compare with the same skip-on-inequality; and the integer-handle
-        // arm screens through `handle_of`, whose `i64::try_from` drops a
-        // `u64` above `i64::MAX` exactly where Go's `ConvertTo` overflows.
-        // So the encoded bytes are always the INNER column's, and a value
-        // outside its domain reads nothing rather than reading the wrong
-        // entry. (This was previously refused outright and recorded as
-        // NAMED RESIDUE; the residue is now closed.)
-        return true;
-    }
-    if inner.is_unsigned() != outer.is_unsigned() {
-        return false;
-    }
-    inner.code() == outer.code()
-        && inner
-            .collation_name()
-            .eq_ignore_ascii_case(outer.collation_name())
-}
-
 /// The two sides of a join as the decision reads them, built from the scope
 /// the join produced and the executors its children became.
 pub(crate) fn join_sides<'a>(
@@ -1812,6 +1007,7 @@ pub(crate) fn join_sides<'a>(
     catalog: &'a Catalog,
     left_types: &[FieldType],
     right_types: &[FieldType],
+    planner_inner: Option<(i64, Option<&str>)>,
 ) -> (JoinSide<'a>, JoinSide<'a>) {
     let left = side_of(
         &join.left, scope, current_db, catalog, left_types, 0, left_width,
@@ -1849,6 +1045,7 @@ pub(crate) fn join_sides<'a>(
             &keys.iter().map(|key| key.left).collect::<Vec<_>>(),
             catalog,
             current_db,
+            planner_inner,
         ),
         discover_composite_target(
             right,
@@ -1856,6 +1053,7 @@ pub(crate) fn join_sides<'a>(
             &keys.iter().map(|key| key.right).collect::<Vec<_>>(),
             catalog,
             current_db,
+            planner_inner,
         ),
     )
 }
@@ -1869,25 +1067,15 @@ fn discover_composite_target<'a>(
     key_outputs: &[usize],
     catalog: &'a Catalog,
     current_db: &str,
+    planner_inner: Option<(i64, Option<&str>)>,
 ) -> JoinSide<'a> {
-    if side.table.is_some() {
+    if side.table.is_some() || planner_inner.is_none() {
         return side;
     }
-    let key_names = key_outputs
-        .iter()
-        .filter_map(|output| side.names.get(*output))
-        .map(String::as_str)
-        .collect::<Vec<_>>();
+    let (target_table_id, target_relation) = planner_inner.expect("checked above");
     let mut tables = Vec::new();
-    collect_index_join_inner_tables(node, &key_names, &mut tables);
+    collect_table_refs(node, &mut tables);
     for table_ref in tables {
-        if !table_ref.partitions.is_empty()
-            || table_ref.as_of.is_some()
-            || !table_ref.hints.is_empty()
-            || table_ref.sample.is_some()
-        {
-            continue;
-        }
         let Ok((database, name)) =
             crate::driver::catalog::split_table_path(&table_ref.name, current_db)
         else {
@@ -1896,6 +1084,12 @@ fn discover_composite_target<'a>(
         let Some(TableEntry::Kv(table)) = catalog.get_in(database, name) else {
             continue;
         };
+        let visible = table_ref.alias.as_deref().unwrap_or(name);
+        if table.table_id != target_table_id
+            || target_relation.is_some_and(|relation| !relation.eq_ignore_ascii_case(visible))
+        {
+            continue;
+        }
         let origin = format!("{database}.{name}");
         let matches = side
             .names
@@ -1919,7 +1113,9 @@ fn discover_composite_target<'a>(
             continue;
         }
         side.table = Some(table);
-        side.source_visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
+        let visible = visible.to_owned();
+        side.visible.clone_from(&visible);
+        side.source_visible = visible;
         side.origin = Some(origin);
         side.output_to_source = vec![None; side.names.len()];
         for (output, source) in matches {
@@ -1931,112 +1127,29 @@ fn discover_composite_target<'a>(
     side
 }
 
-/// Every table an index join may re-seed on this side: Go
-/// `admitIndexJoinInnerChildPattern`.
-///
-/// Go walks DOWN from the join and asks of each operator whether it may sit
-/// between the join and the `DataSource` it re-seeds. `DataSource`,
-/// `Projection`, `Selection` and `UnionScan` may; a `LogicalJoin` may only if
-/// it is an INNER join; a `LogicalAggregation` may only if
-/// `checkIndexJoinInnerTaskWithAgg` holds. Everything else takes the
-/// function's `default` arm and is refused, with the reason stated there:
-/// "index join inner side couldn't allow join, sort, limit, because they are
-/// Optimization Fence".
-///
-/// Walking to any table that merely CARRIES the key by name, as this used to,
-/// re-seeds a leaf through operators that change what the leaf's rows mean.
-/// `group by t2.a with rollup` was the visible one: the probe key reached
-/// `t2` through the rollup's `Expand`, which Go's switch does not name at all.
-fn collect_index_join_inner_tables<'a>(
-    node: &'a tidb_ast::JoinNode,
-    key_names: &[&str],
-    out: &mut Vec<&'a tidb_ast::TableRef>,
-) {
+/// Collects syntax leaves so the exact physical scan receipt can be mapped
+/// back to the executor's source object. Operator admission has already
+/// happened in the shared planner; this walk makes no planning decision.
+fn collect_table_refs<'a>(node: &'a tidb_ast::JoinNode, out: &mut Vec<&'a tidb_ast::TableRef>) {
     match node {
         tidb_ast::JoinNode::Table(table) => out.push(table),
-        // Go admits a `LogicalJoin` only when it is an INNER join; `Cross` is
-        // this AST's spelling for `JOIN`/`INNER JOIN`/`CROSS JOIN`/the comma
-        // join. An AST join node with no `right` is the single-relation
-        // wrapper, which is no join at all.
         tidb_ast::JoinNode::Join(join) => {
-            if join.right.is_some() && !matches!(join.tp, tidb_ast::JoinType::Cross) {
-                return;
-            }
-            collect_index_join_inner_tables(&join.left, key_names, out);
+            collect_table_refs(&join.left, out);
             if let Some(right) = &join.right {
-                collect_index_join_inner_tables(right, key_names, out);
+                collect_table_refs(right, out);
             }
         }
         tidb_ast::JoinNode::Derived { subquery, .. } => {
-            let tidb_ast::QueryStmt::Select(select) = &**subquery else {
-                // A set operation is none of the admitted operators.
-                return;
-            };
-            if !derived_admits_index_join_inner(select, key_names) {
-                return;
-            }
-            if let Some(from) = &select.from {
-                collect_index_join_inner_tables(&from.left, key_names, out);
-                if let Some(right) = &from.right {
-                    collect_index_join_inner_tables(right, key_names, out);
+            if let tidb_ast::QueryStmt::Select(select) = &**subquery {
+                if let Some(from) = &select.from {
+                    collect_table_refs(&from.left, out);
+                    if let Some(right) = &from.right {
+                        collect_table_refs(right, out);
+                    }
                 }
             }
         }
     }
-}
-
-/// Whether the operators a derived table stands for are ones Go admits
-/// between an index join and the leaf it re-seeds.
-///
-/// `WITH ROLLUP` is an `Expand`, a window spec is a `Window`, and `LIMIT` is a
-/// `Limit`; none is in Go's switch. The remaining clauses build a
-/// `Projection`, a `Selection` (`WHERE`/`HAVING`) or a `LogicalAggregation`,
-/// which Go admits -- the aggregation only under
-/// [`group_keys_cover`].
-fn derived_admits_index_join_inner(select: &tidb_ast::SelectStmt, key_names: &[&str]) -> bool {
-    if select.with.is_some()
-        || !select.values.is_empty()
-        || select.rollup
-        || select.limit.is_some()
-        || !select.windows.is_empty()
-    {
-        return false;
-    }
-    // `DISTINCT` groups by the whole output row, so any output column is a
-    // group key and the cover below is trivially met.
-    if select.group_by.is_empty() {
-        return true;
-    }
-    group_keys_cover(&select.group_by, key_names)
-}
-
-/// Go `checkIndexJoinInnerTaskWithAgg`: every inner join key that comes from
-/// the re-seeded `DataSource` must also be a GROUP BY key.
-///
-/// Otherwise the probe splits the aggregate's groups -- Go's own words,
-/// "the aggregation group might be split into multiple groups by the join
-/// keys, which generate incorrect result". Go compares `UniqueID`s and says
-/// it is deliberately conservative for GROUP BY EXPRESSIONS, rejecting valid
-/// plans rather than risking a wrong one; comparing written column names here
-/// is the same trade at this tier, and a non-column group item refuses for
-/// the same reason.
-fn group_keys_cover(group_by: &[tidb_ast::GroupByItem], key_names: &[&str]) -> bool {
-    let group_columns = group_by
-        .iter()
-        .map(|item| match &item.expr {
-            tidb_ast::Expr::Column(path) => path.last().map(String::as_str),
-            _ => None,
-        })
-        .collect::<Option<Vec<_>>>();
-    let Some(group_columns) = group_columns else {
-        return false;
-    };
-    key_names.iter().all(|name| {
-        let column = name.rsplit('.').next().unwrap_or(name);
-        group_columns
-            .iter()
-            .any(|group| group.eq_ignore_ascii_case(column))
-    })
 }
 
 fn side_of<'a>(

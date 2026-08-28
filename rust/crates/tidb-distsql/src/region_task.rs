@@ -291,7 +291,7 @@ pub(crate) fn build_region_tasks(
     }
 
     let mut ranges = KeyRanges::new(original_ranges.clone());
-    let reordered = ensure_monotonic_key_ranges(&mut ranges);
+    let reordered = tidb_txnkv::ensure_monotonic_key_ranges(&mut ranges);
     let hints = (!reordered && hints_shape_valid).then_some(original_hints.as_slice());
     if ranges.is_empty() {
         return Some(Vec::new());
@@ -370,28 +370,6 @@ pub(crate) fn build_region_tasks(
         tasks.reverse();
     }
     Some(tasks)
-}
-
-fn ensure_monotonic_key_ranges(ranges: &mut KeyRanges) -> bool {
-    let ordered = (0..ranges.len()).all(|index| {
-        let range = ranges.ref_at(index);
-        range.end_key.as_bytes().is_empty() || range.start_key <= range.end_key
-    }) && (1..ranges.len()).all(|index| {
-        let previous = ranges.ref_at(index - 1);
-        let current = ranges.ref_at(index);
-        !previous.end_key.as_bytes().is_empty() && previous.end_key <= current.start_key
-    });
-    if ordered {
-        return false;
-    }
-    let mut sorted = ranges.to_ranges();
-    sorted.sort_by(|left, right| {
-        left.start_key
-            .cmp(&right.start_key)
-            .then_with(|| left.end_key.cmp(&right.end_key))
-    });
-    ranges.reset(sorted);
-    true
 }
 
 fn topology_is_valid(topology: &[RegionTaskTopology]) -> bool {

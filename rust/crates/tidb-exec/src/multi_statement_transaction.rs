@@ -743,8 +743,7 @@ where
             // request flag, set from `InitReturnValues` when an executor needs
             // the row it is about to modify (`pkg/executor/point_get.go:614`).
             let retry_reason = match if return_values {
-                transaction
-                    .acquire_locks_returning_values(keys, &BTreeSet::new(), wait, &call)
+                transaction.acquire_locks_returning_values(keys, &BTreeSet::new(), wait, &call)
             } else {
                 transaction.acquire_locks(keys, &BTreeSet::new(), wait, &call)
             } {

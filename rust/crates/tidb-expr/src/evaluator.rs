@@ -224,8 +224,7 @@ fn decimal_mul_minus_const_column(
             return None;
         };
         let a_index = usize::try_from(a_col.index).ok()?;
-        let a_decimal =
-            a_col.get_static_type()?.code() == FieldTypeCode::NewDecimal;
+        let a_decimal = a_col.get_static_type()?.code() == FieldTypeCode::NewDecimal;
         if !a_decimal {
             return None;
         }
@@ -246,17 +245,14 @@ fn decimal_mul_minus_const_column(
             return None;
         };
         let b_index = usize::try_from(b_col.index).ok()?;
-        let b_decimal =
-            b_col.get_static_type()?.code() == FieldTypeCode::NewDecimal;
+        let b_decimal = b_col.get_static_type()?.code() == FieldTypeCode::NewDecimal;
         if !b_decimal {
             return None;
         }
         Some((a_index, b_index, one))
     };
     let Some((a_index, b_index, _one)) =
-        resolve_pair(column_side, minus_side).or_else(|| {
-            resolve_pair(minus_side, column_side)
-        })
+        resolve_pair(column_side, minus_side).or_else(|| resolve_pair(minus_side, column_side))
     else {
         return Ok(false);
     };
@@ -282,16 +278,10 @@ fn decimal_mul_minus_const_column(
         if row.is_null(a_index) || row.is_null(b_index) {
             return Ok(false);
         }
-        let Some((ca, sa)) = input
-            .column(a_index)
-            .get_my_decimal_i128_scaled(row_index)
-        else {
+        let Some((ca, sa)) = input.column(a_index).get_my_decimal_i128_scaled(row_index) else {
             return Ok(false);
         };
-        let Some((cb, sb)) = input
-            .column(b_index)
-            .get_my_decimal_i128_scaled(row_index)
-        else {
+        let Some((cb, sb)) = input.column(b_index).get_my_decimal_i128_scaled(row_index) else {
             return Ok(false);
         };
         // (1 - discount): rescale the constant 1 into b's scale, then subtract.
@@ -317,7 +307,11 @@ fn decimal_mul_minus_const_column(
         return Ok(false);
     };
     if std::env::var("TIDB_DEBUG_FP").is_ok() {
-        eprintln!("[fp] collecting done, rows={} scale={}", coefficients.len(), result_scale);
+        eprintln!(
+            "[fp] collecting done, rows={} scale={}",
+            coefficients.len(),
+            result_scale
+        );
     }
     for coefficient in coefficients {
         // The result type's scale may differ from the natural one; building

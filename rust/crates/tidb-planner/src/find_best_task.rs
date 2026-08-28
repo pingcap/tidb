@@ -12,22 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go's `findBestTask` over `(logical plan, required property)` pairs, for the
-//! JOIN-STRATEGY choice.
+//! Go's physical join enumeration under a required property.
 //!
-//! # Why a cost evaluator was not enough
-//!
-//! [`crate::candidate_cost`] prices a whole candidate tree and is validated
-//! node by node against `EXPLAIN FORMAT='cost_trace'`. Asking it "hash or
-//! index at THIS join" still reproduces neither of the two recorded choices
-//! the corpus pins, because Go never asks that question. Go asks
-//! `findBestTask(join, prop)`, and the required property decides WHICH
-//! candidates are enumerated at all before any of them is costed.
-//!
-//! This module is that layer, and only that layer: the `(prop, candidate,
-//! enforcer)` rules of `pkg/planner/core/find_best_task.go` and
-//! `exhaust_physical_plans.go` for `LogicalJoin`, with costing delegated to
-//! [`crate::candidate_cost`] through [`JoinCostModel`].
+//! The production recursive search is [`dispatch::find_best_task`], which
+//! operates directly on the shared [`LogicalPlan`] and [`PhysicalPlan`](crate::physical::PhysicalPlan)
+//! trees. This parent module retains only the join candidate/property rules
+//! that dispatch consumes. The former reduced candidate tree, duplicate
+//! recursive cost search, and executor-facing decision tree were removed
+//! once the shared planner became the production authority.
 //!
 //! # The rule table, read off the source
 //!
@@ -49,7 +41,7 @@
 //! `exhaustPhysicalPlans4LogicalJoin` returns `hintCanWork = true` whenever
 //! `p.PreferJoinType == 0`.
 //!
-//! Three consequences are load-bearing, and each is pinned by a test below:
+//! Three consequences are load-bearing:
 //!
 //! * under a non-empty order property a join has NO hash-join candidate, so
 //!   the comparison the corpus appeared to demand never happens at that site;
@@ -59,23 +51,10 @@
 //!   is unreachable without a hint, so reproducing Go's CHOICE and minimising
 //!   Go's COST are different objectives -- fidelity is the objective here.
 //!
-//! # What this module does NOT own
-//!
-//! Row counts. Go reads `p.StatsInfo().RowCount` at every node, derived long
-//! before costing. Here that stays with the caller, through
-//! [`JoinCostModel::attach`], which is handed the children's tasks and returns
-//! the [`Candidate`] to price. The estimator is
-//! [`crate::cardinality::derive_stats`]; wiring it to a live driver is a
-//! separate seam and deliberately absent here rather than approximated.
-
-use crate::candidate_cost::{self, Candidate, CostEnv, CostedNode};
 use crate::logical::LogicalPlan;
 use crate::physical_property::{CteProducerStatus, PhysicalProperty, SortItem, TaskType};
 use crate::plan_base::PlanError;
 use crate::plan_cost_ver2::IndexJoinKind;
-/// The cost model's own task enum, which [`crate::candidate_cost`] reads.
-/// Every candidate a join chooser compares sits on the root task.
-use crate::task_type::TaskType as CostTaskType;
 
 /// `base.JoinType`, the subset a root-task join enumeration branches on.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -170,10 +149,6 @@ pub struct EnumeratedJoin {
 pub struct LogicalJoin {
     /// `p.JoinType`.
     pub join_type: LogicalJoinType,
-    /// The left child.
-    pub left: Box<LogicalNode>,
-    /// The right child.
-    pub right: Box<LogicalNode>,
     /// `p.GetJoinKeys()`'s left half, by `UniqueID`.
     pub left_keys: Vec<i64>,
     /// `p.GetJoinKeys()`'s right half, positionally paired with `left_keys`.
@@ -193,13 +168,6 @@ pub struct LogicalJoin {
     /// how `getEnforcedMergeJoin` remains buildable when neither access path
     /// already provides the join-key order.
     pub force_merge: bool,
-    /// `p.StatsInfo().RowCount`, derived before physical enumeration.
-    ///
-    /// The join cost formula mostly reads child rows, but the chosen task's
-    /// cardinality is what its parent must price. `None` keeps standalone
-    /// structural tests independent of the statistics layer; live callers
-    /// provide the logical statistic.
-    pub output_rows: Option<f64>,
     /// `GetJoinKeys()`'s `hasNullEQ`: some key is `<=>`.
     ///
     /// Go refuses BOTH merge-join forms for it — `GetMergeJoin`
@@ -215,29 +183,6 @@ pub struct LogicalJoin {
     /// form, which checks only `hasNullEQ`. That asymmetry is Go's, and it
     /// is reproduced, not repaired.
     pub keys_contain_enum_or_set: bool,
-}
-
-/// A node of the logical tree the search runs over.
-#[derive(Clone, Debug, PartialEq)]
-pub enum LogicalNode {
-    /// A subtree the caller has already physicalised into a fixed set of
-    /// alternatives, each with the order it provides -- Go's `DataSource`
-    /// access paths, reduced to what the join search reads.
-    Leaf(Vec<LeafAlternative>),
-    /// A join, whose candidates this module enumerates.
-    Join(Box<LogicalJoin>),
-}
-
-/// One physical alternative for a leaf subtree.
-#[derive(Clone, Debug, PartialEq)]
-pub struct LeafAlternative {
-    /// The plan to price.
-    pub plan: Candidate,
-    /// The order its rows come out in, outermost first. An unordered read is
-    /// the empty order, which satisfies only the empty property.
-    pub order: Vec<SortItem>,
-    /// Which caller may read this alternative.
-    pub role: LeafRole,
 }
 
 /// Which parent an access path answers to.
@@ -259,77 +204,6 @@ pub enum LeafRole {
         /// than a secondary index.
         table_range_scan: bool,
     },
-}
-
-/// A physical task: a plan, the order it provides, and its cost.
-///
-/// `base.Task` reduced to the three fields the join search reads.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Task {
-    /// The plan.
-    pub plan: Candidate,
-    /// The order the plan's rows come out in.
-    pub order: Vec<SortItem>,
-    /// `GetPlanCostVer2` over `plan`, per node.
-    pub costed: CostedNode,
-    /// The chosen physical strategy in logical left/right order.
-    pub decision: DecisionTree,
-}
-
-/// The reusable output of the recursive search.
-///
-/// [`Candidate`] follows physical build/probe order for hash and index joins,
-/// which may reverse the logical children. The executor builder needs logical
-/// position instead, so the search carries that identity explicitly rather
-/// than attempting to reconstruct it from a cost tree after the choice.
-#[derive(Clone, Debug, PartialEq)]
-pub enum DecisionTree {
-    /// One already-physicalized leaf.
-    Leaf,
-    /// One logical join and the decisions selected for its children.
-    Join {
-        /// The physical strategy chosen at this join.
-        strategy: JoinStrategy,
-        /// Logical left child, then logical right child.
-        children: [Box<DecisionTree>; 2],
-    },
-    /// `EnforceProperty`: a Sort inserted above the child decision.
-    Sort {
-        /// The order enforced by the Sort.
-        property: PhysicalProperty,
-        /// The decision below the Sort.
-        child: Box<DecisionTree>,
-    },
-}
-
-impl Task {
-    /// `getTaskPlanCost`.
-    #[must_use]
-    pub fn cost(&self) -> f64 {
-        self.costed.est_cost()
-    }
-}
-
-/// How a caller turns an enumerated strategy into a plan to price.
-///
-/// This is the seam Go does not have, because Go's physical operators carry
-/// their own stats. Everything the formulas read that is NOT a property --
-/// row counts, row sizes, filter lists -- arrives through here.
-pub trait JoinCostModel {
-    /// `pp.Attach2Task(childTasks...)`: the candidate plan, or `None` for Go's
-    /// invalid task.
-    fn attach(
-        &self,
-        join: &LogicalJoin,
-        strategy: &JoinStrategy,
-        children: [&Task; 2],
-    ) -> Option<Candidate>;
-
-    /// `EnforceProperty`: the `Sort` that makes `task` satisfy `prop`.
-    ///
-    /// `None` refuses the enforced branch, which is what a caller with no row
-    /// estimate for the sort must answer rather than guess one.
-    fn enforce(&self, prop: &PhysicalProperty, task: &Task) -> Option<Candidate>;
 }
 
 /// `util.GetMaxSortPrefix(sort_cols, all_cols)`: each sort column's offset in
@@ -437,6 +311,13 @@ fn hash_join_shapes(join_type: LogicalJoinType) -> Vec<HashJoinShape> {
 /// first.
 #[must_use]
 pub fn exhaust_join(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<EnumeratedJoin> {
+    // Go `exhaustPhysicalPlans4LogicalJoin` enumerates only hash joins while
+    // this join is itself inside an index-join probe. Each hash candidate
+    // forwards `IndexJoinProp` through one child so the eventual data source
+    // can return `IndexJoinInfo`; merge and nested index joins are excluded.
+    if prop.index_join_prop.is_some() {
+        return hash_join_candidates(join, prop);
+    }
     let mut out = Vec::new();
     out.extend(merge_join_candidates(join, prop));
     if join.force_merge {
@@ -503,6 +384,7 @@ fn enforced_merge_join_candidates(
         can_add_enforcer: true,
         sort_items_for_partition: Vec::new(),
         cte_producer_status: CteProducerStatus::default(),
+        index_join_prop: None,
     };
     vec![EnumeratedJoin {
         strategy: JoinStrategy::Merge {
@@ -589,6 +471,7 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
             can_add_enforcer: false,
             sort_items_for_partition: Vec::new(),
             cte_producer_status: CteProducerStatus::default(),
+            index_join_prop: None,
         };
         // The inner side is planned under an empty property plus the index-join
         // runtime prop, which this port carries as the strategy's own
@@ -635,243 +518,39 @@ fn hash_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enum
         can_add_enforcer: false,
         sort_items_for_partition: Vec::new(),
         cte_producer_status: CteProducerStatus::default(),
+        index_join_prop: None,
     };
-    hash_join_shapes(join.join_type)
-        .into_iter()
-        .map(|shape| EnumeratedJoin {
-            strategy: JoinStrategy::Hash(shape),
-            child_props: [child_prop(), child_prop()],
-            child_roles: [LeafRole::Plain, LeafRole::Plain],
-        })
-        .collect()
-}
-
-/// Whether a task providing `order` satisfies `prop`.
-///
-/// Go answers this by construction -- a child is planned UNDER the property --
-/// so this is the leaf-side check only, where the caller declares what each
-/// alternative provides.
-#[must_use]
-pub fn order_satisfies(order: &[SortItem], prop: &PhysicalProperty) -> bool {
-    prop.sort_items.len() <= order.len()
-        && prop
-            .sort_items
-            .iter()
-            .zip(order)
-            .all(|(required, provided)| required == provided)
-}
-
-/// `findBestTask(lp, prop)`: the cheapest task for this subtree that satisfies
-/// `prop`, or `None` for Go's invalid task.
-#[must_use]
-pub fn find_best_task(
-    node: &LogicalNode,
-    prop: &PhysicalProperty,
-    role: LeafRole,
-    model: &dyn JoinCostModel,
-    env: &CostEnv,
-) -> Option<Task> {
-    match node {
-        LogicalNode::Leaf(alternatives) => best_leaf(alternatives, prop, role, model, env),
-        LogicalNode::Join(join) => {
-            // Go's `admitIndexJoinInnerChildPattern` decides which operators
-            // may sit under an index join's runtime property. A JOIN is one of
-            // them in Go, which pushes the property on to one of ITS children;
-            // no recorded plan this tier reaches has that shape, so it is
-            // refused rather than half-implemented. NAMED RESIDUE.
-            if role != LeafRole::Plain {
-                return None;
-            }
-            best_join(join, prop, model, env)
-        }
-    }
-}
-
-fn best_leaf(
-    alternatives: &[LeafAlternative],
-    prop: &PhysicalProperty,
-    role: LeafRole,
-    model: &dyn JoinCostModel,
-    env: &CostEnv,
-) -> Option<Task> {
-    let mut best: Option<Task> = None;
-    for alternative in alternatives {
-        if alternative.role != role || !order_satisfies(&alternative.order, prop) {
-            continue;
-        }
-        let costed = candidate_cost::evaluate(&alternative.plan, env, CostTaskType::Root);
-        let task = Task {
-            plan: alternative.plan.clone(),
-            order: alternative.order.clone(),
-            costed,
-            decision: DecisionTree::Leaf,
-        };
-        keep_cheaper(&mut best, task);
-    }
-    if prop.can_add_enforcer {
-        // Go's `DataSource.findBestTask` clears the sort items, finds the best
-        // unordered path and enforces the order on top of it.
-        let mut unordered = prop.clone();
-        unordered.sort_items = Vec::new();
-        unordered.can_add_enforcer = false;
-        unordered.expected_cnt = f64::MAX;
-        if let Some(task) = best_leaf(alternatives, &unordered, role, model, env) {
-            if let Some(enforced) = enforce(model, prop, &task, env) {
-                keep_cheaper(&mut best, enforced);
-            }
-        }
-    }
-    best
-}
-
-fn best_join(
-    join: &LogicalJoin,
-    prop: &PhysicalProperty,
-    model: &dyn JoinCostModel,
-    env: &CostEnv,
-) -> Option<Task> {
-    let candidates = exhaust_join(join, prop);
-    if join.force_merge
-        && !prop.is_sort_item_empty()
-        && !candidates
-            .iter()
-            .any(|candidate| matches!(candidate.strategy, JoinStrategy::Merge { .. }))
-    {
-        // `hintWorksWithProp == false`: Go retries the hint under an empty
-        // property, then adds one Sort above the hinted join. If that retry
-        // works, the non-hinted candidates from the original property are
-        // discarded rather than allowed to defeat the hint on cost.
-        let mut empty = prop.clone();
-        empty.sort_items.clear();
-        empty.expected_cnt = f64::MAX;
-        let under_empty = exhaust_join(join, &empty);
-        if under_empty
-            .iter()
-            .any(|candidate| matches!(candidate.strategy, JoinStrategy::Merge { .. }))
-        {
-            return enumerate(join, &under_empty, prop, true, model, env);
-        }
-    }
-
-    let mut best = enumerate(join, &candidates, prop, false, model, env);
-    if prop.can_add_enforcer {
-        // `findBestTask`'s enforced branch: exhaust under the EMPTY property,
-        // then put the enforcer on each resulting task.
-        let mut empty = prop.clone();
-        empty.sort_items = Vec::new();
-        empty.expected_cnt = f64::MAX;
-        let enforced = enumerate(join, &exhaust_join(join, &empty), prop, true, model, env);
-        if let Some(task) = enforced {
-            keep_cheaper(&mut best, task);
-        }
-    }
-    best
-}
-
-fn enumerate(
-    join: &LogicalJoin,
-    candidates: &[EnumeratedJoin],
-    prop: &PhysicalProperty,
-    add_enforcer: bool,
-    model: &dyn JoinCostModel,
-    env: &CostEnv,
-) -> Option<Task> {
-    let mut best: Option<Task> = None;
-    for candidate in candidates {
-        let Some(left) = find_best_task(
-            &join.left,
-            &candidate.child_props[0],
-            candidate.child_roles[0],
-            model,
-            env,
-        ) else {
-            continue;
-        };
-        let Some(right) = find_best_task(
-            &join.right,
-            &candidate.child_props[1],
-            candidate.child_roles[1],
-            model,
-            env,
-        ) else {
-            continue;
-        };
-        let Some(plan) = model.attach(join, &candidate.strategy, [&left, &right]) else {
-            continue;
-        };
-        let order = provided_order(&candidate.strategy, [&left, &right]);
-        let mut costed = candidate_cost::evaluate(&plan, env, CostTaskType::Root);
-        if let Some(output_rows) = join.output_rows {
-            costed.rows = output_rows;
-        }
-        let task = Task {
-            plan,
-            order,
-            costed,
-            decision: DecisionTree::Join {
-                strategy: candidate.strategy.clone(),
-                children: [
-                    Box::new(left.decision.clone()),
-                    Box::new(right.decision.clone()),
-                ],
-            },
-        };
-        let task = if add_enforcer {
-            match enforce(model, prop, &task, env) {
-                Some(enforced) => enforced,
-                None => continue,
+    let mut candidates = Vec::new();
+    for shape in hash_join_shapes(join.join_type) {
+        if let Some(runtime) = &prop.index_join_prop {
+            // Go `getHashJoin`: for a parent index-join runtime property,
+            // enumerate one candidate per child that may contain the target
+            // data source. Exactly one child receives the property.
+            for child_idx in 0..2 {
+                let mut child_props = [child_prop(), child_prop()];
+                child_props[child_idx].index_join_prop = Some(runtime.clone());
+                candidates.push(EnumeratedJoin {
+                    strategy: JoinStrategy::Hash(shape.clone()),
+                    child_props,
+                    child_roles: [LeafRole::Plain, LeafRole::Plain],
+                });
             }
         } else {
-            task
-        };
-        keep_cheaper(&mut best, task);
+            candidates.push(EnumeratedJoin {
+                strategy: JoinStrategy::Hash(shape),
+                child_props: [child_prop(), child_prop()],
+                child_roles: [LeafRole::Plain, LeafRole::Plain],
+            });
+        }
     }
-    best
-}
-
-/// `EnforceProperty`: a `Sort` on top, which then provides exactly `prop`.
-fn enforce(
-    model: &dyn JoinCostModel,
-    prop: &PhysicalProperty,
-    task: &Task,
-    env: &CostEnv,
-) -> Option<Task> {
-    let plan = model.enforce(prop, task)?;
-    let costed = candidate_cost::evaluate(&plan, env, CostTaskType::Root);
-    Some(Task {
-        plan,
-        order: prop.sort_items.clone(),
-        costed,
-        decision: DecisionTree::Sort {
-            property: prop.clone(),
-            child: Box::new(task.decision.clone()),
-        },
-    })
-}
-
-/// The order a strategy's output comes out in.
-fn provided_order(strategy: &JoinStrategy, children: [&Task; 2]) -> Vec<SortItem> {
-    match strategy {
-        // "hash join doesn't promise any orders".
-        JoinStrategy::Hash(_) => Vec::new(),
-        // A merge join emits its left child's order, which its child property
-        // already fixed to the left join keys.
-        JoinStrategy::Merge { .. } => children[0].order.clone(),
-        // An index join emits the OUTER child's order, unchanged: the inner
-        // side is read once per outer row and never reorders it.
-        JoinStrategy::Index { outer_idx, .. } => children[*outer_idx].order.clone(),
-    }
+    candidates
 }
 
 /// Go `hint.PreferMergeJoin`: bit 7 of the `1 << iota` block opened by
 /// `PreferINLJ` (`pkg/util/hint/hint.go:141`).
 pub const PREFER_MERGE_JOIN: u32 = 1 << 7;
 
-/// The bridge from the plan tree the builder produces to the reduced view
-/// this enumeration reads: one [`LogicalNode`] per node of a JOIN SPINE.
-///
-/// A `LogicalPlan::Join` becomes [`LogicalNode::Join`], with every field the
-/// enumeration reads extracted from the real operator:
+/// Reduce one real logical join to the fields its physical enumeration reads.
 ///
 /// * keys through `LogicalJoin::get_join_keys` (Go `GetJoinKeys`,
 ///   `logical_join.go:1011`), which also answers `has_null_eq`;
@@ -879,72 +558,10 @@ pub const PREFER_MERGE_JOIN: u32 = 1 << 7;
 ///   what lets [`merge_join_candidates`] apply `GetMergeJoin`'s refusal
 ///   (`physical_merge_join.go:57-66`);
 /// * `force_merge` as `PreferJoinType & PreferMergeJoin`, Go's own test;
-/// * `output_rows` from the operator's derived statistics, which
-///   [`LogicalPlan::recursive_derive_stats`] has usually just written;
 /// * schemas and provided orders from the operator's fields.
-///
-/// Every NON-join node is a leaf, answered by the caller's `leaves` callback
-/// — Go's `DataSource.findBestTask` over its access paths, which this crate
-/// cannot yet enumerate (access-path lists build empty; a NAMED residue). A
-/// callback that cannot supply alternatives for a node returns `Err`, and
-/// the projection fails loudly rather than inventing an empty leaf that
-/// would silently plan nothing.
-///
-/// The walk is stack-explicit, per the crate rule; join spines are shallow,
-/// but the rule is cheap to keep.
-pub fn project_join_spine(
-    plan: &LogicalPlan,
-    leaves: &mut dyn FnMut(&LogicalPlan) -> Result<Vec<LeafAlternative>, PlanError>,
-) -> Result<LogicalNode, PlanError> {
-    enum Frame<'a> {
-        Enter(&'a LogicalPlan),
-        Exit(&'a crate::logical::LogicalJoin, &'a LogicalPlan),
-    }
-    let mut work = vec![Frame::Enter(plan)];
-    let mut done: Vec<LogicalNode> = Vec::new();
-    while let Some(frame) = work.pop() {
-        match frame {
-            Frame::Enter(node) => match node {
-                LogicalPlan::Join(join) => {
-                    let children = node.children();
-                    let (Some(left), Some(right)) = (children.first(), children.get(1)) else {
-                        return Err(PlanError::internal(
-                            "project_join_spine: a LogicalJoin without two children",
-                        ));
-                    };
-                    work.push(Frame::Exit(join, node));
-                    // Left is pushed LAST so it is entered first and its
-                    // result sits deeper in `done`.
-                    work.push(Frame::Enter(right));
-                    work.push(Frame::Enter(left));
-                }
-                other => done.push(LogicalNode::Leaf(leaves(other)?)),
-            },
-            Frame::Exit(join, node) => {
-                let right = done.pop();
-                let left = done.pop();
-                let (Some(left), Some(right)) = (left, right) else {
-                    return Err(PlanError::internal(
-                        "project_join_spine: child results missing at a join exit",
-                    ));
-                };
-                done.push(LogicalNode::Join(Box::new(project_one_join(
-                    join, node, left, right,
-                )?)));
-            }
-        }
-    }
-    done.pop().ok_or_else(|| {
-        PlanError::internal("project_join_spine: empty projection for a non-empty plan")
-    })
-}
-
-/// One `logical::LogicalJoin` reduced to what the enumeration reads.
-fn project_one_join(
+pub(crate) fn project_one_join(
     join: &crate::logical::LogicalJoin,
     node: &LogicalPlan,
-    left: LogicalNode,
-    right: LogicalNode,
 ) -> Result<LogicalJoin, PlanError> {
     let (left_key_cols, right_key_cols, _, has_null_eq) = join.get_join_keys();
     // `GetMergeJoin` reads `RetType.GetType()` on every key of BOTH sides
@@ -973,8 +590,6 @@ fn project_one_join(
     };
     Ok(LogicalJoin {
         join_type: join.join_type,
-        left: Box::new(left),
-        right: Box::new(right),
         left_keys: ids(&left_key_cols),
         right_keys: ids(&right_key_cols),
         left_schema: children.first().map(|c| schema_ids(c)).unwrap_or_default(),
@@ -982,25 +597,10 @@ fn project_one_join(
         left_properties: join.left_properties.iter().map(|p| ids(p)).collect(),
         right_properties: join.right_properties.iter().map(|p| ids(p)).collect(),
         force_merge: join.prefer_join_type & PREFER_MERGE_JOIN != 0,
-        output_rows: node
-            .stats_info()
-            .map(crate::stats_info::StatsInfo::row_count),
         has_null_eq,
         keys_contain_enum_or_set,
     })
 }
 
-/// `compareTaskCost`'s strict `<`: an exactly equal alternative never
-/// displaces the incumbent, so enumeration order breaks the tie.
-fn keep_cheaper(best: &mut Option<Task>, task: Task) {
-    match best {
-        Some(incumbent) if !candidate_cost::prefer(&task.costed, &incumbent.costed) => {}
-        _ => *best = Some(task),
-    }
-}
-
 pub mod coster;
 pub mod dispatch;
-
-#[cfg(test)]
-mod tests;

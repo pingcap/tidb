@@ -129,29 +129,6 @@ impl Hasher for IdentityU64Hasher {
 
 type HashBuckets<V> = HashMap<u64, V, BuildHasherDefault<IdentityU64Hasher>>;
 
-/// Produces a cheap bucket fingerprint in machine-word chunks. Callers must
-/// retain and compare the complete key after a bucket hit because this value
-/// is not collision-free.
-pub(crate) fn fast_bytes_fingerprint(bytes: &[u8]) -> u64 {
-    let mut hash = (bytes.len() as u64).wrapping_mul(0x9e37_79b1_85eb_ca87);
-    let mut chunks = bytes.chunks_exact(8);
-    for chunk in &mut chunks {
-        let word = u64::from_le_bytes(chunk.try_into().expect("eight-byte chunk"));
-        hash ^= word.wrapping_mul(0xc2b2_ae3d_27d4_eb4f);
-        hash = hash
-            .rotate_left(27)
-            .wrapping_mul(0x1656_67b1_9e37_79f9);
-    }
-    let mut tail = 0_u64;
-    for (shift, byte) in chunks.remainder().iter().enumerate() {
-        tail |= u64::from(*byte) << (shift * 8);
-    }
-    hash ^= tail.wrapping_mul(0x85eb_ca77_c2b2_ae63);
-    hash ^= hash >> 33;
-    hash = hash.wrapping_mul(0xff51_afd7_ed55_8ccd);
-    hash ^ (hash >> 33)
-}
-
 /// Hashes the complete integer equality key while retaining the exact
 /// `i128` value in the map. The ordinary hash-join table stores only Go's
 /// 64-bit FNV bucket and must re-check every candidate for collisions; this
@@ -333,26 +310,23 @@ pub(crate) fn has_cross_side_equality(conditions: &[Expression], left_width: usi
             Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
         }
     }
-    conditions
-        .iter()
-        .flat_map(split_conjuncts)
-        .any(|conjunct| {
-            let Expression::ScalarFunction(f) = conjunct else {
-                return false;
-            };
-            let name = f.func_name.lowercase();
-            if (name != "eq" && name != "nulleq") || f.args.len() != 2 {
-                return false;
-            }
-            let mut first = (false, false);
-            let mut second = (false, false);
-            sides(&f.args[0], left_width, &mut first);
-            sides(&f.args[1], left_width, &mut second);
-            matches!(
-                (first, second),
-                ((true, false), (false, true)) | ((false, true), (true, false))
-            )
-        })
+    conditions.iter().flat_map(split_conjuncts).any(|conjunct| {
+        let Expression::ScalarFunction(f) = conjunct else {
+            return false;
+        };
+        let name = f.func_name.lowercase();
+        if (name != "eq" && name != "nulleq") || f.args.len() != 2 {
+            return false;
+        }
+        let mut first = (false, false);
+        let mut second = (false, false);
+        sides(&f.args[0], left_width, &mut first);
+        sides(&f.args[1], left_width, &mut second);
+        matches!(
+            (first, second),
+            ((true, false), (false, true)) | ((false, true), (true, false))
+        )
+    })
 }
 
 pub(crate) fn split_equi(conditions: &[Expression], left_width: usize) -> EquiSplit {
@@ -727,49 +701,6 @@ fn datum_int_key(datum: &Datum) -> Option<i128> {
     })
 }
 
-/// Go `hashRowContainer.matchJoinKey`: a 64-bit hash match selects candidates
-/// but equality of every original key column decides whether the rows join.
-pub(crate) fn equi_keys_equal(
-    keys: &[EquiKey],
-    left: &[Datum],
-    right: &[Datum],
-) -> Result<bool, KeyError> {
-    for key in keys {
-        let left = &left[key.left];
-        let right = &right[key.right];
-        if matches!(left, Datum::Null) || matches!(right, Datum::Null) {
-            if key.null_safe && matches!((left, right), (Datum::Null, Datum::Null)) {
-                continue;
-            }
-            return Ok(false);
-        }
-        let equal = match key.class {
-            KeyClass::Int => {
-                datum_int_key(left).ok_or(KeyError)? == datum_int_key(right).ok_or(KeyError)?
-            }
-            KeyClass::Real => {
-                let number = |datum: &Datum| match datum {
-                    Datum::Real(value) | Datum::Float32(value) => Some(*value),
-                    Datum::Int(value) => Some(*value as f64),
-                    Datum::UInt(value) => Some(*value as f64),
-                    _ => None,
-                };
-                let (Some(left), Some(right)) = (number(left), number(right)) else {
-                    return Err(KeyError);
-                };
-                left == right
-            }
-            KeyClass::Decimal | KeyClass::Str(_) => {
-                key_part(key.class, left)? == key_part(key.class, right)?
-            }
-        };
-        if !equal {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
 /// Compares a materialized row on one side with a typed chunk row on the
 /// other. Hash probing uses this before decoding a complete build row: Go's
 /// `matchJoinKey` only needs the equality columns, while the old Rust path
@@ -1093,7 +1024,9 @@ impl BuildTable {
         let Some(chunks) = self.matched.as_ref() else {
             return;
         };
-        let mut chunks = chunks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut chunks = chunks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(chunk) = chunks.get_mut(ptr.chk_idx as usize) else {
             return;
         };
@@ -1106,7 +1039,9 @@ impl BuildTable {
         let Some(chunks) = self.matched.as_ref() else {
             return false;
         };
-        let chunks = chunks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let chunks = chunks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(chunk) = chunks.get(ptr.chk_idx as usize) else {
             return false;
         };
@@ -1410,9 +1345,21 @@ mod tests {
             class: KeyClass::Int,
             null_safe: false,
         };
-        assert!(equi_keys_equal(&[key], &[Datum::Int(7)], &[Datum::UInt(7)]).unwrap());
-        assert!(!equi_keys_equal(&[key], &[Datum::Int(7)], &[Datum::UInt(8)]).unwrap());
-        assert!(!equi_keys_equal(&[key], &[Datum::Int(-1)], &[Datum::UInt(u64::MAX)]).unwrap());
+        let types = vec![FieldType::new(FieldTypeCode::LongLong).with_unsigned(true)];
+        let mut chunk = Chunk::new_with_capacity(&types, 2);
+        chunk.append_uint64(0, 7);
+        chunk.append_uint64(0, u64::MAX);
+        assert!(
+            equi_keys_equal_row(&[key], &[Datum::Int(7)], true, chunk.get_row(0), &types,).unwrap()
+        );
+        assert!(
+            !equi_keys_equal_row(&[key], &[Datum::Int(8)], true, chunk.get_row(0), &types,)
+                .unwrap()
+        );
+        assert!(
+            !equi_keys_equal_row(&[key], &[Datum::Int(-1)], true, chunk.get_row(1), &types,)
+                .unwrap()
+        );
     }
 
     /// `NaN = NaN` is FALSE, and `-0.0 = 0.0` is TRUE.

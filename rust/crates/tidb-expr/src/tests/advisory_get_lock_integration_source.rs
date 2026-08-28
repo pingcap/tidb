@@ -78,7 +78,9 @@ impl LockSession {
     /// returns the labels of the single result row.
     fn query_row(&self, sql: &str) -> Vec<String> {
         let stmt = tidb_parser::parse(sql).expect("parse");
-        let Stmt::Query(query) = stmt else { panic!("not query") };
+        let Stmt::Query(query) = stmt else {
+            panic!("not query")
+        };
         let QueryStmt::Select(select) = query.into_inner() else {
             panic!("not select")
         };
@@ -141,7 +143,10 @@ fn test_get_lock_call_semantics_table() {
 
     // Timeout 0 acquires immediately; -10 converts to the max value WITH the
     // truncation warning. Both answers read `1`.
-    assert_eq!(session.query_row("SELECT get_lock('testlock1', 0)"), ["INT:1"]);
+    assert_eq!(
+        session.query_row("SELECT get_lock('testlock1', 0)"),
+        ["INT:1"]
+    );
     let warnings = std::cell::RefCell::new(Vec::<(u16, String)>::new());
     struct WarnSession<'a> {
         inner: &'a LockSession,
@@ -151,7 +156,11 @@ fn test_get_lock_call_semantics_table() {
         fn get(&self, path: &[String]) -> Option<Datum> {
             self.inner.get(path)
         }
-        fn acquire_advisory_lock(&self, name: &str, t: std::time::Duration) -> Result<bool, EvalError> {
+        fn acquire_advisory_lock(
+            &self,
+            name: &str,
+            t: std::time::Duration,
+        ) -> Result<bool, EvalError> {
             self.inner.acquire_advisory_lock(name, t)
         }
         fn append_warning(&self, code: u16, message: &str) {
@@ -161,13 +170,21 @@ fn test_get_lock_call_semantics_table() {
             ErrorLevel::Warn
         }
     }
-    let warn_session = WarnSession { inner: &session, warnings: &warnings };
-    assert_eq!(session.query_row("SELECT get_lock('testlock2', -10)"), ["INT:1"]);
+    let warn_session = WarnSession {
+        inner: &session,
+        warnings: &warnings,
+    };
+    assert_eq!(
+        session.query_row("SELECT get_lock('testlock2', -10)"),
+        ["INT:1"]
+    );
     // Re-run through the collecting wrapper so the emitted warning can be
     // compared with Go's SHOW WARNINGS row.
     {
         let stmt = tidb_parser::parse("SELECT get_lock('testlock2', -10)").expect("parse");
-        let Stmt::Query(query) = stmt else { panic!("not query") };
+        let Stmt::Query(query) = stmt else {
+            panic!("not query")
+        };
         let QueryStmt::Select(select) = query.into_inner() else {
             panic!("not select")
         };
@@ -177,12 +194,17 @@ fn test_get_lock_call_semantics_table() {
         let rewritten = rewrite_expr_resolved(expr, &NoResolver).expect("rewrite");
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
         chunk.set_num_virtual_rows(1);
-        rewritten.eval(&warn_session, chunk.get_row(0)).expect("eval");
+        rewritten
+            .eval(&warn_session, chunk.get_row(0))
+            .expect("eval");
     }
     let got_warnings = warnings.borrow();
     assert_eq!(
         &*got_warnings,
-        &[(1292u16, "Truncated incorrect get_lock value: '-10'".to_owned())],
+        &[(
+            1292u16,
+            "Truncated incorrect get_lock value: '-10'".to_owned()
+        )],
         "Go pins exactly one warning 1292 row (integration_test.go:1466)"
     );
     drop(got_warnings);
@@ -190,9 +212,7 @@ fn test_get_lock_call_semantics_table() {
     // Both acquired locks release as `1`; afterwards release_all_locks()
     // reports 0 (nothing left to release).
     assert_eq!(
-        session.query_row(
-            "SELECT release_lock('testlock1'), release_lock('testlock2')"
-        ),
+        session.query_row("SELECT release_lock('testlock1'), release_lock('testlock2')"),
         ["INT:1", "INT:1"]
     );
     assert_eq!(session.query_row("SELECT release_all_locks()"), ["INT:0"]);
@@ -210,7 +230,9 @@ fn test_get_lock_rejects_bad_names_with_3057() {
     ] {
         let session = LockSession::default();
         let stmt = tidb_parser::parse(sql).expect("parse");
-        let Stmt::Query(query) = stmt else { panic!("not query") };
+        let Stmt::Query(query) = stmt else {
+            panic!("not query")
+        };
         let QueryStmt::Select(select) = query.into_inner() else {
             panic!("not select")
         };

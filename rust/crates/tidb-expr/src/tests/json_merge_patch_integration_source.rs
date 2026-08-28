@@ -95,8 +95,10 @@ fn eval_in_column(j: Option<&str>, vc: Option<&str>) -> Result<Datum, EvalError>
         }
     }
 
-    let rewritten =
-        rewrite_expr_resolved(&parse_field_expr("select json_merge_patch(j, vc)"), &ColumnsCtx)?;
+    let rewritten = rewrite_expr_resolved(
+        &parse_field_expr("select json_merge_patch(j, vc)"),
+        &ColumnsCtx,
+    )?;
     let json_ft = FieldType::new(FieldTypeCode::Json);
     let var_ft = FieldType::new(FieldTypeCode::VarString);
     let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&[json_ft, var_ft], 1);
@@ -142,16 +144,8 @@ fn test_builtin_func_json_merge_patch_in_column_table() {
     // TestBuiltinFuncJSONMergePatch_InColumn: `(j, vc, expected)` where a
     // `None` operand stands for the Go `nil` SQL value.
     let rows: &[(&str, &str, &str)] = &[
-        (
-            r#"{"a":"b"}"#,
-            r#"{"a":"c"}"#,
-            r#"{"a": "c"}"#,
-        ),
-        (
-            r#"{"a":"b"}"#,
-            r#"{"b":"c"}"#,
-            r#"{"a": "b", "b": "c"}"#,
-        ),
+        (r#"{"a":"b"}"#, r#"{"a":"c"}"#, r#"{"a": "c"}"#),
+        (r#"{"a":"b"}"#, r#"{"b":"c"}"#, r#"{"a": "b", "b": "c"}"#),
         (r#"{"a":"b"}"#, r#"{"a":null}"#, "{}"),
         (r#"{"a":"b", "b":"c"}"#, r#"{"a":null}"#, r#"{"b": "c"}"#),
         (r#"{"a":["b"]}"#, r#"{"a":"c"}"#, r#"{"a": "c"}"#),
@@ -188,7 +182,11 @@ fn test_builtin_func_json_merge_patch_in_column_table() {
     for (index, (j, vc, expected)) in rows.iter().enumerate() {
         let datum =
             eval_in_column(Some(j), Some(vc)).unwrap_or_else(|err| panic!("row {index}: {err:?}"));
-        assert_document_or_nil(datum, Some(expected), &format!("row {index} ({j:?}, {vc:?})"));
+        assert_document_or_nil(
+            datum,
+            Some(expected),
+            &format!("row {index} ({j:?}, {vc:?})"),
+        );
     }
 
     // The three SQL-NULL truncation rows: target NULL, value NULL, and both.
@@ -202,7 +200,11 @@ fn test_builtin_func_json_merge_patch_in_column_table() {
         None,
         "vc NULL",
     );
-    assert_document_or_nil(eval_in_column(None, None).expect("row: both NULL"), None, "both NULL");
+    assert_document_or_nil(
+        eval_in_column(None, None).expect("row: both NULL"),
+        None,
+        "both NULL",
+    );
 
     // Invalid JSON text reaching the runtime parse raises ErrInvalidJSONText
     // (3140): the failure row of the In-column table.
@@ -220,24 +222,60 @@ fn test_builtin_func_json_merge_patch_in_expression_table() {
     // TestBuiltinFuncJSONMergePatch_InExpression (`integration_test.go:2412`):
     // every argument is either a document string or the Go `nil`.
     let rows: &[(&[Option<&str>], Option<&str>)] = &[
-        (&[Some(r#"{"a":"b"}"#), Some(r#"{"a":"c"}"#)], Some(r#"{"a": "c"}"#)),
-        (&[Some(r#"{"a":"b"}"#), Some(r#"{"b":"c"}"#)], Some(r#"{"a": "b", "b": "c"}"#)),
-        (&[Some(r#"{"a":"b"}"#), Some(r#"{"a":null}"#)], Some("{}")),
-        (&[Some(r#"{"a":"b", "b":"c"}"#), Some(r#"{"a":null}"#)], Some(r#"{"b": "c"}"#)),
-        (&[Some(r#"{"a":["b"]}"#), Some(r#"{"a":"c"}"#)], Some(r#"{"a": "c"}"#)),
-        (&[Some(r#"{"a":"c"}"#), Some(r#"{"a":["b"]}"#)], Some(r#"{"a": ["b"]}"#)),
         (
-            &[Some(r#"{"a":{"b":"c"}}"#), Some(r#"{"a":{"b":"d","c":null}}"#)],
+            &[Some(r#"{"a":"b"}"#), Some(r#"{"a":"c"}"#)],
+            Some(r#"{"a": "c"}"#),
+        ),
+        (
+            &[Some(r#"{"a":"b"}"#), Some(r#"{"b":"c"}"#)],
+            Some(r#"{"a": "b", "b": "c"}"#),
+        ),
+        (&[Some(r#"{"a":"b"}"#), Some(r#"{"a":null}"#)], Some("{}")),
+        (
+            &[Some(r#"{"a":"b", "b":"c"}"#), Some(r#"{"a":null}"#)],
+            Some(r#"{"b": "c"}"#),
+        ),
+        (
+            &[Some(r#"{"a":["b"]}"#), Some(r#"{"a":"c"}"#)],
+            Some(r#"{"a": "c"}"#),
+        ),
+        (
+            &[Some(r#"{"a":"c"}"#), Some(r#"{"a":["b"]}"#)],
+            Some(r#"{"a": ["b"]}"#),
+        ),
+        (
+            &[
+                Some(r#"{"a":{"b":"c"}}"#),
+                Some(r#"{"a":{"b":"d","c":null}}"#),
+            ],
             Some(r#"{"a": {"b": "d"}}"#),
         ),
-        (&[Some(r#"{"a":[{"b":"c"}]}"#), Some(r#"{"a": [1]}"#)], Some(r#"{"a": [1]}"#)),
-        (&[Some(r#"["a","b"]"#), Some(r#"["c","d"]"#)], Some(r#"["c", "d"]"#)),
+        (
+            &[Some(r#"{"a":[{"b":"c"}]}"#), Some(r#"{"a": [1]}"#)],
+            Some(r#"{"a": [1]}"#),
+        ),
+        (
+            &[Some(r#"["a","b"]"#), Some(r#"["c","d"]"#)],
+            Some(r#"["c", "d"]"#),
+        ),
         (&[Some(r#"{"a":"b"}"#), Some(r#"["c"]"#)], Some(r#"["c"]"#)),
         (&[Some(r#"{"a":"foo"}"#), Some("null")], Some("null")),
-        (&[Some(r#"{"a":"foo"}"#), Some(r#""bar""#)], Some(r#""bar""#)),
-        (&[Some(r#"{"e":null}"#), Some(r#"{"a":1}"#)], Some(r#"{"e": null, "a": 1}"#)),
-        (&[Some("[1,2]"), Some(r#"{"a":"b","c":null}"#)], Some(r#"{"a": "b"}"#)),
-        (&[Some("{}"), Some(r#"{"a":{"bb":{"ccc":null}}}"#)], Some(r#"{"a": {"bb": {}}}"#)),
+        (
+            &[Some(r#"{"a":"foo"}"#), Some(r#""bar""#)],
+            Some(r#""bar""#),
+        ),
+        (
+            &[Some(r#"{"e":null}"#), Some(r#"{"a":1}"#)],
+            Some(r#"{"e": null, "a": 1}"#),
+        ),
+        (
+            &[Some("[1,2]"), Some(r#"{"a":"b","c":null}"#)],
+            Some(r#"{"a": "b"}"#),
+        ),
+        (
+            &[Some("{}"), Some(r#"{"a":{"bb":{"ccc":null}}}"#)],
+            Some(r#"{"a": {"bb": {}}}"#),
+        ),
         // RFC 7396 Example Document
         (
             &[
@@ -266,19 +304,38 @@ fn test_builtin_func_json_merge_patch_in_expression_table() {
         (&[None, Some(r#"{"a":"foo"}"#)], None),
         (&[Some(r#"{"a":"foo"}"#), None], None),
         (
-            &[Some(r#"{"a":"foo"}"#), Some(r#"{"a":null}"#), Some(r#"{"b":"123"}"#), Some(r#"{"c":1}"#)],
+            &[
+                Some(r#"{"a":"foo"}"#),
+                Some(r#"{"a":null}"#),
+                Some(r#"{"b":"123"}"#),
+                Some(r#"{"c":1}"#),
+            ],
             Some(r#"{"b":"123","c":1}"#),
         ),
         (
-            &[Some(r#"{"a":"foo"}"#), Some(r#"{"a":null}"#), Some(r#"{"c":1}"#)],
+            &[
+                Some(r#"{"a":"foo"}"#),
+                Some(r#"{"a":null}"#),
+                Some(r#"{"c":1}"#),
+            ],
             Some(r#"{"c":1}"#),
         ),
-        (&[Some(r#"{"a":"foo"}"#), Some(r#"{"a":null}"#), Some("true")], Some("true")),
         (
-            &[Some(r#"{"a":"foo"}"#), Some(r#"{"d":1}"#), Some(r#"{"a":{"bb":{"ccc":null}}}"#)],
+            &[Some(r#"{"a":"foo"}"#), Some(r#"{"a":null}"#), Some("true")],
+            Some("true"),
+        ),
+        (
+            &[
+                Some(r#"{"a":"foo"}"#),
+                Some(r#"{"d":1}"#),
+                Some(r#"{"a":{"bb":{"ccc":null}}}"#),
+            ],
             Some(r#"{"a":{"bb":{}},"d":1}"#),
         ),
-        (&[Some("null"), Some("true"), Some("[1,2,3]")], Some("[1,2,3]")),
+        (
+            &[Some("null"), Some("true"), Some("[1,2,3]")],
+            Some("[1,2,3]"),
+        ),
         // From mysql Example Test Cases: two operands placed in every slot.
         (
             &[None, Some("null"), Some("[1,2,3]"), Some(r#"{"a":1}"#)],
@@ -329,13 +386,76 @@ fn test_builtin_func_json_merge_patch_in_expression_table() {
             None,
         ),
         // Non-object last item replaces the whole chain.
-        (&[Some("true"), Some("false"), Some("[]"), Some("{}"), Some("null")], Some("null")),
-        (&[Some("false"), Some("[]"), Some("{}"), Some("null"), Some("true")], Some("true")),
-        (&[Some("true"), Some("[]"), Some("{}"), Some("null"), Some("false")], Some("false")),
-        (&[Some("true"), Some("false"), Some("{}"), Some("null"), Some("[]")], Some("[]")),
-        (&[Some("true"), Some("false"), Some("{}"), Some("null"), Some("1")], Some("1")),
-        (&[Some("true"), Some("false"), Some("{}"), Some("null"), Some("1.8")], Some("1.8")),
-        (&[Some("true"), Some("false"), Some("{}"), Some("null"), Some(r#""112""#)], Some(r#""112""#)),
+        (
+            &[
+                Some("true"),
+                Some("false"),
+                Some("[]"),
+                Some("{}"),
+                Some("null"),
+            ],
+            Some("null"),
+        ),
+        (
+            &[
+                Some("false"),
+                Some("[]"),
+                Some("{}"),
+                Some("null"),
+                Some("true"),
+            ],
+            Some("true"),
+        ),
+        (
+            &[
+                Some("true"),
+                Some("[]"),
+                Some("{}"),
+                Some("null"),
+                Some("false"),
+            ],
+            Some("false"),
+        ),
+        (
+            &[
+                Some("true"),
+                Some("false"),
+                Some("{}"),
+                Some("null"),
+                Some("[]"),
+            ],
+            Some("[]"),
+        ),
+        (
+            &[
+                Some("true"),
+                Some("false"),
+                Some("{}"),
+                Some("null"),
+                Some("1"),
+            ],
+            Some("1"),
+        ),
+        (
+            &[
+                Some("true"),
+                Some("false"),
+                Some("{}"),
+                Some("null"),
+                Some("1.8"),
+            ],
+            Some("1.8"),
+        ),
+        (
+            &[
+                Some("true"),
+                Some("false"),
+                Some("{}"),
+                Some("null"),
+                Some(r#""112""#),
+            ],
+            Some(r#""112""#),
+        ),
         (&[Some(r#"{"a":"foo"}"#), None], None),
         (&[None, Some(r#"{"a":"foo"}"#)], None),
         (&[Some(r#"{"a":"foo"}"#), Some("false")], Some("false")),
@@ -345,23 +465,39 @@ fn test_builtin_func_json_merge_patch_in_expression_table() {
         (&[Some("null"), Some(r#"{"a":1}"#)], Some(r#"{"a":1}"#)),
         (&[Some(r#"{"a":1}"#), Some("null")], Some("null")),
         (
-            &[Some(r#"{"a":"foo"}"#), Some(r#"{"a":null}"#), Some(r#"{"b":"123"}"#), Some(r#"{"c":1}"#)],
+            &[
+                Some(r#"{"a":"foo"}"#),
+                Some(r#"{"a":null}"#),
+                Some(r#"{"b":"123"}"#),
+                Some(r#"{"c":1}"#),
+            ],
             Some(r#"{"b":"123","c":1}"#),
         ),
         (
-            &[Some(r#"{"a":"foo"}"#), Some(r#"{"a":null}"#), Some(r#"{"c":1}"#)],
+            &[
+                Some(r#"{"a":"foo"}"#),
+                Some(r#"{"a":null}"#),
+                Some(r#"{"c":1}"#),
+            ],
             Some(r#"{"c":1}"#),
         ),
-        (&[Some(r#"{"a":"foo"}"#), Some(r#"{"a":null}"#), Some("true")], Some("true")),
         (
-            &[Some(r#"{"a":"foo"}"#), Some(r#"{"d":1}"#), Some(r#"{"a":{"bb":{"ccc":null}}}"#)],
+            &[Some(r#"{"a":"foo"}"#), Some(r#"{"a":null}"#), Some("true")],
+            Some("true"),
+        ),
+        (
+            &[
+                Some(r#"{"a":"foo"}"#),
+                Some(r#"{"d":1}"#),
+                Some(r#"{"a":{"bb":{"ccc":null}}}"#),
+            ],
             Some(r#"{"a":{"bb":{}},"d":1}"#),
         ),
     ];
 
     for (index, (args, expected)) in rows.iter().enumerate() {
-        let datum = eval_in_expression(args)
-            .unwrap_or_else(|err| panic!("row {index} {args:?}: {err:?}"));
+        let datum =
+            eval_in_expression(args).unwrap_or_else(|err| panic!("row {index} {args:?}: {err:?}"));
         assert_document_or_nil(datum, *expected, &format!("row {index} {args:?}"));
     }
 

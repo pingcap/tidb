@@ -173,7 +173,7 @@ impl BatchTransportState {
         }
     }
 
-    pub(in crate::rpc) async fn submit(
+    pub(in crate::rpc) fn submit(
         &mut self,
         channels: &mut ChannelPool,
         runtime: &tokio::runtime::Runtime,
@@ -214,14 +214,13 @@ impl BatchTransportState {
         let mut receipts =
             Vec::with_capacity(groups.forwarded.len() + usize::from(groups.direct.is_some()));
         if let Some(group) = groups.direct {
-            if let Some(receipt) = self.send_group(&mut context, address, None, group).await {
+            if let Some(receipt) = self.send_group(&mut context, address, None, group) {
                 receipts.push(receipt);
             }
         }
         for (forwarded_host, group) in groups.forwarded {
-            if let Some(receipt) = self
-                .send_group(&mut context, address, Some(forwarded_host.as_str()), group)
-                .await
+            if let Some(receipt) =
+                self.send_group(&mut context, address, Some(forwarded_host.as_str()), group)
             {
                 receipts.push(receipt);
             }
@@ -229,7 +228,7 @@ impl BatchTransportState {
         receipts
     }
 
-    async fn send_group(
+    fn send_group(
         &mut self,
         context: &mut BatchSubmitContext<'_>,
         address: &str,
@@ -252,15 +251,12 @@ impl BatchTransportState {
         }
 
         if !self.streams.contains_key(&key) {
-            if let Err(error) = self
-                .recreate_stream(
-                    context.channels,
-                    context.runtime,
-                    key.clone(),
-                    context.commands,
-                )
-                .await
-            {
+            if let Err(error) = self.recreate_stream(
+                context.channels,
+                context.runtime,
+                key.clone(),
+                context.commands,
+            ) {
                 prepared.fail(BatchInflightError::Transport(error));
                 return None;
             }
@@ -343,7 +339,10 @@ impl BatchTransportState {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis())
                 .unwrap_or(0);
-            eprintln!("[WTRACE s{} w={now}] publish addr={address} ids={:?}", stream.serial, request_ids);
+            eprintln!(
+                "[WTRACE s{} w={now}] publish addr={address} ids={:?}",
+                stream.serial, request_ids
+            );
         }
         let send_error = outbound.send(request.into_proto()).err().map(|_| {
             BatchInflightError::Transport(stream_error(
@@ -390,7 +389,7 @@ impl BatchTransportState {
         key.route(physical_channel, *generation)
     }
 
-    pub(in crate::rpc) async fn handle_event(
+    pub(in crate::rpc) fn handle_event(
         &mut self,
         channels: &mut ChannelPool,
         runtime: &tokio::runtime::Runtime,
@@ -400,11 +399,11 @@ impl BatchTransportState {
         let BatchStreamEvent::Retired { route } = event;
         let key = StreamKey::new(route.physical_address(), route.forwarded_host());
         if self.remove_stream_if_current(&key, &route) && self.reconnect_budget.remove(&key) {
-            let _ = self.recreate_stream(channels, runtime, key, commands).await;
+            let _ = self.recreate_stream(channels, runtime, key, commands);
         }
     }
 
-    async fn recreate_stream(
+    fn recreate_stream(
         &mut self,
         channels: &mut ChannelPool,
         runtime: &tokio::runtime::Runtime,

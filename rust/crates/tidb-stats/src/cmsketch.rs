@@ -828,8 +828,7 @@ impl TopN {
         }
         (
             left,
-            left < self.entries.len()
-                && self.with_resolved_bytes(left, |bytes| bytes == encoded),
+            left < self.entries.len() && self.with_resolved_bytes(left, |bytes| bytes == encoded),
         )
     }
 
@@ -962,9 +961,7 @@ impl TopN {
     /// for ownership-returning callers such as `entry_bytes` and cloning.
     fn with_resolved_bytes<R>(&self, index: usize, f: impl FnOnce(&[u8]) -> R) -> R {
         if let Some(shared) = self.shared_encoded[index].as_ref() {
-            let bytes = shared
-                .read()
-                .expect("shared TopN bytes lock poisoned");
+            let bytes = shared.read().expect("shared TopN bytes lock poisoned");
             f(&bytes)
         } else {
             f(&self.entries[index].encoded)

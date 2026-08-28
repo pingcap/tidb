@@ -65,10 +65,10 @@
 //!   honestly.
 //! * **The final sort is stable** where Go's `slices.SortFunc` is not; only
 //!   the order of exactly-tying rows can differ, which Go does not guarantee.
-//! * **No parallel workers, no `RankInfo`.** Go's worker pool and
-//!   `ROW_NUMBER`-style rank truncation are deferred. The SPILL is ported --
-//!   see [`crate::topn_spill`] for the mechanism and for the two places the
-//!   single-threaded shape differs from Go's.
+//! * **No `RankInfo`.** Go's prefix-key RankTopN truncation for already
+//!   prefix-ordered input remains deferred. The post-spill worker pool and
+//!   heap-based multi-way merge are ported; see [`crate::topn_spill`] for the
+//!   spill mechanism.
 
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
@@ -82,7 +82,7 @@ use tidb_expr::Columns;
 use tidb_util::memory::{ArcAction, Tracker};
 
 use crate::mem_quota::StatementMemory;
-use crate::sort::{less_by_items, SortByItem};
+use crate::sort::{eval_sort_key, less_by_items, SortByItem};
 use crate::topn_chunk_heap::TopNChunkHeap;
 use crate::topn_spill::{SpilledRun, TopNSpillAction, SPILL_CHUNK_SIZE};
 
@@ -132,11 +132,109 @@ pub struct TopNExec<C: Columns> {
     /// rows it dropped -- Go's `outputRowNum`, which is compared against BOTH
     /// `offset` and `offset + count`.
     merged: u64,
+    /// Go `multiWayMergeImpl.elements`: one current head per non-empty run,
+    /// maintained as a min-heap throughout chunk-at-a-time result emission.
+    merge_heads: Vec<TopNMergeHead>,
+    merge_initialized: bool,
     /// Go `spillChunkSize` (a package var so tests can shrink it).
     spill_chunk_size: usize,
+    /// Go `TopNExec.Concurrency`: workers are activated only after spilling
+    /// starts; the ordinary in-memory TopN remains serial.
+    parallelism: usize,
+    /// Per-worker input receipts retained for focused concurrency tests.
+    parallel_worker_chunks: Vec<usize>,
 }
 
-impl<C: Columns> TopNExec<C> {
+struct ParallelTopNWorkerResult {
+    run: Option<SpilledRun>,
+    chunks: usize,
+}
+
+struct TopNMergeHead {
+    run_id: usize,
+    key: Vec<Datum>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_parallel_topn_worker<C>(
+    input: std::sync::mpsc::Receiver<Chunk>,
+    by_items: Vec<SortByItem>,
+    field_types: Vec<FieldType>,
+    init_cap: usize,
+    max_chunk_size: usize,
+    total_limit: u64,
+    ctx: C,
+    tracker: Arc<Tracker>,
+    memory: StatementMemory,
+    disk_tracker: Arc<tidb_util::disk::Tracker>,
+    spill_chunk_size: usize,
+) -> Result<ParallelTopNWorkerResult, ExecError>
+where
+    C: Columns + Clone + Send + Sync + 'static,
+{
+    let mut heap = TopNChunkHeap::new();
+    heap.init(
+        by_items.clone(),
+        field_types.clone(),
+        init_cap,
+        max_chunk_size,
+        total_limit,
+        0,
+    );
+    let mut chunks = 0usize;
+    let mut accounted = 0i64;
+    let result = (|| -> Result<ParallelTopNWorkerResult, ExecError> {
+        while let Ok(chunk) = input.recv() {
+            chunks += 1;
+            let keys = (0..chunk.num_rows())
+                .map(|row| eval_sort_key(&by_items, &ctx, chunk.get_row(row)))
+                .collect::<Result<Vec<_>, _>>()?;
+            if (heap.stored_len() as u64) < total_limit {
+                heap.add_chunk(chunk, keys);
+            } else {
+                if !heap.is_row_ptrs_init() {
+                    heap.init_ptrs();
+                    heap.heap_init();
+                }
+                heap.process_chk(&chunk, keys);
+                heap.take_cmp_err()?;
+                if heap.stored_len() > heap.len() * TOP_N_COMPACTION_FACTOR {
+                    heap.do_compaction();
+                }
+            }
+            let bytes = heap.memory_usage();
+            tracker.consume(bytes - accounted);
+            accounted = bytes;
+            memory.check()?;
+        }
+        if !heap.is_row_ptrs_init() {
+            heap.init_ptrs();
+            heap.heap_init();
+        }
+        heap.take_cmp_err()?;
+        heap.sort_row_ptrs_ascending(0)?;
+        let run = if heap.is_empty() {
+            None
+        } else {
+            Some(SpilledRun::write(
+                &field_types,
+                heap.chunks(),
+                heap.row_ptrs(),
+                spill_chunk_size,
+                &disk_tracker,
+                memory.spill_storage(),
+            )?)
+        };
+        Ok(ParallelTopNWorkerResult { run, chunks })
+    })();
+    tracker.consume(-accounted);
+    result
+}
+
+impl<C> TopNExec<C>
+where
+    C: Columns + Clone + Send + Sync + 'static,
+{
     /// Builds a `TopN` over `child` keeping `count` rows from `offset` in
     /// `by_items` order.
     ///
@@ -175,8 +273,25 @@ impl<C: Columns> TopNExec<C> {
             runs: Vec::new(),
             spilled_runs: 0,
             merged: 0,
+            merge_heads: Vec::new(),
+            merge_initialized: false,
             spill_chunk_size: SPILL_CHUNK_SIZE,
+            parallelism: 1,
+            parallel_worker_chunks: Vec::new(),
         }
+    }
+
+    /// Resolves Go `TopNExec.Concurrency` for this statement. It affects only
+    /// the post-spill worker phase, matching Go's activation boundary.
+    #[must_use]
+    pub fn with_parallelism(mut self, parallelism: usize) -> Self {
+        self.parallelism = parallelism.max(1);
+        self
+    }
+
+    #[cfg(test)]
+    fn parallel_worker_chunks(&self) -> &[usize] {
+        &self.parallel_worker_chunks
     }
 
     /// Go `SetSmallSpillChunkSizeForTest`.
@@ -271,8 +386,10 @@ impl<C: Columns> TopNExec<C> {
     /// One segment with no spill is the whole in-memory operator, unchanged.
     /// Each spill turns the segment's heap into one sorted run
     /// (`executeTopNWhenSpillTriggered` -> `spillHeap`) and the next segment
-    /// starts from an empty heap over the rest of the child -- which is what
-    /// Go's `topNWorker`s do, on one thread instead of `Concurrency` of them.
+    /// starts from an empty heap over the rest of the child. This handles the
+    /// initial in-memory segment. After the first spill,
+    /// [`Self::fetch_parallel_remainder`] distributes later chunks across
+    /// `Concurrency` workers, matching Go's post-spill worker boundary.
     fn fetch_and_select(&mut self) -> Result<(), ExecError> {
         // Go's `AttachChild` turns a zero-count TopN into a dual, so this
         // operator is never asked for zero rows in Go. Answering it without
@@ -287,6 +404,10 @@ impl<C: Columns> TopNExec<C> {
                 break;
             }
             self.spill_heap()?;
+            if self.parallelism > 1 {
+                self.fetch_parallel_remainder()?;
+                break;
+            }
         }
 
         // Go `spillRemainingRowsWhenNeeded`: once ANY run exists, the rows
@@ -300,6 +421,86 @@ impl<C: Columns> TopNExec<C> {
         }
 
         self.sort_survivors_ascending()
+    }
+
+    /// Go `executeTopNWhenSpillTriggered`: the caller keeps fetching child
+    /// chunks while persistent executor-pool tasks each maintain a bounded
+    /// TopN heap. Every worker spills its final sorted heap and the ordinary
+    /// run merger combines those runs with the pre-spill run.
+    fn fetch_parallel_remainder(&mut self) -> Result<(), ExecError> {
+        let workers = self.parallelism;
+        let field_types = self.child.ret_field_types().to_vec();
+        let init_cap = self.child.init_cap();
+        let max_chunk_size = self.child.max_chunk_size();
+        let mut senders = Vec::with_capacity(workers);
+        let mut results = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            let (sender, input) = std::sync::mpsc::sync_channel(1);
+            senders.push(sender);
+            let by_items = self.by_items.clone();
+            let field_types = field_types.clone();
+            let ctx = self.ctx.clone();
+            let tracker = Arc::clone(&self.tracker);
+            let memory = self.memory.clone();
+            let disk_tracker = Arc::clone(&self.disk_tracker);
+            let total_limit = self.total_limit;
+            let spill_chunk_size = self.spill_chunk_size;
+            results.push(crate::worker_pool::spawn(move || {
+                run_parallel_topn_worker(
+                    input,
+                    by_items,
+                    field_types,
+                    init_cap,
+                    max_chunk_size,
+                    total_limit,
+                    ctx,
+                    tracker,
+                    memory,
+                    disk_tracker,
+                    spill_chunk_size,
+                )
+            }));
+        }
+
+        let mut next_worker = 0usize;
+        let fetch_result = loop {
+            let mut chunk = self.child.new_chunk();
+            if let Err(error) = self.child.next(&mut chunk) {
+                break Err(error);
+            }
+            if chunk.num_rows() == 0 {
+                break Ok(());
+            }
+            if senders[next_worker].send(chunk).is_err() {
+                break Err(ExecError::internal(
+                    "parallel TopN worker stopped before input EOF",
+                ));
+            }
+            next_worker = (next_worker + 1) % workers;
+        };
+        drop(senders);
+
+        let mut worker_result = Ok(());
+        self.parallel_worker_chunks.clear();
+        for result in results {
+            let result = result
+                .recv()
+                .map_err(|_| ExecError::internal("parallel TopN worker dropped its result"))
+                .and_then(|result| result);
+            match result {
+                Ok(result) => {
+                    self.parallel_worker_chunks.push(result.chunks);
+                    if let Some(run) = result.run {
+                        self.runs.push(run);
+                        self.spilled_runs += 1;
+                    }
+                }
+                Err(error) if worker_result.is_ok() => worker_result = Err(error),
+                Err(_) => {}
+            }
+        }
+        self.need_spill.store(false, SeqCst);
+        fetch_result.and(worker_result)
     }
 
     /// One segment. Returns `true` when the child is exhausted (no spill is
@@ -396,41 +597,100 @@ impl<C: Columns> TopNExec<C> {
     /// longer than `offset + count`, so the cut Go's shortcut omits can never
     /// fire either.
     ///
-    /// FAITHFUL ADAPTATION: Go's merger is a heap (`multi_way_merge.go`); this
-    /// picks the minimum by scanning the runs, the same choice
-    /// [`crate::sort::SortExec`]'s merge made and the same output for the
-    /// handful of runs a spill produces. Ties resolve to the earlier run in
-    /// both.
+    /// Like Go's `multiWayMergeImpl`, the current run heads live in a
+    /// persistent min-heap. Replacing one head is O(log runs), and the heap is
+    /// retained when a result chunk fills so later `Next` calls resume without
+    /// rebuilding it.
     fn next_merged(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         let limit = self.total_limit;
         let mut runs = std::mem::take(&mut self.runs);
         let result = (|| -> Result<(), ExecError> {
-            while !req.is_full() && self.merged < limit {
-                for run in &mut runs {
+            if !self.merge_initialized {
+                self.merge_heads.clear();
+                for (run_id, run) in runs.iter_mut().enumerate() {
                     run.load_head(&self.by_items, &self.ctx)?;
-                }
-                let mut best: Option<usize> = None;
-                for (i, run) in runs.iter().enumerate() {
-                    let Some(key) = run.head_key() else {
-                        continue;
-                    };
-                    match best {
-                        None => best = Some(i),
-                        Some(b) => {
-                            let other = runs[b].head_key().expect("a loaded head");
-                            if less_by_items(&self.by_items, key, other)? == Ordering::Less {
-                                best = Some(i);
-                            }
-                        }
+                    if let Some(key) = run.head_key() {
+                        self.merge_heads.push(TopNMergeHead {
+                            run_id,
+                            key: key.to_vec(),
+                        });
                     }
                 }
-                let Some(i) = best else { break };
+                let mut compare_error = None;
+                crate::topn_chunk_heap::go_heap::init(&mut self.merge_heads, &mut |left, right| {
+                    match less_by_items(&self.by_items, &left.key, &right.key) {
+                        Ok(ordering) => ordering == Ordering::Less,
+                        Err(error) => {
+                            if compare_error.is_none() {
+                                compare_error = Some(error);
+                            }
+                            false
+                        }
+                    }
+                });
+                if let Some(error) = compare_error {
+                    return Err(error);
+                }
+                self.merge_initialized = true;
+            }
+            while !req.is_full() && self.merged < limit {
+                let Some(head) = self.merge_heads.first() else {
+                    break;
+                };
+                let run_id = head.run_id;
                 if self.merged >= self.offset {
-                    runs[i].take_head_into(req);
+                    runs[run_id].take_head_into(req);
                 } else {
-                    runs[i].drop_head();
+                    runs[run_id].drop_head();
                 }
                 self.merged += 1;
+                runs[run_id].load_head(&self.by_items, &self.ctx)?;
+                if let Some(key) = runs[run_id].head_key() {
+                    self.merge_heads[0].key = key.to_vec();
+                    let mut compare_error = None;
+                    crate::topn_chunk_heap::go_heap::fix(
+                        &mut self.merge_heads,
+                        0,
+                        &mut |left, right| match less_by_items(
+                            &self.by_items,
+                            &left.key,
+                            &right.key,
+                        ) {
+                            Ok(ordering) => ordering == Ordering::Less,
+                            Err(error) => {
+                                if compare_error.is_none() {
+                                    compare_error = Some(error);
+                                }
+                                false
+                            }
+                        },
+                    );
+                    if let Some(error) = compare_error {
+                        return Err(error);
+                    }
+                } else {
+                    let mut compare_error = None;
+                    crate::topn_chunk_heap::go_heap::remove(
+                        &mut self.merge_heads,
+                        0,
+                        &mut |left, right| match less_by_items(
+                            &self.by_items,
+                            &left.key,
+                            &right.key,
+                        ) {
+                            Ok(ordering) => ordering == Ordering::Less,
+                            Err(error) => {
+                                if compare_error.is_none() {
+                                    compare_error = Some(error);
+                                }
+                                false
+                            }
+                        },
+                    );
+                    if let Some(error) = compare_error {
+                        return Err(error);
+                    }
+                }
             }
             Ok(())
         })();
@@ -439,7 +699,10 @@ impl<C: Columns> TopNExec<C> {
     }
 }
 
-impl<C: Columns> Executor for TopNExec<C> {
+impl<C> Executor for TopNExec<C>
+where
+    C: Columns + Clone + Send + Sync + 'static,
+{
     fn open(&mut self) -> Result<(), ExecError> {
         self.fetched = false;
         self.heap.clear();
@@ -448,7 +711,10 @@ impl<C: Columns> Executor for TopNExec<C> {
         }
         self.runs.clear();
         self.spilled_runs = 0;
+        self.parallel_worker_chunks.clear();
         self.merged = 0;
+        self.merge_heads.clear();
+        self.merge_initialized = false;
         self.need_spill.store(false, SeqCst);
         // Go `TopNExec.Open`: an operator re-opened by an Apply's inner side
         // must not keep charging for the rows it just dropped.
@@ -497,6 +763,8 @@ impl<C: Columns> Executor for TopNExec<C> {
             run.close();
         }
         self.runs.clear();
+        self.merge_heads.clear();
+        self.merge_initialized = false;
         if let Some(action) = self.registered_action.take() {
             self.memory
                 .session_tracker()
@@ -858,7 +1126,9 @@ mod tests {
         // Big enough for several child chunks -- so the bound being tested
         // is the SIZE OF THE STORE, not the size of one incoming chunk, which
         // both operators must be able to hold.
-        let quota = 200_000;
+        // The sort stores compact row handles now, so use a quota that is
+        // still comfortably above one child chunk but below the full store.
+        let quota = 100_000;
 
         // Spilling OFF for the sort: the contrast this test draws is between
         // an operator that must HOLD every row and one that holds only `n`.
@@ -1299,6 +1569,40 @@ mod spill_tests {
             "close must remove every spill file"
         );
         drop(exec);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Go `executeTopNWhenSpillTriggered`: once the first heap spills, child
+    /// chunks are shared by `TopNExec.Concurrency` workers and their sorted
+    /// heaps join the same multi-way merge.
+    #[test]
+    fn spilled_topn_uses_parallel_workers_and_preserves_the_answer() {
+        let dir = scratch_temp_dir("topn-parallel-workers");
+        let rows = shuffled_rows(4096);
+        let items = [(0, false), (1, false)];
+
+        let mut reference = topn(&rows, &items, 37, 300, StatementMemory::default());
+        let expected = drain(&mut reference);
+
+        let mut exec = topn(&rows, &items, 37, 300, tight(&dir)).with_parallelism(4);
+        exec.set_spill_chunk_size_for_test(64);
+        let got = drain(&mut exec);
+
+        assert_eq!(got, expected);
+        assert!(
+            exec.num_spilled_runs() > 1,
+            "the worker runs must be merged"
+        );
+        assert!(
+            exec.parallel_worker_chunks()
+                .iter()
+                .filter(|&&chunks| chunks > 0)
+                .count()
+                > 1,
+            "post-spill input was not distributed: {:?}",
+            exec.parallel_worker_chunks()
+        );
+        assert!(spill_files_in(&dir).is_empty(), "close leaked worker runs");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

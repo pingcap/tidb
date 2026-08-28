@@ -167,7 +167,7 @@ fn optimizer_cost_variables_reach_the_statement_snapshot() {
 
     let ctx = session.statement_context(false);
     let env = ctx.optimizer_cost_env();
-    assert_eq!(ctx.hash_join_concurrency(), 13.0);
+    assert_eq!(env.session.hash_join_concurrency, 13.0);
     assert_eq!(env.session.projection_concurrency, 13.0);
     assert_eq!(env.session.index_lookup_join_concurrency, 7.0);
     assert_eq!(env.session.distsql_scan_concurrency, 19.0);

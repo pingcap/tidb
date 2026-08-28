@@ -84,9 +84,7 @@ pub(crate) fn push_down_not(expr: &Expr) -> Expr {
 fn push_not_across_expr(expr: &Expr, not: bool) -> Expr {
     match expr {
         Expr::Paren(inner) => push_not_across_expr(inner, not),
-        Expr::Unary(UnaryOp::Not | UnaryOp::NotKeyword, inner) => {
-            push_not_across_expr(inner, !not)
-        }
+        Expr::Unary(UnaryOp::Not | UnaryOp::NotKeyword, inner) => push_not_across_expr(inner, !not),
         Expr::Binary(op, left, right) => match opposite_binary_op(*op) {
             Some(opposite) => {
                 // Go pushes the flag INTO an `AND`/`OR`'s arguments and only

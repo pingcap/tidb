@@ -1638,20 +1638,23 @@ fn tpcc_conditions_ten_and_twelve_decorrelate_scalar_sums() {
         let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
             panic!("{table_name} is not a KV table");
         };
-        table.add_index(crate::kv_table::KvIndex {
-            id: 1,
-            name: "PRIMARY".to_owned(),
-            comment: String::new(),
-            unique: true,
-            prefix_lengths: vec![
-                crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
-                column_offsets.len()
-            ],
-            column_offsets,
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
+        table.add_index(
+            crate::kv_table::KvIndex {
+                id: 1,
+                name: "PRIMARY".to_owned(),
+                comment: String::new(),
+                unique: true,
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                    column_offsets.len()
+                ],
+                column_offsets,
+                visible: true,
+                global: false,
+                clustered_primary: false,
+            },
+            false,
+        );
     }
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
@@ -1843,17 +1846,20 @@ fn tpcc_conditions_ten_and_twelve_decorrelate_scalar_sums() {
     let TableEntry::Kv(orders) = catalog.get_mut_in("test", "orders").unwrap() else {
         panic!("orders is not a KV table");
     };
-    orders.add_index(crate::kv_table::KvIndex {
-        id: 2,
-        name: "idx_order".to_owned(),
-        comment: String::new(),
-        unique: false,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
-        column_offsets: vec![0, 1, 3, 2],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
+    orders.add_index(
+        crate::kv_table::KvIndex {
+            id: 2,
+            name: "idx_order".to_owned(),
+            comment: String::new(),
+            unique: false,
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
+            column_offsets: vec![0, 1, 3, 2],
+            visible: true,
+            global: false,
+            clustered_primary: false,
+        },
+        false,
+    );
     scale_analyzed_tpcc_table(
         &mut catalog,
         "customer",

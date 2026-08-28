@@ -20,8 +20,7 @@ use tidb_datatype::{CoreTime, Datum, FieldType, FieldTypeCode, Time, TimeType};
 
 use crate::chunk::Chunk;
 use crate::chunk_util::{
-    copy_selected_join_rows_direct, copy_selected_join_rows_with_same_outer_rows,
-    ColumnSwapHelper,
+    copy_selected_join_rows_direct, copy_selected_join_rows_with_same_outer_rows, ColumnSwapHelper,
 };
 
 const NUM_ROWS: usize = 1024;
@@ -98,10 +97,8 @@ fn copy_selected_join_rows() {
 
     // Batch copy.
     let mut dst_chk2 = Chunk::new_with_capacity(&fields, NUM_ROWS);
-    copy_selected_join_rows_with_same_outer_rows(
-        &src_chk, 0, 3, 3, 3, &selected, &mut dst_chk2,
-    )
-    .expect("no selection vectors");
+    copy_selected_join_rows_with_same_outer_rows(&src_chk, 0, 3, 3, 3, &selected, &mut dst_chk2)
+        .expect("no selection vectors");
 
     assert_eq!(dst_chk, dst_chk2);
     assert_selected_counts(&selected, &dst_chk2);
@@ -118,10 +115,8 @@ fn copy_selected_join_rows_without_same_outers() {
     append_all_selected(&src_chk, &selected, &mut dst_chk);
 
     let mut dst_chk2 = Chunk::new_with_capacity(&fields, NUM_ROWS);
-    copy_selected_join_rows_with_same_outer_rows(
-        &src_chk, 0, 6, 0, 0, &selected, &mut dst_chk2,
-    )
-    .expect("no selection vectors");
+    copy_selected_join_rows_with_same_outer_rows(&src_chk, 0, 6, 0, 0, &selected, &mut dst_chk2)
+        .expect("no selection vectors");
 
     assert_eq!(dst_chk, dst_chk2);
     assert_selected_counts(&selected, &dst_chk2);
@@ -159,10 +154,9 @@ fn copy_selected_virtual_num() {
     assert_eq!(dst_chk.num_virtual_rows(), 2);
 
     let mut dst_chk = Chunk::default();
-    let ok = copy_selected_join_rows_with_same_outer_rows(
-        &src_chk, 0, 0, 0, 0, &selected, &mut dst_chk,
-    )
-    .expect("empty chunks carry no selections");
+    let ok =
+        copy_selected_join_rows_with_same_outer_rows(&src_chk, 0, 0, 0, 0, &selected, &mut dst_chk)
+            .expect("empty chunks carry no selections");
     assert!(ok);
     assert_eq!(dst_chk.num_virtual_rows(), 2);
 
@@ -173,10 +167,9 @@ fn copy_selected_virtual_num() {
         src_chk.append_int64(0, i);
     }
     let mut dst_chk = Chunk::new_with_capacity(&fields, 0);
-    let ok = copy_selected_join_rows_with_same_outer_rows(
-        &src_chk, 0, 1, 1, 0, &selected, &mut dst_chk,
-    )
-    .expect("no selections");
+    let ok =
+        copy_selected_join_rows_with_same_outer_rows(&src_chk, 0, 1, 1, 0, &selected, &mut dst_chk)
+            .expect("no selections");
     assert!(ok);
     assert_eq!(dst_chk.num_virtual_rows(), 2);
     assert_eq!(dst_chk.num_rows(), 2);
@@ -189,10 +182,9 @@ fn copy_selected_virtual_num() {
         src_chk.append_int64(0, 3);
     }
     let mut dst_chk = Chunk::new_with_capacity(&fields, 0);
-    let ok = copy_selected_join_rows_with_same_outer_rows(
-        &src_chk, 1, 0, 0, 1, &selected, &mut dst_chk,
-    )
-    .expect("no selections");
+    let ok =
+        copy_selected_join_rows_with_same_outer_rows(&src_chk, 1, 0, 0, 1, &selected, &mut dst_chk)
+            .expect("no selections");
     assert!(ok);
     assert_eq!(dst_chk.num_virtual_rows(), 2);
     assert_eq!(dst_chk.num_rows(), 2);

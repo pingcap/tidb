@@ -23,7 +23,10 @@ use std::sync::Arc;
 
 use tidb_ast::Stmt;
 use tidb_datatype::Datum;
-use tidb_executor::{DriverError, PreparedPointGetExecution, PreparedPointGetPlan};
+use tidb_executor::{
+    DriverError, PreparedPointGetExecution, PreparedPointGetPlan, PreparedSelectExecution,
+    PreparedSelectPlan,
+};
 
 use tidb_executor::access_path::StatementReadShape;
 
@@ -36,6 +39,7 @@ pub struct PreparedAst {
     statement: Stmt,
     parameter_count: usize,
     point_get_plan: Option<Arc<PreparedPointGetPlan>>,
+    select_plan: Option<Arc<PreparedSelectPlan>>,
     point_get_cache_ready: Arc<AtomicBool>,
 }
 
@@ -45,12 +49,14 @@ impl PreparedAst {
         statement: Stmt,
         parameter_count: usize,
         point_get_plan: Option<PreparedPointGetPlan>,
+        select_plan: Option<PreparedSelectPlan>,
     ) -> Self {
         Self {
             sql,
             statement,
             parameter_count,
             point_get_plan: point_get_plan.map(Arc::new),
+            select_plan: select_plan.map(Arc::new),
             point_get_cache_ready: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -78,6 +84,13 @@ impl PreparedAst {
     #[must_use]
     pub fn point_get_plan(&self) -> Option<Arc<PreparedPointGetPlan>> {
         self.point_get_plan.clone()
+    }
+
+    /// The prepared SELECT descriptor whose full physical tree is generated
+    /// on the first EXECUTE and rebuilt on later cache hits.
+    #[must_use]
+    pub fn select_plan(&self) -> Option<Arc<PreparedSelectPlan>> {
+        self.select_plan.clone()
     }
 
     /// The persistent cluster state this statement changes, if any.
@@ -212,14 +225,24 @@ impl Session {
     pub fn prepare_ast(&self, sql: &str) -> Result<PreparedAst, DriverError> {
         let statement = self.parse_statement(sql)?;
         let parameter_count = tidb_executor::parsed_parameter_count(&statement);
-        let point_get_plan = {
+        let planner_context = self.statement_context(false);
+        let (point_get_plan, select_plan) = {
             let catalog = self.lock_catalog()?;
-            tidb_executor::build_prepared_point_get_plan(
-                &statement,
-                parameter_count,
-                &catalog,
-                self.current_database(),
-                &self.session_time_zone(),
+            (
+                tidb_executor::build_prepared_point_get_plan(
+                    &statement,
+                    parameter_count,
+                    &catalog,
+                    self.current_database(),
+                    &self.session_time_zone(),
+                ),
+                tidb_executor::build_prepared_select_plan(
+                    &statement,
+                    parameter_count,
+                    &catalog,
+                    self.current_database(),
+                    &planner_context,
+                ),
             )
         };
         Ok(PreparedAst::from_parsed(
@@ -227,6 +250,7 @@ impl Session {
             statement,
             parameter_count,
             point_get_plan,
+            select_plan,
         ))
     }
 
@@ -241,9 +265,6 @@ impl Session {
     /// from its prepared plan cache inside transactions as well).
     pub(crate) fn can_reuse_prepared_point_get(&self, plan: &PreparedPointGetPlan) -> bool {
         if !self.session_bindings.is_empty() {
-            if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("decline")) {
-                eprintln!("[pg-reuse-no] session_bindings");
-            }
             return false;
         }
         if self
@@ -260,18 +281,10 @@ impl Session {
                 .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS)
                 .is_ok_and(|value| value.trim().parse::<i64>().is_ok_and(|value| value != 0))
         {
-            if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("decline")) {
-                eprintln!("[pg-reuse-no] vars gate");
-            }
             return false;
         }
-        let matched = self
-            .lock_catalog()
-            .is_ok_and(|catalog| plan.matches_catalog(&catalog, self.current_database()));
-        if !matched && std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("decline")) {
-            eprintln!("[pg-reuse-no] catalog identity moved");
-        }
-        matched
+        self.lock_catalog()
+            .is_ok_and(|catalog| plan.matches_catalog(&catalog, self.current_database()))
     }
 
     /// Binds a retained point-get plan for a binary EXECUTE after applying
@@ -285,12 +298,69 @@ impl Session {
         if !self.can_reuse_prepared_point_get(plan) {
             return None;
         }
-        let bound = plan.bind(values, &self.session_time_zone());
-        if bound.is_none()
-            && std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("decline"))
+        plan.bind(values, &self.session_time_zone())
+    }
+
+    /// Binds the current values into a retained SELECT after applying the
+    /// same session, schema, and stale-read invalidation gates as Go's plan
+    /// cache. A refusal returns the statement to ordinary planning.
+    pub fn bind_cached_prepared_select(
+        &self,
+        plan: &Arc<PreparedSelectPlan>,
+        values: &[Datum],
+    ) -> Option<PreparedSelectExecution> {
+        if !self.prepared_plan_cache_enabled()
+            || !self.session_bindings.is_empty()
+            || self
+                .vars
+                .optimizer_fix_control()
+                .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
+            || self.vars.get_system("sql_select_limit").as_deref() != Ok("18446744073709551615")
+            || self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_SNAPSHOT)
+                .is_ok_and(|value| !value.is_empty())
+            || self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS)
+                .is_ok_and(|value| value.trim().parse::<i64>().is_ok_and(|value| value != 0))
         {
-            eprintln!("[pg-bind-none] {}.{}", plan.names().0, plan.names().1);
+            return None;
         }
-        bound
+        let catalog = self.lock_catalog().ok()?;
+        let ctx = self.statement_context(false);
+        let environment = tidb_executor::PreparedPlanCacheEnvironment::new(
+            self.vars.get_system("sql_mode").unwrap_or_default(),
+            self.vars.get_system("time_zone").unwrap_or_default(),
+            self.pushdown_blacklists.generation(),
+        )
+        .with_session_state(
+            self.vars
+                .get_system("character_set_connection")
+                .unwrap_or_default(),
+            self.vars
+                .get_system("collation_connection")
+                .unwrap_or_default(),
+            self.vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+                .unwrap_or_default(),
+            self.vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES)
+                .unwrap_or_default(),
+            self.vars.get_system("sql_select_limit").unwrap_or_default(),
+            self.in_transaction(),
+            self.is_autocommit(),
+            self.vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_INVALIDATION_ON_FRESH_STATS)
+                .as_deref()
+                != Ok("OFF"),
+        );
+        plan.bind(
+            values,
+            &catalog,
+            self.current_database(),
+            &ctx,
+            &environment,
+        )
     }
 }

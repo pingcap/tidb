@@ -224,12 +224,6 @@ impl ApproxCountDistinctSketch {
     }
 
     /// Go `merge`: folds another sketch's surviving elements into `self`.
-    ///
-    /// Not yet called from `hash_agg.rs` -- this seed's `HashAggExec` is the
-    /// serial `unparallelExec` path only (Go's parallel partial/final worker
-    /// pipeline is a documented deferral) -- but it is part of the sketch's
-    /// ported behavior and is exercised directly by this module's tests.
-    #[allow(dead_code)]
     pub fn merge(&mut self, other: &ApproxCountDistinctSketch) {
         if other.skip_degree > self.skip_degree {
             self.skip_degree = other.skip_degree;
@@ -249,6 +243,38 @@ impl ApproxCountDistinctSketch {
                 self.shrink_if_need();
             }
         }
+    }
+
+    /// The state Go's aggregate serializer must retain across a spill: the
+    /// thinning degree, zero membership, and every surviving non-zero hash.
+    pub(crate) fn spill_state(&self) -> (u8, bool, Vec<u32>) {
+        let hashes = self.buf.iter().copied().filter(|hash| *hash != 0).collect();
+        (self.skip_degree, self.has_zero, hashes)
+    }
+
+    /// Rebuilds a sketch from [`Self::spill_state`]. Re-inserting survivors
+    /// gives the same set and thinning degree without persisting hash-table
+    /// bucket placement, which is an internal allocation detail in Go too.
+    pub(crate) fn from_spill_state(
+        skip_degree: u8,
+        has_zero: bool,
+        hashes: &[u32],
+    ) -> Result<Self, String> {
+        if u32::from(skip_degree) >= UNIQUES_HASH_BITS_FOR_SKIP {
+            return Err("invalid APPROX_COUNT_DISTINCT spill degree".to_owned());
+        }
+        let mut sketch = Self::new();
+        sketch.skip_degree = skip_degree;
+        if has_zero {
+            sketch.insert_hash(0);
+        }
+        for hash in hashes {
+            if *hash == 0 || !sketch.good(*hash) {
+                return Err("invalid APPROX_COUNT_DISTINCT spill hash".to_owned());
+            }
+            sketch.insert_hash(*hash);
+        }
+        Ok(sketch)
     }
 
     /// Go `fixedSize`: corrects the systematic bias from hashing into a

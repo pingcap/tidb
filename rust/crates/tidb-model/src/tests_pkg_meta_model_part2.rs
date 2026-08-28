@@ -24,8 +24,8 @@ use crate::db::DBInfo;
 use crate::go_any::{ColumnDefaultValue, GoAny};
 use crate::go_runtime::{GoShared, GoSharedPointerSlice};
 use crate::index::{
-    find_index_by_columns_for_foreign_key, get_global_index_v1_supported,
-    is_index_prefix_covered, is_index_prefix_covered_for_foreign_key, IndexColumn, IndexInfo,
+    find_index_by_columns_for_foreign_key, get_global_index_v1_supported, is_index_prefix_covered,
+    is_index_prefix_covered_for_foreign_key, IndexColumn, IndexInfo,
 };
 use crate::partition::PartitionInfo;
 use crate::table::{FKInfo, SequenceInfo, TTLInfo, DEFAULT_TTL_JOB_INTERVAL};
@@ -127,9 +127,7 @@ fn column_default_value() {
     let mut null_bit_col = src_col.clone_like_go();
     null_bit_col.name = CiString::new("nullBitCol");
     null_bit_col.field_type = FieldType::new(FieldTypeCode::Bit);
-    null_bit_col
-        .set_origin_default_value(GoAny::nil())
-        .unwrap();
+    null_bit_col.set_origin_default_value(GoAny::nil()).unwrap();
     assert!(null_bit_col.get_origin_default_value().is_nil());
 
     struct Case {
@@ -223,7 +221,12 @@ fn index_is_index_prefix_covered() {
         indices: vec![i0, i1].into(),
         ..Default::default()
     };
-    let index = |id: i64| tbl.indices.iter_deref().find(|i| i.read().id == id).unwrap();
+    let index = |id: i64| {
+        tbl.indices
+            .iter_deref()
+            .find(|i| i.read().id == id)
+            .unwrap()
+    };
 
     fn names(values: &[&str]) -> Vec<CiString> {
         values.iter().map(|v| CiString::new(*v)).collect()
@@ -270,7 +273,8 @@ fn index_is_index_prefix_covered() {
         &names(&["c_2"])
     ));
 
-    let mut safe_partial = new_index_for_test(2, &[new_column_for_test(0, 0), new_column_for_test(1, 1)]);
+    let mut safe_partial =
+        new_index_for_test(2, &[new_column_for_test(0, 0), new_column_for_test(1, 1)]);
     safe_partial.condition_expr_string = "`c_1` is not null".to_owned();
     assert!(is_index_prefix_covered_for_foreign_key(
         &tbl,
@@ -296,8 +300,7 @@ fn index_is_index_prefix_covered() {
         &names(&["c_0", "c_1"])
     ));
 
-    let mut unsafe_partial_is_null =
-        new_index_for_test(5, &[new_column_for_test(0, 0)]);
+    let mut unsafe_partial_is_null = new_index_for_test(5, &[new_column_for_test(0, 0)]);
     unsafe_partial_is_null.condition_expr_string = "`c_0` is null".to_owned();
     assert!(!is_index_prefix_covered_for_foreign_key(
         &tbl,
@@ -305,8 +308,7 @@ fn index_is_index_prefix_covered() {
         &names(&["c_0"])
     ));
 
-    let mut unsafe_partial_binary_condition =
-        new_index_for_test(6, &[new_column_for_test(0, 0)]);
+    let mut unsafe_partial_binary_condition = new_index_for_test(6, &[new_column_for_test(0, 0)]);
     unsafe_partial_binary_condition.condition_expr_string = "`c_0` > 0".to_owned();
     assert!(!is_index_prefix_covered_for_foreign_key(
         &tbl,
@@ -329,12 +331,8 @@ fn index_is_index_prefix_covered() {
         Some(GoShared::new(safe_partial)),
     ]);
     let safe_handle = indices.get(1).unwrap();
-    let found = find_index_by_columns_for_foreign_key(
-        &tbl,
-        &indices,
-        &names(&["c_0", "c_1"]),
-    )
-    .expect("the safe partial index must be found");
+    let found = find_index_by_columns_for_foreign_key(&tbl, &indices, &names(&["c_0", "c_1"]))
+        .expect("the safe partial index must be found");
     assert!(found.ptr_eq(&safe_handle));
 }
 
@@ -384,7 +382,10 @@ fn table_move_column_info() {
     let c3 = new_column_for_test(3, 3);
     let c4 = new_column_for_test(4, 4);
 
-    let i0 = new_index_for_test(0, &[c0.clone(), c1.clone(), c2.clone(), c3.clone(), c4.clone()]);
+    let i0 = new_index_for_test(
+        0,
+        &[c0.clone(), c1.clone(), c2.clone(), c3.clone(), c4.clone()],
+    );
     let i1 = new_index_for_test(1, &[c4.clone(), c2.clone()]);
     let i2 = new_index_for_test(2, &[c0.clone(), c4.clone()]);
     let i3 = new_index_for_test(3, &[c1.clone(), c2.clone(), c3.clone()]);
@@ -519,9 +520,12 @@ fn table_model_basic() {
     // Corner cases.
     let mut pk_col = table.columns.get(0).unwrap().read().clone_like_go();
     pk_col.toggle_flag(u64::from(FieldTypeFlags::PRI_KEY));
-    table.columns.get(0).unwrap().write().del_flag(u64::from(
-        FieldTypeFlags::PRI_KEY,
-    ));
+    table
+        .columns
+        .get(0)
+        .unwrap()
+        .write()
+        .del_flag(u64::from(FieldTypeFlags::PRI_KEY));
     let pk_name = table.get_pk_name();
     assert_eq!(pk_name, CiString::new(""));
     assert!(table.get_pk_col_info().is_none());

@@ -45,15 +45,14 @@
 //!   contract -- the fetcher blocks only when a lane falls a full chunk
 //!   behind.
 //! * `inputCh`/`giveBackCh` chunk recycling is dropped (named divergence):
-//!   the fetcher allocates a fresh request chunk per dispatch, exactly like
-//!   the bounded integer fast path beside which this pipeline lives.
+//!   the fetcher allocates a fresh request chunk per dispatch.
 //! * `partialOutputChs[f]` (`chan AggPartialResultMapper`, capacity
 //!   `partialConcurrency`) becomes one `sync_channel(N)` per final worker --
 //!   every partial worker sends exactly one sub-map there.
 //! * `finalOutputCh` (`chan *AfFinalResult`) becomes an unbounded
 //!   `mpsc::channel` of [`FinalMsg`]. Go streams result chunks across `Next`
 //!   calls; here the whole aggregation completes inside one `execute()` call
-//!   and the main thread then emits groups in first-seen order.
+//!   and the main thread then emits groups from the final-worker maps.
 //! * `finishCh` becomes [`PipelineAbort`] plus channel disconnects. Every
 //!   worker DRAINS its inputs even after an error (Go's
 //!   `finalizeWorkerProcess`), so no sender or receiver can block forever --
@@ -62,26 +61,21 @@
 //! Each partial worker owns `M` sub-maps (Go's
 //! `HashAggPartialWorker.partialResultsMap[finalConcurrency]`); a group key
 //! routes to final worker `bucket(key) % M`, so one group's partial pieces
-//! all land on one final worker. DIVERGENCE (unobservable): Go partitions
-//! with `murmur3.Sum32`, this uses FNV-1a 32-bit -- only partition
-//! ASSIGNMENT differs, never results. Every group records the global row
-//! sequence of its first contributing row; merges keep the minimum, and the
-//! final emission sorts by it, so output order is FIRST-SEEN order -- the
-//! serial path's exact contract, stricter than Go's random map iteration.
+//! all land on one final worker. Partitioning uses Go's
+//! `murmur3.Sum32(groupKey) % finalConcurrency`. Like Go's parallel HashAgg,
+//! no global first-seen sequence or Rust-only result sort is maintained.
 //!
 //! # What stays serial, and why
 //!
-//! * DISTINCT / aggregate ORDER BY -> serial: Go's `IsUnparallelExec`
-//!   (`pkg/executor/builder.go:2058`).
+//! * Aggregate ORDER BY -> serial: Go's `IsUnparallelExec`
+//!   (`pkg/executor/builder.go:2162`). DISTINCT is not such a gate: Go keeps
+//!   worker-local value sets and unions them in `MergePartialResult`, which
+//!   [`merge_state`] reproduces.
 //! * `partial == 1 && final == 1` (or either `<= 0`) -> serial: Go's
 //!   builder.go workaround rule.
-//! * Order-sensitive or float-domain aggregates -- `GROUP_CONCAT`,
-//!   `JSON_ARRAYAGG`, `JSON_OBJECTAGG`, `APPROX_PERCENTILE`, the variance
-//!   family, and `SUM`/`AVG` over REAL arguments -> serial. Merging them
-//!   across workers cannot reproduce this port's line-for-line equality with
-//!   `unparallelExec`; integer/decimal SUM/AVG fold in the exact decimal
-//!   domain and merge exactly.
-//! * Statement quotas below 256 MiB stay on the spill-capable serial path.
+//! * Every aggregate without its own ORDER BY uses the partial/final worker
+//!   path, including REAL, variance, JSON, approximate and DISTINCT families,
+//!   matching Go's builder admission.
 //! * Context shareability: Go passes `sessionctx.Context` to every worker;
 //!   the Rust evaluation context must be shareable too, which
 //!   [`HashAggContext`] declares. Production `StmtContext` now qualifies:
@@ -90,18 +84,23 @@
 //!
 //! # Spill interaction
 //!
-//! Go's parallel spill (`parallelHashAggSpillHelper`, agg_spill.go) is NOT
-//! ported yet -- explicitly unfinished, not silently skipped. A pipeline-mode
-//! Open registers NO soft-limit spill action; the fetcher instead calls
-//! `StatementMemory::check()` between chunks, so a quota overrun surfaces as
-//! Go's 8175 cancellation rather than unbounded growth or silent truncation.
+//! When aggregate memory tracking, temporary storage, and
+//! `tidb_enable_parallel_hashagg_spill` are enabled, the soft-limit action
+//! drains the in-flight chunks and writes every partial-worker map across
+//! 256 Murmur3 partitions. Final workers restore one partition at a time and
+//! merge its serialized partial states. DISTINCT follows Go's spill gate and
+//! stays in memory because its value sets are not spillable there either.
 
+use super::spill::parallel_new_group_bytes;
 use super::*;
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::mpsc::{channel, sync_channel};
 use std::sync::{Arc, Mutex};
+use tidb_vardef::tidb_vars::{
+    TIDB_ENABLE_PARALLEL_HASHAGG_SPILL, TIDB_TRACK_AGGREGATE_MEMORY_USAGE,
+};
 
 /// Marks an evaluation context that [`HashAggExec`] accepts.
 ///
@@ -214,15 +213,13 @@ impl PipelineAbort {
 struct PipelinePlan<C: Columns + Send + Sync + Clone + 'static> {
     ctx: C,
     group_by: Vec<Expression>,
-    group_collations: Vec<tidb_datatype::Collation>,
-    integer_columns: Option<Vec<(usize, bool)>>,
+    integer_columns: Option<Vec<usize>>,
     agg_funcs: Vec<AggFunc>,
 }
 
-/// A pipeline group-map key. The single-signed-integer shape (q18's
-/// `group by l_orderkey`, 1.5M groups) keys by the raw `Option<i64>` so no
-/// per-group key allocation happens; every other shape keeps the encoded
-/// `Vec<u8>` key.
+/// A pipeline group-map key. A single integer group item keys by its chunk
+/// lane directly so the native map does not allocate one byte vector per
+/// group; every other shape keeps Go's encoded group key.
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum PipelineMapKey {
     Int(Option<i64>),
@@ -234,19 +231,17 @@ impl PipelineMapKey {
     /// representation, kept for tracker continuity.
     fn charge_len(&self) -> usize {
         match self {
-            // 8-byte varint body + flag + separator.
+            // Go preallocates ten bytes per group item in `GetGroupKey`.
             PipelineMapKey::Int(_) => 10,
             PipelineMapKey::Bytes(bytes) => bytes.len(),
         }
     }
 }
 
-type PipelineMap = HashMap<PipelineMapKey, PipelineGroup, BuildHasherDefault<super::ParallelIntHasher>>;
+type PipelineMap = HashMap<PipelineMapKey, PipelineGroup, BuildHasherDefault<super::HashAggHasher>>;
 
-/// One group inside a worker's map: the global row sequence of the first
-/// contributing row plus the group's aggregate states.
+/// One group inside a worker's map: its aggregate partial states.
 struct PipelineGroup {
-    first_seq: u64,
     states: Vec<AggState>,
 }
 
@@ -254,33 +249,612 @@ impl PipelineGroup {
     /// Creates the group; the CALLER batches the tracker consume (one
     /// round-trip per chunk, not per group — 1.5M-group shapes showed the
     /// lock in profiles).
-    fn new(funcs: &[AggFunc], seq: u64, key_len: usize) -> (Self, i64) {
-        let bytes = new_group_bytes(key_len, funcs.len());
+    fn new(funcs: &[AggFunc], key_len: usize) -> (Self, i64) {
+        let bytes = parallel_new_group_bytes(key_len, funcs);
         (
             PipelineGroup {
-                first_seq: seq,
-                states: funcs.iter().map(AggState::new).collect(),
+                states: funcs.iter().map(AggState::new_parallel).collect(),
             },
             bytes,
         )
     }
 }
 
-/// FNV-1a 32-bit over the encoded key: plays Go's
-/// `murmur3.Sum32(key) % finalConcurrency` partition role. See the module
-/// docs for why a different hash here is unobservable.
-fn key_bucket(key: &[u8], bucket_count: usize) -> usize {
-    let mut hash: u32 = 0x811c_9dc5;
-    for &byte in key {
-        hash ^= u32::from(byte);
-        hash = hash.wrapping_mul(0x0100_0193);
+const SPILLED_PARTITION_NUM: usize = 256;
+const SPILL_CHUNK_SIZE: usize = 1024;
+const SPILL_FORMAT_VERSION: u8 = 1;
+
+struct SpillWriter(Vec<u8>);
+
+impl SpillWriter {
+    fn new() -> Self {
+        Self(vec![SPILL_FORMAT_VERSION])
     }
-    (hash as usize) % bucket_count
+
+    fn u8(&mut self, value: u8) {
+        self.0.push(value);
+    }
+
+    fn u32(&mut self, value: u32) {
+        self.0.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn u64(&mut self, value: u64) {
+        self.0.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn i64(&mut self, value: i64) {
+        self.0.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn i128(&mut self, value: i128) {
+        self.0.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn f64(&mut self, value: f64) {
+        self.u64(value.to_bits());
+    }
+
+    fn bytes(&mut self, value: &[u8]) -> Result<(), ExecError> {
+        let len = u32::try_from(value.len())
+            .map_err(|_| ExecError::SpillFailed("HashAgg spill value is too large".to_owned()))?;
+        self.u32(len);
+        self.0.extend_from_slice(value);
+        Ok(())
+    }
+
+    fn datum(&mut self, value: &Datum) -> Result<(), ExecError> {
+        let encoded = value
+            .marshal_json()
+            .map_err(|error| ExecError::SpillFailed(error.to_string()))?;
+        self.bytes(&encoded)
+    }
+
+    fn optional_datum(&mut self, value: Option<&Datum>) -> Result<(), ExecError> {
+        self.u8(u8::from(value.is_some()));
+        if let Some(value) = value {
+            self.datum(value)?;
+        }
+        Ok(())
+    }
 }
 
-/// Below this estimated input the serial fold is cheaper than the pipeline's
-/// worker handoffs. See `HashAggExec::with_estimated_input_rows`.
-const PIPELINE_MIN_INPUT_ROWS: f64 = 16_384.0;
+struct SpillReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> SpillReader<'a> {
+    fn new(bytes: &'a [u8]) -> Result<Self, ExecError> {
+        if bytes.first().copied() != Some(SPILL_FORMAT_VERSION) {
+            return Err(ExecError::SpillFailed(
+                "invalid HashAgg spill format version".to_owned(),
+            ));
+        }
+        Ok(Self { bytes, offset: 1 })
+    }
+
+    fn fixed<const N: usize>(&mut self) -> Result<[u8; N], ExecError> {
+        let end = self
+            .offset
+            .checked_add(N)
+            .ok_or_else(|| ExecError::SpillFailed("invalid HashAgg spill length".to_owned()))?;
+        let slice = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or_else(|| ExecError::SpillFailed("truncated HashAgg spill record".to_owned()))?;
+        self.offset = end;
+        Ok(slice.try_into().expect("fixed slice length"))
+    }
+
+    fn u8(&mut self) -> Result<u8, ExecError> {
+        Ok(self.fixed::<1>()?[0])
+    }
+
+    fn u32(&mut self) -> Result<u32, ExecError> {
+        Ok(u32::from_le_bytes(self.fixed()?))
+    }
+
+    fn u64(&mut self) -> Result<u64, ExecError> {
+        Ok(u64::from_le_bytes(self.fixed()?))
+    }
+
+    fn i64(&mut self) -> Result<i64, ExecError> {
+        Ok(i64::from_le_bytes(self.fixed()?))
+    }
+
+    fn i128(&mut self) -> Result<i128, ExecError> {
+        Ok(i128::from_le_bytes(self.fixed()?))
+    }
+
+    fn f64(&mut self) -> Result<f64, ExecError> {
+        Ok(f64::from_bits(self.u64()?))
+    }
+
+    fn bytes(&mut self) -> Result<&'a [u8], ExecError> {
+        let len = usize::try_from(self.u32()?).expect("u32 always fits usize");
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or_else(|| ExecError::SpillFailed("invalid HashAgg spill length".to_owned()))?;
+        let value = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or_else(|| ExecError::SpillFailed("truncated HashAgg spill record".to_owned()))?;
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn datum(&mut self) -> Result<Datum, ExecError> {
+        Datum::unmarshal_json(self.bytes()?)
+            .map_err(|error| ExecError::SpillFailed(error.to_string()))
+    }
+
+    fn optional_datum(&mut self) -> Result<Option<Datum>, ExecError> {
+        match self.u8()? {
+            0 => Ok(None),
+            1 => self.datum().map(Some),
+            _ => Err(ExecError::SpillFailed(
+                "invalid HashAgg optional datum flag".to_owned(),
+            )),
+        }
+    }
+
+    fn finish(self) -> Result<(), ExecError> {
+        if self.offset == self.bytes.len() {
+            Ok(())
+        } else {
+            Err(ExecError::SpillFailed(
+                "trailing bytes in HashAgg spill record".to_owned(),
+            ))
+        }
+    }
+}
+
+fn write_partial(writer: &mut SpillWriter, partial: &Partial) -> Result<(), ExecError> {
+    match partial {
+        Partial::Count(value) => {
+            writer.u8(0);
+            writer.i64(*value);
+        }
+        Partial::FinalCount(value) => {
+            writer.u8(1);
+            writer.i64(*value);
+        }
+        Partial::SumDecimal(value) => {
+            writer.u8(2);
+            let datum = value.as_ref().map(|value| Datum::Decimal(value.clone()));
+            writer.optional_datum(datum.as_ref())?;
+        }
+        Partial::SumDecimalFast { sum, scale } => {
+            writer.u8(3);
+            writer.i128(*sum);
+            writer.u32(*scale);
+        }
+        Partial::SumReal(value) => {
+            writer.u8(4);
+            writer.u8(u8::from(value.is_some()));
+            if let Some(value) = value {
+                writer.f64(*value);
+            }
+        }
+        Partial::FirstRow(value) => {
+            writer.u8(5);
+            writer.optional_datum(value.as_ref())?;
+        }
+        Partial::MaxMin { value, .. } => {
+            writer.u8(6);
+            writer.optional_datum(value.as_ref())?;
+        }
+        Partial::AvgDecimal { sum, count } => {
+            writer.u8(7);
+            writer.datum(&Datum::Decimal(sum.clone()))?;
+            writer.i64(*count);
+        }
+        Partial::AvgDecimalFast { sum, scale, count } => {
+            writer.u8(8);
+            writer.i128(*sum);
+            writer.u32(*scale);
+            writer.i64(*count);
+        }
+        Partial::AvgReal { sum, count } => {
+            writer.u8(9);
+            writer.f64(*sum);
+            writer.i64(*count);
+        }
+        Partial::GroupConcat { values, .. } => {
+            writer.u8(10);
+            writer.u32(u32::try_from(values.len()).map_err(|_| {
+                ExecError::SpillFailed("too many GROUP_CONCAT spill values".to_owned())
+            })?);
+            for (value, sort_key) in values {
+                writer.bytes(value)?;
+                writer.u32(u32::try_from(sort_key.len()).map_err(|_| {
+                    ExecError::SpillFailed("too many GROUP_CONCAT sort values".to_owned())
+                })?);
+                for datum in sort_key {
+                    writer.datum(datum)?;
+                }
+            }
+        }
+        Partial::Bit { acc, .. } => {
+            writer.u8(11);
+            writer.u64(*acc);
+        }
+        Partial::Variance {
+            count,
+            sum,
+            variance,
+            ..
+        } => {
+            writer.u8(12);
+            writer.i64(*count);
+            writer.f64(*sum);
+            writer.f64(*variance);
+        }
+        Partial::JsonArrayAgg(values, _) => {
+            writer.u8(13);
+            writer.u32(u32::try_from(values.len()).map_err(|_| {
+                ExecError::SpillFailed("too many JSON_ARRAYAGG spill values".to_owned())
+            })?);
+            for value in values {
+                writer.datum(&Datum::Json(value.clone()))?;
+            }
+        }
+        Partial::JsonObjectAgg(values, _, _) => {
+            writer.u8(14);
+            writer.u32(u32::try_from(values.len()).map_err(|_| {
+                ExecError::SpillFailed("too many JSON_OBJECTAGG spill values".to_owned())
+            })?);
+            for (key, value) in values {
+                writer.bytes(key.as_bytes())?;
+                writer.datum(&Datum::Json(value.clone()))?;
+            }
+        }
+        Partial::ApproxCountDistinct(sketch) => {
+            writer.u8(15);
+            let (skip_degree, has_zero, hashes) = sketch.spill_state();
+            writer.u8(skip_degree);
+            writer.u8(u8::from(has_zero));
+            writer.u32(u32::try_from(hashes.len()).map_err(|_| {
+                ExecError::SpillFailed("too many approximate-count spill hashes".to_owned())
+            })?);
+            for hash in hashes {
+                writer.u32(hash);
+            }
+        }
+        Partial::ApproxPercentile { values, .. } => {
+            writer.u8(16);
+            writer.u32(u32::try_from(values.len()).map_err(|_| {
+                ExecError::SpillFailed("too many approximate-percentile values".to_owned())
+            })?);
+            for value in values {
+                writer.datum(value)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn expect_decimal(value: Datum) -> Result<Decimal, ExecError> {
+    match value {
+        Datum::Decimal(value) => Ok(value),
+        _ => Err(ExecError::SpillFailed(
+            "invalid decimal HashAgg spill state".to_owned(),
+        )),
+    }
+}
+
+fn expect_json(value: Datum) -> Result<BinaryJSON, ExecError> {
+    match value {
+        Datum::Json(value) => Ok(value),
+        _ => Err(ExecError::SpillFailed(
+            "invalid JSON HashAgg spill state".to_owned(),
+        )),
+    }
+}
+
+fn read_partial(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<Partial, ExecError> {
+    let tag = reader.u8()?;
+    let invalid = || ExecError::SpillFailed("aggregate kind mismatch in spill state".to_owned());
+    Ok(match (&func.kind, tag) {
+        (AggKind::Count, 0) => Partial::Count(reader.i64()?),
+        (AggKind::FinalCount, 1) => Partial::FinalCount(reader.i64()?),
+        (AggKind::Sum, 2) => {
+            Partial::SumDecimal(reader.optional_datum()?.map(expect_decimal).transpose()?)
+        }
+        (AggKind::Sum, 3) => Partial::SumDecimalFast {
+            sum: reader.i128()?,
+            scale: reader.u32()?,
+        },
+        (AggKind::Sum, 4) => {
+            let value = match reader.u8()? {
+                0 => None,
+                1 => Some(reader.f64()?),
+                _ => return Err(invalid()),
+            };
+            Partial::SumReal(value)
+        }
+        (AggKind::FirstRow, 5) => Partial::FirstRow(reader.optional_datum()?),
+        (AggKind::Min, 6) => Partial::MaxMin {
+            value: reader.optional_datum()?,
+            is_max: false,
+        },
+        (AggKind::Max, 6) => Partial::MaxMin {
+            value: reader.optional_datum()?,
+            is_max: true,
+        },
+        (AggKind::Avg, 7) => Partial::AvgDecimal {
+            sum: expect_decimal(reader.datum()?)?,
+            count: reader.i64()?,
+        },
+        (AggKind::Avg, 8) => Partial::AvgDecimalFast {
+            sum: reader.i128()?,
+            scale: reader.u32()?,
+            count: reader.i64()?,
+        },
+        (AggKind::Avg, 9) => Partial::AvgReal {
+            sum: reader.f64()?,
+            count: reader.i64()?,
+        },
+        (AggKind::GroupConcat { separator }, 10) => {
+            let mut values = Vec::with_capacity(reader.u32()? as usize);
+            for _ in 0..values.capacity() {
+                let value = reader.bytes()?.to_vec();
+                let mut sort_key = Vec::with_capacity(reader.u32()? as usize);
+                for _ in 0..sort_key.capacity() {
+                    sort_key.push(reader.datum()?);
+                }
+                values.push((value, sort_key));
+            }
+            Partial::GroupConcat {
+                values,
+                separator: separator.clone(),
+            }
+        }
+        (AggKind::Bit(op), 11) => Partial::Bit {
+            acc: reader.u64()?,
+            op: *op,
+        },
+        (AggKind::Variance { sample, sqrt }, 12) => Partial::Variance {
+            count: reader.i64()?,
+            sum: reader.f64()?,
+            variance: reader.f64()?,
+            sample: *sample,
+            sqrt: *sqrt,
+        },
+        (AggKind::JsonArrayAgg { value_type }, 13) => {
+            let mut values = Vec::with_capacity(reader.u32()? as usize);
+            for _ in 0..values.capacity() {
+                values.push(expect_json(reader.datum()?)?);
+            }
+            Partial::JsonArrayAgg(values, value_type.clone())
+        }
+        (
+            AggKind::JsonObjectAgg {
+                value_type,
+                key_is_binary,
+            },
+            14,
+        ) => {
+            let count = reader.u32()?;
+            let mut values = BTreeMap::new();
+            for _ in 0..count {
+                let key = String::from_utf8(reader.bytes()?.to_vec()).map_err(|_| {
+                    ExecError::SpillFailed("invalid JSON_OBJECTAGG spill key".to_owned())
+                })?;
+                values.insert(key, expect_json(reader.datum()?)?);
+            }
+            Partial::JsonObjectAgg(values, value_type.clone(), *key_is_binary)
+        }
+        (AggKind::ApproxCountDistinct, 15) => {
+            let skip_degree = reader.u8()?;
+            let has_zero = match reader.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(invalid()),
+            };
+            let mut hashes = Vec::with_capacity(reader.u32()? as usize);
+            for _ in 0..hashes.capacity() {
+                hashes.push(reader.u32()?);
+            }
+            Partial::ApproxCountDistinct(
+                ApproxCountDistinctSketch::from_spill_state(skip_degree, has_zero, &hashes)
+                    .map_err(ExecError::SpillFailed)?,
+            )
+        }
+        (AggKind::ApproxPercentile(percent), 16) => {
+            let mut values = Vec::with_capacity(reader.u32()? as usize);
+            for _ in 0..values.capacity() {
+                values.push(reader.datum()?);
+            }
+            Partial::ApproxPercentile {
+                values,
+                percent: *percent,
+            }
+        }
+        _ => return Err(invalid()),
+    })
+}
+
+fn encode_spill_entry(key: &PipelineMapKey, group: &PipelineGroup) -> Result<Vec<u8>, ExecError> {
+    let mut writer = SpillWriter::new();
+    match key {
+        PipelineMapKey::Int(value) => {
+            writer.u8(0);
+            writer.u8(u8::from(value.is_some()));
+            if let Some(value) = value {
+                writer.i64(*value);
+            }
+        }
+        PipelineMapKey::Bytes(value) => {
+            writer.u8(1);
+            writer.bytes(value)?;
+        }
+    }
+    writer.u32(
+        u32::try_from(group.states.len())
+            .map_err(|_| ExecError::SpillFailed("too many HashAgg spill states".to_owned()))?,
+    );
+    for state in &group.states {
+        write_partial(&mut writer, &state.partial)?;
+    }
+    Ok(writer.0)
+}
+
+fn decode_spill_entry(
+    bytes: &[u8],
+    funcs: &[AggFunc],
+) -> Result<(PipelineMapKey, PipelineGroup), ExecError> {
+    let mut reader = SpillReader::new(bytes)?;
+    let key = match reader.u8()? {
+        0 => match reader.u8()? {
+            0 => PipelineMapKey::Int(None),
+            1 => PipelineMapKey::Int(Some(reader.i64()?)),
+            _ => {
+                return Err(ExecError::SpillFailed(
+                    "invalid integer HashAgg spill key".to_owned(),
+                ));
+            }
+        },
+        1 => PipelineMapKey::Bytes(reader.bytes()?.to_vec()),
+        _ => {
+            return Err(ExecError::SpillFailed(
+                "invalid HashAgg spill key kind".to_owned(),
+            ));
+        }
+    };
+    if reader.u32()? as usize != funcs.len() {
+        return Err(ExecError::SpillFailed(
+            "aggregate count mismatch in spill state".to_owned(),
+        ));
+    }
+    let mut states = Vec::with_capacity(funcs.len());
+    for func in funcs {
+        let mut state = AggState::new_parallel(func);
+        state.partial = read_partial(&mut reader, func)?;
+        states.push(state);
+    }
+    reader.finish()?;
+    Ok((key, PipelineGroup { states }))
+}
+
+struct ParallelSpillPartitions {
+    field_types: Vec<FieldType>,
+    chunks: Vec<Chunk>,
+    files: Vec<Option<DataInDiskByChunks>>,
+    storage: Arc<disk::SpillStorage>,
+    disk_tracker: Arc<disk::Tracker>,
+    has_data: bool,
+}
+
+impl ParallelSpillPartitions {
+    fn new(memory: &StatementMemory, disk_tracker: &Arc<disk::Tracker>) -> Self {
+        let field_types = vec![FieldType::new(FieldTypeCode::LongBlob)];
+        let chunks = (0..SPILLED_PARTITION_NUM)
+            .map(|_| Chunk::new_with_capacity(&field_types, SPILL_CHUNK_SIZE))
+            .collect();
+        Self {
+            field_types,
+            chunks,
+            files: (0..SPILLED_PARTITION_NUM).map(|_| None).collect(),
+            storage: memory.spill_storage(),
+            disk_tracker: Arc::clone(disk_tracker),
+            has_data: false,
+        }
+    }
+
+    fn bucket(key: &PipelineMapKey) -> usize {
+        map_key_bucket(key, SPILLED_PARTITION_NUM)
+    }
+
+    fn flush(&mut self, partition: usize) -> Result<(), ExecError> {
+        if self.chunks[partition].num_rows() == 0 {
+            return Ok(());
+        }
+        let file = self.files[partition].get_or_insert_with(|| {
+            let file = DataInDiskByChunks::new(
+                self.field_types.clone(),
+                "hashagg-parallel-",
+                Arc::clone(&self.storage),
+            );
+            file.disk_tracker().attach_to(&self.disk_tracker);
+            file
+        });
+        file.add(&self.chunks[partition])
+            .map_err(|error| ExecError::SpillFailed(error.to_string()))?;
+        self.chunks[partition].reset();
+        self.has_data = true;
+        Ok(())
+    }
+
+    fn spill_maps(&mut self, maps: Vec<PipelineMap>) -> Result<(), ExecError> {
+        for map in maps {
+            for (key, group) in map {
+                let partition = Self::bucket(&key);
+                let encoded = encode_spill_entry(&key, &group)?;
+                self.chunks[partition].append_bytes(0, &encoded);
+                if self.chunks[partition].num_rows() >= SPILL_CHUNK_SIZE {
+                    self.flush(partition)?;
+                }
+            }
+        }
+        for partition in 0..SPILLED_PARTITION_NUM {
+            self.flush(partition)?;
+        }
+        Ok(())
+    }
+
+    fn restore_partition(
+        &mut self,
+        partition: usize,
+        funcs: &[AggFunc],
+    ) -> Result<PipelineMap, ExecError> {
+        let Some(file) = self.files[partition].as_mut() else {
+            return Ok(PipelineMap::default());
+        };
+        let mut restored = PipelineMap::default();
+        for chunk_index in 0..file.num_chunks() {
+            let chunk = file
+                .get_chunk(chunk_index)
+                .map_err(|error| ExecError::SpillFailed(error.to_string()))?;
+            for row_index in 0..chunk.num_rows() {
+                let encoded = chunk.get_row(row_index).get_bytes(0);
+                let (key, group) = decode_spill_entry(&encoded, funcs)?;
+                match restored.entry(key) {
+                    Entry::Vacant(slot) => {
+                        slot.insert(group);
+                    }
+                    Entry::Occupied(mut slot) => merge_groups(slot.get_mut(), group)?,
+                }
+            }
+        }
+        file.close();
+        Ok(restored)
+    }
+}
+
+/// Go `murmur3.Sum32(key) % finalConcurrency`.
+fn key_bucket(key: &[u8], bucket_count: usize) -> usize {
+    crate::shuffle::murmur3_sum32(key) as usize % bucket_count
+}
+
+fn map_key_bucket(key: &PipelineMapKey, bucket_count: usize) -> usize {
+    match key {
+        PipelineMapKey::Int(value) => {
+            let mut encoded = Vec::with_capacity(10);
+            match value {
+                Some(value) => {
+                    encoded.push(VARINT_FLAG);
+                    encode_varint(&mut encoded, *value);
+                }
+                None => encoded.push(NIL_FLAG),
+            }
+            key_bucket(&encoded, bucket_count)
+        }
+        PipelineMapKey::Bytes(bytes) => key_bucket(bytes, bucket_count),
+    }
+}
 
 /// Reads one concurrency system variable with Go's resolution order: the
 /// session value first (a context answers `None` when unset), then the
@@ -303,6 +877,30 @@ fn resolved_concurrency<C: Columns>(ctx: &C, name: &str) -> Option<usize> {
 fn executor_concurrency<C: Columns>(ctx: &C) -> usize {
     resolved_concurrency(ctx, "tidb_executor_concurrency")
         .unwrap_or(tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize)
+}
+
+fn resolved_bool<C: Columns>(ctx: &C, name: &str, default: bool) -> bool {
+    let read = |scope| {
+        ctx.sysvar(scope, name).and_then(|value| match value {
+            Datum::Int(value) => Some(value != 0),
+            Datum::UInt(value) => Some(value != 0),
+            Datum::Bytes(raw) => {
+                let value = String::from_utf8_lossy(&raw);
+                let value = value.trim();
+                if value.eq_ignore_ascii_case("ON") || value == "1" {
+                    Some(true)
+                } else if value.eq_ignore_ascii_case("OFF") || value == "0" {
+                    Some(false)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+    };
+    read(None)
+        .or_else(|| read(Some(tidb_ast::SysVarScope::Global)))
+        .unwrap_or(default)
 }
 
 impl<C: HashAggContext> HashAggExec<C> {
@@ -361,87 +959,18 @@ impl<C: HashAggContext> HashAggExec<C> {
     /// Requires `C: HashAggContext` so the context-capability constant
     /// participates in the decision at `Open` time.
     pub(super) fn pipeline_eligibility(&self) -> Option<(usize, usize)> {
-        // An input this small never repays the pipeline's thread handoffs.
-        // Go parallelises here too, but its partial/final workers are
-        // goroutines whose handoff is tens of nanoseconds; ours are OS-thread
-        // wakeups. Measured on `SELECT DISTINCT c ... ORDER BY c` over one
-        // range, the serial fold won at every size up to the whole 1000-row
-        // table -- 10 rows 399.8us against 497.8us, 100 rows 721.3 against
-        // 767.3, 500 rows 2147.3 against 2250.8, 1000 rows 3802.2 against
-        // 4084.2 -- and at 100 rows that is the difference between 1.20x Go
-        // and 0.995x. The bound is deliberately far above those sizes rather
-        // than at the measured crossover: the pipeline exists for the
-        // 200K-group / 800K-row shapes this file's own docs cite, and nothing
-        // here measured where it starts to pay.
-        if self
-            .estimated_input_rows
-            .is_some_and(|rows| rows < PIPELINE_MIN_INPUT_ROWS)
-        {
-            return None;
-        }
-        // The binary-string Web3Bench shape has a columnar serial fold that
-        // is cheaper than materializing per-worker expression rows. Keep it
-        // on that path even when the session falls back to the default
-        // worker concurrency; this also makes the single-concurrency result
-        // independent of whether the two hash-agg variables were set.
-        if self.direct_string_group_column().is_some()
-            && self.direct_string_aggregate_specs().is_some()
-        {
-            return None;
-        }
         // The Datum-flattened output buffer cannot carry zero-width virtual
         // rows; GROUP BY without aggregates stays serial.
         if self.agg_funcs.is_empty() {
             return None;
         }
-        // Go `builder.go:2058`: DISTINCT / ORDER BY aggregates force
-        // `IsUnparallelExec`.
+        // Go `builder.go:2162`: only an aggregate-local ORDER BY forces
+        // `IsUnparallelExec`. `HasDistinct` is recorded independently for
+        // spill support and does not disable the partial/final workers.
         for func in &self.agg_funcs {
-            if func.distinct || !func.order_by.is_empty() {
+            if !func.order_by.is_empty() {
                 return None;
             }
-            match &func.kind {
-                AggKind::Count | AggKind::FinalCount | AggKind::FirstRow => {}
-                AggKind::Min | AggKind::Max | AggKind::Bit(_) => {
-                    func.arg.as_ref()?;
-                }
-                AggKind::Sum => {
-                    // Serial SUM switches to the float domain on the first
-                    // REAL datum; keep the pipeline on arguments whose static
-                    // type folds exactly (integer/decimal).
-                    let arg = func.arg.as_ref()?;
-                    if !matches!(
-                        arg.static_type()?.eval_type(),
-                        tidb_datatype::EvalType::Int | tidb_datatype::EvalType::Decimal
-                    ) {
-                        return None;
-                    }
-                }
-                AggKind::Avg => {
-                    // The pushed-down final form (partial count argument +
-                    // one partial sum extra) folds exactly; plain AVG must
-                    // avoid the float-domain switch like SUM does.
-                    if func.extra_args.len() > 1 {
-                        return None;
-                    }
-                    if func.extra_args.is_empty() {
-                        let arg = func.arg.as_ref()?;
-                        if !matches!(
-                            arg.static_type()?.eval_type(),
-                            tidb_datatype::EvalType::Int | tidb_datatype::EvalType::Decimal
-                        ) {
-                            return None;
-                        }
-                    }
-                }
-                // Order-sensitive or float-domain families cannot merge
-                // without diverging from the serial path.
-                _ => return None,
-            }
-        }
-        // Low quotas belong on the spill-capable serial path.
-        if self.memory.quota() > 0 && self.memory.quota() < 256 * 1024 * 1024 {
-            return None;
         }
         // Go `builder.go:2062`: both concurrencies at 1 (or non-positive)
         // means "run serially".
@@ -451,6 +980,192 @@ impl<C: HashAggContext> HashAggExec<C> {
         }
         Some((partial, final_concurrency))
     }
+
+    /// Go `initForParallelExec`'s complete spill gate.
+    pub(super) fn parallel_spill_enabled(&self) -> bool {
+        self.memory.tmp_storage_on_oom()
+            && !self.agg_funcs.iter().any(|function| function.distinct)
+            && resolved_bool(
+                &self.ctx,
+                TIDB_TRACK_AGGREGATE_MEMORY_USAGE,
+                tidb_vardef::defaults::DEF_TIDB_TRACK_AGGREGATE_MEMORY_USAGE,
+            )
+            && resolved_bool(
+                &self.ctx,
+                TIDB_ENABLE_PARALLEL_HASHAGG_SPILL,
+                tidb_vardef::defaults::DEF_TIDB_ENABLE_PARALLEL_HASHAGG_SPILL,
+            )
+    }
+}
+
+struct PipelineEpoch {
+    maps: Vec<PipelineMap>,
+    child_drained: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
+    child: &mut dyn Executor,
+    child_chunk: &mut Chunk,
+    child_returned_empty: &mut bool,
+    plan: &Arc<PipelinePlan<C>>,
+    stats: &Arc<PipelineStats>,
+    memory: &StatementMemory,
+    tracker: &Arc<Tracker>,
+    spill_requested: &Arc<AtomicBool>,
+) -> Result<PipelineEpoch, ExecError> {
+    let partial_concurrency = stats.partial_concurrency;
+    let final_concurrency = stats.final_concurrency;
+    let abort = PipelineAbort::default();
+    let (final_tx, final_rx) = channel::<FinalMsg>();
+
+    let mut lane_txs = Vec::with_capacity(partial_concurrency);
+    let mut lane_rxs = Vec::with_capacity(partial_concurrency);
+    for _ in 0..partial_concurrency {
+        let (tx, rx) = sync_channel::<(Chunk, i64)>(1);
+        lane_txs.push(tx);
+        lane_rxs.push(rx);
+    }
+    let mut shuffle_txs = Vec::with_capacity(final_concurrency);
+    let mut shuffle_rxs = Vec::with_capacity(final_concurrency);
+    for _ in 0..final_concurrency {
+        let (tx, rx) = sync_channel::<PipelineMap>(partial_concurrency.max(1));
+        shuffle_txs.push(tx);
+        shuffle_rxs.push(rx);
+    }
+
+    let mut partial_handles = Vec::with_capacity(partial_concurrency);
+    for _ in 0..partial_concurrency {
+        let lane_rx = lane_rxs.pop().expect("one receiver per partial worker");
+        let shuffle_txs = shuffle_txs.clone();
+        let final_tx = final_tx.clone();
+        let abort = abort.clone();
+        let stats_ref = Arc::clone(stats);
+        let tracker = Arc::clone(tracker);
+        let plan = Arc::clone(plan);
+        partial_handles.push(crate::worker_pool::spawn(move || {
+            stats_ref.record_partial_worker();
+            let mut maps: Vec<PipelineMap> = (0..shuffle_txs.len())
+                .map(|_| PipelineMap::default())
+                .collect();
+            let mut error: Option<ExecError> = None;
+            while let Ok((chunk, chunk_charge)) = lane_rx.recv() {
+                if error.is_none() {
+                    let fold = fold_chunk(
+                        FoldInputs {
+                            ctx: &plan.ctx,
+                            group_by: &plan.group_by,
+                            integer_columns: plan.integer_columns.as_deref(),
+                            agg_funcs: &plan.agg_funcs,
+                        },
+                        &mut maps,
+                        shuffle_txs.len(),
+                        &tracker,
+                        &chunk,
+                    );
+                    if let Err(fold_error) = fold {
+                        error = Some(fold_error);
+                        abort.raise();
+                    }
+                }
+                // Go returns the consumed input chunk to the fetcher's pool;
+                // this releases the exact growth charged while filling it.
+                tracker.consume(-chunk_charge);
+            }
+            match error {
+                None => {
+                    for (bucket, map) in maps.into_iter().enumerate() {
+                        if shuffle_txs[bucket].send(map).is_err() {
+                            break;
+                        }
+                    }
+                }
+                Some(error) => {
+                    let _ = final_tx.send(FinalMsg::Err(error));
+                }
+            }
+        }));
+    }
+
+    let mut final_handles = Vec::with_capacity(final_concurrency);
+    for _ in 0..final_concurrency {
+        let shuffle_rx = shuffle_rxs.pop().expect("one receiver per final worker");
+        let final_tx = final_tx.clone();
+        final_handles.push(crate::worker_pool::spawn(move || {
+            let mut acc: Option<PipelineMap> = None;
+            let mut error_sent = false;
+            while let Ok(map) = shuffle_rx.recv() {
+                let merged = acc.get_or_insert_with(PipelineMap::default);
+                if let Err(error) = merge_map(merged, map) {
+                    if !error_sent {
+                        let _ = final_tx.send(FinalMsg::Err(error));
+                        error_sent = true;
+                    }
+                }
+            }
+            let _ = final_tx.send(FinalMsg::Maps(acc.unwrap_or_default()));
+        }));
+    }
+
+    let mut next_lane = 0usize;
+    let mut fetch_error: Option<ExecError> = None;
+    let mut child_drained = false;
+    loop {
+        if abort.raised() || spill_requested.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
+        memory.check()?;
+        let before = child_chunk.memory_usage();
+        if let Err(error) = child.next(child_chunk) {
+            fetch_error = Some(error);
+            break;
+        }
+        let rows = child_chunk.num_rows();
+        if rows == 0 {
+            child_drained = true;
+            break;
+        }
+        *child_returned_empty = false;
+        let chunk_charge = child_chunk.memory_usage() - before;
+        tracker.consume(chunk_charge);
+        let replacement = child.new_chunk();
+        let chunk = std::mem::replace(child_chunk, replacement);
+        if lane_txs[next_lane].send((chunk, chunk_charge)).is_err() {
+            break;
+        }
+        stats
+            .dispatched_chunks
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        next_lane = (next_lane + 1) % partial_concurrency;
+    }
+
+    drop(lane_txs);
+    for handle in partial_handles {
+        let _ = handle.recv();
+    }
+    drop(shuffle_txs);
+    for handle in final_handles {
+        let _ = handle.recv();
+    }
+    drop(final_tx);
+
+    let mut maps = Vec::with_capacity(final_concurrency);
+    let mut first_error = fetch_error;
+    while let Ok(message) = final_rx.recv() {
+        match message {
+            FinalMsg::Maps(map) => maps.push(map),
+            FinalMsg::Err(error) => {
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    if let Some(error) = first_error {
+        return Err(error);
+    }
+    Ok(PipelineEpoch {
+        maps,
+        child_drained,
+    })
 }
 
 impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C> {
@@ -466,245 +1181,83 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
                 .as_ref()
                 .expect("pipeline stats installed"),
         );
-        let partial_concurrency = stats.partial_concurrency;
-        let final_concurrency = stats.final_concurrency;
-
-        let abort = PipelineAbort::default();
-        let (final_tx, final_rx) = channel::<FinalMsg>();
-
-        // Input lanes (Go `partialInputChs`, capacity 1).
-        let mut lane_txs = Vec::with_capacity(partial_concurrency);
-        let mut lane_rxs = Vec::with_capacity(partial_concurrency);
-        for _ in 0..partial_concurrency {
-            let (tx, rx) = sync_channel::<(Chunk, u64)>(1);
-            lane_txs.push(tx);
-            lane_rxs.push(rx);
-        }
-        // Shuffle channels (Go `partialOutputChs`, capacity = partial count).
-        let mut shuffle_txs = Vec::with_capacity(final_concurrency);
-        let mut shuffle_rxs = Vec::with_capacity(final_concurrency);
-        for _ in 0..final_concurrency {
-            let (tx, rx) =
-                sync_channel::<PipelineMap>(partial_concurrency.max(1));
-            shuffle_txs.push(tx);
-            shuffle_rxs.push(rx);
-        }
-
-        // The persistent pool's tasks are `'static`: clone the shared plan
-        // pieces once into an Arc instead of borrowing them from the
-        // executor. The clone cost is one pass over the small plan vectors
-        // per aggregation; the saved thread spawns were a top profiling
-        // cost on every grouped query.
         let plan = Arc::new(PipelinePlan {
             ctx: self.ctx.clone(),
             group_by: self.group_by.clone(),
-            group_collations: self.group_collations.clone(),
             integer_columns: self.integer_group_columns.clone(),
             agg_funcs: self.agg_funcs.clone(),
         });
+        let spill_requested = Arc::clone(&self.parallel_spill_requested);
+        let mut spilled = ParallelSpillPartitions::new(&self.memory, &self.disk_tracker);
+        let mut in_memory_maps = None;
+        let child_drained;
 
-        // Split the borrows: the fetcher keeps the mutable executor state.
-        let HashAggExec {
-            child,
-            child_chunk,
-            child_returned_empty,
-            truncated,
-            memory,
-            parallel_output,
-            ..
-        } = self;
-        let memory: &StatementMemory = memory;
-        let tracker: &Arc<Tracker> = &self.tracker;
-
-        let mut base_seq = 0u64;
-        let mut next_lane = 0usize;
-        let mut fetch_error: Option<ExecError> = None;
-        let mut child_drained = false;
-
-        {
-            // ---- Partial workers (Go `HashAggPartialWorker.run`). ----
-            let mut partial_handles = Vec::with_capacity(partial_concurrency);
-            for _ in 0..partial_concurrency {
-                let lane_rx = lane_rxs.pop().expect("one receiver per partial worker");
-                let shuffle_txs = shuffle_txs.clone();
-                let final_tx = final_tx.clone();
-                let abort = abort.clone();
-                let stats_ref = Arc::clone(&stats);
-                let tracker = Arc::clone(tracker);
-                let plan = Arc::clone(&plan);
-                partial_handles.push(crate::worker_pool::spawn(move || {
-                    stats_ref.record_partial_worker();
-                    let mut maps: Vec<PipelineMap> =
-                        (0..shuffle_txs.len()).map(|_| PipelineMap::default()).collect();
-                    let mut error: Option<ExecError> = None;
-                    while let Ok((chunk, base)) = lane_rx.recv() {
-                        if error.is_none() {
-                            let fold = fold_chunk(
-                                FoldInputs {
-                                    ctx: &plan.ctx,
-                                    group_by: &plan.group_by,
-                                    group_collations: &plan.group_collations,
-                                    integer_columns: plan.integer_columns.as_deref(),
-                                    agg_funcs: &plan.agg_funcs,
-                                },
-                                &mut maps,
-                                shuffle_txs.len(),
-                                &tracker,
-                                &chunk,
-                                base,
-                            );
-                            if let Err(fold_error) = fold {
-                                error = Some(fold_error);
-                                abort.raise();
-                            }
-                        }
-                        // Keep draining: the fetcher must never block forever
-                        // on a lane whose worker stopped folding (Go drains
-                        // `inputCh` in `finalizeWorkerProcess`).
-                    }
-                    match error {
-                        None => {
-                            // Go `shuffleIntermData`: one sub-map per bucket.
-                            for (bucket, map) in maps.into_iter().enumerate() {
-                                if shuffle_txs[bucket].send(map).is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                        Some(error) => {
-                            let _ = final_tx.send(FinalMsg::Err(error));
-                        }
-                    }
-                }));
-            }
-
-            // ---- Final workers (Go `HashAggFinalWorker.run`). ----
-            let mut final_handles = Vec::with_capacity(final_concurrency);
-            for _ in 0..final_concurrency {
-                let shuffle_rx = shuffle_rxs.pop().expect("one receiver per final worker");
-                let final_tx = final_tx.clone();
-                final_handles.push(crate::worker_pool::spawn(move || {
-                    let mut acc: Option<PipelineMap> = None;
-                    while let Ok(map) = shuffle_rx.recv() {
-                        // Go `mergeInputIntoResultMap`: the FIRST map becomes
-                        // the accumulator directly; later maps merge in.
-                        let merged = acc.get_or_insert_with(PipelineMap::default);
-                        if let Err(error) = merge_map(merged, map) {
-                            let _ = final_tx.send(FinalMsg::Err(error));
-                        }
-                    }
-                    let _ = final_tx.send(FinalMsg::Maps(acc.unwrap_or_default()));
-                }));
-            }
-
-            // ---- Fetcher: the MAIN thread (Go `fetchChildData`). ----
-            loop {
-                if abort.raised() {
-                    break;
-                }
-                let before = child_chunk.memory_usage();
-                if let Err(error) = child.next(child_chunk) {
-                    fetch_error = Some(error);
-                    break;
-                }
-                let rows = child_chunk.num_rows();
-                if rows == 0 {
+        loop {
+            let epoch = run_pipeline_epoch(
+                self.child.as_mut(),
+                &mut self.child_chunk,
+                &mut self.child_returned_empty,
+                &plan,
+                &stats,
+                &self.memory,
+                &self.tracker,
+                &spill_requested,
+            )?;
+            let requested = spill_requested.swap(false, std::sync::atomic::Ordering::SeqCst);
+            if requested || spilled.has_data {
+                spilled.spill_maps(epoch.maps)?;
+                self.tracker.replace_bytes_used(0);
+                if epoch.child_drained {
                     child_drained = true;
                     break;
                 }
-                *child_returned_empty = false;
-                tracker.consume(child_chunk.memory_usage() - before);
-                // The parallel spill helper is not ported yet (module docs):
-                // the quota check between chunks is what bounds memory here.
-                if let Err(error) = memory.check() {
-                    fetch_error = Some(error);
-                    break;
-                }
-                if abort.raised() {
-                    break;
-                }
-                let replacement = child.new_chunk();
-                let chunk = std::mem::replace(child_chunk, replacement);
-                if lane_txs[next_lane].send((chunk, base_seq)).is_err() {
-                    // The lane errored out and disconnected.
-                    break;
-                }
-                stats
-                    .dispatched_chunks
-                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                base_seq += rows as u64;
-                next_lane = (next_lane + 1) % partial_concurrency;
+                continue;
             }
-            // Close the lanes so every partial worker sees EOF and exits
-            // (Go closes `partialInputChs` once its fetcher returns), then
-            // wait for the partial workers so every shuffled map is sent
-            // before the shuffle senders disappear, and for the final
-            // workers to hand their merged maps back.
-            drop(lane_txs);
-            for handle in partial_handles {
-                let _ = handle.recv();
+            child_drained = epoch.child_drained;
+            in_memory_maps = Some(epoch.maps);
+            break;
+        }
+
+        let mut groups = Vec::new();
+        if spilled.has_data {
+            // Go restores one of the 256 partitions at a time and merges all
+            // partial-result files for that partition before moving on.
+            for partition in (0..SPILLED_PARTITION_NUM).rev() {
+                let restored = spilled.restore_partition(partition, &plan.agg_funcs)?;
+                groups.extend(restored.into_values());
             }
-            drop(shuffle_txs);
-            for handle in final_handles {
-                let _ = handle.recv();
+        } else {
+            for map in in_memory_maps.unwrap_or_default() {
+                groups.extend(map.into_values());
             }
         }
 
-        // Release the final-channel sender held by THIS frame, then drain
-        // until the workers' senders are gone (they have joined above).
-        drop(final_tx);
-        let mut merged_maps = Vec::with_capacity(final_concurrency);
-        let mut first_error = fetch_error;
-        while let Ok(message) = final_rx.recv() {
-            match message {
-                FinalMsg::Maps(map) => merged_maps.push(map),
-                FinalMsg::Err(error) => {
-                    first_error.get_or_insert(error);
-                }
-            }
-        }
-        if let Some(error) = first_error {
-            return Err(error);
-        }
-
-        // Merge the final workers' bucket maps into one global map, keeping
-        // each group's minimum first-seen sequence.
-        let mut global = PipelineMap::default();
-        for map in merged_maps {
-            merge_map(&mut global, map)?;
-        }
-        let mut groups: Vec<PipelineGroup> = global.into_values().collect();
-        groups.sort_unstable_by_key(|group| group.first_seq);
-
-        // Finish values in first-seen order (the serial path's contract).
         let ret_types = self.meta.ret_field_types().to_vec();
         let width = plan.agg_funcs.len();
-        parallel_output.clear();
+        self.parallel_output.clear();
         if groups.is_empty() && plan.group_by.is_empty() {
-            // Go: no group-by and no data yields ONE empty group, so a
-            // global COUNT is 0 rather than an empty result set.
             let mut states: Vec<AggState> = plan.agg_funcs.iter().map(AggState::new).collect();
-            for (c, state) in states.iter_mut().enumerate() {
+            for (column, state) in states.iter_mut().enumerate() {
                 let value = finish_agg_value(
                     state,
-                    &plan.agg_funcs[c],
-                    &ret_types[c],
+                    &plan.agg_funcs[column],
+                    &ret_types[column],
                     &plan.ctx,
-                    &mut truncated[c],
+                    &mut self.truncated[column],
                 )?;
-                parallel_output.push(value);
+                self.parallel_output.push(value);
             }
         } else {
             for group in &mut groups {
-                for (c, state) in group.states.iter_mut().enumerate() {
+                for (column, state) in group.states.iter_mut().enumerate() {
                     let value = finish_agg_value(
                         state,
-                        &plan.agg_funcs[c],
-                        &ret_types[c],
+                        &plan.agg_funcs[column],
+                        &ret_types[column],
                         &plan.ctx,
-                        &mut truncated[c],
+                        &mut self.truncated[column],
                     )?;
-                    parallel_output.push(value);
+                    self.parallel_output.push(value);
                 }
             }
         }
@@ -723,8 +1276,7 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
 struct FoldInputs<'a, C> {
     ctx: &'a C,
     group_by: &'a [Expression],
-    group_collations: &'a [tidb_datatype::Collation],
-    integer_columns: Option<&'a [(usize, bool)]>,
+    integer_columns: Option<&'a [usize]>,
     agg_funcs: &'a [AggFunc],
 }
 
@@ -737,21 +1289,18 @@ fn fold_chunk<C: Columns>(
     bucket_count: usize,
     tracker: &Arc<Tracker>,
     chunk: &Chunk,
-    base_seq: u64,
 ) -> Result<(), ExecError> {
     let FoldInputs {
         ctx,
         group_by,
-        group_collations,
         integer_columns,
         agg_funcs,
     } = inputs;
     let mut new_group_bytes_total = 0i64;
     for row_index in 0..chunk.num_rows() {
         let row = chunk.get_row(row_index);
-        let seq = base_seq.saturating_add(row_index as u64);
         let (key, key_len): (PipelineMapKey, usize) = match integer_columns {
-            Some([(index, false)]) => {
+            Some([index]) => {
                 let index = *index;
                 let value = if row.is_null(index) {
                     None
@@ -766,16 +1315,14 @@ fn fold_chunk<C: Columns>(
                 let mut key = Vec::new();
                 match integer_columns {
                     Some(columns) => {
-                        for &(index, unsigned) in columns {
-                            append_integer_group_key_part(row, index, unsigned, &mut key);
-                            key.push(0xff);
+                        for &index in columns {
+                            append_integer_group_key_part(row, index, &mut key);
                         }
                     }
                     None => {
-                        for (expr, collation) in group_by.iter().zip(group_collations) {
+                        for expr in group_by {
                             let datum = expr.eval(ctx, row)?;
-                            append_group_key_part(collation, &datum, &mut key);
-                            key.push(0xff); // separator: key parts are length-coded
+                            append_hash_agg_group_key_part(ctx, expr, &datum, &mut key)?;
                         }
                     }
                 }
@@ -783,20 +1330,11 @@ fn fold_chunk<C: Columns>(
                 (PipelineMapKey::Bytes(key), len)
             }
         };
-        let bucket = match &key {
-            PipelineMapKey::Int(value) => key_bucket(
-                &match value {
-                    Some(v) => v.to_le_bytes().to_vec(),
-                    None => vec![NIL_FLAG],
-                },
-                bucket_count,
-            ),
-            PipelineMapKey::Bytes(bytes) => key_bucket(bytes, bucket_count),
-        };
+        let bucket = map_key_bucket(&key, bucket_count);
         let entry = match maps[bucket].entry(key) {
             std::collections::hash_map::Entry::Occupied(occupied) => occupied.into_mut(),
             std::collections::hash_map::Entry::Vacant(vacant) => {
-                let (group, bytes) = PipelineGroup::new(agg_funcs, seq, key_len);
+                let (group, bytes) = PipelineGroup::new(agg_funcs, key_len);
                 new_group_bytes_total += bytes;
                 vacant.insert(group)
             }
@@ -867,10 +1405,7 @@ fn update_group<C: Columns>(
 /// Merges one shuffled sub-map into an accumulator (Go
 /// `mergeInputIntoResultMap`: a fresh accumulator adopts the first map
 /// as-is).
-fn merge_map(
-    global: &mut PipelineMap,
-    incoming: PipelineMap,
-) -> Result<(), ExecError> {
+fn merge_map(global: &mut PipelineMap, incoming: PipelineMap) -> Result<(), ExecError> {
     for (key, group) in incoming {
         match global.entry(key) {
             Entry::Vacant(slot) => {
@@ -882,15 +1417,10 @@ fn merge_map(
     Ok(())
 }
 
-/// Merges two copies of one group, keeping the earliest first-seen sequence
-/// so downstream ordering stays deterministic.
+/// Merges two copies of one group in final-worker arrival order.
 fn merge_groups(dst: &mut PipelineGroup, src: PipelineGroup) -> Result<(), ExecError> {
-    let src_is_first = src.first_seq < dst.first_seq;
-    if src_is_first {
-        dst.first_seq = src.first_seq;
-    }
     for (c, state) in src.states.into_iter().enumerate() {
-        merge_state(&mut dst.states[c], state, src_is_first)?;
+        merge_state(&mut dst.states[c], state)?;
     }
     Ok(())
 }
@@ -899,7 +1429,39 @@ fn merge_groups(dst: &mut PipelineGroup, src: PipelineGroup) -> Result<(), ExecE
 /// through: every arm folds EXACTLY (integer/decimal domain or order-free
 /// comparison), so a merged result equals the serial accumulation bit for
 /// bit. Any other pair is an eligibility-gate bug, not a value.
-fn merge_state(dst: &mut AggState, mut src: AggState, src_is_first: bool) -> Result<(), ExecError> {
+fn merge_state(dst: &mut AggState, mut src: AggState) -> Result<(), ExecError> {
+    // Go's distinct partial implementations merge their retained value sets;
+    // adding worker-local COUNT/SUM/AVG scalars would double-count a value
+    // present in two workers. Replay only keys newly admitted to `dst`.
+    if dst.seen.is_some() || src.seen.is_some() {
+        let Some(inputs) = src.distinct_inputs.take() else {
+            return Err(ExecError::unsupported(
+                "parallel DISTINCT state did not retain its partial inputs",
+            ));
+        };
+        for input in inputs {
+            dst.update(input.value, &input.extra, input.sort_key, Some(input.key))?;
+        }
+        return Ok(());
+    }
+
+    // Fast decimal representations are an execution detail. Materialize a
+    // mismatched pair before dispatching so every exact combination has the
+    // same merge rule as Go's decimal partial result.
+    let sum_fast_matches = matches!(
+        (&dst.partial, &src.partial),
+        (
+            Partial::SumDecimalFast { scale: a, .. },
+            Partial::SumDecimalFast { scale: b, .. }
+        ) if a == b
+    );
+    if !sum_fast_matches
+        && (matches!(dst.partial, Partial::SumDecimalFast { .. })
+            || matches!(src.partial, Partial::SumDecimalFast { .. }))
+    {
+        dst.partial.materialize_sum_fast();
+        src.partial.materialize_sum_fast();
+    }
     // Fixed-scale AVG accumulators over the same column share one scale; a
     // representation or scale mismatch materializes both sides into full
     // decimals so the merge stays exact.
@@ -928,8 +1490,13 @@ fn merge_state(dst: &mut AggState, mut src: AggState, src_is_first: bool) -> Res
                 });
             }
         }
+        (Partial::SumReal(a), Partial::SumReal(b)) => {
+            if let Some(value) = b {
+                *a = Some(a.unwrap_or(0.0) + value);
+            }
+        }
         (Partial::FirstRow(slot), Partial::FirstRow(value)) => {
-            if slot.is_none() || (src_is_first && value.is_some()) {
+            if slot.is_none() {
                 *slot = value;
             }
         }
@@ -983,6 +1550,19 @@ fn merge_state(dst: &mut AggState, mut src: AggState, src_is_first: bool) -> Res
             *dst_count = dst_count.wrapping_add(src_count);
         }
         (
+            Partial::AvgReal {
+                sum: dst_sum,
+                count: dst_count,
+            },
+            Partial::AvgReal {
+                sum: src_sum,
+                count: src_count,
+            },
+        ) => {
+            *dst_sum += src_sum;
+            *dst_count = dst_count.wrapping_add(src_count);
+        }
+        (
             Partial::SumDecimalFast {
                 sum: dst_sum,
                 scale: dst_scale,
@@ -1003,10 +1583,6 @@ fn merge_state(dst: &mut AggState, mut src: AggState, src_is_first: bool) -> Res
         (Partial::SumDecimal(None), Partial::SumDecimalFast { .. }) => {
             // dst keeps its own accumulator; nothing to add.
         }
-        (state @ Partial::SumDecimalFast { .. }, Partial::SumDecimal(None)) => {
-            let _ = state;
-            // dst's materialized Decimal already holds the total.
-        }
         // Mixed Fast/materialized states arise only after an overflow
         // replay materialized BOTH sides into SumDecimal(Some); they take
         // the exact merge arm below. A lone mismatch is unreachable.
@@ -1015,6 +1591,63 @@ fn merge_state(dst: &mut AggState, mut src: AggState, src_is_first: bool) -> Res
             BitOp::Or => *dst_acc |= src_acc,
             BitOp::Xor => *dst_acc ^= src_acc,
         },
+        (
+            Partial::Variance {
+                count: dst_count,
+                sum: dst_sum,
+                variance: dst_variance,
+                ..
+            },
+            Partial::Variance {
+                count: src_count,
+                sum: src_sum,
+                variance: src_variance,
+                ..
+            },
+        ) => {
+            if src_count != 0 {
+                if *dst_count == 0 {
+                    *dst_count = src_count;
+                    *dst_sum = src_sum;
+                    *dst_variance = src_variance;
+                } else {
+                    // Go `calculateMerge` (`func_varpop.go`).
+                    let src_count_f = src_count as f64;
+                    let dst_count_f = *dst_count as f64;
+                    let t = (src_count_f / dst_count_f) * *dst_sum - src_sum;
+                    *dst_variance += src_variance
+                        + ((dst_count_f / src_count_f) / (dst_count_f + src_count_f)) * t * t;
+                    *dst_count = dst_count.wrapping_add(src_count);
+                    *dst_sum += src_sum;
+                }
+            }
+        }
+        (
+            Partial::GroupConcat {
+                values: dst_values, ..
+            },
+            Partial::GroupConcat {
+                values: src_values, ..
+            },
+        ) => dst_values.extend(src_values),
+        (Partial::JsonArrayAgg(dst_values, _), Partial::JsonArrayAgg(src_values, _)) => {
+            dst_values.extend(src_values);
+        }
+        (Partial::JsonObjectAgg(dst_values, _, _), Partial::JsonObjectAgg(src_values, _, _)) => {
+            // Go's merge overwrites duplicate keys with the incoming map.
+            dst_values.extend(src_values);
+        }
+        (Partial::ApproxCountDistinct(dst_sketch), Partial::ApproxCountDistinct(src_sketch)) => {
+            dst_sketch.merge(&src_sketch);
+        }
+        (
+            Partial::ApproxPercentile {
+                values: dst_values, ..
+            },
+            Partial::ApproxPercentile {
+                values: src_values, ..
+            },
+        ) => dst_values.extend(src_values),
         _ => {
             return Err(ExecError::unsupported(
                 "aggregate kind reached the parallel merge gate unfiltered",
@@ -1028,8 +1661,8 @@ fn merge_state(dst: &mut AggState, mut src: AggState, src_is_first: bool) -> Res
 mod tests {
     use super::*;
     use tidb_datatype::{FieldType, FieldTypeCode};
-    use tidb_expr::NoColumns;
     use tidb_expr::column::Column;
+    use tidb_expr::NoColumns;
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::LongLong)
@@ -1041,12 +1674,6 @@ mod tests {
 
     fn col(index: i64) -> Expression {
         let mut c = Column::new(index + 1, long());
-        c.index = index;
-        Expression::Column(c)
-    }
-
-    fn decimal_col(index: i64) -> Expression {
-        let mut c = Column::new(index + 1, decimal());
         c.index = index;
         Expression::Column(c)
     }
@@ -1134,7 +1761,12 @@ mod tests {
         let mut req = exec.new_chunk();
         let mut out = Vec::new();
         loop {
-            exec.next(&mut req).unwrap();
+            if let Err(error) = exec.next(&mut req) {
+                panic!(
+                    "HashAgg next failed after {} spill requests: {error:?}",
+                    exec.spill_times()
+                );
+            }
             if req.num_rows() == 0 {
                 break;
             }
@@ -1217,9 +1849,22 @@ mod tests {
         ]
     }
 
+    fn sort_rows(rows: &mut [Vec<Datum>]) {
+        rows.sort_by(|left, right| {
+            for (left, right) in left.iter().zip(right) {
+                let ordering = compare_datums(left, right).unwrap_or(Ordering::Equal);
+                if ordering != Ordering::Equal {
+                    return ordering;
+                }
+            }
+            left.len().cmp(&right.len())
+        });
+    }
+
     /// FAIL-BEFORE/PASS-AFTER regression: the pipeline must engage (worker
     /// threads ran, every chunk dispatched) and produce EXACTLY the serial
-    /// path's rows in the serial path's first-seen order.
+    /// path's result set. Go's parallel HashAgg does not promise serial
+    /// first-seen output order.
     #[test]
     fn pipeline_matches_serial_path_and_uses_multiple_workers() {
         let data = dataset();
@@ -1232,7 +1877,7 @@ mod tests {
             MultiChunkSource::new(&data, CHUNK_SIZE),
             &wide_out_types(),
         );
-        let serial_rows = run(&mut serial_exec);
+        let mut serial_rows = run(&mut serial_exec);
         assert_eq!(serial_rows.len(), GROUPS as usize, "one row per group");
 
         // Pipeline under test: default concurrency resolves to >1 workers
@@ -1250,16 +1895,15 @@ mod tests {
         let (partial, final_) = parallel_exec.resolved_pipeline_concurrency();
         assert!(partial > 1 && final_ > 1, "defaults must exceed 1 worker");
         parallel_exec.open().unwrap();
-        let parallel_rows = drain_rows(&mut parallel_exec);
+        let mut parallel_rows = drain_rows(&mut parallel_exec);
         // Diagnostics must be read while the Open is still live: `close`
         // releases the pipeline stats.
         let info = parallel_exec.pipeline_run_info().expect("pipeline ran");
         parallel_exec.close().unwrap();
 
-        assert_eq!(
-            parallel_rows, serial_rows,
-            "pipeline output must equal the serial path line for line"
-        );
+        sort_rows(&mut serial_rows);
+        sort_rows(&mut parallel_rows);
+        assert_eq!(parallel_rows, serial_rows);
 
         // Concurrency evidence: every lane received a share of the chunks
         // (round-robin over {chunks} >= lanes), and more than ONE partial-
@@ -1284,23 +1928,41 @@ mod tests {
         assert!(exec.pipeline_eligibility().is_none());
     }
 
-    /// DISTINCT aggregates keep Go's `IsUnparallelExec` fallback.
+    /// FAIL-BEFORE/PASS-AFTER: Go does not set `IsUnparallelExec` for
+    /// DISTINCT. Worker-local sets are unioned before the final COUNT.
     #[test]
-    fn distinct_aggregate_stays_serial() {
-        let mut func = AggFunc::new(AggKind::Count, Some(col(1)));
-        func.distinct = true;
-        let exec = build(
+    fn distinct_aggregate_uses_parallel_set_merge() {
+        let data = vec![(1, 5), (1, 5), (1, 8), (1, 8), (1, 13), (2, 7), (2, 7)];
+        let funcs = || {
+            let mut func = AggFunc::new(AggKind::Count, Some(col(1)));
+            func.distinct = true;
+            vec![func]
+        };
+        let mut serial = build(
             vec![col(0)],
-            vec![func],
-            MultiChunkSource::new(&[(1, 5)], 1),
+            funcs(),
+            MultiChunkSource::new(&data, 1),
+            &[long()],
+        )
+        .with_pipeline_concurrency_override(1, 1);
+        let mut expected = run(&mut serial);
+
+        let mut parallel = build(
+            vec![col(0)],
+            funcs(),
+            MultiChunkSource::new(&data, 1),
             &[long()],
         );
-        assert!(exec.pipeline_eligibility().is_none());
+        assert!(parallel.pipeline_eligibility().is_some());
+        let mut actual = run(&mut parallel);
+        sort_rows(&mut expected);
+        sort_rows(&mut actual);
+        assert_eq!(actual, expected);
     }
 
-    /// REAL-domain SUM is excluded from the exactness gate.
+    /// Go admits REAL-domain SUM to the partial/final worker pipeline.
     #[test]
-    fn real_sum_is_not_pipeline_eligible() {
+    fn real_sum_is_pipeline_eligible() {
         let real_type = FieldType::new(FieldTypeCode::Double);
         let mut column = Column::new(2, real_type);
         column.index = 1;
@@ -1311,7 +1973,44 @@ mod tests {
             MultiChunkSource::new(&[(1, 5)], 1),
             &[long()],
         );
-        assert!(exec.pipeline_eligibility().is_none());
+        assert!(exec.pipeline_eligibility().is_some());
+    }
+
+    /// Go's admission does not depend on an arbitrary memory-quota cutoff.
+    #[test]
+    fn low_quota_does_not_change_parallel_admission() {
+        let exec = HashAggExec::new(
+            out_meta(&[long()]),
+            vec![col(0)],
+            vec![AggFunc::new(AggKind::Count, Some(col(1)))],
+            MultiChunkSource::new(&[(1, 5)], 1),
+            NoColumns,
+            StatementMemory::new(1 << 20, crate::mem_quota::OomAction::Cancel, 42),
+        );
+        assert!(exec.pipeline_eligibility().is_some());
+    }
+
+    /// FAIL-BEFORE/PASS-AFTER: Go keeps the partial/final worker topology
+    /// under pressure and spills serialized partial results by partition.
+    /// It does not cancel merely because this is the parallel HashAgg path.
+    #[test]
+    fn parallel_hashagg_spills_partial_results_and_finishes() {
+        let data = (0..20_000).map(|value| (value, 1)).collect::<Vec<_>>();
+        let mut exec = HashAggExec::new(
+            out_meta(&[long()]),
+            vec![col(0)],
+            vec![AggFunc::new(AggKind::Count, Some(col(1)))],
+            MultiChunkSource::new(&data, 128),
+            NoColumns,
+            StatementMemory::new(512 * 1024, crate::mem_quota::OomAction::Cancel, 42)
+                .with_tmp_storage_on_oom(true),
+        );
+
+        exec.open().unwrap();
+        let rows = drain_rows(&mut exec);
+        assert_eq!(rows.len(), data.len());
+        assert!(exec.spill_times() > 0);
+        exec.close().unwrap();
     }
 
     /// Empty input with no group-by emits exactly one defaults row through
@@ -1357,7 +2056,7 @@ mod tests {
             &types,
         )
         .with_pipeline_concurrency_override(1, 1);
-        let expected = run(&mut serial_exec);
+        let mut expected = run(&mut serial_exec);
 
         let mut exec = build(
             vec![col(0)],
@@ -1366,7 +2065,10 @@ mod tests {
             &types,
         );
         assert!(exec.pipeline_eligibility().is_some());
-        assert_eq!(run(&mut exec), expected);
+        let mut actual = run(&mut exec);
+        sort_rows(&mut expected);
+        sort_rows(&mut actual);
+        assert_eq!(actual, expected);
     }
 
     /// A test context answering session-variable reads from a map, to prove
@@ -1496,7 +2198,7 @@ mod tests {
         )
         .with_pipeline_concurrency_override(1, 1);
         serial_exec.open().unwrap();
-        let serial_rows = drain(&mut serial_exec);
+        let mut serial_rows = drain(&mut serial_exec);
         serial_exec.close().unwrap();
 
         // The same aggregate under a real `StmtContext`, default concurrency:
@@ -1513,16 +2215,15 @@ mod tests {
             "the aggregate shape is pipeline-eligible"
         );
         exec.open().unwrap();
-        let rows = drain(&mut exec);
+        let mut rows = drain(&mut exec);
         let info = exec
             .pipeline_run_info()
             .expect("production StmtContext selected the parallel pipeline");
         exec.close().unwrap();
 
-        assert_eq!(
-            rows, serial_rows,
-            "pipeline output must equal the serial path line for line"
-        );
+        sort_rows(&mut serial_rows);
+        sort_rows(&mut rows);
+        assert_eq!(rows, serial_rows);
         let (_partial, _final_, dispatched, threads) = info;
         assert!(dispatched > 0, "every chunk was dispatched to workers");
         assert!(threads > 1, "multiple partial-worker threads ran");

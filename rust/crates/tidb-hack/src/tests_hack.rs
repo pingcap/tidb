@@ -21,7 +21,7 @@
 //! - Benchmarks `BenchmarkMemAwareIntMap` / `BenchmarkNativeIntMap` map to
 //!   `benches/hack.rs` and are not unit tests.
 
-use crate::{map_type, string, slice, MemAwareMap, MutableBytes, MAX_TABLE_CAPACITY};
+use crate::{map_type, slice, string, MemAwareMap, MutableBytes, MAX_TABLE_CAPACITY};
 
 /// Port of `hack_test.go` `TestString`: a string view over a byte buffer must
 /// observe in-place mutation and stay stable when the buffer grows by append.
@@ -36,7 +36,10 @@ fn hack_string_observes_mutation_and_survives_append() {
     assert_eq!(a, "aello world");
 
     b.append(b"abc");
-    assert_eq!(a, "aello world", "append must not rewrite an existing view's bytes");
+    assert_eq!(
+        a, "aello world",
+        "append must not rewrite an existing view's bytes"
+    );
 }
 
 /// Port of `hack_test.go` `TestByte`: `Slice` returns the string's bytes.
@@ -100,9 +103,7 @@ fn hack_swiss_table_geometry_and_mem_aware_accounting() {
         mp.set(i, i * 2);
     }
     assert_eq!(mp.len(), (N + 1) as usize);
-    assert!(mp
-        .iter()
-        .any(|(k, v)| *k == 1234 && *v == 5678));
+    assert!(mp.iter().any(|(k, v)| *k == 1234 && *v == 5678));
     // The accounted size tracks the real allocation exactly.
     assert_eq!(mp.bytes(), mp.real_bytes());
 }

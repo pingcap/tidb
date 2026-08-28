@@ -854,10 +854,7 @@ fn pseudo_row_count(
     if ranges.len() >= 32
         && ranges.iter().all(|range| {
             range.low == range.high
-                && !matches!(
-                    range.low,
-                    Datum::Null | Datum::MinNotNull | Datum::MaxValue
-                )
+                && !matches!(range.low, Datum::Null | Datum::MinNotNull | Datum::MaxValue)
         })
     {
         let equality_count = pseudo_equal_count(table_row_count);

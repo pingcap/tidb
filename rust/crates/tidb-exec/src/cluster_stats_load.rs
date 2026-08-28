@@ -263,7 +263,7 @@ impl ClusterStatsLoader {
             );
         }
         Ok(result)
-}
+    }
 
     /// Reads every histogram one table has, at one snapshot.
     ///
@@ -368,7 +368,8 @@ impl ClusterStatsLoader {
                 row.u64("version")?.unwrap_or_default(),
                 row.i64("modify_count")?.unwrap_or_default(),
                 row.u64("count")?.unwrap_or_default(),
-                row.u64("last_stats_histograms_version")?.unwrap_or_default(),
+                row.u64("last_stats_histograms_version")?
+                    .unwrap_or_default(),
             )));
         }
         Ok(None)

@@ -225,12 +225,7 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
     /// Marks a presumed-absent key and retains the Go duplicate text for a
     /// deferred prewrite assertion. Backends without a commit boundary keep
     /// the ordinary mark only.
-    fn mark_presume_key_not_exists_with_hint(
-        &mut self,
-        key: &Key,
-        value: &str,
-        index: &str,
-    ) {
+    fn mark_presume_key_not_exists_with_hint(&mut self, key: &Key, value: &str, index: &str) {
         let _ = (value, index);
         self.mark_presume_key_not_exists(key);
     }

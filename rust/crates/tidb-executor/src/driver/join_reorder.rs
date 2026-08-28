@@ -623,26 +623,6 @@ pub(crate) fn reorder(
         written_order[*written] = position;
     }
     let join = rebuild(&plan, &leaves, &edges, &residual_on)?;
-    if std::env::var_os("TIDB_DEBUG_JOIN_REORDER").is_some() {
-        let mut output_order = Vec::new();
-        plan.leaves(&mut output_order);
-        let input = leaves
-            .iter()
-            .map(|leaf| leaf.visible.as_str())
-            .collect::<Vec<_>>()
-            .join(",");
-        let output = output_order
-            .iter()
-            .filter_map(|index| leaves.get(*index).map(|leaf| leaf.visible.as_str()))
-            .collect::<Vec<_>>()
-            .join(",");
-        eprintln!(
-            "JOIN_REORDER input=[{input}] output=[{output}] greedy={use_greedy} advanced={} threshold={threshold} edges={} others={}",
-            ctx.advanced_join_reorder(),
-            edges.len(),
-            others.len(),
-        );
-    }
     Some(Reordered {
         join,
         written_order,
@@ -1834,7 +1814,6 @@ fn solve(
     models: &[LogicalNode],
     context: &DeriveStatsContext,
 ) -> Option<Plan> {
-    let debug = std::env::var_os("TIDB_DEBUG_JOIN_DP").is_some();
     // `bfsGraph`: relabel the nodes breadth-first from node 0. This is what
     // fixes the subset enumeration order below, and therefore which of two
     // EQUAL-cost candidates survives the strict `>` update test.
@@ -1864,30 +1843,6 @@ fn solve(
     for (visit, node) in visit_to_node.iter().enumerate() {
         node_to_visit[*node] = visit;
     }
-    let mask_names = |mask: usize| {
-        (0..leaves.len())
-            .filter(|index| mask & (1usize << node_to_visit[*index]) != 0)
-            .map(|index| leaves[index].visible.as_str())
-            .collect::<Vec<_>>()
-            .join(",")
-    };
-
-    if debug {
-        eprintln!(
-            "JOIN_DP leaves=[{}] bfs=[{}] edges={}",
-            leaves
-                .iter()
-                .map(|leaf| leaf.visible.as_str())
-                .collect::<Vec<_>>()
-                .join(","),
-            visit_to_node
-                .iter()
-                .map(|node| leaves[*node].visible.as_str())
-                .collect::<Vec<_>>()
-                .join(","),
-            edges.len()
-        );
-    }
 
     let count = leaves.len();
     let mut best: Vec<Option<Candidate>> = (0..(1usize << count)).map(|_| None).collect();
@@ -1898,16 +1853,6 @@ fn solve(
             cum_cost: derive_stats(&model, context).cum_cost(),
             model,
         });
-        if debug {
-            let candidate = best[1 << visit].as_ref().expect("just inserted");
-            eprintln!(
-                "JOIN_DP leaf mask={:b} names=[{}] cost={:.6} rows={:.6}",
-                1usize << visit,
-                mask_names(1usize << visit),
-                candidate.cum_cost,
-                derive_stats(&candidate.model, context).stats.row_count(),
-            );
-        }
     }
     for bitmap in 1usize..(1 << count) {
         if bitmap.count_ones() == 1 {
@@ -1936,38 +1881,12 @@ fn solve(
                         Some(current) => current.cum_cost > candidate.cum_cost,
                         None => true,
                     };
-                    if debug {
-                        eprintln!(
-                            "JOIN_DP candidate bitmap={:b} names=[{}] sub={:b} [{}] remain={:b} [{}] edges={:?} left_cost={:.6} right_cost={:.6} candidate_cost={:.6} replace={}",
-                            bitmap,
-                            mask_names(bitmap),
-                            sub,
-                            mask_names(sub),
-                            remain,
-                            mask_names(remain),
-                            used,
-                            best[sub].as_ref().expect("checked").cum_cost,
-                            best[remain].as_ref().expect("checked").cum_cost,
-                            candidate.cum_cost,
-                            replace,
-                        );
-                    }
                     if replace {
                         best[bitmap] = Some(candidate);
                     }
                 }
             }
             sub = (sub - 1) & bitmap;
-        }
-    }
-    if debug {
-        if let Some(candidate) = &best[(1 << count) - 1] {
-            eprintln!(
-                "JOIN_DP final bitmap={:b} names=[{}] cost={:.6}",
-                (1usize << count) - 1,
-                mask_names((1usize << count) - 1),
-                candidate.cum_cost,
-            );
         }
     }
     best[(1 << count) - 1].take().map(|best| best.plan)
@@ -2498,14 +2417,10 @@ fn rebuild_node(plan: &Plan, leaves: &[Leaf<'_>], edges: &[Edge<'_>]) -> Option<
 /// # Why this exists beside the DP solver
 ///
 /// The DP above builds exactly these models, costs them, and throws them away.
-/// A join-strategy chooser needs the same numbers
-/// ([`crate::driver::join_search`]), and the ONE other place this tier derives
-/// a per-node row count is [`crate::plan_trace::PlanTrace`], which the driver
-/// constructs only for `EXPLAIN`. Reading rows off the trace would make the
-/// STRATEGY depend on whether the statement is being explained; this source
-/// reads the statement, the catalog and the statistics and nothing else, so it
-/// answers identically either way. That equality is a test, not a claim:
-/// `crate::tests_join_search::the_choice_is_the_same_under_explain_and_bare_execution`.
+/// Mechanical executor lowering still needs the selected plan's cardinality
+/// receipts, while [`crate::plan_trace::PlanTrace`] exists only for `EXPLAIN`.
+/// This source reads the statement, catalog, and statistics directly, so bare
+/// execution and `EXPLAIN` consume the same estimates.
 ///
 /// It is built from the join group as WRITTEN, before any reorder, because the
 /// leaves and their pushed-down predicates are the same set either way and
@@ -2537,17 +2452,9 @@ struct RowRuntimeState {
     /// The first such rewrite is Go's `OuterJoinToSemiJoin`: the `IS NULL`
     /// selection disappears when its outer join becomes an anti-semi join.
     consumed_where_parts: BTreeSet<usize>,
-    /// Bumped on every mutation of either consumption ledger, so callers can
-    /// recognise "the ledger has not changed since I last looked" without
-    /// snapshotting its contents. Restores count as mutations even when they
-    /// write back equal contents, which only ever costs a cache miss.
-    ledger_epoch: u64,
     /// Logical row counts keyed by the complete shape of each current join
     /// subtree. Logical optimization fills this before physical search.
     join_subtree_rows: BTreeMap<Vec<usize>, f64>,
-    /// Bumped whenever `join_subtree_rows` is refilled, for the same purpose
-    /// as [`Self::ledger_epoch`]... its sibling on this map.
-    rows_epoch: u64,
 }
 
 struct WherePart {
@@ -2891,7 +2798,14 @@ fn modeled_union_all_leaf<'a>(
         let tidb_ast::SetOprTermBody::Select(select) = &term.body else {
             return None;
         };
-        children.push(union_term_model(select, &names, &output_ids, catalog, current_db, ctx)?);
+        children.push(union_term_model(
+            select,
+            &names,
+            &output_ids,
+            catalog,
+            current_db,
+            ctx,
+        )?);
     }
     Some(Leaf {
         node,
@@ -3071,7 +2985,8 @@ fn modeled_grouped_select_leaf<'a>(
     }
     let output_ids = ids.take(names.len());
     let distinct_eliminated =
-        super::agg_select::distinct_can_be_eliminated(select, catalog, current_db);
+        super::planner_bridge::aggregation_eliminated(select, catalog, current_db, ctx)
+            .unwrap_or(false);
     let mut model = if distinct_eliminated {
         let [input] = group_by.as_slice() else {
             return None;
@@ -3676,13 +3591,6 @@ impl RowSource {
         )
     }
 
-    /// One number that changes whenever either filter ledger changes. A
-    /// speculative pass that needs "did the consumed/residual set move?"
-    /// reads this instead of cloning the whole ledger.
-    pub(crate) fn ledger_epoch(&self) -> u64 {
-        self.state.borrow().ledger_epoch
-    }
-
     /// Restores a checkpoint returned by
     /// [`Self::filter_consumption_checkpoint`].
     pub(crate) fn restore_filter_consumption(
@@ -3696,7 +3604,6 @@ impl RowSource {
         {
             state.consumed_filter_leaves = consumed_filter_leaves;
             state.consumed_where_parts = consumed_where_parts;
-            state.ledger_epoch += 1;
         }
     }
 
@@ -3784,9 +3691,7 @@ impl RowSource {
             return;
         }
         let mut state = self.state.borrow_mut();
-        if state.consumed_where_parts.insert(part) {
-            state.ledger_epoch += 1;
-        }
+        state.consumed_where_parts.insert(part);
     }
 
     /// Go's `LogicalPlan.StatsInfo().RowCount` for this complete `FROM`
@@ -3852,17 +3757,8 @@ impl RowSource {
         let mut rows = BTreeMap::new();
         record(self, plan, &derived, &mut rows)?;
         let mut state = self.state.borrow_mut();
-        if state.join_subtree_rows != rows {
-            state.rows_epoch += 1;
-            state.join_subtree_rows = rows;
-        }
+        state.join_subtree_rows = rows;
         Some(root_rows)
-    }
-
-    /// The [`Self::join_subtree_rows`] generation: moves whenever the exact
-    /// per-shape row estimates are refilled. See [`Self::ledger_epoch`].
-    pub(crate) fn rows_epoch(&self) -> u64 {
-        self.state.borrow().rows_epoch
     }
 
     /// Whether installing every leaf-local filter and every join equality
@@ -3881,42 +3777,9 @@ impl RowSource {
             .find(|(_, leaf)| leaf.visible.eq_ignore_ascii_case(visible))
         {
             let mut state = self.state.borrow_mut();
-            if state.consumed_filter_leaves.get(&leaf) != Some(&(Vec::new(), Vec::new())) {
-                state.ledger_epoch += 1;
-            }
             state
                 .consumed_filter_leaves
                 .insert(leaf, (Vec::new(), Vec::new()));
-        }
-    }
-
-    /// Records the exact predicates a committed access path could not turn
-    /// into ranges. They remain eligible for the post-pruning Selection.
-    pub(crate) fn record_leaf_filter_residuals(
-        &self,
-        visible: &str,
-        residuals: Vec<Expr>,
-        traced_residuals: Vec<Expr>,
-    ) {
-        if let Some((leaf, _)) = self
-            .leaves
-            .iter()
-            .enumerate()
-            .find(|(_, leaf)| leaf.visible.eq_ignore_ascii_case(visible))
-        {
-            let mut state = self.state.borrow_mut();
-            let changed = state
-                .consumed_filter_leaves
-                .get(&leaf)
-                .map_or(true, |(existing_residuals, existing_traced)| {
-                    *existing_residuals != residuals || *existing_traced != traced_residuals
-                });
-            if changed {
-                state.ledger_epoch += 1;
-            }
-            state
-                .consumed_filter_leaves
-                .insert(leaf, (residuals, traced_residuals));
         }
     }
 
@@ -4352,6 +4215,47 @@ pub(crate) struct JoinRows {
     pub(crate) right: f64,
     /// The join's own.
     pub(crate) joined: f64,
+}
+
+/// Returns the statement-owned estimates for one join in left/right order.
+///
+/// This is a cardinality lookup only. Physical join-family selection belongs
+/// to the shared planner and is carried to executor lowering as a receipt.
+pub(crate) fn estimated_rows(join: &Join, rows: Option<&RowSource>) -> Option<JoinRows> {
+    let (left, right) = join_side_names(join)?;
+    rows?.rows_of_join(&left, &right)
+}
+
+fn join_side_names(join: &Join) -> Option<(Vec<String>, Vec<String>)> {
+    let mut left = Vec::new();
+    let mut right = Vec::new();
+    join_leaf_names(&join.left, &mut left)?;
+    join_leaf_names(join.right.as_ref()?, &mut right)?;
+    (!left.is_empty() && !right.is_empty()).then_some((left, right))
+}
+
+fn join_leaf_names(node: &JoinNode, out: &mut Vec<String>) -> Option<()> {
+    match node {
+        JoinNode::Table(table_ref) => {
+            let name = table_ref
+                .alias
+                .clone()
+                .or_else(|| table_ref.name.last().cloned())?;
+            out.push(name);
+            Some(())
+        }
+        JoinNode::Derived { alias, .. } => {
+            out.push(alias.clone().filter(|alias| !alias.is_empty())?);
+            Some(())
+        }
+        JoinNode::Join(inner) => {
+            join_leaf_names(&inner.left, out)?;
+            match &inner.right {
+                Some(right) => join_leaf_names(right, out),
+                None => Some(()),
+            }
+        }
+    }
 }
 
 #[cfg(test)]

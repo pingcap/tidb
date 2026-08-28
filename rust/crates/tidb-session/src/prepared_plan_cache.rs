@@ -12,31 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The PREPARED plan cache's observable contract: Go
-//! `plan_cacheable_checker.go`'s `IsASTCacheable`, decided at `PREPARE`, and
-//! the hit `@@last_plan_from_cache` reports on a later `EXECUTE`.
+//! Prepared-plan-cache admission: Go `plan_cacheable_checker.go`'s
+//! `IsASTCacheable`, decided at `PREPARE`.
 //!
-//! The same honesty note as [`crate::non_prepared_plan_cache`]: this tier has
-//! no reified plan object, so nothing here STORES a plan. A statement is
-//! re-planned from its text on every `EXECUTE`, which makes Go's danger --
-//! returning a plan built for a different literal -- structurally impossible.
-//! What is modelled is the contract an application can observe: which
-//! prepared statements Go's cache would admit, and whether the `EXECUTE` that
-//! just ran would have found its plan already there. The ADMISSION list is
-//! ported at full fidelity because it is what will stand between a shared key
-//! and a wrong answer when a reusable plan lands.
-//!
-//! # The key
-//!
-//! Go's cache key (`plan_cache_utils.go`, `NewPlanCacheKey`) hashes the
-//! statement with the schema version, the current database, the `sql_mode`,
-//! the time zone, and -- the one that surprised us -- the expression
-//! push-down blacklist's reload timestamp (`plan_cache_utils.go:443`), so an
-//! `ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST` invalidates every cached plan. The
-//! corpus reads that directly: `planner/core/plan_cache` blacklists `mod`,
-//! reloads, and expects the next `EXECUTE` to MISS. [`PreparedPlanKey`]
-//! carries the same facts, with the reload timestamp as
-//! [`crate::blacklist::PushdownBlacklists`]' generation counter.
+//! The retained physical trees and execute-time recursive rebuild live in
+//! `tidb_executor::PreparedSelectPlan`; this module only decides whether
+//! a statement may enter that cache.
 
 use std::any::Any;
 
@@ -72,46 +53,7 @@ const UNCACHEABLE_FUNCTIONS: &[&str] = &[
     "aes_decrypt",
 ];
 
-/// What one `EXECUTE` planned against. Two executes with an equal key are the
-/// case Go serves from the cache.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PreparedPlanKey {
-    /// The catalog's schema version: any DDL between the two executes is a
-    /// miss, which is what makes a cached plan never read a dropped column.
-    pub(crate) schema_version: u64,
-    /// Go hashes the current database because an unqualified name resolves
-    /// differently under another `USE`.
-    pub(crate) current_db: String,
-    /// `@@sql_mode`, which changes evaluation semantics.
-    pub(crate) sql_mode: String,
-    /// `@@time_zone`, which changes every temporal answer.
-    pub(crate) time_zone: String,
-    /// Go `ExprPushDownBlackListReloadTimeStamp`: bumped by `ADMIN RELOAD
-    /// EXPR_PUSHDOWN_BLACKLIST`, so a reload invalidates cached plans.
-    pub(crate) blacklist_generation: u64,
-}
-
 impl Session {
-    /// The facts the CURRENT statement would be planned against.
-    pub(crate) fn prepared_plan_key(&mut self) -> PreparedPlanKey {
-        // Go keys on the INFOSCHEMA version, which DDL moves and DML never
-        // does. This catalog's plain `version()` also advances on every write
-        // path (`get_mut_in`, the transaction conflict-check approximation),
-        // so keying on it would invalidate a cached plan on every UPDATE --
-        // nothing like Go. `metadata_version()` is this catalog's DDL-only
-        // counter and the faithful stand-in.
-        let schema_version = self
-            .with_catalog_mut(|catalog| Ok(catalog.metadata_version()))
-            .unwrap_or(0);
-        PreparedPlanKey {
-            schema_version,
-            current_db: self.current_db.clone(),
-            sql_mode: self.vars.get_system("sql_mode").unwrap_or_default(),
-            time_zone: self.vars.get_system("time_zone").unwrap_or_default(),
-            blacklist_generation: self.pushdown_blacklists.generation(),
-        }
-    }
-
     /// Go `SessionVars.EnablePreparedPlanCache` (`tidb_enable_prepared_plan_cache`,
     /// default ON).
     pub(crate) fn prepared_plan_cache_enabled(&self) -> bool {

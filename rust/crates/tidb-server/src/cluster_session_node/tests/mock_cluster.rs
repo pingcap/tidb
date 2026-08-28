@@ -32,6 +32,8 @@ use tidb_txnkv::Key;
 pub(super) struct MockCluster {
     pub(super) advisory_locks: tidb_executor::advisory_lock_state::LocalAdvisoryLockService,
     pub(super) committed: Mutex<BTreeMap<Vec<u8>, Vec<u8>>>,
+    /// Resource groups observed at snapshot/transaction request boundaries.
+    pub(super) resource_groups: Mutex<Vec<String>>,
     /// The timestamp of the last commit that touched each key, which is
     /// what a prewrite at `start_ts` is checked against -- TiKV's own
     /// write-conflict rule in miniature.
@@ -94,6 +96,13 @@ impl MockCluster {
 
     pub(super) fn timestamp(&self) -> u64 {
         self.clock.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    pub(super) fn record_resource_group(&self, resource_group: &str) {
+        self.resource_groups
+            .lock()
+            .expect("resource groups")
+            .push(resource_group.to_owned());
     }
 
     /// Commits, as some other session, a new value for whatever single row the
@@ -251,7 +260,11 @@ impl PendingClusterSnapshot for MockPendingSnapshot {
 }
 
 impl ClusterTransactions for MockTransactions {
-    fn prepare_snapshot(&self) -> Result<Box<dyn PendingClusterSnapshot>, String> {
+    fn prepare_snapshot(
+        &self,
+        resource_group: &str,
+    ) -> Result<Box<dyn PendingClusterSnapshot>, String> {
+        self.0.record_resource_group(resource_group);
         self.0.prepared.fetch_add(1, Ordering::AcqRel);
         if self
             .0
@@ -282,7 +295,8 @@ impl ClusterTransactions for MockTransactions {
         }))
     }
 
-    fn open_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+    fn open_snapshot(&self, resource_group: &str) -> Result<Box<dyn ClusterSnapshot>, String> {
+        self.0.record_resource_group(resource_group);
         self.0.opened.fetch_add(1, Ordering::AcqRel);
         self.0.live.fetch_add(1, Ordering::AcqRel);
         // The order is the whole point: this statement's rows and its
@@ -324,7 +338,11 @@ impl ClusterTransactions for MockTransactions {
         )
     }
 
-    fn open_max_ts_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+    fn open_max_ts_snapshot(
+        &self,
+        resource_group: &str,
+    ) -> Result<Box<dyn ClusterSnapshot>, String> {
+        self.0.record_resource_group(resource_group);
         self.0.opened_at_max_ts.fetch_add(1, Ordering::AcqRel);
         self.0.live.fetch_add(1, Ordering::AcqRel);
         // No `timestamp()` call: that absence IS what this branch buys, and
@@ -339,7 +357,11 @@ impl ClusterTransactions for MockTransactions {
         }))
     }
 
-    fn begin_max_ts(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+    fn begin_max_ts(
+        &self,
+        resource_group: &str,
+    ) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        self.0.record_resource_group(resource_group);
         Ok(Box::new(MockSessionTransaction {
             start_ts: u64::MAX,
             data: self.0.snapshot(),
@@ -348,7 +370,11 @@ impl ClusterTransactions for MockTransactions {
         }))
     }
 
-    fn begin_autocommit_write(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+    fn begin_autocommit_write(
+        &self,
+        resource_group: &str,
+    ) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        self.0.record_resource_group(resource_group);
         Ok(Box::new(MockSessionTransaction {
             start_ts: self.0.timestamp(),
             data: self.0.snapshot(),
@@ -357,7 +383,13 @@ impl ClusterTransactions for MockTransactions {
         }))
     }
 
-    fn commit(&self, buffer: &MutationBuffer, read_ts: Option<u64>) -> Result<(), SqlQueryError> {
+    fn commit(
+        &self,
+        buffer: &MutationBuffer,
+        read_ts: Option<u64>,
+        resource_group: &str,
+    ) -> Result<(), SqlQueryError> {
+        self.0.record_resource_group(resource_group);
         let staged = buffer.snapshot();
         if staged.is_empty() {
             return Ok(());
@@ -405,7 +437,12 @@ impl ClusterTransactions for MockTransactions {
         Ok(())
     }
 
-    fn begin(&self, _pessimistic: bool) -> Result<Box<dyn OpenClusterTransaction>, String> {
+    fn begin(
+        &self,
+        _pessimistic: bool,
+        resource_group: &str,
+    ) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        self.0.record_resource_group(resource_group);
         self.0.begun.fetch_add(1, Ordering::AcqRel);
         Ok(Box::new(MockSessionTransaction {
             start_ts: self.0.timestamp(),
@@ -430,6 +467,11 @@ pub(super) struct MockSessionTransaction {
 impl OpenClusterTransaction for MockSessionTransaction {
     fn start_ts(&self) -> u64 {
         self.start_ts
+    }
+
+    fn set_resource_group_name(&self, name: &str) -> Result<(), String> {
+        self.cluster.record_resource_group(name);
+        Ok(())
     }
 
     fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {

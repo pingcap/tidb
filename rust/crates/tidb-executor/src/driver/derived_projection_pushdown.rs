@@ -825,28 +825,18 @@ fn simplify_outer_join(select: &mut SelectStmt, catalog: &Catalog, current_db: &
         Some(right) => right,
         None => return false,
     };
-    let offered = super::predicate_push_down::offered_conjuncts(Some(where_clause));
-    let joined = match super::merge_decision::join_properties(
-        join,
-        catalog,
-        current_db,
-        &offered,
-        super::merge_decision::Phase::Promise,
-    ) {
+    let joined = match super::merge_decision::join_layout(join, catalog, current_db) {
         Some(properties) => properties,
         None => return false,
     };
-    let left =
-        match super::merge_decision::possible_properties(&join.left, catalog, current_db, &offered)
-        {
-            Some(properties) => properties,
-            None => return false,
-        };
-    let right =
-        match super::merge_decision::possible_properties(right, catalog, current_db, &offered) {
-            Some(properties) => properties,
-            None => return false,
-        };
+    let left = match super::merge_decision::source_layout(&join.left, catalog, current_db) {
+        Some(properties) => properties,
+        None => return false,
+    };
+    let right = match super::merge_decision::source_layout(right, catalog, current_db) {
+        Some(properties) => properties,
+        None => return false,
+    };
     let rejects = match join.tp {
         JoinType::Left => left.width..left.width + right.width,
         JoinType::Right => 0..left.width,
@@ -879,19 +869,10 @@ fn inject_left_not_null_filters(
     if join.tp != JoinType::Cross {
         return;
     }
-    let offered = super::predicate_push_down::offered_conjuncts(select.where_clause.as_ref());
-    let Some(joined) = super::merge_decision::join_properties(
-        join,
-        catalog,
-        current_db,
-        &offered,
-        super::merge_decision::Phase::Promise,
-    ) else {
+    let Some(joined) = super::merge_decision::join_layout(join, catalog, current_db) else {
         return;
     };
-    let Some(left) =
-        super::merge_decision::possible_properties(&join.left, catalog, current_db, &offered)
-    else {
+    let Some(left) = super::merge_decision::source_layout(&join.left, catalog, current_db) else {
         return;
     };
     let mut paths = Vec::new();

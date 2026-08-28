@@ -287,7 +287,13 @@ fn concrete_dispatch_attaches_context_forwards_and_maps_coprocessor_response() {
         )
         .unwrap();
 
+    assert!(pending.publication().is_none());
     let raw = pending.complete(&call).unwrap().unwrap();
+    let publication = pending
+        .publication()
+        .expect("completion resolves the retained publication receipt");
+    assert_eq!(publication.physical_address(), server.address);
+    assert_eq!(publication.forwarded_host(), Some("logical-tikv:20160"));
     let response = CoprocessorResponse::decode(raw.encoded_response.as_slice()).unwrap();
     assert_eq!(response.data, b"dag");
     let received = received.lock().unwrap();

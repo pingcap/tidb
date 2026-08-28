@@ -891,7 +891,8 @@ impl SessionVars {
         for (key, previous) in snapshot {
             match previous {
                 Some(value) => {
-                    self.session_resolved.note(key.as_str(), Some(value.as_str()));
+                    self.session_resolved
+                        .note(key.as_str(), Some(value.as_str()));
                     self.systems.insert(key, value);
                 }
                 None => {

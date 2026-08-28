@@ -31,7 +31,9 @@ use super::*;
 /// `testkit.Rows` splits a result row into cells with.
 fn eval_row(select_list: &str) -> String {
     let stmt = tidb_parser::parse(&format!("select {select_list}")).expect("parse");
-    let Stmt::Query(query) = stmt else { panic!("not query") };
+    let Stmt::Query(query) = stmt else {
+        panic!("not query")
+    };
     let QueryStmt::Select(select) = query.into_inner() else {
         panic!("not select")
     };
@@ -62,7 +64,10 @@ fn test_compare_builtin_coalesce_rows() {
     assert_eq!(chunk_e("coalesce(NULL, NULL, NULL)"), "NULL");
 
     // integration_test.go:2827-2830 -- JSON documents keep their kind.
-    assert_eq!(chunk_e("coalesce(cast(1 as json), cast(2 as json))"), "JSON:1");
+    assert_eq!(
+        chunk_e("coalesce(cast(1 as json), cast(2 as json))"),
+        "JSON:1"
+    );
     assert_eq!(chunk_e("coalesce(NULL, cast(2 as json))"), "JSON:2");
     assert_eq!(chunk_e("coalesce(cast(1 as json), NULL)"), "JSON:1");
 }
@@ -111,8 +116,10 @@ fn test_compare_builtin_interval_rows() {
     );
     // integration_test.go:2862
     assert_eq!(
-        eval_row("interval(cast(9223372036854775806 as unsigned), 9223372036854775807), \
-         interval(cast(9223372036854775806 as unsigned), -9223372036854775807)"),
+        eval_row(
+            "interval(cast(9223372036854775806 as unsigned), 9223372036854775807), \
+         interval(cast(9223372036854775806 as unsigned), -9223372036854775807)"
+        ),
         "INT:0 INT:1"
     );
     // integration_test.go:2863 -- decimal strings compare as REAL against one another.
@@ -122,9 +129,11 @@ fn test_compare_builtin_interval_rows() {
     );
     // integration_test.go:2864 -- mixed literal/string comparisons are REAL-signed.
     assert_eq!(
-        eval_row("interval(9007199254740992, \"9007199254740993\"), \
+        eval_row(
+            "interval(9007199254740992, \"9007199254740993\"), \
          interval(\"9007199254740992\", 9007199254740993), \
-         interval(\"9007199254740992\", \"9007199254740993\")"),
+         interval(\"9007199254740992\", \"9007199254740993\")"
+        ),
         "INT:1 INT:1 INT:1"
     );
     // integration_test.go:2865 -- trailing NULLs sort after everything real.
@@ -133,7 +142,10 @@ fn test_compare_builtin_interval_rows() {
         "INT:6"
     );
     // integration_test.go:2866 -- INTERVAL is ordinary scalar arithmetic.
-    assert_eq!(chunk_e("(INTERVAL(0,(1*5)/2)) + (INTERVAL(5,4,3))"), "INT:2");
+    assert_eq!(
+        chunk_e("(INTERVAL(0,(1*5)/2)) + (INTERVAL(5,4,3))"),
+        "INT:2"
+    );
 }
 
 #[test]
@@ -163,8 +175,14 @@ fn test_compare_builtin_greatest_least_literal_rows() {
         "STR:123"
     );
     // One NULL argument propagates (integration_test.go:2876/2886).
-    assert_eq!(chunk_e(r#"greatest(cast("2017-01-01" as date), "123", null)"#), "NULL");
-    assert_eq!(chunk_e(r#"least(cast("2017-01-01" as date), "123", null)"#), "NULL");
+    assert_eq!(
+        chunk_e(r#"greatest(cast("2017-01-01" as date), "123", null)"#),
+        "NULL"
+    );
+    assert_eq!(
+        chunk_e(r#"least(cast("2017-01-01" as date), "123", null)"#),
+        "NULL"
+    );
     //
     // go-parity-gap: the companion `show warnings` assertions at
     // integration_test.go:2881/2890 expect three `Warning 1292 Incorrect time
@@ -199,23 +217,34 @@ fn test_time_builtin_date_year_makedate_literal_rows() {
     // integration_test.go:2902-2904 -- DATE keeps the calendar prefix only,
     // zero dates and garbage go NULL.
     assert_eq!(
-        eval_row(r#"date("2019-09-12"), date("2019-09-12 12:12:09"), date("2019-09-12 12:12:09.121212")"#),
+        eval_row(
+            r#"date("2019-09-12"), date("2019-09-12 12:12:09"), date("2019-09-12 12:12:09.121212")"#
+        ),
         "STR:2019-09-12 STR:2019-09-12 STR:2019-09-12"
     );
     assert_eq!(
-        eval_row(r#"date("0000-00-00"), date("0000-00-00 12:12:09"), date("0000-00-00 00:00:00.121212")"#),
+        eval_row(
+            r#"date("0000-00-00"), date("0000-00-00 12:12:09"), date("0000-00-00 00:00:00.121212")"#
+        ),
         "NULL NULL NULL"
     );
-    assert_eq!(eval_row(r#"date("aa"), date(12.1), date("")"#), "NULL NULL NULL");
+    assert_eq!(
+        eval_row(r#"date("aa"), date(12.1), date("")"#),
+        "NULL NULL NULL"
+    );
 
     // integration_test.go:2907-2912 -- YEAR extraction; zero months/days keep
     // the year, overflow lengths answer NULL.
     assert_eq!(
-        eval_row(r#"year("2013-01-09"), year("2013-00-09"), year("000-01-09"), year("1-01-09"), year("20131-01-09"), year(null)"#),
+        eval_row(
+            r#"year("2013-01-09"), year("2013-00-09"), year("000-01-09"), year("1-01-09"), year("20131-01-09"), year(null)"#
+        ),
         "INT:2013 INT:2013 INT:0 INT:2001 NULL NULL"
     );
     assert_eq!(
-        eval_row(r#"year("2013-00-00"), year("2013-00-00 00:00:00"), year("0000-00-00 12:12:12"), year("2017-00-00 12:12:12")"#),
+        eval_row(
+            r#"year("2013-00-00"), year("2013-00-00 00:00:00"), year("0000-00-00 12:12:12"), year("2017-00-00 12:12:12")"#
+        ),
         "INT:2013 INT:2013 INT:0 INT:2017"
     );
 

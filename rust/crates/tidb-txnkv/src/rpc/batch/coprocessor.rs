@@ -33,6 +33,7 @@ use crate::rpc::{
 pub struct BatchCoprocessorPending {
     completion: CompletionPull<OpaqueBatchCommand, BatchInflightError>,
     publication_route: Option<BatchRoute>,
+    deferred: Option<crate::rpc::transport_runtime::DeferredReceipts>,
 }
 
 impl BatchCoprocessorPending {
@@ -52,8 +53,27 @@ impl BatchCoprocessorPending {
             Self {
                 completion: pull,
                 publication_route: None,
+                deferred: None,
             },
         )
+    }
+
+    pub(in crate::rpc) fn retain_deferred(
+        &mut self,
+        deferred: crate::rpc::transport_runtime::DeferredReceipts,
+    ) {
+        self.deferred = Some(deferred);
+    }
+
+    fn resolve_publication(&mut self) -> Result<(), DirectUnaryClientError> {
+        if self.publication_route.is_some() {
+            return Ok(());
+        }
+        let Some(deferred) = self.deferred.take() else {
+            return Ok(());
+        };
+        let receipts = deferred.wait()?;
+        self.bind_publication(&receipts)
     }
 
     pub(in crate::rpc) fn bind_publication(
@@ -130,8 +150,13 @@ impl PendingRequest for BatchCoprocessorPending {
     fn try_complete(
         &mut self,
     ) -> Result<Option<Result<DirectUnaryResponse, DirectUnaryClientError>>, CompletionError> {
-        let result = self.completion.try_complete()?;
-        Ok(result.map(|result| self.map_result(result)))
+        let Some(result) = self.completion.try_complete()? else {
+            return Ok(None);
+        };
+        if let Err(error) = self.resolve_publication() {
+            return Ok(Some(Err(error)));
+        }
+        Ok(Some(self.map_result(result)))
     }
 
     fn cancel(&mut self) {
@@ -143,6 +168,9 @@ impl PendingRequest for BatchCoprocessorPending {
         call: &crate::rpc::UnaryCallContext,
     ) -> Result<Result<DirectUnaryResponse, DirectUnaryClientError>, CompletionError> {
         let result = self.completion.complete(call)?;
+        if let Err(error) = self.resolve_publication() {
+            return Ok(Err(error));
+        }
         Ok(self.map_result(result))
     }
 }

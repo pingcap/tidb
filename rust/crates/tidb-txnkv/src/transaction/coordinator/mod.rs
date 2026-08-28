@@ -380,9 +380,9 @@ where
         self.protocol = protocol;
     }
 
-/// Rejects a completed read whose timestamp GC has already passed.
-///
-/// Called only after TiKV has answered, mirroring client-go's placement of
+    /// Rejects a completed read whose timestamp GC has already passed.
+    ///
+    /// Called only after TiKV has answered, mirroring client-go's placement of
     /// `CheckVisibility` at the end of `snapshot.get` and `snapshot.scan`. A
     /// pre-read check would be worthless: GC can advance while the RPC is in
     /// flight, so only a post-read check covers the data actually returned.
@@ -422,6 +422,8 @@ where
 
     /// Clones a routed request context and attaches this transaction's resource
     /// group without disturbing route, priority, penalty, or tracing fields.
+    /// Snapshot reads and writes must both use this: TiKV's resource control is
+    /// request-scoped, not mutation-scoped.
     pub(super) fn write_context(&self, context: &KvrpcContext) -> KvrpcContext {
         let mut context = context.clone();
         if let Some(resource_group_name) = self.resource_group_name.as_ref() {

@@ -26,13 +26,13 @@
 use super::*;
 use crate::column::Column;
 use crate::constant::Constant;
-use crate::expression::Expression;
+use crate::evaluator::EvaluatorSuite;
+use crate::expr_util::FunctionBuilder;
 use crate::expr_util::{
     fold_constant_with, FoldOptions, PreservingFunctionBuilder, RealFunctionBuilder,
     SubstituteOptions,
 };
-use crate::evaluator::EvaluatorSuite;
-use crate::expr_util::FunctionBuilder;
+use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
 use tidb_ast::CiString;
 use tidb_datatype::{FieldType, FieldTypeCode};
@@ -81,7 +81,11 @@ fn expect_int_constant<'a>(expr: &'a Expression, context: &str) -> i64 {
 }
 
 /// The scalar-function arm the fold kept alive.
-fn expect_scalar_function<'a>(expr: &'a Expression, name: &str, arity: usize) -> &'a ScalarFunction {
+fn expect_scalar_function<'a>(
+    expr: &'a Expression,
+    name: &str,
+    arity: usize,
+) -> &'a ScalarFunction {
     match expr {
         Expression::ScalarFunction(function) => {
             assert_eq!(function.func_name.lowercase(), name, "{name} root");
@@ -100,10 +104,10 @@ fn expect_scalar_function<'a>(expr: &'a Expression, name: &str, arity: usize) ->
 #[test]
 fn constant_folding_operator_arguments_reduce_in_place() {
     // lt(Column#0, plus(1, 2)) -> lt(Column#0, 3).
-    let expr = build("lt", vec![
-        column(0),
-        build("plus", vec![int_const(1), int_const(2)]),
-    ]);
+    let expr = build(
+        "lt",
+        vec![column(0), build("plus", vec![int_const(1), int_const(2)])],
+    );
     let folded = fold(&expr);
     let root = expect_scalar_function(&folded, "lt", 2);
     assert!(
@@ -113,22 +117,28 @@ fn constant_folding_operator_arguments_reduce_in_place() {
     assert_eq!(expect_int_constant(&root.args[1], "plus(1,2)"), 3);
 
     // lt(Column#0, greatest(1, 2)) -> lt(Column#0, 2).
-    let expr = build("lt", vec![
-        column(0),
-        build("greatest", vec![int_const(1), int_const(2)]),
-    ]);
+    let expr = build(
+        "lt",
+        vec![
+            column(0),
+            build("greatest", vec![int_const(1), int_const(2)]),
+        ],
+    );
     let folded = fold(&expr);
     let root = expect_scalar_function(&folded, "lt", 2);
     assert_eq!(expect_int_constant(&root.args[1], "greatest(1,2)"), 2);
 
     // lt(Column#0, plus(Column#1, plus(2, 1))) -> lt(Column#0, plus(Column#1, 3)).
-    let expr = build("lt", vec![
-        column(0),
-        build("plus", vec![
-            column(1),
-            build("plus", vec![int_const(2), int_const(1)]),
-        ]),
-    ]);
+    let expr = build(
+        "lt",
+        vec![
+            column(0),
+            build(
+                "plus",
+                vec![column(1), build("plus", vec![int_const(2), int_const(1)])],
+            ),
+        ],
+    );
     let folded = fold(&expr);
     let root = expect_scalar_function(&folded, "lt", 2);
     let inner_arg = root.args[1].clone();
@@ -160,10 +170,13 @@ fn constant_folding_isnull_and_unary_not_reduce() {
     let expr = build("isnull", vec![int_const(1)]);
     assert_eq!(expect_int_constant(&fold(&expr), "isnull(1)"), 0);
 
-    let expr = build("eq", vec![
-        column(0),
-        build("not", vec![build("plus", vec![int_const(1), int_const(1)])]),
-    ]);
+    let expr = build(
+        "eq",
+        vec![
+            column(0),
+            build("not", vec![build("plus", vec![int_const(1), int_const(1)])]),
+        ],
+    );
     let folded = fold(&expr);
     let root = expect_scalar_function(&folded, "eq", 2);
     assert_eq!(expect_int_constant(&root.args[1], "not(2)"), 0);
@@ -187,14 +200,13 @@ fn null_reject_conditions_survive_both_fold_modes() {
     // table's subject (the subject is what survives FoldConstant).
     let mut concat_ws_ft = varchar_type();
     concat_ws_ft.set_charset_name("binary");
-    let concat_ws =
-        |args: Vec<Expression>| -> Expression {
-            Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("concat_ws"),
-                concat_ws_ft.clone(),
-                args,
-            ))
-        };
+    let concat_ws = |args: Vec<Expression>| -> Expression {
+        Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("concat_ws"),
+            concat_ws_ft.clone(),
+            args,
+        ))
+    };
 
     for in_null_reject_check in [false, true] {
         let opts = FoldOptions {
@@ -212,7 +224,10 @@ fn null_reject_conditions_survive_both_fold_modes() {
     }
 
     // field(Column#0, Double(0), NULL): same retention contract.
-    let mut double_column = Column::new(0, tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Double));
+    let mut double_column = Column::new(
+        0,
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Double),
+    );
     double_column.index = 0;
     let field_args = vec![
         Expression::Column(double_column),
@@ -237,9 +252,7 @@ fn null_reject_conditions_survive_both_fold_modes() {
     let folded = fold_constant_with(&field_expr, &NoColumns, &opts);
     let root = expect_scalar_function(&folded, "field", 3);
     assert!(matches!(&root.args[0], Expression::Column(_)));
-    assert!(
-        matches!(&root.args[2], Expression::Constant(c) if c.value == Datum::Null)
-    );
+    assert!(matches!(&root.args[2], Expression::Constant(c) if c.value == Datum::Null));
 }
 
 /// Go `newString`: a VARCHAR-typed constant tagged with an explicit
@@ -268,7 +281,11 @@ fn internal_binary_call(name: &str, target_charset: Option<&str>, arg: Expressio
         ret_type.set_charset_name("binary");
         ret_type.set_collation_name("binary");
     }
-    Expression::ScalarFunction(ScalarFunction::new(CiString::new(name), ret_type, vec![arg]))
+    Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new(name),
+        ret_type,
+        vec![arg],
+    ))
 }
 
 /// A BINARY-tagged string constant holding arbitrary bytes -- the shape a
@@ -359,10 +376,13 @@ fn constant_folding_sees_through_internal_charset_transcodes() {
             vec![raw_binary_const(&[0xd2, 0xbb])],
         )))
     };
-    let leading_gbk = build("concat", vec![
-        gbk_from_bytes,
-        tagged_string_const("中文", "gbk", "gbk_bin"),
-    ]);
+    let leading_gbk = build(
+        "concat",
+        vec![
+            gbk_from_bytes,
+            tagged_string_const("中文", "gbk", "gbk_bin"),
+        ],
+    );
     assert_eq!(
         folded_datum_of(leading_gbk).label(),
         "STR:一中文",
@@ -370,16 +390,18 @@ fn constant_folding_sees_through_internal_charset_transcodes() {
     );
 
     // ... and reversed argument order reads '中文一'.
-    let trailing_gbk = build("concat", vec![
-        tagged_string_const("中文", "gbk", "gbk_bin"),
-        construct_folded(internal_binary_call(
-            "from_binary",
-            Some("gbk"),
-            raw_binary_const(&[0xd2, 0xbb]),
-        )),
-    ]);
+    let trailing_gbk = build(
+        "concat",
+        vec![
+            tagged_string_const("中文", "gbk", "gbk_bin"),
+            construct_folded(internal_binary_call(
+                "from_binary",
+                Some("gbk"),
+                raw_binary_const(&[0xd2, 0xbb]),
+            )),
+        ],
+    );
     assert_eq!(folded_datum_of(trailing_gbk).label(), "STR:中文一");
-
 }
 
 /// Master row 6 of `pkg/expression/constant_test.go:274
@@ -475,7 +497,6 @@ fn test_deferred_expr_not_null() {}
 #[ignore = "go-parity-gap: param-marker GetType inference is deferred in constant.rs; no per-call FieldType derivation exists to prove thread safety on"]
 fn test_get_type_thread_safe() {}
 
-
 /// `pkg/expression/constant_test.go:478 TestVectorizedConstant`: a literal
 /// Constant fills a whole output chunk -- 1024 INT rows and 1024 VARCHAR rows
 /// all read back the same value, through the `EvaluatorSuite` Go drives the
@@ -491,9 +512,10 @@ fn vectorized_constant_fills_whole_output_chunks() {
     let string_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
 
     // Fixed-length type: int 2333 over 1024 integer input rows.
-    for expression in [
-        Expression::Constant(Constant::new(Datum::Int(2333), int_type.clone())),
-    ] {
+    for expression in [Expression::Constant(Constant::new(
+        Datum::Int(2333),
+        int_type.clone(),
+    ))] {
         let mut input = Chunk::new_with_capacity(std::slice::from_ref(&int_type), rows);
         for row in 0..rows as i64 {
             input.append_datum(0, &Datum::Int(row));
@@ -517,8 +539,7 @@ fn vectorized_constant_fills_whole_output_chunks() {
         Datum::new_string("hello"),
         string_type.clone(),
     ));
-    let int_input_type =
-        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+    let int_input_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
     let mut input = Chunk::new_with_capacity(std::slice::from_ref(&int_input_type), rows);
     for row in 0..rows as i64 {
         input.append_datum(0, &Datum::Int(row));

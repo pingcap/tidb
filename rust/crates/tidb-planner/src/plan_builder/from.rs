@@ -247,6 +247,53 @@ pub struct JoinHints {
 }
 
 impl JoinHints {
+    /// Resolves the table-list join hints written on one SELECT into the
+    /// preference bits consumed by `LogicalJoin`. This is the local
+    /// equivalent of Go's `ParsePlanHints`/`SetPreferredJoinTypeAndOrder`
+    /// handoff; physical dispatch remains the only family selector.
+    #[must_use]
+    pub fn from_select(select: &tidb_ast::SelectStmt) -> Self {
+        use tidb_ast::HintKind;
+
+        let mut hints = Self::default();
+        for hint in &select.hints {
+            let HintKind::Tables { qb_name, tables } = &hint.kind else {
+                continue;
+            };
+            // Query-block-name resolution needs the owning block offset. Do
+            // not let a scoped hint leak into the current block when that
+            // identity is unavailable.
+            if qb_name.is_some() {
+                continue;
+            }
+            let flag = match hint.name.to_ascii_uppercase().as_str() {
+                "INL_JOIN" | "TIDB_INLJ" => join_hint_flags::INLJ,
+                "INL_HASH_JOIN" => join_hint_flags::INLHJ,
+                "INL_MERGE_JOIN" => join_hint_flags::INLMJ,
+                "HASH_JOIN" | "TIDB_HJ" => join_hint_flags::HASH_JOIN,
+                "HASH_JOIN_BUILD" => join_hint_flags::HJ_BUILD,
+                "HASH_JOIN_PROBE" => join_hint_flags::HJ_PROBE,
+                "NO_HASH_JOIN" => join_hint_flags::NO_HASH_JOIN,
+                "MERGE_JOIN" | "TIDB_SMJ" => join_hint_flags::MERGE_JOIN,
+                "NO_MERGE_JOIN" => join_hint_flags::NO_MERGE_JOIN,
+                "NO_INDEX_JOIN" => join_hint_flags::NO_INDEX_JOIN,
+                "NO_INDEX_HASH_JOIN" => join_hint_flags::NO_INDEX_HASH_JOIN,
+                "NO_INDEX_MERGE_JOIN" => join_hint_flags::NO_INDEX_MERGE_JOIN,
+                "BROADCAST_JOIN" => join_hint_flags::BC_JOIN,
+                "SHUFFLE_JOIN" => join_hint_flags::SHUFFLE_JOIN,
+                _ => continue,
+            };
+            for table in tables.iter().filter(|table| table.qb_name.is_none()) {
+                hints.hint_table(
+                    table.db_name.as_deref().unwrap_or_default(),
+                    &table.name,
+                    flag,
+                );
+            }
+        }
+        hints
+    }
+
     /// Go `PlanHints.IfPreferXxx(alias)` for whichever bit `flag` is: the
     /// alias carries the hint, matched qualified-first then bare.
     #[must_use]

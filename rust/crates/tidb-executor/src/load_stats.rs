@@ -439,10 +439,7 @@ fn column_stats_from_json(
                         &SessionTimeZone::utc(),
                     )
                     .map_err(|error| {
-                        LoadStatsError::Convert(format!(
-                            "column `{}`: {error:?}",
-                            column.name
-                        ))
+                        LoadStatsError::Convert(format!("column `{}`: {error:?}", column.name))
                     })?;
                 *bound = converted.value;
             }
@@ -555,10 +552,9 @@ mod tests {
     /// as version 1, or every pre-2021 fixture's histogram goes unused.
     #[test]
     fn missing_stats_ver_infers_version_one_from_ndv() {
-        let json: JsonColumn = serde_json::from_str(
-            r#"{"histogram": {"ndv": 5, "buckets": []}, "null_count": 0}"#,
-        )
-        .expect("parses");
+        let json: JsonColumn =
+            serde_json::from_str(r#"{"histogram": {"ndv": 5, "buckets": []}, "null_count": 0}"#)
+                .expect("parses");
         assert_eq!(resolve_stats_version(&json), 1);
         let empty: JsonColumn =
             serde_json::from_str(r#"{"histogram": {"ndv": 0, "buckets": []}}"#).expect("parses");

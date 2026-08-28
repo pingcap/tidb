@@ -330,10 +330,9 @@ fn command_fingerprint(
             .ok()
             .and_then(|id| prepared_sql.get(&id))
         {
-            Some(sql) => CommandFingerprint::Sql(
-                "stmt_execute",
-                format!("sql={}", trace_sql_head(sql)),
-            ),
+            Some(sql) => {
+                CommandFingerprint::Sql("stmt_execute", format!("sql={}", trace_sql_head(sql)))
+            }
             None => CommandFingerprint::Sql("stmt_execute", "sql=?".to_owned()),
         },
         _ => CommandFingerprint::Kind(trace_command_kind(command)),

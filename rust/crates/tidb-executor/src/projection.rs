@@ -76,7 +76,18 @@ impl<C: Columns> Executor for ProjectionExec<C> {
         self.child_chunk
             .set_required_rows(required_rows, max_chunk_size);
         self.child.next(&mut self.child_chunk)?;
-        if self.child_chunk.num_rows() == 0 {
+        let child_rows = self.child_chunk.num_rows();
+        if child_rows == 0 {
+            return Ok(());
+        }
+        // Go's chunk keeps an explicit virtual-row count when its schema has
+        // no columns. Column pruning can legitimately reduce a Projection to
+        // zero expressions below COUNT(*); it still preserves one output row
+        // per child row. The evaluator has no column on which to record that
+        // cardinality, so carry it explicitly instead of turning the batch
+        // into an EOF marker.
+        if self.meta.ret_field_types().is_empty() {
+            req.set_num_virtual_rows(child_rows);
             return Ok(());
         }
         self.evaluator_suite
@@ -109,14 +120,6 @@ impl<C: Columns> Executor for ProjectionExec<C> {
 
     fn new_chunk(&self) -> Chunk {
         self.meta.new_chunk()
-    }
-
-    /// Projection preserves one output row per child row, so an exact child
-    /// cardinality is also exact for this wrapper.  Expressions are not
-    /// evaluated on the count-only path, which matches Go's parent COUNT
-    /// shortcut.
-    fn row_count(&mut self) -> Result<Option<u64>, ExecError> {
-        self.child.row_count()
     }
 }
 
@@ -171,6 +174,23 @@ mod tests {
         proj.next(&mut req).unwrap();
         assert_eq!(req.num_rows(), 0);
         proj.close().unwrap();
+    }
+
+    #[test]
+    fn empty_projection_preserves_virtual_row_count() {
+        let dual = TableDualExec::new(ExecutorMeta::new(Schema::new(vec![]), 0, 1, 1024), 1);
+        let mut projection = ProjectionExec::new(
+            ExecutorMeta::new(Schema::new(vec![]), 1, 3, 1024),
+            Vec::new(),
+            Box::new(dual),
+            NoColumns,
+        );
+
+        projection.open().unwrap();
+        let mut result = projection.new_chunk();
+        projection.next(&mut result).unwrap();
+        assert_eq!(result.num_rows(), 1);
+        projection.close().unwrap();
     }
 
     /// The projection's per-row evaluation reads a child column: `col0 + 1` over

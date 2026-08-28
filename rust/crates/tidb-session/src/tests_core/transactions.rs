@@ -171,7 +171,9 @@ fn normal_insert_duplicate_mode_matches_go_for_autocommit_and_explicit_modes() {
     assert!(!default.constraint_check_in_place());
     assert!(default.pessimistic_lazy_dup_check());
 
-    session.apply_set("SET tidb_txn_mode = 'optimistic'").unwrap();
+    session
+        .apply_set("SET tidb_txn_mode = 'optimistic'")
+        .unwrap();
     let optimistic = session.statement_context(true);
     assert!(!optimistic.pessimistic_lazy_dup_check());
     assert!(!optimistic.constraint_check_in_place());

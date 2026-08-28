@@ -224,10 +224,10 @@ pub mod column_field_type;
 mod column_types;
 pub mod index_prefix;
 mod indexes;
+pub mod placement_policy;
 mod table_cache;
 mod table_constraints;
 mod table_lifecycle;
-pub mod placement_policy;
 mod table_partition;
 pub mod table_partition_list;
 pub mod table_partition_range;
@@ -242,9 +242,8 @@ pub use placement_policy::{
 };
 pub use table_partition::{
     append_partition_defs, build_partition_metadata, escape_partition_name,
-    partition_placement_text,
-    linear_partitioning_warning,
-    partition_spec_from_metadata, StoredPartitionDefinition, StoredPartitionMetadata,
+    linear_partitioning_warning, partition_placement_text, partition_spec_from_metadata,
+    StoredPartitionDefinition, StoredPartitionMetadata,
 };
 
 use column_types::{database_charset_of, field_type_of, table_charset_of, NOT_NULL_FLAG};
@@ -497,8 +496,8 @@ fn ttl_info_from_options(
             unit,
         } = option
         {
-            let interval_time_unit = tidb_model::time_unit_type_from_keyword(unit)
-                .ok_or_else(|| {
+            let interval_time_unit =
+                tidb_model::time_unit_type_from_keyword(unit).ok_or_else(|| {
                     DriverError::unsupported(format!("`{unit}` is not a TTL interval unit"))
                 })?;
             info = Some(tidb_model::TTLInfo {
@@ -1466,7 +1465,13 @@ pub fn run_create_table_in(
                 .map_err(|message| DriverError::unsupported(message))?;
         }
     }
-    let (indexes, hidden_columns) = table_indexes(create, &columns, clustered, ctx)?;
+    let (indexes, hidden_columns) = table_indexes(
+        create,
+        &columns,
+        clustered,
+        matches!(&handle, HandleKind::CommonHandle(_)),
+        ctx,
+    )?;
     for hidden in hidden_columns {
         // Go `checkExpressionIndexAutoIncrement`: an expression index may not
         // read an AUTO_INCREMENT column. Captured as 3754 naming the index,
@@ -1544,24 +1549,27 @@ pub fn run_create_table_in(
         };
         if !covered(handle.offsets()) && !table.indexes().iter().any(covered_index) {
             let id = table.next_index_id();
-            table.add_index(KvIndex {
-                id,
-                name: foreign_key.name.clone(),
-                comment: String::new(),
-                unique: false,
-                column_offsets: fk_offsets.clone(),
-                // Go's auto-created foreign-key index names whole columns:
-                // an `FKInfo` has no per-column length to carry.
-                prefix_lengths: vec![
-                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
-                    fk_offsets.len()
-                ],
-                // Local to the table it constrains: an `FKInfo` carries no
-                // `GLOBAL` to record.
-                global: false,
-                clustered_primary: false,
-                visible: true,
-            }, false);
+            table.add_index(
+                KvIndex {
+                    id,
+                    name: foreign_key.name.clone(),
+                    comment: String::new(),
+                    unique: false,
+                    column_offsets: fk_offsets.clone(),
+                    // Go's auto-created foreign-key index names whole columns:
+                    // an `FKInfo` has no per-column length to carry.
+                    prefix_lengths: vec![
+                        crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                        fk_offsets.len()
+                    ],
+                    // Local to the table it constrains: an `FKInfo` carries no
+                    // `GLOBAL` to record.
+                    global: false,
+                    clustered_primary: false,
+                    visible: true,
+                },
+                false,
+            );
         }
         table.allocate_foreign_key_id();
         table.add_foreign_key(foreign_key);

@@ -43,9 +43,7 @@
 
 use chrono::Utc;
 use tidb_codec::{hash_group_key_in_timezone, Encoder};
-use tidb_datatype::{
-    Collation, Datum, Decimal, FieldType, FieldTypeCode, MySqlDuration, TimeType,
-};
+use tidb_datatype::{Collation, Datum, Decimal, FieldType, FieldTypeCode, MySqlDuration, TimeType};
 
 /// Go `eType2FieldType(eTypes[i])` for the seven types in TestHashGroupKey's
 /// table order.
@@ -117,8 +115,7 @@ fn cases() -> Vec<Case> {
         },
         Case {
             label: "string",
-            ft: FieldType::new(FieldTypeCode::VarString)
-                .with_collation(Collation::Utf8Mb4Bin),
+            ft: FieldType::new(FieldTypeCode::VarString).with_collation(Collation::Utf8Mb4Bin),
             values: vec![
                 Datum::Null,
                 Datum::new_bytes(b""),

@@ -26,19 +26,15 @@
 //!   attach, convert to root, enforce.
 //! * `compareTaskCost` (`:479`) / `getTaskPlanCost` (`:498`) — an invalid
 //!   task prices at `MaxFloat64` and never wins; pricing itself arrives
-//!   through [`TaskCoster`], the same seam decision
-//!   [`crate::find_best_task::JoinCostModel`] made and for the same reason:
+//!   through [`TaskCoster`], which keeps cost inputs at the dispatch boundary:
 //!   the cost formulas live in [`crate::plan_cost_ver2`] but the profile
 //!   inputs are the caller's.
 //!
 //! # Narrowings, each naming its Go symbol
 //!
-//! * Hints: `hintWorksWithProp`/`hintCanWork` and
-//!   `applyLogicalHintVarEigen` — an unhinted plan answers `true`, so the
-//!   only enforcer trigger left is `prop.CanAddEnforcer`, which is what
-//!   this port implements. A hinted enumeration is planner-hint work.
-//! * `prop.IndexJoinProp` and `admitIndexJoinInnerChildPattern`: the
-//!   index-join runtime property is unported ([`crate::task`] header).
+//! * `applyLogicalHintVarEigen`: join hints are applied after child tasks
+//!   attach, matching Go's `applyLogicalJoinHint`; TopN/Limit and
+//!   aggregation hints remain outside this dispatcher.
 //! * `checkOpSelfSatisfyPropTaskTypeRequirement` and the MPP property
 //!   fields the enforcer branch resets: no TiFlash tier.
 //! * `optimizeByShuffle`: the TiDB-side parallel shuffle rewrite is an
@@ -71,9 +67,8 @@ use crate::task_type::TaskType;
 
 /// Go `getTaskPlanCost`'s pricing half: what a built task costs.
 ///
-/// The seam exists for [`crate::find_best_task::JoinCostModel`]'s reason:
-/// the formulas are in [`crate::plan_cost_ver2`], but row counts and factor
-/// profiles are the caller's to provide.
+/// Cost formulas are in [`crate::plan_cost_ver2`], while row counts and factor
+/// profiles are supplied by the caller.
 pub trait TaskCoster {
     /// The task's plan cost; called only on VALID tasks — the invalid-task
     /// `MaxFloat64` arm is [`compare_task_cost`]'s own, as in Go.
@@ -107,6 +102,21 @@ pub struct DispatchContext<'a> {
     pub coster: &'a dyn TaskCoster,
     /// The `tidb_opt_skew_ratio` the NDV scaling reads; 1.0 is Go's default.
     pub skew_ratio: f64,
+    /// Go `SessionVars.OptOrderingIdxSelRatio`, used by the ordered LIMIT
+    /// row-count adjustment for table and index scans.
+    pub ordering_index_selectivity_ratio: f64,
+    /// Go `SessionVars.AllowProjectionPushDown`, used when Projection
+    /// enumerates its TiKV coprocessor candidate.
+    pub allow_projection_push_down: bool,
+    /// Go `SessionVars.LimitPushDownThreshold`, used by TopN's normal
+    /// coprocessor preference. A physical Limit always prefers cop.
+    pub limit_push_down_threshold: u64,
+    /// Go `SessionVars.EnablePaging`. Reader costing writes the selected
+    /// paging mode back onto `PhysicalIndexLookUpReader`.
+    pub enable_paging: bool,
+    /// Go `SessionVars.HashJoinConcurrency()`, stamped onto every hash-join
+    /// candidate by `NewPhysicalHashJoin`.
+    pub hash_join_concurrency: usize,
     /// Go `BaseLogicalPlan.taskMap`, keyed here by `(plan id, prop key)`.
     task_map: HashMap<(i32, String), Task>,
     /// Go `SessionVars.AllocPlanColumnID`: the column-id allocator the
@@ -128,9 +138,51 @@ impl<'a> DispatchContext<'a> {
             allocator,
             coster,
             skew_ratio,
+            ordering_index_selectivity_ratio: 0.01,
+            allow_projection_push_down: true,
+            // Go `vardef.DefOptLimitPushDownThreshold`.
+            limit_push_down_threshold: 5_000,
+            enable_paging: true,
+            hash_join_concurrency: 5,
             task_map: HashMap::new(),
             column_ids: None,
         }
+    }
+
+    /// The same context with the statement's ordering-index selectivity
+    /// ratio attached.
+    #[must_use]
+    pub const fn with_ordering_index_selectivity_ratio(mut self, ratio: f64) -> Self {
+        self.ordering_index_selectivity_ratio = ratio;
+        self
+    }
+
+    /// The same context with the session's projection-pushdown switch.
+    #[must_use]
+    pub const fn with_projection_push_down(mut self, allow: bool) -> Self {
+        self.allow_projection_push_down = allow;
+        self
+    }
+
+    /// The same context with the session's TopN pushdown threshold.
+    #[must_use]
+    pub const fn with_limit_push_down_threshold(mut self, threshold: u64) -> Self {
+        self.limit_push_down_threshold = threshold;
+        self
+    }
+
+    /// The same context with the session's coprocessor-paging switch.
+    #[must_use]
+    pub const fn with_paging(mut self, enable: bool) -> Self {
+        self.enable_paging = enable;
+        self
+    }
+
+    /// The same context with the resolved hash-join concurrency.
+    #[must_use]
+    pub const fn with_hash_join_concurrency(mut self, concurrency: usize) -> Self {
+        self.hash_join_concurrency = concurrency;
+        self
     }
 
     /// The same context with the session's column-id allocator attached.
@@ -154,6 +206,19 @@ fn prop_key(prop: &PhysicalProperty) -> String {
     );
     for item in &prop.sort_items {
         let _ = write!(key, "|{}:{}", item.col, item.desc);
+    }
+    if let Some(runtime) = &prop.index_join_prop {
+        let _ = write!(
+            key,
+            "|ij:{}:{}",
+            runtime.table_range_scan, runtime.avg_inner_row_count
+        );
+        for column in &runtime.outer_join_keys {
+            let _ = write!(key, ":o{}", column.unique_id);
+        }
+        for column in &runtime.inner_join_keys {
+            let _ = write!(key, ":i{}", column.unique_id);
+        }
     }
     key
 }
@@ -188,8 +253,15 @@ fn exhaust_physical_plans(
                 prop,
                 ctx.allocator,
                 ctx.skew_ratio,
+                ctx.allow_projection_push_down,
             )))
         }
+        LogicalPlan::Sort(op) => Ok(one(physical::exhaust_physical_plans_4_logical_sort(
+            op,
+            prop,
+            ctx.allocator,
+            ctx.skew_ratio,
+        ))),
         LogicalPlan::Limit(op) => Ok(one(physical::exhaust_physical_plans_4_logical_limit(
             op,
             prop,
@@ -249,28 +321,177 @@ fn exhaust_physical_plans(
         }
         LogicalPlan::Aggregation(op) => {
             // `ExhaustPhysicalPlans4LogicalAggregation`
-            // (`base_physical_agg.go:935`): the hash-agg candidates; the
-            // stream-agg half (`getStreamAggs`, order-riding) is a later
-            // slice, named.
-            // Go appends `getStreamAggs` then `getHashAggs` into ONE
-            // list; the stream candidates ride a covered order, the hash
-            // candidates need none, and cost picks between them.
-            let mut aggs = physical::get_stream_aggs(op, prop, ctx.allocator, ctx.skew_ratio);
-            aggs.extend(physical::get_hash_aggs(
-                op,
-                prop,
-                ctx.allocator,
-                ctx.skew_ratio,
-            ));
+            // (`base_physical_agg.go:935`): Go enumerates HashAgg first and
+            // immediately returns it when HASH_AGG applies, then enumerates
+            // StreamAgg and immediately returns it when STREAM_AGG applies.
+            // With no applicable hint both families share one cost search in
+            // that same hash-then-stream order.
+            let mut hash_aggs = physical::get_hash_aggs(op, prop, ctx.allocator, ctx.skew_ratio);
+            if !hash_aggs.is_empty()
+                && op.prefer_agg_type & crate::expression_rewriter::PREFER_HASH_AGG != 0
+            {
+                return Ok(vec![hash_aggs]);
+            }
+            let stream_aggs = physical::get_stream_aggs(op, prop, ctx.allocator, ctx.skew_ratio);
+            if !stream_aggs.is_empty()
+                && op.prefer_agg_type & crate::expression_rewriter::PREFER_STREAM_AGG != 0
+            {
+                return Ok(vec![stream_aggs]);
+            }
+            hash_aggs.extend(stream_aggs);
+            let aggs = hash_aggs;
             Ok(if aggs.is_empty() {
                 Vec::new()
             } else {
                 vec![aggs]
             })
         }
-        LogicalPlan::Join(_) | LogicalPlan::Apply(_) => Err(PlanError::internal(
-            "exhaustPhysicalPlans4LogicalJoin: joins are enumerated by \
-             crate::find_best_task's specialized search, not this dispatcher",
+        LogicalPlan::Join(op) => {
+            use crate::find_best_task::JoinStrategy;
+            use crate::plan_builder::from::join_hint_flags;
+
+            let reduced = crate::find_best_task::project_one_join(op, plan)?;
+            let (left_columns, right_columns, _, _) = op.get_join_keys();
+            let column = |columns: &[tidb_expr::column::Column], id: i64| {
+                columns
+                    .iter()
+                    .find(|column| column.unique_id == id)
+                    .cloned()
+            };
+            let mut joins = Vec::new();
+            for candidate in crate::find_best_task::exhaust_join(&reduced, prop) {
+                let strategy = candidate.strategy.clone();
+                let filtered = match &strategy {
+                    JoinStrategy::Hash(_) => op.prefer_any(&[join_hint_flags::NO_HASH_JOIN]),
+                    JoinStrategy::Merge { .. } => op.prefer_any(&[join_hint_flags::NO_MERGE_JOIN]),
+                    JoinStrategy::Index { kind, .. } => match kind {
+                        crate::plan_cost_ver2::IndexJoinKind::IndexJoin => {
+                            op.prefer_any(&[join_hint_flags::NO_INDEX_JOIN])
+                        }
+                        crate::plan_cost_ver2::IndexJoinKind::IndexHashJoin => {
+                            op.prefer_any(&[join_hint_flags::NO_INDEX_HASH_JOIN])
+                        }
+                        crate::plan_cost_ver2::IndexJoinKind::IndexMergeJoin => {
+                            op.prefer_any(&[join_hint_flags::NO_INDEX_MERGE_JOIN])
+                        }
+                    },
+                };
+                if filtered {
+                    continue;
+                }
+                let mut child_props = candidate.child_props;
+                if let JoinStrategy::Index {
+                    outer_idx,
+                    table_range_scan,
+                    ..
+                } = &strategy
+                {
+                    let inner_idx = 1 - *outer_idx;
+                    let (outer_join_keys, inner_join_keys) = if *outer_idx == 0 {
+                        (left_columns.clone(), right_columns.clone())
+                    } else {
+                        (right_columns.clone(), left_columns.clone())
+                    };
+                    let outer_rows = plan
+                        .children()
+                        .get(*outer_idx)
+                        .and_then(LogicalPlan::stats_info)
+                        .map_or(1.0, crate::stats_info::StatsInfo::row_count)
+                        .max(1.0);
+                    let joined_rows = op
+                        .base
+                        .base
+                        .stats_info()
+                        .map_or(outer_rows, crate::stats_info::StatsInfo::row_count);
+                    child_props[inner_idx].index_join_prop =
+                        Some(crate::physical_property::IndexJoinRuntimeProp {
+                            other_conditions: op.other_conditions.clone(),
+                            outer_join_keys,
+                            inner_join_keys,
+                            avg_inner_row_count: (joined_rows / outer_rows).max(0.0),
+                            table_range_scan: *table_range_scan,
+                        });
+                }
+                let mut base = physical::BasePhysicalPlan::new(
+                    ctx.allocator,
+                    op.base.base.tp(),
+                    op.base.base.query_block_offset(),
+                );
+                base.base.set_stats(op.base.base.stats_info().cloned());
+                base.base.set_schema(op.base.base.schema().cloned());
+                base.set_children_req_props(child_props.into_iter().map(Some).collect());
+                let physical = match strategy {
+                    JoinStrategy::Hash(shape) => {
+                        PhysicalPlan::HashJoin(physical::PhysicalHashJoin {
+                            base,
+                            concurrency: ctx.hash_join_concurrency,
+                            join_type: op.join_type,
+                            inner_child_idx: shape.inner_idx,
+                            use_outer_to_build: shape.use_outer_to_build,
+                            left_join_keys: left_columns.clone(),
+                            right_join_keys: right_columns.clone(),
+                            left_conditions: op.left_conditions.clone(),
+                            right_conditions: op.right_conditions.clone(),
+                            other_conditions: op.other_conditions.clone(),
+                        })
+                    }
+                    JoinStrategy::Merge {
+                        left_keys,
+                        right_keys,
+                        desc,
+                    } => {
+                        let Some(left_join_keys) = left_keys
+                            .into_iter()
+                            .map(|id| column(&left_columns, id))
+                            .collect::<Option<Vec<_>>>()
+                        else {
+                            continue;
+                        };
+                        let Some(right_join_keys) = right_keys
+                            .into_iter()
+                            .map(|id| column(&right_columns, id))
+                            .collect::<Option<Vec<_>>>()
+                        else {
+                            continue;
+                        };
+                        PhysicalPlan::MergeJoin(physical::PhysicalMergeJoin {
+                            base,
+                            join_type: op.join_type,
+                            left_join_keys,
+                            right_join_keys,
+                            left_conditions: op.left_conditions.clone(),
+                            right_conditions: op.right_conditions.clone(),
+                            other_conditions: op.other_conditions.clone(),
+                            desc,
+                        })
+                    }
+                    JoinStrategy::Index {
+                        outer_idx,
+                        kind,
+                        keep_outer_order,
+                        ..
+                    } => PhysicalPlan::IndexJoin(physical::PhysicalIndexJoin {
+                        base,
+                        join_type: op.join_type,
+                        inner_child_idx: 1 - outer_idx,
+                        kind,
+                        keep_outer_order,
+                        inner_access_table_id: None,
+                        inner_access_index_id: None,
+                        left_join_keys: left_columns.clone(),
+                        right_join_keys: right_columns.clone(),
+                        left_conditions: op.left_conditions.clone(),
+                        right_conditions: op.right_conditions.clone(),
+                        ranges: crate::ranger::types::Ranges::default(),
+                        range_rebuild: None,
+                    }),
+                };
+                joins.push(physical);
+            }
+            Ok(one(joins))
+        }
+        LogicalPlan::Apply(_) => Err(PlanError::internal(
+            "exhaustPhysicalPlans4LogicalApply is not ported to the dispatcher",
         )),
         other => Err(PlanError::internal(format!(
             "exhaustPhysicalPlans over {} is not ported to the dispatcher",
@@ -292,9 +513,72 @@ pub fn find_best_task(
     if let Some(cached) = ctx.task_map.get(&key) {
         return Ok(cached.copy());
     }
-    let best = find_best_task_uncached(plan, prop, ctx)?;
+    let mut best = find_best_task_uncached(plan, prop, ctx)?;
+    // `IndexJoinProp` is not merely a costing hint: Go's selected inner task
+    // must return `IndexJoinInfo` from the access path that accepted the
+    // runtime probe. A structurally valid task that lost this bottom-up
+    // receipt is not an index-join inner candidate. Mark it invalid here so
+    // enumeration can continue with MergeJoin/HashJoin instead of aborting
+    // later in `completePhysicalIndexJoin`.
+    if prop.index_join_prop.is_some() && !task_has_index_join_info(&best) {
+        best = Task::invalid_task();
+    }
+    if let Some(plan) = best.plan_mut() {
+        apply_reader_cost_side_effects(plan, ctx.enable_paging);
+    }
     ctx.task_map.insert(key, best.copy());
     Ok(best)
+}
+
+/// Go's lookup-reader cost functions set `PhysicalIndexLookUpReader.Paging`
+/// on the winning physical tree. The Rust coster is deliberately read-only,
+/// so apply that same cost side effect before memoizing the selected task.
+fn apply_reader_cost_side_effects(plan: &mut PhysicalPlan, enable_paging: bool) {
+    match plan {
+        PhysicalPlan::TableReader(reader) => {
+            if let Some(child) = reader.table_plan.as_deref_mut() {
+                apply_reader_cost_side_effects(child, enable_paging);
+            }
+        }
+        PhysicalPlan::IndexReader(reader) => {
+            if let Some(child) = reader.index_plan.as_deref_mut() {
+                apply_reader_cost_side_effects(child, enable_paging);
+            }
+        }
+        PhysicalPlan::IndexLookUpReader(reader) => {
+            reader.paging = enable_paging
+                && reader.expect_cnt > 0
+                && reader.expect_cnt <= crate::plan_cost_ver2::PAGING_THRESHOLD;
+            if let Some(child) = reader.index_plan.as_deref_mut() {
+                apply_reader_cost_side_effects(child, enable_paging);
+            }
+            if let Some(child) = reader.table_plan.as_deref_mut() {
+                apply_reader_cost_side_effects(child, enable_paging);
+            }
+        }
+        PhysicalPlan::IndexMergeReader(reader) => {
+            for group in &mut reader.partial_plans {
+                for child in group {
+                    apply_reader_cost_side_effects(child, enable_paging);
+                }
+            }
+            if let Some(child) = reader.table_plan.as_deref_mut() {
+                apply_reader_cost_side_effects(child, enable_paging);
+            }
+        }
+        _ => {}
+    }
+    for child in plan.base_mut().children_mut() {
+        apply_reader_cost_side_effects(child, enable_paging);
+    }
+}
+
+fn task_has_index_join_info(task: &Task) -> bool {
+    match task {
+        Task::Root(root) => root.index_join_info.is_some(),
+        Task::Cop(cop) => cop.index_join_info.is_some(),
+        Task::Mpp(_) => false,
+    }
 }
 
 fn find_best_task_uncached(
@@ -356,7 +640,12 @@ fn find_best_task_uncached(
     // is exactly the caller's CanAddEnforcer.
     let _ = &mut can_add_enforcer;
 
-    let new_prop = prop.clone_essential_fields();
+    let mut new_prop = prop.clone_essential_fields();
+    // Go restores `IndexJoinProp` immediately after
+    // `CloneEssentialFields`, whose contract deliberately omits it. The
+    // operator-specific `admitIndexJoinProp(s)` functions then decide which
+    // child may inherit it.
+    new_prop.index_join_prop = prop.index_join_prop.clone();
     let plans_fits_prop = exhaust_physical_plans(plan, &new_prop, ctx)?;
 
     let plans_need_enforce = if can_add_enforcer {
@@ -443,25 +732,49 @@ fn try_to_get_dual_task(
 /// properties, and the index-column prefix walk (`:1095`) are later slices,
 /// named here.
 fn table_path_matches_order(ds: &crate::logical::DataSource, prop: &PhysicalProperty) -> bool {
-    if !ds.pk_is_handle || !ds.handle_is_int {
+    if ds.pk_is_handle && ds.handle_is_int {
+        let Some(pk_col) = ds.handle_cols.first() else {
+            return false;
+        };
+        let [item] = prop.sort_items.as_slice() else {
+            return false;
+        };
+        return item.col == pk_col.unique_id;
+    }
+    let (all_same, _) = prop.all_same_order();
+    if !all_same || prop.sort_items.is_empty() {
         return false;
     }
-    let Some(pk_col) = ds.handle_cols.first() else {
-        return false;
-    };
-    let [item] = prop.sort_items.as_slice() else {
-        return false;
-    };
-    item.col == pk_col.unique_id
+    let fixed = equality_fixed_ids(ds);
+    let mut handle_offset = 0;
+    for item in &prop.sort_items {
+        let mut found = false;
+        while let Some(column) = ds.common_handle_cols.get(handle_offset) {
+            let length = ds.common_handle_lens.get(handle_offset).copied();
+            handle_offset += 1;
+            if length == Some(tidb_datatype::UNSPECIFIED_LENGTH) && column.unique_id == item.col {
+                found = true;
+                break;
+            }
+            if fixed.contains(&column.unique_id) {
+                continue;
+            }
+            return false;
+        }
+        if !found {
+            return false;
+        }
+    }
+    true
 }
 
 /// The basic index-prefix arm of Go `matchProperty` (`find_best_task.go:1095`):
 /// the required order matches an index when every sort item is the same
-/// direction (`AllSameOrder`) and the items are a PREFIX of the index's
-/// columns, mapped to unique ids through the source's schema (an index
-/// column's `Offset` addresses the TABLE column list, which is the scan's
-/// schema order). Constant-column skipping and the common-handle suffix
-/// extension are ranger-fed refinements, named as later slices.
+/// direction (`AllSameOrder`) and the items follow the index's columns,
+/// mapped to unique ids through the source's schema (an index column's
+/// `Offset` addresses the TABLE column list, which is the scan's schema
+/// order). Index columns fixed to one constant by access conditions may be
+/// skipped, matching Go's `path.ConstCols` case.
 /// Go `DataSource.IsSingleScan` (`logical_datasource.go:677`) over the
 /// catalog's offset/name model, in the `ColsRequiringFullLen == nil`
 /// fallback branch this pipeline is always in (column pruning does not fill
@@ -497,24 +810,119 @@ fn index_path_matches_order(
     if prop.is_sort_item_empty() || !all_same {
         return false;
     }
-    let Some(schema) = ds.base.base.schema() else {
-        return false;
-    };
-    if index.columns.len() < prop.sort_items.len() {
-        return false;
+    let fixed = equality_fixed_ids(ds);
+    let mut index_offset = 0;
+    for item in &prop.sort_items {
+        let mut found = false;
+        while let Some(index_column) = index.columns.get(index_offset) {
+            index_offset += 1;
+            let schema_column = ds.schema_column_for_index_column(index_column);
+            if index_column.length < 0
+                && schema_column.is_some_and(|column| column.unique_id == item.col)
+            {
+                found = true;
+                break;
+            }
+            if schema_column.is_some_and(|column| fixed.contains(&column.unique_id)) {
+                continue;
+            }
+            return false;
+        }
+        if !found {
+            return false;
+        }
     }
-    prop.sort_items
+    true
+}
+
+fn equality_fixed_ids(ds: &crate::logical::DataSource) -> Vec<i64> {
+    use tidb_expr::expression::Expression;
+    let mut ids = Vec::new();
+    for condition in &ds.pushed_down_conds {
+        let Expression::ScalarFunction(function) = condition else {
+            continue;
+        };
+        let id = match function.get_args() {
+            [Expression::Column(column), Expression::Constant(_)]
+            | [Expression::Constant(_), Expression::Column(column)]
+                if function.func_name.lowercase() == "eq" =>
+            {
+                Some(column.unique_id)
+            }
+            _ => None,
+        };
+        if let Some(id) = id {
+            ids.push(id);
+        }
+    }
+    ids
+}
+
+/// The path admission half of Go's
+/// `buildDataSource2{Table,Index}ScanByIndexJoinProp`: a table-range
+/// candidate must probe the clustered handle; an index-range candidate must
+/// cover a leading run made of runtime join keys and equality-fixed columns.
+fn path_matches_index_join_runtime(
+    ds: &crate::logical::DataSource,
+    path: &crate::access_path::PossiblePath,
+    runtime: &crate::physical_property::IndexJoinRuntimeProp,
+) -> bool {
+    let inner_ids: Vec<i64> = runtime
+        .inner_join_keys
         .iter()
-        .zip(&index.columns)
-        .all(|(item, col)| {
-            // Go's `isMatchProp` walks `FullIdxCols`, where a prefix-length
-            // column has no entry: it cannot carry an order.
-            col.length < 0
-                && schema
-                    .columns
-                    .get(col.offset)
-                    .is_some_and(|schema_col| schema_col.unique_id == item.col)
-        })
+        .map(|column| column.unique_id)
+        .collect();
+    match path {
+        crate::access_path::PossiblePath::Table { .. } => {
+            if !runtime.table_range_scan {
+                return false;
+            }
+            if ds.handle_is_int {
+                return ds
+                    .handle_cols
+                    .first()
+                    .is_some_and(|column| inner_ids.contains(&column.unique_id));
+            }
+            // Go's common-handle table-range builder follows the PRIMARY KEY
+            // from its first column. Runtime join keys and equality-fixed
+            // columns may jointly cover that leading run, but a later handle
+            // column cannot be probed across an unfixed earlier one.
+            let fixed = equality_fixed_ids(ds);
+            let mut matched_runtime_key = false;
+            for column in &ds.common_handle_cols {
+                if inner_ids.contains(&column.unique_id) {
+                    matched_runtime_key = true;
+                } else if !fixed.contains(&column.unique_id) {
+                    break;
+                }
+            }
+            matched_runtime_key
+        }
+        crate::access_path::PossiblePath::Index { index } => {
+            if runtime.table_range_scan {
+                return false;
+            }
+            let Some(index) = ds.indexes.get(*index) else {
+                return false;
+            };
+            let Some(schema) = ds.base.base.schema() else {
+                return false;
+            };
+            let fixed = equality_fixed_ids(ds);
+            let mut matched_runtime_key = false;
+            for index_column in &index.columns {
+                let Some(column) = schema.columns.get(index_column.offset) else {
+                    return false;
+                };
+                if inner_ids.contains(&column.unique_id) {
+                    matched_runtime_key = true;
+                } else if !fixed.contains(&column.unique_id) {
+                    break;
+                }
+            }
+            matched_runtime_key
+        }
+    }
 }
 
 fn find_best_task_4_logical_data_source(
@@ -522,16 +930,53 @@ fn find_best_task_4_logical_data_source(
     prop: &PhysicalProperty,
     ctx: &mut DispatchContext<'_>,
 ) -> Result<Task, PlanError> {
-    // Go's DataSource findBestTask serves COP-typed properties too: a
-    // single-read child property (`CopSingleReadTaskType`) answers the COP
-    // task itself, for the parent's push-down attach to grow
-    // (`convertToTableScan` refuses only `CopMultiReadTaskType`, the
-    // double-read type, which this slice's lookup-less world cannot serve).
+    // Go `findBestTask4LogicalDataSource` handles `CanAddEnforcer` inside
+    // the DataSource override, before entering the path loop.  First price
+    // a path that satisfies the requested order directly.  Then clear the
+    // order, price the best unordered path, and enforce the original
+    // property above it.  This branch is what makes
+    // `getEnforcedStreamAggs`' sorted child property executable when no
+    // access path naturally provides the group order.
+    //
+    // IndexJoinProp takes Go's earlier, dedicated runtime-range return and
+    // therefore never enters the enforcer branch.
+    if prop.can_add_enforcer && prop.index_join_prop.is_none() {
+        let mut direct_prop = prop.clone();
+        direct_prop.can_add_enforcer = false;
+        let direct = find_best_task_4_logical_data_source_without_enforcer(ds, &direct_prop, ctx)?;
+
+        let mut unordered_prop = prop.clone();
+        unordered_prop.can_add_enforcer = false;
+        unordered_prop.sort_items.clear();
+        let unordered =
+            find_best_task_4_logical_data_source_without_enforcer(ds, &unordered_prop, ctx)?;
+        let enforced = enforce_property(prop, unordered, ctx.allocator)?;
+        if compare_task_cost(ctx.coster, &direct, &enforced)? {
+            return Ok(direct);
+        }
+        return Ok(enforced);
+    }
+
+    find_best_task_4_logical_data_source_without_enforcer(ds, prop, ctx)
+}
+
+fn find_best_task_4_logical_data_source_without_enforcer(
+    ds: &crate::logical::DataSource,
+    prop: &PhysicalProperty,
+    ctx: &mut DispatchContext<'_>,
+) -> Result<Task, PlanError> {
+    // Go's DataSource findBestTask serves both COP property kinds. The
+    // single-read property admits table and covering-index scans; the
+    // multi-read property admits only a non-covering index path whose COP
+    // task still owns both the index and table halves. Aggregation needs the
+    // latter so `attach2Task4PhysicalHashAgg` can put its partial stage on
+    // the lookup's table half before converting the task to root.
     let cop_answer = match prop.task_tp {
         TaskType::Root => false,
-        TaskType::CopSingleRead => true,
+        TaskType::CopSingleRead | TaskType::CopMultiRead => true,
         _ => return Ok(Task::invalid_task()),
     };
+    let cop_multi_read = prop.task_tp == TaskType::CopMultiRead;
     if let Some(dual) = try_to_get_dual_task(ds, ctx) {
         return Ok(dual);
     }
@@ -545,8 +990,16 @@ fn find_best_task_4_logical_data_source(
     let desc = ordered && prop.sort_items[0].desc;
     let mut best = Task::invalid_task();
     for path in &ds.enumerated_paths {
+        if let Some(runtime) = &prop.index_join_prop {
+            if !path_matches_index_join_runtime(ds, path, runtime) {
+                continue;
+            }
+        }
         let cop = match path {
-            crate::access_path::PossiblePath::Table { .. } => {
+            crate::access_path::PossiblePath::Table { primary_index, .. } => {
+                if cop_multi_read {
+                    continue;
+                }
                 let keep_order = ordered;
                 if keep_order && !table_path_matches_order(ds, prop) {
                     continue;
@@ -557,22 +1010,66 @@ fn find_best_task_4_logical_data_source(
                     ds.base.base.query_block_offset(),
                 );
                 base.base.set_schema(ds.base.base.schema().cloned());
-                // Go `buildTableRange` over the pushed conditions: the
-                // int-handle scan's key ranges (full when nothing pushed).
-                let handle_type = ds
+                // Go `buildTableRange`: integer handles use the table ranger;
+                // clustered common handles use the primary-index ranger over
+                // the complete handle tuple.
+                let handle_column = ds
                     .base
                     .base
                     .schema()
-                    .and_then(|schema| ds.get_pk_is_handle_col(schema))
+                    .and_then(|schema| ds.get_pk_is_handle_col(schema));
+                let handle_type = handle_column
                     .and_then(|col| col.ret_type.clone())
                     .unwrap_or_else(|| {
                         tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
                     });
-                let ranges = if ds.pushed_down_conds.is_empty() {
+                let common_handle = primary_index.and_then(|index| ds.indexes.get(index));
+                let common_columns = common_handle.map_or_else(Vec::new, |index| {
+                    index
+                        .columns
+                        .iter()
+                        .filter_map(|column| ds.schema_column_for_index_column(column).cloned())
+                        .collect::<Vec<_>>()
+                });
+                let common_lengths = common_handle.map_or_else(Vec::new, |index| {
+                    index
+                        .columns
+                        .iter()
+                        .map(|column| column.length)
+                        .collect::<Vec<_>>()
+                });
+                let common_detach = common_handle.and_then(|index| {
+                    (!ds.pushed_down_conds.is_empty()
+                        && common_columns.len() == index.columns.len())
+                    .then(|| {
+                        crate::ranger::detacher::detach_cond_and_build_range_for_index(
+                            &ds.pushed_down_conds,
+                            &common_columns,
+                            &common_lengths,
+                            0,
+                        )
+                        .ok()
+                    })
+                    .flatten()
+                });
+                let int_access_conditions = handle_column.map_or_else(Vec::new, |handle| {
+                    crate::ranger::detacher::extract_access_conditions_for_column(
+                        &ds.pushed_down_conds,
+                        handle,
+                        true,
+                    )
+                });
+                let ranges = if common_handle.is_some() {
+                    common_detach
+                        .as_ref()
+                        .map_or_else(crate::ranger::points::full_range, |result| {
+                            result.ranges.clone()
+                        })
+                } else if int_access_conditions.is_empty() {
                     crate::ranger::points::full_int_range(handle_type.is_unsigned())
                 } else {
                     match crate::ranger::ranger::build_table_range(
-                        &ds.pushed_down_conds,
+                        &int_access_conditions,
                         &handle_type,
                         0,
                     ) {
@@ -580,36 +1077,160 @@ fn find_best_task_4_logical_data_source(
                         Err(_) => crate::ranger::points::full_int_range(handle_type.is_unsigned()),
                     }
                 };
-                // Go `CountAfterAccess`: the pseudo row count over the
-                // built ranges shapes the scan's stats when conditions
-                // pushed.
-                let mut stats = ds.base.base.stats_info().cloned();
-                if !ds.pushed_down_conds.is_empty() {
-                    if let Some(base_stats) = &stats {
-                        let count = crate::ranger::stats_bridge::pseudo_count_by_int_ranges(
-                            &ranges,
-                            base_stats.row_count(),
-                            handle_type.is_unsigned(),
-                        );
-                        stats = Some(crate::stats_info::StatsInfo::new(
-                            count.min(base_stats.row_count()),
-                            [],
-                        ));
+                let table_access_conds = common_detach.as_ref().map_or_else(
+                    || int_access_conditions.clone(),
+                    |result| result.access_conds.clone(),
+                );
+                let table_filters = if common_handle.is_some() {
+                    common_detach.as_ref().map_or_else(
+                        || ds.pushed_down_conds.clone(),
+                        |result| result.remained_conds.clone(),
+                    )
+                } else {
+                    crate::ranger::detacher::remove_conditions(
+                        &ds.pushed_down_conds,
+                        &table_access_conds,
+                    )
+                };
+                let table_stats = ds
+                    .table_stats
+                    .clone()
+                    .or_else(|| ds.base.base.stats_info().cloned());
+                let mut count_after_access = table_stats.as_ref().map(|stats| stats.row_count());
+                if !table_access_conds.is_empty() {
+                    count_after_access = ds.table_path_count_after_access.or_else(|| {
+                        let base_stats = table_stats.as_ref()?;
+                        Some(if common_handle.is_some() {
+                            crate::ranger::stats_bridge::pseudo_count_by_ranges(
+                                &ranges,
+                                base_stats.row_count(),
+                            )
+                        } else {
+                            crate::ranger::stats_bridge::pseudo_count_by_int_ranges(
+                                &ranges,
+                                base_stats.row_count(),
+                                handle_type.is_unsigned(),
+                            )
+                        })
+                    });
+                }
+                if let (Some(count), Some(ds_stats), Some(base_stats)) = (
+                    count_after_access.as_mut(),
+                    ds.base.base.stats_info(),
+                    table_stats.as_ref(),
+                ) {
+                    if *count + crate::cost_factors::TOLERANCE_FACTOR < ds_stats.row_count() {
+                        *count = (ds_stats.row_count() / crate::cost_factors::SELECTION_FACTOR)
+                            .min(base_stats.row_count());
                     }
                 }
-                base.base.set_stats(stats);
+                let mut stats = table_stats.as_ref().map(|stats| {
+                    stats.scale_by_expect_cnt(
+                        count_after_access.unwrap_or_else(|| stats.row_count()),
+                        ctx.skew_ratio,
+                    )
+                });
+                if prop.index_join_prop.is_none() {
+                    if let (Some(path_stats), Some(ds_stats), Some(table_stats)) = (
+                        stats.as_ref(),
+                        ds.base.base.stats_info(),
+                        ds.table_stats.as_ref(),
+                    ) {
+                        let count_after_access = path_stats.row_count();
+                        let original_row_count = ds_stats.row_count();
+                        if prop.expected_cnt + crate::cost_factors::TOLERANCE_FACTOR
+                            < original_row_count
+                            || (keep_order
+                                && original_row_count.min(prop.expected_cnt) < count_after_access
+                                && !table_access_conds.is_empty())
+                        {
+                            let mut row_count = count_after_access;
+                            if prop.expected_cnt < original_row_count {
+                                let selectivity = original_row_count / count_after_access;
+                                row_count = count_after_access.min(prop.expected_cnt / selectivity);
+                            }
+                            if keep_order && count_after_access > row_count {
+                                let ratio = ctx.ordering_index_selectivity_ratio;
+                                if ratio > 0.0 {
+                                    row_count += (count_after_access - row_count).max(0.0) * ratio;
+                                }
+                            }
+                            stats =
+                                Some(table_stats.scale_by_expect_cnt(row_count, ctx.skew_ratio));
+                        }
+                    }
+                }
+                if let Some(runtime) = &prop.index_join_prop {
+                    stats = Some(crate::stats_info::StatsInfo::new(
+                        runtime.avg_inner_row_count,
+                        [],
+                    ));
+                }
+                base.base.set_stats(stats.clone());
                 let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
                     base,
                     table_id: ds.physical_table_id,
+                    table_as_name: ds.table_as_name.clone(),
+                    cost_columns: ds.table_columns.clone(),
                     store_type: crate::physical_table_reader::StoreType::TiKv,
                     keep_order,
                     desc,
-                    ranges,
+                    ranges: ranges.clone(),
+                    range_rebuild: if table_access_conds.is_empty() {
+                        None
+                    } else if common_handle.is_some() {
+                        Some(
+                            crate::physical_plan_cache::TableRangeRebuild::common_handle(
+                                table_access_conds.clone(),
+                                common_columns,
+                                common_lengths,
+                            ),
+                        )
+                    } else {
+                        Some(crate::physical_plan_cache::TableRangeRebuild::int_handle(
+                            table_access_conds.clone(),
+                            handle_type.clone(),
+                            handle_type.is_unsigned(),
+                        ))
+                    },
+                    table_scan_penalty: ds.table_scan_penalty,
                 });
+                let table_plan = if table_filters.is_empty() {
+                    scan
+                } else {
+                    // Go `addPushedDownSelection`: access cardinality belongs
+                    // to the scan; the DataSource's post-filter cardinality
+                    // belongs to the Selection above it.
+                    let mut selection_base = crate::physical::BasePhysicalPlan::new(
+                        ctx.allocator,
+                        "Selection",
+                        ds.base.base.query_block_offset(),
+                    );
+                    selection_base
+                        .base
+                        .set_schema(ds.base.base.schema().cloned());
+                    selection_base
+                        .base
+                        .set_stats(ds.base.base.stats_info().cloned());
+                    selection_base.set_children(vec![scan]);
+                    PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+                        base: selection_base,
+                        conditions: table_filters,
+                        from_data_source: true,
+                    })
+                };
                 Task::Cop(crate::task::CopTask {
-                    table_plan: Some(Box::new(scan)),
+                    table_plan: Some(Box::new(table_plan)),
                     index_plan_finished: true,
                     keep_order,
+                    expect_cnt: prop.expected_cnt as u64,
+                    index_join_info: prop.index_join_prop.as_ref().map(|_| {
+                        crate::task::IndexJoinInfo {
+                            table_id: ds.physical_table_id,
+                            index_id: None,
+                            ranges: ranges.clone(),
+                        }
+                    }),
                     ..crate::task::CopTask::default()
                 })
             }
@@ -626,9 +1247,11 @@ fn find_best_task_4_logical_data_source(
                 // read (`BuildIndexLookUpTask` at conversion) — the cop task
                 // carries BOTH halves, exactly Go's shape.
                 let single_scan = index_path_is_single_scan(ds, source_index);
-                // Go `convertToIndexScan`: a single-read property cannot be
-                // served by a double read.
-                if cop_answer && !single_scan {
+                // The two COP property kinds are disjoint: a covering index
+                // is single-read, while a lookup is multi-read.
+                if (prop.task_tp == TaskType::CopSingleRead && !single_scan)
+                    || (cop_multi_read && single_scan)
+                {
                     continue;
                 }
                 let mut base = crate::physical::BasePhysicalPlan::new(
@@ -640,62 +1263,238 @@ fn find_best_task_4_logical_data_source(
                 // Go `detachCondAndBuildRangeForPath`: the index columns
                 // (schema columns at the index's offsets) detach the pushed
                 // conditions into this path's ranges.
-                let index_cols: Vec<tidb_expr::column::Column> = source_index
+                // Go retains the usable leading `IdxCols` after logical
+                // column pruning. A missing later index column does not
+                // invalidate ranges on an earlier prefix; only the first
+                // unresolved position ends that prefix.
+                let mut resolved_index_prefix = source_index
                     .columns
                     .iter()
-                    .filter_map(|index_column| {
-                        ds.base
-                            .base
-                            .schema()
-                            .and_then(|schema| schema.columns.get(index_column.offset))
+                    .map_while(|index_column| {
+                        ds.schema_column_for_index_column(index_column)
                             .cloned()
+                            .map(|column| (column, index_column.length))
                     })
-                    .collect();
-                let index_lengths: Vec<i64> = source_index
-                    .columns
-                    .iter()
-                    .map(|index_column| index_column.length)
-                    .collect();
-                let ranges = if ds.pushed_down_conds.is_empty()
-                    || index_cols.len() != source_index.columns.len()
+                    .collect::<Vec<_>>();
+                let declared_index_prefix_complete =
+                    resolved_index_prefix.len() == source_index.columns.len();
+                // Go `fillIndexPath` appends the signed integer table handle
+                // to every complete non-unique secondary-index prefix.  It
+                // is a real trailing execution key part, so predicates on
+                // the handle participate in range detachment.  Unique and
+                // primary indexes do not append it, an unsigned handle is
+                // deliberately excluded because its encoded ordering is
+                // signed, and an index that already declares the handle must
+                // not add it twice.
+                if !source_index.unique
+                    && !source_index.primary
+                    && declared_index_prefix_complete
+                    && ds.handle_is_int
                 {
-                    crate::ranger::points::full_range()
+                    if let Some(handle) = ds.handle_cols.first().filter(|handle| {
+                        !handle.ret_type.as_ref().is_some_and(|ty| ty.is_unsigned())
+                            && !resolved_index_prefix
+                                .iter()
+                                .any(|(column, _)| column.unique_id == handle.unique_id)
+                    }) {
+                        resolved_index_prefix
+                            .push((handle.clone(), tidb_datatype::UNSPECIFIED_LENGTH));
+                    }
+                }
+                let index_cols = resolved_index_prefix
+                    .iter()
+                    .map(|(column, _)| column.clone())
+                    .collect::<Vec<_>>();
+                let index_lengths = resolved_index_prefix
+                    .iter()
+                    .map(|(_, length)| *length)
+                    .collect::<Vec<_>>();
+                let detach = if ds.pushed_down_conds.is_empty() || index_cols.is_empty() {
+                    None
                 } else {
-                    match crate::ranger::detacher::detach_cond_and_build_range_for_index(
+                    crate::ranger::detacher::detach_cond_and_build_range_for_index(
                         &ds.pushed_down_conds,
                         &index_cols,
                         &index_lengths,
                         0,
-                    ) {
-                        Ok(result) => result.ranges,
-                        Err(_) => crate::ranger::points::full_range(),
-                    }
+                    )
+                    .ok()
                 };
-                let mut stats = ds.base.base.stats_info().cloned();
-                if !ds.pushed_down_conds.is_empty() {
-                    if let Some(base_stats) = &stats {
-                        let count = crate::ranger::stats_bridge::pseudo_count_by_ranges(
-                            &ranges,
-                            base_stats.row_count(),
-                        );
-                        stats = Some(crate::stats_info::StatsInfo::new(
-                            count.min(base_stats.row_count()),
-                            [],
-                        ));
+                let ranges = detach
+                    .as_ref()
+                    .map_or_else(crate::ranger::points::full_range, |result| {
+                        result.ranges.clone()
+                    });
+                let remained_conds = detach.as_ref().map_or_else(
+                    || ds.pushed_down_conds.clone(),
+                    |result| result.remained_conds.clone(),
+                );
+                let table_stats = ds
+                    .table_stats
+                    .clone()
+                    .or_else(|| ds.base.base.stats_info().cloned());
+                let mut count_after_access = table_stats.as_ref().map(|stats| stats.row_count());
+                if detach.is_some() {
+                    count_after_access = ds
+                        .index_path_count_after_access
+                        .get(&source_index.id)
+                        .copied()
+                        .or_else(|| {
+                            let base_stats = table_stats.as_ref()?;
+                            // Go `deriveIndexPathStats` trims the signed handle
+                            // appended by `fillIndexPath` back to the declared
+                            // index columns before estimating CountAfterAccess.
+                            // The handle remains in `ranges` for execution.
+                            let estimate_ranges =
+                                if resolved_index_prefix.len() > source_index.columns.len() {
+                                    ranges
+                                        .iter()
+                                        .cloned()
+                                        .map(|mut range| {
+                                            range.low_val.truncate(source_index.columns.len());
+                                            range.high_val.truncate(source_index.columns.len());
+                                            range.collators.truncate(source_index.columns.len());
+                                            range
+                                        })
+                                        .collect()
+                                } else {
+                                    ranges.clone()
+                                };
+                            Some(crate::ranger::stats_bridge::pseudo_count_by_ranges(
+                                &estimate_ranges,
+                                base_stats.row_count(),
+                            ))
+                        });
+                }
+                if let (Some(count), Some(ds_stats), Some(base_stats)) = (
+                    count_after_access.as_mut(),
+                    ds.base.base.stats_info(),
+                    table_stats.as_ref(),
+                ) {
+                    if *count + crate::cost_factors::TOLERANCE_FACTOR < ds_stats.row_count() {
+                        *count = (ds_stats.row_count() / crate::cost_factors::SELECTION_FACTOR)
+                            .min(base_stats.row_count());
                     }
                 }
-                base.base.set_stats(stats);
+                // Go `GetOriginalPhysicalIndexScan` calls
+                // `AdjustRowCountForIndexScanByLimit` before pricing the
+                // scan. With pseudo statistics its cross-estimation arm
+                // reduces to the uniform estimate below; residual filters on
+                // an ordering index then add the session's risk ratio. The
+                // missing adjustment made an ordered LIMIT price the whole
+                // index, so Rust chose `TopN -> TableReader` where Go chooses
+                // the bounded IndexLookUp path.
+                if let (Some(count), Some(ds_stats)) =
+                    (count_after_access.as_mut(), ds.base.base.stats_info())
+                {
+                    if (keep_order || prop.is_sort_item_empty())
+                        && prop.expected_cnt < ds_stats.row_count()
+                        && *count > 0.0
+                    {
+                        let selectivity = ds_stats.row_count() / *count;
+                        let mut adjusted = (*count).min(prop.expected_cnt / selectivity);
+                        if keep_order && !remained_conds.is_empty() && *count > adjusted {
+                            let ratio = ctx.ordering_index_selectivity_ratio;
+                            if ratio > 0.0 {
+                                adjusted += (*count - adjusted).max(0.0) * ratio;
+                            }
+                        }
+                        *count = adjusted;
+                    }
+                }
+                let mut stats = table_stats.as_ref().map(|stats| {
+                    stats.scale_by_expect_cnt(
+                        count_after_access.unwrap_or_else(|| stats.row_count()),
+                        ctx.skew_ratio,
+                    )
+                });
+                if let Some(runtime) = &prop.index_join_prop {
+                    stats = Some(crate::stats_info::StatsInfo::new(
+                        runtime.avg_inner_row_count,
+                        [],
+                    ));
+                }
+                base.base.set_stats(stats.clone());
+                let mut cost_columns = source_index
+                    .columns
+                    .iter()
+                    .filter_map(|column| ds.table_columns.get(column.offset).cloned())
+                    .collect::<Vec<_>>();
+                // Go `convertToIndexScan` appends the table handle columns to
+                // the physical index schema even when the same logical
+                // columns already occur in the secondary index.  Cost model
+                // v2 prices that physical schema verbatim: for a four-column
+                // secondary index over a three-column common handle this is
+                // seven INT slots, not the four-column set-union.  Retaining
+                // the duplicates is therefore both an execution-schema and
+                // a plan-cost contract, not an index-width heuristic.
+                cost_columns.extend(ds.common_handle_cols.iter().cloned());
+                cost_columns.extend(ds.handle_cols.iter().cloned());
                 let scan = PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
                     base,
                     table_id: ds.physical_table_id,
+                    table_as_name: ds.table_as_name.clone(),
+                    cost_columns,
                     index_id: source_index.id,
                     index_name: source_index.name.clone(),
                     keep_order,
                     desc,
-                    ranges,
+                    ranges: ranges.clone(),
+                    range_rebuild: (!ds.pushed_down_conds.is_empty()
+                        && declared_index_prefix_complete)
+                        .then(|| {
+                            crate::physical_plan_cache::IndexRangeRebuild::new(
+                                ds.pushed_down_conds.clone(),
+                                index_cols.clone(),
+                                index_lengths.clone(),
+                            )
+                        }),
                 });
-                let table_side = if single_scan {
-                    None
+                let fully_covered_columns = source_index
+                    .columns
+                    .iter()
+                    .filter(|column| column.length < 0)
+                    .filter_map(|column| {
+                        ds.schema_column_for_index_column(column)
+                            .map(|column| column.unique_id)
+                    })
+                    .collect::<std::collections::BTreeSet<_>>();
+                let (index_filters, table_filters): (Vec<_>, Vec<_>) =
+                    remained_conds.into_iter().partition(|condition| {
+                        tidb_expr::simple_expr::extract_columns(condition)
+                            .iter()
+                            .all(|column| fully_covered_columns.contains(&column.unique_id))
+                    });
+                let index_plan = if index_filters.is_empty() {
+                    scan
+                } else {
+                    let mut selection_base = crate::physical::BasePhysicalPlan::new(
+                        ctx.allocator,
+                        "Selection",
+                        ds.base.base.query_block_offset(),
+                    );
+                    selection_base
+                        .base
+                        .set_schema(ds.base.base.schema().cloned());
+                    selection_base.base.set_stats(if table_filters.is_empty() {
+                        ds.base.base.stats_info().cloned()
+                    } else {
+                        stats.clone()
+                    });
+                    selection_base.set_children(vec![scan]);
+                    PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+                        base: selection_base,
+                        conditions: index_filters,
+                        from_data_source: true,
+                    })
+                };
+                let (table_side, root_task_conds) = if single_scan {
+                    // A condition that is not covered by the index key (for
+                    // example an unsigned integer handle predicate) remains
+                    // above the covering IndexReader as Go's
+                    // `CopTask.RootTaskConds`; it must never disappear merely
+                    // because no table probe is required.
+                    (None, table_filters)
                 } else {
                     // Go `convertToIndexScan` builds the lookup's table side
                     // over the source's schema and stats.
@@ -706,26 +1505,59 @@ fn find_best_task_4_logical_data_source(
                     );
                     table_base
                         .base
-                        .set_stats(ds.base.base.stats_info().cloned());
+                        .set_stats(index_plan.base().base.stats_info().cloned());
                     table_base.base.set_schema(ds.base.base.schema().cloned());
-                    Some(Box::new(PhysicalPlan::TableScan(
-                        crate::physical::PhysicalTableScan {
-                            base: table_base,
-                            table_id: ds.physical_table_id,
-                            store_type: crate::physical_table_reader::StoreType::TiKv,
-                            keep_order: false,
-                            desc: false,
-                            // The lookup's table side reads BY HANDLE from
-                            // the index rows, not by its own ranges.
-                            ranges: crate::ranger::types::Ranges::new(),
-                        },
-                    )))
+                    let table_scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+                        base: table_base,
+                        table_id: ds.physical_table_id,
+                        table_as_name: ds.table_as_name.clone(),
+                        cost_columns: ds.table_columns.clone(),
+                        store_type: crate::physical_table_reader::StoreType::TiKv,
+                        keep_order: false,
+                        desc: false,
+                        // The lookup's table side reads BY HANDLE from
+                        // the index rows, not by its own ranges.
+                        ranges: crate::ranger::types::Ranges::new(),
+                        range_rebuild: None,
+                        table_scan_penalty: ds.table_scan_penalty,
+                    });
+                    let table_plan = if table_filters.is_empty() {
+                        table_scan
+                    } else {
+                        let mut selection_base = crate::physical::BasePhysicalPlan::new(
+                            ctx.allocator,
+                            "Selection",
+                            ds.base.base.query_block_offset(),
+                        );
+                        selection_base
+                            .base
+                            .set_schema(ds.base.base.schema().cloned());
+                        selection_base
+                            .base
+                            .set_stats(ds.base.base.stats_info().cloned());
+                        selection_base.set_children(vec![table_scan]);
+                        PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+                            base: selection_base,
+                            conditions: table_filters,
+                            from_data_source: true,
+                        })
+                    };
+                    (Some(Box::new(table_plan)), Vec::new())
                 };
                 Task::Cop(crate::task::CopTask {
-                    index_plan: Some(Box::new(scan)),
+                    index_plan: Some(Box::new(index_plan)),
                     table_plan: table_side,
+                    root_task_conds,
                     index_plan_finished: false,
                     keep_order,
+                    expect_cnt: prop.expected_cnt as u64,
+                    index_join_info: prop.index_join_prop.as_ref().map(|_| {
+                        crate::task::IndexJoinInfo {
+                            table_id: ds.physical_table_id,
+                            index_id: Some(source_index.id),
+                            ranges: ranges.clone(),
+                        }
+                    }),
                     ..crate::task::CopTask::default()
                 })
             }
@@ -742,10 +1574,15 @@ fn find_best_task_4_logical_data_source(
     Ok(best)
 }
 
-/// Go `enumeratePhysicalPlans4Task` + helper (`find_best_task.go:112,156`),
-/// without the hint half: plan every child under the candidate's child
-/// property, attach, convert to root, enforce when asked, keep the
-/// cheapest.
+#[derive(Default)]
+struct EnumerateState {
+    topn_cop_exists: bool,
+    limit_cop_exists: bool,
+}
+
+/// Go `enumeratePhysicalPlans4Task` + helper (`find_best_task.go:112,156`):
+/// preserve preference slices, hint priority, and the normal cop preference
+/// for pushed TopN/Limit candidates while comparing peers by cost.
 fn enumerate_physical_plans_4_task(
     plan: &LogicalPlan,
     physical_plans_slice: &[Vec<PhysicalPlan>],
@@ -756,8 +1593,13 @@ fn enumerate_physical_plans_4_task(
     if physical_plans_slice.is_empty() {
         return Ok(Task::invalid_task());
     }
-    let mut normal_task = Task::invalid_task();
+    let mut outer_normal_task = Task::invalid_task();
+    let mut outer_hint_task = Task::invalid_task();
     for ops in physical_plans_slice {
+        let mut normal_iter_task = Task::invalid_task();
+        let mut normal_prefer_task = Task::invalid_task();
+        let mut hint_task = Task::invalid_task();
+        let mut state = EnumerateState::default();
         for pp in ops {
             let child_len = plan.children().len();
             let mut child_tasks = Vec::with_capacity(child_len);
@@ -767,7 +1609,7 @@ fn enumerate_physical_plans_4_task(
                 };
                 let child_prop = child_prop.clone();
                 let child_task = find_best_task(child, &child_prop, ctx)?;
-                if child_task.invalid() {
+                if child_task.invalid() || !task_type_satisfied(&child_prop, &child_task) {
                     break;
                 }
                 child_tasks.push(child_task);
@@ -776,6 +1618,19 @@ fn enumerate_physical_plans_4_task(
             if child_tasks.len() != child_len {
                 continue;
             }
+            let child_is_cop = matches!(child_tasks.first(), Some(Task::Cop(_)));
+            let child_is_root = matches!(child_tasks.first(), Some(Task::Root(_)));
+            let child_is_mpp = matches!(child_tasks.first(), Some(Task::Mpp(_)));
+            let hint_applicable = logical_hint_applies(plan, pp, child_is_cop);
+            let normally_preferred = normal_preference_applies(
+                plan,
+                pp,
+                child_is_cop,
+                child_is_root,
+                child_is_mpp,
+                ctx.limit_push_down_threshold,
+                &mut state,
+            );
             let mut cur_task = match attach2_task(pp.clone_shallow(), child_tasks, ctx.column_ids) {
                 Ok(task) => task,
                 // An unported attach body refuses; Go has no such arm, so a
@@ -792,12 +1647,154 @@ fn enumerate_physical_plans_4_task(
             if add_enforcer {
                 cur_task = enforce_property(prop, cur_task, ctx.allocator)?;
             }
-            if normal_task.invalid() || compare_task_cost(ctx.coster, &cur_task, &normal_task)? {
-                normal_task = cur_task;
+            if hint_applicable {
+                if hint_task.invalid() || compare_task_cost(ctx.coster, &cur_task, &hint_task)? {
+                    hint_task = cur_task;
+                }
+            } else if hint_task.invalid() && normally_preferred {
+                if normal_prefer_task.invalid()
+                    || compare_task_cost(ctx.coster, &cur_task, &normal_prefer_task)?
+                {
+                    normal_prefer_task = cur_task;
+                }
+            } else if hint_task.invalid() && normal_prefer_task.invalid() {
+                if normal_iter_task.invalid()
+                    || compare_task_cost(ctx.coster, &cur_task, &normal_iter_task)?
+                {
+                    normal_iter_task = cur_task;
+                }
             }
         }
+        let (slice_task, slice_is_hint) = if !hint_task.invalid() {
+            (hint_task, true)
+        } else if !normal_prefer_task.invalid() {
+            (normal_prefer_task, false)
+        } else {
+            (normal_iter_task, false)
+        };
+        if slice_is_hint {
+            if outer_hint_task.invalid()
+                || compare_task_cost(ctx.coster, &slice_task, &outer_hint_task)?
+            {
+                outer_hint_task = slice_task;
+            }
+        } else if outer_normal_task.invalid()
+            || compare_task_cost(ctx.coster, &slice_task, &outer_normal_task)?
+        {
+            outer_normal_task = slice_task;
+        }
     }
-    Ok(normal_task)
+    if outer_hint_task.invalid() {
+        Ok(outer_normal_task)
+    } else {
+        Ok(outer_hint_task)
+    }
+}
+
+fn task_type_satisfied(required: &PhysicalProperty, task: &Task) -> bool {
+    match required.task_tp {
+        TaskType::Root => matches!(task, Task::Root(_) | Task::Cop(_) | Task::Mpp(_)),
+        TaskType::CopSingleRead | TaskType::CopMultiRead => matches!(task, Task::Cop(_)),
+        TaskType::Mpp => matches!(task, Task::Mpp(_)),
+        TaskType::Unknown(_) => false,
+    }
+}
+
+fn logical_hint_applies(plan: &LogicalPlan, physical: &PhysicalPlan, child_is_cop: bool) -> bool {
+    if logical_join_hint_applies(plan, physical) {
+        return true;
+    }
+    match plan {
+        LogicalPlan::TopN(topn) => topn.prefer_limit_to_cop && child_is_cop,
+        LogicalPlan::Limit(limit) => limit.prefer_limit_to_cop && child_is_cop,
+        LogicalPlan::Aggregation(aggregation) => aggregation.prefer_agg_to_cop && child_is_cop,
+        _ => false,
+    }
+}
+
+fn normal_preference_applies(
+    plan: &LogicalPlan,
+    physical: &PhysicalPlan,
+    child_is_cop: bool,
+    child_is_root: bool,
+    child_is_mpp: bool,
+    limit_push_down_threshold: u64,
+    state: &mut EnumerateState,
+) -> bool {
+    let meets_threshold = match plan {
+        LogicalPlan::Limit(_) => true,
+        LogicalPlan::TopN(topn) => {
+            matches!(physical, PhysicalPlan::Limit(_))
+                || topn.count.saturating_add(topn.offset) <= limit_push_down_threshold
+        }
+        _ => false,
+    };
+    if !meets_threshold {
+        return false;
+    }
+    let cop_exists = if matches!(physical, PhysicalPlan::TopN(_)) {
+        &mut state.topn_cop_exists
+    } else {
+        &mut state.limit_cop_exists
+    };
+    if *cop_exists {
+        return child_is_cop || child_is_mpp;
+    }
+    if child_is_cop {
+        *cop_exists = true;
+        return true;
+    }
+    child_is_root || child_is_mpp
+}
+
+/// Go `applyLogicalJoinHint`: a hint becomes applicable only after the
+/// candidate and both child tasks have been built successfully.  A valid
+/// hinted task outranks ordinary candidates regardless of cost; multiple
+/// valid hinted tasks still compare by cost.
+fn logical_join_hint_applies(plan: &LogicalPlan, physical: &PhysicalPlan) -> bool {
+    use crate::plan_builder::from::join_hint_flags as hint;
+    use crate::plan_cost_ver2::IndexJoinKind;
+
+    let LogicalPlan::Join(join) = plan else {
+        return false;
+    };
+    match physical {
+        PhysicalPlan::MergeJoin(_) => join.prefer_any(&[hint::MERGE_JOIN]),
+        PhysicalPlan::IndexJoin(index) => {
+            let inner_is_left = index.inner_child_idx == 0;
+            match index.kind {
+                IndexJoinKind::IndexJoin => {
+                    (inner_is_left && join.prefer_any(&[hint::LEFT_AS_INLJ_INNER]))
+                        || (!inner_is_left && join.prefer_any(&[hint::RIGHT_AS_INLJ_INNER]))
+                }
+                IndexJoinKind::IndexHashJoin => {
+                    (inner_is_left && join.prefer_any(&[hint::LEFT_AS_INLHJ_INNER]))
+                        || (!inner_is_left && join.prefer_any(&[hint::RIGHT_AS_INLHJ_INNER]))
+                }
+                IndexJoinKind::IndexMergeJoin => {
+                    (inner_is_left && join.prefer_any(&[hint::LEFT_AS_INLMJ_INNER]))
+                        || (!inner_is_left && join.prefer_any(&[hint::RIGHT_AS_INLMJ_INNER]))
+                }
+            }
+        }
+        PhysicalPlan::HashJoin(hash) => {
+            let mut force_left_to_build =
+                join.prefer_any(&[hint::LEFT_AS_HJ_BUILD, hint::RIGHT_AS_HJ_PROBE]);
+            let mut force_right_to_build =
+                join.prefer_any(&[hint::RIGHT_AS_HJ_BUILD, hint::LEFT_AS_HJ_PROBE]);
+            if force_left_to_build && force_right_to_build {
+                force_left_to_build = false;
+                force_right_to_build = false;
+            }
+            let hash_hint = join.prefer_any(&[hint::HASH_JOIN]);
+            if hash_hint && !force_left_to_build && !force_right_to_build {
+                return true;
+            }
+            (force_left_to_build && hash.inner_child_idx == 0)
+                || (force_right_to_build && hash.inner_child_idx == 1)
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -972,6 +1969,37 @@ mod tests {
     }
 
     #[test]
+    fn a_hash_join_candidate_retains_the_sessions_concurrency() {
+        // Go `NewPhysicalHashJoin` copies
+        // `SessionVars.HashJoinConcurrency()` onto every candidate, and the
+        // plan cost later reads the candidate field. This must not fall back
+        // to the default after the shared physical tree is cached or cloned.
+        use crate::logical::LogicalJoin;
+
+        let allocator = PlanIdAllocator::new();
+        let coster = CountCoster;
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0).with_hash_join_concurrency(13);
+        let mut base = BaseLogicalPlan::new(&allocator, LogicalJoin::TYPE, 0);
+        base.base.set_stats(Some(StatsInfo::new(5.0, [])));
+        base.set_children(vec![dual(&allocator, 10.0), dual(&allocator, 20.0)]);
+        let join = LogicalPlan::Join(LogicalJoin {
+            base,
+            ..LogicalJoin::default()
+        });
+
+        let task = find_best_task(&join, &PhysicalProperty::default(), &mut ctx).expect("plans");
+        let Some(PhysicalPlan::HashJoin(hash_join)) = task.plan() else {
+            panic!("a hash join candidate, got {:?}", task.plan());
+        };
+        assert_eq!(hash_join.concurrency, 13);
+        let cloned = task.plan().expect("plan").clone_shallow();
+        let PhysicalPlan::HashJoin(cloned) = cloned else {
+            unreachable!();
+        };
+        assert_eq!(cloned.concurrency, 13, "cached-plan clones retain it");
+    }
+
+    #[test]
     fn a_false_pushed_constant_short_circuits_into_a_dual() {
         // `tryToGetDualTask` (`find_best_task.go:749`): WHERE FALSE never
         // touches a path.
@@ -1051,7 +2079,6 @@ mod tests {
         assert!(task.invalid());
     }
 
-    #[test]
     #[test]
     fn pushed_conditions_become_scan_ranges() {
         // The ranger wire-in: `WHERE pk > 5` on the int handle fills the
@@ -1140,8 +2167,15 @@ mod tests {
         let Some(PhysicalPlan::TableReader(reader)) = task.plan() else {
             panic!("a TableReader, got {:?}", task.plan());
         };
-        let Some(PhysicalPlan::TableScan(scan)) = reader.table_plan.as_deref() else {
-            panic!("the scan");
+        let scan = match reader.table_plan.as_deref() {
+            Some(PhysicalPlan::TableScan(scan)) => scan,
+            Some(PhysicalPlan::Selection(selection)) => {
+                let Some(PhysicalPlan::TableScan(scan)) = selection.base.children().first() else {
+                    panic!("the residual selection's scan");
+                };
+                scan
+            }
+            other => panic!("the scan, got {other:?}"),
         };
         assert_eq!(scan.ranges.len(), 1);
         assert_eq!(scan.ranges[0].to_display_string(), "(5,+inf]");
@@ -1149,6 +2183,38 @@ mod tests {
         // The pseudo CountAfterAccess: 100 rows / pseudoLessRate(3).
         let scanned = scan.base.base.stats_info().expect("stats").row_count();
         assert!((scanned - 100.0 / 3.0).abs() < 1e-9, "{scanned}");
+
+        // A predicate on an ordinary column is residual to the table path.
+        // It must not be interpreted as an integer-handle point/range merely
+        // because it was pushed into the DataSource.
+        let source = build(
+            vec![cmp("eq", &b, 7)],
+            vec![PossiblePath::Table {
+                is_int_handle: true,
+                primary_index: None,
+            }],
+        );
+        let task = find_best_task(&source, &PhysicalProperty::default(), &mut ctx).expect("plans");
+        let Some(PhysicalPlan::TableReader(reader)) = task.plan() else {
+            panic!("a TableReader, got {:?}", task.plan());
+        };
+        let scan = match reader.table_plan.as_deref() {
+            Some(PhysicalPlan::TableScan(scan)) => scan,
+            Some(PhysicalPlan::Selection(selection)) => {
+                let Some(PhysicalPlan::TableScan(scan)) = selection.base.children().first() else {
+                    panic!("the residual selection's scan");
+                };
+                scan
+            }
+            other => panic!("the scan, got {other:?}"),
+        };
+        assert!(crate::ranger::types::has_full_range(&scan.ranges, false));
+        assert_eq!(
+            scan.base.base.stats_info().expect("stats").row_count(),
+            100.0,
+            "a non-handle predicate must not scale table-range cardinality",
+        );
+        assert!(scan.range_rebuild.is_none());
     }
 
     #[test]
@@ -1276,72 +2342,146 @@ mod tests {
         assert!(task.invalid(), "a prefix column serves no order");
     }
 
-    fn an_index_prefix_order_plans_an_index_reader() {
-        // The index-read column end to end: ORDER BY the index's first
-        // column admits the index path (`matchProperty:1095` basic prefix),
-        // the cop's index half converts through `convertToRootTaskImpl`'s
-        // index branch (`task_base.go:563`), and the reader carries the
-        // scan on its IndexPlan field.
-        use crate::access_path::PossiblePath;
+    #[test]
+    fn a_constant_index_prefix_is_skipped_when_matching_order() {
+        use crate::logical::data_source::DataSourceColumn;
         use crate::logical::DataSource;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
-        use tidb_datatype::{FieldType, FieldTypeCode};
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
+        use tidb_expr::constant::Constant;
+        use tidb_expr::expression::Expression;
+        use tidb_expr::scalar_function::ScalarFunction;
         use tidb_expr::schema::Schema;
 
-        let allocator = PlanIdAllocator::new();
-        let coster = crate::find_best_task::coster::Ver2Coster::default();
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let source = {
-            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
-            base.base.set_stats(Some(StatsInfo::new(50.0, [])));
-            let mut schema = Schema::default();
-            schema.columns = vec![
-                Column::new(11, FieldType::new(FieldTypeCode::LongLong)),
-                Column::new(12, FieldType::new(FieldTypeCode::LongLong)),
-            ];
-            base.base.set_schema(Some(schema));
-            LogicalPlan::DataSource(DataSource {
-                base,
-                physical_table_id: 7,
-                enumerated_paths: vec![
-                    PossiblePath::Table {
-                        is_int_handle: true,
-                        primary_index: None,
-                    },
-                    PossiblePath::Index { index: 0 },
+        let a = Column::new(11, FieldType::new(FieldTypeCode::LongLong));
+        let b = Column::new(12, FieldType::new(FieldTypeCode::LongLong));
+        let mut base = BaseLogicalPlan::with_id(1, "DataSource", 0);
+        base.base.set_stats(Some(StatsInfo::new(100.0, [])));
+        base.base.set_schema(Some(Schema::new(vec![a.clone(), b])));
+        let source = DataSource {
+            base,
+            columns: vec![
+                DataSourceColumn {
+                    id: 1,
+                    name: "a".to_owned(),
+                    is_primary_key: false,
+                },
+                DataSourceColumn {
+                    id: 2,
+                    name: "b".to_owned(),
+                    is_primary_key: false,
+                },
+            ],
+            pushed_down_conds: vec![Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new("eq"),
+                FieldType::new(FieldTypeCode::LongLong),
+                vec![
+                    Expression::Column(a),
+                    Expression::Constant(Constant::new(
+                        Datum::Int(1),
+                        FieldType::new(FieldTypeCode::LongLong),
+                    )),
                 ],
-                indexes: vec![SourceIndex {
-                    id: 3,
-                    name: "ib".to_owned(),
-                    columns: vec![SourceIndexColumn {
+            ))],
+            indexes: vec![SourceIndex {
+                columns: vec![
+                    SourceIndexColumn {
+                        name: "a".to_owned(),
+                        offset: 0,
+                        length: -1,
+                    },
+                    SourceIndexColumn {
                         name: "b".to_owned(),
                         offset: 1,
                         length: -1,
-                    }],
-                    ..SourceIndex::default()
-                }],
-                ..DataSource::default()
-            })
+                    },
+                ],
+                ..SourceIndex::default()
+            }],
+            ..DataSource::default()
+        };
+        let order_by_b = PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);
+
+        assert!(index_path_matches_order(
+            &source,
+            &source.indexes[0],
+            &order_by_b
+        ));
+    }
+
+    #[test]
+    fn a_constant_common_handle_prefix_is_skipped_when_matching_order() {
+        use crate::logical::DataSource;
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
+        use tidb_expr::column::Column;
+        use tidb_expr::constant::Constant;
+        use tidb_expr::expression::Expression;
+        use tidb_expr::scalar_function::ScalarFunction;
+        use tidb_expr::schema::Schema;
+
+        let warehouse = Column::new(11, FieldType::new(FieldTypeCode::LongLong));
+        let district = Column::new(12, FieldType::new(FieldTypeCode::LongLong));
+        let mut base = BaseLogicalPlan::with_id(1, "DataSource", 0);
+        base.base
+            .set_schema(Some(Schema::new(vec![warehouse.clone(), district.clone()])));
+        let source = DataSource {
+            base,
+            pushed_down_conds: vec![Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new("eq"),
+                FieldType::new(FieldTypeCode::LongLong),
+                vec![
+                    Expression::Column(warehouse.clone()),
+                    Expression::Constant(Constant::new(
+                        Datum::Int(1),
+                        FieldType::new(FieldTypeCode::LongLong),
+                    )),
+                ],
+            ))],
+            common_handle_cols: vec![warehouse, district],
+            common_handle_lens: vec![UNSPECIFIED_LENGTH; 2],
+            ..DataSource::default()
+        };
+        let order_by_district =
+            PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);
+
+        assert!(table_path_matches_order(&source, &order_by_district));
+    }
+
+    #[test]
+    fn an_index_join_cannot_probe_only_a_later_common_handle_column() {
+        use crate::access_path::PossiblePath;
+        use crate::logical::DataSource;
+        use crate::physical_property::IndexJoinRuntimeProp;
+        use tidb_datatype::{FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
+        use tidb_expr::column::Column;
+
+        let part = Column::new(11, FieldType::new(FieldTypeCode::LongLong));
+        let supplier = Column::new(12, FieldType::new(FieldTypeCode::LongLong));
+        let source = DataSource {
+            handle_cols: vec![part.clone(), supplier.clone()],
+            handle_is_int: false,
+            common_handle_cols: vec![part, supplier.clone()],
+            common_handle_lens: vec![UNSPECIFIED_LENGTH; 2],
+            ..DataSource::default()
+        };
+        let table_path = PossiblePath::Table {
+            is_int_handle: false,
+            primary_index: Some(0),
+        };
+        let runtime = IndexJoinRuntimeProp {
+            other_conditions: Vec::new(),
+            outer_join_keys: vec![Column::new(21, FieldType::new(FieldTypeCode::LongLong))],
+            inner_join_keys: vec![supplier],
+            avg_inner_row_count: 1.0,
+            table_range_scan: true,
         };
 
-        // ORDER BY the index's column (unique id 12): only the index path
-        // matches, and the plan is an IndexReader over a keep-order scan.
-        let prop = PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);
-        let task = find_best_task(&source, &prop, &mut ctx).expect("plans");
-        let Some(PhysicalPlan::IndexReader(reader)) = task.plan() else {
-            panic!("an IndexReader, got {:?}", task.plan());
-        };
-        let Some(PhysicalPlan::IndexScan(scan)) = reader.index_plan.as_deref() else {
-            panic!("the scan hangs off IndexPlan");
-        };
-        assert_eq!(scan.index_id, 3);
-        assert!(scan.keep_order && !scan.desc);
-
-        // A two-item order the one-column index cannot cover refuses.
-        let prop = PhysicalProperty::new(TaskType::Root, &[12, 11], false, f64::MAX, false);
-        let task = find_best_task(&source, &prop, &mut ctx).expect("answers");
-        assert!(task.invalid());
+        assert!(!path_matches_index_join_runtime(
+            &source,
+            &table_path,
+            &runtime,
+        ));
     }
 
     #[test]
@@ -1602,6 +2742,65 @@ mod tests {
             plan.children().first(),
             Some(PhysicalPlan::HashAgg(_))
         ));
+    }
+
+    #[test]
+    fn a_global_aggregate_costs_stream_and_hash_over_the_same_child() {
+        use crate::access_path::PossiblePath;
+        use crate::logical::{DataSource, LogicalAggregation};
+        use crate::plan_base::PossiblePropertiesInfo;
+
+        let allocator = PlanIdAllocator::new();
+        let coster = crate::find_best_task::coster::Ver2Coster::default();
+        let column_ids = crate::expression_rewriter::ColumnIdAllocator::new();
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0).with_column_ids(&column_ids);
+        let source = {
+            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
+            base.base.set_stats(Some(StatsInfo::new(250.0, [])));
+            base.base
+                .set_schema(Some(tidb_expr::schema::Schema::default()));
+            LogicalPlan::DataSource(DataSource {
+                base,
+                physical_table_id: 5,
+                enumerated_paths: vec![PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                }],
+                ..DataSource::default()
+            })
+        };
+        let mut base = BaseLogicalPlan::new(&allocator, "Aggregation", 0);
+        base.base.set_stats(Some(StatsInfo::new(1.0, [])));
+        base.set_children(vec![source]);
+        let agg = LogicalPlan::Aggregation(LogicalAggregation {
+            base,
+            input_count: 250.0,
+            possible_properties: PossiblePropertiesInfo {
+                orders: vec![Vec::new()],
+                has_tiflash: false,
+            },
+            ..LogicalAggregation::default()
+        });
+
+        let task = find_best_task(&agg, &PhysicalProperty::default(), &mut ctx).expect("plans");
+        let plan = task.plan().expect("a plan");
+        assert!(
+            matches!(plan, PhysicalPlan::StreamAgg(_)),
+            "Go's global StreamAgg avoids HashAgg's fixed start cost: {plan:?}"
+        );
+        let Some(PhysicalPlan::TableReader(reader)) = plan.children().first() else {
+            panic!(
+                "a TableReader under the global aggregate: {:?}",
+                plan.children()
+            );
+        };
+        assert!(
+            matches!(
+                reader.table_plan.as_deref(),
+                Some(PhysicalPlan::StreamAgg(_))
+            ),
+            "the partial stage keeps the same family"
+        );
     }
 
     #[test]

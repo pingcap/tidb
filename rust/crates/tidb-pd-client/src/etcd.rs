@@ -548,7 +548,8 @@ fn run_kv_worker(
                     timeout,
                     security,
                     |runtime, mut client| {
-                        runtime.block_on(client.put(key.clone(), value.clone(), None))
+                        runtime
+                            .block_on(client.put(key.clone(), value.clone(), None))
                             .map(|_| ())
                     },
                 );
@@ -597,9 +598,7 @@ fn run_kv_worker(
                     &mut clients,
                     timeout,
                     security,
-                    |runtime, mut client| {
-                        runtime.block_on(client.lease_revoke(id)).map(|_| ())
-                    },
+                    |runtime, mut client| runtime.block_on(client.lease_revoke(id)).map(|_| ()),
                 );
                 let _ = reply.send(result);
             }
@@ -666,7 +665,9 @@ fn run_kv_worker(
                     timeout,
                     security,
                     |runtime, mut client| {
-                        runtime.block_on(client.delete(key.clone(), None)).map(|_| ())
+                        runtime
+                            .block_on(client.delete(key.clone(), None))
+                            .map(|_| ())
                     },
                 );
                 let _ = reply.send(result);
@@ -699,7 +700,11 @@ fn run_kv_worker(
                         runtime
                             .block_on(client.get(key.clone(), Some(options)))
                             .map(|mut response| {
-                                response.take_kvs().into_iter().next().map(|kv| kv.into_key_value().1)
+                                response
+                                    .take_kvs()
+                                    .into_iter()
+                                    .next()
+                                    .map(|kv| kv.into_key_value().1)
                             })
                     },
                 );
@@ -1030,9 +1035,11 @@ async fn watch_one_stream(
     stats: &WatchCounters,
     shutdown: &mut watch::Receiver<bool>,
 ) -> bool {
-    let Ok(options) =
-        etcd_connect_options_with_tls(endpoint, security, ConnectOptions::new().with_connect_timeout(timeout))
-    else {
+    let Ok(options) = etcd_connect_options_with_tls(
+        endpoint,
+        security,
+        ConnectOptions::new().with_connect_timeout(timeout),
+    ) else {
         return false;
     };
     let Ok(mut client) = RawEtcdClient::connect([strip_scheme(endpoint)], Some(options)).await

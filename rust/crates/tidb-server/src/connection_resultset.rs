@@ -261,10 +261,7 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         let next_batch = match source.next_batch(batch_size.max(1)) {
             Ok(next_batch) => next_batch,
             Err(message) => {
-                let pending_refs = pending_rows
-                    .iter()
-                    .map(Vec::as_slice)
-                    .collect::<Vec<_>>();
+                let pending_refs = pending_rows.iter().map(Vec::as_slice).collect::<Vec<_>>();
                 write_binary_payloads(sink, &pending_refs, false)?;
                 return Err(binary_failure(message, sink, false));
             }
@@ -272,30 +269,21 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         if next_batch.is_empty() {
             break;
         }
-        let pending_refs = pending_rows
-            .iter()
-            .map(Vec::as_slice)
-            .collect::<Vec<_>>();
+        let pending_refs = pending_rows.iter().map(Vec::as_slice).collect::<Vec<_>>();
         write_binary_payloads(sink, &pending_refs, false)?;
         pending_rows.clear();
         batch = next_batch;
     }
 
     if let Err(message) = source.finish() {
-        let pending_refs = pending_rows
-            .iter()
-            .map(Vec::as_slice)
-            .collect::<Vec<_>>();
+        let pending_refs = pending_rows.iter().map(Vec::as_slice).collect::<Vec<_>>();
         write_binary_payloads(sink, &pending_refs, false)?;
         return Err(binary_failure(message, sink, true));
     }
     let terminal = stream
         .finish_packet()
         .map_err(|error| binary_failure(error.to_string(), sink, true))?;
-    let mut final_refs = pending_rows
-        .iter()
-        .map(Vec::as_slice)
-        .collect::<Vec<_>>();
+    let mut final_refs = pending_rows.iter().map(Vec::as_slice).collect::<Vec<_>>();
     final_refs.push(&terminal);
     write_binary_payloads(sink, &final_refs, true)?;
     flush_binary_payload(sink, true)?;
@@ -325,14 +313,15 @@ fn write_binary_payloads<W: ResultSetSink>(
     payloads: &[&[u8]],
     finish_attempted: bool,
 ) -> Result<(), BinaryTrackedError> {
-    sink.write_payloads(payloads).map_err(|error| BinaryTrackedError {
-        error: ResultSetWriteError {
-            message: error.message,
-            retryable: false,
-            bytes_escaped: sink.packets_written() > 0 || error.bytes_escaped,
-        },
-        finish_attempted,
-    })
+    sink.write_payloads(payloads)
+        .map_err(|error| BinaryTrackedError {
+            error: ResultSetWriteError {
+                message: error.message,
+                retryable: false,
+                bytes_escaped: sink.packets_written() > 0 || error.bytes_escaped,
+            },
+            finish_attempted,
+        })
 }
 
 fn flush_binary_payload<W: ResultSetSink>(

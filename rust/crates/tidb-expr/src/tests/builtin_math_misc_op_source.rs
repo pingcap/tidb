@@ -29,9 +29,9 @@ use super::*;
 use crate::builtin_ext::compare2::dispatch as compare2_dispatch;
 use crate::builtin_ext::misc::dispatch_in as misc_dispatch_in;
 use crate::builtin_op::infer_unary_op_type;
+use crate::builtin_registry::verify_args_by_count;
 use crate::expression::Expression;
 use crate::math_fn::{conv_valid_prefix, dispatch_values as math_dispatch_values};
-use crate::builtin_registry::verify_args_by_count;
 use crate::rewriter::result_type::builtin_return_type;
 use crate::scalar_function::ScalarFunction;
 use tidb_ast::{CiString, QueryStmt, SelectField, Stmt};
@@ -323,9 +323,8 @@ fn math_string_coercion_raises_one_truncate_warning_each() {
         // Degrees' own `""` which coerces silently to 0).
         let clean = if name == "DEGREES" { "" } else { "0.000" };
         let ctx = WarnCountCtx::new();
-        let got =
-            math_dispatch_values(name, &[Datum::new_string(clean.to_owned())], &ctx)
-                .unwrap_or_else(|| panic!("{name} belongs to the math family"));
+        let got = math_dispatch_values(name, &[Datum::new_string(clean.to_owned())], &ctx)
+            .unwrap_or_else(|| panic!("{name} belongs to the math family"));
         assert!(
             matches!(&got, Ok(Datum::Real(_))),
             "{name}({clean:?}) stays real, got {got:?}"
@@ -423,7 +422,10 @@ fn vectorized_builtin_math_eval_one_vec() {
     assert_eq!(chunk_e("floor(-1.5e0)"), "FLOAT:-2");
     assert_eq!(chunk_e("ceil(-1.5e0)"), "FLOAT:-1");
     assert_eq!(chunk_e("floor(-2.55)"), "INT:-3");
-    assert_eq!(unsigned_int_column_value("floor(c0)", Datum::UInt(3)), "UINT:3");
+    assert_eq!(
+        unsigned_int_column_value("floor(c0)", Datum::UInt(3)),
+        "UINT:3"
+    );
     let decimal_col = {
         let mut ft = FieldType::new(C::NewDecimal);
         ft.set_flen(32);
@@ -431,7 +433,13 @@ fn vectorized_builtin_math_eval_one_vec() {
         ft
     };
     assert_eq!(
-        chunk_row_value("floor(c0)", &[("c0", decimal_col, Datum::Decimal(crate::Decimal::from_literal("-2.55")))],
+        chunk_row_value(
+            "floor(c0)",
+            &[(
+                "c0",
+                decimal_col,
+                Datum::Decimal(crate::Decimal::from_literal("-2.55"))
+            )],
         ),
         "DEC:-3"
     );
@@ -630,7 +638,10 @@ fn vectorized_builtin_miscellaneous_eval_one_vec() {
     // InetAton's second gener -- the explicit SELECT-string list. Left-
     // extension makes 1/2/3-byte prefixes valid.
     let wanted: [(&str, Datum); 5] = [
-        ("11.11.11.11", Datum::UInt(u64::from(u32::from_be_bytes([11, 11, 11, 11])))),
+        (
+            "11.11.11.11",
+            Datum::UInt(u64::from(u32::from_be_bytes([11, 11, 11, 11]))),
+        ),
         ("255.255.255.255", Datum::UInt(4294967295)),
         ("127", Datum::UInt(127)),
         ("127.255", Datum::UInt(2130706687)),
@@ -668,25 +679,44 @@ fn vectorized_builtin_miscellaneous_eval_one_vec() {
         s("x"),
         json.clone(),
     ] {
-        assert_eq!(misc_dispatch_in("ANY_VALUE", std::slice::from_ref(&value), &crate::context::NoColumns)
+        assert_eq!(
+            misc_dispatch_in(
+                "ANY_VALUE",
+                std::slice::from_ref(&value),
+                &crate::context::NoColumns
+            )
             .expect("ANY_VALUE arity")
-            .unwrap(), value);
+            .unwrap(),
+            value
+        );
     }
     // NameConst arms echo the value argument unchanged per ET-family pair.
     assert_eq!(
-        misc_dispatch_in("NAME_CONST", &[s("label"), Datum::Int(5)], &crate::context::NoColumns)
-            .unwrap()
-            .unwrap(),
+        misc_dispatch_in(
+            "NAME_CONST",
+            &[s("label"), Datum::Int(5)],
+            &crate::context::NoColumns
+        )
+        .unwrap()
+        .unwrap(),
         Datum::Int(5)
     );
-    let echoed = misc_dispatch_in("NAME_CONST", &[s("label"), json.clone()], &crate::context::NoColumns)
-        .unwrap()
-        .unwrap();
+    let echoed = misc_dispatch_in(
+        "NAME_CONST",
+        &[s("label"), json.clone()],
+        &crate::context::NoColumns,
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(echoed, json);
     assert_eq!(
-        misc_dispatch_in("NAME_CONST", &[s("label"), Datum::Null], &crate::context::NoColumns)
-            .unwrap()
-            .unwrap(),
+        misc_dispatch_in(
+            "NAME_CONST",
+            &[s("label"), Datum::Null],
+            &crate::context::NoColumns
+        )
+        .unwrap()
+        .unwrap(),
         Datum::Null
     );
 
@@ -714,27 +744,34 @@ fn vectorized_builtin_miscellaneous_eval_one_vec() {
 fn vectorized_builtin_miscellaneous_func() {
     let canonical = "6ccd780c-baba-1026-9564-5b8c656024db";
     let normal: Vec<u8> = vec![
-        0x6c, 0xcd, 0x78, 0x0c, 0xba, 0xba, 0x10, 0x26, 0x95, 0x64, 0x5b, 0x8c, 0x65, 0x60,
-        0x24, 0xdb,
+        0x6c, 0xcd, 0x78, 0x0c, 0xba, 0xba, 0x10, 0x26, 0x95, 0x64, 0x5b, 0x8c, 0x65, 0x60, 0x24,
+        0xdb,
     ];
-    assert_eq!(call("BIN_TO_UUID", &[Datum::new_bytes(normal.clone())]), s(canonical));
     assert_eq!(
-        call("BIN_TO_UUID", &[Datum::new_bytes(normal.clone()), Datum::Int(1)]),
+        call("BIN_TO_UUID", &[Datum::new_bytes(normal.clone())]),
+        s(canonical)
+    );
+    assert_eq!(
+        call(
+            "BIN_TO_UUID",
+            &[Datum::new_bytes(normal.clone()), Datum::Int(1)]
+        ),
         s("baba1026-780c-6ccd-9564-5b8c656024db")
     );
     // Too-short byte strings refuse to parse rather than truncating.
-    assert!(
-        misc_dispatch_in(
-            "BIN_TO_UUID",
-            &[Datum::new_bytes(normal[..15].to_vec())],
-            &crate::context::NoColumns
-        )
-        .unwrap()
-        .is_err()
-    );
+    assert!(misc_dispatch_in(
+        "BIN_TO_UUID",
+        &[Datum::new_bytes(normal[..15].to_vec())],
+        &crate::context::NoColumns
+    )
+    .unwrap()
+    .is_err());
     // Braced spelling accepted by google/uuid's Parse in BOTH directions.
     assert_eq!(
-        call("UUID_TO_BIN", &[s("{6ccd780c-baba-1026-9564-5b8c656024db}")]),
+        call(
+            "UUID_TO_BIN",
+            &[s("{6ccd780c-baba-1026-9564-5b8c656024db}")]
+        ),
         Datum::new_bytes(normal)
     );
 }
@@ -902,7 +939,10 @@ fn unary_minus_ret_type_flen_follows_go_sign_reservation() {
     // Signed Int constant flen 11 -> 12.
     let mut int_ft11 = int_ft();
     int_ft11.set_flen(11);
-    let arg = Expression::Constant(crate::constant::Constant::new(Datum::Int(123), int_ft11.clone()));
+    let arg = Expression::Constant(crate::constant::Constant::new(
+        Datum::Int(123),
+        int_ft11.clone(),
+    ));
     let ret = infer_unary_op_type("unaryminus", &arg).expect("int infer");
     assert_eq!(ret.flen(), 12);
 
@@ -957,7 +997,10 @@ fn logic_and_source_table() {
     // Wrong parameter count refuses the signature outright -- Go's
     // newFunctionForTest validates via VerifyArgsWrapper, whose port is
     // `builtin_registry::verify_args_by_count`.
-    assert!(matches!(verify_args_by_count("and", 1), Err(EvalError::WrongParameterCount(_))));
+    assert!(matches!(
+        verify_args_by_count("and", 1),
+        Err(EvalError::WrongParameterCount(_))
+    ));
     assert!(verify_args_by_count("and", 2).is_ok());
     // Two operands BUILD fine (funcs[...] getFunction z,z succeeds).
     assert!(eval_default("and", vec![i_(0), i_(1)], int_ft()).is_ok());
@@ -997,7 +1040,10 @@ fn logic_or_source_table() {
             .unwrap_or_else(|err| panic!("or{args:?}: {err:?}"));
         assert_eq!(got, expected, "or {args:?}");
     }
-    assert!(matches!(verify_args_by_count("or", 1), Err(EvalError::WrongParameterCount(_))));
+    assert!(matches!(
+        verify_args_by_count("or", 1),
+        Err(EvalError::WrongParameterCount(_))
+    ));
 }
 
 /// Go `pkg/expression/builtin_op_test.go:644 TestLogicXor`: parity of
@@ -1032,7 +1078,10 @@ fn logic_xor_source_table() {
             .unwrap_or_else(|err| panic!("xor{args:?}: {err:?}"));
         assert_eq!(got, expected, "xor {args:?}");
     }
-    assert!(matches!(verify_args_by_count("xor", 1), Err(EvalError::WrongParameterCount(_))));
+    assert!(matches!(
+        verify_args_by_count("xor", 1),
+        Err(EvalError::WrongParameterCount(_))
+    ));
 }
 
 /// Go `pkg/expression/builtin_op_test.go:285 TestBitOr` and `:398 TestBitAnd`
@@ -1066,8 +1115,14 @@ fn bit_or_bit_and_complete_tables() {
         eval_default("bitand", vec![Datum::Null, i_(1)], uint_result()).unwrap(),
         Datum::Null
     );
-    assert!(matches!(verify_args_by_count("bitor", 1), Err(EvalError::WrongParameterCount(_))));
-    assert!(matches!(verify_args_by_count("bitand", 1), Err(EvalError::WrongParameterCount(_))));
+    assert!(matches!(
+        verify_args_by_count("bitor", 1),
+        Err(EvalError::WrongParameterCount(_))
+    ));
+    assert!(matches!(
+        verify_args_by_count("bitand", 1),
+        Err(EvalError::WrongParameterCount(_))
+    ));
 }
 
 /// Go `pkg/expression/builtin_op_test.go:437 TestBitNeg` -- the source rows
@@ -1087,7 +1142,10 @@ fn bit_neg_source_rows() {
         eval_default("bitneg", vec![Datum::Null], uint_result()).unwrap(),
         Datum::Null
     );
-    assert!(matches!(verify_args_by_count("bitneg", 2), Err(EvalError::WrongParameterCount(_))));
+    assert!(matches!(
+        verify_args_by_count("bitneg", 2),
+        Err(EvalError::WrongParameterCount(_))
+    ));
 }
 
 /// Go `pkg/expression/builtin_op_test.go:483 TestUnaryNot` -- string, float,
@@ -1117,7 +1175,10 @@ fn unary_not_every_input_domain() {
             "not {arg:?}"
         );
     }
-    assert!(matches!(verify_args_by_count("not", 2), Err(EvalError::WrongParameterCount(_))));
+    assert!(matches!(
+        verify_args_by_count("not", 2),
+        Err(EvalError::WrongParameterCount(_))
+    ));
 }
 
 /// Go `pkg/expression/builtin_op_test.go:537 TestIsTrueOrFalse` -- the FULL
@@ -1235,7 +1296,11 @@ fn builtin_unary_minus_int_sig_columns() {
     // Unsigned 2^63+1 overflows (Go AppendUint64(-(math.MinInt64)+1)).
     assert!(chunk_row_value(
         "-c0",
-        &[("c0", unsigned_col.clone(), Datum::UInt(9_223_372_036_854_775_809))]
+        &[(
+            "c0",
+            unsigned_col.clone(),
+            Datum::UInt(9_223_372_036_854_775_809)
+        )]
     )
     .contains("IntOverflow"));
     assert_eq!(
@@ -1254,12 +1319,30 @@ fn vectorized_builtin_op_func() {
     // IsTruthWithoutNull / IsFalsity over REAL, DECIMAL, INT children --
     // evaluated signature-directly (the chunk tier exposes IS TRUE as an
     // AST postfix form, not a callable builtin).
-    assert_eq!(eval_default("istrue", vec![r_(-0.5)], int_result()).unwrap(), Datum::Int(1));
-    assert_eq!(eval_default("istrue", vec![r_(0.0)], int_result()).unwrap(), Datum::Int(0));
-    assert_eq!(eval_default("istrue", vec![dec_("0.00")], int_result()).unwrap(), Datum::Int(0));
-    assert_eq!(eval_default("istrue", vec![i_(2)], int_result()).unwrap(), Datum::Int(1));
-    assert_eq!(eval_default("isfalse", vec![r_(0.0)], int_result()).unwrap(), Datum::Int(1));
-    assert_eq!(eval_default("isfalse", vec![r_(1.5)], int_result()).unwrap(), Datum::Int(0));
+    assert_eq!(
+        eval_default("istrue", vec![r_(-0.5)], int_result()).unwrap(),
+        Datum::Int(1)
+    );
+    assert_eq!(
+        eval_default("istrue", vec![r_(0.0)], int_result()).unwrap(),
+        Datum::Int(0)
+    );
+    assert_eq!(
+        eval_default("istrue", vec![dec_("0.00")], int_result()).unwrap(),
+        Datum::Int(0)
+    );
+    assert_eq!(
+        eval_default("istrue", vec![i_(2)], int_result()).unwrap(),
+        Datum::Int(1)
+    );
+    assert_eq!(
+        eval_default("isfalse", vec![r_(0.0)], int_result()).unwrap(),
+        Datum::Int(1)
+    );
+    assert_eq!(
+        eval_default("isfalse", vec![r_(1.5)], int_result()).unwrap(),
+        Datum::Int(0)
+    );
     // LogicOr arms: (int,int), (decimal,real), (int,duration).
     assert_eq!(chunk_e("0 or null"), "NULL");
     assert_eq!(chunk_e("1.50 or 0e0"), "INT:1");
@@ -1303,9 +1386,18 @@ fn vectorized_builtin_op_func() {
     assert_eq!(chunk_e("1 & 3"), "UINT:1");
     assert_eq!(chunk_e("~0"), "UINT:18446744073709551615");
     // UnaryNot over each numeric family (signature-directly).
-    assert_eq!(eval_default("not", vec![r_(0.0)], int_result()).unwrap(), Datum::Int(1));
-    assert_eq!(eval_default("not", vec![dec_("0.0")], int_result()).unwrap(), Datum::Int(1));
-    assert_eq!(eval_default("not", vec![i_(5)], int_result()).unwrap(), Datum::Int(0));
+    assert_eq!(
+        eval_default("not", vec![r_(0.0)], int_result()).unwrap(),
+        Datum::Int(1)
+    );
+    assert_eq!(
+        eval_default("not", vec![dec_("0.0")], int_result()).unwrap(),
+        Datum::Int(1)
+    );
+    assert_eq!(
+        eval_default("not", vec![i_(5)], int_result()).unwrap(),
+        Datum::Int(0)
+    );
     // RightShift / LeftShift int-int.
     assert_eq!(chunk_e("1 >> 1"), "UINT:0");
     assert_eq!(chunk_e("1 << 2"), "UINT:4");

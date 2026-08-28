@@ -73,7 +73,7 @@ fn extract_master_unit_table_matches_source() {
 /// extractor answers 0 / time-part-zero for these inputs today, so pinning
 /// them live would fail; nothing here pretends the divergence away.
 #[test]
-#[ignore = "go-parity-gap: EXTRACT composite units over a string WITH fractional seconds drop the HH:MM:SS part (parse_time_hms rejects the fsp suffix in time_fn/calendar.rs)" ]
+#[ignore = "go-parity-gap: EXTRACT composite units over a string WITH fractional seconds drop the HH:MM:SS part (parse_time_hms rejects the fsp suffix in time_fn/calendar.rs)"]
 fn extract_composite_units_over_fractional_strings_diverge() {}
 
 /// The three rows of `pkg/expression/evaluator_test.go:606 TestMod`.
@@ -154,7 +154,10 @@ fn unary_op_kind_rows_match_source() {
         apply_unary_of(UnaryOp::Minus, Datum::Real(1.0)),
         Datum::Real(-1.0)
     );
-    assert_eq!(apply_unary_of(UnaryOp::Minus, Datum::Int(1)), Datum::Int(-1));
+    assert_eq!(
+        apply_unary_of(UnaryOp::Minus, Datum::Int(1)),
+        Datum::Int(-1)
+    );
     assert_eq!(
         apply_unary_of(UnaryOp::Minus, Datum::UInt(1)),
         Datum::Int(-1),
@@ -181,7 +184,10 @@ fn unary_minus_temporal_and_decimal_operands_match_source() {
 
     // NewDecFromInt(1) -> -1: result must COMPARE equal to -1 decimal.
     let folded_minus_one = crate::Decimal::from_literal("-1");
-    match apply_unary_of(UnaryOp::Minus, Datum::Decimal(crate::Decimal::from_literal("1"))) {
+    match apply_unary_of(
+        UnaryOp::Minus,
+        Datum::Decimal(crate::Decimal::from_literal("1")),
+    ) {
         Datum::Decimal(value) => {
             assert!(
                 value.add(&folded_minus_one.negate()).is_zero(),
@@ -192,11 +198,13 @@ fn unary_minus_temporal_and_decimal_operands_match_source() {
     }
 
     // ZeroDuration -> decimal ZERO (`new(types.MyDecimal)`).
-    let zero_duration =
-        tidb_datatype::MySqlDuration::new(0, 0, 0, 0, 0).expect("zero duration");
+    let zero_duration = tidb_datatype::MySqlDuration::new(0, 0, 0, 0, 0).expect("zero duration");
     match apply_unary_of(UnaryOp::Minus, Datum::Duration(zero_duration)) {
         Datum::Decimal(value) => {
-            assert!(value.is_zero(), "-zero-duration folds to decimal zero, got {value:?}");
+            assert!(
+                value.is_zero(),
+                "-zero-duration folds to decimal zero, got {value:?}"
+            );
         }
         other => panic!("expected a decimal answer for -duration, got {other:?}"),
     }

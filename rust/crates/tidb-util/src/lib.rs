@@ -32,12 +32,12 @@ pub(crate) fn global_logger_test_guard() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[cfg(test)]
-mod tests_fastrand;
-mod tests_mathutil;
-#[cfg(test)]
 mod tests_dbterror;
 #[cfg(test)]
+mod tests_fastrand;
+#[cfg(test)]
 mod tests_intest;
+mod tests_mathutil;
 
 pub mod arena;
 pub mod backoff;
@@ -56,8 +56,8 @@ pub mod disk;
 pub mod disttask;
 pub mod encrypt;
 pub mod errno_summary;
-pub mod fastrand;
 pub mod fast_hash;
+pub mod fastrand;
 pub mod filter;
 pub mod format;
 pub mod generic;

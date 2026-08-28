@@ -38,7 +38,7 @@ use tidb_executor::cluster_storage::{
 use tidb_executor::driver::{run_select_on, Catalog};
 use tidb_executor::kv_table::{KvColumn, KvTable};
 use tidb_executor::remote_scan::{
-    PushdownAggregateKind, PushdownGlobalAggregateFunction, PushdownPartialAggregate,
+    PushdownAggregateFunction, PushdownAggregateKind, PushdownPartialAggregate,
     PushdownScanColumn, PushdownScanRequest, PushdownScanner, PushdownStatementContext,
 };
 use tidb_executor::storage::StorageError;
@@ -118,6 +118,7 @@ struct Observation {
 #[derive(Debug, Default)]
 struct FakeRegion {
     observations: Mutex<Vec<Observation>>,
+    response_threads: Mutex<Vec<std::thread::ThreadId>>,
 }
 
 /// A coprocessor that executes the DAG it is given, the way TiKV does: the
@@ -130,10 +131,16 @@ struct FakeTransport {
 
 struct FakeResponse {
     subsets: Vec<QueryResultSubset>,
+    region: Arc<FakeRegion>,
 }
 
 impl QueryResponse for FakeResponse {
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+        self.region
+            .response_threads
+            .lock()
+            .unwrap()
+            .push(std::thread::current().id());
         Ok(if self.subsets.is_empty() {
             None
         } else {
@@ -197,9 +204,12 @@ impl QueryTransport for FakeTransport {
 
         let mut rows_data = Vec::new();
         let mut sent = 0usize;
-        if observation.count_children.is_empty() && dag.executors.iter().any(|executor| {
-            executor.tp == Some(ExecType::TypeAggregation as i32)
-        }) {
+        if observation.count_children.is_empty()
+            && dag
+                .executors
+                .iter()
+                .any(|executor| executor.tp == Some(ExecType::TypeAggregation as i32))
+        {
             // Still return a valid partial count when the malformed request
             // has no child, so the regression fails on the encoded DAG rather
             // than on response decoding.
@@ -251,6 +261,7 @@ impl QueryTransport for FakeTransport {
                 data: response.encode_to_vec(),
                 runtime: None,
             }],
+            region: Arc::clone(&self.region),
         }))
     }
 }
@@ -306,10 +317,7 @@ fn fixture() -> (Catalog, Arc<FakeRegion>) {
     let storage = ClusterTableStorage::new(MutationBuffer::new(), snapshot)
         .with_remote_scanner(scanner as Arc<dyn PushdownScanner>);
     let mut catalog = Catalog::default();
-    catalog.register_kv(
-        "t",
-        KvTable::with_storage(91, columns, Box::new(storage)),
-    );
+    catalog.register_kv("t", KvTable::with_storage(91, columns, Box::new(storage)));
     (catalog, region)
 }
 
@@ -352,6 +360,37 @@ fn a_limit_over_a_partly_lowered_predicate_returns_every_qualifying_row() {
         "so the cap must not have travelled with it"
     );
     assert_eq!(observation.rows_sent, region_rows().len());
+}
+
+/// A synchronous SQL worker must pull its own coprocessor iterator. Spawning
+/// an OS-thread producer and rendezvousing through a bounded channel turns
+/// every small OLTP range read into two scheduler crossings; Go's equivalent
+/// iterator is pulled by the statement goroutine itself.
+#[test]
+fn coprocessor_response_is_pulled_by_query_worker() {
+    let query_thread = std::thread::current().id();
+    let (catalog, region) = fixture();
+
+    let rows = run_select_on(
+        "SELECT id FROM t WHERE id > 0",
+        &catalog,
+        &StmtContext::for_query(),
+    )
+    .expect("the scan is served by the coprocessor");
+    assert_eq!(rows.len(), region_rows().len());
+
+    let response_threads = region.response_threads.lock().unwrap();
+    assert!(
+        !response_threads.is_empty(),
+        "the response iterator was pulled"
+    );
+    assert!(
+        response_threads
+            .iter()
+            .all(|thread| *thread == query_thread),
+        "the query ran on {query_thread:?}, but the response was pulled on \
+         {response_threads:?}"
+    );
 }
 
 /// The same invariant with a **pushed builtin call** as the conjunct that did
@@ -434,6 +473,36 @@ fn a_limit_over_a_fully_lowered_builtin_predicate_travels_with_it() {
     );
 }
 
+/// FAIL-BEFORE/PASS-AFTER: a physical access receipt does not imply that it
+/// consumed a root-only Selection. Go leaves `TAN` above the reader because
+/// TiKV does not support it; the local Selection must therefore still run,
+/// and its Limit must remain at root as well.
+#[test]
+fn a_root_only_predicate_is_not_swallowed_by_the_access_receipt() {
+    let (catalog, region) = fixture();
+    let rows = run_select_on(
+        "SELECT id FROM t WHERE tan(id) > 0 LIMIT 5",
+        &catalog,
+        &StmtContext::for_query(),
+    )
+    .expect("the scan is served by the coprocessor");
+    assert_eq!(
+        rows,
+        [1, 4, 7, 10, 13]
+            .into_iter()
+            .map(|id| vec![Datum::Int(id)])
+            .collect::<Vec<_>>()
+    );
+
+    let observations = region.observations.lock().unwrap();
+    let [observation] = observations.as_slice() else {
+        panic!("exactly one coprocessor request: {observations:?}");
+    };
+    assert_eq!(observation.conditions, 0, "TAN remains at the root");
+    assert_eq!(observation.remote_limit, None, "the root Limit stays with it");
+    assert_eq!(observation.rows_sent, region_rows().len());
+}
+
 /// Go rewrites `COUNT(*)` to `COUNT(1)` before `AggFuncToPBExpr` serializes
 /// every aggregate argument. TiKV's COUNT parser therefore always reads one
 /// child; a zero-child COUNT is malformed and panics the region worker. The
@@ -467,11 +536,12 @@ fn count_star_lowers_to_count_with_one_constant_child() {
         limit: None,
         paging_min_size: None,
         aggregate: Some(PushdownPartialAggregate::Global {
-            functions: vec![PushdownGlobalAggregateFunction {
+            functions: vec![PushdownAggregateFunction {
                 kind: PushdownAggregateKind::Count,
                 input: None,
                 output_type: count_type,
             }],
+            streamed: false,
         }),
         keep_order: false,
         allow_unordered_response: false,

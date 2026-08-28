@@ -2381,7 +2381,6 @@ fn range_mem_usage_matches_go() {
     assert_eq!(ranges_mem_usage(&ranges), mem1 + mem2);
 }
 
-
 /// The taobench `edges` write shape: a three-arm DNF over
 /// PRIMARY(id1, id2, type) where EVERY arm shares `id1 = const` and two
 /// arms extend it with `(id2, type)` conjuncts. The live go baseline
@@ -2394,7 +2393,8 @@ fn taobench_edge_dnf_index_ranges_match_go() {
     struct EdgesTable;
     impl EdgesTable {
         fn columns() -> Vec<Column> {
-            let big = |unique_id: i64| Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong));
+            let big =
+                |unique_id: i64| Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong));
             let mut varchar = FieldType::new(FieldTypeCode::Varchar);
             varchar.set_collation(tidb_datatype::Collation::Utf8Mb4Bin);
             varchar.add_flags(FieldTypeFlags::NOT_NULL);
@@ -2411,7 +2411,11 @@ fn taobench_edge_dnf_index_ranges_match_go() {
                 _ => return None,
             };
             let columns = Self::columns();
-            Some((offset, columns[offset].ret_type.clone().expect("typed"), columns[offset].unique_id))
+            Some((
+                offset,
+                columns[offset].ret_type.clone().expect("typed"),
+                columns[offset].unique_id,
+            ))
         }
         fn resolve_column(&self, path: &[String]) -> Option<Column> {
             let name = path.last()?;
@@ -2433,13 +2437,14 @@ fn taobench_edge_dnf_index_ranges_match_go() {
 
     let run = |sql: &str| -> Result<String, String> {
         let stmt = tidb_parser::parse(sql).map_err(|error| format!("parse: {error:?}"))?;
-        let tidb_ast::Stmt::Query(query) = stmt else { return Err("not query".to_owned()) };
+        let tidb_ast::Stmt::Query(query) = stmt else {
+            return Err("not query".to_owned());
+        };
         let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
             return Err("not select".to_owned());
         };
-        let rewritten =
-            rewrite_expr_resolved(&select.where_clause.expect("where"), &EdgesTable)
-                .map_err(|error| format!("rewrite: {error:?}"))?;
+        let rewritten = rewrite_expr_resolved(&select.where_clause.expect("where"), &EdgesTable)
+            .map_err(|error| format!("rewrite: {error:?}"))?;
         let ctx = tidb_expr::NoColumns;
         let builder = RealFunctionBuilder::new(&ctx);
         let conds: Vec<Expression> = split_cnf_items(&rewritten)
@@ -2450,7 +2455,10 @@ fn taobench_edge_dnf_index_ranges_match_go() {
         let index_cols = EdgesTable::columns();
         let lengths = vec![super::checker::UNSPECIFIED_LENGTH; index_cols.len()];
         let result = super::detacher::detach_cond_and_build_range_for_index(
-            &conds, &index_cols, &lengths, 0,
+            &conds,
+            &index_cols,
+            &lengths,
+            0,
         )
         .map_err(|error| format!("detach: {error:?}"))?;
         Ok(ranges_to_go_string(&result.ranges))
@@ -2458,20 +2466,15 @@ fn taobench_edge_dnf_index_ranges_match_go() {
 
     // Every arm shares id1; the (id2, type) arms are covered by the
     // id1 point. Go unions this into ONE point range.
-    let shared_id1 = run(
-        "select * from t where id1 = 999999999001 \
+    let shared_id1 = run("select * from t where id1 = 999999999001 \
          or id1 = 999999999001 and id2 = 1947761684552 and type = '3' \
-         or id1 = 999999999001 and id2 = 1947761684552 and type = '0'",
-    )
+         or id1 = 999999999001 and id2 = 1947761684552 and type = '0'")
     .expect("detaches");
     assert_eq!(shared_id1, "[[999999999001,999999999001]]");
 
     // Two plain id2 arms under one id1 behave the same way.
-    let two_id2_arms = run(
-        "select * from t where id1 = 999999999001 \
-         or id1 = 999999999001 and id2 = 1947761684552",
-    )
+    let two_id2_arms = run("select * from t where id1 = 999999999001 \
+         or id1 = 999999999001 and id2 = 1947761684552")
     .expect("detaches");
     assert_eq!(two_id2_arms, "[[999999999001,999999999001]]");
 }
-

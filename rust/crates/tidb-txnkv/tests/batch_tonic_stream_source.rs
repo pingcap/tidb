@@ -563,7 +563,7 @@ fn opening_generation_bounds_packets_and_isolates_sibling_cancellation() {
 }
 
 #[test]
-fn pending_exposes_publication_before_withheld_response_headers_complete() {
+fn coprocessor_begin_does_not_resolve_publication_before_completion() {
     let (headers_started, headers_wait) = mpsc::channel();
     let release_headers = Arc::new(AtomicBool::new(false));
     let server = TestServer::start(StreamingTikv {
@@ -589,13 +589,10 @@ fn pending_exposes_publication_before_withheld_response_headers_complete() {
             &call,
         )
         .unwrap();
-    let publication = pending
-        .publication()
-        .expect("begin must bind the BatchCommands receipt before returning");
-    assert_eq!(publication.physical_address(), server.address);
-    assert_eq!(publication.physical_channel_version(), 1);
-    assert_eq!(publication.batch_stream_generation(), 1);
-    assert_eq!(publication.forwarded_host(), Some("logical-tikv:20160"));
+    assert!(
+        pending.publication().is_none(),
+        "begin must hand the request off without synchronously resolving its publication receipt"
+    );
     headers_wait.recv_timeout(Duration::from_secs(1)).unwrap();
     assert!(pending.try_complete().unwrap().is_none());
 

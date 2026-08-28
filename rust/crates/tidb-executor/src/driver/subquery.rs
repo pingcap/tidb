@@ -296,11 +296,7 @@ pub(crate) fn rewrite_filter_in_subqueries(
 fn filter_in_candidate(expr: &tidb_ast::Expr) -> bool {
     use tidb_ast::Expr;
     match expr {
-        Expr::InSubquery {
-            expr,
-            subquery,
-            ..
-        } => {
+        Expr::InSubquery { expr, subquery, .. } => {
             !matches!(expr.as_ref(), Expr::Row(_))
                 && matches!(subquery.as_ref(), QueryStmt::Select(inner)
                     if inner.limit.is_none()
@@ -362,13 +358,7 @@ fn rewrite_nested_filter_in_expr(
     {
         if !top_level {
             if let Some(rewritten) = rewrite_correlated_exists_to_left_join(
-                subquery,
-                outer,
-                catalog,
-                current_db,
-                ctx,
-                from,
-                ordinal,
+                subquery, outer, catalog, current_db, ctx, from, ordinal,
             )? {
                 *changed = true;
                 return Ok(rewritten);
@@ -559,14 +549,7 @@ fn rewrite_correlated_exists_to_left_join(
 
     let inner_scope = select_outer_scope(inner, catalog, current_db, ctx);
     let mut correlated = Vec::new();
-    collect_correlated_columns_query(
-        subquery,
-        outer,
-        catalog,
-        current_db,
-        &mut correlated,
-        ctx,
-    );
+    collect_correlated_columns_query(subquery, outer, catalog, current_db, &mut correlated, ctx);
     if correlated.len() != 1 {
         return Ok(None);
     }
@@ -579,7 +562,9 @@ fn rewrite_correlated_exists_to_left_join(
     }
 
     let outer_resolver = ScopeResolver { scope: outer };
-    let inner_resolver = ScopeResolver { scope: &inner_scope };
+    let inner_resolver = ScopeResolver {
+        scope: &inner_scope,
+    };
     let mut match_pair: Option<(tidb_ast::Expr, tidb_ast::Expr)> = None;
     let mut remaining = Vec::with_capacity(predicates.len());
     for predicate in predicates {
@@ -589,8 +574,10 @@ fn rewrite_correlated_exists_to_left_join(
         };
         let left_outer = collect_correlated_columns_expr(left, &inner_scope, outer);
         let right_outer = collect_correlated_columns_expr(right, &inner_scope, outer);
-        let left_inner = matches!(left.as_ref(), Expr::Column(path) if inner_resolver.resolve(path).is_some());
-        let right_inner = matches!(right.as_ref(), Expr::Column(path) if inner_resolver.resolve(path).is_some());
+        let left_inner =
+            matches!(left.as_ref(), Expr::Column(path) if inner_resolver.resolve(path).is_some());
+        let right_inner =
+            matches!(right.as_ref(), Expr::Column(path) if inner_resolver.resolve(path).is_some());
         let left_is_target = left_outer.len() == 1
             && right_outer.is_empty()
             && right_inner
@@ -631,10 +618,8 @@ fn rewrite_correlated_exists_to_left_join(
     ) else {
         return Ok(None);
     };
-    if !tidb_datatype::compatible_collate(
-        outer_type.collation_name(),
-        inner_type.collation_name(),
-    ) {
+    if !tidb_datatype::compatible_collate(outer_type.collation_name(), inner_type.collation_name())
+    {
         return Ok(None);
     }
     let key_cast = match comparison_key_cast(&outer_expression, outer_type, inner_type) {
@@ -1161,7 +1146,6 @@ fn collect_correlated_columns(
                 None,
                 crate::driver::leaf_demand::FromDemand::none(),
                 &tidb_planner::physical_property::PhysicalProperty::default(),
-                None,
             ) {
                 Ok((_, scope, _)) => scope,
                 // An unresolvable inner FROM is reported by the inner run itself.
@@ -1776,7 +1760,6 @@ pub(crate) fn select_outer_scope(
                 None,
                 crate::driver::leaf_demand::FromDemand::none(),
                 &tidb_planner::physical_property::PhysicalProperty::default(),
-                None,
             ) {
                 Ok((_, scope, _)) => scope,
                 Err(_) => empty(),

@@ -70,6 +70,7 @@ pub(super) fn direct_snapshot_get<C, L, T>(
     runtime: &SharedReadRuntime<C, L>,
     timestamps: &T,
     gc_state: &GcStateCache,
+    resource_group_name: Option<&str>,
     key: &[u8],
     call: &UnaryCallContext,
 ) -> Result<SnapshotGetResult, OptimisticCoordinatorError>
@@ -87,6 +88,7 @@ where
         gc_state,
         &mut forward_backoff,
         &mut resolved_locks,
+        resource_group_name,
         key,
         call,
     )
@@ -100,6 +102,7 @@ fn snapshot_get_with<C, L, T>(
     gc_state: &GcStateCache,
     forward_backoff: &mut RegionBackoffBudget,
     resolved_locks: &mut crate::lock::SnapshotLockSet,
+    resource_group_name: Option<&str>,
     key: &[u8],
     call: &UnaryCallContext,
 ) -> Result<SnapshotGetResult, OptimisticCoordinatorError>
@@ -121,7 +124,7 @@ where
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
         // Go `ClientHelper.SendReqCtx` stamps both sets immediately before
         // every send, so a lock this snapshot classified is not met again.
-        let mut context = route.context().clone();
+        let mut context = context_with_resource_group(route.context(), resource_group_name);
         resolved_locks.stamp(&mut context);
         let request = KvrpcGetRequest {
             key: key.to_vec(),
@@ -242,6 +245,7 @@ pub(super) fn direct_snapshot_scan<C, L, T>(
     runtime: &SharedReadRuntime<C, L>,
     timestamps: &T,
     gc_state: &GcStateCache,
+    resource_group_name: Option<&str>,
     start_key: &[u8],
     end_key: &[u8],
     limit: Option<usize>,
@@ -262,6 +266,7 @@ where
         &mut forward_backoff,
         &mut resolved_locks,
         &mut snapshot_reads,
+        resource_group_name,
         start_key,
         end_key,
         limit,
@@ -278,6 +283,7 @@ fn snapshot_scan_with<C, L, T>(
     forward_backoff: &mut RegionBackoffBudget,
     resolved_locks: &mut crate::lock::SnapshotLockSet,
     snapshot_reads: &mut Vec<SnapshotReadReceipt>,
+    resource_group_name: Option<&str>,
     start_key: &[u8],
     end_key: &[u8],
     limit: Option<usize>,
@@ -309,7 +315,7 @@ where
     while cursor.as_slice() < end_key {
         let route = point_route(runtime, &cursor)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-        let mut context = route.context().clone();
+        let mut context = context_with_resource_group(route.context(), resource_group_name);
         resolved_locks.stamp(&mut context);
         let region_end = route.region_end_key().to_vec();
         let page_end = if region_end.is_empty() || region_end.as_slice() > end_key {
@@ -422,6 +428,22 @@ where
     Ok(pairs)
 }
 
+fn context_with_resource_group(
+    context: &tidb_proto::KvrpcContext,
+    resource_group_name: Option<&str>,
+) -> tidb_proto::KvrpcContext {
+    let mut context = context.clone();
+    if let Some(resource_group_name) = resource_group_name {
+        resource_group_name.clone_into(
+            &mut context
+                .resource_control_context
+                .get_or_insert_with(Default::default)
+                .resource_group_name,
+        );
+    }
+    context
+}
+
 fn begin_scan_direct<C, L>(
     runtime: &SharedReadRuntime<C, L>,
     route: &RegionKeyBatch,
@@ -504,7 +526,7 @@ where
             // Go `ClientHelper.SendReqCtx` stamps both sets onto the context
             // immediately before every send, so a lock this snapshot already
             // classified is never met a second time.
-            let mut context = route.context().clone();
+            let mut context = self.write_context(route.context());
             self.resolved_locks.stamp(&mut context);
             let request = KvrpcGetRequest {
                 key: key.to_vec(),
@@ -638,7 +660,7 @@ where
             let mut retry_region = false;
             let mut requests = Vec::with_capacity(groups.len());
             for batch in &groups {
-                let mut context = batch.context().clone();
+                let mut context = self.write_context(batch.context());
                 self.resolved_locks.stamp(&mut context);
                 let request = KvrpcBatchGetRequest {
                     keys: batch.keys().to_vec(),
@@ -813,6 +835,7 @@ where
             &mut self.forward_backoff,
             &mut self.resolved_locks,
             &mut self.snapshot_reads,
+            self.resource_group_name.as_deref(),
             start_key,
             end_key,
             limit,

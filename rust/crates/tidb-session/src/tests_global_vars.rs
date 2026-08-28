@@ -930,8 +930,14 @@ fn an_overflow_names_its_class_and_folded_constants_name_their_expression() {
         .unwrap();
 
     for (sql, folded_expression) in [
-        ("SELECT 9223372036854775807 + 1", "(9223372036854775807 + 1)"),
-        ("SELECT 9223372036854775807 * 2", "(9223372036854775807 * 2)"),
+        (
+            "SELECT 9223372036854775807 + 1",
+            "(9223372036854775807 + 1)",
+        ),
+        (
+            "SELECT 9223372036854775807 * 2",
+            "(9223372036854775807 * 2)",
+        ),
     ] {
         let error = session.run(sql).unwrap_err().to_mysql_error();
         assert_eq!(error.code, 1690, "{sql}");

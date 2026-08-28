@@ -99,7 +99,11 @@ fn yearweek_source_rows_pin_zero_month_null_and_boundary_years() {
         Datum::Int(198_652)
     );
     assert_eq!(
-        dispatched("YEARWEEK", &[string_arg("2000-01-01"), Datum::Int(0)], &NoColumns),
+        dispatched(
+            "YEARWEEK",
+            &[string_arg("2000-01-01"), Datum::Int(0)],
+            &NoColumns
+        ),
         Datum::Int(199_952),
     );
     assert_eq!(
@@ -125,10 +129,7 @@ fn timestamp_diff_flag_block_rows_stay_null() {
             Datum::new_string("2017-01-01"),
         ],
     ] {
-        assert_eq!(
-            dispatched("TIMESTAMPDIFF", &args, &NoColumns),
-            Datum::Null
-        );
+        assert_eq!(dispatched("TIMESTAMPDIFF", &args, &NoColumns), Datum::Null);
     }
 }
 
@@ -146,10 +147,7 @@ fn unix_timestamp_value_table_under_utc() {
     for (arg, want_label) in [
         (Datum::Int(151_113), "INT:1447372800"),
         (Datum::Int(20_151_113), "INT:1447372800"),
-        (
-            Datum::new_string("2015-11-13 10:20:19"),
-            "INT:1447410019",
-        ),
+        (Datum::new_string("2015-11-13 10:20:19"), "INT:1447410019"),
         (
             Datum::new_string("2015-11-13 10:20:19.012"),
             "DEC:1447410019.012",
@@ -194,19 +192,43 @@ fn unix_timestamp_value_table_under_utc() {
 fn date_arith_day_month_year_overflow_tables_match_master() {
     for (sql, want) in [
         ("date_add('2016-12-31', interval 1 day)", Some("2017-01-01")),
-        ("date_add('2017-01-01', interval -1 day)", Some("2016-12-31")),
-        ("date_add('2017-01-01', interval -0.5 day)", Some("2016-12-31")),
-        ("date_add('2017-01-01', interval -1.4 day)", Some("2016-12-31")),
+        (
+            "date_add('2017-01-01', interval -1 day)",
+            Some("2016-12-31"),
+        ),
+        (
+            "date_add('2017-01-01', interval -0.5 day)",
+            Some("2016-12-31"),
+        ),
+        (
+            "date_add('2017-01-01', interval -1.4 day)",
+            Some("2016-12-31"),
+        ),
         ("date_add('1998-10-00', interval 1 day)", None),
         ("date_add('2004-00-01', interval 1 day)", None),
-        ("date_add('20111111', interval '-123' day)", Some("2011-07-11")),
+        (
+            "date_add('20111111', interval '-123' day)",
+            Some("2011-07-11"),
+        ),
         ("date_sub('2017-01-01', interval 1 day)", Some("2016-12-31")),
-        ("date_sub('2016-12-31', interval -1 day)", Some("2017-01-01")),
-        ("date_sub('2016-12-31', interval -0.5 day)", Some("2017-01-01")),
-        ("date_sub('2016-12-31', interval -1.4 day)", Some("2017-01-01")),
+        (
+            "date_sub('2016-12-31', interval -1 day)",
+            Some("2017-01-01"),
+        ),
+        (
+            "date_sub('2016-12-31', interval -0.5 day)",
+            Some("2017-01-01"),
+        ),
+        (
+            "date_sub('2016-12-31', interval -1.4 day)",
+            Some("2017-01-01"),
+        ),
         ("date_sub('1998-10-00', interval 31 day)", None),
         ("date_sub('2004-00-01', interval 31 day)", None),
-        ("date_sub('20111111', interval '-123' day)", Some("2012-03-13")),
+        (
+            "date_sub('20111111', interval '-123' day)",
+            Some("2012-03-13"),
+        ),
         // The NULL-interval block.
         ("date_add('2016-12-31', interval null day)", None),
         ("date_sub('2017-01-01', interval null day)", None),
@@ -383,13 +405,28 @@ fn maketime_float_second_maxfsp_and_unsigned_cast_rows() {}
 #[test]
 fn timestamp_add_delimited_rows_match_master() {
     let cases = [
-        ("timestampadd(MINUTE, 1, '2003-01-02')", "2003-01-02 00:01:00"),
-        ("timestampadd(WEEK, 1, '2003-01-02 23:59:59')", "2003-01-09 23:59:59"),
-        ("timestampadd(QUARTER, 3, '1995-05-01')", "1996-02-01 00:00:00"),
+        (
+            "timestampadd(MINUTE, 1, '2003-01-02')",
+            "2003-01-02 00:01:00",
+        ),
+        (
+            "timestampadd(WEEK, 1, '2003-01-02 23:59:59')",
+            "2003-01-09 23:59:59",
+        ),
+        (
+            "timestampadd(QUARTER, 3, '1995-05-01')",
+            "1996-02-01 00:00:00",
+        ),
         // Fractional SECOND: microsecond carry into whole seconds, truncation
         // of the sub-microsecond tail, and the below-one-microsecond floor.
-        ("timestampadd(SECOND, 1.1, '1995-05-01')", "1995-05-01 00:00:01.100000"),
-        ("timestampadd(SECOND, -1, '1995-05-01')", "1995-04-30 23:59:59"),
+        (
+            "timestampadd(SECOND, 1.1, '1995-05-01')",
+            "1995-05-01 00:00:01.100000",
+        ),
+        (
+            "timestampadd(SECOND, -1, '1995-05-01')",
+            "1995-04-30 23:59:59",
+        ),
         (
             "timestampadd(SECOND, -1.1, '1995-05-01')",
             "1995-04-30 23:59:58.900000",
@@ -398,11 +435,20 @@ fn timestamp_add_delimited_rows_match_master() {
             "timestampadd(SECOND, 0.0000099999, '1995-05-01')",
             "1995-05-01 00:00:00.000009",
         ),
-        ("timestampadd(SECOND, -0.0000099999, '1995-05-01')", "1995-04-30 23:59:59.999991"),
+        (
+            "timestampadd(SECOND, -0.0000099999, '1995-05-01')",
+            "1995-04-30 23:59:59.999991",
+        ),
         // MINUTE rounds half-away-from-zero onto the whole count; both
         // source spellings of midnight agree.
-        ("timestampadd(MINUTE, 1.5, '1995-05-01 00:00:00')", "1995-05-01 00:02:00"),
-        ("timestampadd(MINUTE, 1.5, '1995-05-01 00:00:00.000000')", "1995-05-01 00:02:00"),
+        (
+            "timestampadd(MINUTE, 1.5, '1995-05-01 00:00:00')",
+            "1995-05-01 00:02:00",
+        ),
+        (
+            "timestampadd(MINUTE, 1.5, '1995-05-01 00:00:00.000000')",
+            "1995-05-01 00:02:00",
+        ),
         // A negative MICROSECOND span that zeroes the result drops the
         // fraction entirely (Go keeps DefaultFsp there).
         (
@@ -410,35 +456,119 @@ fn timestamp_add_delimited_rows_match_master() {
             "1995-05-01 00:00:00",
         ),
         // Issue #41052: one-month additions clamp February/30-day tails.
-        ("timestampadd(MONTH, 1, '2024-01-31')", "2024-02-29 00:00:00"),
-        ("timestampadd(MONTH, 1, '2024-01-28')", "2024-02-28 00:00:00"),
-        ("timestampadd(MONTH, 1, '2024-10-31')", "2024-11-30 00:00:00"),
-        ("timestampadd(MONTH, 3, '2024-01-31')", "2024-04-30 00:00:00"),
-        ("timestampadd(MONTH, 15, '2024-01-31')", "2025-04-30 00:00:00"),
-        ("timestampadd(MONTH, 10, '2024-10-31')", "2025-08-31 00:00:00"),
-        ("timestampadd(MONTH, 1, '2024-11-30')", "2024-12-30 00:00:00"),
-        ("timestampadd(MONTH, 13, '2024-11-30')", "2025-12-30 00:00:00"),
+        (
+            "timestampadd(MONTH, 1, '2024-01-31')",
+            "2024-02-29 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, 1, '2024-01-28')",
+            "2024-02-28 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, 1, '2024-10-31')",
+            "2024-11-30 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, 3, '2024-01-31')",
+            "2024-04-30 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, 15, '2024-01-31')",
+            "2025-04-30 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, 10, '2024-10-31')",
+            "2025-08-31 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, 1, '2024-11-30')",
+            "2024-12-30 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, 13, '2024-11-30')",
+            "2025-12-30 00:00:00",
+        ),
         // Issue #54908: negative multi-month walks and their February folds.
-        ("timestampadd(MONTH, 0, '2024-09-01')", "2024-09-01 00:00:00"),
-        ("timestampadd(MONTH, -10, '2024-09-01')", "2023-11-01 00:00:00"),
-        ("timestampadd(MONTH, -2, '2024-04-28')", "2024-02-28 00:00:00"),
-        ("timestampadd(MONTH, -2, '2024-04-29')", "2024-02-29 00:00:00"),
-        ("timestampadd(MONTH, -2, '2024-04-30')", "2024-02-29 00:00:00"),
-        ("timestampadd(MONTH, -1, '2024-03-31')", "2024-02-29 00:00:00"),
-        ("timestampadd(MONTH, -1, '2024-03-25')", "2024-02-25 00:00:00"),
-        ("timestampadd(MONTH, -12, '2024-03-31')", "2023-03-31 00:00:00"),
-        ("timestampadd(MONTH, -13, '2024-03-31')", "2023-02-28 00:00:00"),
-        ("timestampadd(MONTH, -14, '2024-03-31')", "2023-01-31 00:00:00"),
-        ("timestampadd(MONTH, -11, '2025-02-28')", "2024-03-28 00:00:00"),
-        ("timestampadd(MONTH, -13, '2025-02-28')", "2024-01-28 00:00:00"),
-        ("timestampadd(MONTH, -11, '2024-02-29')", "2023-03-29 00:00:00"),
-        ("timestampadd(MONTH, -12, '2024-02-29')", "2023-02-28 00:00:00"),
-        ("timestampadd(MONTH, -13, '2024-02-29')", "2023-01-29 00:00:00"),
-        ("timestampadd(MONTH, -11, '2023-02-28')", "2022-03-28 00:00:00"),
-        ("timestampadd(MONTH, -15, '2023-03-20')", "2021-12-20 00:00:00"),
-        ("timestampadd(MONTH, -15, '2023-03-31')", "2021-12-31 00:00:00"),
-        ("timestampadd(MONTH, 12, '2020-02-29')", "2021-02-28 00:00:00"),
-        ("timestampadd(MONTH, -12, '2020-02-29')", "2019-02-28 00:00:00"),
+        (
+            "timestampadd(MONTH, 0, '2024-09-01')",
+            "2024-09-01 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -10, '2024-09-01')",
+            "2023-11-01 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -2, '2024-04-28')",
+            "2024-02-28 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -2, '2024-04-29')",
+            "2024-02-29 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -2, '2024-04-30')",
+            "2024-02-29 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -1, '2024-03-31')",
+            "2024-02-29 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -1, '2024-03-25')",
+            "2024-02-25 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -12, '2024-03-31')",
+            "2023-03-31 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -13, '2024-03-31')",
+            "2023-02-28 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -14, '2024-03-31')",
+            "2023-01-31 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -11, '2025-02-28')",
+            "2024-03-28 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -13, '2025-02-28')",
+            "2024-01-28 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -11, '2024-02-29')",
+            "2023-03-29 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -12, '2024-02-29')",
+            "2023-02-28 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -13, '2024-02-29')",
+            "2023-01-29 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -11, '2023-02-28')",
+            "2022-03-28 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -15, '2023-03-20')",
+            "2021-12-20 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -15, '2023-03-31')",
+            "2021-12-31 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, 12, '2020-02-29')",
+            "2021-02-28 00:00:00",
+        ),
+        (
+            "timestampadd(MONTH, -12, '2020-02-29')",
+            "2019-02-28 00:00:00",
+        ),
     ];
     for (sql, want) in cases {
         assert_eq!(e(sql), format!("STR:{want}"), "{sql}");
@@ -465,7 +595,10 @@ fn period_invalid_period_reject_the_call() {
         ("PERIOD_DIFF", vec![Datum::Int(0), Datum::Int(999_999_999)]),
         ("PERIOD_DIFF", vec![Datum::Int(9_999_999), Datum::Int(0)]),
         ("PERIOD_DIFF", vec![Datum::Int(411), Datum::Int(200_413)]),
-        ("PERIOD_DIFF", vec![Datum::Int(197_000), Datum::Int(207_700)]),
+        (
+            "PERIOD_DIFF",
+            vec![Datum::Int(197_000), Datum::Int(207_700)],
+        ),
         ("PERIOD_DIFF", vec![Datum::Int(12_509), Datum::Int(12_323)]),
     ] {
         let (name, args) = name_args;
@@ -516,7 +649,11 @@ fn time_format_hour_family_rows_match_master() {
             &[Datum::new_string(time), Datum::new_string(format)],
             &NoColumns,
         );
-        assert_eq!(got, Datum::new_string(want), "TIME_FORMAT({time:?}, {format:?})");
+        assert_eq!(
+            got,
+            Datum::new_string(want),
+            "TIME_FORMAT({time:?}, {format:?})"
+        );
     }
     // SELECT TIME_FORMAT(null,'%H %k %h %I %l').
     assert_eq!(
@@ -675,13 +812,9 @@ fn str_datetime_add_duration_warns_once_with_frozen_arg_text() {
 
     let sink = WarnSink(RefCell::new(Vec::new()));
     let zero_duration = v("'00:00:00'");
-    let result = dispatch(
-        "ADDTIME",
-        &[Datum::new_string("abc"), zero_duration],
-        &sink,
-    )
-    .unwrap()
-    .unwrap();
+    let result = dispatch("ADDTIME", &[Datum::new_string("abc"), zero_duration], &sink)
+        .unwrap()
+        .unwrap();
     assert!(result.is_null());
     let warnings = sink.0.borrow();
     assert_eq!(warnings.len(), 1, "exactly one warning: {warnings:?}");

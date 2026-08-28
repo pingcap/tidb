@@ -5,6 +5,37 @@
 use crate::tests_support::*;
 use crate::*;
 
+#[test]
+fn resource_group_is_session_scoped_and_statement_hint_overrides_once() {
+    let mut session = Session::new();
+    assert_eq!(session.current_resource_group(), "default");
+
+    assert_eq!(
+        session.apply_set("SET RESOURCE GROUP analytics").unwrap(),
+        Some(())
+    );
+    assert_eq!(session.current_resource_group(), "analytics");
+
+    let hinted = session
+        .parse_statement("SELECT /*+ RESOURCE_GROUP(Burst) */ 1")
+        .unwrap();
+    assert_eq!(session.statement_resource_group(&hinted), "Burst");
+    assert_eq!(session.current_resource_group(), "analytics");
+    session.activate_statement_resource_group(&hinted);
+    assert_eq!(
+        session.statement_context(false).resource_group_name(),
+        "burst"
+    );
+
+    let ordinary = session.parse_statement("SELECT 1").unwrap();
+    assert_eq!(session.statement_resource_group(&ordinary), "analytics");
+    session.activate_statement_resource_group(&ordinary);
+    assert_eq!(
+        session.statement_context(false).resource_group_name(),
+        "analytics"
+    );
+}
+
 /// SET and the variable reads a connecting client performs.
 #[test]
 fn session_variables() {

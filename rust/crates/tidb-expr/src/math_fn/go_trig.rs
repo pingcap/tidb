@@ -130,9 +130,7 @@ fn trig_reduce(x: f64) -> (u64, f64) {
     let d = exp + 61;
     let digit = (d / 64) as usize;
     let bitshift = (d % 64) as u32;
-    let digits = |i: usize| -> u64 {
-        shl(M_PI4[i], bitshift) | shr(M_PI4[i + 1], 64 - bitshift)
-    };
+    let digits = |i: usize| -> u64 { shl(M_PI4[i], bitshift) | shr(M_PI4[i + 1], 64 - bitshift) };
     let z0 = digits(digit);
     let z1 = digits(digit + 1);
     let z2 = digits(digit + 2);
@@ -257,8 +255,8 @@ pub(crate) fn go_sin(x: f64) -> f64 {
     } else {
         z + z
             * zz
-                * ((((((SIN[0] * zz) + SIN[1]) * zz + SIN[2]) * zz + SIN[3]) * zz + SIN[4]) * zz
-                    + SIN[5])
+            * ((((((SIN[0] * zz) + SIN[1]) * zz + SIN[2]) * zz + SIN[3]) * zz + SIN[4]) * zz
+                + SIN[5])
     };
     if sign {
         y = -y;
@@ -300,8 +298,8 @@ pub(crate) fn go_cos(x: f64) -> f64 {
     let mut y = if j == 1 || j == 2 {
         z + z
             * zz
-                * ((((((SIN[0] * zz) + SIN[1]) * zz + SIN[2]) * zz + SIN[3]) * zz + SIN[4]) * zz
-                    + SIN[5])
+            * ((((((SIN[0] * zz) + SIN[1]) * zz + SIN[2]) * zz + SIN[3]) * zz + SIN[4]) * zz
+                + SIN[5])
     } else {
         1.0 - 0.5 * zz
             + zz * zz
@@ -327,22 +325,97 @@ mod tests {
         // {-100.5, -3.75, -1.0, -1e-9, 0.0, 1e-9, 0.5, 1.0, 2.0, 3.14159,
         //  10.25, 100.5, 1e8, 1e9, 5.3e8, 1e15}.
         let goldens: &[(u64, u64, u64, u64)] = &[
-            (0xc059200000000000, 0x3f9fb3f833470ff1, 0x3feffc12adaecec1, 0x3f9fb7dcab49130d), // -100.5
-            (0xc00e000000000000, 0x3fe24a3af6750622, 0xbfea4205b28667f6, 0xbfe64a2502b0ca3b), // -3.75
-            (0xbff0000000000000, 0xbfeaed548f090cee, 0x3fe14a280fb5068c, 0xbff8eb245cbee3a5), // -1
-            (0xbe112e0be826d695, 0xbe112e0be826d695, 0x3ff0000000000000, 0xbe112e0be826d695), // -1e-09
+            (
+                0xc059200000000000,
+                0x3f9fb3f833470ff1,
+                0x3feffc12adaecec1,
+                0x3f9fb7dcab49130d,
+            ), // -100.5
+            (
+                0xc00e000000000000,
+                0x3fe24a3af6750622,
+                0xbfea4205b28667f6,
+                0xbfe64a2502b0ca3b,
+            ), // -3.75
+            (
+                0xbff0000000000000,
+                0xbfeaed548f090cee,
+                0x3fe14a280fb5068c,
+                0xbff8eb245cbee3a5,
+            ), // -1
+            (
+                0xbe112e0be826d695,
+                0xbe112e0be826d695,
+                0x3ff0000000000000,
+                0xbe112e0be826d695,
+            ), // -1e-09
             (0x0, 0x0, 0x3ff0000000000000, 0x0), // 0
-            (0x3e112e0be826d695, 0x3e112e0be826d695, 0x3ff0000000000000, 0x3e112e0be826d695), // 1e-09
-            (0x3fe0000000000000, 0x3fdeaee8744b05f0, 0x3fec1528065b7d50, 0x3fe17b4f5bf3474a), // 0.5
-            (0x3ff0000000000000, 0x3feaed548f090cee, 0x3fe14a280fb5068c, 0x3ff8eb245cbee3a5), // 1
-            (0x4000000000000000, 0x3fed18f6ead1b445, 0xbfdaa22657537205, 0xc0017af62e0950f8), // 2
-            (0x400921f9f01b866e, 0x3ec6428a6aa44cd1, 0xbfefffffffff8420, 0xbec6428a6aa4a2fd), // 3.14159
-            (0x4024800000000000, 0xbfe782a648605b2a, 0xbfe5b5670532f73c, 0x3ff153f48c125ae1), // 10.25
-            (0x4059200000000000, 0xbf9fb3f833470ff1, 0x3feffc12adaecec1, 0xbf9fb7dcab49130d), // 100.5
-            (0x4197d78400000000, 0x3fedcffca623a20b, 0xbfd741b388a8c029, 0xc004829e83f49589), // 1e+08
-            (0x41cdcd6500000000, 0x3fe1778cae83c69a, 0x3feacff8c7364234, 0x3fe4d8b249e3dba5), // 1e+09
-            (0x41bf972880000000, 0xbfeb283be499a2bd, 0x3fe0ed0c5923fb27, 0xbff9abe5d8168959), // 5.3e+08
-            (0x430c6bf526340000, 0x3feb76f88136ceba, 0xbfe06c154609d33e, 0xbffac23600a95be5), // 1e+15
+            (
+                0x3e112e0be826d695,
+                0x3e112e0be826d695,
+                0x3ff0000000000000,
+                0x3e112e0be826d695,
+            ), // 1e-09
+            (
+                0x3fe0000000000000,
+                0x3fdeaee8744b05f0,
+                0x3fec1528065b7d50,
+                0x3fe17b4f5bf3474a,
+            ), // 0.5
+            (
+                0x3ff0000000000000,
+                0x3feaed548f090cee,
+                0x3fe14a280fb5068c,
+                0x3ff8eb245cbee3a5,
+            ), // 1
+            (
+                0x4000000000000000,
+                0x3fed18f6ead1b445,
+                0xbfdaa22657537205,
+                0xc0017af62e0950f8,
+            ), // 2
+            (
+                0x400921f9f01b866e,
+                0x3ec6428a6aa44cd1,
+                0xbfefffffffff8420,
+                0xbec6428a6aa4a2fd,
+            ), // 3.14159
+            (
+                0x4024800000000000,
+                0xbfe782a648605b2a,
+                0xbfe5b5670532f73c,
+                0x3ff153f48c125ae1,
+            ), // 10.25
+            (
+                0x4059200000000000,
+                0xbf9fb3f833470ff1,
+                0x3feffc12adaecec1,
+                0xbf9fb7dcab49130d,
+            ), // 100.5
+            (
+                0x4197d78400000000,
+                0x3fedcffca623a20b,
+                0xbfd741b388a8c029,
+                0xc004829e83f49589,
+            ), // 1e+08
+            (
+                0x41cdcd6500000000,
+                0x3fe1778cae83c69a,
+                0x3feacff8c7364234,
+                0x3fe4d8b249e3dba5,
+            ), // 1e+09
+            (
+                0x41bf972880000000,
+                0xbfeb283be499a2bd,
+                0x3fe0ed0c5923fb27,
+                0xbff9abe5d8168959,
+            ), // 5.3e+08
+            (
+                0x430c6bf526340000,
+                0x3feb76f88136ceba,
+                0xbfe06c154609d33e,
+                0xbffac23600a95be5,
+            ), // 1e+15
         ];
         for &(in_bits, sin_bits, cos_bits, tan_bits) in goldens {
             let x = f64::from_bits(in_bits);

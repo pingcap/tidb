@@ -591,7 +591,6 @@ fn key_partition_type_allowed(field_type: &FieldType) -> bool {
     )
 }
 
-
 /// The warning a `LINEAR HASH`/`LINEAR KEY` clause earns, or `None`.
 ///
 /// Go accepts `LINEAR` and builds a plain non-linear table, appending
@@ -845,7 +844,9 @@ fn check_partition_expression_type(
     // why `unwrap_parentheses` has no place here.
     if let Expr::Column(path) = expr {
         let name = path.last().cloned().unwrap_or_else(|| "?".to_owned());
-        return Err(DriverError::PartitionFieldTypeNotAllowed(go_to_lower(&name)));
+        return Err(DriverError::PartitionFieldTypeNotAllowed(go_to_lower(
+            &name,
+        )));
     }
     // Go's remaining `expression.Column` arm quotes `col.OrigName`, the name
     // as the source spelled it -- which is what a parenthesised column
@@ -857,7 +858,6 @@ fn check_partition_expression_type(
     Err(DriverError::PartitionFuncWrongType)
 }
 
-
 /// The parenthesised expression's subject, since `(a)` partitions on `a`.
 fn unwrap_parentheses(expr: &Expr) -> &Expr {
     match expr {
@@ -865,7 +865,6 @@ fn unwrap_parentheses(expr: &Expr) -> &Expr {
         other => other,
     }
 }
-
 
 /// Go `buildHashPartitionDefinitions`: `n` partitions, named `p0..pn-1`
 /// unless the statement named them itself.
@@ -900,8 +899,8 @@ fn build_hash_partition_definitions(
     let mut definitions = Vec::with_capacity(count as usize);
     for index in 0..count {
         let written_definition = written.get(index as usize);
-        let name = written_definition
-            .map_or_else(|| format!("p{index}"), |written| written.name.clone());
+        let name =
+            written_definition.map_or_else(|| format!("p{index}"), |written| written.name.clone());
         let comment = match written_definition {
             Some(definition) => partition_definition_comment(definition, ctx, false)?,
             None => String::new(),
@@ -1229,8 +1228,9 @@ fn check_partition_call_args(
             "YEAR" | "YEAR_MONTH" | "QUARTER" | "MONTH" | "DAY" => ok(has_date),
             "DAY_MICROSECOND" | "DAY_HOUR" | "DAY_MINUTE" | "DAY_SECOND" => ok(has_datetime),
             "HOUR" | "HOUR_MINUTE" | "HOUR_SECOND" | "MINUTE" | "MINUTE_SECOND" | "SECOND"
-            | "MICROSECOND" | "HOUR_MICROSECOND" | "MINUTE_MICROSECOND"
-            | "SECOND_MICROSECOND" => ok(has_time),
+            | "MICROSECOND" | "HOUR_MICROSECOND" | "MINUTE_MICROSECOND" | "SECOND_MICROSECOND" => {
+                ok(has_time)
+            }
             _ => Err(DriverError::PartitionWrongExprInFunc),
         },
         // Go raises 1486 for a TIMESTAMP argument to these, because their
@@ -1477,7 +1477,9 @@ pub fn append_partition_defs(definitions: &[PartitionDef], kind: &PartitionKind)
             PartitionKind::Hash | PartitionKind::Key | PartitionKind::None => {}
         }
         out.push_str(&partition_comment_text(&definition.comment));
-        out.push_str(&partition_placement_text(definition.placement_policy.as_ref()));
+        out.push_str(&partition_placement_text(
+            definition.placement_policy.as_ref(),
+        ));
     }
     out.push(')');
     out
@@ -1787,15 +1789,18 @@ fn stored_clause(
         for tuple in &definition.in_values {
             // Go `buildListPartitionValueMap`: `DEFAULT` is recognised on the
             // FIRST component only, and the rest of the tuple is not read.
-            if tuple.first().is_some_and(|first| first.eq_ignore_ascii_case("DEFAULT")) {
+            if tuple
+                .first()
+                .is_some_and(|first| first.eq_ignore_ascii_case("DEFAULT"))
+            {
                 values.push(PartitionValue::Default);
                 continue;
             }
             values.push(match tuple.as_slice() {
                 [single] => PartitionValue::Expr(parse(single)?),
-                many => PartitionValue::Tuple(
-                    many.iter().map(parse).collect::<Result<Vec<_>, _>>()?,
-                ),
+                many => {
+                    PartitionValue::Tuple(many.iter().map(parse).collect::<Result<Vec<_>, _>>()?)
+                }
             });
         }
         return Ok(PartitionDefinitionClause::In(values));
@@ -1934,9 +1939,9 @@ pub fn partition_spec_from_metadata(
                     ctx,
                     PartitionBuildMode::Load,
                     // Go's loader runs no per-definition name or comment
-                // check: `newPartitionExpr` re-judges nothing the DDL
-                // already accepted.
-                &mut |_| Ok(()),
+                    // check: `newPartitionExpr` re-judges nothing the DDL
+                    // already accepted.
+                    &mut |_| Ok(()),
                 )?;
             Ok(PartitionSpec {
                 is_empty_columns,
@@ -2214,9 +2219,15 @@ fn stored_definitions_for(
         match &spec.kind {
             // HASH, KEY and NONE definitions carry a name and nothing else.
             PartitionKind::Hash | PartitionKind::Key | PartitionKind::None => {}
-            PartitionKind::Range { less_than, unsigned } => {
+            PartitionKind::Range {
+                less_than,
+                unsigned,
+            } => {
                 entry.less_than = vec![stored_range_bound_text(
-                    less_than.get(ordinal).copied().unwrap_or(RangeBound::MaxValue),
+                    less_than
+                        .get(ordinal)
+                        .copied()
+                        .unwrap_or(RangeBound::MaxValue),
                     *unsigned,
                 )];
             }
@@ -2283,8 +2294,8 @@ fn stored_value_text(datum: &Datum, field_type: Option<&FieldType>) -> Result<St
     match field_type.map(FieldType::eval_type) {
         Some(EvalType::Int) => rendered(),
         Some(EvalType::String) => {
-            let binary = field_type
-                .is_some_and(|ft| ft.charset() == tidb_datatype::Charset::Binary);
+            let binary =
+                field_type.is_some_and(|ft| ft.charset() == tidb_datatype::Charset::Binary);
             let bytes = match datum {
                 Datum::Bytes(value) => Some(value.as_slice()),
                 Datum::String(value) => Some(value.bytes()),
@@ -2345,16 +2356,18 @@ pub(super) fn stored_in_values(
             // Go stores the catch-all as the literal word `DEFAULT`, which
             // `buildListPartitionValueMap` matches with `strings.EqualFold`.
             PartitionValue::Default => tuples.push(vec!["DEFAULT".to_owned()]),
-            PartitionValue::MaxValue => {
-                return Err(DriverError::PartitionColumnValueWrongType)
-            }
+            PartitionValue::MaxValue => return Err(DriverError::PartitionColumnValueWrongType),
             PartitionValue::Expr(expr) => {
                 tuples.push(vec![stored_list_component(expr, field_types.first(), ctx)?]);
             }
             PartitionValue::Tuple(components) => {
                 let mut tuple = Vec::with_capacity(components.len());
                 for (position, component) in components.iter().enumerate() {
-                    tuple.push(stored_list_component(component, field_types.get(position), ctx)?);
+                    tuple.push(stored_list_component(
+                        component,
+                        field_types.get(position),
+                        ctx,
+                    )?);
                 }
                 tuples.push(tuple);
             }
@@ -2601,12 +2614,8 @@ mod round_trip_tests {
         // k2: no handle; the implicit primary key is the first UNIQUE key
         // whose columns are all NOT NULL.
         assert_eq!(
-            key_clause_dependencies(
-                &[not_null(), long()],
-                &[],
-                &[index("id", true, vec![0])]
-            )
-            .expect("k2 is legal"),
+            key_clause_dependencies(&[not_null(), long()], &[], &[index("id", true, vec![0])])
+                .expect("k2 is legal"),
             vec!["id".to_owned()]
         );
         // k3: an explicit PRIMARY index wins even when it is NONCLUSTERED,
@@ -2678,8 +2687,16 @@ mod round_trip_tests {
     fn a_partition_function_is_admitted_on_its_result_type_not_its_name() {
         // Go asserts both halves of the FLOOR split itself, at
         // `ddl/tests/partition/db_partition_test.go:241-242`.
-        assert_eq!(partition_clause_error("FLOOR(c2)"), Some(1491), "FLOOR over a float is a REAL");
-        assert_eq!(partition_clause_error("FLOOR(c1)"), None, "FLOOR over an int is an int");
+        assert_eq!(
+            partition_clause_error("FLOOR(c2)"),
+            Some(1491),
+            "FLOOR over a float is a REAL"
+        );
+        assert_eq!(
+            partition_clause_error("FLOOR(c1)"),
+            None,
+            "FLOOR over an int is an int"
+        );
         assert_eq!(partition_clause_error("ABS(c2)"), Some(1491));
         assert_eq!(partition_clause_error("CEILING(c2)"), Some(1491));
         // FROM_DAYS returns a DATE whatever it is given -- but WHICH error
@@ -2737,8 +2754,12 @@ mod round_trip_tests {
              PARTITION BY RANGE ({expr}) (PARTITION p0 VALUES LESS THAN (100))"
         );
         let statement = tidb_parser::parse(&sql).expect("the fixture parses");
-        let tidb_ast::Stmt::Ddl(ddl) = statement else { panic!("not DDL") };
-        let tidb_ast::DdlStmt::CreateTable(create) = &*ddl else { panic!("not CREATE TABLE") };
+        let tidb_ast::Stmt::Ddl(ddl) = statement else {
+            panic!("not DDL")
+        };
+        let tidb_ast::DdlStmt::CreateTable(create) = &*ddl else {
+            panic!("not CREATE TABLE")
+        };
         // Derive the column types the way the DDL path does, so the fixture
         // cannot drift from what a real CREATE TABLE produces -- a plain
         // TIMESTAMP is fsp 0, and hand-building the FieldType left it
@@ -2816,7 +2837,12 @@ mod load_permissiveness_tests {
     /// must open here even when this node's CREATE would refuse the same
     /// shape. Round-trip tests cannot cover it, because they start from a
     /// CREATE and so only ever produce metadata CREATE accepts.
-    fn definition(id: i64, name: &str, less_than: &[&str], in_values: &[&[&str]]) -> StoredPartitionDefinition {
+    fn definition(
+        id: i64,
+        name: &str,
+        less_than: &[&str],
+        in_values: &[&[&str]],
+    ) -> StoredPartitionDefinition {
         StoredPartitionDefinition {
             id,
             name: name.to_owned(),

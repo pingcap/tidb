@@ -21,7 +21,7 @@
 //! a refusal — below).
 //!
 //! This is the production body behind
-//! [`crate::find_best_task::JoinCostModel::enforce`]: `findBestTask`'s
+//! [`crate::find_best_task::dispatch::find_best_task`]: `findBestTask`'s
 //! enforcer branch prices `EnforceProperty(prop, task, ...)` against the
 //! un-enforced candidates, and until this file the crate had only the seam.
 //!
@@ -121,6 +121,7 @@ pub fn enforce_property(
         can_add_enforcer: false,
         sort_items_for_partition: Vec::new(),
         cte_producer_status: CteProducerStatus::default(),
+        index_join_prop: None,
     };
     let child = task
         .plan()

@@ -166,6 +166,46 @@ pub struct SortItem {
     pub desc: bool,
 }
 
+/// Go `IndexJoinRuntimeProp`: the lookup facts carried from an index-join
+/// candidate to the inner data source while `findBestTask` plans that child.
+#[derive(Clone, Debug)]
+pub struct IndexJoinRuntimeProp {
+    /// Conditions that may complete the final lookup-range column.
+    pub other_conditions: Vec<tidb_expr::expression::Expression>,
+    /// The driving join keys on the outer child.
+    pub outer_join_keys: Vec<tidb_expr::column::Column>,
+    /// The lookup keys on the inner child.
+    pub inner_join_keys: Vec<tidb_expr::column::Column>,
+    /// Estimated inner rows returned for one outer row.
+    pub avg_inner_row_count: f64,
+    /// Whether this candidate probes the clustered/table handle rather than
+    /// a secondary index.
+    pub table_range_scan: bool,
+}
+
+impl PartialEq for IndexJoinRuntimeProp {
+    fn eq(&self, other: &Self) -> bool {
+        self.table_range_scan == other.table_range_scan
+            && self.avg_inner_row_count == other.avg_inner_row_count
+            && self.other_conditions.len() == other.other_conditions.len()
+            && self
+                .other_conditions
+                .iter()
+                .zip(&other.other_conditions)
+                .all(|(left, right)| left.equal(right))
+            && self
+                .outer_join_keys
+                .iter()
+                .map(|column| column.unique_id)
+                .eq(other.outer_join_keys.iter().map(|column| column.unique_id))
+            && self
+                .inner_join_keys
+                .iter()
+                .map(|column| column.unique_id)
+                .eq(other.inner_join_keys.iter().map(|column| column.unique_id))
+    }
+}
+
 impl SortItem {
     /// A required order on `col`, ascending when `desc` is false.
     #[must_use]
@@ -209,6 +249,9 @@ pub struct PhysicalProperty {
     /// consumer builds, so a producer that cannot run MPP poisons the whole
     /// sequence's MPP choice.
     pub cte_producer_status: CteProducerStatus,
+    /// Go `IndexJoinProp`; present only while planning an index join's inner
+    /// child and the pass-through operators admitted by Go.
+    pub index_join_prop: Option<IndexJoinRuntimeProp>,
 }
 
 impl Default for PhysicalProperty {
@@ -224,6 +267,7 @@ impl Default for PhysicalProperty {
             can_add_enforcer: false,
             sort_items_for_partition: Vec::new(),
             cte_producer_status: CteProducerStatus::default(),
+            index_join_prop: None,
         }
     }
 }
@@ -246,6 +290,7 @@ impl PhysicalProperty {
             can_add_enforcer: enforced,
             sort_items_for_partition: Vec::new(),
             cte_producer_status: CteProducerStatus::default(),
+            index_join_prop: None,
         }
     }
 
@@ -263,6 +308,7 @@ impl PhysicalProperty {
             expected_cnt: self.expected_cnt,
             can_add_enforcer: false,
             cte_producer_status: self.cte_producer_status,
+            index_join_prop: None,
         }
     }
 

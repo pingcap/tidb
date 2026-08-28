@@ -154,8 +154,7 @@ fn test_zero_quota() {
 fn test_oom_guard() {
     let max_mem = mem_total();
 
-    let mut lru =
-        SimpleLruCache::with_memory_guard(3, 1.0, max_mem, instance_mem_used);
+    let mut lru = SimpleLruCache::with_memory_guard(3, 1.0, max_mem, instance_mem_used);
     assert_eq!(3, lru.capacity());
 
     for i in 0..5 {

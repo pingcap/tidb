@@ -102,56 +102,6 @@ pub(crate) struct AvailablePaths {
 }
 
 impl AvailablePaths {
-    /// Go's `available = publicPaths` with no hints in play: every path.
-    pub(crate) const fn unrestricted() -> Self {
-        Self {
-            forced_indexes: None,
-            table: true,
-            ignored: Vec::new(),
-            forced_common_primary: false,
-            ignored_common_primary: false,
-            pushdown_lookup_indexes: Vec::new(),
-        }
-    }
-
-    /// Restricts enumeration to ONE index -- the prepared plan cache's
-    /// replayed winner. Go's plan-cache hit
-    /// (`RebuildPlan4CachedPlan`, pkg/planner/core/plan_cache_rebuild.go:30)
-    /// replays the recorded physical plan without re-running access-path
-    /// selection or costing; restricting the hints to the pinned index gives
-    /// this tier's enumerator the same shape.
-    pub(crate) fn pinned_to_single_index(index_id: i64) -> Self {
-        Self {
-            forced_indexes: Some(vec![index_id]),
-            table: false,
-            ignored: Vec::new(),
-            forced_common_primary: false,
-            ignored_common_primary: false,
-            pushdown_lookup_indexes: Vec::new(),
-        }
-    }
-
-    /// Restricts one partial IndexMerge path to the indexes named by its hint.
-    pub(crate) fn index_merge_only(indexes: Vec<i64>) -> Self {
-        Self {
-            forced_indexes: Some(indexes),
-            table: false,
-            ignored: Vec::new(),
-            forced_common_primary: false,
-            ignored_common_primary: false,
-            pushdown_lookup_indexes: Vec::new(),
-        }
-    }
-
-    /// Whether an `INDEX_LOOKUP_PUSHDOWN` hint elects this index's lookup
-    /// for Go's `LocalIndexLookUp` execution. Only the default
-    /// `hint-only` value of `@@tidb_index_lookup_pushdown_policy` is
-    /// modelled: the policy-driven `force`/`affinity-force` elections
-    /// appear in this corpus only under `EXPLAIN`, never executed.
-    pub(crate) fn lookup_pushdown_hinted(&self, index_id: i64) -> bool {
-        self.pushdown_lookup_indexes.contains(&index_id)
-    }
-
     /// Whether an index may still become a candidate path.
     pub(crate) fn allows_index(&self, index_id: i64) -> bool {
         if self.ignored.contains(&index_id) {
@@ -161,28 +111,6 @@ impl AvailablePaths {
             Some(forced) => forced.contains(&index_id),
             None => true,
         }
-    }
-
-    /// Go `path.Forced`: the hint named this index, so skyline pruning keeps
-    /// it even when it neither narrows a range nor covers the read.
-    pub(crate) fn forces_index(&self, index_id: i64) -> bool {
-        self.forced_indexes
-            .as_ref()
-            .is_some_and(|forced| forced.contains(&index_id))
-    }
-
-    /// Go `StmtCtx.SetIndexForce`, which `stats.go`'s
-    /// `getGeneralAttributesFromPaths` raises the moment ANY path of the
-    /// statement is `path.Forced` -- and `USE INDEX` forces just as `FORCE
-    /// INDEX` does, since Go stopped distinguishing them
-    /// (`planbuilder.go`: "Currently we don't distinguish between FORCE and
-    /// USE because our cost estimation is not reliable").
-    ///
-    /// Read by [`crate::access_cost`]'s table-scan penalty, which is the only
-    /// consumer: a hinted statement makes EVERY full table scan in it more
-    /// expensive, including one over a table the hint never named.
-    pub(crate) const fn has_forced_path(&self) -> bool {
-        self.forced_indexes.is_some()
     }
 
     /// Whether the table path -- full scan, handle range, or point get --
@@ -573,22 +501,6 @@ fn resolve_index_name(table: &KvTable, name: &str) -> Option<HintedPath> {
     None
 }
 
-/// The hints on a plain single-table `FROM`, resolved against that table.
-///
-/// Every OTHER `FROM` shape -- a join, a derived table, a view -- resolves to
-/// [`AvailablePaths::unrestricted`] here and has its names validated by
-/// [`validate_join_index_hints`] instead, so a hint naming a missing index is
-/// still 1176 on a table this tier's fast path never reaches.
-pub(crate) fn table_ref_hints(
-    table_ref: &tidb_ast::TableRef,
-    table: &KvTable,
-) -> Result<AvailablePaths, DriverError> {
-    if table_ref.hints.is_empty() {
-        return Ok(AvailablePaths::unrestricted());
-    }
-    AvailablePaths::resolve(table, &table_ref.hints)
-}
-
 /// Both spellings of one single-table `SELECT`'s scan hints, resolved into
 /// the candidate set the optimizer may cost -- Go's whole
 /// `getPossibleAccessPaths` over the `indexHints` slice it built from the
@@ -606,76 +518,6 @@ pub(crate) fn single_table_scan_hints(
         accumulator.take_comment_hints(select, table_ref, table, current_db, ctx);
     }
     Ok(accumulator.finish())
-}
-
-pub(crate) fn single_table_index_merge_indexes(
-    select: &tidb_ast::SelectStmt,
-    table_ref: Option<&tidb_ast::TableRef>,
-    table: &KvTable,
-    current_db: &str,
-) -> Vec<i64> {
-    let Some(table_ref) = table_ref else {
-        return Vec::new();
-    };
-    let mut indexes = Vec::new();
-    for hint in &select.hints {
-        if !hint.name.eq_ignore_ascii_case("USE_INDEX_MERGE") {
-            continue;
-        }
-        let tidb_ast::HintKind::Index {
-            table: hinted,
-            indexes: names,
-            ..
-        } = &hint.kind
-        else {
-            continue;
-        };
-        let database = hinted.db_name.as_deref().unwrap_or(current_db);
-        if !comment_hint_matches(table_ref, hinted, database, current_db) {
-            continue;
-        }
-        for name in names {
-            if let Some(HintedPath::Index(index_id)) = resolve_index_name(table, name) {
-                if !indexes.contains(&index_id) {
-                    indexes.push(index_id);
-                }
-            }
-        }
-    }
-    indexes
-}
-
-/// Whether this table has an explicit `USE_INDEX_MERGE` comment hint.
-///
-/// An empty index list is still an explicit request in Go. Automatic path
-/// selection must not reinterpret an inapplicable hint as a different plan.
-pub(crate) fn has_single_table_index_merge_hint(
-    select: &tidb_ast::SelectStmt,
-    table_ref: Option<&tidb_ast::TableRef>,
-    current_db: &str,
-) -> bool {
-    let Some(table_ref) = table_ref else {
-        return false;
-    };
-    select.hints.iter().any(|hint| {
-        if !hint.name.eq_ignore_ascii_case("USE_INDEX_MERGE") {
-            return false;
-        }
-        let tidb_ast::HintKind::Index { table: hinted, .. } = &hint.kind else {
-            return false;
-        };
-        let database = hinted.db_name.as_deref().unwrap_or(current_db);
-        comment_hint_matches(table_ref, hinted, database, current_db)
-    })
-}
-
-/// Go `StmtCtx.NoIndexMergeHint`: this statement-level hint wins over both
-/// the session switch and `USE_INDEX_MERGE` candidates.
-pub(crate) fn no_index_merge(select: &tidb_ast::SelectStmt) -> bool {
-    select
-        .hints
-        .iter()
-        .any(|hint| hint.name.eq_ignore_ascii_case("NO_INDEX_MERGE"))
 }
 
 /// Raises Go's 1176 for any index hint in a `FROM` clause naming an index its

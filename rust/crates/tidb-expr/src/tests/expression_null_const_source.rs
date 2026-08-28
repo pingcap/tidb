@@ -29,10 +29,10 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use crate::column::Column;
 use crate::constant::{Constant, ParamMarker};
 use crate::context::NoColumns;
-use crate::expression::{ConstLevel, Expression};
 use crate::expr_util::{FunctionBuilder, RealFunctionBuilder};
-use crate::schema::Schema;
+use crate::expression::{ConstLevel, Expression};
 use crate::scalar_function::ScalarFunction;
+use crate::schema::Schema;
 use tidb_ast::CiString;
 
 fn int_type() -> FieldType {

@@ -1164,5 +1164,4 @@ mod tests {
             assert_eq!(row.get_json(5).to_string(), text);
         }
     }
-
 }

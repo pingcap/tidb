@@ -53,6 +53,9 @@ pub struct RealOptimisticTransactionOpener<
     /// opener — and therefore any transaction it opened — can still read.
     gc_state: Arc<TxnSafePointRefresher>,
     protocol: CommitProtocol,
+    /// Resource group every transaction and direct MaxTS snapshot opened
+    /// through this capability attaches to its TiKV request contexts.
+    resource_group_name: Option<Arc<str>>,
 }
 
 impl<C: Clone, L, P: Clone> Clone for RealOptimisticTransactionOpener<C, L, P> {
@@ -63,6 +66,7 @@ impl<C: Clone, L, P: Clone> Clone for RealOptimisticTransactionOpener<C, L, P> {
             timeout: self.timeout,
             gc_state: Arc::clone(&self.gc_state),
             protocol: self.protocol,
+            resource_group_name: self.resource_group_name.clone(),
         }
     }
 }
@@ -97,6 +101,7 @@ impl RealOptimisticTransactionOpener {
             timeout,
             gc_state: Arc::new(gc_state),
             protocol: CommitProtocol::two_phase_only(),
+            resource_group_name: None,
         })
     }
 }
@@ -164,6 +169,7 @@ where
             timeout,
             gc_state: Arc::new(gc_state),
             protocol: CommitProtocol::two_phase_only(),
+            resource_group_name: None,
         })
     }
 
@@ -176,6 +182,17 @@ where
     #[must_use]
     pub const fn with_commit_protocol(mut self, protocol: CommitProtocol) -> Self {
         self.protocol = protocol;
+        self
+    }
+
+    /// Assigns the SQL resource group inherited by every TiKV request opened
+    /// through this capability.
+    ///
+    /// The opener is cloned per owning service, so configuring the SQL
+    /// transaction tier does not silently relabel unrelated internal clients.
+    #[must_use]
+    pub fn with_resource_group_name(mut self, name: impl Into<Arc<str>>) -> Self {
+        self.resource_group_name = Some(name.into());
         self
     }
 
@@ -358,6 +375,7 @@ where
             &runtime,
             &crate::pd_capability::CapabilityTimestampSource(self.pd.clone()),
             self.gc_state.cache().as_ref(),
+            self.resource_group_name.as_deref(),
             key,
             call,
         )
@@ -389,6 +407,7 @@ where
             &runtime,
             &crate::pd_capability::CapabilityTimestampSource(self.pd.clone()),
             self.gc_state.cache().as_ref(),
+            self.resource_group_name.as_deref(),
             start_key,
             end_key,
             limit,
@@ -457,6 +476,12 @@ where
             self.gc_state.cache(),
         )?;
         transaction.set_commit_protocol(self.protocol);
+        if let Some(resource_group_name) = self.resource_group_name.as_deref() {
+            crate::new_txn::TxnResourceGroup::set_resource_group_name(
+                &mut transaction,
+                resource_group_name,
+            );
+        }
         Ok(transaction)
     }
 

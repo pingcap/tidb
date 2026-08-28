@@ -486,15 +486,9 @@ impl LogicalAggregation {
     /// reloads)` (`logical_aggregation.go:219`): the output row count is the
     /// NDV of the group-by columns, and every output column takes that NDV.
     ///
-    /// # Blocked
-    ///
-    /// Go's row count is `cardinality.EstimateColsNDVWithMatchedLen(sctx,
-    /// gbyCols, childSchema[0], childProfile)`, which needs the session and the
-    /// child histograms. The dependency-closed part of that estimator — the
-    /// product of the per-column NDVs, capped at the child row count — is what
-    /// runs here; a group-by column absent from the child profile falls back to
-    /// the child row count, as Go's `EstimateColsNDVWithMatchedLen` does for an
-    /// unmatched column.
+    /// The production default `RiskGroupNDVSkewRatio == 0` uses Go's
+    /// conservative estimate: an exact `GroupNDV` when present, otherwise the
+    /// largest group-column NDV. It does not multiply independent column NDVs.
     pub fn derive_stats(
         &mut self,
         child_stats: &[StatsInfo],
@@ -512,17 +506,12 @@ impl LogicalAggregation {
         for item in &self.group_by_items {
             gby_cols.extend(extract_columns(item));
         }
-        let mut ndv = 1.0_f64;
-        for column in &gby_cols {
-            ndv *= child
-                .col_ndvs()
-                .get(&column.unique_id)
-                .copied()
-                .unwrap_or(child.row_count());
-        }
-        if gby_cols.is_empty() {
-            ndv = 1.0;
-        }
+        let group_ids = gby_cols
+            .iter()
+            .map(|column| column.unique_id)
+            .collect::<Vec<_>>();
+        let (ndv, _) =
+            crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len(&group_ids, child);
         let ndv = ndv.min(child.row_count());
         let stats = StatsInfo::new(
             ndv,

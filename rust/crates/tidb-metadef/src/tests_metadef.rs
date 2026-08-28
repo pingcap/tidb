@@ -17,8 +17,8 @@
 
 use super::*;
 use crate::{
-    is_mem_db, is_reserved_id, is_system_db, is_system_related_db, RESERVED_GLOBAL_ID_LOWER_BOUND,
-    system::RESERVED_GLOBAL_ID_UPPER_BOUND,
+    is_mem_db, is_reserved_id, is_system_db, is_system_related_db,
+    system::RESERVED_GLOBAL_ID_UPPER_BOUND, RESERVED_GLOBAL_ID_LOWER_BOUND,
 };
 
 // Go pkg/meta/metadef/db_test.go TestIsMemDB.

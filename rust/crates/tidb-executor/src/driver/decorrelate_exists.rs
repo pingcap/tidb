@@ -29,6 +29,10 @@ pub(crate) struct DecorrelatedWhere {
     pub(crate) residual: Option<tidb_ast::Expr>,
     pub(crate) delivered: crate::driver::from::Delivered,
     pub(crate) semi_join_count: usize,
+    /// Logical rows after the decorrelated semi/anti-semi chain. The shared
+    /// stats derivation owns this estimate; no executor-local physical cost
+    /// tree is rebuilt merely to recover its root cardinality.
+    pub(crate) logical_outer_rows: Option<f64>,
     /// The first semi join's left Projection absorbed the enclosing join
     /// reorder's written-schema restoration.
     pub(crate) consumed_outer_projection: bool,
@@ -128,12 +132,8 @@ pub(crate) fn decorrelate_where(
                     .collect::<Vec<_>>(),
             );
             // Go's Apply decorrelation starts from the preserved DataSource
-            // after its ordinary local predicates. A candidate built from the
-            // original SELECT may already include the semi predicate's
-            // fallback selectivity (q4), while a scalar-subquery predicate
-            // may only be represented by the candidate (q22). Prefer the
-            // loaded-statistics local count, then Go's outer logical receipt,
-            // and only then the physical candidate.
+            // after its ordinary local predicates. Prefer the loaded-
+            // statistics local count, then the outer logical receipt.
             let local_outer_rows = crate::driver::access::select_predicate_stats_rows(
                 select,
                 local_where.as_ref(),
@@ -141,17 +141,7 @@ pub(crate) fn decorrelate_where(
                 current_db,
                 outer,
             );
-            let candidate_outer_rows = delivered.candidate.as_ref().map(|candidate| {
-                tidb_planner::candidate_cost::evaluate(
-                    candidate,
-                    ctx.optimizer_cost_env(),
-                    tidb_planner::task_type::TaskType::Root,
-                )
-                .rows
-            });
-            let initial_outer_rows = local_outer_rows
-                .or(outer_rows_hint)
-                .or(candidate_outer_rows);
+            let initial_outer_rows = local_outer_rows.or(outer_rows_hint);
             let mut logical_outer_rows = initial_outer_rows;
             let mut final_residual = deferred_local.clone();
             let mut physical_outer_scope = outer.clone();
@@ -232,7 +222,7 @@ pub(crate) fn decorrelate_where(
                     break;
                 };
                 let local_join_rows =
-                    crate::driver::join_search::estimated_rows(&physical_join, Some(&rows));
+                    crate::driver::join_reorder::estimated_rows(&physical_join, Some(&rows));
                 let next_outer_rows = logical_outer_rows
                     .or_else(|| local_join_rows.map(|estimated| estimated.left))
                     .map(|left| left * crate::plan_trace::SELECTIVITY_FACTOR);
@@ -240,12 +230,10 @@ pub(crate) fn decorrelate_where(
                     offered: &offered,
                     pushdown: Some(&pushdown),
                     columns: Some(&wanted),
-                    // `wanted` IS the statement-wide walk (`of_select`), so
-                    // it answers both questions for this rewritten select.
-                    all_names: Some(&wanted),
                     output_columns: Some(&output_wanted),
                     rows: Some(&rows),
-                    join_hints: None,
+                    planner_join: None,
+                    planner_access: None,
                     physical_source_names: false,
                     plan_columns: &[],
                     runtime_lookup: None,
@@ -294,6 +282,7 @@ pub(crate) fn decorrelate_where(
                 residual: final_residual,
                 delivered,
                 semi_join_count,
+                logical_outer_rows,
                 consumed_outer_projection,
             });
         }
@@ -323,7 +312,6 @@ pub(crate) fn decorrelate_where(
             None,
             crate::driver::leaf_demand::FromDemand::none(),
             &tidb_planner::physical_property::PhysicalProperty::default(),
-            None,
         )?;
         debug_assert_eq!(built_scope.width(), prepared.inner_scope.width());
 
@@ -383,6 +371,8 @@ pub(crate) fn decorrelate_where(
         residual: crate::driver::predicate_push_down::combined(&residual),
         delivered,
         semi_join_count,
+        logical_outer_rows: outer_rows_hint
+            .map(|rows| rows * crate::plan_trace::SELECTIVITY_FACTOR.powi(semi_join_count as i32)),
         consumed_outer_projection: false,
     })
 }
@@ -478,7 +468,6 @@ fn prepare<'a>(
         None,
         crate::driver::leaf_demand::FromDemand::none(),
         &tidb_planner::physical_property::PhysicalProperty::default(),
-        None,
     )?;
     let mut all_correlated = Vec::new();
     crate::driver::subquery::collect_correlated_columns_query(

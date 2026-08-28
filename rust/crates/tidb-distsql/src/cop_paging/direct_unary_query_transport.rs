@@ -57,8 +57,8 @@ pub use tidb_txnkv::{
 
 use super::{
     build_tikv_unary_request_for_dispatch, classify_transport_failure, decode_tikv_unary_response,
-    CopPagingState,
-    CopReadTaskError, CopReadTaskRuntime, ReadEngineGeneration, TransportFailureAction,
+    CopPagingState, CopReadTaskError, CopReadTaskRuntime, ReadEngineGeneration,
+    TransportFailureAction,
 };
 use crate::{RegionTaskEpoch, RegionTaskTopology, ReplicaReadType};
 
@@ -453,10 +453,6 @@ fn record_physical_dispatch(
     batch: bool,
     publication: Option<AsyncRequestPublication>,
 ) {
-    let published = publication.map(|publication| PublishedDispatchEvidence {
-        region_id,
-        publication,
-    });
     {
         let mut evidence = evidence.borrow_mut();
         if !evidence.dispatched_region_ids.contains(&region_id) {
@@ -467,15 +463,29 @@ fn record_physical_dispatch(
         } else {
             evidence.unary_attempts += 1;
         }
-        if let Some(published) = &published {
-            evidence.published_attempts.push(published.clone());
-        }
     }
-    if let Some(published) = &published {
-        let observer = publication_observer.borrow().clone();
-        if let Some(observer) = observer {
-            observer(published);
-        }
+    if let Some(publication) = publication {
+        record_physical_publication(evidence, publication_observer, region_id, publication);
+    }
+}
+
+fn record_physical_publication(
+    evidence: &Rc<RefCell<DirectUnaryTransportEvidence>>,
+    publication_observer: &Rc<RefCell<Option<PublicationObserver>>>,
+    region_id: u64,
+    publication: AsyncRequestPublication,
+) {
+    let published = PublishedDispatchEvidence {
+        region_id,
+        publication,
+    };
+    evidence
+        .borrow_mut()
+        .published_attempts
+        .push(published.clone());
+    let observer = publication_observer.borrow().clone();
+    if let Some(observer) = observer {
+        observer(&published);
     }
 }
 
@@ -741,8 +751,13 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         let topology = topology_from_locations(locations);
         crate::cop_paging::direct_unary_query_transport::qtrace(
             trace_t0,
-            format_args!("locate_done tasks={} t={:.1}ms", topology.len(),
-                trace_t0.map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0)),
+            format_args!(
+                "locate_done tasks={} t={:.1}ms",
+                topology.len(),
+                trace_t0
+                    .map(|t| t.elapsed().as_secs_f64() * 1000.0)
+                    .unwrap_or(0.0)
+            ),
         );
         *self.publication_observer.borrow_mut() = None;
         {
@@ -797,8 +812,12 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
 
         let trace_start = trace_t0;
         if let Some(t0) = trace_start {
-            eprintln!("[QTRACE +{:.1}ms] resp_open tasks={} keep_order={}",
-                t0.elapsed().as_secs_f64() * 1000.0, logical_order.len(), metadata.keep_order);
+            eprintln!(
+                "[QTRACE +{:.1}ms] resp_open tasks={} keep_order={}",
+                t0.elapsed().as_secs_f64() * 1000.0,
+                logical_order.len(),
+                metadata.keep_order
+            );
         }
         Ok(Some(DirectUnaryQueryResponse {
             shared_runtime: self.shared_runtime.clone(),
@@ -952,7 +971,12 @@ fn wall_ms() -> u128 {
 
 fn qtrace(start: Option<std::time::Instant>, message: std::fmt::Arguments<'_>) {
     if let Some(start) = start {
-        eprintln!("[QTRACE +{}ms w={}] {}", format_elapsed(start.elapsed()), wall_ms(), message);
+        eprintln!(
+            "[QTRACE +{}ms w={}] {}",
+            format_elapsed(start.elapsed()),
+            wall_ms(),
+            message
+        );
     }
 }
 
@@ -1024,12 +1048,19 @@ struct PendingBatchAttempt {
     dispatch: PreparedRegionDispatch,
     pending: Box<dyn PendingRequest>,
     started_at: Instant,
+    publication_recorded: bool,
 }
 
 impl<C, L> Drop for DirectUnaryQueryResponse<C, L> {
     fn drop(&mut self) {
-        qtrace(self.trace_start, format_args!("resp_close pending={} inflight={}",
-            self.pending_batches.len(), self.unordered_inflight.len()));
+        qtrace(
+            self.trace_start,
+            format_args!(
+                "resp_close pending={} inflight={}",
+                self.pending_batches.len(),
+                self.unordered_inflight.len()
+            ),
+        );
         for attempt in self.pending_batches.values_mut() {
             attempt.pending.cancel();
         }
@@ -1212,8 +1243,14 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 .wait(&self.call)
                 .map_err(Self::completion_error)?;
             if query_trace_enabled() && wait_started.elapsed().as_millis() >= 1 {
-                qtrace(self.trace_start, format_args!("wait_completion {}ms -> task {}",
-                    wait_started.elapsed().as_millis(), logical_task_id));
+                qtrace(
+                    self.trace_start,
+                    format_args!(
+                        "wait_completion {}ms -> task {}",
+                        wait_started.elapsed().as_millis(),
+                        logical_task_id
+                    ),
+                );
             }
             if self.pending_batches.contains_key(&logical_task_id)
                 && self
@@ -1295,15 +1332,18 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         attempt_id: u64,
     ) -> Result<(), DirectUnaryTransportError> {
         self.check_retry_active()?;
-        qtrace(self.trace_start, format_args!(
-            "dispatch task={} attempt={} page_size={}",
-            logical_task_id,
-            attempt_id,
-            self.runtime
-                .prepared_attempt(attempt_id)
-                .map(|p| p.request().paging_size)
-                .unwrap_or(0),
-        ));
+        qtrace(
+            self.trace_start,
+            format_args!(
+                "dispatch task={} attempt={} page_size={}",
+                logical_task_id,
+                attempt_id,
+                self.runtime
+                    .prepared_attempt(attempt_id)
+                    .map(|p| p.request().paging_size)
+                    .unwrap_or(0),
+            ),
+        );
         let prepared = self.runtime.prepared_attempt(attempt_id).cloned().ok_or(
             DirectUnaryTransportError::ResponseState("active attempt is not prepared"),
         )?;
@@ -1472,6 +1512,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             match begin_result {
                 Ok(mut pending) => {
                     let publication = pending.publication();
+                    let publication_recorded = publication.is_some();
                     if !self.metadata.keep_order {
                         pending.set_notifier(
                             self.completion_notifier.clone(),
@@ -1491,6 +1532,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                             dispatch: prepared_dispatch,
                             pending,
                             started_at: dispatch_started,
+                            publication_recorded,
                         },
                     );
                     return Ok(());
@@ -1539,12 +1581,32 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             }
             return Err(error);
         }
-        let completion = {
+        let (completion, late_publication, region_id) = {
             let attempt = self.pending_batches.get_mut(&logical_task_id).ok_or(
                 DirectUnaryTransportError::ResponseState("missing pending BatchCommands attempt"),
             )?;
-            attempt.pending.complete(&self.call)
+            let completion = attempt.pending.complete(&self.call);
+            let publication = if attempt.publication_recorded {
+                None
+            } else {
+                let publication = attempt.pending.publication();
+                attempt.publication_recorded = publication.is_some();
+                publication
+            };
+            (
+                completion,
+                publication,
+                attempt.dispatch.selected.attempt.region.id,
+            )
         };
+        if let Some(publication) = late_publication {
+            record_physical_publication(
+                &self.evidence,
+                &self.publication_observer,
+                region_id,
+                publication,
+            );
+        }
         if let Err(error) = self.check_retry_active() {
             if let Some(attempt) = self.pending_batches.get_mut(&logical_task_id) {
                 attempt.pending.cancel();
@@ -1578,12 +1640,33 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         logical_task_id: u64,
     ) -> Result<bool, DirectUnaryTransportError> {
         self.check_retry_active()?;
-        let completion = {
+        let (completion, late_publication, region_id) = {
             let attempt = self.pending_batches.get_mut(&logical_task_id).ok_or(
                 DirectUnaryTransportError::ResponseState("missing pending BatchCommands attempt"),
             )?;
-            attempt.pending.try_complete()
+            let completion = attempt.pending.try_complete();
+            let publication = if matches!(completion, Ok(Some(_))) && !attempt.publication_recorded
+            {
+                let publication = attempt.pending.publication();
+                attempt.publication_recorded = publication.is_some();
+                publication
+            } else {
+                None
+            };
+            (
+                completion,
+                publication,
+                attempt.dispatch.selected.attempt.region.id,
+            )
         };
+        if let Some(publication) = late_publication {
+            record_physical_publication(
+                &self.evidence,
+                &self.publication_observer,
+                region_id,
+                publication,
+            );
+        }
         let send_result = match completion {
             Ok(None) => return Ok(false),
             Ok(Some(result)) => result,
@@ -1620,9 +1703,17 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             batch_attempt,
             pre_batch_network_metrics,
         } = dispatch;
-        qtrace(self.trace_start, format_args!("task_done id={} attempt={} rpc={}ms bytes={} ok={}",
-            logical_task_id, attempt_id, dispatch_duration.as_millis(), request_bytes,
-            send_result.is_ok()));
+        qtrace(
+            self.trace_start,
+            format_args!(
+                "task_done id={} attempt={} rpc={}ms bytes={} ok={}",
+                logical_task_id,
+                attempt_id,
+                dispatch_duration.as_millis(),
+                request_bytes,
+                send_result.is_ok()
+            ),
+        );
         // Go checks ctx.Err after SendRequest returns. Caller cancellation has
         // precedence over a simultaneous transport error or successful reply.
         if self.cancellation.is_cancelled()
@@ -2152,7 +2243,10 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         if delay.is_zero() {
             return Ok(());
         }
-        qtrace(self.trace_start, format_args!("sleep_retry {}ms", delay.as_millis()));
+        qtrace(
+            self.trace_start,
+            format_args!("sleep_retry {}ms", delay.as_millis()),
+        );
         let remaining = self.call.timeout();
         if remaining.is_zero() || delay >= remaining {
             return Err(DirectUnaryTransportError::DeadlineExceeded);

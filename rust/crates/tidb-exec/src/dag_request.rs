@@ -287,6 +287,7 @@ pub fn construct_aggregate_read_only_dag_req_with_conditions(
     scan: TiKvScanPlan<'_>,
     conditions: &[Expr],
     aggregate_functions: &[Expr],
+    streamed: bool,
     output_offsets: &[u32],
 ) -> Result<DagRequest, DagRequestBuildError> {
     construct_dag_req_inner(
@@ -300,7 +301,7 @@ pub fn construct_aggregate_read_only_dag_req_with_conditions(
         Some(output_offsets),
         Some(aggregate_functions),
         None,
-        false,
+        streamed,
         None,
     )
 }
@@ -397,16 +398,16 @@ pub fn construct_index_aggregated_dag_req(
     aggregation_width: usize,
 ) -> Result<DagRequest, DagRequestBuildError> {
     let mut executors = vec![Executor {
-            tp: Some(ExecType::TypeIndexScan as i32),
-            tbl_scan: None,
-            idx_scan: Some(index_scan),
-            selection: None,
-            aggregation: None,
-            top_n: None,
-            limit: None,
-            executor_id: None,
-            parent_idx: None,
-        }];
+        tp: Some(ExecType::TypeIndexScan as i32),
+        tbl_scan: None,
+        idx_scan: Some(index_scan),
+        selection: None,
+        aggregation: None,
+        top_n: None,
+        limit: None,
+        executor_id: None,
+        parent_idx: None,
+    }];
     if !conditions.is_empty() {
         executors.push(selection_executor(conditions)?);
     }

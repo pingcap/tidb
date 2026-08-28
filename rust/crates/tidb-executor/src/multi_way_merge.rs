@@ -19,9 +19,9 @@
 //! `multi_way_merge.go`. Covered elsewhere: `sort.go` -> [`crate::sort`],
 //! `sort_util.go` -> [`crate::sort_util`], `sort_partition.go` ->
 //! [`crate::sort_partition`], `topn.go` -> [`crate::topn`], `topn_spill.go` ->
-//! [`crate::topn_spill`], `topn_chunk_heap.go` -> [`crate::topn_chunk_heap`].
-//! NOT COVERED anywhere yet: `parallel_sort_worker.go`,
-//! `parallel_sort_spill_helper.go`, `sort_spill.go`, `topn_worker.go`.
+//! [`crate::topn_spill`], `topn_chunk_heap.go` -> [`crate::topn_chunk_heap`],
+//! `parallel_sort_worker.go`/`sort_spill.go` -> [`crate::sort`], and
+//! `parallel_sort_spill_helper.go` -> [`crate::parallel_sort_spill_helper`].
 //!
 //! The shape is Go's: a heap holds ONE element per live run
 //! ([`crate::sort_util::RowWithPartition`]), `next` returns the heap's minimum
@@ -43,9 +43,8 @@
 //! * `sortPartitionSource` is NOT ported. Go's `sortPartition` exposes
 //!   `getNextSortedRow`; this port's [`crate::sort_partition::SortPartition`]
 //!   exposes a `load_head`/`head_key`/`take_head_into` cursor that
-//!   [`crate::sort::SortExec`] merges directly, and reshaping it to feed this
-//!   merger would change a file this port already ships. The two remaining
-//!   sources cover the in-memory and spilled cases.
+//!   [`crate::sort::SortExec`] merges directly. [`MemorySource`] and
+//!   [`DiskSource`] cover the parallel workers' in-memory and spilled runs.
 //! * `lessRowFunction` returns [`Ordering`] rather than Go's `int`, and it may
 //!   FAIL: this port's keys are evaluated datums, and an unorderable pair is an
 //!   error rather than a planner-time impossibility. `init`/`next` therefore

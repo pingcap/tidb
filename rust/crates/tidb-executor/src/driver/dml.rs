@@ -147,7 +147,8 @@ pub fn run_fast_prepared_insert(
         || !kv.foreign_keys().is_empty()
         || kv.auto_increment_offset().is_some()
         || kv.partition().is_some()
-        || kv.columns
+        || kv
+            .columns
             .iter()
             .any(|column| column.generated.is_some() || column.default_value.is_some())
     {
@@ -979,8 +980,7 @@ pub(crate) fn run_insert_traced(
     // constraint check. The moment a statement must RESOLVE a conflict rather
     // than report one, every prior read stays eager, exactly as Go keeps the
     // in-place mode for those statements.
-    let lazy_dup_check = (!ctx.constraint_check_in_place()
-        || ctx.pessimistic_lazy_dup_check())
+    let lazy_dup_check = (!ctx.constraint_check_in_place() || ctx.pessimistic_lazy_dup_check())
         && !insert.replace
         && insert.on_duplicate.is_empty()
         && !insert.ignore;
@@ -1270,7 +1270,9 @@ pub(crate) fn kv_read_error(operation: &str, error: crate::kv_table::KvTableErro
         // A row that could not be READ is a runtime storage/decode failure;
         // Go surfaces it through its generic 1105 path -- never a 1064, which
         // would tell the client its SQL TEXT was at fault.
-        other => DriverError::Exec(ExecError::Internal(format!("{operation}: {other:?}").into())),
+        other => DriverError::Exec(ExecError::Internal(
+            format!("{operation}: {other:?}").into(),
+        )),
     }
 }
 
@@ -1756,12 +1758,21 @@ pub fn run_fast_prepared_update(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Option<u64>, DriverError> {
-    let __fast_t0 = std::time::Instant::now();
-    if update.ignore || !update.order_by.is_empty() || update.limit.is_some()
-        || !update.returning.is_empty() || update.assignments.is_empty() { return Ok(None); }
-    let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else { return Ok(None) };
+    if update.ignore
+        || !update.order_by.is_empty()
+        || update.limit.is_some()
+        || !update.returning.is_empty()
+        || update.assignments.is_empty()
+    {
+        return Ok(None);
+    }
+    let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
+        return Ok(None);
+    };
     let (database, name) = single_table_name(table_ref, current_db)?;
-    let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else { return Ok(None) };
+    let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
+        return Ok(None);
+    };
     // Two clustered shapes reach this arm, and Go's cached point-update plan
     // (`tryUpdatePointPlan`, pkg/planner/core/point_get_plan.go) admits both:
     // go-ycsb's COMPOSITE COMMON handle and sbtest's INT `PKIsHandle`. The
@@ -1775,18 +1786,28 @@ pub fn run_fast_prepared_update(
         handles = vec![offset];
     }
     if handles.is_empty()
-        || kv.visible_columns().iter().any(|column| column.generated.is_some())
+        || kv
+            .visible_columns()
+            .iter()
+            .any(|column| column.generated.is_some())
     {
         return Ok(None);
     }
-    let qualifier = table_ref.alias.as_deref().or_else(|| table_ref.name.last().map(String::as_str));
+    let qualifier = table_ref
+        .alias
+        .as_deref()
+        .or_else(|| table_ref.name.last().map(String::as_str));
     let columns = kv.visible_columns().to_vec();
     let mut assignment_offsets = Vec::with_capacity(update.assignments.len());
     for assignment in &update.assignments {
         let Some(offset) = columns.iter().position(|column| {
-            column.name.eq_ignore_ascii_case(assignment.col.last().map_or("", String::as_str))
+            column
+                .name
+                .eq_ignore_ascii_case(assignment.col.last().map_or("", String::as_str))
                 && assignment_qualifier_matches(&assignment.col, qualifier)
-        }) else { return Ok(None) };
+        }) else {
+            return Ok(None);
+        };
         // Assigning a clustered-key column MOVES the row, and duplicate
         // targets would make an arithmetic assignment order-dependent. Both
         // keep the ordinary planner.
@@ -1802,14 +1823,23 @@ pub fn run_fast_prepared_update(
     // entry pair carries no constraint, and `update_row_in` already rewrites
     // exactly that pair (old deleted, new written, restored on failure), so
     // handing it here is Go's own cached-point-update behavior.
-    if kv.indexes().iter().any(|index|
+    if kv.indexes().iter().any(|index| {
         index.unique
             && !index.clustered_primary
-            && index.column_offsets.iter().any(|offset| assignment_offsets.contains(offset)))
-        || kv.foreign_keys().iter().any(|fk| fk.cols.iter().any(|column|
-            update.assignments.iter().any(|assignment|
-                assignment.col.last().is_some_and(|assigned| assigned.eq_ignore_ascii_case(column)))))
-    {
+            && index
+                .column_offsets
+                .iter()
+                .any(|offset| assignment_offsets.contains(offset))
+    }) || kv.foreign_keys().iter().any(|fk| {
+        fk.cols.iter().any(|column| {
+            update.assignments.iter().any(|assignment| {
+                assignment
+                    .col
+                    .last()
+                    .is_some_and(|assigned| assigned.eq_ignore_ascii_case(column))
+            })
+        })
+    }) {
         return Ok(None);
     }
     // The WHERE flattens into conjunction leaves: EACH clustered-key column
@@ -1823,10 +1853,14 @@ pub fn run_fast_prepared_update(
         qualifier,
         &columns,
         &mut residual_eqs,
-    ) else { return Ok(None) };
+    ) else {
+        return Ok(None);
+    };
     let mut key_values = Vec::with_capacity(handles.len());
     for key_expr in key_exprs {
-        let Some(key_value) = prepared_or_literal(key_expr, params)? else { return Ok(None) };
+        let Some(key_value) = prepared_or_literal(key_expr, params)? else {
+            return Ok(None);
+        };
         key_values.push(key_value);
     }
     let handle = match int_pk_offset {
@@ -1842,39 +1876,46 @@ pub fn run_fast_prepared_update(
         }
         None => {
             let encoded = tidb_codec::encode_key_in_timezone(&ctx.session_zone(), &key_values)
-                .map_err(|error| DriverError::unsupported(
-                    format!("cannot encode common handle: {error:?}"),
-                ))?;
-            let handle = tidb_txnkv::CommonHandle::new(encoded)
-                .map_err(|error| DriverError::unsupported(
-                    format!("cannot encode common handle: {error:?}"),
-                ))?;
+                .map_err(|error| {
+                    DriverError::unsupported(format!("cannot encode common handle: {error:?}"))
+                })?;
+            let handle = tidb_txnkv::CommonHandle::new(encoded).map_err(|error| {
+                DriverError::unsupported(format!("cannot encode common handle: {error:?}"))
+            })?;
             TableHandle::Common(handle.encoded().to_vec())
         }
     };
-    if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("upd")) {
-        eprintln!("[upd] admitted+encoded {}us", __fast_t0.elapsed().as_micros());
-    }
-    let __upd_t0 = std::time::Instant::now();
-    let old_row = match kv.get_row_by_handle(&handle, &ctx.session_zone()).map_err(kv_write_error)? {
-        Some(row) => row, None => return Ok(Some(0)),
+    let old_row = match kv
+        .get_row_by_handle(&handle, &ctx.session_zone())
+        .map_err(kv_write_error)?
+    {
+        Some(row) => row,
+        None => return Ok(Some(0)),
     };
-    if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("upd")) {
-        eprintln!("[upd] read-old-row {}us", __upd_t0.elapsed().as_micros());
-    }
-    let field_types: Vec<FieldType> = columns.iter().map(|column| column.field_type.clone()).collect();
+    let field_types: Vec<FieldType> = columns
+        .iter()
+        .map(|column| column.field_type.clone())
+        .collect();
     let names: Vec<String> = columns.iter().map(|column| column.name.clone()).collect();
     for (offset, bound) in &residual_eqs {
         let expected = match bound {
             ResidualEq::Param(order) => params.get(*order).cloned(),
             ResidualEq::Constant(value) => Some(value.clone()),
         };
-        let Some(mut expected) = expected else { return Ok(None) };
+        let Some(mut expected) = expected else {
+            return Ok(None);
+        };
         if expected.is_null() || old_row.get(*offset).is_none_or(Datum::is_null) {
             // `<column> = NULL` matches nothing under SQL semantics.
             return Ok(Some(0));
         }
-        expected = cast_value_for_update_assignment(expected, &field_types[*offset], &names[*offset], 0, ctx)?;
+        expected = cast_value_for_update_assignment(
+            expected,
+            &field_types[*offset],
+            &names[*offset],
+            0,
+            ctx,
+        )?;
         match old_row[*offset].compare(&expected, field_types[*offset].collation()) {
             Ok(std::cmp::Ordering::Equal) => {}
             _ => return Ok(Some(0)),
@@ -1884,30 +1925,44 @@ pub fn run_fast_prepared_update(
     for (assignment, offset) in update.assignments.iter().zip(assignment_offsets) {
         // Go's plan cache serves `SET col = col + ?` shapes unchanged; the
         // arithmetic evaluates against the selected row's own column.
-        let Some(value) =
-            assignment_new_value(&assignment.value, &assignment.col, qualifier, offset, &row, params)?
-        else { return Ok(None) };
-        row[offset] = cast_value_for_update_assignment(value, &field_types[offset], &names[offset], 0, ctx)?;
+        let Some(value) = assignment_new_value(
+            &assignment.value,
+            &assignment.col,
+            qualifier,
+            offset,
+            &row,
+            params,
+        )?
+        else {
+            return Ok(None);
+        };
+        row[offset] =
+            cast_value_for_update_assignment(value, &field_types[offset], &names[offset], 0, ctx)?;
     }
     let level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
     for ((value, field_type), name) in row.iter_mut().zip(field_types.iter()).zip(names.iter()) {
         crate::bad_null::handle_bad_null(value, field_type, name, level, ctx)?;
     }
-    if row == old_row { return Ok(Some(0)); }
-    if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("upd")) {
-        eprintln!("[upd] pre-write {}us", __upd_t0.elapsed().as_micros());
+    if row == old_row {
+        return Ok(Some(0));
     }
     kv.update_row_with_old(&handle, Some(&old_row), &row, ctx)
         .map_err(kv_write_error)?;
-    if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("upd")) {
-        eprintln!("[upd] stage-write {}us", __upd_t0.elapsed().as_micros());
-    }
     Ok(Some(1))
 }
 
-fn prepared_or_literal(expr: &tidb_ast::Expr, params: &[Datum]) -> Result<Option<Datum>, DriverError> {
-    let tidb_ast::Expr::ParamMarker { order, .. } = expr else { return Ok(None) };
-    params.get(*order).cloned().map(Some).ok_or(DriverError::WrongParamCount)
+fn prepared_or_literal(
+    expr: &tidb_ast::Expr,
+    params: &[Datum],
+) -> Result<Option<Datum>, DriverError> {
+    let tidb_ast::Expr::ParamMarker { order, .. } = expr else {
+        return Ok(None);
+    };
+    params
+        .get(*order)
+        .cloned()
+        .map(Some)
+        .ok_or(DriverError::WrongParamCount)
 }
 
 fn unparen(expr: &tidb_ast::Expr) -> &tidb_ast::Expr {
@@ -1915,37 +1970,6 @@ fn unparen(expr: &tidb_ast::Expr) -> &tidb_ast::Expr {
         tidb_ast::Expr::Paren(inner) => unparen(inner),
         other => other,
     }
-}
-
-/// Flattens a WHERE tree into its conjunction leaves, each a plain
-/// `column = ?` equality with the column kept UNRESOLVED. An OR, a residual
-/// predicate, or any non-equality leaf makes the whole tree decline the
-/// caller's narrow path.
-fn point_eq_conjunct_leaves<'a>(
-    where_clause: &'a tidb_ast::Expr,
-) -> Option<Vec<(&'a [String], &'a tidb_ast::Expr)>> {
-    let mut out = Vec::new();
-    let mut stack = vec![unparen(where_clause)];
-    while let Some(current) = stack.pop() {
-        match current {
-            tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, left, right) => {
-                stack.push(unparen(left));
-                stack.push(unparen(right));
-            }
-            tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, left, right) => {
-                let (left, right) = (unparen(left), unparen(right));
-                if let tidb_ast::Expr::Column(path) = left {
-                    out.push((path.as_slice(), right));
-                } else if let tidb_ast::Expr::Column(path) = right {
-                    out.push((path.as_slice(), left));
-                } else {
-                    return None;
-                }
-            }
-            _ => return None,
-        }
-    }
-    Some(out)
 }
 
 /// Whether one operand names THE assigned column (its last spelling matches,
@@ -1958,7 +1982,9 @@ fn operand_is_assigned_column(
     match unparen(expr) {
         tidb_ast::Expr::Column(path) => {
             path.last().is_some_and(|leaf| {
-                target_path.last().is_some_and(|target| leaf.eq_ignore_ascii_case(target))
+                target_path
+                    .last()
+                    .is_some_and(|target| leaf.eq_ignore_ascii_case(target))
             }) && assignment_qualifier_matches(path, qualifier)
         }
         _ => false,
@@ -1986,7 +2012,11 @@ fn assignment_new_value(
             left,
             right,
         ) => {
-            let sign = if matches!(op, tidb_ast::BinaryOp::Plus) { 1i8 } else { -1i8 };
+            let sign = if matches!(op, tidb_ast::BinaryOp::Plus) {
+                1i8
+            } else {
+                -1i8
+            };
             // Exactly one side may name THE assigned column; naming a
             // DIFFERENT column declines (reading another row column is the
             // planner's job).
@@ -2002,9 +2032,10 @@ fn assignment_new_value(
                 return Ok(None);
             };
             let delta = match unparen(delta_expr) {
-                tidb_ast::Expr::ParamMarker { order, .. } => {
-                    params.get(*order).cloned().ok_or(DriverError::WrongParamCount)?
-                }
+                tidb_ast::Expr::ParamMarker { order, .. } => params
+                    .get(*order)
+                    .cloned()
+                    .ok_or(DriverError::WrongParamCount)?,
                 tidb_ast::Expr::Int(text) => match text.parse::<i64>() {
                     Ok(value) => Datum::Int(value),
                     Err(_) => match text.parse::<u64>() {
@@ -2028,9 +2059,17 @@ fn assignment_new_value(
                     _ => None,
                 }
             };
-            let Some(base) = as_i128(current) else { return Ok(None) };
-            let Some(shift) = as_i128(&delta) else { return Ok(None) };
-            let value = if sign == 1 { base.checked_add(shift) } else { base.checked_sub(shift) };
+            let Some(base) = as_i128(current) else {
+                return Ok(None);
+            };
+            let Some(shift) = as_i128(&delta) else {
+                return Ok(None);
+            };
+            let value = if sign == 1 {
+                base.checked_add(shift)
+            } else {
+                base.checked_sub(shift)
+            };
             let Some(value) = value else { return Ok(None) };
             let narrowed = match current {
                 Datum::UInt(_) => u64::try_from(value).ok().map(Datum::UInt),
@@ -2121,7 +2160,9 @@ fn point_update_where<'a>(
             return None;
         }
         let offset = columns.iter().position(|column| {
-            column.name.eq_ignore_ascii_case(path.last().map_or("", String::as_str))
+            column
+                .name
+                .eq_ignore_ascii_case(path.last().map_or("", String::as_str))
         })?;
         match unparenthesized(if matches!(left.as_ref(), tidb_ast::Expr::Column(_)) {
             right.as_ref()
@@ -2155,8 +2196,11 @@ fn point_update_where<'a>(
 }
 
 fn is_key_column(expr: &tidb_ast::Expr, column: &str, qualifier: Option<&str>) -> bool {
-    let tidb_ast::Expr::Column(path) = expr else { return false };
-    path.last().is_some_and(|name| name.eq_ignore_ascii_case(column))
+    let tidb_ast::Expr::Column(path) = expr else {
+        return false;
+    };
+    path.last()
+        .is_some_and(|name| name.eq_ignore_ascii_case(column))
         && assignment_qualifier_matches(path, qualifier)
 }
 
@@ -2373,6 +2417,7 @@ pub(crate) fn run_update_traced(
         update.where_clause.as_ref(),
         &update.order_by,
         update.limit.as_ref(),
+        table_ref,
     );
     let read_path = super::access::write_read_path(catalog, &database, &name, &point_plan, ctx)?;
     let predicate_consumed = match catalog.get_in(&database, &name) {
@@ -2951,6 +2996,7 @@ pub(crate) fn run_delete_traced(
         delete.where_clause.as_ref(),
         &delete.order_by,
         delete.limit.as_ref(),
+        table_ref,
     );
     let read_path = super::access::write_read_path(catalog, &database, &name, &point_plan, ctx)?;
     let predicate_consumed = match catalog.get_in(&database, &name) {

@@ -85,10 +85,23 @@ fn command_adapters_share_one_transport_authority_and_exact_paths() {
     let runtime = include_str!("../src/rpc/transport_runtime.rs");
     // The worker builds the pool through the security-aware constructor so
     // every TiKV channel routes through the shared `secure_endpoint` helper.
-    assert_eq!(runtime.matches("ChannelPool::with_security(").count(), 1);
-    assert_eq!(runtime.matches("Builder::new_multi_thread()").count(), 1);
+    let runtime_production = runtime.split("#[cfg(test)]").next().unwrap();
+    assert_eq!(
+        runtime_production
+            .matches("ChannelPool::with_security(")
+            .count(),
+        1
+    );
+    assert_eq!(
+        runtime_production
+            .matches("Builder::new_multi_thread()")
+            .count(),
+        1
+    );
     assert!(runtime.contains("WorkerCommand::UnarySend"));
-    assert!(runtime.contains("WorkerCommand::BatchSubmit"));
+    assert!(runtime.contains("TransportCore"));
+    assert!(runtime.contains("submit_batch_direct"));
+    assert!(!runtime.contains("WorkerCommand::BatchSubmit"));
     let shutdown = runtime
         .split("pub(super) fn shutdown(&mut self)")
         .nth(1)
@@ -111,7 +124,7 @@ fn command_adapters_share_one_transport_authority_and_exact_paths() {
     assert!(batch.contains("reconnect_budget"));
 
     let send_group = batch
-        .split("async fn send_group")
+        .split("fn send_group")
         .nth(1)
         .unwrap()
         .split("fn route_for_submission")
@@ -122,6 +135,27 @@ fn command_adapters_share_one_transport_authority_and_exact_paths() {
     let send = send_group.find(".send(request.into_proto())").unwrap();
     assert!(stamp < publish && publish < send);
     assert!(!send_group.contains("continue;"));
+}
+
+#[test]
+fn warm_batch_publication_does_not_cross_the_transport_command_queue() {
+    let runtime = include_str!("../src/rpc/transport_runtime.rs");
+    let deferred = runtime
+        .split("pub(super) fn batch_submit_deferred(")
+        .nth(1)
+        .expect("deferred publication method")
+        .split("pub(super) fn close_address")
+        .next()
+        .expect("deferred publication body");
+
+    assert!(
+        deferred.contains("submit_batch_direct"),
+        "warm BatchCommands publication must mutate the shard under its shared state lock"
+    );
+    assert!(
+        !deferred.contains("WorkerCommand::BatchSubmit"),
+        "the query worker must not enqueue and wake a second OS thread before every RPC"
+    );
 }
 
 #[test]

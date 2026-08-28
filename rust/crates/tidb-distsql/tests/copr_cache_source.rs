@@ -18,9 +18,9 @@ use std::mem;
 
 use prost::Message;
 use tidb_distsql::{
-    build_copr_cache_key, CoprCache, CoprCacheAdmission, CoprCacheConfig, CoprCacheError,
-    CoprCacheRequestContext, CoprCacheResponseContext, CoprCacheResponseOutcome, CoprCacheValue,
-    CoprocessorRequestEnvelope, RequestKeyRange,
+    build_copr_cache_key, copr_cache_metric_snapshot, CoprCache, CoprCacheAdmission,
+    CoprCacheConfig, CoprCacheError, CoprCacheRequestContext, CoprCacheResponseContext,
+    CoprCacheResponseOutcome, CoprCacheValue, CoprocessorRequestEnvelope, RequestKeyRange,
 };
 use tidb_proto::{CoprocessorKeyRange, CoprocessorResponse};
 
@@ -275,6 +275,7 @@ fn test_cache_value_len() {
 
 #[test]
 fn test_get_set_and_live_request_response_lifecycle() {
+    let metrics_before = copr_cache_metric_snapshot();
     let cache = cache();
     assert!(cache.get(b"foo").is_none());
     assert!(cache.set(
@@ -361,6 +362,12 @@ fn test_get_set_and_live_request_response_lifecycle() {
     );
     assert_eq!(hit.data, b"cached");
     assert_eq!(hit.range.unwrap().start, b"m");
+    let metrics_after = copr_cache_metric_snapshot();
+    // The counters are process-global like Go's Prometheus vectors. Other
+    // parallel tests can only increase them, so assert the lifecycle's
+    // monotonic minimum rather than an exact isolated delta.
+    assert!(metrics_after.miss >= metrics_before.miss + 1);
+    assert!(metrics_after.hit >= metrics_before.hit + 1);
 
     let stale_region = cache
         .prepare_request(&mut request, request_context(8, 101))

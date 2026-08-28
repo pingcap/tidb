@@ -379,16 +379,22 @@ impl<'a, O: ConnectionPacketOutput + ?Sized> TcpResultSetSink<'a, O> {
         if self.pending.is_empty() {
             return Ok(());
         }
-        let refs: Vec<&[u8]> = self.pending.iter().map(|payload| payload.as_slice()).collect();
+        let refs: Vec<&[u8]> = self
+            .pending
+            .iter()
+            .map(|payload| payload.as_slice())
+            .collect();
         let result = self.output.write_packets(self.sequence, &refs);
         self.pending.clear();
         self.pending_bytes = 0;
-        result.map(|sequence| {
-            self.sequence = sequence;
-        }).map_err(|error| SinkWriteError {
-            message: error.to_string(),
-            bytes_escaped: true,
-        })
+        result
+            .map(|sequence| {
+                self.sequence = sequence;
+            })
+            .map_err(|error| SinkWriteError {
+                message: error.to_string(),
+                bytes_escaped: true,
+            })
     }
 }
 

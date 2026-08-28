@@ -156,7 +156,10 @@ mod tests {
         );
         // Go: `RecommendedExchangeCompressionMode.ToTipbCompressionMode() ==
         // tipb.CompressionMode_FAST` (version_test.go:97).
-        assert_eq!(ExchangeCompressionMode::RECOMMENDED.to_tipb_compression_value(), 1);
+        assert_eq!(
+            ExchangeCompressionMode::RECOMMENDED.to_tipb_compression_value(),
+            1
+        );
     }
 
     #[test]

@@ -62,16 +62,14 @@
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
-use crate::pinned_thread_pool::PinnedThreadPool;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_distsql::{
     CancelHandle, DistSqlContext, EncodeType, ExecutorKind, ExecutorShape, InjectedQueryRuntime,
     QueryResultContext, QueryTransport, RequestBuilder, RequestEnvelope, SelectInput,
-    WarningCollector,
+    SelectResponseIter, WarningCollector,
 };
 use tidb_executor::predicate_pushdown::ScanPredicate;
 use tidb_executor::remote_scan::{
@@ -86,23 +84,21 @@ use tidb_planner::tikv_scan_spec::{
     ResolvedIndexDescriptor, ScanColumnInfo, TiKvIndexScanSpec, TiKvTableScanSpec,
 };
 use tidb_proto::tipb::{
-    Aggregation, ByItem, ExecType, Executor as PbExecutor, Expr, ExprType, ScalarFuncSig, TopN,
+    ByItem, ExecType, Executor as PbExecutor, Expr, ExprType, ScalarFuncSig, TopN,
 };
 use tidb_txnkv::KeyRange;
 
 use crate::dag_request::{
     construct_aggregate_read_only_dag_req_with_conditions,
-    construct_aggregated_read_only_dag_req_with_conditions,
     construct_capped_read_only_dag_req_with_conditions,
     construct_grouped_aggregate_read_only_dag_req_with_conditions, DagRequestContext, TiKvScanPlan,
 };
 
 enum LoweredAggregate {
-    Legacy {
-        message: Aggregation,
-        output_width: usize,
+    Global {
+        functions: Vec<Expr>,
+        streamed: bool,
     },
-    Global(Vec<Expr>),
     Grouped {
         functions: Vec<Expr>,
         group_by: Vec<Expr>,
@@ -129,66 +125,18 @@ const MYSQL_TYPE_SHORT: i32 = 2;
 /// Go `mysql.TypeTiny`.
 const MYSQL_TYPE_TINY: i32 = 1;
 
-/// How many decoded rows the reader thread may run ahead of the consumer.
-///
-/// The point of the bound is that it *is* a bound: a scan holds a few batches
-/// of decoded rows, never the relation, so the streaming property the scan
-/// source has above the seam survives the thread hop below it.
-// Keep the response-channel boundary above TiKV's small type chunks so a
-// reader can amortize cross-thread wakeups while the consumer drains a full
-// scan. Index scans use Go's MaxChunkSize below: IndexLookUp's
-// `readFromChunk`/`extractTaskHandles` relies on those response boundaries to
-// grow table tasks without splitting a typed chunk.
+/// Keep TiKV's small type chunks behind one decoder pull. Index scans use
+/// Go's MaxChunkSize: IndexLookUp's `readFromChunk`/`extractTaskHandles`
+/// relies on those response boundaries to grow table tasks without splitting
+/// a typed chunk.
 const BATCH_ROWS: usize = 32768;
 const INDEX_BATCH_ROWS: usize = 1024;
-const MAX_BATCHES_AHEAD: usize = 64;
-/// Full scans have no early-stop consumer. A deeper bounded queue lets TiKV
-/// response decoding overlap local join/aggregate work; scans with LIMIT keep
-/// the caller's smaller read-ahead so cancellation remains tight.
-const FULL_SCAN_MIN_BATCHES_AHEAD: usize = 16;
-
-/// A process-local pool every coprocessor scan producer runs on.
-///
-/// Go never creates an OS thread for a scan: `IndexLookUpExecutor` submits
-/// each index and table task to a persistent worker pool
-/// (`pkg/executor/distsql.go:743-745, 1432-1434`), and a `TableReader`'s
-/// producer is a goroutine, which costs microseconds. Rust still needs a
-/// second thread per remote scan so response decoding can overlap executor
-/// work, but paying `pthread_create` for it on the statement path is ours
-/// alone: a bounded `WHERE id BETWEEN ? AND ?` was measured spending 6.3% of
-/// its samples in `Thread::new`, 3% of them inside `_pthread_create`.
-///
-/// [`PinnedThreadPool`] is the right shape because it NEVER queues: a
-/// submission takes a parked worker if one is free and starts a new thread if
-/// not. That is what lets one pool serve short lookup windows and whole-region
-/// streams together -- a long scan cannot convoy a short one behind it,
-/// because a short one never waits. The park is kept separate from the
-/// transaction pool's only so the two do not contend on one mutex.
-fn scan_pool() -> &'static PinnedThreadPool {
-    static POOL: OnceLock<PinnedThreadPool> = OnceLock::new();
-    POOL.get_or_init(|| PinnedThreadPool::with_limit(SCAN_WORKER_PARK_LIMIT))
-}
-
-/// How many idle scan producers the process parks between scans. One per
-/// connection that is mid-scan at the same instant is the working set; past
-/// that a returning worker ends rather than parks.
-const SCAN_WORKER_PARK_LIMIT: usize = 64;
-
-/// Starts one scan producer, reporting the platform's refusal if a new thread
-/// was needed and could not be created.
-fn enqueue_scan<F>(task: F) -> Result<(), String>
-where
-    F: FnOnce() + Send + 'static,
-{
-    scan_pool().run("cop-scan", Box::new(task))
-}
 
 /// One coprocessor scan capability for a node's sessions.
 ///
-/// Each opened scan gets its own worker-local transport on its own thread,
-/// because the production transport is deliberately not `Send` while the
-/// storage that holds this scanner is shared between connection workers. What
-/// crosses threads is the request and the decoded rows.
+/// The shared scanner opens a query-local transport only after a connection
+/// worker asks for a scan. The returned stream owns the lazy response on that
+/// same worker: neither the transport nor the iterator crosses threads.
 pub struct CopScanSource<F> {
     factory: Arc<F>,
     /// Rows this node has received from coprocessor scans, for the receipt a
@@ -410,7 +358,10 @@ where
 
         let aggregate = match request.aggregate.as_ref() {
             None => None,
-            Some(PushdownPartialAggregate::Global { functions }) => {
+            Some(PushdownPartialAggregate::Global {
+                functions,
+                streamed,
+            }) => {
                 if lowered.len() != request.predicates.len()
                     || request.limit.is_some()
                     || request.topn.is_some()
@@ -420,14 +371,17 @@ where
                         "partial aggregation requires a complete Selection and no competing pushdown",
                     ));
                 }
-                let lowered = lower_global_aggregate(functions, &columns).ok_or_else(|| {
+                let lowered = lower_aggregate_functions(functions, &columns).ok_or_else(|| {
                     refuse("a global aggregate function cannot be lowered to TiPB")
                 })?;
                 field_types = functions
                     .iter()
                     .map(|function| function.output_type.clone())
                     .collect();
-                Some(LoweredAggregate::Global(lowered))
+                Some(LoweredAggregate::Global {
+                    functions: lowered,
+                    streamed: *streamed,
+                })
             }
             Some(PushdownPartialAggregate::Grouped {
                 group_offsets,
@@ -445,7 +399,7 @@ where
                     ));
                 }
                 let lowered_functions =
-                    lower_grouped_aggregate(functions, &columns).ok_or_else(|| {
+                    lower_aggregate_functions(functions, &columns).ok_or_else(|| {
                         refuse("a grouped aggregate function cannot be lowered to TiPB")
                     })?;
                 let group_by = lower_group_by(group_offsets, group_types, &columns)
@@ -459,34 +413,6 @@ where
                     functions: lowered_functions,
                     group_by,
                     streamed: *streamed,
-                })
-            }
-            Some(aggregate) => {
-                // The SAME gate the two arms above state, and for the same
-                // reason: an aggregate computed at the region IS the answer,
-                // so a conjunct left behind is not a weaker pre-filter that
-                // the scan source re-tests -- there are no rows left to test.
-                // `count(*)` reaches this arm, and without the gate
-                // `WHERE u >= 9223372036854775808` over a `BIGINT UNSIGNED`
-                // column answered 5 where every row-returning form of the same
-                // query answered 2: the unsigned literal is one this lowering
-                // refuses, so the Selection stayed home while the COUNT
-                // travelled and counted the whole table.
-                if lowered.len() != request.predicates.len()
-                    || request.limit.is_some()
-                    || request.topn.is_some()
-                    || request.output_offsets.is_some()
-                {
-                    return Err(refuse(
-                        "partial aggregation requires a complete Selection and no competing pushdown",
-                    ));
-                }
-                let message = aggregation_to_pb(aggregate, &columns)
-                    .ok_or_else(|| refuse("a pushed aggregate has no bounded lowering"))?;
-                field_types = aggregate.output_types();
-                Some(LoweredAggregate::Legacy {
-                    message,
-                    output_width: field_types.len(),
                 })
             }
         };
@@ -581,25 +507,17 @@ where
             EncodeType::Chunk,
         );
         let mut dag = match aggregate.as_ref() {
-            Some(LoweredAggregate::Legacy {
-                message,
-                output_width,
-            }) => construct_aggregated_read_only_dag_req_with_conditions(
+            Some(LoweredAggregate::Global {
+                functions,
+                streamed,
+            }) => construct_aggregate_read_only_dag_req_with_conditions(
                 &context,
                 scan,
                 &conditions,
-                message.clone(),
-                *output_width,
+                functions,
+                *streamed,
+                &output_offsets,
             ),
-            Some(LoweredAggregate::Global(functions)) => {
-                construct_aggregate_read_only_dag_req_with_conditions(
-                    &context,
-                    scan,
-                    &conditions,
-                    functions,
-                    &output_offsets,
-                )
-            }
             Some(LoweredAggregate::Grouped {
                 functions,
                 group_by,
@@ -699,44 +617,28 @@ where
             is_index_scan: request.index.is_some(),
             paging_min_size: request.paging_min_size,
             time_zone: request.statement.time_zone.clone(),
+            resource_group_name: request.statement.resource_group_name.clone(),
             warnings: request.statement.warnings.clone(),
         };
-        let batches_ahead = request.read_ahead_batches.clamp(1, MAX_BATCHES_AHEAD);
-        let batches_ahead = if request.limit.is_none() {
-            batches_ahead.max(FULL_SCAN_MIN_BATCHES_AHEAD)
+        let batch_rows = if plan.is_index_scan {
+            INDEX_BATCH_ROWS
         } else {
-            batches_ahead
+            BATCH_ROWS
         };
-        let (rows, batches) = sync_channel::<Result<Chunk, String>>(batches_ahead);
-        let factory = Arc::clone(&self.factory);
-        let node_rows = Arc::clone(&self.rows_returned);
-        // A bounded one-row request is consumed immediately by the caller.
-        // Serving it on this worker avoids creating and detaching a native
-        // thread for every YCSB-E scan while retaining the threaded stream for
-        // full scans, where response decoding must overlap executor work.
-        if request.limit == Some(1) {
-            serve_scan(&factory, plan, &rows, &node_rows);
-        } else {
-            // Every other scan -- index scans, handle-grouped table-worker
-            // windows, and whole-region streams alike -- runs on the shared
-            // producer pool, which is what Go does for all three
-            // (`pkg/executor/distsql.go:743-745,881-1149`). The pool never
-            // queues, so a whole-region stream cannot convoy a short lookup
-            // behind it. The channel remains bounded, so cancellation and
-            // back-pressure are unchanged from the dedicated-thread path.
-            enqueue_scan(move || serve_scan(&factory, plan, &rows, &node_rows))
-                .map_err(|error| PushdownScannerError::Backend(StorageError::Backend(error)))?;
-        }
+        let iter = open_scan(&self.factory, plan)
+            .map_err(|error| PushdownScannerError::Backend(StorageError::Backend(error)))?;
         self.scans_served.fetch_add(1, Ordering::Relaxed);
         self.requests
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .push(summary);
         Ok(Box::new(CopRowStream {
-            batches: Some(batches),
+            iter: Some(iter),
             pending: None,
             pending_row: 0,
             field_types,
+            batch_rows,
+            node_rows: Arc::clone(&self.rows_returned),
             returned: 0,
             predicates_applied,
         }))
@@ -818,10 +720,10 @@ fn dag_summary(dag: &tidb_proto::tipb::DagRequest) -> String {
     )
 }
 
-/// Everything the reader thread needs, owned independently of the caller.
+/// Everything needed to open one response on the query worker.
 struct RemoteScanPlan {
     dag: tidb_proto::tipb::DagRequest,
-    /// Read-only identity line for [`drain_scan`]'s env-gated trace: which
+    /// Read-only identity line for [`open_scan`]'s env-gated trace: which
     /// executors this request lowers (`IndexScan(table t, index i, ..)` vs
     /// `TableScan(..)`), and the pushed output offsets.
     summary: String,
@@ -856,34 +758,18 @@ struct RemoteScanPlan {
     /// Optional Go IndexLookUp first-window paging floor for index scans.
     paging_min_size: Option<u64>,
     time_zone: tidb_datatype::SessionTimeZone,
-    /// The statement's warning sink, carried onto the scan thread. It is an
-    /// `Arc` handler, so a warning appended here lands in the buffer
-    /// `SHOW WARNINGS` reads even though the decode happens off-thread.
+    /// Go `StmtCtx.ResourceGroupName` for this request.
+    resource_group_name: String,
+    /// The statement's warning sink. It is an `Arc` handler, so warnings
+    /// appended while the query worker decodes land in the buffer
+    /// `SHOW WARNINGS` reads.
     warnings: WarningCollector,
 }
 
-/// Runs one coprocessor scan on its own thread, handing decoded rows back in
-/// bounded batches.
-fn serve_scan<F>(
-    factory: &Arc<F>,
-    plan: RemoteScanPlan,
-    rows: &SyncSender<Result<Chunk, String>>,
-    node_rows: &Arc<AtomicU64>,
-) where
-    F: RealTiKvSessionTransportFactory,
-    <F::Transport as QueryTransport>::Response: 'static,
-{
-    if let Err(error) = drain_scan(factory, plan, rows, node_rows) {
-        let _ = rows.send(Err(error));
-    }
-}
-
-fn drain_scan<F>(
-    factory: &Arc<F>,
-    plan: RemoteScanPlan,
-    rows: &SyncSender<Result<Chunk, String>>,
-    node_rows: &Arc<AtomicU64>,
-) -> Result<(), String>
+/// Opens the lazy response on the query worker. Pulling remains demand-driven:
+/// an early-stopping executor closes this iterator before unread regions are
+/// decoded, without an intermediate producer or scheduler rendezvous.
+fn open_scan<F>(factory: &Arc<F>, plan: RemoteScanPlan) -> Result<SelectResponseIter, String>
 where
     F: RealTiKvSessionTransportFactory,
     <F::Transport as QueryTransport>::Response: 'static,
@@ -897,18 +783,16 @@ where
     // `ResourceGroupName`, neither of which any TiDB sends: a stock session
     // is `tidb_distsql_scan_concurrency = 15` and resource group `default`.
     //
-    // The context is the STOCK one, not this session's: the remaining
-    // `SetFromSessionVars` fields (replica read, statement priority, paging,
-    // request source, task id, max_execution_time, tidb_kv_read_timeout, the
-    // runaway checker) are session variables no `StmtContext` carries yet, so
-    // threading them is a session-tier change this seam cannot make on its
-    // own. What it can do is stop sending values that correspond to no
-    // session at all.
-    let trace_range_counts =
-        std::env::var_os("TIKV_QUERY_TRACE").is_some().then(|| {
-            (plan.key_ranges.len(), plan.key_range_hints.len())
-        });
+    // The remaining `SetFromSessionVars` fields (replica read, statement
+    // priority, request source, task id, max_execution_time,
+    // tidb_kv_read_timeout, the runaway checker) are session variables no
+    // `StmtContext` carries yet. Resource group is statement-scoped in Go and
+    // is therefore copied from this request rather than the stock context.
+    let trace_range_counts = std::env::var_os("TIKV_QUERY_TRACE")
+        .is_some()
+        .then(|| (plan.key_ranges.len(), plan.key_range_hints.len()));
     let mut context = DistSqlContext::new();
+    context.request.resource_group_name = plan.resource_group_name;
     if let Some(min_size) = plan.paging_min_size {
         // Go's buildIndexSelectResultForRange raises both paging bounds to
         // the worker's first handle batch. Keep the normal session defaults
@@ -956,45 +840,43 @@ where
             true,
         )
         .map_err(|error| error.to_string())?;
-    let mut iter = result.into_select_iter(Vec::new());
-    let batch_rows = if plan.is_index_scan {
-        INDEX_BATCH_ROWS
-    } else {
-        BATCH_ROWS
-    };
-    loop {
-        let batch = iter
-            .next_chunk_with_required_rows(batch_rows)
-            .map_err(|error| error.to_string())?;
-        let Some(batch) = batch else {
-            break;
-        };
-        if batch.row.num_rows() != 0 {
-            let sent = batch.row.num_rows() as u64;
-            // A consumer that stopped pulling -- an early-stopping `LIMIT`, or
-            // a failed statement -- drops its receiver, and this is where the
-            // scan learns it: the rest of the relation is never read.
-            let send_result = rows.send(Ok(batch.row));
-            if send_result.is_err() {
-                break;
-            }
-            node_rows.fetch_add(sent, Ordering::Relaxed);
-        }
-    }
-    iter.close();
-    Ok(())
+    Ok(result.into_select_iter(Vec::new()))
 }
 
 /// The caller's end of one coprocessor scan.
 struct CopRowStream {
-    /// Dropping this is what tells the reader thread to stop; see
-    /// `drain_scan`.
-    batches: Option<Receiver<Result<Chunk, String>>>,
+    /// Dropping this closes the response and cancels unread region work.
+    iter: Option<SelectResponseIter>,
     pending: Option<Chunk>,
     pending_row: usize,
     field_types: Vec<FieldType>,
+    batch_rows: usize,
+    node_rows: Arc<AtomicU64>,
     returned: u64,
     predicates_applied: bool,
+}
+
+impl CopRowStream {
+    fn pull_chunk(&mut self) -> Result<Option<Chunk>, StorageError> {
+        loop {
+            let Some(iter) = self.iter.as_mut() else {
+                return Ok(None);
+            };
+            let batch = iter
+                .next_chunk_with_required_rows(self.batch_rows)
+                .map_err(|error| StorageError::Backend(error.to_string()))?;
+            let Some(batch) = batch else {
+                self.iter = None;
+                return Ok(None);
+            };
+            if batch.row.num_rows() == 0 {
+                continue;
+            }
+            self.node_rows
+                .fetch_add(batch.row.num_rows() as u64, Ordering::Relaxed);
+            return Ok(Some(batch.row));
+        }
+    }
 }
 
 impl PushdownRowStream for CopRowStream {
@@ -1017,20 +899,9 @@ impl PushdownRowStream for CopRowStream {
                 self.pending = None;
                 self.pending_row = 0;
             }
-            let Some(batches) = self.batches.as_ref() else {
-                return Ok(None);
-            };
-            match batches.recv() {
-                Ok(Ok(batch)) => self.pending = Some(batch),
-                Ok(Err(error)) => {
-                    self.batches = None;
-                    return Err(StorageError::Backend(error));
-                }
-                // The reader thread finished and dropped its sender.
-                Err(_) => {
-                    self.batches = None;
-                    return Ok(None);
-                }
+            match self.pull_chunk()? {
+                Some(batch) => self.pending = Some(batch),
+                None => return Ok(None),
             }
         }
     }
@@ -1058,22 +929,12 @@ impl PushdownRowStream for CopRowStream {
             self.returned += remainder.num_rows() as u64;
             return Ok(Some(remainder));
         }
-        let Some(batches) = self.batches.as_ref() else {
-            return Ok(None);
-        };
-        match batches.recv() {
-            Ok(Ok(batch)) => {
+        match self.pull_chunk()? {
+            Some(batch) => {
                 self.returned += batch.num_rows() as u64;
                 Ok(Some(batch))
             }
-            Ok(Err(error)) => {
-                self.batches = None;
-                Err(StorageError::Backend(error))
-            }
-            Err(_) => {
-                self.batches = None;
-                Ok(None)
-            }
+            None => Ok(None),
         }
     }
 
@@ -1086,7 +947,10 @@ impl PushdownRowStream for CopRowStream {
     }
 
     fn close(&mut self) {
-        self.batches = None;
+        if let Some(iter) = self.iter.as_mut() {
+            iter.close();
+        }
+        self.iter = None;
         self.pending = None;
         self.pending_row = 0;
     }
@@ -1095,130 +959,6 @@ impl PushdownRowStream for CopRowStream {
 impl Drop for CopRowStream {
     fn drop(&mut self) {
         self.close();
-    }
-}
-
-/// One column's coprocessor descriptor, or `None` for a type this bounded
-/// lowering will not describe.
-///
-/// The refusal is the honest half: a descriptor built from a guessed
-/// collation, length or flag set would make TiKV decode a column differently
-/// from the client, which is a wrong answer rather than a slow one.
-/// Lowers the pushed partial aggregate into the TiPB `Aggregation` message
-/// -- Go `PhysicalHashAgg.ToPB`/`PhysicalStreamAgg.ToPB` over
-/// `aggregation.AggFuncToPBExpr`, narrowed to the column-argument shapes
-/// [`PushdownPartialAggregate`] models. `None` refuses the whole scan.
-///
-/// The aggregate leaves carry no `field_type`: every argument is a scan
-/// column whose full descriptor already travels in the `TableScan`
-/// executor, which is where the region reads types and collations from.
-fn aggregation_to_pb(
-    aggregate: &PushdownPartialAggregate,
-    columns: &[ScanColumnInfo],
-) -> Option<Aggregation> {
-    // Go `AggFuncToPBExpr` types BOTH halves of every aggregate leaf: the
-    // `ColumnRef` child carries the scanned column's declared type and the
-    // aggregate expression carries the function's return type (`RetTp`).
-    // TiKV builds its aggregate implementation FROM that return type
-    // (`components/tidb_query_aggr`), so an untyped expression is not
-    // "default-typed" -- it is refused as `Unsupported type: Unspecified`,
-    // which sysbench's `SELECT SUM(k)` hit live against a real region.
-    let column_ref = |offset: usize| -> Option<Expr> {
-        let column = columns.get(offset)?;
-        let code = tidb_datatype::FieldTypeCode::from_mysql_type(u8::try_from(column.tp).ok()?);
-        let field_type = FieldType::new(code)
-            .with_flags(u32::try_from(column.flag).ok()?)
-            .with_collation_name(tidb_datatype::proto_to_collation(column.collation));
-        tidb_expr::pushdown_catalog::to_pb(
-            &tidb_expr::pushdown_catalog::PbScalar::Column {
-                offset: u32::try_from(offset).ok()?,
-                field_type,
-            },
-            &|offset| scan_column_descriptor(columns, offset),
-        )
-    };
-    let agg = |tp: ExprType, child: Expr, output: &FieldType| -> Option<Expr> {
-        Some(Expr {
-            tp: Some(tp as i32),
-            val: None,
-            children: vec![child],
-            sig: Some(ScalarFuncSig::Unspecified as i32),
-            field_type: Some(tidb_expr::pushdown_catalog::field_type_to_pb(output)?),
-            has_distinct: Some(false),
-        })
-    };
-    let message = |group_by: Vec<Expr>, agg_func: Vec<Expr>, streamed: bool| Aggregation {
-        group_by,
-        agg_func,
-        streamed: Some(streamed),
-    };
-    match aggregate {
-        PushdownPartialAggregate::Count {
-            input_offset,
-            output_type,
-        } => {
-            let input = match input_offset {
-                Some(offset) => column_ref(*offset)?,
-                None => tidb_expr::pushdown_catalog::to_pb(
-                    &tidb_expr::pushdown_catalog::PbScalar::IntLiteral(1),
-                    &|_| None,
-                )?,
-            };
-            Some(message(
-                Vec::new(),
-                vec![agg(ExprType::Count, input, output_type)?],
-                true,
-            ))
-        }
-        PushdownPartialAggregate::Sum {
-            input_offset,
-            output_type,
-        } => Some(message(
-            Vec::new(),
-            vec![agg(ExprType::Sum, column_ref(*input_offset)?, output_type)?],
-            false,
-        )),
-        PushdownPartialAggregate::GroupBy { input_offset, .. } => {
-            Some(message(vec![column_ref(*input_offset)?], Vec::new(), false))
-        }
-        PushdownPartialAggregate::GroupBySum {
-            group_offset,
-            sum_offset,
-            sum_type,
-            ..
-        } => Some(message(
-            vec![column_ref(*group_offset)?],
-            vec![agg(ExprType::Sum, column_ref(*sum_offset)?, sum_type)?],
-            false,
-        )),
-        PushdownPartialAggregate::Grouped {
-            group_offsets,
-            functions,
-            streamed,
-            ..
-        } => {
-            let group_by = group_offsets
-                .iter()
-                .map(|offset| column_ref(*offset))
-                .collect::<Option<Vec<_>>>()?;
-            let agg_func = functions
-                .iter()
-                .map(|function| {
-                    lower_aggregate_function(
-                        function.kind,
-                        function.input.as_ref(),
-                        &function.output_type,
-                        columns,
-                    )
-                })
-                .collect::<Option<Vec<_>>>()?;
-            Some(message(group_by, agg_func, *streamed))
-        }
-        PushdownPartialAggregate::Global { functions } => Some(message(
-            Vec::new(),
-            lower_global_aggregate(functions, columns)?,
-            false,
-        )),
     }
 }
 
@@ -1317,24 +1057,7 @@ fn scan_column_descriptor(
     })
 }
 
-fn lower_global_aggregate(
-    functions: &[tidb_executor::remote_scan::PushdownGlobalAggregateFunction],
-    columns: &[ScanColumnInfo],
-) -> Option<Vec<Expr>> {
-    functions
-        .iter()
-        .map(|function| {
-            lower_aggregate_function(
-                function.kind,
-                function.input.as_ref(),
-                &function.output_type,
-                columns,
-            )
-        })
-        .collect()
-}
-
-fn lower_grouped_aggregate(
+fn lower_aggregate_functions(
     functions: &[tidb_executor::remote_scan::PushdownAggregateFunction],
     columns: &[ScanColumnInfo],
 ) -> Option<Vec<Expr>> {
@@ -1416,56 +1139,4 @@ pub fn requests_extra_handle(request: &PushdownScanRequest) -> bool {
         .handle_index
         .and_then(|index| request.columns.get(index))
         .is_some_and(|column| column.id == EXTRA_HANDLE_COLUMN_ID)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::BTreeSet;
-    use std::sync::mpsc::sync_channel;
-
-    use super::enqueue_scan;
-
-    /// A run of scans REUSES producer threads instead of creating one each.
-    ///
-    /// Go never pays `pthread_create` for a scan producer: `IndexLookUpExecutor`
-    /// submits to a persistent pool (`pkg/executor/distsql.go:743-745`) and a
-    /// `TableReader`'s producer is a goroutine. A bounded
-    /// `WHERE id BETWEEN ? AND ?` was measured spending 6.3% of its samples
-    /// inside `Thread::new` when every scan spawned its own, which is why the
-    /// thread identity -- not just "the work ran" -- is what this pins.
-    ///
-    /// Each scan here finishes before the next is submitted, so a pool that
-    /// parks its workers answers all of them from one thread. The bound allows
-    /// a second only because the park is process-wide: a sibling test's worker
-    /// may hold the parked slot when this one submits.
-    #[test]
-    fn a_run_of_scans_reuses_producer_threads() {
-        const SCANS: usize = 8;
-        let mut producers = BTreeSet::new();
-        for _ in 0..SCANS {
-            let (done, received) = sync_channel(1);
-            enqueue_scan(move || {
-                let _ = done.send(format!("{:?}", std::thread::current().id()));
-            })
-            .expect("the scan pool should start a producer");
-            producers.insert(received.recv().expect("the producer should complete"));
-        }
-        assert!(
-            producers.len() <= 2,
-            "{SCANS} sequential scans ran on {} producer threads; a pool that \
-             parks its workers answers them from one, and one thread per scan \
-             is the `pthread_create` this pool exists to avoid",
-            producers.len()
-        );
-    }
-
-    #[test]
-    fn bounded_lookup_scan_pool_runs_submitted_work() {
-        let (done, received) = sync_channel(1);
-        enqueue_scan(move || done.send(()).expect("lookup producer should run"))
-            .expect("the scan pool should start a producer");
-        received
-            .recv()
-            .expect("persistent lookup producer should complete");
-    }
 }

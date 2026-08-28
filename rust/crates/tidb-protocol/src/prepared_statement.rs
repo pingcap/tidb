@@ -950,14 +950,12 @@ fn encode_binary_result_row_owned_inner(
                     }
                 } else if let Some((columns, encoder)) = &mut column_encoding {
                     let metadata = &columns[index];
-                    let collation = if matches!(
-                        metadata.type_code,
-                        TYPE_JSON | TYPE_TIDB_VECTOR_FLOAT32
-                    ) {
-                        DEFAULT_COLLATION_ID
-                    } else {
-                        metadata.charset
-                    };
+                    let collation =
+                        if matches!(metadata.type_code, TYPE_JSON | TYPE_TIDB_VECTOR_FLOAT32) {
+                            DEFAULT_COLLATION_ID
+                        } else {
+                            metadata.charset
+                        };
                     if encoder.update_data_encoding(collation).is_ok() {
                         encoder
                             .encode_data_owned(bytes)
@@ -1123,14 +1121,12 @@ impl BinaryResultSetStream {
                 if !is_binary_string_result_type(metadata.type_code) {
                     return None;
                 }
-                let collation = if matches!(
-                    metadata.type_code,
-                    TYPE_JSON | TYPE_TIDB_VECTOR_FLOAT32
-                ) {
-                    DEFAULT_COLLATION_ID
-                } else {
-                    metadata.charset
-                };
+                let collation =
+                    if matches!(metadata.type_code, TYPE_JSON | TYPE_TIDB_VECTOR_FLOAT32) {
+                        DEFAULT_COLLATION_ID
+                    } else {
+                        metadata.charset
+                    };
                 let mut encoder = options.result_encoder;
                 if encoder.update_data_encoding(collation).is_ok() {
                     Some(encoder)

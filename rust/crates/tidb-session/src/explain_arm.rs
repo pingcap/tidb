@@ -61,6 +61,7 @@ impl Session {
         // binding took effect at all.
         let bound = self.bind_statement_hints(target);
         let target = bound.as_ref().unwrap_or(target);
+        self.activate_statement_resource_group(target);
         let current_db = self.current_db.clone();
         // Both forms plan through the driver's own build path (see
         // `tidb_executor::explain`), using the context of the statement

@@ -16,7 +16,6 @@
 //! `TestUnfoldableFuncs` (:24) and `TestIllegalFunctions4GeneratedColumns`
 //! (:40).
 
-
 /// GO PORT of `pkg/expression/function_traits_test.go:24 TestUnfoldableFuncs`.
 ///
 /// Go asserts `unFoldableFunctions[ast.Sysdate]` exists -- the map is the one
@@ -29,7 +28,9 @@ fn unfoldable_functions_contains_sysdate() {
     assert!(crate::scalar_function::is_unfoldable_function("sysdate"));
     // The same membership drives constant_fold's handler; pin both faces.
     assert!(crate::scalar_function::is_unfoldable_function("getvar"));
-    assert!(crate::scalar_function::is_unfoldable_function("getvar_string"));
+    assert!(crate::scalar_function::is_unfoldable_function(
+        "getvar_string"
+    ));
     assert!(crate::scalar_function::is_unfoldable_function("rand"));
     assert!(crate::scalar_function::is_unfoldable_function("uuid"));
     assert!(crate::scalar_function::is_unfoldable_function("getparam"));

@@ -1244,10 +1244,7 @@ impl Session {
             None => (None, None),
             Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
                 let value = datum_text(&self.eval_value(expr)?);
-                (
-                    Some(ShowLikePattern::from_expr(expr, value, true)),
-                    None,
-                )
+                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
             }
             Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
         };
@@ -1272,9 +1269,7 @@ impl Session {
                             partition
                                 .definitions
                                 .iter()
-                                .map(|definition| {
-                                    (definition.id, definition.name.clone())
-                                })
+                                .map(|definition| (definition.id, definition.name.clone()))
                                 .collect()
                         })
                         .unwrap_or_default();
@@ -1286,29 +1281,26 @@ impl Session {
                         &partitions,
                         true,
                     ) {
-                        let Some(statistics) = catalog.table_statistics(target.physical_id)
-                        else {
+                        let Some(statistics) = catalog.table_statistics(target.physical_id) else {
                             continue;
                         };
-                        let update_time =
-                            tidb_executor::show_stats::version_to_time(
-                                statistics.version,
-                                &chrono::Local,
-                            )
-                            .map_or(Datum::Null, Datum::Time);
+                        let update_time = tidb_executor::show_stats::version_to_time(
+                            statistics.version,
+                            &chrono::Local,
+                        )
+                        .map_or(Datum::Null, Datum::Time);
                         // Go's `IsAnalyzed()`: `LastAnalyzeVersion > 0`. A
                         // table with a stats row but no analysis keeps the
                         // last column NULL rather than inventing a time.
-                        let last_analyze_time =
-                            if statistics.last_analyze_version > 0 {
-                                tidb_executor::show_stats::version_to_time(
-                                    statistics.last_analyze_version,
-                                    &chrono::Local,
-                                )
-                                .map_or(Datum::Null, Datum::Time)
-                            } else {
-                                Datum::Null
-                            };
+                        let last_analyze_time = if statistics.last_analyze_version > 0 {
+                            tidb_executor::show_stats::version_to_time(
+                                statistics.last_analyze_version,
+                                &chrono::Local,
+                            )
+                            .map_or(Datum::Null, Datum::Time)
+                        } else {
+                            Datum::Null
+                        };
                         rows.push(vec![
                             Datum::new_string(database.as_bytes().to_vec()),
                             Datum::new_string(name.as_bytes().to_vec()),

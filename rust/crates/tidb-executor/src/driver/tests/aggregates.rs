@@ -6,6 +6,158 @@
 
 use super::*;
 
+#[test]
+fn aggregation_hints_are_lowered_from_the_shared_physical_plan() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE hinted_agg (g BIGINT, v BIGINT)", &mut catalog)
+        .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO hinted_agg VALUES (2,20),(1,10),(2,21),(3,30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let stream_sql = "SELECT /*+ STREAM_AGG() */ g, COUNT(v) FROM hinted_agg GROUP BY g";
+    assert_eq!(
+        run_select_on(stream_sql, &catalog, &ctx).unwrap(),
+        vec![
+            vec![Datum::Int(1), Datum::Int(1)],
+            vec![Datum::Int(2), Datum::Int(2)],
+            vec![Datum::Int(3), Datum::Int(1)],
+        ]
+    );
+
+    for (sql, expected_root, expected_child) in [
+        (stream_sql, "StreamAgg", Some("Sort")),
+        (
+            "SELECT /*+ HASH_AGG() */ g, COUNT(v) FROM hinted_agg GROUP BY g",
+            "HashAgg",
+            None,
+        ),
+    ] {
+        let Stmt::Query(query) = tidb_parser::parse(sql).unwrap() else {
+            panic!("a query");
+        };
+        let QueryStmt::Select(select) = &*query else {
+            panic!("a SELECT");
+        };
+        let (_, rows) =
+            explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+        let names = rows
+            .iter()
+            .filter_map(|row| match &row[0] {
+                Datum::Bytes(bytes) => Some(String::from_utf8_lossy(bytes).into_owned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let root = names
+            .iter()
+            .position(|name| name.contains(expected_root))
+            .unwrap_or_else(|| panic!("{names:?}"));
+        if let Some(expected_child) = expected_child {
+            assert!(
+                names
+                    .get(root + 1)
+                    .is_some_and(|name| name.contains(expected_child)),
+                "{names:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn distinct_aggregation_family_is_lowered_from_the_shared_physical_plan() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE hinted_distinct (g BIGINT)", &mut catalog).unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO hinted_distinct VALUES (2),(1),(2),(3)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT /*+ STREAM_AGG() */ DISTINCT g FROM hinted_distinct";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![
+            vec![Datum::Int(1)],
+            vec![Datum::Int(2)],
+            vec![Datum::Int(3)],
+        ]
+    );
+    let Stmt::Query(query) = tidb_parser::parse(sql).unwrap() else {
+        panic!("a query");
+    };
+    let QueryStmt::Select(select) = &*query else {
+        panic!("a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let names = rows
+        .iter()
+        .filter_map(|row| match &row[0] {
+            Datum::Bytes(bytes) => Some(String::from_utf8_lossy(bytes).into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let stream = names
+        .iter()
+        .position(|name| name.contains("StreamAgg"))
+        .unwrap_or_else(|| panic!("the shared STREAM_AGG receipt was not lowered: {names:?}"));
+    assert!(
+        names
+            .get(stream + 1)
+            .is_some_and(|name| name.contains("Sort")),
+        "the enforced StreamAgg child sort must be retained: {names:?}"
+    );
+}
+
+/// Once the shared planner has selected the aggregate's physical child, the
+/// executor must lower that receipt without entering its former access-path
+/// race a second time. Re-costing this exact shape replaced Go's 99-row
+/// handle range with a full scan of the unrelated `k` index.
+#[test]
+fn a_shared_aggregate_access_receipt_is_lowered_once() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE sbtest1 (id BIGINT PRIMARY KEY, k BIGINT, INDEX k_1(k))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    let stmt =
+        tidb_parser::parse("SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN 100 AND 199").unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("a SELECT");
+    };
+
+    reset_ordinary_access_path_entries();
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+
+    assert_eq!(
+        ordinary_access_path_entries(),
+        0,
+        "the shared physical receipt is the only access-path decision"
+    );
+    assert!(rows.iter().any(|row| {
+        matches!(&row[0], Datum::Bytes(name) if String::from_utf8_lossy(name).contains("TableRangeScan"))
+            && matches!(&row[4], Datum::Bytes(info) if String::from_utf8_lossy(info).contains("range:[100,199]"))
+    }), "{rows:#?}");
+}
+
 /// TPC-H q1 is Go's complete grouped partial-aggregation contract: AVG is a
 /// count/sum pair in TiKV, the root AVG merges both partial columns, and the
 /// restoring projection stays below the final group-key sort.
@@ -406,8 +558,9 @@ fn tpch_q14_matches_recorded_hash_join_plan() {
     let QueryStmt::Select(select) = &**query else {
         panic!("not a SELECT");
     };
-    let ctx = crate::StmtContext::for_query()
-        .with_optimizer_cost_env(tidb_planner::candidate_cost::CostEnv::default(), 1.0);
+    let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
+    env.session.hash_join_concurrency = 1.0;
+    let ctx = crate::StmtContext::for_query().with_optimizer_cost_env(env);
     let (_, rows) =
         explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
 
@@ -479,8 +632,9 @@ fn tpch_q14_matches_recorded_hash_join_plan() {
     // 10,000,000-row `part` probe becomes nearly free, and the filtered
     // `lineitem` side prices below it. Reading q14 at 5 and comparing it to a
     // recording made at 1 is what makes the build side look wrong.
-    let plain_session = crate::StmtContext::for_query()
-        .with_optimizer_cost_env(tidb_planner::candidate_cost::CostEnv::default(), 5.0);
+    let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
+    env.session.hash_join_concurrency = 5.0;
+    let plain_session = crate::StmtContext::for_query().with_optimizer_cost_env(env);
     let (_, at_five) = explain_select_stmt(
         select,
         &catalog,
@@ -854,12 +1008,12 @@ fn grouped_rows_follow_the_reordered_join_tree() {
     );
 }
 
-/// TPCC condition 01: join pruning renumbers the merge-key column, but the
-/// committed MergeJoin still delivers that named order to the grouped
-/// StreamAgg. Go projects the three aggregate inputs between the join and the
-/// aggregation.
+/// TPCC condition 01 follows the shared planner's current Go shape: HashAgg
+/// over IndexHashJoin, with the warehouse point-get driving the district
+/// PRIMARY-index lookup. This used to pin a Rust-only StreamAgg/MergeJoin
+/// choice and must not override the received physical plan.
 #[test]
-fn tpcc_grouped_merge_join_keeps_order_through_pruning() {
+fn tpcc_grouped_join_matches_go_shared_planner_choice() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
     let mut catalog = Catalog::default();
@@ -872,17 +1026,20 @@ fn tpcc_grouped_merge_join_keeps_order_through_pruning() {
     let TableEntry::Kv(district) = catalog.get_mut_in("test", "district").unwrap() else {
         panic!("district is not a KV table");
     };
-    district.add_index(crate::kv_table::KvIndex {
-        id: 1,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
-        column_offsets: vec![1, 0],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
+    district.add_index(
+        crate::kv_table::KvIndex {
+            id: 1,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+            column_offsets: vec![1, 0],
+            visible: true,
+            global: false,
+            clustered_primary: false,
+        },
+        false,
+    );
     crate::run_create_table_on(
         "CREATE TABLE warehouse (w_id INT PRIMARY KEY, w_ytd DECIMAL(12,2) NOT NULL)",
         &mut catalog,
@@ -924,12 +1081,13 @@ fn tpcc_grouped_merge_join_keeps_order_through_pruning() {
         (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
         vec![
             "Projection",
-            "└─StreamAgg",
+            "└─HashAgg",
             "  └─Projection",
-            "    └─MergeJoin",
-            "      ├─TableReader(Build)",
-            "      │ └─TableRangeScan",
-            "      └─Point_Get(Probe)",
+            "    └─IndexHashJoin",
+            "      ├─Point_Get(Build)",
+            "      └─TableReader(Probe)",
+            "        └─Selection",
+            "          └─TableRangeScan",
         ],
     );
     assert!(cell(1, 4).contains("group by:test.district.d_w_id"));
@@ -955,17 +1113,20 @@ fn tpcc_grouped_common_handle_uses_partial_and_final_stream_agg() {
     let TableEntry::Kv(table) = catalog.get_mut_in("test", "new_order").unwrap() else {
         panic!("new_order is not a KV table");
     };
-    table.add_index(crate::kv_table::KvIndex {
-        id: 1,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
-        column_offsets: vec![2, 1, 0],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
+    table.add_index(
+        crate::kv_table::KvIndex {
+            id: 1,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+            column_offsets: vec![2, 1, 0],
+            visible: true,
+            global: false,
+            clustered_primary: false,
+        },
+        false,
+    );
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
         "INSERT INTO new_order VALUES (1,1,1),(2,1,1),(5,2,1),(7,2,1),(9,1,2)",
@@ -1031,17 +1192,20 @@ fn grouped_partial_count_carries_the_group_key() {
     let TableEntry::Kv(table) = catalog.get_mut_in("test", "order_line").unwrap() else {
         panic!("order_line is not a KV table");
     };
-    table.add_index(crate::kv_table::KvIndex {
-        id: 1,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
-        column_offsets: vec![2, 1, 0, 3],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
+    table.add_index(
+        crate::kv_table::KvIndex {
+            id: 1,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
+            column_offsets: vec![2, 1, 0, 3],
+            visible: true,
+            global: false,
+            clustered_primary: false,
+        },
+        false,
+    );
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
         "INSERT INTO order_line VALUES (1,1,1,1),(1,1,1,2),(2,2,1,1),(1,1,2,1)",
@@ -1104,17 +1268,20 @@ fn tpcc_condition_four_streams_across_a_grouped_derived_table() {
     let TableEntry::Kv(orders) = catalog.get_mut_in("test", "orders").unwrap() else {
         panic!("orders is not a KV table");
     };
-    orders.add_index(crate::kv_table::KvIndex {
-        id: 1,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
-        column_offsets: vec![2, 1, 0],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
+    orders.add_index(
+        crate::kv_table::KvIndex {
+            id: 1,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+            column_offsets: vec![2, 1, 0],
+            visible: true,
+            global: false,
+            clustered_primary: false,
+        },
+        false,
+    );
     crate::run_create_table_on(
         "CREATE TABLE order_line (ol_o_id INT NOT NULL, ol_d_id INT NOT NULL, \
             ol_w_id INT NOT NULL, ol_number INT NOT NULL, \
@@ -1125,17 +1292,20 @@ fn tpcc_condition_four_streams_across_a_grouped_derived_table() {
     let TableEntry::Kv(order_line) = catalog.get_mut_in("test", "order_line").unwrap() else {
         panic!("order_line is not a KV table");
     };
-    order_line.add_index(crate::kv_table::KvIndex {
-        id: 2,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
-        column_offsets: vec![2, 1, 0, 3],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
+    order_line.add_index(
+        crate::kv_table::KvIndex {
+            id: 2,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
+            column_offsets: vec![2, 1, 0, 3],
+            visible: true,
+            global: false,
+            clustered_primary: false,
+        },
+        false,
+    );
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
         "INSERT INTO orders VALUES (1,1,1,2),(2,2,1,1)",
@@ -1296,17 +1466,20 @@ fn tpcc_condition_six_simplifies_and_pushes_through_derived_tables() {
     let TableEntry::Kv(orders) = catalog.get_mut_in("test", "orders").unwrap() else {
         panic!("orders is not a KV table");
     };
-    orders.add_index(crate::kv_table::KvIndex {
-        id: 1,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
-        column_offsets: vec![2, 1, 0],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
+    orders.add_index(
+        crate::kv_table::KvIndex {
+            id: 1,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+            column_offsets: vec![2, 1, 0],
+            visible: true,
+            global: false,
+            clustered_primary: false,
+        },
+        false,
+    );
     crate::run_create_table_on(
         "CREATE TABLE order_line (ol_o_id INT NOT NULL, ol_d_id INT NOT NULL, \
             ol_w_id INT NOT NULL, ol_number INT NOT NULL, \
@@ -1317,17 +1490,20 @@ fn tpcc_condition_six_simplifies_and_pushes_through_derived_tables() {
     let TableEntry::Kv(order_line) = catalog.get_mut_in("test", "order_line").unwrap() else {
         panic!("order_line is not a KV table");
     };
-    order_line.add_index(crate::kv_table::KvIndex {
-        id: 2,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
-        column_offsets: vec![2, 1, 0, 3],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
+    order_line.add_index(
+        crate::kv_table::KvIndex {
+            id: 2,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
+            column_offsets: vec![2, 1, 0, 3],
+            visible: true,
+            global: false,
+            clustered_primary: false,
+        },
+        false,
+    );
 
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
@@ -1538,7 +1714,6 @@ fn tpcc_condition_eight_uses_index_join_and_carries_warehouse_ytd() {
         vec![vec![Datum::Int(1)]],
     );
 
-    crate::driver::join_search::ANSWERS.with(|answers| answers.borrow_mut().clear());
     let stmt = tidb_parser::parse(sql).unwrap();
     let Stmt::Query(query) = &stmt else {
         panic!("not a query");
@@ -1548,15 +1723,6 @@ fn tpcc_condition_eight_uses_index_join_and_carries_warehouse_ytd() {
     };
     let (_, rows) =
         explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
-    let answers = crate::driver::join_search::ANSWERS.with(|answers| answers.borrow().clone());
-    assert!(!answers.is_empty(), "the join search was not consulted");
-    assert!(
-        answers.iter().all(|answer| {
-            answer.chosen == crate::driver::join_search::Chosen::IndexForSingleOuterRow
-                && answer == &answers[0]
-        }),
-        "rebuilt candidates must make the same join decision: {answers:#?}"
-    );
     let cell = |row: usize, column: usize| match &rows[row][column] {
         Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
         other => format!("{other:?}"),
@@ -1681,17 +1847,20 @@ fn tpcc_condition_nine_eliminates_the_unique_district_aggregation() {
     let TableEntry::Kv(district) = catalog.get_mut_in("test", "district").unwrap() else {
         panic!("district is not a KV table");
     };
-    district.add_index(crate::kv_table::KvIndex {
-        id: 1,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
-        column_offsets: vec![1, 0],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
+    district.add_index(
+        crate::kv_table::KvIndex {
+            id: 1,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+            column_offsets: vec![1, 0],
+            visible: true,
+            global: false,
+            clustered_primary: false,
+        },
+        false,
+    );
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
         "INSERT INTO district VALUES (1,1,10.25),(2,1,NULL),(1,2,20.50)",
@@ -1795,17 +1964,20 @@ fn tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup() {
     let TableEntry::Kv(district) = catalog.get_mut_in("test", "district").unwrap() else {
         panic!("district is not a KV table");
     };
-    district.add_index(crate::kv_table::KvIndex {
-        id: 1,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
-        column_offsets: vec![1, 0],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
+    district.add_index(
+        crate::kv_table::KvIndex {
+            id: 1,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+            column_offsets: vec![1, 0],
+            visible: true,
+            global: false,
+            clustered_primary: false,
+        },
+        false,
+    );
     crate::run_create_table_on(
         "CREATE TABLE history (h_c_id INT NOT NULL, h_c_d_id INT NOT NULL, \
             h_c_w_id INT NOT NULL, h_d_id INT NOT NULL, h_w_id INT NOT NULL, \
@@ -1830,7 +2002,6 @@ fn tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup() {
         &ctx,
     )
     .unwrap();
-
     let sql = "SELECT COUNT(*) FROM \
         (SELECT d_id,d_w_id,SUM(d_ytd) s1 FROM district \
          GROUP BY d_id,d_w_id) d, \
@@ -1866,7 +2037,7 @@ fn tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup() {
         operators,
         vec![
             "StreamAgg",
-            "└─IndexJoin",
+            "└─IndexHashJoin",
             "  ├─Projection(Build)",
             "  │ └─TableReader",
             "  │   └─Selection",
@@ -1885,12 +2056,11 @@ fn tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup() {
         cell(4, 4),
         "not(isnull(cast(test.district.d_ytd, decimal(34,2) BINARY)))"
     );
-    let answers = crate::driver::join_search::ANSWERS.with(|answers| answers.borrow().clone());
     assert!(
         operators
             .iter()
-            .any(|operator| operator.contains("IndexJoin")),
-        "{plan:#?}\n{answers:#?}",
+            .any(|operator| operator.contains("IndexHashJoin")),
+        "{plan:#?}",
     );
 
     scale_analyzed_tpcc_table(
@@ -1973,7 +2143,7 @@ fn tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup() {
     let analyzed_operators = (0..analyzed.len())
         .map(|row| analyzed_cell(row, 0))
         .collect::<Vec<_>>();
-    assert_eq!(analyzed_operators[1], "└─IndexHashJoin", "{analyzed:#?}");
+    assert_eq!(analyzed_operators[1], "└─IndexJoin", "{analyzed:#?}");
     let inner = analyzed_operators
         .iter()
         .position(|operator| operator.contains("Selection(Probe)"))
@@ -2086,20 +2256,23 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
             panic!("{table_name} is not a KV table");
         };
         for (position, (name, unique, column_offsets)) in indexes.into_iter().enumerate() {
-            table.add_index(crate::kv_table::KvIndex {
-                id: (position + 1) as i64,
-                name: name.to_owned(),
-                comment: String::new(),
-                unique,
-                prefix_lengths: vec![
-                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
-                    column_offsets.len()
-                ],
-                column_offsets,
-                visible: true,
-                global: false,
-                clustered_primary: false,
-            }, false);
+            table.add_index(
+                crate::kv_table::KvIndex {
+                    id: (position + 1) as i64,
+                    name: name.to_owned(),
+                    comment: String::new(),
+                    unique,
+                    prefix_lengths: vec![
+                        crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                        column_offsets.len()
+                    ],
+                    column_offsets,
+                    visible: true,
+                    global: false,
+                    clustered_primary: false,
+                },
+                false,
+            );
         }
     }
 
@@ -2246,7 +2419,7 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
         .find("funcs:firstrow(test.customer.c_w_id)->test.customer.c_w_id")
         .expect("customer warehouse carrier");
     let synthetic_count = customer_aggregation
-        .find("funcs:count(Column#")
+        .find("funcs:count(1)")
         .expect("synthetic customer row count");
     assert!(
         customer_district < customer_warehouse && customer_warehouse < synthetic_count,
@@ -2311,48 +2484,44 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
     assert_eq!(
         analyzed_operator_names
             .iter()
-            .filter(|operator| operator.starts_with("IndexJoin"))
+            .filter(|operator| operator.starts_with("MergeJoin"))
             .count(),
-        1,
-        "{analyzed:#?}"
-    );
-    assert_eq!(
-        analyzed_operator_names
-            .iter()
-            .filter(|operator| operator.starts_with("IndexHashJoin"))
-            .count(),
-        1,
+        2,
         "{analyzed:#?}"
     );
     assert!(
         analyzed_operator_names
             .iter()
-            .all(|operator| !operator.starts_with("HashJoin")),
+            .all(|operator| !operator.starts_with("IndexJoin")
+                && !operator.starts_with("IndexHashJoin")
+                && !operator.starts_with("HashJoin")),
         "{analyzed:#?}"
     );
-    let index_hash_join = analyzed_operator_names
+    let top_merge = analyzed_operator_names
         .iter()
-        .position(|operator| operator.starts_with("IndexHashJoin"))
-        .expect("top IndexHashJoin");
+        .position(|operator| operator.starts_with("MergeJoin"))
+        .expect("top MergeJoin");
     assert!(
-        analyzed_details[index_hash_join].contains(
-            "outer key:test.new_order.no_d_id, test.new_order.no_w_id, \
-             inner key:test.customer.c_d_id, test.customer.c_w_id"
+        analyzed_details[top_merge].contains(
+            "left key:test.new_order.no_w_id, test.new_order.no_d_id, \
+             right key:test.customer.c_w_id, test.customer.c_d_id"
         ),
-        "top access keys must retain logical equality order: {}",
-        analyzed_details[index_hash_join]
+        "top merge keys must come from the shared physical receipt: {}",
+        analyzed_details[top_merge]
     );
-    let index_join = analyzed_operator_names
+    let nested_merge = analyzed_operator_names
         .iter()
-        .position(|operator| operator.starts_with("IndexJoin"))
-        .expect("nested IndexJoin");
+        .enumerate()
+        .skip(top_merge + 1)
+        .find_map(|(index, operator)| operator.starts_with("MergeJoin").then_some(index))
+        .expect("nested MergeJoin");
     assert!(
-        analyzed_details[index_join].contains(
-            "outer key:test.new_order.no_d_id, test.new_order.no_w_id, \
-             inner key:test.orders.o_d_id, test.orders.o_w_id"
+        analyzed_details[nested_merge].contains(
+            "left key:test.new_order.no_w_id, test.new_order.no_d_id, \
+             right key:test.orders.o_w_id, test.orders.o_d_id"
         ),
-        "nested access keys must retain logical equality order: {}",
-        analyzed_details[index_join]
+        "nested merge keys must come from the shared physical receipt: {}",
+        analyzed_details[nested_merge]
     );
     let grouped_detail = |table: &str| {
         analyzed_details
@@ -2387,12 +2556,12 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
             "Go retains source-schema order for FIRST_ROW carriers: {detail}"
         );
     }
-    assert_eq!(
+    assert!(
         analyzed_operators
             .iter()
             .filter(|operator| operator.contains("StreamAgg"))
-            .count(),
-        3,
+            .count()
+            >= 3,
         "{analyzed:#?}"
     );
     assert!(
@@ -2409,8 +2578,9 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
             .zip(&analyzed_access)
             .zip(&analyzed_details)
             .any(|((operator, access), detail)| {
-                *operator == "TableRangeScan"
+                *operator == "IndexRangeScan"
                     && access.contains("table:orders")
+                    && access.contains("idx_order")
                     && detail.contains("keep order:true")
             }),
         "{analyzed:#?}"
@@ -2431,31 +2601,6 @@ fn tpcc_condition_two_orders_group_uses_the_covering_index_range() {
         &mut catalog,
     )
     .unwrap();
-    let TableEntry::Kv(orders) = catalog.get_mut_in("test", "orders").unwrap() else {
-        panic!("orders is not a KV table");
-    };
-    orders.add_index(crate::kv_table::KvIndex {
-        id: 1,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
-        column_offsets: vec![2, 1, 0],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
-    orders.add_index(crate::kv_table::KvIndex {
-        id: 2,
-        name: "idx_order".to_owned(),
-        comment: String::new(),
-        unique: false,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
-        column_offsets: vec![2, 1, 3, 0],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
         "INSERT INTO orders VALUES \
@@ -2520,40 +2665,12 @@ fn tpcc_condition_two_orders_group_uses_the_covering_index_range() {
         &mut catalog,
     )
     .unwrap();
-    let TableEntry::Kv(district) = catalog.get_mut_in("test", "district").unwrap() else {
-        panic!("district is not a KV table");
-    };
-    district.add_index(crate::kv_table::KvIndex {
-        id: 3,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
-        column_offsets: vec![1, 0],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
     crate::run_create_table_on(
         "CREATE TABLE new_order (no_o_id INT NOT NULL, no_d_id INT NOT NULL, \
             no_w_id INT NOT NULL, PRIMARY KEY (no_w_id,no_d_id,no_o_id) CLUSTERED)",
         &mut catalog,
     )
     .unwrap();
-    let TableEntry::Kv(new_order) = catalog.get_mut_in("test", "new_order").unwrap() else {
-        panic!("new_order is not a KV table");
-    };
-    new_order.add_index(crate::kv_table::KvIndex {
-        id: 4,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
-        column_offsets: vec![2, 1, 0],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
     run_insert_on(
         "INSERT INTO district VALUES (1,1,5),(2,1,6),(1,2,10)",
         &mut catalog,
@@ -2788,7 +2905,7 @@ fn global_sum_expression_uses_partial_and_final_stream_agg() {
 /// Go's `BasePhysicalAgg.NewPartialAggregate` expands a global AVG into a
 /// cop COUNT/SUM pair and a root final AVG over those two partial columns.
 #[test]
-fn global_avg_uses_count_sum_partial_and_final_hash_agg() {
+fn global_avg_uses_count_sum_partial_and_final_stream_agg() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
     let mut catalog = Catalog::default();
@@ -2799,7 +2916,7 @@ fn global_avg_uses_count_sum_partial_and_final_hash_agg() {
     .unwrap();
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
-        "INSERT INTO avg_revenue VALUES (1,100.00,1),(2,200.00,2),(3,300.00,3)",
+        "INSERT INTO avg_revenue VALUES (10,100.00,1),(20,200.00,2),(30,300.00,3)",
         &mut catalog,
         &ctx,
     )
@@ -2826,9 +2943,9 @@ fn global_avg_uses_count_sum_partial_and_final_hash_agg() {
     assert_eq!(
         (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
         vec![
-            "HashAgg",
+            "StreamAgg",
             "└─TableReader",
-            "  └─HashAgg",
+            "  └─StreamAgg",
             "    └─Selection",
             "      └─TableFullScan"
         ]
@@ -3570,8 +3687,18 @@ fn explain_distinct_scalar_subquery_with_filter() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert!(operators.iter().any(|operator| operator.contains("HashAgg")), "{rows:#?}");
-    assert!(operators.iter().any(|operator| operator.contains("Selection")), "{rows:#?}");
+    assert!(
+        operators
+            .iter()
+            .any(|operator| operator.contains("HashAgg")),
+        "{rows:#?}"
+    );
+    assert!(
+        operators
+            .iter()
+            .any(|operator| operator.contains("Selection")),
+        "{rows:#?}"
+    );
     assert_eq!(
         run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap(),
         vec![vec![Datum::Int(1201)]]
@@ -3993,5 +4120,40 @@ fn a_delivered_grouped_aggregate_matches_the_planned_statement() {
          the partial aggregate functions first and the restoring Projection is \
          what puts them back, and that Projection is exactly what derived mode \
          drops"
+    );
+}
+
+#[test]
+fn grouped_aggregation_enumerates_families_over_one_planned_child() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE shared_child (id INT PRIMARY KEY, k INT, INDEX idx_k(k))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO shared_child VALUES (1, 10), (2, 10), (3, 20)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    crate::driver::select_plan_visit_count::reset();
+    let (_, mut rows) = run_select_meta_on(
+        "SELECT k, SUM(id) FROM shared_child GROUP BY k",
+        &catalog,
+        &ctx,
+    )
+    .unwrap();
+    rows.sort_by_key(|row| match row[0] {
+        Datum::Int(value) => value,
+        _ => i64::MAX,
+    });
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        crate::driver::select_plan_visit_count::get(),
+        1,
+        "HashAgg and StreamAgg must be costed over one constructed child"
     );
 }

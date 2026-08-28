@@ -307,7 +307,10 @@ impl SnapshotLockSet {
             // Carrying `access` down would tell TiKV to read THROUGH a lock
             // whose commit is in the future of the new read -- surfacing a
             // later commit to an earlier reader.
-            if self.classified_at.is_some_and(|previous| read_ts < previous) {
+            if self
+                .classified_at
+                .is_some_and(|previous| read_ts < previous)
+            {
                 self.access.clear();
             }
             self.ignore.clear();

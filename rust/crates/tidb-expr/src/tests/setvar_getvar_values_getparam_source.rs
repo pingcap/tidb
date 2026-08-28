@@ -108,19 +108,22 @@ fn setvar_stores_session_value_and_returns_it() {
         ],
     );
     let empty = tidb_chunk::chunk::Chunk::new_empty(&[]);
-    assert_eq!(
-        renamed.eval(&store, empty.get_row(0)).unwrap(),
-        text("34")
-    );
+    assert_eq!(renamed.eval(&store, empty.get_row(0)).unwrap(), text("34"));
     assert_eq!(store.get("g"), Some(text("34")));
 
     // {c, nil}: NULL assignment propagates and must NOT create the variable.
     let null_call = ScalarFunction::new(
         CiString::new("setvar"),
         FieldType::new(C::Null),
-        vec![var_name("h"), const_arg(Datum::Null, FieldType::new(C::Null))],
+        vec![
+            var_name("h"),
+            const_arg(Datum::Null, FieldType::new(C::Null)),
+        ],
     );
-    assert_eq!(null_call.eval(&store, empty.get_row(0)).unwrap(), Datum::Null);
+    assert_eq!(
+        null_call.eval(&store, empty.get_row(0)).unwrap(),
+        Datum::Null
+    );
     assert_eq!(store.get("h"), None);
 
     // {c, "ABC"} then {c, "dEf"}: the second assignment overwrites in place.
@@ -235,10 +238,7 @@ fn getvar_reads_typed_session_value_by_signature_kind() {
         ("c", text_var("")),
         ("e", Datum::Int(3)),
         ("f", Datum::Real(2.5)),
-        (
-            "g",
-            Datum::Decimal(tidb_datatype::Decimal::from_int(5)),
-        ),
+        ("g", Datum::Decimal(tidb_datatype::Decimal::from_int(5))),
     ];
     let mut vars = BTreeMap::new();
     for (name, value) in preload {
@@ -260,10 +260,7 @@ fn getvar_reads_typed_session_value_by_signature_kind() {
     assert_eq!(eval_getvar("string", "d", &store).unwrap(), Datum::Null);
     // Int/real/decimal rows keep their own kinds through their signatures.
     assert_eq!(eval_getvar("int", "e", &store).unwrap(), Datum::Int(3));
-    assert_eq!(
-        eval_getvar("real", "f", &store).unwrap(),
-        Datum::Real(2.5)
-    );
+    assert_eq!(eval_getvar("real", "f", &store).unwrap(), Datum::Real(2.5));
     assert_eq!(
         eval_getvar("decimal", "g", &store).unwrap(),
         Datum::Decimal(tidb_datatype::Decimal::from_int(5))

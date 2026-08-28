@@ -99,10 +99,15 @@
 //! fails to compile until it is placed in some rule's explicit arm or its
 //! `base_arms!` list. Do NOT invent a second convention.
 
+use std::collections::BTreeMap;
+
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::builder::FunctionBuilder;
-use tidb_expr::expr_util::predicates::{is_const_null, maybe_over_optimized_4_plan_cache};
+use tidb_expr::expr_util::predicates::{
+    is_const_null, is_mutable_effects_expr, maybe_over_optimized_4_plan_cache, remove_dup_exprs,
+};
 use tidb_expr::expr_util::push_not::push_down_not;
+use tidb_expr::expr_util::substitute::{column_substitute_impl, SubstituteOptions};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
@@ -361,6 +366,9 @@ impl RuleId {
         match self {
             Self::ColumnPruner | Self::ColumnPrunerAgain => Some(&ColumnPruner),
             Self::BuildKeySolver => Some(&BuildKeySolver),
+            Self::AggregationEliminator => {
+                Some(&super::rule_aggregation_elimination::AggregationEliminator)
+            }
             Self::PpdSolver => Some(&PpdSolver),
             Self::PushDownTopNOptimizer => Some(&PushDownTopNOptimizer),
             Self::ResultReorder => Some(&super::rule_result_reorder::ResultReorder),
@@ -380,7 +388,6 @@ impl RuleId {
             Self::GcSubstituter
             | Self::DecorrelateSolver
             | Self::SemiJoinRewriter
-            | Self::AggregationEliminator
             | Self::SkewDistinctAggRewriter
             | Self::ProjectionEliminator
             | Self::MaxMinEliminator
@@ -681,7 +688,7 @@ fn run_rule_list(
 // ***** logicalop.AddSelection and its predicate-simplification dependency *****
 
 /// Go `ruleutil.ApplyPredicateSimplification(sctx, predicates,
-/// propagateConstant=false, filter=nil)`, the SUBSET that
+/// propagateConstant=false, filter=nil)`, the subset that
 /// `logicalop.AddSelection` needs.
 ///
 /// # Why a subset lands here and not in a `PredicateSimplification` batch
@@ -707,12 +714,10 @@ fn run_rule_list(
 /// * `constraint.DeleteTrueExprs` — a predicate that is a constant TRUE is
 ///   dropped, since `WHERE TRUE` filters nothing.
 ///
-/// NOT ported, each blocked on a named Go symbol that is not transcreated:
-/// * `expression.PropagateConstant` / `PropagateConstantForJoin` — this is the
-///   `propagateConstant` half the parameter name refers to, and it is exactly
-///   what Go's #11 `ConstantPropagationSolver` and #21 own. `AddSelection`
-///   passes `propagateConstant=true`, so this subset is a NARROWING of that
-///   call, not an implementation of it.
+/// `expression.PropagateConstantForJoin` is supplied separately by
+/// [`apply_predicate_simplification_for_join`], because ordinary selection
+/// simplification asks Go not to propagate constants while inner/semi join
+/// pushdown asks it to do so.
 /// * `shortCircuitLogicalConstants`, `mergeInAndNotEQLists`,
 ///   `removeRedundantORBranch`, `pruneEmptyORBranches`
 ///   (`rule_predicate_simplification.go`).
@@ -733,6 +738,173 @@ pub fn apply_predicate_simplification(
         .map(|expr| push_down_not(expr, ctx.builder))
         .filter(|expr| !is_const_true(expr))
         .collect()
+}
+
+/// Go `ruleutil.ApplyPredicateSimplificationForJoin(...,
+/// propagateConstant=true, ...)` for inner and semi joins.
+///
+/// The important distinction from [`apply_predicate_simplification`] is
+/// `expression.PropagateConstantForJoin`: equality keys form equivalence
+/// classes, and every deterministic predicate over one member is reproduced
+/// for the other members. Thus `a = b AND b = 1` yields `a = 1` while retaining
+/// `a = b` as a physical join key (`tidb_opt_always_keep_join_key` defaults to
+/// ON in Go).
+///
+/// Go's solver also substitutes constants repeatedly to fold expressions that
+/// become constant. That affects simplification quality but not condition
+/// attribution; this planner retains those original conditions and adds the
+/// same equality-derived predicates. Keeping an unfurled original is
+/// conservative, while the derived predicates are what let predicate
+/// pushdown, range building, cardinality estimation and physical join
+/// enumeration see the same constraints as Go.
+#[must_use]
+pub fn apply_predicate_simplification_for_join(
+    ctx: &RuleContext<'_>,
+    predicates: Vec<Expression>,
+) -> Vec<Expression> {
+    let simplified: Vec<Expression> = predicates
+        .iter()
+        .map(|expr| push_down_not(expr, ctx.builder))
+        .collect();
+    let propagated = propagate_constant_for_join(ctx, simplified);
+    propagated
+        .into_iter()
+        .filter(|expr| !is_const_true(expr))
+        .collect()
+}
+
+/// Go `expression.PropagateConstantForJoin`'s column-equivalence propagation.
+fn propagate_constant_for_join(
+    ctx: &RuleContext<'_>,
+    conditions: Vec<Expression>,
+) -> Vec<Expression> {
+    const MAX_PROPAGATE_COLUMNS: usize = 100;
+
+    let mut columns = BTreeMap::<i64, Column>::new();
+    let mut equalities = Vec::<(i64, i64)>::new();
+    for condition in &conditions {
+        let Expression::ScalarFunction(function) = condition else {
+            continue;
+        };
+        if function.func_name.lowercase() != "eq" {
+            continue;
+        }
+        let [Expression::Column(left), Expression::Column(right)] = function.get_args() else {
+            continue;
+        };
+        let Some(left_type) = left.get_static_type() else {
+            continue;
+        };
+        let Some(right_type) = right.get_static_type() else {
+            continue;
+        };
+        if left_type.collation_name() != right_type.collation_name()
+            || matches!(
+                left_type.code(),
+                tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
+            )
+            || matches!(
+                right_type.code(),
+                tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
+            )
+        {
+            continue;
+        }
+        columns
+            .entry(left.unique_id)
+            .or_insert_with(|| left.clone());
+        columns
+            .entry(right.unique_id)
+            .or_insert_with(|| right.clone());
+        equalities.push((left.unique_id, right.unique_id));
+    }
+    if equalities.is_empty() || columns.len() > MAX_PROPAGATE_COLUMNS {
+        return conditions;
+    }
+
+    let ids: Vec<i64> = columns.keys().copied().collect();
+    let id_to_offset: BTreeMap<i64, usize> = ids
+        .iter()
+        .enumerate()
+        .map(|(offset, id)| (*id, offset))
+        .collect();
+    let mut parent: Vec<usize> = (0..ids.len()).collect();
+    for (left, right) in equalities {
+        let left = id_to_offset[&left];
+        let right = id_to_offset[&right];
+        let left_root = equivalence_root(&mut parent, left);
+        let right_root = equivalence_root(&mut parent, right);
+        if left_root != right_root {
+            parent[right_root] = left_root;
+        }
+    }
+
+    let mut result = conditions.clone();
+    let opts = SubstituteOptions {
+        builder: ctx.builder,
+        constant_propagate_check: true,
+        new_collation_enabled: true,
+    };
+    for source_offset in 0..ids.len() {
+        for target_offset in 0..ids.len() {
+            if source_offset == target_offset
+                || equivalence_root(&mut parent, source_offset)
+                    != equivalence_root(&mut parent, target_offset)
+            {
+                continue;
+            }
+            let source = &columns[&ids[source_offset]];
+            let target = &columns[&ids[target_offset]];
+            let (Some(source_type), Some(target_type)) =
+                (source.get_static_type(), target.get_static_type())
+            else {
+                continue;
+            };
+            if source_type.code() != target_type.code() {
+                continue;
+            }
+            let source_schema = Schema::new(vec![source.clone()]);
+            let replacements = [Expression::Column(target.clone())];
+            for condition in &conditions {
+                let Expression::ScalarFunction(function) = condition else {
+                    continue;
+                };
+                if function.func_name.lowercase() == "isnull"
+                    || is_column_equality(condition)
+                    || is_mutable_effects_expr(condition)
+                {
+                    continue;
+                }
+                let outcome =
+                    column_substitute_impl(condition, &source_schema, &replacements, false, &opts);
+                if outcome.substituted && !outcome.has_fail {
+                    result.push(outcome.expr);
+                }
+            }
+        }
+    }
+    remove_dup_exprs(result)
+}
+
+fn equivalence_root(parent: &mut [usize], mut node: usize) -> usize {
+    while parent[node] != node {
+        parent[node] = parent[parent[node]];
+        node = parent[node];
+    }
+    node
+}
+
+fn is_column_equality(expr: &Expression) -> bool {
+    let Expression::ScalarFunction(function) = expr else {
+        return false;
+    };
+    if function.func_name.lowercase() != "eq" {
+        return false;
+    }
+    let [Expression::Column(_), Expression::Column(_)] = function.get_args() else {
+        return false;
+    };
+    true
 }
 
 /// Go `constraint.DeleteTrueExprs`'s per-expression test, for the constants

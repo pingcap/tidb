@@ -21,7 +21,9 @@ use crate::expression::{Expression, ScalarFunction};
 use crate::scalar_function::{binary_op_name, unary_op_name};
 use crate::EvalError;
 use tidb_ast::{BinaryOp, CiString, Expr, GetFormatSelector, IsTarget, UnaryOp};
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{
+    default_field_type_for_value, Datum, FieldType, FieldTypeCode, FieldTypeValue, TimeType,
+};
 
 /// Go `mysql.DefaultDecimal` (`parser/mysql/const.go`): the value a decimal
 /// literal too large for a `MyDecimal` saturates to.
@@ -670,6 +672,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             Ok(binary_expression(*op, left, right, resolver))
         }
         Expr::Int(_)
+        | Expr::ParamMarker { .. }
         | Expr::Float(_)
         | Expr::Bool(_)
         | Expr::Null
@@ -702,8 +705,74 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
 /// stack while planning. Each group pays only its own arms now, and the
 /// dispatcher that recurses pays almost nothing.
 #[inline(never)]
-fn rewrite_leaf_literal(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expression, EvalError> {
+fn rewrite_leaf_literal(
+    expr: &Expr,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
     match expr {
+        Expr::ParamMarker {
+            order,
+            in_execute: true,
+            value: Some(value),
+            ..
+        } => {
+            let (charset, collation) = resolver.connection_charset_info();
+            let value_type = match value {
+                Datum::Null => FieldTypeValue::Null,
+                Datum::Int(value) => FieldTypeValue::Signed(*value),
+                Datum::UInt(value) => FieldTypeValue::Unsigned(*value),
+                Datum::Decimal(value) => {
+                    let rendered = value.to_string();
+                    FieldTypeValue::Decimal {
+                        display_len: rendered.len() as i64,
+                        fraction_digits: i64::from(value.scale()),
+                    }
+                }
+                Datum::Real(value) => FieldTypeValue::Float64(*value),
+                Datum::Float32(value) => FieldTypeValue::Float32(*value as f32),
+                Datum::String(value) => match value.as_utf8() {
+                    Ok(value) => FieldTypeValue::String(value),
+                    Err(_) => FieldTypeValue::Bytes(value.bytes()),
+                },
+                Datum::Bytes(value) | Datum::Raw(value) => FieldTypeValue::Bytes(value),
+                Datum::BinaryLiteral(value) | Datum::Bit(value) => {
+                    FieldTypeValue::BinaryLiteral(value.as_bytes())
+                }
+                Datum::Duration(value) => FieldTypeValue::Duration {
+                    display_len: value.to_string().len() as i64,
+                    fsp: value.fsp(),
+                },
+                Datum::Enum(value, _) => match std::str::from_utf8(value.name_bytes()) {
+                    Ok(value) => FieldTypeValue::Enum(value),
+                    Err(_) => FieldTypeValue::Bytes(value.name_bytes()),
+                },
+                Datum::Set(value, _) => match std::str::from_utf8(value.name_bytes()) {
+                    Ok(value) => FieldTypeValue::Set(value),
+                    Err(_) => FieldTypeValue::Bytes(value.name_bytes()),
+                },
+                Datum::Time(value) => match value.kind() {
+                    TimeType::Date => FieldTypeValue::Date,
+                    TimeType::DateTime => FieldTypeValue::Datetime {
+                        fsp: i64::from(value.fsp()),
+                    },
+                    TimeType::Timestamp => FieldTypeValue::Timestamp {
+                        fsp: i64::from(value.fsp()),
+                    },
+                },
+                Datum::Json(_) => FieldTypeValue::Json,
+                Datum::VectorFloat32(_) => FieldTypeValue::VectorFloat32,
+                Datum::MinNotNull | Datum::MaxValue => FieldTypeValue::Unsupported,
+            };
+            let mut constant = Constant::new(
+                value.clone(),
+                default_field_type_for_value(value_type, charset, collation),
+            );
+            constant.param_marker = Some(crate::constant::ParamMarker {
+                order: *order as i64,
+            });
+            Ok(Expression::Constant(constant))
+        }
+        Expr::ParamMarker { .. } => Err(EvalError::Unsupported("unbound parameter marker")),
         // Go's `ast.NewValueExpr` hands the scanned literal to
         // `types.NewDatum`, whose int64/uint64 split puts a literal above
         // `math.MaxInt64` in `KindUint64` -- the signedness lives in the datum
@@ -910,7 +979,10 @@ fn rewrite_leaf_literal(expr: &Expr, resolver: &impl ColumnResolver) -> Result<E
 /// stack while planning. Each group pays only its own arms now, and the
 /// dispatcher that recurses pays almost nothing.
 #[inline(never)]
-fn rewrite_leaf_compound(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expression, EvalError> {
+fn rewrite_leaf_compound(
+    expr: &Expr,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
     match expr {
         // Go's `in` builtin takes the tested value as args[0] and the list as
         // the remaining arguments; `NOT IN` wraps it in a unary NOT, which
@@ -1661,7 +1733,6 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         )),
     }
 }
-
 
 #[cfg(test)]
 mod tests {

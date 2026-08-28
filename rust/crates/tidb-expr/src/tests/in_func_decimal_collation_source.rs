@@ -24,8 +24,8 @@ use crate::column::Column;
 use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
 use tidb_ast::CiString;
-use tidb_datatype::{Decimal, FieldType, FieldTypeCode as C};
 use tidb_chunk::chunk::Chunk;
+use tidb_datatype::{Decimal, FieldType, FieldTypeCode as C};
 
 /// GO PORT of `pkg/expression/builtin_other_vec_test.go:66 TestInDecimal`.
 ///
@@ -65,8 +65,7 @@ fn in_decimal_across_scales_compares_numerically() {
         }
     }
 
-    let mut input =
-        Chunk::new_with_capacity(&[ft.clone(), ft.clone()], left.len());
+    let mut input = Chunk::new_with_capacity(&[ft.clone(), ft.clone()], left.len());
     let mut column = Column::new(0, ft.clone());
     column.index = 0;
     let lhs = Expression::Column(column);

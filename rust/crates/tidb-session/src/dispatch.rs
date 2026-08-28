@@ -442,6 +442,7 @@ impl Session {
         stmt: &Stmt,
         params: &[tidb_datatype::Datum],
     ) -> Result<Option<StmtOutput>, DriverError> {
+        self.activate_statement_resource_group(stmt);
         if !self.in_transaction() {
             self.lock_catalog()?.clear_dirty_content();
         }
@@ -478,6 +479,7 @@ impl Session {
         stmt: &Stmt,
         params: &[tidb_datatype::Datum],
     ) -> Result<Option<StmtOutput>, DriverError> {
+        self.activate_statement_resource_group(stmt);
         if !self.in_transaction() {
             self.lock_catalog()?.clear_dirty_content();
         }
@@ -528,6 +530,7 @@ impl Session {
         stmt: &Stmt,
         params: &[tidb_datatype::Datum],
     ) -> Result<Option<StmtOutput>, DriverError> {
+        self.activate_statement_resource_group(stmt);
         if !self.in_transaction() {
             self.lock_catalog()?.clear_dirty_content();
         }
@@ -593,6 +596,7 @@ impl Session {
         &mut self,
         cached: tidb_executor::PreparedPointGetExecution,
     ) -> Result<StmtOutput, DriverError> {
+        self.active_resource_group.clone_from(&self.resource_group);
         self.begin_cached_prepared_query_boundary();
         // `dirty_content` only gates scan/access-path planning. This cached
         // executor owns one handle read and the admission gate already refuses
@@ -618,6 +622,39 @@ impl Session {
             ));
         };
         self.found_in_plan_cache = true;
+        Ok(StmtOutput::Rows { columns, rows })
+    }
+
+    /// Executes a reusable prepared SELECT physical tree. The plan has
+    /// already passed the same schema and session-state gates as a Go cache
+    /// hit; this method only builds fresh runtime executors and drains them.
+    pub fn execute_cached_prepared_select(
+        &mut self,
+        cached: tidb_executor::PreparedSelectExecution,
+    ) -> Result<StmtOutput, DriverError> {
+        self.activate_select_resource_group(cached.select());
+        let cache_hit = cached.cache_hit();
+        self.begin_cached_prepared_query_boundary();
+        self.refuse_pinned_historical_read()?;
+        self.statement_insert_id = 0;
+        self.statement_kind = StatementKind::Select;
+
+        if self.in_transaction() {
+            let plan = cached.plan();
+            self.record_mdl_related_table_names(plan.table_names());
+        }
+        let current_db = self.current_db.clone();
+        let ctx = self.statement_context(false);
+        let result = self.with_catalog_mut(|catalog| {
+            tidb_executor::run_prepared_select(&cached, catalog, &current_db, &ctx)
+        })?;
+        self.drain_eval_warnings(&ctx);
+        let Some((columns, rows)) = result else {
+            return Err(DriverError::unsupported(
+                "prepared SELECT cache was invalidated during the statement",
+            ));
+        };
+        self.found_in_plan_cache = cache_hit;
         Ok(StmtOutput::Rows { columns, rows })
     }
 
@@ -849,6 +886,7 @@ impl Session {
         prepared: bool,
         cached_point_get: Option<tidb_executor::PreparedPointGetExecution>,
     ) -> Result<StmtOutput, DriverError> {
+        self.activate_statement_resource_group(&stmt);
         // Go `SelectInto` with `SelectIntoVars`: the query runs as itself and
         // its one row lands in the named user variables. Intercepted at this
         // one door so text and prepared spellings share the rules: more than
@@ -988,8 +1026,7 @@ impl Session {
         // Only an allocating INSERT sets it; every other statement reports 0.
         self.statement_insert_id = 0;
         // The Apply channel describes THIS statement's plan.
-        self
-            .planned_apply
+        self.planned_apply
             .store(false, std::sync::atomic::Ordering::Relaxed);
         // Go's `matchAgainstToLike` rewrites a direct-boolean-context
         // `MATCH ... AGAINST` into ILIKE predicates inside the expression
@@ -1073,8 +1110,7 @@ impl Session {
         // which is what makes `tidb_shard_allocate_step` count rows rather
         // than statements.
         if !self.in_transaction() {
-            self
-                .row_id_shards
+            self.row_id_shards
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .end_run();
@@ -1141,6 +1177,9 @@ impl Session {
                 // decides the access path the same way a hint written in the
                 // query would. See `crate::binding`.
                 let bound = self.bind_statement_hints(&stmt);
+                if let Some(bound) = bound.as_ref() {
+                    self.activate_statement_resource_group(bound);
+                }
                 let select = match &bound {
                     Some(Stmt::Query(query)) => match query.as_ref() {
                         tidb_ast::QueryStmt::Select(bound) => bound,

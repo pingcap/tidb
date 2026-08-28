@@ -22,20 +22,17 @@
 //! final output is a multi-way merge of the runs (`sort.go`
 //! `externalSorting`).
 //!
-//! FAITHFUL ADAPTATION (concurrency shape, not behavior): Go's
+//! For the explicit unparallel test path, Go's
 //! `sortPartitionSpillDiskAction.Action` spawns a goroutine that performs the
-//! spill while other goroutines wait on a condition variable. This tier's sort
-//! is serial, so the action only RAISES A FLAG
+//! spill while other goroutines wait on a condition variable. The Rust
+//! unparallel path raises a flag
 //! ([`SpillDiskAction::need_spill`]) and the fetch loop performs the spill
 //! itself at the next safe point -- which is the same point Go's `add`
 //! observes `isSpillTriggered()` and rolls to a new partition. There is no
 //! window in which rows are added to a partition that is being spilled,
-//! because there is no second thread.
-//!
-//! DEFERRED (named): the parallel sort's `parallelSortSpillHelper` and
-//! `parallelSortSpillAction`, and the `topn` spill. Go runs the parallel path
-//! by default (`IsUnparallel = false`); this port has only the unparallel
-//! path, so it is the unparallel spill that is ported here.
+//! because that path has no second thread. The default parallel path uses
+//! [`crate::parallel_sort_spill_helper`] and its coordinated spill action in
+//! [`crate::sort`]; TopN spill lives in [`crate::topn_spill`].
 
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
@@ -43,6 +40,7 @@ use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
+use tidb_chunk::row::OwnedRow;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::Columns;
 use tidb_util::disk::{self, SpillStorage};
@@ -51,7 +49,9 @@ use tidb_util::memory::{
 };
 
 use crate::executor::ExecError;
-use crate::sort::{eval_sort_key, less_by_items, SortByItem};
+use crate::sort::{compare_rows, eval_sort_key, SortByItem};
+use tidb_chunk::compare::ColumnCompareFunc;
+use tidb_chunk::ColumnRead;
 
 /// Go `spillChunkSize`: rows per chunk written to the spill file.
 pub const SPILL_CHUNK_SIZE: usize = 1024;
@@ -140,8 +140,6 @@ pub struct SortPartition {
     /// `(chunk index, row index)` per row, permuted into sorted order by
     /// [`SortPartition::sort`].
     rows: Vec<(usize, usize)>,
-    /// The sort key of `rows[i]`, permuted alongside it.
-    keys: Vec<Vec<Datum>>,
     sorted: bool,
     /// Go `inDisk`: `None` until the spill fires.
     in_disk: Option<DataInDiskByChunks>,
@@ -176,7 +174,6 @@ impl SortPartition {
             field_types,
             chunks: Vec::new(),
             rows: Vec::new(),
-            keys: Vec::new(),
             sorted: false,
             in_disk: None,
             mem_tracker,
@@ -189,6 +186,49 @@ impl SortPartition {
             disk_row: 0,
             head_key: None,
         }
+    }
+
+    /// Builds one already-sorted in-memory run from rows returned by a Go
+    /// `parallelSortWorker`. The worker has already performed its local
+    /// batch merge, so re-sorting here would duplicate the most expensive
+    /// part of the parallel path.
+    pub(crate) fn from_sorted_owned_rows(
+        field_types: Vec<FieldType>,
+        parent: &Arc<Tracker>,
+        spill_storage: Arc<SpillStorage>,
+        rows: Vec<OwnedRow>,
+        chunk_size: usize,
+    ) -> Self {
+        let mut partition = Self::new(field_types.clone(), parent, spill_storage);
+        let chunk_size = chunk_size.max(1);
+        let mut chunk = Chunk::new_with_capacity(&field_types, chunk_size);
+        for row in rows {
+            chunk.append_row(row.as_row());
+            if chunk.num_rows() == chunk_size {
+                partition.add(chunk);
+                chunk = Chunk::new_with_capacity(&field_types, chunk_size);
+            }
+        }
+        if chunk.num_rows() > 0 {
+            partition.add(chunk);
+        }
+        partition.sorted = true;
+        partition
+    }
+
+    /// Wraps one sorted run produced by Go's parallel spill helper. The disk
+    /// object already accounts to the sort's disk tracker; this wrapper owns
+    /// its read cursor and closes the file with the rest of the sort runs.
+    pub(crate) fn from_spilled(
+        field_types: Vec<FieldType>,
+        parent: &Arc<Tracker>,
+        spill_storage: Arc<SpillStorage>,
+        in_disk: DataInDiskByChunks,
+    ) -> Self {
+        let mut partition = Self::new(field_types, parent, spill_storage);
+        partition.in_disk = Some(in_disk);
+        partition.sorted = true;
+        partition
     }
 
     /// Test hook for Go `SetSmallSpillChunkSizeForTest`.
@@ -224,78 +264,126 @@ impl SortPartition {
     /// Go stores `chunk.Row` handles into the caller's chunk and charges
     /// `chunk.RowSize*rowNum + chk.MemoryUsage()`; this port owns the chunk,
     /// which is the same memory, charged the same way.
-    pub fn add<C: Columns>(
-        &mut self,
-        chunk: Chunk,
-        by_items: &[SortByItem],
-        ctx: &C,
-    ) -> Result<(), ExecError> {
+    pub fn add(&mut self, chunk: Chunk) {
         let rows = i64::try_from(chunk.num_rows()).unwrap_or(i64::MAX);
         self.mem_tracker
             .consume(chunk.memory_usage() + tidb_chunk::row::ROW_SIZE * rows);
 
         let chunk_index = self.chunks.len();
         for row_index in 0..chunk.num_rows() {
-            let key = eval_sort_key(by_items, ctx, chunk.get_row(row_index))?;
-            // OVER-COUNT vs Go, deliberately (and unchanged from this port's
-            // pre-spill behavior): Go re-reads the chunk cell on every
-            // comparison and keeps no materialized key, so `keys` is memory
-            // THIS port holds and Go does not. Counting it is what makes the
-            // tracker describe the process rather than the source.
-            let mut key_bytes = i64::try_from(size_of::<Vec<Datum>>()).unwrap_or(i64::MAX);
-            for datum in &key {
-                key_bytes += i64::try_from(datum.estimated_mem_usage()).unwrap_or(i64::MAX);
-            }
-            self.mem_tracker.consume(key_bytes);
-            self.keys.push(key);
             self.rows.push((chunk_index, row_index));
         }
         self.chunks.push(chunk);
         self.sorted = false;
-        Ok(())
     }
 
     /// Go `sortPartition.sortNoLock`: order the rows this partition holds.
     ///
-    /// DIVERGENCE (documented, unchanged from the in-memory port): Go's
-    /// `sort.Slice` is unstable; this is Rust's stable sort, so only the order
-    /// of exactly-tying rows can differ -- an order Go does not guarantee.
-    pub fn sort(&mut self, by_items: &[SortByItem]) -> Result<(), ExecError> {
+    pub fn sort<C: Columns>(
+        &mut self,
+        by_items: &[SortByItem],
+        compare_funcs: &[Option<ColumnCompareFunc>],
+        ctx: &C,
+    ) -> Result<(), ExecError> {
         if self.sorted {
             return Ok(());
         }
-        let keys = &self.keys;
+        let chunks = &self.chunks;
+        // Go's row handles point straight at their chunk columns. Retain the
+        // equivalent Rust read views for the whole sort so the comparator
+        // neither reopens a ColumnSlot nor copies a shared variable-width
+        // cell on every comparison.
+        let column_views: Vec<Option<Vec<ColumnRead<'_>>>> = by_items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                compare_funcs[index].as_ref()?;
+                let column = usize::try_from(item.expr.as_column()?.index).ok()?;
+                chunks
+                    .iter()
+                    .all(|chunk| column < chunk.num_cols())
+                    .then(|| chunks.iter().map(|chunk| chunk.column(column)).collect())
+            })
+            .collect();
         let mut sort_err: Option<ExecError> = None;
-        let mut indices: Vec<usize> = (0..self.rows.len()).collect();
-        indices.sort_by(|&a, &b| match less_by_items(by_items, &keys[a], &keys[b]) {
-            Ok(ordering) => ordering,
-            Err(error) => {
-                if sort_err.is_none() {
-                    sort_err = Some(error);
+        self.rows
+            .sort_unstable_by(|&(left_chunk, left_row), &(right_chunk, right_row)| {
+                let result = (|| {
+                    for (index, item) in by_items.iter().enumerate() {
+                        let ordering = match (&compare_funcs[index], &column_views[index]) {
+                            (Some(compare), Some(columns)) => {
+                                let mut ordering = compare(
+                                    &columns[left_chunk],
+                                    left_row,
+                                    &columns[right_chunk],
+                                    right_row,
+                                );
+                                if item.desc {
+                                    ordering = ordering.reverse();
+                                }
+                                ordering
+                            }
+                            _ => compare_rows(
+                                std::slice::from_ref(item),
+                                std::slice::from_ref(&compare_funcs[index]),
+                                ctx,
+                                chunks[left_chunk].get_row(left_row),
+                                chunks[right_chunk].get_row(right_row),
+                            )?,
+                        };
+                        if ordering != Ordering::Equal {
+                            return Ok(ordering);
+                        }
+                    }
+                    Ok(Ordering::Equal)
+                })();
+                match result {
+                    Ok(ordering) => ordering,
+                    Err(error) => {
+                        if sort_err.is_none() {
+                            sort_err = Some(error);
+                        }
+                        Ordering::Equal
+                    }
                 }
-                Ordering::Equal
-            }
-        });
+            });
         if let Some(error) = sort_err {
             return Err(error);
         }
-        self.rows = indices.iter().map(|&i| self.rows[i]).collect();
-        self.keys = {
-            let mut keys = std::mem::take(&mut self.keys);
-            let mut permuted: Vec<Option<Vec<Datum>>> = keys.drain(..).map(Some).collect();
-            indices
-                .iter()
-                .map(|&i| permuted[i].take().expect("each key moved once"))
-                .collect()
-        };
         self.sorted = true;
         Ok(())
     }
 
+    /// Copies this in-memory run into the owned-row representation used by
+    /// the parallel worker's local K-way merge, then releases the worker's
+    /// retained chunks. Go keeps borrowed `chunk.Row` handles here; Rust must
+    /// own them because the worker buffers are cleared before the spill or
+    /// result merge outlives the worker lock.
+    pub(crate) fn take_sorted_owned_rows(&mut self) -> Vec<OwnedRow> {
+        debug_assert!(self.sorted);
+        debug_assert!(self.in_disk.is_none());
+        let rows = self
+            .rows
+            .iter()
+            .map(|&(chunk_index, row_index)| {
+                self.chunks[chunk_index].get_row(row_index).copy_construct()
+            })
+            .collect();
+        self.chunks.clear();
+        self.rows.clear();
+        self.mem_tracker.replace_bytes_used(0);
+        rows
+    }
+
     /// Go `sortPartition.spillToDisk` + `spillToDiskImpl`: sort, write every
     /// row out in sorted order, then release the in-memory rows.
-    pub fn spill_to_disk(&mut self, by_items: &[SortByItem]) -> Result<(), ExecError> {
-        self.sort(by_items)?;
+    pub fn spill_to_disk<C: Columns>(
+        &mut self,
+        by_items: &[SortByItem],
+        compare_funcs: &[Option<ColumnCompareFunc>],
+        ctx: &C,
+    ) -> Result<(), ExecError> {
+        self.sort(by_items, compare_funcs, ctx)?;
         if self.rows.is_empty() {
             // Go `errSpillEmptyChunk`. Reached only if the action fires on a
             // partition that has taken no rows, which the `spillLimit` guard
@@ -328,7 +416,6 @@ impl SortPartition {
         // Release memory as all data have been spilled to disk.
         self.chunks = Vec::new();
         self.rows = Vec::new();
-        self.keys = Vec::new();
         self.mem_tracker.replace_bytes_used(0);
         Ok(())
     }
@@ -354,7 +441,12 @@ impl SortPartition {
         if self.cursor >= self.rows.len() {
             return Ok(false);
         }
-        self.head_key = Some(self.keys[self.cursor].clone());
+        let (chunk_index, row_index) = self.rows[self.cursor];
+        self.head_key = Some(eval_sort_key(
+            by_items,
+            ctx,
+            self.chunks[chunk_index].get_row(row_index),
+        )?);
         Ok(true)
     }
 
@@ -375,6 +467,34 @@ impl SortPartition {
             self.cursor += 1;
         }
         self.head_key = None;
+    }
+
+    /// Streams one already-sorted run directly into `req`.
+    ///
+    /// Go's one-partition path advances its slice/disk iterator directly; it
+    /// does not build merge-head keys for a merge with no second run.
+    pub fn append_sorted_rows_into(
+        &mut self,
+        req: &mut Chunk,
+        limit: usize,
+    ) -> Result<(), ExecError> {
+        while req.num_rows() < limit {
+            if self.in_disk.is_some() {
+                if !self.position_disk_cursor()? {
+                    break;
+                }
+                let chunk = self.disk_chunk.as_ref().expect("positioned chunk");
+                req.append_row(chunk.get_row(self.disk_row));
+                self.disk_row += 1;
+            } else {
+                let Some(&(chunk_index, row_index)) = self.rows.get(self.cursor) else {
+                    break;
+                };
+                req.append_row(self.chunks[chunk_index].get_row(row_index));
+                self.cursor += 1;
+            }
+        }
+        Ok(())
     }
 
     /// Go `reloadCursor`: makes sure `disk_chunk`/`disk_row` name a real row.
@@ -408,7 +528,6 @@ impl SortPartition {
         self.in_disk = None;
         self.chunks = Vec::new();
         self.rows = Vec::new();
-        self.keys = Vec::new();
         self.disk_chunk = None;
         self.mem_tracker.replace_bytes_used(0);
     }

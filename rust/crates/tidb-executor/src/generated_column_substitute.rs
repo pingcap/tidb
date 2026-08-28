@@ -35,8 +35,8 @@
 //! equality definition to keep honest across pruning and derived tables.
 //!
 //! There is no mapping here, because the two expressions never have to meet
-//! in a positional namespace at all. The access-path choice this rule feeds
-//! ([`crate::access_cost::enumerate_paths`]) consumes the `WHERE` as an
+//! in a positional namespace at all. The shared DataSource access planner
+//! this rule feeds consumes the `WHERE` as an
 //! `tidb_ast::Expr` with column NAMES, and a generated column already carries
 //! its expression as `expr_text` -- the canonically RESTORED text of the same
 //! AST, which is what `SHOW CREATE TABLE` prints back. So both sides are

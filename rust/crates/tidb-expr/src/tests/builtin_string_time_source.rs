@@ -27,9 +27,7 @@ use crate::scalar_function::ScalarFunction;
 use crate::time_fn;
 use std::cell::RefCell;
 use tidb_ast::{CiString, QueryStmt, SelectField};
-use tidb_datatype::{
-    FieldType, FieldTypeCode, MySqlDuration, SessionTimeZone, Time, TimeType,
-};
+use tidb_datatype::{FieldType, FieldTypeCode, MySqlDuration, SessionTimeZone, Time, TimeType};
 
 /// A [`Columns`] stub modeling the statement state Go's packet-sig tests
 /// construct by hand: `max_allowed_packet` lowered to a known bound plus
@@ -97,7 +95,10 @@ impl UtcClockCtx {
     }
 
     fn with_nanos(secs: i64, nanos: u32) -> Self {
-        Self { nanos, ..Self::new(secs) }
+        Self {
+            nanos,
+            ..Self::new(secs)
+        }
     }
 
     fn drain(&self) -> Vec<(u16, String)> {
@@ -145,7 +146,9 @@ fn const_arg_typed(datum: Datum, field_type: FieldType) -> Expression {
 }
 
 fn date_of(y: i32, m: i32, d: i32) -> Datum {
-    Datum::Time(Time::from_date_checked(y, m, d, 0, 0, 0, 0, TimeType::Date, 0).expect("valid date"))
+    Datum::Time(
+        Time::from_date_checked(y, m, d, 0, 0, 0, 0, TimeType::Date, 0).expect("valid date"),
+    )
 }
 
 fn datetime_of(y: i32, m: i32, d: i32, hh: i32, mm: i32, ss: i32) -> Datum {
@@ -530,8 +533,7 @@ fn test_insert_func_table() {
         ("Quadratic", 3, 1, "What", "QuWhatdratic"),
     ];
     for (s, pos, length, newstr, want) in ascii {
-        let expr =
-            format!("insert_func('{s}', {pos}, {length}, '{newstr}')");
+        let expr = format!("insert_func('{s}', {pos}, {length}, '{newstr}')");
         assert_eq!(e(&expr), format!("STR:{want}"), "{expr}");
     }
     for expr in [
@@ -616,11 +618,7 @@ fn test_from_base64() {
             None => assert_eq!(e(&expr), "NULL", "{expr}"),
             Some(value) => {
                 let got = v(&expr);
-                assert_eq!(
-                    got,
-                    Datum::new_bytes(value.as_bytes().to_vec()),
-                    "{expr}"
-                );
+                assert_eq!(got, Datum::new_bytes(value.as_bytes().to_vec()), "{expr}");
             }
         }
     }
@@ -683,7 +681,10 @@ fn test_ord_charset_table() {
     assert!(eval_scalar(
         "ORD",
         FieldType::new(FieldTypeCode::LongLong),
-        vec![const_arg_typed(Datum::Int(0), FieldType::new(FieldTypeCode::LongLong))],
+        vec![const_arg_typed(
+            Datum::Int(0),
+            FieldType::new(FieldTypeCode::LongLong)
+        )],
         &NoColumns,
     )
     .is_ok());
@@ -707,7 +708,6 @@ fn test_elt() {
         assert_eq!(chunk_e(expr), want, "{expr}");
     }
 }
-
 
 /// Go `pkg/expression/builtin_string_test.go:2529 TestQuote`. Every row,
 /// driven byte-exactly through the same public signature the chunk tier
@@ -751,10 +751,7 @@ fn test_quote() {
         ("Don\\\"", b"Don\\\"".to_vec()),
         ("\\'", b"\\'".to_vec()),
         ("\\\"", b"\\\"".to_vec()),
-        (
-            "萌萌哒(๑•ᴗ•๑)😊",
-            "萌萌哒(๑•ᴗ•๑)😊".as_bytes().to_vec(),
-        ),
+        ("萌萌哒(๑•ᴗ•๑)😊", "萌萌哒(๑•ᴗ•๑)😊".as_bytes().to_vec()),
         ("㍿㌍㍑㌫", "㍿㌍㍑㌫".as_bytes().to_vec()),
         ("<nul><ctrl-z>", vec![0u8, 26u8]),
     ];
@@ -780,7 +777,10 @@ fn test_quote() {
         eval_scalar(
             "QUOTE",
             FieldType::new(FieldTypeCode::VarString),
-            vec![const_arg_typed(Datum::Null, FieldType::new(FieldTypeCode::VarString))],
+            vec![const_arg_typed(
+                Datum::Null,
+                FieldType::new(FieldTypeCode::VarString)
+            )],
             &NoColumns,
         )
         .unwrap(),
@@ -833,8 +833,7 @@ fn test_to_base64_gbk_session_rows() {
 /// losing side and no warning on the winning side.
 #[test]
 fn test_to_base64_sig_packet_boundaries() {
-    let alphabet =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let triple = format!("{alphabet}{alphabet}{alphabet}");
     let rows: [(Vec<u8>, u64, bool); 6] = [
         (b"abc".to_vec(), 4, false),
@@ -981,12 +980,7 @@ fn test_ci_weight_string_table() {
         (
             "utf8mb4_unicode_ci",
             [
-                (
-                    "aAÁàãăâ",
-                    "NONE",
-                    0,
-                    "0E330E330E330E330E330E330E33",
-                ),
+                ("aAÁàãăâ", "NONE", 0, "0E330E330E330E330E330E330E33"),
                 ("中", "NONE", 0, "FB40CE2D"),
                 ("a", "CHAR", 5, "0E33"),
                 ("a ", "CHAR", 5, "0E33"),
@@ -1005,12 +999,7 @@ fn test_ci_weight_string_table() {
         (
             "utf8mb4_0900_ai_ci",
             [
-                (
-                    "aAÁàãăâ",
-                    "NONE",
-                    0,
-                    "1C471C471C471C471C471C471C47",
-                ),
+                ("aAÁàãăâ", "NONE", 0, "1C471C471C471C471C471C471C47"),
                 ("中", "NONE", 0, "FB40CE2D"),
                 ("a", "CHAR", 5, "1C470209020902090209"),
                 ("a ", "CHAR", 5, "1C470209020902090209"),
@@ -1059,8 +1048,14 @@ fn test_translate_tables() {
             r"translate('lowercase', 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')",
             "STR:LOWERCASE",
         ),
-        (r"translate('aaaaabbbbb', 'aaabbb', 'xyzXYZ')", "STR:xxxxxXXXXX"),
-        (r"translate('Ti*DB User''s Guide', ' */''', '___')", "STR:Ti_DB_Users_Guide"),
+        (
+            r"translate('aaaaabbbbb', 'aaabbb', 'xyzXYZ')",
+            "STR:xxxxxXXXXX",
+        ),
+        (
+            r"translate('Ti*DB User''s Guide', ' */''', '___')",
+            "STR:Ti_DB_Users_Guide",
+        ),
         (r"translate('abc', 'ab', '')", "STR:c"),
         (r"translate('aaa', 'a', '')", "STR:"),
         (r"translate('', 'null', 'null')", "STR:"),
@@ -1338,10 +1333,7 @@ fn test_vectorized_generated_builtin_string_func() {
 fn test_vectorized_builtin_string_eval_one_vec() {
     // Lpad geners: newRangeInt64Gener(168435456, 368435456) lengths all sit
     // past mysql.MaxBlobWidth => NULL without panic (#42770 family).
-    assert_eq!(
-        e("lpad('hi', 368435456, 'ab')"),
-        "NULL"
-    );
+    assert_eq!(e("lpad('hi', 368435456, 'ab')"), "NULL");
     // Default-gener junk reaches the same rune semantics as source rows.
     assert_eq!(e(r"lpad('中文', 5, '字符')"), "STR:字符字中文");
     // Rpad/Lpad binary signature selection through hex-literal payloads.
@@ -1367,10 +1359,7 @@ fn test_vectorized_builtin_string_eval_one_vec() {
         "STR:XbYdZfhjklmno"
     );
     // Substring_index zero-count empty arm from range (-4, 4).
-    assert_eq!(
-        e(r"substring_index('aaa.bbb.ccc.ddd.eee', '.', 0)"),
-        "STR:"
-    );
+    assert_eq!(e(r"substring_index('aaa.bbb.ccc.ddd.eee', '.', 0)"), "STR:");
     assert_eq!(
         e(r"substring_index('aaa.bbb.ccc.ddd.eee', '.', 4)"),
         "STR:aaa.bbb.ccc.ddd"
@@ -1401,9 +1390,15 @@ fn test_vectorized_builtin_string_eval_one_vec_2() {
     // Quote's control-byte escapes.
     assert_eq!(e(r"quote(char(0, 26))"), r"STR:'\0\Z'");
     // MakeSet negative-mask arms.
-    assert_eq!(e(r"make_set(-100 | 4, 'hello', 'nice', 'abc', 'world')"), "STR:abc,world");
+    assert_eq!(
+        e(r"make_set(-100 | 4, 'hello', 'nice', 'abc', 'world')"),
+        "STR:abc,world"
+    );
     // FromBase64 whitespace tolerance / ToBase64 packet-safe short strings.
-    assert_eq!(v("from_base64('YWIKYw==')"), Datum::new_bytes(b"ab\nc".to_vec()));
+    assert_eq!(
+        v("from_base64('YWIKYw==')"),
+        Datum::new_bytes(b"ab\nc".to_vec())
+    );
     assert_eq!(e("to_base64('ab c')"), "STR:YWIgYw==");
     // Format locale fallbacks + IsNull signature arms.
     assert_eq!(chunk_e("format(12345.67, 2, 'en_us')"), "STR:12,345.67");
@@ -1464,7 +1459,10 @@ fn test_is_null_func() {
         eval_scalar(
             "ISNULL",
             FieldType::new(FieldTypeCode::LongLong),
-            vec![const_arg_typed(Datum::Int(1), FieldType::new(FieldTypeCode::LongLong))],
+            vec![const_arg_typed(
+                Datum::Int(1),
+                FieldType::new(FieldTypeCode::LongLong)
+            )],
             &NoColumns,
         )
         .unwrap(),
@@ -1474,7 +1472,10 @@ fn test_is_null_func() {
         eval_scalar(
             "ISNULL",
             FieldType::new(FieldTypeCode::LongLong),
-            vec![const_arg_typed(Datum::Null, FieldType::new(FieldTypeCode::Null))],
+            vec![const_arg_typed(
+                Datum::Null,
+                FieldType::new(FieldTypeCode::Null)
+            )],
             &NoColumns,
         )
         .unwrap(),
@@ -1522,8 +1523,14 @@ fn test_lock() {
             .eval(&LockSession, tidb_chunk::row::Row::empty())
             .unwrap()
     };
-    assert_eq!(eval_locked(r#"SELECT get_lock('mylock', 1)"#), Datum::Int(1));
-    assert_eq!(eval_locked(r#"SELECT release_lock('mylock')"#), Datum::Int(1));
+    assert_eq!(
+        eval_locked(r#"SELECT get_lock('mylock', 1)"#),
+        Datum::Int(1)
+    );
+    assert_eq!(
+        eval_locked(r#"SELECT release_lock('mylock')"#),
+        Datum::Int(1)
+    );
 }
 
 /// Go `pkg/expression/builtin_test.go:167 TestBuiltinFuncCacheConcurrency`:
@@ -1550,9 +1557,8 @@ fn test_builtin_func_cache_lifecycle() {}
 #[test]
 fn test_date_delimiter_table() {
     let punct: [char; 30] = [
-        '"', '#', '$', '%', '&', '\'', '(', ')', '*', '+', ',', '.', '/', ':',
-        ';', '<', '=', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|',
-        '}', '~',
+        '"', '#', '$', '%', '&', '\'', '(', ')', '*', '+', ',', '.', '/', ':', ';', '<', '=', '>',
+        '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~',
     ];
     for d in punct {
         let expr = match d {
@@ -1624,10 +1630,13 @@ fn test_clock_parts_and_invalid_time_warning() {
         assert_eq!(e(&format!("{func}({broken})")), "NULL");
     }
     let clock = UtcClockCtx::new(0);
-    let got =
-        time_fn::dispatch("TIME", &[Datum::new_string("2011-11-11 10:10:10.11.12")], &clock)
-            .unwrap()
-            .unwrap();
+    let got = time_fn::dispatch(
+        "TIME",
+        &[Datum::new_string("2011-11-11 10:10:10.11.12")],
+        &clock,
+    )
+    .unwrap()
+    .unwrap();
     // The source leaves the zero value standing under truncate-as-warning.
     assert_eq!(got_text(&got), "00:00:00");
     let drained = clock.drain();
@@ -1661,7 +1670,10 @@ fn test_time_values_and_result_type() {
             assert_eq!(tp.charset_name(), "binary", "{sql}");
             assert_eq!(tp.collation_name(), "binary", "{sql}");
             assert!(
-                tidb_mysql::has_flag(usize::try_from(tp.flags()).expect("narrow flags"), BinaryFlag),
+                tidb_mysql::has_flag(
+                    usize::try_from(tp.flags()).expect("narrow flags"),
+                    BinaryFlag
+                ),
                 "{sql} missing BinaryFlag"
             );
             assert_eq!(tp.flen(), flen, "{sql} flen");
@@ -1707,13 +1719,16 @@ fn test_date_format_zero_year_x_token() {}
 fn test_now_utc_timestamp_fixed_clock() {
     let ctx = UtcClockCtx::new(1234);
     // NOW(): truncation semantics, fractional seconds absent at default fsp.
-    let now =
-        time_fn::dispatch("NOW", &[], &ctx).unwrap().unwrap();
+    let now = time_fn::dispatch("NOW", &[], &ctx).unwrap().unwrap();
     assert_eq!(got_text(&now), "1970-01-01 00:20:34");
-    assert!(!got_text(&now).contains('.'), "default fsp must not show a fraction");
+    assert!(
+        !got_text(&now).contains('.'),
+        "default fsp must not show a fraction"
+    );
     let half = UtcClockCtx::with_nanos(1234, 500_000_000);
-    let now6 =
-        time_fn::dispatch("NOW", &[Datum::Int(6)], &half).unwrap().unwrap();
+    let now6 = time_fn::dispatch("NOW", &[Datum::Int(6)], &half)
+        .unwrap()
+        .unwrap();
     assert_eq!(got_text(&now6), "1970-01-01 00:20:34.500000");
     assert!(got_text(&now6).contains('.'));
 
@@ -1735,7 +1750,9 @@ fn test_now_utc_timestamp_fixed_clock() {
                 other => panic!("{name}({bad}) must fail construction, got {other:?}"),
             }
         }
-        let null_fsp = time_fn::dispatch(name, &[Datum::Null], &ctx).unwrap().unwrap();
+        let null_fsp = time_fn::dispatch(name, &[Datum::Null], &ctx)
+            .unwrap()
+            .unwrap();
         assert_eq!(got_text(&null_fsp), "1970-01-01 00:20:34");
     }
 }
@@ -1782,7 +1799,11 @@ fn test_add_time_sig_value_tables() {
             "2 1:1:1.000002",
             "STR:2008-01-03 01:01:01.000001",
         ),
-        ("2018-08-16 20:21:01", "00:00:00.000001", "STR:2018-08-16 20:21:01.000001"),
+        (
+            "2018-08-16 20:21:01",
+            "00:00:00.000001",
+            "STR:2018-08-16 20:21:01.000001",
+        ),
         ("1", "xxcvadfgasd", "NULL"),
         ("xxcvadfgasd", "1", "NULL"),
         ("2020-05-13 14:01:24", "2020-04-29 05:11:19", "NULL"),
@@ -1885,8 +1906,16 @@ fn test_sub_time_sig_value_tables() {
             "1 1:1:1.000002",
             "STR:2007-12-30 22:58:58.999997",
         ),
-        ("1000-01-01 01:00:00.000000", "00:00:00.000001", "STR:1000-01-01 00:59:59.999999"),
-        ("1000-01-01 01:00:00.000001", "00:00:00.000001", "STR:1000-01-01 01:00:00"),
+        (
+            "1000-01-01 01:00:00.000000",
+            "00:00:00.000001",
+            "STR:1000-01-01 00:59:59.999999",
+        ),
+        (
+            "1000-01-01 01:00:00.000001",
+            "00:00:00.000001",
+            "STR:1000-01-01 01:00:00",
+        ),
         ("1", "xxcvadfgasd", "NULL"),
         ("xxcvadfgasd", "1", "NULL"),
     ] {
@@ -1942,15 +1971,18 @@ fn test_from_unixtime_utc_fixed() {
             .expect("FROM_UNIXTIME belongs to this family")
             .map(|d| got_text(&d))
     };
-    assert_eq!(call(vec![Datum::Int(1_451_606_400)]), Ok("2016-01-01 00:00:00".into()));
+    assert_eq!(
+        call(vec![Datum::Int(1_451_606_400)]),
+        Ok("2016-01-01 00:00:00".into())
+    );
     for fraction in ["1451606400.123456", "1451606400.999999"] {
         let want = match fraction {
             "1451606400.123456" => "2016-01-01 00:00:00.123456",
             _ => "2016-01-01 00:00:00.999999",
         };
-        let args = vec![Datum::Decimal(
-            tidb_datatype::Decimal::from_literal(fraction),
-        )];
+        let args = vec![Datum::Decimal(tidb_datatype::Decimal::from_literal(
+            fraction,
+        ))];
         assert_eq!(call(args), Ok(want.to_string()), "{fraction}");
     }
     // A scale-7 decimal rounds half-up into the next second.
@@ -1970,21 +2002,25 @@ fn test_from_unixtime_utc_fixed() {
     let fmt = "%Y %D %M %h:%i:%s %x";
     let two_arg = |arg: Datum| {
         got_text(
-            &time_fn::dispatch(
-                "FROM_UNIXTIME",
-                &[arg, Datum::new_string(fmt)],
-                &utc,
-            )
-            .unwrap()
-            .unwrap(),
+            &time_fn::dispatch("FROM_UNIXTIME", &[arg, Datum::new_string(fmt)], &utc)
+                .unwrap()
+                .unwrap(),
         )
     };
     let oracle = |text: &str| {
-        got_text(&time_fn::calendar::date_format(&Datum::new_string(text), &Datum::new_string(fmt)).unwrap())
+        got_text(
+            &time_fn::calendar::date_format(&Datum::new_string(text), &Datum::new_string(fmt))
+                .unwrap(),
+        )
     };
-    assert_eq!(two_arg(Datum::Int(1_451_606_400)), oracle("2016-01-01 00:00:00"));
     assert_eq!(
-        two_arg(Datum::Decimal(tidb_datatype::Decimal::from_literal("1451606400.123456"))),
+        two_arg(Datum::Int(1_451_606_400)),
+        oracle("2016-01-01 00:00:00")
+    );
+    assert_eq!(
+        two_arg(Datum::Decimal(tidb_datatype::Decimal::from_literal(
+            "1451606400.123456"
+        ))),
         oracle("2016-01-01 00:00:00.123456")
     );
     // Out-of-domain inputs answer SQL NULL.
@@ -2004,12 +2040,19 @@ fn test_current_date_current_time_utc_time_clocks() {
     let ctx = UtcClockCtx::new(1_234);
     let half = UtcClockCtx::with_nanos(1_234, 500_000_000);
 
-    assert_eq!(got_text(&time_fn::dispatch("CURDATE", &[], &ctx).unwrap().unwrap()), "1970-01-01");
+    assert_eq!(
+        got_text(&time_fn::dispatch("CURDATE", &[], &ctx).unwrap().unwrap()),
+        "1970-01-01"
+    );
 
     // CURRENT_TIME(nil): master passes MakeDatums(nil) expecting an
     // 8-character seconds-only string.
     assert_eq!(
-        got_text(&time_fn::dispatch("CURRENT_TIME", &[Datum::Null], &half).unwrap().unwrap()),
+        got_text(
+            &time_fn::dispatch("CURRENT_TIME", &[Datum::Null], &half)
+                .unwrap()
+                .unwrap()
+        ),
         "00:20:35"
     );
     for (vals, want_len) in [
@@ -2019,8 +2062,11 @@ fn test_current_date_current_time_utc_time_clocks() {
         (vec![Datum::Int(6)], 15),
     ] {
         let ctx_local = UtcClockCtx::with_nanos(1_234, 500_000_000);
-        let text =
-            got_text(&time_fn::dispatch("CURRENT_TIME", &vals, &ctx_local).unwrap().unwrap());
+        let text = got_text(
+            &time_fn::dispatch("CURRENT_TIME", &vals, &ctx_local)
+                .unwrap()
+                .unwrap(),
+        );
         assert_eq!(text.chars().count(), want_len, "{text}");
         assert!(text.starts_with("00:20:"), "{text}");
     }
@@ -2044,7 +2090,11 @@ fn test_current_date_current_time_utc_time_clocks() {
         (vec![Datum::Int(3)], 12),
         (vec![Datum::Int(6)], 15),
     ] {
-        let text = got_text(&time_fn::dispatch("UTC_TIME", &vals, &half).unwrap().unwrap());
+        let text = got_text(
+            &time_fn::dispatch("UTC_TIME", &vals, &half)
+                .unwrap()
+                .unwrap(),
+        );
         assert_eq!(text.chars().count(), want_len, "{text}");
         assert!(text.starts_with("00:20:"), "{text}");
     }

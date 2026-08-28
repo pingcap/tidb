@@ -188,8 +188,8 @@ impl Session {
     /// such seam (an in-process session, or a node that serves no cluster)
     /// keeps the in-memory-only behavior this always had.
     ///
-    /// DEFERRED (documented): resource groups and the other non-variable
-    /// `SET` forms stay unsupported.
+    /// Non-variable `SET` forms outside the resource-group selector remain
+    /// unsupported.
     pub fn apply_set(&mut self, sql: &str) -> Result<Option<()>, DriverError> {
         let stmt = self.parse(sql)?;
         self.apply_set_stmt(&stmt)
@@ -260,8 +260,55 @@ impl Session {
                 }
                 Ok(Some(()))
             }
+            SessionStmt::SetResourceGroup(resource_group) => {
+                self.resource_group = if resource_group.name.is_empty() {
+                    "default".to_owned()
+                } else {
+                    resource_group.name.to_ascii_lowercase()
+                };
+                Ok(Some(()))
+            }
             _ => Ok(None),
         }
+    }
+
+    /// The connection's persistent resource group. A statement hint does not
+    /// modify this value.
+    #[must_use]
+    pub fn current_resource_group(&self) -> &str {
+        &self.resource_group
+    }
+
+    /// Resolves Go `StmtCtx.ResourceGroupName`: the last top-level
+    /// `RESOURCE_GROUP(name)` hint wins for this statement, otherwise the
+    /// connection's `SET RESOURCE GROUP` selection is used.
+    #[must_use]
+    pub fn statement_resource_group<'a>(&'a self, stmt: &'a Stmt) -> &'a str {
+        resource_group_hint(statement_hints(stmt).unwrap_or_default())
+            .unwrap_or(&self.resource_group)
+    }
+
+    /// Resets Go `StmtCtx.ResourceGroupName` for one statement before its
+    /// snapshot, transaction, planner, or executor is opened.
+    pub(crate) fn activate_statement_resource_group(&mut self, stmt: &Stmt) {
+        let resource_group = self.statement_resource_group(stmt).to_ascii_lowercase();
+        self.active_resource_group = resource_group;
+    }
+
+    /// Applies the hints on a cached SELECT whose bound AST is retained by the
+    /// reusable physical plan rather than passed through the ordinary session
+    /// funnel again.
+    pub(crate) fn activate_select_resource_group(&mut self, select: &tidb_ast::SelectStmt) {
+        self.active_resource_group = resource_group_hint(&select.hints)
+            .unwrap_or(&self.resource_group)
+            .to_ascii_lowercase();
+    }
+
+    /// Parses one text-protocol statement and resolves its statement-scoped
+    /// resource group before any snapshot or transaction is opened.
+    pub fn statement_resource_group_sql(&self, sql: &str) -> Result<String, DriverError> {
+        let stmt = self.parse(sql)?;
+        Ok(self.statement_resource_group(&stmt).to_owned())
     }
 
     /// One `name = value` assignment.
@@ -1115,6 +1162,16 @@ pub(crate) fn statement_hints(stmt: &Stmt) -> Option<&[Hint]> {
         }
         Stmt::Ddl(_) | Stmt::Session(_) => None,
     }
+}
+
+fn resource_group_hint(hints: &[Hint]) -> Option<&str> {
+    hints.iter().rev().find_map(|hint| match &hint.kind {
+        tidb_ast::HintKind::Name {
+            qb_name: None,
+            name,
+        } if hint.name.eq_ignore_ascii_case("RESOURCE_GROUP") => Some(name.as_str()),
+        _ => None,
+    })
 }
 
 /// Fix 52592 as it will be seen by this statement's planner, computed before

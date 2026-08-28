@@ -86,9 +86,9 @@ use crate::resultset_source::ResultSetSource;
 use crate::session_transaction::SessionTransaction;
 use crate::sorting_result_set::SortingResultSetSource;
 use crate::sql_node::{
-    cluster_ddl_error, ActiveQueryCancellation, ConcurrentSqlNode,
-    PreparedPointRead, PreparedWrite, QueryCancellationLease, QueryResult, QuerySession,
-    QuerySessionFactory, SessionContext, SqlNodeError, SqlQueryError, WriteOutcome,
+    cluster_ddl_error, ActiveQueryCancellation, ConcurrentSqlNode, PreparedPointRead,
+    PreparedWrite, QueryCancellationLease, QueryResult, QuerySession, QuerySessionFactory,
+    SessionContext, SqlNodeError, SqlQueryError, WriteOutcome,
 };
 use crate::transaction_overlay_result_set::{OverlayHandleSource, TransactionOverlayResultSet};
 use crate::wire_status::WireStatus;

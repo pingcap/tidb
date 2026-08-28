@@ -952,18 +952,13 @@ fn points_from_in(
     // ordering/equality key. Sorting the owned values directly avoids one key
     // allocation per IN item; collations with weight tables keep the keyed
     // path below because their keys are not byte-identical.
-    let raw_binary_key = matches!(
-        collation,
-        Collation::Binary | Collation::Utf8Mb40900Bin
-    ) || (matches!(
-        collation,
-        Collation::AsciiBin
-            | Collation::Latin1Bin
-            | Collation::Utf8Bin
-            | Collation::Utf8Mb4Bin
-    ) && values.iter().all(|value| {
-        matches!(value, Datum::String(string) if string.bytes().last() != Some(&b' '))
-    }));
+    let raw_binary_key = matches!(collation, Collation::Binary | Collation::Utf8Mb40900Bin)
+        || (matches!(
+            collation,
+            Collation::AsciiBin | Collation::Latin1Bin | Collation::Utf8Bin | Collation::Utf8Mb4Bin
+        ) && values.iter().all(
+            |value| matches!(value, Datum::String(string) if string.bytes().last() != Some(&b' ')),
+        ));
     if raw_binary_key && values.iter().all(|value| matches!(value, Datum::String(_))) {
         values.sort_unstable_by(|left, right| {
             let (Datum::String(left), Datum::String(right)) = (left, right) else {
@@ -1159,8 +1154,13 @@ fn points_for_condition(
     like_default_escape: u8,
     convert_to_sort_key: bool,
 ) -> Option<ColumnPoints> {
-    let mut column_points =
-        points_on_column(condition, column, zone, like_default_escape, convert_to_sort_key)?;
+    let mut column_points = points_on_column(
+        condition,
+        column,
+        zone,
+        like_default_escape,
+        convert_to_sort_key,
+    )?;
     // Go cuts and converts at the tail of each `build` arm; the one arm that
     // does both itself says so, and is left alone here. Cutting an already
     // converted point a second time reads a SORT KEY as text -- for
@@ -1201,11 +1201,7 @@ fn points_for_condition(
 fn enum_compares_as_int(value: &Datum) -> bool {
     matches!(
         value,
-        Datum::Int(_)
-            | Datum::UInt(_)
-            | Datum::Bit(_)
-            | Datum::Enum(_, _)
-            | Datum::Set(_, _)
+        Datum::Int(_) | Datum::UInt(_) | Datum::Bit(_) | Datum::Enum(_, _) | Datum::Set(_, _)
     )
 }
 
@@ -1282,9 +1278,13 @@ fn points_on_column(
 ) -> Option<ColumnPoints> {
     let name = column.name.as_str();
     match condition {
-        Expr::Paren(inner) => {
-            points_on_column(inner, column, zone, like_default_escape, convert_to_sort_key)
-        }
+        Expr::Paren(inner) => points_on_column(
+            inner,
+            column,
+            zone,
+            like_default_escape,
+            convert_to_sort_key,
+        ),
         // Go `buildFromScalarFunc`'s `ast.LogicAnd` / `ast.LogicOr` arms. A
         // boolean connective over ONE index column is still a point set on
         // that column: `b = 1 OR b = 2` is the union of the two, and
@@ -1626,8 +1626,7 @@ fn build_cnf_ranges<'a>(
                 zone,
                 like_default_escape,
                 convert_to_sort_key,
-            )
-            else {
+            ) else {
                 continue;
             };
             if !column.eq_or_in {
@@ -1673,8 +1672,7 @@ fn build_cnf_ranges<'a>(
                 zone,
                 like_default_escape,
                 convert_to_sort_key,
-            )
-            else {
+            ) else {
                 continue;
             };
             tail = Some(intersection(
@@ -1870,7 +1868,11 @@ fn build_dnf_ranges<'a>(
         // The DNF branch is taken when the WHOLE `WHERE` is one `OR`; a
         // partial branch leaves nothing beside the disjunction itself, but
         // the whole disjunction must stay among the filters.
-        residual: if has_residual { vec![disjunct] } else { Vec::new() },
+        residual: if has_residual {
+            vec![disjunct]
+        } else {
+            Vec::new()
+        },
     })
 }
 
@@ -1954,20 +1956,21 @@ fn conjunct_points_on_first_column<'a>(
             op @ (BinaryOp::Gt | BinaryOp::Ge | BinaryOp::Lt | BinaryOp::Le),
             lhs,
             rhs,
-        ) if row_items(lhs).is_some_and(|items| {
-            !items.is_empty() && is_column(&items[0], &column.name)
-        }) && row_items(lhs).map(|l| l.len()) == row_items(rhs).map(|r| r.len()) => {
+        ) if row_items(lhs)
+            .is_some_and(|items| !items.is_empty() && is_column(&items[0], &column.name))
+            && row_items(lhs).map(|l| l.len()) == row_items(rhs).map(|r| r.len()) =>
+        {
             let items = row_items(lhs).unwrap_or(&[]);
             let values = row_items(rhs).unwrap_or(&[]);
-            let head = Expr::Binary(
-                *op,
-                Box::new(items[0].clone()),
-                Box::new(values[0].clone()),
-            );
-            let Some(head_points) =
-                points_for_condition(&head, column, zone, like_default_escape, convert_to_sort_key)
-                    .map(|column_points| typed_points(column_points.points, column))
-            else {
+            let head = Expr::Binary(*op, Box::new(items[0].clone()), Box::new(values[0].clone()));
+            let Some(head_points) = points_for_condition(
+                &head,
+                column,
+                zone,
+                like_default_escape,
+                convert_to_sort_key,
+            )
+            .map(|column_points| typed_points(column_points.points, column)) else {
                 return None;
             };
             if items.len() == 1 {
@@ -1985,17 +1988,12 @@ fn conjunct_points_on_first_column<'a>(
                 like_default_escape,
                 convert_to_sort_key,
             )
-            .map(|column_points| typed_points(column_points.points, column))
-            else {
+            .map(|column_points| typed_points(column_points.points, column)) else {
                 // The leading equality holds nothing here (a NULL literal,
                 // say): the whole comparison degrades to its filter.
                 return None;
             };
-            let points = union_points(
-                &head_points,
-                &tail_points,
-                column.field_type.collation(),
-            );
+            let points = union_points(&head_points, &tail_points, column.field_type.collation());
             Some((points, true))
         }
         other => points_for_condition(
@@ -2377,7 +2375,9 @@ fn detach_conjuncts_and_build_range_for_index_with_like_default_escape<'a>(
     convert_to_sort_key: bool,
 ) -> Option<IndexRanges<'a>> {
     if let [condition] = conjuncts {
-        if let Some(built) = build_row_in_ranges(index_columns, condition, zone, convert_to_sort_key) {
+        if let Some(built) =
+            build_row_in_ranges(index_columns, condition, zone, convert_to_sort_key)
+        {
             return Some(built);
         }
     }
@@ -2418,137 +2418,6 @@ fn detach_conjuncts_and_build_range_for_index_with_like_default_escape<'a>(
         convert_to_sort_key,
     );
     (projected.access_count > 0).then_some(projected)
-}
-
-/// Go's `PredicateSimplification` / `unsatisfiable`
-/// (`pkg/planner/core/rule/rule_predicate_simplification.go`): a `WHERE` reads
-/// no row on ANY access path when some column carries an equality `col = c`
-/// that another binary comparison on the same column contradicts.
-///
-/// This is the index-INDEPENDENT `TableDual`: `b = 1 AND b = 2` reads nothing
-/// no matter which columns are indexed, so Go plans `TableDual rows:0` before
-/// any path is costed, and does the same for a partition key
-/// (`a = 2 AND a = 3` over a partitioned table). It is distinct from the
-/// empty-range short-circuit in [`detach_cond_and_build_range_for_index`],
-/// which fires only for the column an access path was chosen on.
-///
-/// The EQUALITY gate is Go's own. `unsatisfiable` pairs an equality
-/// (`equalPredicate`) only with another BINARY COMPARISON
-/// (`binaryComparisonPredicate`: `=`, `<>`, `<`, `>`, `<=`, `>=`) -- never with
-/// an `IN`, a `BETWEEN` or an `OR` -- and requires one side of the pair to be
-/// an equality. So `b > 10 AND b < 1` (no equality) stays an ordinary filter,
-/// matching Go which leaves it a `TableFullScan` on a non-indexed column, and
-/// `b = 1 AND b IN (2, 3)` is not proven contradictory because the other side
-/// is an `IN` rather than a binary comparison.
-///
-/// Intersecting the equality's single point with each other comparison's point
-/// set and asking whether the result is empty is exactly Go's pairwise check:
-/// the intersection drops the equality's value iff some `c1 <op> c2` is false.
-/// Go `logicalop.IsConstFalse` (`expression_util.go:55`), the test
-/// `Conds2TableDual` applies to a single condition: the predicate is a
-/// CONSTANT, and it is either NULL or converts to boolean false.
-///
-/// Go reaches this through `AddSelection` (`logical_plans_misc.go:85`), which
-/// replaces the child with a zero-row `LogicalTableDual` rather than building
-/// a `LogicalSelection` that admits nothing. `a = 1 AND a = 2` never arrives
-/// here -- the ranger proves that contradiction and
-/// [`where_is_unsatisfiable`] reports it -- but a predicate that constant
-/// folding has already reduced to a literal does, most often after a
-/// projected constant was substituted into it (`0 > 0` from
-/// `registration_num > 0` over a `0 registration_num` union term).
-pub(crate) fn where_is_constant_false(
-    where_clause: &Expr,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> bool {
-    // Go reaches the dual through TWO steps, and both matter here.
-    // `shortCircuitLogicalConstants` (`rule_predicate_simplification.go:535`)
-    // walks the CONJUNCT list and, on the first false one, returns THAT
-    // predicate alone as the whole list; `Conds2TableDual` then sees a
-    // single const-false condition and answers a dual. So a false conjunct
-    // anywhere in an `AND` chain is enough -- which is the shape a
-    // substituted constant arrives in (`period = 1 AND ... AND 0`).
-    let mut conjuncts = Vec::new();
-    collect_conjuncts(where_clause, &mut conjuncts);
-    conjuncts.iter().any(|conjunct| {
-        let Some(value) = constant_value(conjunct, zone) else {
-            return false;
-        };
-        match value {
-            // Go: `con.Value.IsNull()` is const-false outright.
-            Datum::Null => true,
-            // Go: `con.Value.ToBool(...) == 0`; an error is NOT const-false.
-            other => matches!(tidb_expr::truthy_of(&other), Ok(Some(false))),
-        }
-    })
-}
-
-pub(crate) fn where_is_unsatisfiable(
-    columns: &[(String, FieldType)],
-    where_clause: &Expr,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> bool {
-    let mut conjuncts = Vec::new();
-    collect_conjuncts(where_clause, &mut conjuncts);
-    // A lone top-level OR is a disjunction, so a contradictory branch does not
-    // make the whole predicate false. A top-level AND is already flattened into
-    // several conjuncts by `collect_conjuncts`.
-    if conjuncts.len() == 1 && is_or(conjuncts[0]) {
-        return false;
-    }
-    columns
-        .iter()
-        .any(|(name, field_type)| column_conjuncts_contradict(name, field_type, &conjuncts, zone))
-}
-
-/// Whether the binary-comparison conjuncts on one column, taken together with
-/// at least one equality among them, admit no value.
-fn column_conjuncts_contradict(
-    name: &str,
-    field_type: &FieldType,
-    conjuncts: &[&Expr],
-    zone: &tidb_datatype::SessionTimeZone,
-) -> bool {
-    let column = RangeColumn::whole(name.to_owned(), field_type.clone());
-    let mut points = full_range();
-    let mut has_equality = false;
-    let mut access = false;
-    for condition in conjuncts {
-        let Some(column_points) = simple_comparison_points(condition, &column, zone) else {
-            continue;
-        };
-        points = intersection(
-            &points,
-            &column_points.points,
-            column.field_type.collation(),
-        );
-        has_equality |= column_points.eq_or_in;
-        access = true;
-    }
-    if !(access && has_equality) {
-        return false;
-    }
-    convert_points_in_place(&mut points, &column.field_type);
-    points_to_ranges(&points, &column).is_empty()
-}
-
-/// The points a TOP-LEVEL binary comparison (`=`, `<>`, `<`, `>`, `<=`, `>=`)
-/// on `column` puts on it, with `eq_or_in` set only for the `=` Go's
-/// `unsatisfiable` requires. `None` for every other shape -- an `IN`, a
-/// `BETWEEN`, an `OR`, a `LIKE`, an `IS NULL` -- because Go's pairwise check
-/// never uses those as the contradicting side.
-fn simple_comparison_points(
-    condition: &Expr,
-    column: &RangeColumn,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Option<ColumnPoints> {
-    match condition {
-        Expr::Paren(inner) => simple_comparison_points(inner, column, zone),
-        Expr::Binary(
-            BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge,
-            ..,
-        ) => points_on_column(condition, column, zone, b'\\', true),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -2667,9 +2536,18 @@ mod tests {
     #[test]
     fn dnf_branch_with_residual_conjunct_keeps_its_ranges() {
         let typed: Vec<RangeColumn> = vec![
-            RangeColumn::whole("id1".to_owned(), FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
-            RangeColumn::whole("id2".to_owned(), FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
-            RangeColumn::whole("tp".to_owned(), FieldType::new(tidb_datatype::FieldTypeCode::VarString)),
+            RangeColumn::whole(
+                "id1".to_owned(),
+                FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            ),
+            RangeColumn::whole(
+                "id2".to_owned(),
+                FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            ),
+            RangeColumn::whole(
+                "tp".to_owned(),
+                FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+            ),
         ];
         // String-literal arms detach fully; the union collapses onto the
         // shared `id1` point exactly as go prints it.
@@ -3280,71 +3158,5 @@ mod tests {
                 "{where_sql}"
             );
         }
-    }
-
-    /// `where_is_unsatisfiable` fires exactly on Go's `unsatisfiable`: an
-    /// equality contradicted by another BINARY comparison on the same column,
-    /// on ANY column of the table -- and never on the shapes Go leaves a
-    /// filter (a range pair with no equality, an equality vs an `IN`, a lone
-    /// disjunction).
-    #[test]
-    fn where_is_unsatisfiable_matches_go_predicate_simplification() {
-        // The table is `t(a int, b int, c int)`; the contradiction may be on
-        // any of them, indexed or not.
-        let table: Vec<(String, FieldType)> = ["a", "b", "c"]
-            .iter()
-            .map(|name| {
-                (
-                    (*name).to_owned(),
-                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                )
-            })
-            .collect();
-        let unsat = |where_sql: &str| {
-            let sql = format!("SELECT * FROM t WHERE {where_sql}");
-            let stmt = tidb_parser::parse(&sql).expect("parses");
-            let tidb_ast::Stmt::Query(query) = &stmt else {
-                panic!("not a query")
-            };
-            let tidb_ast::QueryStmt::Select(select) = &**query else {
-                panic!("not a select")
-            };
-            let where_clause = select.where_clause.as_ref().expect("has a WHERE");
-            where_is_unsatisfiable(&table, where_clause, &tidb_datatype::SessionTimeZone::utc())
-        };
-
-        // Contradictory: an equality no other comparison on the column admits.
-        // The column need not be the leading one, nor indexed at all -- this is
-        // the whole point of the index-independent dual.
-        assert!(unsat("b = 1 and b = 2"), "two conflicting equalities on b");
-        assert!(unsat("a = 2 and a = 3"), "the partition-key shape");
-        assert!(unsat("a = 1 and a > 2"), "equality below a lower bound");
-        assert!(unsat("a = 1 and a < 1"), "equality at an excluded bound");
-        assert!(unsat("a = 1 and a <> 1"), "equality against its own <>");
-        assert!(
-            unsat("c > 0 and b = 1 and b = 2"),
-            "a satisfiable conjunct on another column does not hide it"
-        );
-
-        // Satisfiable / not proven false by Go's rule:
-        assert!(!unsat("a = 1 and a = 1"), "the same equality twice");
-        assert!(!unsat("a = 1 and a < 2"), "equality inside the bound");
-        assert!(
-            !unsat("b > 10 and b < 1"),
-            "no equality: Go keeps it a filter, not a dual"
-        );
-        assert!(
-            !unsat("b = 1 and b in (2, 3)"),
-            "the other side is an IN, not a binary comparison"
-        );
-        assert!(
-            !unsat("(b = 1 and b = 2) or c = 5"),
-            "a lone top-level OR is a disjunction"
-        );
-        assert!(!unsat("a = 1"), "a single equality constrains nothing else");
-        assert!(
-            !unsat("a = b"),
-            "a column-to-column equality is not a point"
-        );
     }
 }

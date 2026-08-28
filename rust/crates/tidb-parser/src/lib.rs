@@ -337,11 +337,14 @@ pub fn is_sole_statement(sql: &str) -> bool {
                     }
                     j += 1;
                 }
-                i = if j + 1 < bytes.len() { j + 2 } else { bytes.len() };
+                i = if j + 1 < bytes.len() {
+                    j + 2
+                } else {
+                    bytes.len()
+                };
             }
-            b'-'
-                if bytes.get(i + 1) == Some(&b'-')
-                    && bytes.get(i + 2).is_some_and(u8::is_ascii_whitespace) =>
+            b'-' if bytes.get(i + 1) == Some(&b'-')
+                && bytes.get(i + 2).is_some_and(u8::is_ascii_whitespace) =>
             {
                 i += 3;
                 while i < bytes.len() && bytes[i] != b'\n' {

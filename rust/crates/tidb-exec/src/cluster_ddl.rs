@@ -918,9 +918,7 @@ impl tidb_placement::PolicyGetter for SnapshotPolicies {
 }
 
 /// Every stored policy, read from the statement's own snapshot.
-fn load_policies<S: MetaSnapshot>(
-    snapshot: &mut S,
-) -> Result<SnapshotPolicies, DdlPlanError> {
+fn load_policies<S: MetaSnapshot>(snapshot: &mut S) -> Result<SnapshotPolicies, DdlPlanError> {
     let mut policies = Vec::new();
     for (_, encoded) in snapshot.scan_prefix(&key::policies_kv_prefix())? {
         policies.push(
@@ -965,14 +963,19 @@ fn policy_referenced(catalog: &ClusterCatalog, policy: &CiString) -> bool {
                 return true;
             }
             table.partition.as_ref().is_some_and(|partition| {
-                partition.read().definitions.snapshot().iter().any(|definition| {
-                    definition
-                        .placement_policy_ref
-                        .as_ref()
-                        .is_some_and(|reference| {
-                            reference.read().name.lowercase() == policy.lowercase()
-                        })
-                })
+                partition
+                    .read()
+                    .definitions
+                    .snapshot()
+                    .iter()
+                    .any(|definition| {
+                        definition
+                            .placement_policy_ref
+                            .as_ref()
+                            .is_some_and(|reference| {
+                                reference.read().name.lowercase() == policy.lowercase()
+                            })
+                    })
             })
         })
     })
@@ -2461,9 +2464,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         } => {
             let Some(found) = find_policy(snapshot, name)? else {
                 if *if_exists {
-                    return Ok(already(format!(
-                        "placement policy `{name}` does not exist"
-                    )));
+                    return Ok(already(format!("placement policy `{name}` does not exist")));
                 }
                 return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
                     8239,
@@ -2497,9 +2498,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         DdlStatement::DropPlacementPolicy { name, if_exists } => {
             let Some(found) = find_policy(snapshot, name)? else {
                 if *if_exists {
-                    return Ok(already(format!(
-                        "placement policy `{name}` does not exist"
-                    )));
+                    return Ok(already(format!("placement policy `{name}` does not exist")));
                 }
                 return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
                     8239,
@@ -2776,14 +2775,15 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // lookup needs the same snapshot the rest of the statement plans
             // against; `CreateTableBuild` keeps the original statement, so
             // the written name is still in reach.
-            if let Some(policy_name) = build
-                .create
-                .table_options
-                .iter()
-                .find_map(|option| match option {
-                    tidb_ast::TableOption::PlacementPolicy(name) => Some(name.clone()),
-                    _ => None,
-                })
+            if let Some(policy_name) =
+                build
+                    .create
+                    .table_options
+                    .iter()
+                    .find_map(|option| match option {
+                        tidb_ast::TableOption::PlacementPolicy(name) => Some(name.clone()),
+                        _ => None,
+                    })
             {
                 let Some(policy) = find_policy(snapshot, &policy_name)? else {
                     return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
@@ -2791,12 +2791,11 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         format!("Unknown placement policy '{policy_name}'"),
                     )));
                 };
-                info.placement_policy_ref = Some(tidb_model::GoShared::new(
-                    tidb_model::PolicyRefInfo {
+                info.placement_policy_ref =
+                    Some(tidb_model::GoShared::new(tidb_model::PolicyRefInfo {
                         id: policy.id,
                         name: CiString::new(policy_name),
-                    },
-                ));
+                    }));
             }
             // Go builds the table's bundles once the ids are assigned and
             // sends them before the schema version is published

@@ -23,8 +23,8 @@ use crate::expression::Expression;
 use crate::like::like_match_with_collation;
 use crate::math_fn::dispatch_values;
 use crate::regexp::{regexp_like, regexp_match};
-use crate::rewriter::rewrite_expr;
 use crate::rewriter::result_type::builtin_return_type;
+use crate::rewriter::rewrite_expr;
 use crate::scalar_function::ScalarFunction;
 use crate::{Columns, Datum, EvalError, MysqlRng, NoColumns};
 use tidb_ast::{CiString, QueryStmt, SelectField, Stmt};
@@ -435,10 +435,7 @@ fn format_nano_time() {
             Datum::Real(4_827_524_825_702_572_425_242_552.0),
             Datum::new_string("5.59e+10 d"),
         ),
-        (
-            Datum::Real(-9_999_999_991.0),
-            Datum::new_string("-10.00 s"),
-        ),
+        (Datum::Real(-9_999_999_991.0), Datum::new_string("-10.00 s")),
     ] {
         assert_eq!(
             crate::builtin_ext::info::dispatch("FORMAT_NANO_TIME", &[arg.clone()], &ctx)
@@ -477,9 +474,7 @@ fn vectorized_builtin_info_func() {
     assert_eq!(eval_rewritten("connection_id()", &ctx), Datum::UInt(1));
     assert_eq!(eval_rewritten("last_insert_id()", &ctx), Datum::UInt(7));
     assert_eq!(
-        eval_rewritten("current_role()", &ctx)
-            .sql_string()
-            .unwrap(),
+        eval_rewritten("current_role()", &ctx).sql_string().unwrap(),
         "NONE"
     );
     assert_eq!(eval_rewritten("benchmark(3, 1)", &ctx), Datum::Int(0));
@@ -866,8 +861,7 @@ fn json_member_of() {
 #[test]
 fn json_contains() {
     assert_eq!(
-        json_call("JSON_CONTAINS", &[Datum::Null, json_s("1"), json_s("$.c")])
-            .unwrap(),
+        json_call("JSON_CONTAINS", &[Datum::Null, json_s("1"), json_s("$.c")]).unwrap(),
         Datum::Null
     );
     for (doc, cand, want) in [
@@ -911,11 +905,7 @@ fn json_contains() {
         )
         .is_err());
     }
-    assert!(json_call(
-        "JSON_CONTAINS",
-        &[json_s("[1,2,[1,3]]"), json_s("a:1")]
-    )
-    .is_err());
+    assert!(json_call("JSON_CONTAINS", &[json_s("[1,2,[1,3]]"), json_s("a:1")]).is_err());
 }
 
 /// Go `pkg/expression/builtin_json_test.go:619 TestJSONOverlaps`.
@@ -1013,7 +1003,10 @@ fn json_length() {
             "{doc}"
         );
     }
-    assert_eq!(json_call("JSON_LENGTH", &[Datum::Null]).unwrap(), Datum::Null);
+    assert_eq!(
+        json_call("JSON_LENGTH", &[Datum::Null]).unwrap(),
+        Datum::Null
+    );
     assert_eq!(
         json_call(
             "JSON_LENGTH",
@@ -1022,12 +1015,9 @@ fn json_length() {
         .unwrap(),
         Datum::Int(2)
     );
-    assert!(json_call(
-        "JSON_LENGTH",
-        &[json_s(r#""1""#), json_s("$.a")]
-    )
-    .unwrap()
-    .is_null());
+    assert!(json_call("JSON_LENGTH", &[json_s(r#""1""#), json_s("$.a")])
+        .unwrap()
+        .is_null());
     for path in ["$.*", "$[*]", "$**.a"] {
         assert!(json_call(
             "JSON_LENGTH",
@@ -1094,7 +1084,10 @@ fn json_depth() {
             "{input}"
         );
     }
-    assert_eq!(json_call("JSON_DEPTH", &[Datum::Null]).unwrap(), Datum::Null);
+    assert_eq!(
+        json_call("JSON_DEPTH", &[Datum::Null]).unwrap(),
+        Datum::Null
+    );
     assert!(json_call("JSON_DEPTH", &[json_s("a")]).is_err());
 }
 
@@ -1158,11 +1151,7 @@ fn json_array_append() {
         &[json_s("asdf"), json_s("$"), Datum::Null]
     )
     .is_err());
-    assert!(json_dispatch(
-        "JSON_ARRAY_APPEND",
-        &[json_s(r#"{"a": 1}"#), json_s("$.d")]
-    )
-    .is_none());
+    assert!(json_dispatch("JSON_ARRAY_APPEND", &[json_s(r#"{"a": 1}"#), json_s("$.d")]).is_none());
     assert!(json_call(
         "JSON_ARRAY_APPEND",
         &[json_s(r#"{"a": 1}"#), json_s("$.*"), Datum::Null],
@@ -1176,33 +1165,20 @@ fn json_search() {
     let json = r#"["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]"#;
     let json2 = r#"["abc", [{"k": "10"}, "def"], {"x":"ab%d"}, {"y":"abcd"}]"#;
     json_eq(
-        &json_call(
-            "JSON_SEARCH",
-            &[json_s(json), json_s("one"), json_s("abc")],
-        )
-        .unwrap(),
+        &json_call("JSON_SEARCH", &[json_s(json), json_s("one"), json_s("abc")]).unwrap(),
         r#""$[0]""#,
     );
     json_eq(
-        &json_call(
-            "JSON_SEARCH",
-            &[json_s(json), json_s("all"), json_s("abc")],
-        )
-        .unwrap(),
+        &json_call("JSON_SEARCH", &[json_s(json), json_s("all"), json_s("abc")]).unwrap(),
         r#"["$[0]", "$[2].x"]"#,
     );
-    assert!(json_call(
-        "JSON_SEARCH",
-        &[json_s(json), json_s("all"), json_s("ghi")]
-    )
-    .unwrap()
-    .is_null());
+    assert!(
+        json_call("JSON_SEARCH", &[json_s(json), json_s("all"), json_s("ghi")])
+            .unwrap()
+            .is_null()
+    );
     json_eq(
-        &json_call(
-            "JSON_SEARCH",
-            &[json_s(json), json_s("all"), json_s("10")],
-        )
-        .unwrap(),
+        &json_call("JSON_SEARCH", &[json_s(json), json_s("all"), json_s("10")]).unwrap(),
         r#""$[1][0].k""#,
     );
     json_eq(
@@ -1216,22 +1192,16 @@ fn json_search() {
     json_eq(
         &json_call(
             "JSON_SEARCH",
-            &[
-                json_s(json2),
-                json_s("all"),
-                json_s("ab|%d"),
-                json_s("|"),
-            ],
+            &[json_s(json2), json_s("all"), json_s("ab|%d"), json_s("|")],
         )
         .unwrap(),
         r#""$[2].x""#,
     );
-    assert!(json_call(
-        "JSON_SEARCH",
-        &[Datum::Null, json_s("all"), json_s("abc")]
-    )
-    .unwrap()
-    .is_null());
+    assert!(
+        json_call("JSON_SEARCH", &[Datum::Null, json_s("all"), json_s("abc")])
+            .unwrap()
+            .is_null()
+    );
     assert!(json_call("JSON_SEARCH", &[json_s("a"), json_s("all"), json_s("abc")]).is_err());
     assert!(json_call(
         "JSON_SEARCH",
@@ -1451,11 +1421,7 @@ fn json_merge_patch() {
         );
     }
     assert_eq!(
-        json_call(
-            "JSON_MERGE_PATCH",
-            &[json_s(r#"{"a":"foo"}"#), Datum::Null],
-        )
-        .unwrap(),
+        json_call("JSON_MERGE_PATCH", &[json_s(r#"{"a":"foo"}"#), Datum::Null],).unwrap(),
         Datum::Null
     );
     assert!(json_call("JSON_MERGE_PATCH", &[json_s(r#"{"a":1}"#), json_s("[1]}")]).is_err());
@@ -2006,13 +1972,13 @@ fn truncate() {
         (vec![Datum::Real(1.58), Datum::Int(0)], Datum::Real(1.0)),
         (vec![Datum::Real(1.298), Datum::Int(1)], Datum::Real(1.2)),
         (vec![Datum::Real(123.2), Datum::Int(-1)], Datum::Real(120.0)),
-        (vec![Datum::Real(123.2), Datum::Int(100)], Datum::Real(123.2)),
+        (
+            vec![Datum::Real(123.2), Datum::Int(100)],
+            Datum::Real(123.2),
+        ),
         (vec![Datum::Real(123.2), Datum::Int(-100)], Datum::Real(0.0)),
         (
-            vec![
-                Datum::Real(1.797_693_134_862_315_7e308),
-                Datum::Int(2),
-            ],
+            vec![Datum::Real(1.797_693_134_862_315_7e308), Datum::Int(2)],
             Datum::Real(1.797_693_134_862_315_7e308),
         ),
         (

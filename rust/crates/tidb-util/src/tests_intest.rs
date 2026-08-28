@@ -19,9 +19,8 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::Ordering;
 
 use crate::intest::{
-    assert, assert_func, assert_func_with_message, assert_no_error,
-    assert_no_error_with_message, assert_not_nil, assert_not_nil_with_message,
-    assert_with_message, ENABLE_ASSERT, IN_TEST,
+    assert, assert_func, assert_func_with_message, assert_no_error, assert_no_error_with_message,
+    assert_not_nil, assert_not_nil_with_message, assert_with_message, ENABLE_ASSERT, IN_TEST,
 };
 
 struct Foo;
@@ -45,7 +44,10 @@ fn check(operation: impl FnOnce(), expected: Option<&str>) {
             panic!("assertion should have panicked with {expected:?}")
         }
         (Err(payload), None) => {
-            panic!("assertion should not have panicked: {:?}", panic_text(payload.as_ref()))
+            panic!(
+                "assertion should not have panicked: {:?}",
+                panic_text(payload.as_ref())
+            )
         }
         (Err(payload), Some(expected)) => match panic_text(payload.as_ref()) {
             Some(text) if text == expected || text.starts_with(expected) => {}

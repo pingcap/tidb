@@ -726,8 +726,9 @@ fn used_base_columns(
     relations: &[Relation],
     injections: &[Injection],
 ) -> Vec<Option<BTreeSet<usize>>> {
-    let mut used: Vec<Option<BTreeSet<usize>>> =
-        (0..relations.len()).map(|_| Some(BTreeSet::new())).collect();
+    let mut used: Vec<Option<BTreeSet<usize>>> = (0..relations.len())
+        .map(|_| Some(BTreeSet::new()))
+        .collect();
     let mut mark_all = |used: &mut Vec<Option<BTreeSet<usize>>>, relation: usize| {
         used[relation] = None;
     };

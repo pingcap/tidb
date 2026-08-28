@@ -62,7 +62,10 @@ impl std::fmt::Display for PlacementDeliveryError {
             Self::Encode(detail) => write!(formatter, "encoding placement bundles: {detail}"),
             Self::Transport(detail) => write!(formatter, "sending placement bundles: {detail}"),
             Self::Rejected { status, detail } => {
-                write!(formatter, "PD rejected the placement bundles ({status}): {detail}")
+                write!(
+                    formatter,
+                    "PD rejected the placement bundles ({status}): {detail}"
+                )
             }
             Self::Runtime(detail) => write!(formatter, "placement delivery runtime: {detail}"),
         }

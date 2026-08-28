@@ -44,13 +44,13 @@ use tidb_executor::sequence::{
 use tidb_meta::structure::encode_hash_data_key;
 use tidb_meta::{key, value};
 use tidb_pd_client::PdClient;
+use tidb_txnkv::pd_capability::CapabilityTimestampSource;
 use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticMutation, RealOptimisticTransaction,
     RealOptimisticTransactionOpener,
 };
-use tidb_txnkv::pd_capability::CapabilityTimestampSource;
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 use tidb_txnkv::PdRegionLoader;
 
@@ -58,11 +58,8 @@ use crate::cluster_auto_id::MAX_RESERVE_RETRIES;
 use crate::cluster_catalog::MetaSnapshot;
 
 /// One sequence's shared counter over the cluster meta keys.
-pub struct ClusterSequenceCounter<
-    C = TonicCoprocessorClient,
-    L = PdRegionLoader,
-    P = PdClient,
-> where
+pub struct ClusterSequenceCounter<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+where
     C: StoreWriteClient,
     L: StoreWriteLoader,
     P: StorePdCapability,
@@ -78,8 +75,7 @@ pub struct ClusterSequenceCounter<
 
 /// The concrete transaction type [`RealOptimisticTransactionOpener::begin`]
 /// hands back.
-type CounterTransaction<C, L, P> =
-    RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>;
+type CounterTransaction<C, L, P> = RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>;
 
 impl<C, L, P> std::fmt::Debug for ClusterSequenceCounter<C, L, P>
 where
@@ -128,14 +124,9 @@ where
 
     /// Reads both fields at one snapshot. Go `HGetInt64`: a missing field is
     /// zero.
-    fn read(
-        &self,
-        transaction: &mut CounterTransaction<C, L, P>,
-    ) -> Result<(i64, i64), String> {
-        let mut snapshot = crate::real_tikv_catalog::TransactionMetaSnapshot::new(
-            transaction,
-            self.timeout,
-        );
+    fn read(&self, transaction: &mut CounterTransaction<C, L, P>) -> Result<(i64, i64), String> {
+        let mut snapshot =
+            crate::real_tikv_catalog::TransactionMetaSnapshot::new(transaction, self.timeout);
         let stored = snapshot.get(&self.value_key).map_err(|e| e.to_string())?;
         let round = snapshot.get(&self.cycle_key).map_err(|e| e.to_string())?;
         let parse = |bytes: Option<Vec<u8>>| match bytes {
@@ -155,13 +146,11 @@ where
         round: i64,
         round_changed: bool,
     ) -> Result<(), CommitFailure> {
-        let mut mutations = vec![
-            OptimisticMutation::meta_put(
-                self.value_key.clone(),
-                value::encode_int_value(new_end),
-            )
-            .map_err(|error| CommitFailure::Failed(error.to_string()))?,
-        ];
+        let mut mutations = vec![OptimisticMutation::meta_put(
+            self.value_key.clone(),
+            value::encode_int_value(new_end),
+        )
+        .map_err(|error| CommitFailure::Failed(error.to_string()))?];
         if round_changed {
             mutations.push(
                 OptimisticMutation::meta_put(
@@ -295,11 +284,7 @@ where
         }
     }
 
-    fn rebase_seq(
-        &self,
-        info: &SequenceInfo,
-        required: i64,
-    ) -> Result<(i64, bool), SequenceError> {
+    fn rebase_seq(&self, info: &SequenceInfo, required: i64) -> Result<(i64, bool), SequenceError> {
         loop {
             let call = UnaryCallContext::with_timeout(self.timeout);
             let mut transaction = self
@@ -363,12 +348,18 @@ where
                         }
                     }
                     Err(error) => {
-                        eprintln!("{{\"event\":\"sequence_restart_mutation_failed\",\"error\":{:?}}}", error);
+                        eprintln!(
+                            "{{\"event\":\"sequence_restart_mutation_failed\",\"error\":{:?}}}",
+                            error
+                        );
                     }
                 }
             }
             Err(error) => {
-                eprintln!("{{\"event\":\"sequence_restart_open_failed\",\"error\":{:?}}}", error);
+                eprintln!(
+                    "{{\"event\":\"sequence_restart_open_failed\",\"error\":{:?}}}",
+                    error
+                );
             }
         }
     }

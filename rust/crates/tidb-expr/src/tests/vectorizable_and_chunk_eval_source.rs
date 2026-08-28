@@ -18,9 +18,7 @@
 //! go-parity-gap reason.
 
 use tidb_chunk::chunk::Chunk;
-use tidb_datatype::{
-    Decimal, FieldType, FieldTypeCode, MySqlDuration, Time, TimeType,
-};
+use tidb_datatype::{Decimal, FieldType, FieldTypeCode, MySqlDuration, Time, TimeType};
 
 use super::*;
 use crate::column::Column;
@@ -70,7 +68,10 @@ fn test_vectorizable_over_go_expression_table() {
     let expressions = vec![
         raw("rand", vec![]),
         one(),
-        Expression::Constant(Constant::new(Datum::Null, FieldType::new(FieldTypeCode::LongLong))),
+        Expression::Constant(Constant::new(
+            Datum::Null,
+            FieldType::new(FieldTypeCode::LongLong),
+        )),
         column(0, FieldTypeCode::LongLong),
     ];
     assert!(crate::evaluator::vectorizable(&expressions));
@@ -101,10 +102,13 @@ fn test_vectorizable_over_go_expression_table() {
     ]));
     assert!(!crate::evaluator::vectorizable(&[
         raw("nextval", vec![column(4, FieldTypeCode::LongLong)]),
-        raw("setval", vec![
-            column(5, FieldTypeCode::String),
-            column(6, FieldTypeCode::LongLong)
-        ])
+        raw(
+            "setval",
+            vec![
+                column(5, FieldTypeCode::String),
+                column(6, FieldTypeCode::LongLong)
+            ]
+        )
     ]));
 }
 
@@ -178,8 +182,7 @@ fn test_eval_expr_column_projected_through_both_modes_agrees() {
             real_type(),
             Box::new(move |chunk: &mut Chunk| {
                 fill(chunk, |row| {
-                    (row % 7 != 3)
-                        .then(|| Datum::Real(((row as f64) * 17.0 - 11.0) / 7.0))
+                    (row % 7 != 3).then(|| Datum::Real(((row as f64) * 17.0 - 11.0) / 7.0))
                 })
             }),
         ),
@@ -243,8 +246,7 @@ fn test_eval_expr_column_projected_through_both_modes_agrees() {
         // The projected expression: Column{Index: 0} typed by eType2FieldType.
         let mut projection_column = Column::new(index as i64, field_type.clone());
         projection_column.index = 0;
-        let expression =
-            Expression::Column(projection_column);
+        let expression = Expression::Column(projection_column);
 
         // Default suite = vectorized transfer of the lone column; the
         // avoid_column_evaluator suite = Go's scalar per-row evaluation.
@@ -291,7 +293,7 @@ fn test_expression_memory_usage() {}
 /// modules' usage of `MySqlDuration::new(12, 59, 59, 555_000, 3)`.
 #[test]
 fn duration_constructor_argument_order_is_pinned() {
-    let noon_thirty_point_five = MySqlDuration::new(12, 30, 30, 500_000, 1)
-        .expect("valid duration");
+    let noon_thirty_point_five =
+        MySqlDuration::new(12, 30, 30, 500_000, 1).expect("valid duration");
     assert_eq!(noon_thirty_point_five.to_string(), "12:30:30.5");
 }

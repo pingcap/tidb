@@ -87,9 +87,13 @@ impl ColumnResolver for Zone {
 
 /// Evaluates one select-field expression over the stubbed session.
 fn eval_now(offset_secs: i32) -> String {
-    let ctx = Zone { inner: TimestampSysVar { offset_secs } };
+    let ctx = Zone {
+        inner: TimestampSysVar { offset_secs },
+    };
     let stmt = tidb_parser::parse("select now()").expect("parse");
-    let Stmt::Query(query) = stmt else { panic!("not query") };
+    let Stmt::Query(query) = stmt else {
+        panic!("not query")
+    };
     let QueryStmt::Select(select) = query.into_inner() else {
         panic!("not select")
     };
@@ -99,7 +103,11 @@ fn eval_now(offset_secs: i32) -> String {
     let rewritten = rewrite_expr_resolved(expr, &ctx).expect("rewrite");
     let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
     chunk.set_num_virtual_rows(1);
-    rewritten.eval(&ctx, chunk.get_row(0)).expect("eval").sql_string().expect("text")
+    rewritten
+        .eval(&ctx, chunk.get_row(0))
+        .expect("eval")
+        .sql_string()
+        .expect("text")
 }
 
 #[test]
@@ -143,7 +151,9 @@ fn test_timestamp_sysvar_renders_fixed_now_literal_rows() {
 
     let ctx = Sys { offset_secs: 0 };
     let stmt = tidb_parser::parse("select now()").expect("parse");
-    let Stmt::Query(query) = stmt else { panic!("not query") };
+    let Stmt::Query(query) = stmt else {
+        panic!("not query")
+    };
     let QueryStmt::Select(select) = query.into_inner() else {
         panic!("not select")
     };

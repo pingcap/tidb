@@ -14,12 +14,10 @@
 
 //! Ports of `pkg/util/chunk/codec_test.go`.
 
-use tidb_datatype::{
-    BinaryJSON, BinaryJSONValue, FieldType, FieldTypeCode, MyDecimal,
-};
+use tidb_datatype::{BinaryJSON, BinaryJSONValue, FieldType, FieldTypeCode, MyDecimal};
 
-use crate::codec::{estimate_type_width, Codec};
 use crate::chunk::Chunk;
+use crate::codec::{estimate_type_width, Codec};
 
 fn codec_field_types() -> Vec<FieldType> {
     vec![

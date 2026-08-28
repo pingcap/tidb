@@ -306,7 +306,11 @@ fn point_get_answers_nothing_for_min_int64_and_one_row_for_zero() {
 
     // Point get on math.MinInt64 returns nothing.
     let dag = cop_dag(cop_column_infos(), COP_TABLE_ID, None, None);
-    let select = run_dag(&mut store, dag, vec![cop_point_range(COP_TABLE_ID, i64::MIN)]);
+    let select = run_dag(
+        &mut store,
+        dag,
+        vec![cop_point_range(COP_TABLE_ID, i64::MIN)],
+    );
     assert!(
         select.chunks.is_empty(),
         "require.Len(chunks, 0): MinInt64 answers nothing"

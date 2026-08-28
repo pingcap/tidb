@@ -50,11 +50,7 @@ fn longlong_const(v: i64) -> Expression {
 }
 
 fn func(name: &str, args: Vec<Expression>) -> Expression {
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new(name),
-        int_type(),
-        args,
-    ))
+    Expression::ScalarFunction(ScalarFunction::new(CiString::new(name), int_type(), args))
 }
 
 /// Go's `isLogicOrFunction` predicate (`util_test.go:394`).

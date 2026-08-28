@@ -38,9 +38,9 @@ use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::cluster_auto_id::ClusterAutoIdStore;
 use tidb_exec::cluster_sequence::ClusterSequenceCounter;
+use tidb_executor::driver::SequenceDef;
 use tidb_executor::kv_table::{TableAutoId, DEFAULT_AUTO_ID_STEP};
 use tidb_executor::sequence::{SequenceAllocator, SequenceInfo as SeqCounterInfo};
-use tidb_executor::driver::SequenceDef;
 use tidb_model::TableInfo;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
@@ -138,8 +138,6 @@ where
         def
     }
 }
-
-
 
 impl<C, L, P> TableAutoIds for ClusterTableAutoIds<C, L, P>
 where

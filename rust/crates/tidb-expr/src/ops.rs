@@ -830,8 +830,7 @@ pub(crate) fn integer_binary_typed(
     // records neither -- see `ops::operand`. A CONSTANT binary literal
     // (`0x1234`, `b'11'`) carries its signedness in its own `FieldType`, so
     // the same conversion the generic entry applies runs here first.
-    let (l, r) =
-        crate::binary_literal::cast_signed_literal_operands(op, l, r, signed_operands);
+    let (l, r) = crate::binary_literal::cast_signed_literal_operands(op, l, r, signed_operands);
     if l == Datum::Null || r == Datum::Null {
         return Ok(Some(Datum::Null));
     }

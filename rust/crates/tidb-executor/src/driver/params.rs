@@ -71,11 +71,46 @@ pub fn bind_statement(mut stmt: Stmt, values: &[Datum]) -> Result<Stmt, DriverEr
 pub fn bind_prepared_statement(stmt: &Stmt, values: &[Datum]) -> Result<Stmt, DriverError> {
     let mut bound_stmt = stmt.clone();
     let mut bound = 0usize;
-    bind_statement_markers(&mut bound_stmt, values, &mut bound)?;
+    install_statement_marker_values(&mut bound_stmt, values, &mut bound)?;
     if bound != values.len() {
         return Err(DriverError::WrongParamCount);
     }
     Ok(bound_stmt)
+}
+
+/// Installs execute-time values without replacing marker nodes. Go's
+/// `ParamMarkerExpr` embeds a `ValueExpr`, so the ordinary planner sees both
+/// the current datum and the stable marker order. Cached physical expressions
+/// can then retain `Constant.ParamMarker` and rebind it recursively.
+fn install_statement_marker_values(
+    stmt: &mut Stmt,
+    values: &[Datum],
+    bound: &mut usize,
+) -> Result<(), DriverError> {
+    let mut failure = None;
+    walk_statement_markers(stmt, &mut |expr| {
+        let tidb_ast::Expr::ParamMarker {
+            order,
+            in_execute,
+            value,
+            ..
+        } = expr
+        else {
+            return;
+        };
+        match values.get(*order) {
+            Some(parameter) => {
+                *value = Some(parameter.clone());
+                *in_execute = true;
+                *bound += 1;
+            }
+            None => failure = Some(DriverError::WrongParamCount),
+        }
+    });
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 /// The number of `?` markers a statement carries, which `COM_STMT_PREPARE`

@@ -99,7 +99,11 @@ pub mod allocator_stats {
         if !refreshed {
             return None;
         }
-        Some((stat(b"stats.allocated\0")?, stat(b"stats.active\0")?, stat(b"stats.resident\0")?))
+        Some((
+            stat(b"stats.allocated\0")?,
+            stat(b"stats.active\0")?,
+            stat(b"stats.resident\0")?,
+        ))
     }
 }
 

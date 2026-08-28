@@ -38,7 +38,7 @@ use crate::remote_scan::{
     EXTRA_HANDLE_COLUMN_ID,
 };
 use crate::storage::StorageIterator;
-use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
+use std::collections::{BTreeMap, BinaryHeap, HashMap};
 use tidb_chunk::chunk::Chunk;
 use tidb_codec::table_key::{
     cut_index_prefix, cut_row_key_prefix, decode_table_id, encode_index_seek_key,
@@ -341,8 +341,8 @@ impl KvTable {
         // it like any other (`table_reader.go:295`). For an UNSIGNED handle
         // that split is what puts the read in VALUE order -- the block above
         // `i64::MAX` encodes negative and would otherwise be walked first --
-        // and it is what lets [`full_table_handle_order`] promise the order at
-        // all.
+        // and it is what lets the shared planner promise handle order at the
+        // reader boundary.
         //
         // A SIGNED handle needs none of this: its whole domain is one key
         // interval already, and building it here instead of through the range
@@ -410,12 +410,8 @@ impl KvTable {
             handle_ranges
         };
         let encoded = match handle_ranges {
-            Some(ranges) => crate::handle_range::record_key_range_value_halves(
-                self,
-                ranges,
-                zone,
-            )
-            .map_err(|error| KvTableError::Encode(format!("{error:?}")))?,
+            Some(ranges) => crate::handle_range::record_key_range_value_halves(self, ranges, zone)
+                .map_err(|error| KvTableError::Encode(format!("{error:?}")))?,
             None => None,
         };
         let mut groups = match encoded {
@@ -621,8 +617,7 @@ impl KvTable {
             range_hints: request_range_hints.map_or_else(Vec::new, <[usize]>::to_vec),
             statement: statement.clone(),
         };
-        let mut scans: Vec<crate::remote_scan::PushdownScan> =
-            Vec::with_capacity(groups.len());
+        let mut scans: Vec<crate::remote_scan::PushdownScan> = Vec::with_capacity(groups.len());
         for ranges in &groups {
             let Some(scan) = self.store.open_remote_scan(&build_request(ranges.clone())) else {
                 for mut opened in scans.drain(..) {
@@ -732,9 +727,8 @@ impl KvTable {
         zone: &SessionTimeZone,
         statement: &PushdownStatementContext,
     ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool)>, KvTableError> {
-        let Some(staged) = self.stage_rows_by_handles_filtered(
-            handles, scan_keep, predicates, zone, statement,
-        )?
+        let Some(staged) =
+            self.stage_rows_by_handles_filtered(handles, scan_keep, predicates, zone, statement)?
         else {
             return Ok(None);
         };
@@ -1181,18 +1175,13 @@ impl KvTable {
         if self.has_dirty_content() || self.partition.is_some() {
             return Ok(None);
         }
-        if self.has_dirty_content() || self.partition.is_some() {
-            return Ok(None);
-        }
         let Some(index) = self.indexes.iter().find(|index| index.id == index_id) else {
             return Ok(None);
         };
         if index.column_offsets.is_empty()
             || !matches!(
                 aggregate,
-                PushdownPartialAggregate::Count { .. }
-                    | PushdownPartialAggregate::Global { .. }
-                    | PushdownPartialAggregate::Grouped { .. }
+                PushdownPartialAggregate::Global { .. } | PushdownPartialAggregate::Grouped { .. }
             )
         {
             return Ok(None);
@@ -1291,15 +1280,7 @@ impl KvTable {
             Some(())
         };
         match &mut remote_aggregate {
-            PushdownPartialAggregate::Count { input_offset, .. } => {
-                if input_offset.is_some() {
-                    let offset = input_offset.as_mut().expect("checked above");
-                    if remap(offset).is_none() {
-                        return Ok(None);
-                    }
-                }
-            }
-            PushdownPartialAggregate::Global { functions } => {
+            PushdownPartialAggregate::Global { functions, .. } => {
                 for function in functions {
                     if let Some(input) = function.input.as_mut() {
                         // An argument naming a column the index does not
@@ -1329,15 +1310,13 @@ impl KvTable {
                 }
                 for function in functions {
                     if let Some(input) = function.input.as_mut() {
-                        if crate::predicate_pushdown::remap_expression(input, &index_keep)
-                            .is_none()
+                        if crate::predicate_pushdown::remap_expression(input, &index_keep).is_none()
                         {
                             return Ok(None);
                         }
                     }
                 }
             }
-            _ => unreachable!("index partial aggregate shape checked above"),
         }
         let request = PushdownScanRequest {
             table_id: self.table_id,
@@ -1386,7 +1365,6 @@ impl KvTable {
     /// Opens a coprocessor index scan whose rows carry only the indexed
     /// columns and the table handle. The access source consumes those rows as
     /// an ordered handle stream before issuing its table lookup batch.
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     pub fn pushdown_index_handle_cursor(
         &mut self,
@@ -1545,7 +1523,11 @@ impl KvTable {
         // its windows are re-sorted per batch and nothing consumes cross-
         // window order. Letting the regions answer out of order is what
         // unlocks go's `2 x DistSQLConcurrency` in-flight window.
-        let keep_order = if unordered { false } else { !desc || topn.is_none() };
+        let keep_order = if unordered {
+            false
+        } else {
+            !desc || topn.is_none()
+        };
         let encoder = Encoder::new(self.use_new_collation);
         let encode = |values: &[Datum]| -> Result<Vec<u8>, KvTableError> {
             encoder
@@ -2873,8 +2855,7 @@ impl RemoteIndexHandleCursor {
 
     /// Returns the next row handle in the remote index order.
     pub fn next_handle(&mut self) -> Result<Option<TableHandle>, KvTableError> {
-        if (self.handle_is_unsigned.is_some() || self.common_handle)
-            && self.inner.supports_chunks()
+        if (self.handle_is_unsigned.is_some() || self.common_handle) && self.inner.supports_chunks()
         {
             return self.next_handle_from_chunk();
         }
@@ -3362,42 +3343,7 @@ impl TableScanExec {
         aggregate: &PushdownPartialAggregate,
     ) -> Result<Vec<Vec<Datum>>, ExecError> {
         match aggregate {
-            PushdownPartialAggregate::Count { input_offset, .. } => {
-                let mut count = 0_i64;
-                while let Some(row) = self.next_source_row()? {
-                    self.scanned.set(self.scanned.get() + 1);
-                    if let Some(filter) = self.filter.as_mut() {
-                        if !filter.admits(&row)? {
-                            continue;
-                        }
-                    }
-                    if input_offset
-                        .is_none_or(|offset| !matches!(row.get(offset), None | Some(Datum::Null)))
-                    {
-                        count += 1;
-                    }
-                }
-                Ok(vec![vec![Datum::Int(count)]])
-            }
-            PushdownPartialAggregate::Sum { input_offset, .. } => {
-                let mut sum = PartialSum::default();
-                while let Some(row) = self.next_source_row()? {
-                    self.scanned.set(self.scanned.get() + 1);
-                    if let Some(filter) = self.filter.as_mut() {
-                        if !filter.admits(&row)? {
-                            continue;
-                        }
-                    }
-                    let Some(value) = row.get(*input_offset) else {
-                        return Err(ExecError::unsupported(
-                            "partial SUM input is outside the scan row",
-                        ));
-                    };
-                    sum.accumulate(value)?;
-                }
-                Ok(vec![vec![sum.into_datum()]])
-            }
-            PushdownPartialAggregate::Global { functions } => {
+            PushdownPartialAggregate::Global { functions, .. } => {
                 enum PartialValue {
                     Count(i64),
                     SumDecimal(Option<Decimal>),
@@ -3530,64 +3476,6 @@ impl TableScanExec {
                         PartialValue::Extreme { value, .. } => value.unwrap_or(Datum::Null),
                     })
                     .collect()])
-            }
-            PushdownPartialAggregate::GroupBy {
-                input_offset,
-                output_type,
-            } => {
-                let mut seen = HashSet::new();
-                let mut rows = Vec::new();
-                while let Some(row) = self.next_source_row()? {
-                    self.scanned.set(self.scanned.get() + 1);
-                    if let Some(filter) = self.filter.as_mut() {
-                        if !filter.admits(&row)? {
-                            continue;
-                        }
-                    }
-                    let Some(value) = row.get(*input_offset).cloned() else {
-                        return Err(ExecError::unsupported(
-                            "partial GROUP BY input is outside the scan row",
-                        ));
-                    };
-                    let key = crate::hash_agg::group_key_part(&output_type.collation(), &value);
-                    if seen.insert(key) {
-                        rows.push(vec![value]);
-                    }
-                }
-                Ok(rows)
-            }
-            PushdownPartialAggregate::GroupBySum {
-                group_offset,
-                sum_offset,
-                sum_type: _,
-                group_type,
-            } => {
-                let mut groups: BTreeMap<Vec<u8>, (Datum, PartialSum)> = BTreeMap::new();
-                while let Some(row) = self.next_source_row()? {
-                    self.scanned.set(self.scanned.get() + 1);
-                    if let Some(filter) = self.filter.as_mut() {
-                        if !filter.admits(&row)? {
-                            continue;
-                        }
-                    }
-                    let Some(group) = row.get(*group_offset).cloned() else {
-                        return Err(ExecError::unsupported(
-                            "partial GROUP BY input is outside the scan row",
-                        ));
-                    };
-                    let Some(value) = row.get(*sum_offset) else {
-                        return Err(ExecError::unsupported(
-                            "partial SUM input is outside the scan row",
-                        ));
-                    };
-                    let key = crate::hash_agg::group_key_part(&group_type.collation(), &group);
-                    let (_, sum) = groups.entry(key).or_insert((group, PartialSum::default()));
-                    sum.accumulate(value)?;
-                }
-                Ok(groups
-                    .into_values()
-                    .map(|(group, sum)| vec![sum.into_datum(), group])
-                    .collect())
             }
             PushdownPartialAggregate::Grouped {
                 group_offsets,
@@ -3843,6 +3731,10 @@ impl Executor for TableScanExec {
                 .remote
                 .as_ref()
                 .is_some_and(|remote| remote.predicates_applied() && !remote.merge_staged)
+                && self
+                    .filter
+                    .as_ref()
+                    .is_some_and(crate::predicate_pushdown::ScanFilterProbe::fully_described)
             {
                 self.filter = None;
             }
@@ -3854,8 +3746,8 @@ impl Executor for TableScanExec {
     /// Pulls rows from the open cursor until the chunk is full, the pushed
     /// row cap is reached, or the range is exhausted.
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        let cap = req.required_rows().clamp(1, self.meta.max_chunk_size());
         req.reset();
-        let cap = self.meta.max_chunk_size();
         if let Some(remote) = self.partial_remote.as_mut() {
             if remote.supports_chunks() {
                 if let Some(rows) = append_partial_remote_chunk(
@@ -4079,7 +3971,10 @@ impl crate::table_access::TableAccess for TableScanExec {
             || self.partial_aggregate.is_some()
             || self.remote_topn.is_some()
             || !self.pushed.is_empty()
-            || self.handle_ranges.as_ref().is_some_and(|ranges| ranges.len() != 1)
+            || self
+                .handle_ranges
+                .as_ref()
+                .is_some_and(|ranges| ranges.len() != 1)
         {
             return false;
         }
@@ -4259,6 +4154,13 @@ impl crate::table_access::TableAccess for TableScanExec {
     /// order, so stopping after `cap` of them yields the same prefix a
     /// `LimitExec` above would have kept.
     fn accept_scan_limit(&mut self, cap: u64) -> bool {
+        if self
+            .filter
+            .as_ref()
+            .is_some_and(|filter| !filter.fully_described())
+        {
+            return false;
+        }
         self.limit = Some(cap);
         true
     }
@@ -4408,9 +4310,7 @@ mod remote_cursor_tests {
     /// the test can assert on the wire shape itself.
     #[derive(Debug)]
     struct RequestCapture {
-        captured: std::sync::Arc<
-            std::sync::Mutex<Option<crate::remote_scan::PushdownScanRequest>>,
-        >,
+        captured: std::sync::Arc<std::sync::Mutex<Option<crate::remote_scan::PushdownScanRequest>>>,
     }
 
     impl TableStorage for RequestCapture {
@@ -4492,24 +4392,28 @@ mod remote_cursor_tests {
             }),
         );
         table.set_common_handle_offsets(vec![0, 1]);
-        table.add_index(crate::kv_table::table_meta::KvIndex {
-            id: 5,
-            name: "idx_c".to_owned(),
-            comment: String::new(),
-            unique: false,
-            prefix_lengths: vec![UNSPECIFIED_LENGTH],
-            column_offsets: vec![2],
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
+        table.add_index(
+            crate::kv_table::table_meta::KvIndex {
+                id: 5,
+                name: "idx_c".to_owned(),
+                comment: String::new(),
+                unique: false,
+                prefix_lengths: vec![UNSPECIFIED_LENGTH],
+                column_offsets: vec![2],
+                visible: true,
+                global: false,
+                clustered_primary: false,
+            },
+            false,
+        );
 
         let aggregate = crate::remote_scan::PushdownPartialAggregate::Global {
-            functions: vec![crate::remote_scan::PushdownGlobalAggregateFunction {
+            functions: vec![crate::remote_scan::PushdownAggregateFunction {
                 kind: crate::remote_scan::PushdownAggregateKind::Count,
                 input: None,
                 output_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             }],
+            streamed: false,
         };
         let ranges = [IndexRange {
             low: vec![Datum::Int(1)],
@@ -4543,8 +4447,7 @@ mod remote_cursor_tests {
             vec![1, 2],
             "the clustered primary travels for TiKV's common-handle decode"
         );
-        let schema_ids: Vec<i64> =
-            request.columns.iter().map(|column| column.id).collect();
+        let schema_ids: Vec<i64> = request.columns.iter().map(|column| column.id).collect();
         assert_eq!(
             schema_ids,
             vec![3, 1, 2],
@@ -4666,14 +4569,8 @@ mod remote_cursor_tests {
             pending_chunk_row: 0,
         };
 
-        assert_eq!(
-            cursor.next_handle().unwrap(),
-            Some(TableHandle::Int(7))
-        );
-        assert_eq!(
-            cursor.next_handle().unwrap(),
-            Some(TableHandle::Int(8))
-        );
+        assert_eq!(cursor.next_handle().unwrap(), Some(TableHandle::Int(7)));
+        assert_eq!(cursor.next_handle().unwrap(), Some(TableHandle::Int(8)));
         assert_eq!(cursor.next_handle().unwrap(), None);
     }
 
@@ -4713,7 +4610,10 @@ mod remote_cursor_tests {
         assert!(cursor.next_handle().unwrap().is_none());
 
         let mut cursor = make_cursor();
-        assert_eq!(cursor.next_handle_batch(1).unwrap(), Some(vec![TableHandle::Int(42)]));
+        assert_eq!(
+            cursor.next_handle_batch(1).unwrap(),
+            Some(vec![TableHandle::Int(42)])
+        );
         assert!(cursor.next_handle_batch(1).unwrap().is_none());
     }
 

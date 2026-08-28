@@ -23,10 +23,10 @@
 //!   — i.e. every prototype resolves to its own registered protocol code,
 //!   never the ErrUnknown (1105) fallback.
 
+use std::sync::LazyLock;
 use tidb_error::mysql::errcode;
 use tidb_error::plannererrors::*;
 use tidb_error::terror::TerrorError;
-use std::sync::LazyLock;
 
 /// Go `pkg/util/dbterror/plannererrors/errors_test.go::TestError`.
 #[test]

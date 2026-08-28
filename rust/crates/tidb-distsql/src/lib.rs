@@ -29,6 +29,7 @@ mod chunk_decode;
 mod context;
 pub mod cop_paging;
 mod copr_cache;
+mod copr_cache_metrics;
 mod coprocessor_request;
 mod distsql_runtime;
 mod envelope;
@@ -73,6 +74,7 @@ pub use copr_cache::{
     CoprCacheLookup, CoprCacheRequestContext, CoprCacheResponseContext, CoprCacheResponseOutcome,
     CoprCacheValue,
 };
+pub use copr_cache_metrics::{copr_cache_metric_snapshot, CoprCacheMetricSnapshot};
 pub use coprocessor_request::CoprocessorRequestEnvelope;
 pub use distsql_runtime::{
     analyze_request_source, analyze_result_metadata, can_use_chunk_rpc, checksum_result_metadata,

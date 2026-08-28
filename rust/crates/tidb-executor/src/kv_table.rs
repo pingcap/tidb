@@ -818,7 +818,9 @@ impl KvTable {
     /// staged a row write to this table. See the field's own doc.
     #[must_use]
     pub fn has_dirty_content(&self) -> bool {
-        self.dirty_content.0.load(std::sync::atomic::Ordering::Relaxed)
+        self.dirty_content
+            .0
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Forgets the staged writes: the state Go's membuffer is in at the start
@@ -1243,10 +1245,7 @@ impl KvTable {
             match physical_ids.and_then(|ids| ids.get(index).copied()) {
                 Some(id) => grouped.entry(id).or_default().push((
                     index,
-                    Key::from_bytes(encode_row_key_with_handle(
-                        id,
-                        &handle.record_handle(),
-                    )),
+                    Key::from_bytes(encode_row_key_with_handle(id, &handle.record_handle())),
                 )),
                 None => {
                     for id in &partition_ids {
@@ -2607,108 +2606,6 @@ impl KvTable {
         self.read_row(handle, context)
     }
 
-    /// The point row under one already-routed physical partition id.
-    ///
-    /// Go's partitioned `BatchPointGetExec` carries one physical id beside
-    /// each handle. This is the matching storage boundary: one exact row-key
-    /// lookup, without probing the table's remaining partitions.
-    pub(crate) fn get_row_by_handle_in_physical_id_with_context(
-        &mut self,
-        handle: &TableHandle,
-        physical_id: i64,
-        context: &RowDecodeContext,
-    ) -> Result<Option<Vec<Datum>>, KvTableError> {
-        let key = Key::from_bytes(encode_row_key_with_handle(
-            physical_id,
-            &handle.record_handle(),
-        ));
-        let entry = match self.store.get(&key) {
-            Ok(entry) => entry,
-            Err(StorageError::NotFound) => return Ok(None),
-            Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
-        };
-        Ok(Some(self.decode_row_entry(handle, &entry, context)?))
-    }
-
-    /// Every stored record inside half-open RECORD-KEY `ranges`, decoded by
-    /// [`PreparedPointGetRowDecoder`] with each record's handle parsed from
-    /// its key. This is the row source of a prepared point read whose pins
-    /// name only a leading prefix of a CLUSTERED primary key -- the same
-    /// immutable reader the single-row arm uses, walked over several keys.
-    pub(crate) fn prepared_rows_in_record_ranges(
-        &mut self,
-        ranges: &[(Key, Key)],
-        decoder: &PreparedPointGetRowDecoder,
-        context: &PreparedPointGetDecodeContext,
-        max_rows: usize,
-    ) -> Result<Option<Vec<Vec<Datum>>>, KvTableError> {
-        let mut rows = Vec::new();
-        for (low, upper) in ranges {
-            let mut iterator = self
-                .store
-                .iter(Some(low), Some(upper))
-                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
-            while iterator.valid() {
-                if rows.len() > max_rows {
-                    iterator.close();
-                    return Ok(None);
-                }
-                let key = iterator.key().as_bytes().to_vec();
-                let value = iterator.value().to_vec();
-                iterator
-                    .next()
-                    .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
-                let handle = decoder.record_handle(&key)?;
-                rows.push(decoder.decode(&handle, &value, context)?);
-            }
-            iterator.close();
-        }
-        Ok(Some(rows))
-    }
-
-    /// Several stored-record reads decoded by the immutable projection
-    /// retained on a prepared PointGet plan, through ONE batched storage call
-    /// per physical partition -- Go's `IndexLookUpExecutor` fetching every
-    /// handle of a lookup task with a single `BatchGet`, not one point read
-    /// per entry. Slots preserve input order; `None` marks an absent record.
-    pub(crate) fn get_prepared_point_rows(
-        &mut self,
-        handles: &[TableHandle],
-        decoder: &PreparedPointGetRowDecoder,
-        context: &PreparedPointGetDecodeContext,
-    ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError> {
-        if handles.is_empty() {
-            return Ok(Vec::new());
-        }
-        let physical_ids = self.record_physical_ids();
-        let mut probes = Vec::with_capacity(handles.len() * physical_ids.len());
-        for handle in handles {
-            for physical_id in &physical_ids {
-                probes.push((
-                    Key::from_bytes(encode_row_key_with_handle(
-                        *physical_id,
-                        &handle.record_handle(),
-                    )),
-                    handle,
-                ));
-            }
-        }
-        let keys: Vec<Key> = probes.iter().map(|(key, _)| key.clone()).collect();
-        let entries = self
-            .store
-            .batch_get(&keys)
-            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
-        let mut rows = Vec::with_capacity(handles.len());
-        for (key, handle) in probes {
-            let Some(entry) = entries.get(&key) else {
-                rows.push(None);
-                continue;
-            };
-            rows.push(decoder.decode(handle, entry, context).map(Some)?);
-        }
-        Ok(rows)
-    }
-
     /// One stored-record read decoded by the immutable projection retained on
     /// a prepared PointGet plan.
     pub fn get_prepared_point_row(
@@ -3522,7 +3419,11 @@ mod tests {
             )
             .unwrap();
         let after_touched = table.index_entries_for_check(1).unwrap();
-        assert_eq!(after_touched.len(), 1, "exactly one entry, moved not copied");
+        assert_eq!(
+            after_touched.len(),
+            1,
+            "exactly one entry, moved not copied"
+        );
         assert_ne!(after_touched, before, "entry follows the new indexed value");
     }
 
@@ -3534,17 +3435,20 @@ mod tests {
         // so two NULLs must create two entries without a duplicate error.
         let mut table = test_table();
         table.set_pk_handle_offset(0);
-        table.add_index(KvIndex {
-            id: 1,
-            name: "s".to_owned(),
-            comment: String::new(),
-            unique: true,
-            column_offsets: vec![1],
-            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
+        table.add_index(
+            KvIndex {
+                id: 1,
+                name: "s".to_owned(),
+                comment: String::new(),
+                unique: true,
+                column_offsets: vec![1],
+                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                visible: true,
+                global: false,
+                clustered_primary: false,
+            },
+            false,
+        );
 
         table
             .insert_row(&[Datum::Int(1), Datum::Null], &tidb_expr::NoColumns)
@@ -3831,17 +3735,20 @@ mod tests {
             ],
         );
         t.set_common_handle_offsets(vec![0]);
-        t.add_index(KvIndex {
-            id: 1,
-            name: "idx".to_owned(),
-            comment: String::new(),
-            unique: false,
-            column_offsets: vec![1],
-            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
+        t.add_index(
+            KvIndex {
+                id: 1,
+                name: "idx".to_owned(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: vec![1],
+                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                visible: true,
+                global: false,
+                clustered_primary: false,
+            },
+            false,
+        );
         let written = t
             .insert_row(
                 &[

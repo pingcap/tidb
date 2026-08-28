@@ -142,9 +142,7 @@ pub fn publish_bootstrap_over_tikv<S: tidb_txnkv::TikvTransactionSource>(
     // The previous facade took the plan's size as a begin() parameter; here it
     // bounds the engine's own staged buffer, which is where the source
     // enforces it.
-    let mut transaction = opener
-        .begin()
-        .map_err(|error| error.to_string())?;
+    let mut transaction = opener.begin().map_err(|error| error.to_string())?;
     transaction.set_size_limits(bytes.max(1), bytes.max(1));
     let start_ts = transaction.start_ts();
     let write = {

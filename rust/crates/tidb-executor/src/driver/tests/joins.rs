@@ -367,20 +367,23 @@ fn tpcc_check_five_keeps_only_the_cross_leaf_residual() {
         let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
             panic!("{table_name} is not a KV table");
         };
-        table.add_index(crate::kv_table::KvIndex {
-            id: 2,
-            name: "PRIMARY".to_owned(),
-            comment: String::new(),
-            unique: true,
-            prefix_lengths: vec![
-                crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
-                column_offsets.len()
-            ],
-            column_offsets,
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
+        table.add_index(
+            crate::kv_table::KvIndex {
+                id: 2,
+                name: "PRIMARY".to_owned(),
+                comment: String::new(),
+                unique: true,
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                    column_offsets.len()
+                ],
+                column_offsets,
+                visible: true,
+                global: false,
+                clustered_primary: false,
+            },
+            false,
+        );
     }
     let sql = "SELECT count(*) FROM orders LEFT JOIN new_order ON no_w_id=o_w_id AND o_d_id=no_d_id AND o_id=no_o_id WHERE o_w_id=1 AND ((o_carrier_id IS NULL and no_o_id IS NULL) OR (o_carrier_id IS NOT NULL and no_o_id IS NOT NULL))";
     let stmt = tidb_parser::parse(sql).unwrap();
@@ -463,20 +466,23 @@ fn tpcc_check_seven_propagates_the_warehouse_range_to_both_leaves() {
         let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
             panic!("{table_name} is not a KV table");
         };
-        table.add_index(crate::kv_table::KvIndex {
-            id: 1,
-            name: "PRIMARY".to_owned(),
-            comment: String::new(),
-            unique: true,
-            prefix_lengths: vec![
-                crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
-                column_offsets.len()
-            ],
-            column_offsets,
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
+        table.add_index(
+            crate::kv_table::KvIndex {
+                id: 1,
+                name: "PRIMARY".to_owned(),
+                comment: String::new(),
+                unique: true,
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                    column_offsets.len()
+                ],
+                column_offsets,
+                visible: true,
+                global: false,
+                clustered_primary: false,
+            },
+            false,
+        );
     }
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
@@ -831,20 +837,23 @@ fn tpcc_stock_level_bounds_both_join_leaves() {
         let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
             panic!("{table_name} is not a KV table");
         };
-        table.add_index(crate::kv_table::KvIndex {
-            id: 1,
-            name: "PRIMARY".to_owned(),
-            comment: String::new(),
-            unique: true,
-            prefix_lengths: vec![
-                crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
-                column_offsets.len()
-            ],
-            column_offsets,
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
+        table.add_index(
+            crate::kv_table::KvIndex {
+                id: 1,
+                name: "PRIMARY".to_owned(),
+                comment: String::new(),
+                unique: true,
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                    column_offsets.len()
+                ],
+                column_offsets,
+                visible: true,
+                global: false,
+                clustered_primary: false,
+            },
+            false,
+        );
     }
     let sql = "SELECT /*+ TIDB_INLJ(`order_line`, `stock`)*/ \
         COUNT(DISTINCT (`s_i_id`)) AS `stock_count` \
@@ -992,17 +1001,20 @@ fn tpcc_customer_warehouse_join_uses_two_point_gets() {
     let TableEntry::Kv(customer) = catalog.get_mut_in("test", "customer").unwrap() else {
         panic!("customer is not a KV table");
     };
-    customer.add_index(crate::kv_table::KvIndex {
-        id: 1,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
-        column_offsets: vec![2, 1, 0],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
+    customer.add_index(
+        crate::kv_table::KvIndex {
+            id: 1,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+            column_offsets: vec![2, 1, 0],
+            visible: true,
+            global: false,
+            clustered_primary: false,
+        },
+        false,
+    );
     crate::run_create_table_on(
         "CREATE TABLE warehouse (\
             w_id INT NOT NULL, w_name VARCHAR(10), w_street_1 VARCHAR(20), \
@@ -1191,11 +1203,9 @@ fn tpcc_customer_warehouse_join_uses_two_point_gets() {
         .is_empty());
 }
 
-/// THE ROW-DROP PIN: a parent merge join over a child join that HASHES.
+/// A parent must not consume an order that its physical child does not deliver.
 ///
-/// This is the exact hazard `crate::driver::merge_decision`'s narrowing once
-/// existed to prevent, and the reason the narrowing could be removed. The
-/// shape:
+/// The shape is:
 ///
 /// ```text
 ///   mid JOIN top ON mid.a = top.a         -- promise says mid.a is ordered
@@ -1210,13 +1220,11 @@ fn tpcc_customer_warehouse_join_uses_two_point_gets() {
 /// merge join over that stream would advance past groups the input never
 /// separated and silently DROP rows.
 ///
-/// The VERIFY step is what stops it: both children are built first, each
-/// reports what it actually delivers, and the bottom join reports nothing --
-/// so the parent falls back to hashing. The assertion below is the full,
-/// correct row set. Delete the `merge.filter(...)` in
-/// `crate::driver::from::build_join` and this test loses rows.
+/// The shared planner must therefore choose a physical tree whose required
+/// properties are satisfied. The executor verifies that receipt before
+/// lowering it. The assertion below pins the complete row set.
 #[test]
-fn a_promise_the_child_cannot_deliver_falls_back_instead_of_dropping_rows() {
+fn a_parent_does_not_consume_an_order_its_child_does_not_deliver() {
     let mut catalog = Catalog::default();
     for ddl in [
         "CREATE TABLE bot (a BIGINT PRIMARY KEY, k BIGINT)",
@@ -1414,18 +1422,14 @@ fn a_leaf_asked_for_an_index_order_walks_the_index_and_says_so() {
     );
 }
 
-/// A non-covering index must remain eligible when a parent asks the leaf for
-/// its order. Go's `skylinePruning` keeps such a path through the
-/// `!prop.IsSortItemEmpty()` arm, even though an unordered full index scan
-/// followed by one row lookup per entry could never beat the table scan.
-///
-/// TPC-DS Q64 reaches this shape on the non-clustered composite PRIMARY keys
-/// of `catalog_sales` and `catalog_returns`: the merge keys are in the index,
-/// while the aggregate inputs still require the table row. Dropping the
-/// ordered double-read candidates makes the merge verification fail and
-/// changes the upstream StreamAgg into a HashAgg.
+/// Go's `DataSource.findBestTask` compares a naturally ordered access path
+/// with an unordered scan plus `EnforceProperty` whenever the child property
+/// has `CanAddEnforcer`. For this pseudo-statistics shape, Go chooses the two
+/// full table scans and puts one physical Sort below each MergeJoin child.
+/// Lowering only the join property while discarding those Sort nodes leaves
+/// the scans unordered and makes the selected merge plan unexecutable.
 #[test]
-fn an_ordered_noncovering_primary_index_can_feed_a_merge_join() {
+fn a_forced_merge_lowers_the_planner_selected_sort_enforcers() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
     let mut catalog = Catalog::default();
@@ -1472,15 +1476,22 @@ fn an_ordered_noncovering_primary_index_can_feed_a_merge_join() {
         plan.iter().any(|line| line.contains("MergeJoin")),
         "the two ordered PRIMARY double reads must feed the forced merge join: {plan:#?}"
     );
-    for side in ["table:l", "table:r"] {
+    for (side, keys) in [
+        ("table:l", "test.ncl.k, test.ncl.o"),
+        ("table:r", "test.ncr.k, test.ncr.o"),
+    ] {
+        assert!(
+            plan.iter()
+                .any(|line| line.contains("Sort") && line.contains(keys)),
+            "{side} must be ordered by the selected physical Sort: {plan:#?}"
+        );
         assert!(
             plan.iter().any(|line| {
-                line.contains("IndexFullScan")
+                line.contains("TableFullScan")
                     && line.contains(side)
-                    && line.contains("index:PRIMARY(k, o)")
-                    && line.contains("keep order:true")
+                    && line.contains("keep order:false")
             }),
-            "{side} must walk the non-covering PRIMARY in key order: {plan:#?}"
+            "{side} must retain Go's unordered table scan below the Sort: {plan:#?}"
         );
     }
 
@@ -1503,8 +1514,7 @@ fn an_ordered_noncovering_primary_index_can_feed_a_merge_join() {
 /// Reduced from `tests/integrationtest/t/topn_push_down.test`, where TiDB
 /// records a `MergeJoin` for `TIDB_SMJ`, a `HashJoin` for `TIDB_HJ` and an
 /// `IndexJoin` for `TIDB_INLJ` over the very same `t t1 join t t2 on t1.a =
-/// t2.a`. Without the gate in [`crate::driver::join_method_hints`] all three
-/// merge here, which the `join_shape` casetest counts as EXTRA merge pairs.
+/// t2.a`. The shared planner must preserve those three physical receipts.
 #[test]
 fn a_join_hint_decides_the_family_before_any_cost_is_compared() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
@@ -1590,16 +1600,9 @@ fn a_join_hint_decides_the_family_before_any_cost_is_compared() {
 /// complete join output incorrectly makes the broad primary-key prefix look
 /// like a one-row probe.
 ///
-/// CITATION CORRECTED: this named a Go test
-/// `TestIndexJoinInnerRowCountUsesUsableJoinKeys` "from #70176". No such
-/// test, and no such function, exists anywhere in the Go tree; the
-/// expectation below was not captured from Go. The CONCERN is real and Go
-/// does hold the quantity it turns on -- `rowCountUpperBound`,
-/// `exhaust_physical_plans.go:1123` -- but as an UPPER bound on the inner
-/// INDEX-scan task, behind `fixcontrol.Fix44855`, which defaults to false.
-/// See `IndexJoinDecision::probe_access_rows_floor` for what that means for
-/// the mechanism this guards. Until the same statement is captured from a
-/// running Go TiDB, this test pins Rust's own behaviour, not Go's.
+/// The shared planner must select the complete-key secondary index. Executor
+/// lowering receives that exact `inner_access_index_id`; it must not compare
+/// the broad clustered prefix against it a second time.
 #[test]
 fn index_join_probe_rows_use_only_the_access_paths_join_keys() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
@@ -1689,8 +1692,7 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
     .unwrap();
     // The in-memory DDL catalog stores only the clustered handle; mirror the
     // parity fixture's metadata by also exposing PRIMARY as an access path.
-    for (table_name, column_offsets) in
-        [("district", vec![1, 0]), ("order_line", vec![2, 1, 0, 3])]
+    for (table_name, column_offsets) in [("district", vec![1, 0]), ("order_line", vec![2, 1, 0, 3])]
     {
         let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
             panic!("{table_name} is not a KV table");
@@ -1755,7 +1757,11 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
     let result: Vec<Vec<Datum>> = ids.into_iter().map(Datum::Int).map(|v| vec![v]).collect();
     assert_eq!(
         result,
-        vec![vec![Datum::Int(10)], vec![Datum::Int(11)], vec![Datum::Int(29)]],
+        vec![
+            vec![Datum::Int(10)],
+            vec![Datum::Int(11)],
+            vec![Datum::Int(29)]
+        ],
         "the window [d_next_o_id-20, d_next_o_id) holds 10, 11 and 29; \
          9/30/31/40 sit outside it and the NULL district matches nothing",
     );
@@ -1773,9 +1779,7 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
         .map(|row| {
             row.iter()
                 .map(|datum| match datum {
-                    Datum::Bytes(bytes) => {
-                        String::from_utf8_lossy(bytes).into_owned()
-                    }
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
                     other => format!("{other:?}"),
                 })
                 .collect::<Vec<_>>()
@@ -1790,9 +1794,8 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
         plan.iter().any(|line| {
             line.contains("TableRangeScan")
                 && line.contains("table:order_line")
-                && line.contains(
-                    "ge(test.order_line.ol_o_id, minus(test.district.d_next_o_id, 20))",
-                )
+                && line
+                    .contains("ge(test.order_line.ol_o_id, minus(test.district.d_next_o_id, 20))")
                 && line.contains("lt(test.order_line.ol_o_id, test.district.d_next_o_id)")
         }),
         "the inner range must carry both outer-derived bounds exactly as Go \
@@ -1917,9 +1920,7 @@ fn a_join_leaf_limit_counts_after_its_residual_selection() {
         .collect::<Vec<_>>()
         .join(", ");
     run_insert_on(
-        &format!(
-            "INSERT INTO jr_core (pk, mi, m, country) VALUES {core_values}"
-        ),
+        &format!("INSERT INTO jr_core (pk, mi, m, country) VALUES {core_values}"),
         &mut catalog,
         &ctx,
     )
@@ -1956,10 +1957,16 @@ fn a_join_leaf_limit_counts_after_its_residual_selection() {
     // The residual keeps 30 of the 60 entries. A limit past the surviving
     // cardinality must return ALL of them -- a raw-entry cap would stop at
     // half.
-    assert_eq!(pks_of(&format!("{base} 50")), (1..=30).map(|i| i * 2).collect::<Vec<_>>());
+    assert_eq!(
+        pks_of(&format!("{base} 50")),
+        (1..=30).map(|i| i * 2).collect::<Vec<_>>()
+    );
     // And a limit inside it must keep the FIRST 20 qualifying rows in index
     // order, not the qualifying subset of the first 20 entries.
-    assert_eq!(pks_of(&format!("{base} 20")), (1..=20).map(|i| i * 2).collect::<Vec<_>>());
+    assert_eq!(
+        pks_of(&format!("{base} 20")),
+        (1..=20).map(|i| i * 2).collect::<Vec<_>>()
+    );
 
     // The control: without the residual predicate there is nothing above the
     // capped read, so the same join answers the plain index-order prefix.

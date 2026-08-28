@@ -146,10 +146,7 @@ fn vectorized_time_harness_representative_cases_match_scalar_answers() {
         binary_vec(
             |args| dispatch("TIMEDIFF", args, &NoColumns).unwrap(),
             &[
-                (
-                    "2008-12-31 23:59:59.000001",
-                    "2008-12-30 01:01:01.000002",
-                ),
+                ("2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002",),
                 ("2016-12-00 12:00:00", "2016-12-01 12:00:00"),
                 ("2016-12-00 12:00:00", "10:9:0"),
             ],
@@ -335,7 +332,10 @@ fn double_evaluation_reproduces_the_projected_column_exactly() {
         .expect("cell-by-cell recalculation");
 
     for row in 0..ROWS {
-        for (name, other) in [("second-transfer", &second), ("cell-by-cell", &recalculated)] {
+        for (name, other) in [
+            ("second-transfer", &second),
+            ("cell-by-cell", &recalculated),
+        ] {
             assert_eq!(
                 first.get_row(row).is_null(0),
                 other.get_row(row).is_null(0),

@@ -64,7 +64,8 @@ pub mod stats_bridge {
     use tidb_datatype::Datum;
 
     use crate::cardinality::pseudo::{
-        pseudo_row_count_by_index_ranges, pseudo_row_count_by_signed_int_ranges,
+        pseudo_row_count_by_index_ranges as estimate_pseudo_index_ranges,
+        pseudo_row_count_by_scalar_ranges, pseudo_row_count_by_signed_int_ranges,
         pseudo_row_count_by_unsigned_int_ranges, IndexRange, PseudoBoundKind, ScalarRange,
         SignedIntRange, UnsignedIntRange,
     };
@@ -95,6 +96,18 @@ pub mod stats_bridge {
     /// unexported) over this port's range model.
     #[must_use]
     pub fn pseudo_count_by_ranges(ranges: &super::types::Ranges, table_row_count: f64) -> f64 {
+        pseudo_count_by_index_ranges(ranges, table_row_count, None)
+    }
+
+    /// The same Go index-range estimator with the index's declared unique
+    /// column count. A fully bound unique key estimates one row; passing
+    /// `None` preserves the ordinary secondary-index behavior.
+    #[must_use]
+    pub fn pseudo_count_by_index_ranges(
+        ranges: &super::types::Ranges,
+        table_row_count: f64,
+        unique_columns: Option<usize>,
+    ) -> f64 {
         let mut index_ranges = Vec::with_capacity(ranges.len());
         for ran in ranges {
             let equal_prefix_len = ran.prefix_equal_len().unwrap_or(0);
@@ -148,7 +161,41 @@ pub mod stats_bridge {
                 high_exclude: ran.high_exclude,
             });
         }
-        pseudo_row_count_by_index_ranges(&index_ranges, table_row_count, None)
+        estimate_pseudo_index_ranges(&index_ranges, table_row_count, unique_columns)
+    }
+
+    /// Go `getPseudoRowCountByColumnRanges` (`cardinality/pseudo.go:210`)
+    /// over one ordinary (non-handle) pseudo column. Unlike an index point,
+    /// an equality is not unique: it estimates `RealtimeCount / 1000`.
+    #[must_use]
+    pub fn pseudo_count_by_column_ranges(
+        ranges: &super::types::Ranges,
+        table_row_count: f64,
+    ) -> f64 {
+        let mapped = ranges
+            .iter()
+            .filter_map(|ran| {
+                let low_datum = ran.low_val.first()?;
+                let high_datum = ran.high_val.first()?;
+                let low_kind = bound_kind(low_datum);
+                let high_kind = bound_kind(high_datum);
+                let low = datum_to_scalar(low_datum).unwrap_or(0.0);
+                let high = datum_to_scalar(high_datum).unwrap_or_else(|| {
+                    if low_datum == high_datum {
+                        low
+                    } else {
+                        low + 1.0
+                    }
+                });
+                Some(ScalarRange {
+                    low,
+                    high,
+                    low_kind,
+                    high_kind,
+                })
+            })
+            .collect::<Vec<_>>();
+        pseudo_row_count_by_scalar_ranges(&mapped, table_row_count)
     }
 
     /// Go's int-handle pseudo estimate: `getPseudoRowCountBySignedIntRanges`

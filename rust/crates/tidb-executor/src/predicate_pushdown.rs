@@ -383,6 +383,35 @@ impl PushedScanFilter {
         }
     }
 
+    /// Builds the exact conditions already selected by a physical reader.
+    ///
+    /// These expressions need no second AST pushdown decision.  They are
+    /// evaluated by the source for every local/staged row; the empty
+    /// description list deliberately keeps them out of the remote request
+    /// until the physical-expression-to-TiPB lowering owns that translation.
+    #[must_use]
+    pub(crate) fn from_physical_conditions(filters: Vec<Expression>) -> Self {
+        let predicates = filters
+            .iter()
+            .filter_map(scan_predicate_from_expression)
+            .collect();
+        let fast_paths = vec![None; filters.len()];
+        Self {
+            predicates,
+            filters,
+            fast_paths,
+        }
+    }
+
+    /// Whether every locally evaluated physical condition also has a remote
+    /// description. A backend can only report on the descriptions it was
+    /// sent; this receipt prevents an un-described condition from being
+    /// mistaken for one the coprocessor applied.
+    #[must_use]
+    pub(crate) fn fully_described(&self) -> bool {
+        self.predicates.len() == self.filters.len()
+    }
+
     /// The pushed conjuncts in `WHERE` order, for a coprocessor lowering.
     #[must_use]
     pub fn predicates(&self) -> &[ScanPredicate] {
@@ -405,6 +434,9 @@ impl PushedScanFilter {
     /// descriptions avoids evaluating constants a second time or raising a
     /// second copy of their statement warnings.
     pub(crate) fn selection_conditions(&self) -> Vec<Expression> {
+        if self.predicates.len() != self.filters.len() {
+            return self.filters.clone();
+        }
         self.predicates
             .iter()
             .zip(&self.filters)
@@ -425,6 +457,13 @@ impl PushedScanFilter {
     /// paired expression has the same semantics, and evaluating it twice can
     /// duplicate statement warnings.
     fn conjoin(&mut self, additional: &Self) {
+        if additional.predicates.len() != additional.filters.len() {
+            for filter in &additional.filters {
+                self.filters.push(filter.clone());
+                self.fast_paths.push(None);
+            }
+            return;
+        }
         for (predicate, filter) in additional.predicates.iter().zip(&additional.filters) {
             if self.predicates.contains(predicate) {
                 continue;
@@ -476,10 +515,14 @@ impl PushedScanFilter {
             remap_expression(filter, keep)?;
         }
         Some(Self {
-            fast_paths: predicates
-                .iter()
-                .map(FastScanFilter::from_predicate)
-                .collect(),
+            fast_paths: if predicates.len() == filters.len() {
+                predicates
+                    .iter()
+                    .map(FastScanFilter::from_predicate)
+                    .collect()
+            } else {
+                vec![None; filters.len()]
+            },
             predicates,
             filters,
         })
@@ -873,6 +916,69 @@ impl ScanFilterProbe {
     pub(crate) fn predicates(&self) -> &[ScanPredicate] {
         self.filter.predicates()
     }
+
+    pub(crate) fn fully_described(&self) -> bool {
+        self.filter.fully_described()
+    }
+}
+
+/// Describes one already-resolved physical condition for TiKV.
+///
+/// Go performs this conversion after `findBestTask` has selected the reader;
+/// the executor receives that exact `expression.Expression`, not the original
+/// SQL AST. Keep comparisons in the explicit scan representation used by the
+/// local fakes, and use the shared scalar-signature catalog for every other
+/// expression family. A refusal leaves the physical expression in the local
+/// filter and is therefore semantic, not heuristic.
+pub(crate) fn scan_predicate_from_expression(expression: &Expression) -> Option<ScanPredicate> {
+    let Expression::ScalarFunction(function) = expression else {
+        return tidb_expr::pushdown_catalog::from_expression(expression)
+            .map(ScanPredicate::Builtin);
+    };
+    let operation = match function.func_name.lowercase().as_ref() {
+        "eq" => Some(ScanComparisonOp::Eq),
+        "ne" => Some(ScanComparisonOp::Ne),
+        "lt" => Some(ScanComparisonOp::Lt),
+        "le" => Some(ScanComparisonOp::Le),
+        "gt" => Some(ScanComparisonOp::Gt),
+        "ge" => Some(ScanComparisonOp::Ge),
+        _ => None,
+    };
+    if let (Some(operation), [left, right]) = (operation, function.args.as_slice()) {
+        if let (Expression::Column(left), Expression::Column(right)) = (left, right) {
+            return Some(ScanPredicate::ColumnCompare(ScanColumnComparison {
+                left_offset: u32::try_from(left.index).ok()?,
+                left_type: left.get_static_type()?.clone(),
+                right_offset: u32::try_from(right.index).ok()?,
+                right_type: right.get_static_type()?.clone(),
+                op: operation,
+            }));
+        }
+        let (column, constant, column_on_left) = match (left, right) {
+            (Expression::Column(column), Expression::Constant(constant)) => {
+                (column, constant, true)
+            }
+            (Expression::Constant(constant), Expression::Column(column)) => {
+                (column, constant, false)
+            }
+            _ => {
+                return tidb_expr::pushdown_catalog::from_expression(expression)
+                    .map(ScanPredicate::Builtin);
+            }
+        };
+        if constant.value != Datum::Null {
+            return Some(ScanPredicate::Compare(ScanComparison {
+                column_offset: u32::try_from(column.index).ok()?,
+                collation: column.get_static_type()?.collation(),
+                column_type: column.get_static_type()?.clone(),
+                literal_type: constant.get_static_type()?.clone(),
+                op: operation,
+                literal: constant.value.clone(),
+                column_on_left,
+            }));
+        }
+    }
+    tidb_expr::pushdown_catalog::from_expression(expression).map(ScanPredicate::Builtin)
 }
 
 #[cfg(test)]

@@ -477,14 +477,8 @@ pub fn int_is_null_to_pb(column: IntPbOperand) -> Result<Expr, PbPredicateError>
 /// Lowers `column IS NULL` for an already-built column reference. The
 /// signature is deliberately supplied by the caller because TiKV dispatches
 /// each evaluation family separately; Go chooses it in `isNullFunctionClass`.
-pub fn is_null_to_pb(
-    column: Expr,
-    signature: ScalarFuncSig,
-) -> Result<Expr, PbPredicateError> {
-    Ok(boolean_scalar_func(
-        signature,
-        vec![column],
-    ))
+pub fn is_null_to_pb(column: Expr, signature: ScalarFuncSig) -> Result<Expr, PbPredicateError> {
+    Ok(boolean_scalar_func(signature, vec![column]))
 }
 
 /// Lowers `string_column IS NULL` with the same `IntIsNull` signature Go

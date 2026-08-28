@@ -29,9 +29,10 @@
 //! optimizer pass can be written against. The tree is what those become
 //! passes over.
 //!
-//! It is a SEED of `pkg/planner/core`: the tree and its method surface land
-//! complete; the operator set does not, and every operator not yet ported is
-//! an explicit `Todo` variant naming its Go type rather than a default arm.
+//! It is an incremental transcreation of `pkg/planner/core`: the ordinary
+//! SELECT path now builds and costs this tree, while every operator not yet
+//! ported remains an explicit `Todo` variant naming its Go type rather than a
+//! default arm.
 //!
 //! # One tree is the truth
 //!
@@ -42,8 +43,8 @@
 //! * Statistics derive on the tree directly:
 //!   `LogicalPlan::recursive_derive_stats`, over the per-operator
 //!   `DeriveStats` bodies.
-//! * The join enumeration's reduced view (`find_best_task::LogicalNode`) is
-//!   PRODUCED FROM the tree by `find_best_task::project_join_spine`; its
+//! * Join enumeration projects only the fields it reads from the shared
+//!   logical join; its
 //!   leaves take caller-supplied access-path alternatives until access-path
 //!   enumeration is real — a named residue.
 //! * The third representation this crate once held — the DP join-reorder
@@ -78,18 +79,19 @@
 //! stack-explicit; the measurements behind both decisions are recorded in the
 //! [`logical`] module header.
 //!
-//! # What is NOT here
+//! # Runtime boundary
 //!
-//! No optimizer driver. Nothing in this crate runs a rule pass or picks a
-//! plan; the live query path still plans inside `tidb-executor`'s driver.
-//! [`plan::PlanNode`] remains as the explain-only metadata view it always
-//! was, and is not a second plan representation — see its module header.
+//! [`plan_builder`], [`logical::prepare_possible_properties`], and
+//! [`find_best_task`] form the live ordinary SELECT optimizer. The executor
+//! driver supplies catalog/session inputs and mechanically lowers the selected
+//! physical receipt; it must not re-enumerate access, join, or aggregation
+//! alternatives. [`plan::PlanNode`] remains an explain-only metadata view and
+//! is not a second plan representation — see its module header.
 
 pub mod access_path;
 pub mod aggregation_descriptor;
 pub mod base_traits;
 pub mod by_item;
-pub mod candidate_cost;
 pub mod cardinality;
 pub mod cascades_base;
 pub mod column_length;
@@ -152,6 +154,7 @@ pub mod physical_index_scan;
 pub mod physical_limit;
 pub mod physical_lock;
 pub mod physical_max_one_row;
+pub mod physical_plan_cache;
 pub mod physical_projection;
 pub mod physical_property;
 pub mod physical_selection;

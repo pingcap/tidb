@@ -19,8 +19,8 @@ use crate::*;
 use chrono::Utc;
 use std::cmp::Ordering;
 use tidb_datatype::{
-    BinaryLiteral, BinaryJSON, Collation, Datum, Decimal, FieldType, FieldTypeCode,
-    FieldTypeFlags, MysqlEnum, MysqlSet, MySqlDuration, Time, TimeType,
+    BinaryJSON, BinaryLiteral, Collation, Datum, Decimal, FieldType, FieldTypeCode, FieldTypeFlags,
+    MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType,
 };
 
 fn parse_datetime_str(s: &str) -> Time {
@@ -76,15 +76,19 @@ fn test_codec_key() {
             ],
         ),
         // true, false -> int64(1), int64(0)
-        (&[Datum::new_int(1), Datum::new_int(0)], &[Datum::new_int(1), Datum::new_int(0)]),
+        (
+            &[Datum::new_int(1), Datum::new_int(0)],
+            &[Datum::new_int(1), Datum::new_int(0)],
+        ),
         (&[Datum::Null], &[Datum::Null]),
         (
             // NewBinaryLiteralFromUint(100, -1) / (100, 4) -> uint64(100)
             &[
                 Datum::new_binary_literal(BinaryLiteral::from_uint(100, None)),
-                Datum::new_binary_literal(BinaryLiteral::from_uint(100, Some(
-                    tidb_datatype::BinaryLiteralWidth::try_from(4u8).unwrap(),
-                ))),
+                Datum::new_binary_literal(BinaryLiteral::from_uint(
+                    100,
+                    Some(tidb_datatype::BinaryLiteralWidth::try_from(4u8).unwrap()),
+                )),
             ],
             &[Datum::new_uint(100), Datum::new_uint(100)],
         ),
@@ -112,10 +116,7 @@ fn test_codec_key() {
         }
 
         let value = encode_value(input).unwrap_or_else(|e| panic!("{i}: {e}"));
-        let size: usize = input
-            .iter()
-            .map(|v| estimate_value_size(v).unwrap())
-            .sum();
+        let size: usize = input.iter().map(|v| estimate_value_size(v).unwrap()).sum();
         assert_eq!(value.len(), size, "row {i} value size");
 
         let args = decode(&value, 1).unwrap_or_else(|e| panic!("{i}: {e}"));
@@ -143,7 +144,11 @@ fn test_codec_key_compare() {
     let table: &[(&[Datum], &[Datum], Ordering)] = &[
         (&[Datum::new_int(1)], &[Datum::new_int(1)], Ordering::Equal),
         (&[Datum::new_int(-1)], &[Datum::new_int(1)], Ordering::Less),
-        (&[Datum::new_real(3.15)], &[Datum::new_real(3.12)], Ordering::Greater),
+        (
+            &[Datum::new_real(3.15)],
+            &[Datum::new_real(3.12)],
+            Ordering::Greater,
+        ),
         (
             &[Datum::new_string("abc")],
             &[Datum::new_string("abcd")],
@@ -160,33 +165,63 @@ fn test_codec_key_compare() {
             Ordering::Less,
         ),
         (
-            &[Datum::new_int(1), Datum::new_string("abc"), Datum::new_string("def")],
-            &[Datum::new_int(1), Datum::new_string("abcd"), Datum::new_string("af")],
+            &[
+                Datum::new_int(1),
+                Datum::new_string("abc"),
+                Datum::new_string("def"),
+            ],
+            &[
+                Datum::new_int(1),
+                Datum::new_string("abcd"),
+                Datum::new_string("af"),
+            ],
             Ordering::Less,
         ),
         (
-            &[Datum::new_real(3.12), Datum::new_string("ebc"), Datum::new_string("def")],
-            &[Datum::new_real(2.12), Datum::new_string("abcd"), Datum::new_string("af")],
+            &[
+                Datum::new_real(3.12),
+                Datum::new_string("ebc"),
+                Datum::new_string("def"),
+            ],
+            &[
+                Datum::new_real(2.12),
+                Datum::new_string("abcd"),
+                Datum::new_string("af"),
+            ],
             Ordering::Greater,
         ),
         (
-            &[Datum::new_bytes(vec![0x01, 0x00]), Datum::new_bytes(vec![0xFF])],
+            &[
+                Datum::new_bytes(vec![0x01, 0x00]),
+                Datum::new_bytes(vec![0xFF]),
+            ],
             &[Datum::new_bytes(vec![0x01, 0x00, 0xFF])],
             Ordering::Less,
         ),
         (
-            &[Datum::new_bytes(vec![0x01]), Datum::new_uint(0xFFFFFFFFFFFFFFF)],
+            &[
+                Datum::new_bytes(vec![0x01]),
+                Datum::new_uint(0xFFFFFFFFFFFFFFF),
+            ],
             &[Datum::new_bytes(vec![0x01, 0x10]), Datum::new_uint(0)],
             Ordering::Less,
         ),
         (&[Datum::new_int(0)], &[Datum::Null], Ordering::Greater),
-        (&[Datum::new_bytes(vec![0x00])], &[Datum::Null], Ordering::Greater),
+        (
+            &[Datum::new_bytes(vec![0x00])],
+            &[Datum::Null],
+            Ordering::Greater,
+        ),
         (
             &[Datum::new_real(f64::from_bits(1))],
             &[Datum::Null],
             Ordering::Greater,
         ),
-        (&[Datum::new_int(i64::MIN)], &[Datum::Null], Ordering::Greater),
+        (
+            &[Datum::new_int(i64::MIN)],
+            &[Datum::Null],
+            Ordering::Greater,
+        ),
         (
             &[Datum::new_int(1), Datum::new_int(i64::MIN), Datum::Null],
             &[Datum::new_int(1), Datum::Null, Datum::new_uint(u64::MAX)],
@@ -229,8 +264,8 @@ fn test_float_codec() {
         1.0,
         f64::MAX,
         f32::MAX as f64,
-        f32::from_bits(1) as f64,   // math.SmallestNonzeroFloat32
-        f64::from_bits(1),          // math.SmallestNonzeroFloat64
+        f32::from_bits(1) as f64, // math.SmallestNonzeroFloat32
+        f64::from_bits(1),        // math.SmallestNonzeroFloat64
         f64::NEG_INFINITY,
         f64::INFINITY,
     ];
@@ -429,13 +464,17 @@ fn test_bytes_compact_and_order_table() {
         (&[0x00, 0x01], &[0x00, 0x00], Ordering::Greater),
         (&[0x00, 0x00, 0x00], &[0x00, 0x00], Ordering::Greater),
         (&[0x00, 0x00, 0x00], &[0x00, 0x00], Ordering::Greater),
+        (&[0; 8], &[0; 9], Ordering::Less),
         (
-            &[0; 8],
-            &[0; 9],
+            &[0x01, 0x02, 0x03, 0x00],
+            &[0x01, 0x02, 0x03],
+            Ordering::Greater,
+        ),
+        (
+            &[0x01, 0x03, 0x03, 0x04],
+            &[0x01, 0x03, 0x03, 0x05],
             Ordering::Less,
         ),
-        (&[0x01, 0x02, 0x03, 0x00], &[0x01, 0x02, 0x03], Ordering::Greater),
-        (&[0x01, 0x03, 0x03, 0x04], &[0x01, 0x03, 0x03, 0x05], Ordering::Less),
         (
             &[1, 2, 3, 4, 5, 6, 7],
             &[1, 2, 3, 4, 5, 6, 7, 8],
@@ -470,7 +509,11 @@ fn test_bytes_compact_and_order_table() {
 /// Go `codec_test.go::TestTime`.
 #[test]
 fn test_time_codec_key_round_trip_and_order() {
-    for s in ["2011-01-01 00:00:00", "2011-01-01 00:00:00", "0001-01-01 00:00:00"] {
+    for s in [
+        "2011-01-01 00:00:00",
+        "2011-01-01 00:00:00",
+        "0001-01-01 00:00:00",
+    ] {
         let m = parse_datetime_str(s);
         let key = encode_key_in_timezone(&Utc, &[Datum::new_time(m)]).unwrap();
         let decoded = decode(&key, 1).unwrap();
@@ -478,15 +521,22 @@ fn test_time_codec_key_round_trip_and_order() {
             Datum::UInt(packed) => *packed,
             other => panic!("expected uint packed time, got {other:?}"),
         };
-        let raw_time =
-            Time::from_packed_uint(packed, TimeType::DateTime, 0).expect("from packed");
+        let raw_time = Time::from_packed_uint(packed, TimeType::DateTime, 0).expect("from packed");
         assert_eq!(m, raw_time, "{s}");
     }
 
     let tbl_cmp = [
-        ("2011-10-10 00:00:00", "2000-12-12 11:11:11", Ordering::Greater),
+        (
+            "2011-10-10 00:00:00",
+            "2000-12-12 11:11:11",
+            Ordering::Greater,
+        ),
         ("2000-10-10 00:00:00", "2001-10-10 00:00:00", Ordering::Less),
-        ("2000-10-10 00:00:00", "2000-10-10 00:00:00", Ordering::Equal),
+        (
+            "2000-10-10 00:00:00",
+            "2000-10-10 00:00:00",
+            Ordering::Equal,
+        ),
     ];
     for (a, b, ret) in tbl_cmp {
         let m1 = parse_datetime_str(a);
@@ -502,9 +552,13 @@ fn test_time_codec_key_round_trip_and_order() {
 fn test_duration_codec_key_round_trip_and_order() {
     for s in ["11:11:11", "00:00:00", "1 11:11:11"] {
         let nanos = parse_duration_nanos(s);
-        let key =
-            encode_key_in_timezone(&Utc, &[Datum::new_duration(MySqlDuration::from_nanoseconds(nanos, 0).unwrap())])
-                .unwrap();
+        let key = encode_key_in_timezone(
+            &Utc,
+            &[Datum::new_duration(
+                MySqlDuration::from_nanoseconds(nanos, 0).unwrap(),
+            )],
+        )
+        .unwrap();
         let decoded = decode(&key, 1).unwrap();
         // Source sets Fsp=MaxFsp before comparing because decoding recovers
         // max-fractional-precision durations.
@@ -530,8 +584,8 @@ fn test_duration_codec_key_round_trip_and_order() {
 #[test]
 fn test_decimal_codec_round_trip_metadata() {
     let inputs = [
-        "123400", "1234", "12.34", "0.1234", "0.01234", "-0.1234", "-0.01234", "12.3400",
-        "-12.34", "0.00000", "0", "-0.0", "-0.000",
+        "123400", "1234", "12.34", "0.1234", "0.01234", "-0.1234", "-0.01234", "12.3400", "-12.34",
+        "0.00000", "0", "-0.0", "-0.000",
     ];
     for text in inputs {
         let v = Decimal::from_literal(text);
@@ -564,8 +618,8 @@ fn test_frac_round_trip_display() {
 #[test]
 fn test_decimal_key_order_and_fixed_precision_errors() {
     let tbl = [
-        "1234.00", "1234", "12.34", "12.340", "0.1234", "0.0", "0", "-0.0", "-0.0000",
-        "-1234.00", "-1234", "-12.34", "-12.340", "-0.1234",
+        "1234.00", "1234", "12.34", "12.340", "0.1234", "0.0", "0", "-0.0", "-0.0000", "-1234.00",
+        "-1234", "-12.34", "-12.340", "-0.1234",
     ];
     for text in tbl {
         let dec = Decimal::from_literal(text);
@@ -580,13 +634,14 @@ fn test_decimal_key_order_and_fixed_precision_errors() {
 
     // Go normalizes every table decimal with SetLength(30)/SetFrac(6); the
     // declared shape drives the fixed-schema memcomparable bin encoding.
-    let dec_of = |text: &str| {
-        Datum::new_decimal(Decimal::from_literal(text).with_declared_shape(30, 6))
+    let dec_of =
+        |text: &str| Datum::new_decimal(Decimal::from_literal(text).with_declared_shape(30, 6));
+    let int_of = |v: i64| {
+        Datum::new_decimal(Decimal::from_literal(&v.to_string()).with_declared_shape(30, 6))
     };
-    let int_of =
-        |v: i64| Datum::new_decimal(Decimal::from_literal(&v.to_string()).with_declared_shape(30, 6));
-    let uint_of =
-        |v: u64| Datum::new_decimal(Decimal::from_literal(&v.to_string()).with_declared_shape(30, 6));
+    let uint_of = |v: u64| {
+        Datum::new_decimal(Decimal::from_literal(&v.to_string()).with_declared_shape(30, 6))
+    };
 
     let tbl_cmp: &[((Datum, Datum), Ordering)] = &[
         ((dec_of("1234"), dec_of("123400")), Ordering::Less),
@@ -621,29 +676,56 @@ fn test_decimal_key_order_and_fixed_precision_errors() {
         ((dec_of("-12340"), dec_of("-123400")), Ordering::Greater),
         ((int_of(-1), int_of(1)), Ordering::Less),
         ((int_of(i64::MAX), int_of(i64::MIN)), Ordering::Greater),
-        ((int_of(i64::MAX), int_of(i32::MAX as i64)), Ordering::Greater),
-        ((int_of(i32::MIN as i64), int_of(i16::MAX as i64)), Ordering::Less),
+        (
+            (int_of(i64::MAX), int_of(i32::MAX as i64)),
+            Ordering::Greater,
+        ),
+        (
+            (int_of(i32::MIN as i64), int_of(i16::MAX as i64)),
+            Ordering::Less,
+        ),
         ((int_of(i64::MIN), int_of(i8::MAX as i64)), Ordering::Less),
         ((int_of(0), int_of(i8::MAX as i64)), Ordering::Less),
         ((int_of(i8::MIN as i64), int_of(0)), Ordering::Less),
-        ((int_of(i16::MIN as i64), int_of(i16::MAX as i64)), Ordering::Less),
+        (
+            (int_of(i16::MIN as i64), int_of(i16::MAX as i64)),
+            Ordering::Less,
+        ),
         ((int_of(1), int_of(-1)), Ordering::Greater),
         ((int_of(1), int_of(0)), Ordering::Greater),
         ((int_of(-1), int_of(0)), Ordering::Less),
         ((int_of(0), int_of(0)), Ordering::Equal),
-        ((int_of(i16::MAX as i64), int_of(i16::MAX as i64)), Ordering::Equal),
+        (
+            (int_of(i16::MAX as i64), int_of(i16::MAX as i64)),
+            Ordering::Equal,
+        ),
         ((uint_of(0), uint_of(0)), Ordering::Equal),
         ((uint_of(1), uint_of(0)), Ordering::Greater),
         ((uint_of(0), uint_of(1)), Ordering::Less),
-        ((uint_of(u8::MAX as u64), uint_of(u16::MAX as u64)), Ordering::Less),
+        (
+            (uint_of(u8::MAX as u64), uint_of(u16::MAX as u64)),
+            Ordering::Less,
+        ),
         (
             (uint_of(u32::MAX as u64), uint_of(i32::MAX as u64)),
             Ordering::Greater,
         ),
-        ((uint_of(u8::MAX as u64), uint_of(i8::MAX as u64)), Ordering::Greater),
-        ((uint_of(u16::MAX as u64), uint_of(i32::MAX as u64)), Ordering::Less),
-        ((uint_of(u64::MAX), uint_of(i64::MAX as u64)), Ordering::Greater),
-        ((uint_of(i64::MAX as u64), uint_of(u32::MAX as u64)), Ordering::Greater),
+        (
+            (uint_of(u8::MAX as u64), uint_of(i8::MAX as u64)),
+            Ordering::Greater,
+        ),
+        (
+            (uint_of(u16::MAX as u64), uint_of(i32::MAX as u64)),
+            Ordering::Less,
+        ),
+        (
+            (uint_of(u64::MAX), uint_of(i64::MAX as u64)),
+            Ordering::Greater,
+        ),
+        (
+            (uint_of(i64::MAX as u64), uint_of(u32::MAX as u64)),
+            Ordering::Greater,
+        ),
         ((uint_of(u64::MAX), uint_of(0)), Ordering::Greater),
         ((uint_of(0), uint_of(u64::MAX)), Ordering::Less),
     ];
@@ -660,8 +742,22 @@ fn test_decimal_key_order_and_fixed_precision_errors() {
 
     // Float-backed decimals sort monotonically through their hash-key bytes.
     let floats = [
-        "-123.45", "-123.40", "-23.45", "-1.43", "-0.93", "-0.4333", "-0.068", "-0.0099", "0",
-        "0.001", "0.0012", "0.12", "1.2", "1.23", "123.3", "2424.242424",
+        "-123.45",
+        "-123.40",
+        "-23.45",
+        "-1.43",
+        "-0.93",
+        "-0.4333",
+        "-0.068",
+        "-0.0099",
+        "0",
+        "0.001",
+        "0.0012",
+        "0.12",
+        "1.2",
+        "1.23",
+        "123.3",
+        "2424.242424",
     ];
     let mut decs = Vec::with_capacity(floats.len());
     for text in floats {
@@ -673,7 +769,10 @@ fn test_decimal_key_order_and_fixed_precision_errors() {
         decs.push(buf);
     }
     for pair in decs.windows(2) {
-        assert!(pair[0].cmp(&pair[1]) != Ordering::Greater, "unordered decimals");
+        assert!(
+            pair[0].cmp(&pair[1]) != Ordering::Greater,
+            "unordered decimals"
+        );
     }
 
     // `-123.123456789` with (20,5) truncates; with (12,10) it overflows.
@@ -736,9 +835,10 @@ fn test_cut_one_across_key_and_value_streams() {
         &[Datum::Null],
         &[
             Datum::new_binary_literal(BinaryLiteral::from_uint(100, None)),
-            Datum::new_binary_literal(BinaryLiteral::from_uint(100, Some(
-                tidb_datatype::BinaryLiteralWidth::try_from(4u8).unwrap(),
-            ))),
+            Datum::new_binary_literal(BinaryLiteral::from_uint(
+                100,
+                Some(tidb_datatype::BinaryLiteralWidth::try_from(4u8).unwrap()),
+            )),
         ],
         &[enum_a(), set_a()],
         &[
@@ -772,8 +872,8 @@ fn test_cut_one_across_key_and_value_streams() {
         let mut value = encode_value(datums).expect("encode value");
         let mut count = 0;
         while !value.is_empty() {
-            let (cut, remain) = cut_one(&value)
-                .unwrap_or_else(|e| panic!("value {table_index}.{count}: {e}"));
+            let (cut, remain) =
+                cut_one(&value).unwrap_or_else(|e| panic!("value {table_index}.{count}: {e}"));
             let decoded = decode_one(cut)
                 .unwrap_or_else(|e| panic!("valuedec {table_index}.{count}: {e}"))
                 .1;
@@ -844,9 +944,18 @@ fn test_decode_one_typed_columns_survive_round_trip() {
         (Datum::new_string("def"), ft(FieldTypeCode::Varchar)),
         (Datum::new_string("ghi"), ft(FieldTypeCode::VarString)),
         (Datum::new_bytes(b"abc".to_vec()), ft(FieldTypeCode::Blob)),
-        (Datum::new_bytes(b"abc".to_vec()), ft(FieldTypeCode::TinyBlob)),
-        (Datum::new_bytes(b"abc".to_vec()), ft(FieldTypeCode::MediumBlob)),
-        (Datum::new_bytes(b"abc".to_vec()), ft(FieldTypeCode::LongBlob)),
+        (
+            Datum::new_bytes(b"abc".to_vec()),
+            ft(FieldTypeCode::TinyBlob),
+        ),
+        (
+            Datum::new_bytes(b"abc".to_vec()),
+            ft(FieldTypeCode::MediumBlob),
+        ),
+        (
+            Datum::new_bytes(b"abc".to_vec()),
+            ft(FieldTypeCode::LongBlob),
+        ),
         (
             Datum::new_time(parse_datetime_str("2011-11-11 00:00:00")),
             ft(FieldTypeCode::Datetime),
@@ -873,9 +982,10 @@ fn test_decode_one_typed_columns_survive_round_trip() {
                 .with_elems(vec!["a"]),
         ),
         (
-            Datum::new_mysql_bit(BinaryLiteral::from_uint(100, Some(
-                tidb_datatype::BinaryLiteralWidth::try_from(1u8).unwrap(),
-            ))),
+            Datum::new_mysql_bit(BinaryLiteral::from_uint(
+                100,
+                Some(tidb_datatype::BinaryLiteralWidth::try_from(1u8).unwrap()),
+            )),
             {
                 let mut bit = ft(FieldTypeCode::Bit);
                 bit.set_flen(8);
@@ -920,11 +1030,7 @@ fn test_decode_one_typed_columns_survive_round_trip() {
 fn test_hash_group_decimal_shape_errors() {
     let value = Decimal::from_literal("-123.123456789");
     let datum_value = Datum::new_decimal(value);
-    let values = [
-        datum_value.clone(),
-        datum_value.clone(),
-        datum_value,
-    ];
+    let values = [datum_value.clone(), datum_value.clone(), datum_value];
 
     let mut tp1 = FieldType::new(FieldTypeCode::NewDecimal);
     tp1.set_flen(20);
@@ -974,9 +1080,10 @@ fn hash_fixture() -> (Vec<Vec<Datum>>, Vec<FieldType>) {
         Datum::new_duration(MySqlDuration::from_nanoseconds(1_000_000_000, 1).unwrap()),
         Datum::new_enum(MysqlEnum::new("a", 1), Collation::Utf8Mb4Bin),
         Datum::new_set(MysqlSet::new("a", 1), Collation::Utf8Mb4Bin),
-        Datum::new_mysql_bit(BinaryLiteral::from_uint(100, Some(
-            tidb_datatype::BinaryLiteralWidth::try_from(1u8).unwrap(),
-        ))),
+        Datum::new_mysql_bit(BinaryLiteral::from_uint(
+            100,
+            Some(tidb_datatype::BinaryLiteralWidth::try_from(1u8).unwrap()),
+        )),
         Datum::new_json(BinaryJSON::parse("1").unwrap()),
     ];
     let types = vec![
@@ -1014,10 +1121,9 @@ fn test_hash_chunk_row_equal_matrix() {
     let sum1 = hash_row(&rows[0], &types, &indices).expect("hash row");
     let sum2 = hash_row(&rows[0], &types, &indices).expect("hash row");
     assert_eq!(sum1, sum2);
-    assert!(equal_rows(
-        &rows[0], &types, &indices, &rows[0], &types, &indices
-    )
-    .expect("equal rows"));
+    assert!(
+        equal_rows(&rows[0], &types, &indices, &rows[0], &types, &indices).expect("equal rows")
+    );
 
     let mut unsigned_longlong = FieldType::new(FieldTypeCode::LongLong);
     unsigned_longlong.toggle_flags(FieldTypeFlags::UNSIGNED);
@@ -1033,14 +1139,27 @@ fn test_hash_chunk_row_equal_matrix() {
             "hash mismatch for {a:?}/{ta:?} vs {b:?}/{tb:?}"
         );
         assert_eq!(
-            equal_rows(a, std::slice::from_ref(ta), &[0], b, std::slice::from_ref(tb), &[0])
-                .expect("equal rows"),
+            equal_rows(
+                a,
+                std::slice::from_ref(ta),
+                &[0],
+                b,
+                std::slice::from_ref(tb),
+                &[0]
+            )
+            .expect("equal rows"),
             equal,
         );
     };
 
     // null vs null hashes equal
-    check(&[Datum::Null], &signed_longlong, &[Datum::Null], &signed_longlong, true);
+    check(
+        &[Datum::Null],
+        &signed_longlong,
+        &[Datum::Null],
+        &signed_longlong,
+        true,
+    );
     // uint64(1) == int64(1)
     check(
         &[Datum::new_uint(1)],
@@ -1115,17 +1234,25 @@ fn test_hash_chunk_row_equal_matrix() {
     );
     // JSON uint64(max) != float64(max)
     check(
-        &[Datum::new_json(BinaryJSON::parse("18446744073709551615").unwrap())],
+        &[Datum::new_json(
+            BinaryJSON::parse("18446744073709551615").unwrap(),
+        )],
         &json_tp,
-        &[Datum::new_json(BinaryJSON::parse("1.8446744073709552e19").unwrap())],
+        &[Datum::new_json(
+            BinaryJSON::parse("1.8446744073709552e19").unwrap(),
+        )],
         &json_tp,
         false,
     );
     // JSON int64(min) == float64(min) (exact power of two)
     check(
-        &[Datum::new_json(BinaryJSON::parse("-9223372036854775808").unwrap())],
+        &[Datum::new_json(
+            BinaryJSON::parse("-9223372036854775808").unwrap(),
+        )],
         &json_tp,
-        &[Datum::new_json(BinaryJSON::parse("-9223372036854775808").unwrap())],
+        &[Datum::new_json(
+            BinaryJSON::parse("-9223372036854775808").unwrap(),
+        )],
         &json_tp,
         true,
     );
@@ -1150,7 +1277,11 @@ fn test_value_size_of_signed_int_matches_varint_len() {
             let mut buf = Vec::new();
             encode_varint(&mut buf, value);
             // Source `valueSizeOfSignedInt` counts the leading `varintFlag` byte.
-            assert_eq!(value_size_of_signed_int(value), buf.len() + 1, "value {value}");
+            assert_eq!(
+                value_size_of_signed_int(value),
+                buf.len() + 1,
+                "value {value}"
+            );
         }
     }
 }
@@ -1174,7 +1305,11 @@ fn test_value_size_of_unsigned_int_matches_uvarint_len() {
             let mut buf = Vec::new();
             encode_uvarint(&mut buf, value);
             // Source `valueSizeOfUnsignedInt` counts the leading `uvarintFlag` byte.
-            assert_eq!(value_size_of_unsigned_int(value), buf.len() + 1, "value {value}");
+            assert_eq!(
+                value_size_of_unsigned_int(value),
+                buf.len() + 1,
+                "value {value}"
+            );
         }
     }
 }
@@ -1196,9 +1331,13 @@ fn test_hash_chunk_columns_agree_with_row_hashes_and_selection() {
 
         for (row_index, row) in rows.iter().enumerate() {
             assert_eq!(has_null[row_index], all_null, "col {col}");
-            let per_row = hash_row(row, std::slice::from_ref(&types[col]), &[col])
-                .expect("hash row");
-            assert_eq!(encoded[row_index].as_deref(), Some(per_row.as_slice()), "col {col}");
+            let per_row =
+                hash_row(row, std::slice::from_ref(&types[col]), &[col]).expect("hash row");
+            assert_eq!(
+                encoded[row_index].as_deref(),
+                Some(per_row.as_slice()),
+                "col {col}"
+            );
         }
 
         // Deselected rows contribute no bytes but keep their slots.
@@ -1229,12 +1368,20 @@ fn test_encoder_new_collation_enabled_mode_split() {
     let enabled_encoder = Encoder::new(true);
     let disabled_encoder = Encoder::new(false);
 
-    let enabled_lower = enabled_encoder.encode_key(std::slice::from_ref(&lower)).unwrap();
-    let enabled_upper = enabled_encoder.encode_key(std::slice::from_ref(&upper)).unwrap();
+    let enabled_lower = enabled_encoder
+        .encode_key(std::slice::from_ref(&lower))
+        .unwrap();
+    let enabled_upper = enabled_encoder
+        .encode_key(std::slice::from_ref(&upper))
+        .unwrap();
     assert_eq!(enabled_lower, enabled_upper);
 
-    let disabled_lower = disabled_encoder.encode_key(std::slice::from_ref(&lower_b)).unwrap();
-    let disabled_upper = disabled_encoder.encode_key(std::slice::from_ref(&upper_b)).unwrap();
+    let disabled_lower = disabled_encoder
+        .encode_key(std::slice::from_ref(&lower_b))
+        .unwrap();
+    let disabled_upper = disabled_encoder
+        .encode_key(std::slice::from_ref(&upper_b))
+        .unwrap();
     assert_ne!(disabled_lower, disabled_upper);
 
     let exported_enabled_lower = encode_key(&[lower]).unwrap();

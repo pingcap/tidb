@@ -33,17 +33,18 @@
 use tidb_expr::aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::normal_form::split_cnf_items;
+use tidb_expr::expr_util::predicates::contains;
 use tidb_expr::expr_util::substitute::SubstituteOptions;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::extract_columns;
 
 use crate::base_arms;
-use crate::find_best_task::LogicalJoinType;
 use crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len;
 use crate::cardinality::join::{
     estimate_full_join_row_count, FullJoinRowCountInput, JoinKeyEstimate,
 };
+use crate::find_best_task::LogicalJoinType;
 use crate::plan_base::PlanError;
 use crate::stats_info::StatsInfo;
 
@@ -69,6 +70,227 @@ fn effective_schema(node: &LogicalPlan) -> Schema {
 /// The schemas of `node`'s children, in child order.
 fn child_schemas(node: &LogicalPlan) -> Vec<Schema> {
     node.children().iter().map(effective_schema).collect()
+}
+
+/// Histogram-backed `Selectivity` for the equality shapes whose complete
+/// inputs already live in [`StatsInfo`]. Go estimates a column/constant
+/// equality as one value out of the column NDV (and an IN list as its number
+/// of values out of that NDV). Returning `None` keeps genuinely pseudo tables
+/// on `pseudoSelectivity`; it must not overwrite loaded NDVs with the pseudo
+/// 1/1000 equality rate.
+fn analyzed_filter_selectivity(table_stats: &StatsInfo, conditions: &[Expression]) -> Option<f64> {
+    if table_stats.col_ndvs().is_empty() {
+        return None;
+    }
+    if table_stats.row_count() == 0.0 || conditions.is_empty() {
+        return Some(1.0);
+    }
+
+    let mut selectivity = 1.0_f64;
+    let mut recognized = false;
+    for condition in conditions {
+        let Expression::ScalarFunction(function) = condition else {
+            selectivity *= crate::cost_factors::SELECTION_FACTOR;
+            continue;
+        };
+        let (column, values) = match (function.func_name.lowercase(), function.args.as_slice()) {
+            (
+                "eq" | "nulleq",
+                [Expression::Column(column), Expression::Constant(_)]
+                | [Expression::Constant(_), Expression::Column(column)],
+            ) => (column, 1_usize),
+            ("in", [Expression::Column(column), values @ ..])
+                if !values.is_empty()
+                    && values
+                        .iter()
+                        .all(|value| matches!(value, Expression::Constant(_))) =>
+            {
+                (column, values.len())
+            }
+            _ => {
+                selectivity *= crate::cost_factors::SELECTION_FACTOR;
+                continue;
+            }
+        };
+        let ndv = table_stats.col_ndv(column.unique_id);
+        if ndv > 0.0 {
+            selectivity *= (values as f64 / ndv).min(1.0);
+            recognized = true;
+        } else {
+            selectivity *= crate::cost_factors::SELECTION_FACTOR;
+        }
+    }
+    if recognized {
+        Some(selectivity.max(1.0 / table_stats.row_count().max(1.0)))
+    } else {
+        Some(selectivity)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PseudoRangeSelectivityNode {
+    mask: u64,
+    selectivity: f64,
+    preferred_path: bool,
+    num_columns: usize,
+    id: i64,
+}
+
+fn covered_condition_mask(conditions: &[Expression], access: &[Expression]) -> u64 {
+    conditions
+        .iter()
+        .enumerate()
+        .fold(0_u64, |mask, (offset, condition)| {
+            if contains(access, condition) {
+                mask | (1_u64 << offset)
+            } else {
+                mask
+            }
+        })
+}
+
+/// Go `cardinality.Selectivity` over the pseudo column/index histograms that
+/// `statistics.PseudoTable` creates. This is intentionally distinct from
+/// `pseudoSelectivity`: that coarse fallback is used only when the histogram
+/// collection has no columns/indexes (or more than 63 predicates). A normal
+/// unanalyzed table still builds ranges, so `k >= 1 AND k <= 3` is one
+/// bounded range (`1/pseudoBetweenRate`), not two unrelated `1/3` guesses.
+fn pseudo_range_filter_selectivity(
+    source: &super::data_source::DataSource,
+    table_stats: &StatsInfo,
+    conditions: &[Expression],
+    schema: &Schema,
+) -> Option<f64> {
+    if conditions.is_empty() || table_stats.row_count() == 0.0 {
+        return Some(1.0);
+    }
+    if conditions.len() > 63 {
+        return None;
+    }
+
+    let rows = table_stats.row_count();
+    let mut nodes = Vec::new();
+    for column in &schema.columns {
+        let field_type = column.ret_type.as_ref()?;
+        let (access, _) =
+            crate::ranger::detacher::detach_conds_for_column(conditions, column, true);
+        if access.is_empty() {
+            continue;
+        }
+        let range_result = crate::ranger::ranger::build_column_range(
+            &access,
+            field_type,
+            crate::ranger::checker::UNSPECIFIED_LENGTH,
+            0,
+        )
+        .ok()?;
+        let mask = covered_condition_mask(conditions, &range_result.access_conds);
+        if mask == 0 {
+            continue;
+        }
+        let count =
+            crate::ranger::stats_bridge::pseudo_count_by_column_ranges(&range_result.ranges, rows);
+        nodes.push(PseudoRangeSelectivityNode {
+            mask,
+            selectivity: count / rows,
+            preferred_path: source
+                .handle_cols
+                .iter()
+                .any(|handle| handle.unique_id == column.unique_id),
+            num_columns: 1,
+            id: column.unique_id,
+        });
+    }
+
+    for index in source
+        .indexes
+        .iter()
+        .filter(|index| index.is_public && !index.is_multi_valued && !index.is_columnar)
+    {
+        let resolved = index
+            .columns
+            .iter()
+            .map_while(|index_column| {
+                source
+                    .schema_column_for_index_column(index_column)
+                    .cloned()
+                    .map(|column| (column, index_column.length))
+            })
+            .collect::<Vec<_>>();
+        if resolved.is_empty() {
+            continue;
+        }
+        let index_columns = resolved
+            .iter()
+            .map(|(column, _)| column.clone())
+            .collect::<Vec<_>>();
+        let lengths = resolved
+            .iter()
+            .map(|(_, length)| *length)
+            .collect::<Vec<_>>();
+        let detached = crate::ranger::detacher::detach_cond_and_build_range_for_index(
+            conditions,
+            &index_columns,
+            &lengths,
+            0,
+        )
+        .ok()?;
+        let mask = covered_condition_mask(conditions, &detached.access_conds);
+        if mask == 0 {
+            continue;
+        }
+        let unique_columns =
+            (index.unique && resolved.len() == index.columns.len()).then_some(index.columns.len());
+        let count = crate::ranger::stats_bridge::pseudo_count_by_index_ranges(
+            &detached.ranges,
+            rows,
+            unique_columns,
+        );
+        nodes.push(PseudoRangeSelectivityNode {
+            mask,
+            selectivity: count / rows,
+            preferred_path: true,
+            num_columns: index.columns.len(),
+            id: index.id,
+        });
+    }
+
+    // Go `GetUsableSetsByGreedy`: primary/index paths outrank plain-column
+    // nodes, then coverage, fewer columns, lower selectivity, and stable id.
+    nodes.sort_by_key(|node| (node.preferred_path, node.id));
+    let mut remaining = (1_u64 << conditions.len()) - 1;
+    let mut selectivity = 1.0_f64;
+    loop {
+        let mut best: Option<PseudoRangeSelectivityNode> = None;
+        for node in &nodes {
+            if node.mask == 0 || node.mask & remaining != node.mask {
+                continue;
+            }
+            let better = best.is_none_or(|incumbent| {
+                node.preferred_path > incumbent.preferred_path
+                    || (node.preferred_path == incumbent.preferred_path
+                        && (node.mask.count_ones() > incumbent.mask.count_ones()
+                            || (node.mask.count_ones() == incumbent.mask.count_ones()
+                                && (node.num_columns < incumbent.num_columns
+                                    || (node.num_columns == incumbent.num_columns
+                                        && node.selectivity < incumbent.selectivity)))))
+            });
+            if better {
+                best = Some(*node);
+            }
+        }
+        let Some(best) = best else {
+            break;
+        };
+        remaining &= !best.mask;
+        selectivity *= best.selectivity;
+    }
+    if remaining != 0 {
+        // Go applies the minimum default ONCE to all still-uncovered CNF
+        // items, rather than multiplying 0.8 once per item.
+        selectivity *= crate::cost_factors::SELECTION_FACTOR;
+    }
+    Some(selectivity.max(1.0 / rows.max(1.0)))
 }
 
 /// Replaces `node`'s OWN schema, when it has one.
@@ -147,12 +369,14 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
             // Go `LogicalJoin.PredicatePushDown` (`logical_join.go:171`).
             LogicalPlan::Join(op) => {
                 let opts = SubstituteOptions::new(self.ctx.builder);
+                let left_schema = schemas.first().unwrap_or(&own_schema);
+                let right_schema = schemas.get(1).unwrap_or(&own_schema);
                 let split = op.predicate_push_down_local(
                     predicates,
-                    schemas.first().unwrap_or(&own_schema),
-                    schemas.get(1).unwrap_or(&own_schema),
+                    left_schema,
+                    right_schema,
                     &opts,
-                    |conds| apply_predicate_simplification(self.ctx, conds),
+                    |conds| super::rule::apply_predicate_simplification_for_join(self.ctx, conds),
                 );
                 if let Some(conds) = &split.dual_conditions {
                     if let Some(dual) =
@@ -233,17 +457,19 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
             }
             // Go `DataSource.PredicatePushDown` (`logical_datasource.go:135`).
             //
-            // NARROWING: Go splits `predicates` with
-            // `expression.PushDownExprs(pushDownCtx, predicates, kv.UnSpecified)`,
-            // which consults the store's function whitelist and the session's
-            // expression-pushdown blacklist. Neither is reachable from here, so
-            // NOTHING is claimed as pushable: every predicate is recorded in
-            // `AllConds` (which is what column pruning reads) and handed back to
-            // the parent, so the filter is still applied — one level up rather
-            // than in the coprocessor. That direction is safe; the opposite
-            // would drop a filter the store cannot evaluate.
+            // Go splits `predicates` with
+            // `expression.PushDownExprs(pushDownCtx, predicates, kv.UnSpecified)`.
+            // The TiKV expression whitelist is the dependency-closed half of
+            // that decision; session blacklist entries are applied later by
+            // the live executor when it negotiates the scan. Keep unsupported
+            // expressions above the source and let supported expressions grow
+            // the DataSource ranges and statistics used by physical planning.
             LogicalPlan::DataSource(op) => {
-                Descend::Stop(op.predicate_push_down_local(Vec::new(), predicates))
+                let (pushable, not_pushable): (Vec<_>, Vec<_>) =
+                    predicates.into_iter().partition(|predicate| {
+                        crate::pushdown::can_exprs_push_down_tikv(std::slice::from_ref(predicate))
+                    });
+                Descend::Stop(op.predicate_push_down_local(pushable, not_pushable))
             }
             // Go `LogicalTableDual.PredicatePushDown`
             // (`logical_table_dual.go:73`).
@@ -739,8 +965,12 @@ impl OwnedRewrite for PushDownTopN<'_> {
                         if incoming.is_limit() {
                             incoming.by_items = op.by_items.clone();
                         }
-                        self.stash.push(PendingTopN::ReplaceWithChild(Some(incoming)));
-                        Descend::Children(vec![])
+                        // Go returns `ls.Children()[0].PushDownTopN(topN)`:
+                        // the Sort disappears and the TopN keeps travelling
+                        // through the child instead of being reattached to an
+                        // untouched subtree.
+                        self.stash.push(PendingTopN::ReplaceWithChild(None));
+                        Descend::Children(vec![Some(incoming)])
                     }
                 }
             }
@@ -821,7 +1051,11 @@ impl OwnedRewrite for PushDownTopN<'_> {
                     self.stash.push(PendingTopN::Nothing);
                     return Descend::Children(vec![None; child_count.max(1)]);
                 };
-                if op.exprs.iter().any(tidb_expr::evaluator::has_get_set_var_func) {
+                if op
+                    .exprs
+                    .iter()
+                    .any(tidb_expr::evaluator::has_get_set_var_func)
+                {
                     self.stash.push(PendingTopN::Reattach(incoming));
                     return Descend::Children(vec![None; child_count]);
                 }
@@ -849,7 +1083,11 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 }
                 // A column with ID 0 that only THIS projection produces cannot
                 // enter the child; keep the TopN above.
-                let child_schema = op.base.children().first().and_then(super::LogicalPlan::schema);
+                let child_schema = op
+                    .base
+                    .children()
+                    .first()
+                    .and_then(super::LogicalPlan::schema);
                 let blocked_by_projection = substituted_items.iter().any(|expr| {
                     extract_columns(expr).iter().any(|col| {
                         col.id == 0
@@ -888,9 +1126,9 @@ impl OwnedRewrite for PushDownTopN<'_> {
                     | LogicalJoinType::LeftOuterSemi
                     | LogicalJoinType::AntiLeftOuterSemi => Some(0usize),
                     LogicalJoinType::RightOuter => Some(1usize),
-                    LogicalJoinType::Inner
-                    | LogicalJoinType::Semi
-                    | LogicalJoinType::AntiSemi => None,
+                    LogicalJoinType::Inner | LogicalJoinType::Semi | LogicalJoinType::AntiSemi => {
+                        None
+                    }
                 };
                 let Some(outer_idx) = outer_idx else {
                     self.stash.push(match topn {
@@ -914,7 +1152,9 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 // cannot enter that child and just re-attaches above.
                 let by_item_cols_fit_child = child_schema.as_ref().is_some_and(|schema| {
                     topn.by_items.iter().all(|item| {
-                        extract_columns(&item.expr).iter().all(|col| schema.contains(col))
+                        extract_columns(&item.expr)
+                            .iter()
+                            .all(|col| schema.contains(col))
                     })
                 });
                 if !by_item_cols_fit_child {
@@ -926,16 +1166,14 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 }
                 let inner_idx = 1 - outer_idx;
                 let (left_keys, right_keys, _is_null_eq, has_null_eq) = op.get_join_keys();
-                let inner_keys = if outer_idx == 0 { right_keys } else { left_keys };
-                #[allow(clippy::diverging_sub_expression)]
-                eprintln!(
-                    "DBG join outer={outer_idx} inner={inner_idx} keys_l={:?} keys_r={:?} uniq={:?} child_schema={:?}",
-                    inner_keys.iter().map(|c| c.unique_id).collect::<Vec<_>>(),
-                    children.get(outer_idx).and_then(super::LogicalPlan::schema).map(|sc| sc.pk_or_uk.len()),
-                    children.get(inner_idx).and_then(super::LogicalPlan::schema).map(|sc| sc.is_unique(true, &inner_keys)),
-                    children.get(inner_idx).and_then(super::LogicalPlan::schema).map(|sc| (sc.pk_or_uk.len(), sc.nullable_uk.len()))
-                );
-                let inner_unique = children.get(inner_idx).and_then(super::LogicalPlan::schema)
+                let inner_keys = if outer_idx == 0 {
+                    right_keys
+                } else {
+                    left_keys
+                };
+                let inner_unique = children
+                    .get(inner_idx)
+                    .and_then(super::LogicalPlan::schema)
                     .is_some_and(|schema| {
                         schema.is_unique(true, &inner_keys)
                             || (!has_null_eq && schema.is_unique(false, &inner_keys))
@@ -948,13 +1186,14 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 let mut pushed = topn.clone();
                 pushed.count = count;
                 pushed.offset = offset;
-                self.stash.push(if inner_unique && topn.by_items.is_empty() {
-                    PendingTopN::Nothing
-                } else if inner_unique {
-                    PendingTopN::ReattachAsSort(topn.by_items.clone())
-                } else {
-                    PendingTopN::Reattach(Box::new(topn))
-                });
+                self.stash
+                    .push(if inner_unique && topn.by_items.is_empty() {
+                        PendingTopN::Nothing
+                    } else if inner_unique {
+                        PendingTopN::ReattachAsSort(topn.by_items.clone())
+                    } else {
+                        PendingTopN::Reattach(Box::new(topn))
+                    });
                 if child_count == 0 {
                     return Descend::Stop(());
                 }
@@ -993,7 +1232,11 @@ impl OwnedRewrite for PushDownTopN<'_> {
         }
     }
 
-    fn ascend(&mut self, mut node: LogicalPlan, _child_ups: Vec<Self::Up>) -> (LogicalPlan, Self::Up) {
+    fn ascend(
+        &mut self,
+        mut node: LogicalPlan,
+        _child_ups: Vec<Self::Up>,
+    ) -> (LogicalPlan, Self::Up) {
         match self.stash.pop() {
             Some(PendingTopN::Reattach(topn)) => (topn.attach_child(node), ()),
             Some(PendingTopN::ReattachAsSort(by_items)) => {
@@ -1238,45 +1481,55 @@ impl OwnedRewrite for DeriveStatsFold {
                      Go's initStats attaches at least the pseudo table first",
                 ))),
                 Some(table_stats) => {
-                    // Go `deriveStats4DataSource`: `ds.stats =
-                    // deriveStatsByFilter(ds, ds.PushedDownConds, nil)`. With
-                    // no histograms loaded, `Selectivity` takes the
-                    // `pseudoSelectivity` path unconditionally
-                    // (`selectivity.go:69`), which is this tier's only slice.
-                    // The expression columns resolve POSITIONALLY through the
-                    // operator's schema into its column metas, Go's
-                    // schema-to-TblCols alignment.
-                    let schema_ids: Vec<i64> = self_schema
-                        .columns
-                        .iter()
-                        .map(|col| col.unique_id)
-                        .collect();
-                    let resolve = |unique_id: i64| {
-                        let position = schema_ids.iter().position(|id| *id == unique_id)?;
-                        let column = op.columns.get(position)?;
-                        Some(crate::cardinality::pseudo::PseudoColumn {
-                            lower_name: column.name.to_lowercase(),
-                            // boundary: `mysql.HasUniKeyFlag(col.Info.GetFlag())`
-                            // — neither catalog column type carries a
-                            // unique-key flag yet, so the unique shortcut
-                            // never fires from a column. Estimates stay
-                            // HIGHER, the conservative direction.
-                            unique_key_flag: false,
-                        })
-                    };
-                    let stats = crate::cardinality::pseudo::derive_stats_by_filter_pseudo(
-                        &table_stats,
-                        &op.pushed_down_conds,
-                        &resolve,
-                        // boundary: the operator does not yet carry its index
-                        // metas, so `pseudoSelectivity`'s composite-index
-                        // branch never fires; higher estimates, conservative.
-                        &[],
-                        crate::cost_factors::SELECTION_FACTOR,
-                        crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
-                    );
-                    op.base.base.set_stats(Some(stats.clone()));
-                    StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
+                    if let Some(stats) = op.base.base.stats_info().cloned() {
+                        StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
+                    } else {
+                        // Go `deriveStats4DataSource`: `ds.stats =
+                        // deriveStatsByFilter(ds, ds.PushedDownConds, nil)`.
+                        let schema_ids: Vec<i64> = self_schema
+                            .columns
+                            .iter()
+                            .map(|col| col.unique_id)
+                            .collect();
+                        let resolve = |unique_id: i64| {
+                            let position = schema_ids.iter().position(|id| *id == unique_id)?;
+                            let column = op.columns.get(position)?;
+                            Some(crate::cardinality::pseudo::PseudoColumn {
+                                lower_name: column.name.to_lowercase(),
+                                unique_key_flag: false,
+                            })
+                        };
+                        let range_selectivity = if op.table_scan_penalty.pseudo_stats {
+                            pseudo_range_filter_selectivity(
+                                op,
+                                &table_stats,
+                                &op.pushed_down_conds,
+                                &self_schema,
+                            )
+                        } else {
+                            analyzed_filter_selectivity(&table_stats, &op.pushed_down_conds)
+                        };
+                        let stats = range_selectivity.map_or_else(
+                            || {
+                                crate::cardinality::pseudo::derive_stats_by_filter_pseudo(
+                                    &table_stats,
+                                    &op.pushed_down_conds,
+                                    &resolve,
+                                    &[],
+                                    crate::cost_factors::SELECTION_FACTOR,
+                                    crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+                                )
+                            },
+                            |selectivity| {
+                                table_stats.scale(
+                                    selectivity,
+                                    crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+                                )
+                            },
+                        );
+                        op.base.base.set_stats(Some(stats.clone()));
+                        StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
+                    }
                 }
             },
             LogicalPlan::Selection(op) => StatsOutcome::Done(

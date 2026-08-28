@@ -8,6 +8,262 @@
 
 use super::*;
 
+/// A prepared SELECT cache retains the complete physical operator tree, not
+/// any one execution's rows or parameter bounds. Rebinding two different
+/// ranges must match ordinary planning for every root shape in the sysbench
+/// mix.
+#[test]
+fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
+    let mut catalog = Catalog::default();
+    let environment = PreparedPlanCacheEnvironment::default();
+    crate::run_create_table_on(
+        "CREATE TABLE range_cache (id BIGINT PRIMARY KEY, k BIGINT NOT NULL, c CHAR(8) NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO range_cache VALUES (1,10,'b'),(2,20,'a'),(3,30,'b'),(4,40,'c')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE range_cache_dim (id BIGINT PRIMARY KEY, label CHAR(8) NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO range_cache_dim VALUES (1,'one'),(2,'two'),(3,'three'),(4,'four')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+
+    let cases = [
+        (
+            "SELECT c FROM range_cache WHERE id BETWEEN ? AND ?",
+            "SELECT c FROM range_cache WHERE id BETWEEN 2 AND 3",
+            "SELECT c FROM range_cache WHERE id BETWEEN 1 AND 4",
+        ),
+        (
+            "SELECT c FROM range_cache WHERE id BETWEEN ? AND ? ORDER BY c",
+            "SELECT c FROM range_cache WHERE id BETWEEN 2 AND 3 ORDER BY c",
+            "SELECT c FROM range_cache WHERE id BETWEEN 1 AND 4 ORDER BY c",
+        ),
+        (
+            "SELECT DISTINCT c FROM range_cache WHERE id BETWEEN ? AND ? ORDER BY c",
+            "SELECT DISTINCT c FROM range_cache WHERE id BETWEEN 2 AND 3 ORDER BY c",
+            "SELECT DISTINCT c FROM range_cache WHERE id BETWEEN 1 AND 4 ORDER BY c",
+        ),
+        (
+            "SELECT SUM(k) FROM range_cache WHERE id BETWEEN ? AND ?",
+            "SELECT SUM(k) FROM range_cache WHERE id BETWEEN 2 AND 3",
+            "SELECT SUM(k) FROM range_cache WHERE id BETWEEN 1 AND 4",
+        ),
+        (
+            "SELECT c, SUM(k) FROM range_cache WHERE id BETWEEN ? AND ? GROUP BY c ORDER BY c",
+            "SELECT c, SUM(k) FROM range_cache WHERE id BETWEEN 2 AND 3 GROUP BY c ORDER BY c",
+            "SELECT c, SUM(k) FROM range_cache WHERE id BETWEEN 1 AND 4 GROUP BY c ORDER BY c",
+        ),
+        (
+            "SELECT r.id, d.label FROM range_cache r JOIN range_cache_dim d ON r.id = d.id \
+             WHERE r.id BETWEEN ? AND ? ORDER BY r.id",
+            "SELECT r.id, d.label FROM range_cache r JOIN range_cache_dim d ON r.id = d.id \
+             WHERE r.id BETWEEN 2 AND 3 ORDER BY r.id",
+            "SELECT r.id, d.label FROM range_cache r JOIN range_cache_dim d ON r.id = d.id \
+             WHERE r.id BETWEEN 1 AND 4 ORDER BY r.id",
+        ),
+    ];
+    for (prepared, first_sql, second_sql) in cases {
+        let statement = tidb_parser::parse(prepared).unwrap();
+        let plan = std::sync::Arc::new(
+            build_prepared_select_plan(
+                &statement,
+                2,
+                &catalog,
+                DEFAULT_DATABASE,
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap_or_else(|| panic!("{prepared} should admit a prepared SELECT cache")),
+        );
+        for (execution_index, (values, ordinary)) in [
+            ([Datum::Int(2), Datum::Int(3)], first_sql),
+            ([Datum::Int(1), Datum::Int(4)], second_sql),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let expected =
+                run_select_on(ordinary, &catalog, &crate::StmtContext::for_query()).unwrap();
+            let execution = plan
+                .bind(
+                    &values,
+                    &catalog,
+                    DEFAULT_DATABASE,
+                    &crate::StmtContext::for_query(),
+                    &environment,
+                )
+                .expect("integer bounds bind");
+            assert_eq!(execution.cache_hit(), execution_index != 0);
+            let (_, actual) = run_prepared_select(
+                &execution,
+                &mut catalog,
+                DEFAULT_DATABASE,
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap()
+            .expect("the schema is unchanged");
+            assert_eq!(actual, expected, "{prepared} with {values:?}");
+        }
+    }
+
+    // A cache hit must also rebind parameter markers retained by a physical
+    // Selection, not only the markers consumed into scan ranges.
+    let prepared = "SELECT id FROM range_cache \
+                    WHERE id BETWEEN ? AND ? AND c = ? ORDER BY id";
+    let statement = tidb_parser::parse(prepared).unwrap();
+    let plan = std::sync::Arc::new(
+        build_prepared_select_plan(
+            &statement,
+            3,
+            &catalog,
+            DEFAULT_DATABASE,
+            &crate::StmtContext::for_query(),
+        )
+        .expect("the shared cache admits a range with a residual filter"),
+    );
+    for (values, ordinary) in [
+        (
+            vec![
+                Datum::Int(1),
+                Datum::Int(4),
+                Datum::String(tidb_datatype::StringDatum::new(
+                    b"b".to_vec(),
+                    tidb_datatype::Collation::Utf8Mb4Bin,
+                )),
+            ],
+            "SELECT id FROM range_cache WHERE id BETWEEN 1 AND 4 AND c = 'b' ORDER BY id",
+        ),
+        (
+            vec![
+                Datum::Int(1),
+                Datum::Int(4),
+                Datum::String(tidb_datatype::StringDatum::new(
+                    b"c".to_vec(),
+                    tidb_datatype::Collation::Utf8Mb4Bin,
+                )),
+            ],
+            "SELECT id FROM range_cache WHERE id BETWEEN 1 AND 4 AND c = 'c' ORDER BY id",
+        ),
+    ] {
+        let expected = run_select_on(ordinary, &catalog, &crate::StmtContext::for_query()).unwrap();
+        let execution = plan
+            .bind(
+                &values,
+                &catalog,
+                DEFAULT_DATABASE,
+                &crate::StmtContext::for_query(),
+                &environment,
+            )
+            .expect("residual values bind");
+        let (_, actual) = run_prepared_select(
+            &execution,
+            &mut catalog,
+            DEFAULT_DATABASE,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap()
+        .expect("the schema is unchanged");
+        assert_eq!(actual, expected, "{prepared} with {values:?}");
+    }
+
+    // Go includes parameter types and parameterized LIMIT values in distinct
+    // cache keys. Variants coexist; returning to an earlier key is a hit.
+    let statement = tidb_parser::parse("SELECT id FROM range_cache ORDER BY id LIMIT ?").unwrap();
+    let plan = std::sync::Arc::new(
+        build_prepared_select_plan(
+            &statement,
+            1,
+            &catalog,
+            DEFAULT_DATABASE,
+            &crate::StmtContext::for_query(),
+        )
+        .expect("a parameterized LIMIT is cacheable"),
+    );
+    for (values, hit) in [
+        (vec![Datum::Int(2)], false),
+        (vec![Datum::Int(3)], false),
+        (vec![Datum::Int(2)], true),
+        (vec![Datum::UInt(2)], false),
+        (vec![Datum::UInt(2)], true),
+    ] {
+        let execution = plan
+            .bind(
+                &values,
+                &catalog,
+                DEFAULT_DATABASE,
+                &crate::StmtContext::for_query(),
+                &environment,
+            )
+            .unwrap_or_else(|| panic!("the LIMIT value should bind: {values:?}"));
+        assert_eq!(execution.cache_hit(), hit, "values={values:?}");
+    }
+    assert!(plan
+        .bind(
+            &[Datum::UInt(10_001)],
+            &catalog,
+            DEFAULT_DATABASE,
+            &crate::StmtContext::for_query(),
+            &environment,
+        )
+        .is_none());
+
+    // A plan-affecting session-state change moves Go's NewPlanCacheKey.
+    let changed_environment =
+        PreparedPlanCacheEnvironment::new("ANSI_QUOTES".to_owned(), "+00:00".to_owned(), 1);
+    let first_changed = plan
+        .bind(
+            &[Datum::Int(2)],
+            &catalog,
+            DEFAULT_DATABASE,
+            &crate::StmtContext::for_query(),
+            &changed_environment,
+        )
+        .expect("the changed environment replans");
+    assert!(!first_changed.cache_hit());
+    let second_changed = plan
+        .bind(
+            &[Datum::Int(2)],
+            &catalog,
+            DEFAULT_DATABASE,
+            &crate::StmtContext::for_query(),
+            &changed_environment,
+        )
+        .expect("the changed environment has its own entry");
+    assert!(second_changed.cache_hit());
+
+    let statement = tidb_parser::parse(
+        "SELECT d.id FROM (SELECT id FROM range_cache) d \
+         JOIN range_cache_dim x ON d.id = x.id WHERE d.id > ?",
+    )
+    .unwrap();
+    let plan = build_prepared_select_plan(
+        &statement,
+        1,
+        &catalog,
+        DEFAULT_DATABASE,
+        &crate::StmtContext::for_query(),
+    )
+    .expect("derived-table SELECT is admitted");
+    assert_eq!(
+        plan.table_names(),
+        &[
+            (DEFAULT_DATABASE.to_owned(), "range_cache".to_owned()),
+            (DEFAULT_DATABASE.to_owned(), "range_cache_dim".to_owned()),
+        ]
+    );
+}
+
 /// Go's TryFastPlan: a single-table SELECT whose WHERE pins the handle or
 /// a whole unique index reads one row instead of scanning. The results
 /// must be identical to the scan in every case, including the cases that
@@ -294,14 +550,25 @@ fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
     .unwrap();
     let stored_projection =
         tidb_parser::parse("SELECT base FROM generated_point WHERE id = ?").unwrap();
-    assert!(
-        build_prepared_point_get_plan(&stored_projection, 1, &catalog, DEFAULT_DATABASE, &Default::default()).is_some()
-    );
+    assert!(build_prepared_point_get_plan(
+        &stored_projection,
+        1,
+        &catalog,
+        DEFAULT_DATABASE,
+        &Default::default()
+    )
+    .is_some());
     let generated_projection =
         tidb_parser::parse("SELECT projected FROM generated_point WHERE id = ?").unwrap();
     assert!(
-        build_prepared_point_get_plan(&generated_projection, 1, &catalog, DEFAULT_DATABASE, &Default::default())
-            .is_none(),
+        build_prepared_point_get_plan(
+            &generated_projection,
+            1,
+            &catalog,
+            DEFAULT_DATABASE,
+            &Default::default()
+        )
+        .is_none(),
         "a generated-column projection needs the full statement context"
     );
 }
@@ -342,13 +609,10 @@ fn prepared_fast_point_get_binds_common_handle_without_cloning_template() {
     assert_eq!(datum_text_for_test(&fast.1[0][1]), "value-1");
 }
 
-
-
-/// The prepared point cache answers a SECONDARY-INDEX prefix pin with one
-/// closed index range, fetching each entry's row and filtering the residual
-/// equalities on the decoded rows -- Go's cached IndexLookUp shape.
+/// Go's prepared point cache admits a complete non-prefix UNIQUE secondary
+/// key and retains residual predicates on the fetched row.
 #[test]
-fn prepared_point_cache_answers_a_secondary_index_prefix() {
+fn prepared_point_cache_answers_a_unique_secondary_index() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
         "CREATE TABLE idx_pin (\
@@ -356,7 +620,7 @@ fn prepared_point_cache_answers_a_secondary_index_prefix() {
             a VARCHAR(8) NOT NULL COLLATE utf8mb4_bin, \
             b VARCHAR(8) NOT NULL COLLATE utf8mb4_bin, \
             v BIGINT NOT NULL, \
-            INDEX ia (a, b))",
+            UNIQUE INDEX ia (a, b))",
         &mut catalog,
     )
     .unwrap();
@@ -371,11 +635,11 @@ fn prepared_point_cache_answers_a_secondary_index_prefix() {
         tidb_parser::parse("SELECT id, v FROM idx_pin WHERE a = ? AND b = ? AND v = ?").unwrap();
     let plan = std::sync::Arc::new(
         build_prepared_point_get_plan(&stmt, 3, &catalog, DEFAULT_DATABASE, &Default::default())
-            .expect("an index-prefix pin is a reusable prepared plan"),
+            .expect("a complete unique-index pin is a reusable prepared plan"),
     );
     assert!(matches!(
         plan.target,
-        crate::driver::access::PreparedPointTarget::IndexPrefix { .. }
+        crate::driver::access::PreparedPointTarget::UniqueIndex { .. }
     ));
 
     // The same answer the ordinary scan gives.
@@ -387,74 +651,83 @@ fn prepared_point_cache_answers_a_secondary_index_prefix() {
         &crate::StmtContext::for_query(),
     )
     .unwrap();
-    let got = cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Bytes(b"a1".to_vec()), Datum::Bytes(b"b2".to_vec()), Datum::Int(20)]);
+    let got = cached_rows(
+        &plan,
+        &mut catalog,
+        &ctx,
+        &zone,
+        &[
+            Datum::Bytes(b"a1".to_vec()),
+            Datum::Bytes(b"b2".to_vec()),
+            Datum::Int(20),
+        ],
+    );
     assert_eq!(got.len(), 1);
-    assert_eq!(datum_text_for_test(&got[0][0]), datum_text_for_test(&expected[0][0]));
+    assert_eq!(
+        datum_text_for_test(&got[0][0]),
+        datum_text_for_test(&expected[0][0])
+    );
 
     // A residual that no row satisfies reads nothing even though the index
     // range itself matched.
-    let got = cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Bytes(b"a1".to_vec()), Datum::Bytes(b"b1".to_vec()), Datum::Int(999)]);
+    let got = cached_rows(
+        &plan,
+        &mut catalog,
+        &ctx,
+        &zone,
+        &[
+            Datum::Bytes(b"a1".to_vec()),
+            Datum::Bytes(b"b1".to_vec()),
+            Datum::Int(999),
+        ],
+    );
     assert!(got.is_empty());
 
     // A NULL pin matches no row under SQL semantics and reads nothing.
-    assert!(cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Null, Datum::Bytes(b"b1".to_vec()), Datum::Int(10)]).is_empty());
+    assert!(cached_rows(
+        &plan,
+        &mut catalog,
+        &ctx,
+        &zone,
+        &[Datum::Null, Datum::Bytes(b"b1".to_vec()), Datum::Int(10)]
+    )
+    .is_empty());
 }
 
-/// A leading prefix of a CLUSTERED primary key narrows the ROW-KEY space to
-/// closed record ranges; every unpinned equality filters the decoded rows.
+/// Go `tryPointGetPlan` rejects partial and non-unique keys. Those statements
+/// are cached by the general physical-plan tree instead of a capped prefix
+/// scan hidden inside the point fast path.
 #[test]
-fn prepared_point_cache_answers_a_clustered_key_prefix() {
+fn prepared_point_cache_declines_partial_and_non_unique_keys() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
-        "CREATE TABLE clustered_pin (\
+        "CREATE TABLE partial_pin (\
             custacc VARCHAR(8) NOT NULL COLLATE utf8mb4_bin, \
             seq BIGINT NOT NULL, \
             stsrcd VARCHAR(4) NOT NULL COLLATE utf8mb4_bin, \
             v BIGINT NOT NULL, \
-            PRIMARY KEY (custacc, seq) CLUSTERED)",
+            PRIMARY KEY (custacc, seq) CLUSTERED, \
+            INDEX by_status (stsrcd, v))",
         &mut catalog,
     )
     .unwrap();
-    run_insert_on(
-        "INSERT INTO clustered_pin VALUES ('c1',1,'1',100),('c1',2,'1',200),('c2',1,'1',300)",
-        &mut catalog,
-        &crate::StmtContext::for_query(),
-    )
-    .unwrap();
-    // The prefix guard reads loaded statistics; a partial key pin without
-    // them declines, so give the table analyzed NDVs like production has.
-    scale_analyzed_tpcc_table(
-        &mut catalog,
-        "clustered_pin",
-        1_000,
-        &[("custacc", 2), ("seq", 1_000), ("stsrcd", 1), ("v", 1_000)],
-        &crate::StmtContext::for_query(),
-    );
-
-    // Every residual equality must survive into the projection -- the cached
-    // read filters decoded OUTPUT rows only.
-    let stmt = tidb_parser::parse(
-        "SELECT seq, v, stsrcd FROM clustered_pin WHERE custacc = ? AND stsrcd = ?",
-    )
-    .unwrap();
-    let plan = std::sync::Arc::new(
-        build_prepared_point_get_plan(&stmt, 2, &catalog, DEFAULT_DATABASE, &Default::default())
-            .expect("a clustered-key prefix pin is a reusable prepared plan"),
-    );
-    assert!(matches!(
-        plan.target,
-        crate::driver::access::PreparedPointTarget::ClusteredPrefix
-    ));
-
-    let zone: tidb_datatype::SessionTimeZone = Default::default();
-    let ctx = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone.clone());
-    let rows = cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Bytes(b"c1".to_vec()), Datum::Bytes(b"1".to_vec())]);
-    assert_eq!(rows.len(), 2);
-
-    // The residual `stsrcd = ?` filters the decoded rows of the range: a
-    // value no row under `custacc = 'c2'` carries reads nothing.
-    let rows = cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Bytes(b"c2".to_vec()), Datum::Bytes(b"9".to_vec())]);
-    assert!(rows.is_empty());
+    for sql in [
+        "SELECT seq, v FROM partial_pin WHERE custacc = ?",
+        "SELECT seq, v FROM partial_pin WHERE stsrcd = ? AND v = ?",
+    ] {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        assert!(
+            build_prepared_point_get_plan(
+                &stmt,
+                sql.matches('?').count(),
+                &catalog,
+                DEFAULT_DATABASE,
+                &Default::default(),
+            )
+            .is_none(),
+            "non-Go point fast path admitted {sql}",
+        );
+    }
 }
 
 /// Binds one EXECUTE of a prepared point plan and drains its cached read.
@@ -471,7 +744,6 @@ fn cached_rows(
         .expect("the cached read")
         .1
 }
-
 
 /// `col IS NULL` beside the pins is a row-level residual: it never pins a
 /// key, and the cached read answers only rows whose decoded slot is NULL.
@@ -503,17 +775,27 @@ fn prepared_point_cache_answers_an_is_null_residual() {
     );
 
     let stmt = tidb_parser::parse(
-        "SELECT alwcobj, alwcnum, lmtdms, flgval FROM null_pin WHERE alwcobj = ? AND lmtdms IS NULL AND flgval = ?",
+        "SELECT alwcobj, alwcnum, lmtdms, flgval FROM null_pin WHERE alwcobj = ? AND alwcnum = ? AND lmtdms IS NULL AND flgval = ?",
     )
     .unwrap();
     let plan = std::sync::Arc::new(
-        build_prepared_point_get_plan(&stmt, 2, &catalog, DEFAULT_DATABASE, &Default::default())
+        build_prepared_point_get_plan(&stmt, 3, &catalog, DEFAULT_DATABASE, &Default::default())
             .expect("an equality pin beside IS NULL is a reusable prepared plan"),
     );
 
     let zone: tidb_datatype::SessionTimeZone = Default::default();
     let ctx = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone.clone());
-    let rows = cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Bytes(b"o1".to_vec()), Datum::Bytes(b"1".to_vec())]);
+    let rows = cached_rows(
+        &plan,
+        &mut catalog,
+        &ctx,
+        &zone,
+        &[
+            Datum::Bytes(b"o1".to_vec()),
+            Datum::Bytes(b"n1".to_vec()),
+            Datum::Bytes(b"1".to_vec()),
+        ],
+    );
     assert_eq!(rows.len(), 1);
     assert_eq!(datum_text_for_test(&rows[0][1]), "n1");
 }
@@ -1108,9 +1390,8 @@ fn fast_point_writes_remove_only_the_consumed_selection_like_go() {
 /// The fast plan REFUSES this statement (a handle pair plus an extra
 /// conjunct, `tryPointGetPlan`'s `else if handlePair.value.Kind() !=
 /// KindNull` -- ported in `try_point_get`), so reaching the same tree PROVES
-/// the ordinary chooser picked the table path: before
-/// `access_cost::heuristic_point_path` this statement read the unique index
-/// (`IndexRangeScan index:i(i, j) range:[1 1,1 1]`).
+/// the shared ordinary planner picked the same table path rather than the
+/// unique index (`IndexRangeScan index:i(i, j) range:[1 1,1 1]`).
 #[test]
 fn a_handle_point_with_an_extra_conjunct_wins_over_the_unique_index_like_go() {
     use crate::explain::{explain_update_stmt, ExplainFormat};
@@ -1270,17 +1551,20 @@ fn residual_selection_uses_logical_rows_over_access_rows() {
         panic!("customer is not a KV table");
     };
     customer.set_common_handle_offsets(vec![2, 1, 0]);
-    customer.add_index(crate::kv_table::KvIndex {
-        id: 2,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
-        column_offsets: vec![2, 1, 0],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
+    customer.add_index(
+        crate::kv_table::KvIndex {
+            id: 2,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+            column_offsets: vec![2, 1, 0],
+            visible: true,
+            global: false,
+            clustered_primary: false,
+        },
+        false,
+    );
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
         "INSERT INTO customer VALUES \

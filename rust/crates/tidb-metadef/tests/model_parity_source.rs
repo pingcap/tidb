@@ -23,8 +23,8 @@ use tidb_ast::CiString;
 use tidb_model::{
     find_index_by_columns_for_foreign_key, get_job_ver_in_use, is_index_prefix_covered,
     is_index_prefix_covered_for_foreign_key, ts_convert_2_time, ColumnInfo, DBInfo, DDLReorgMeta,
-    GoShared, GoSharedPointerSlice, HistoryInfo, IndexColumn, IndexInfo, Job, TableInfo,
-    TruncateTableArgs, TTLInfo, DEFAULT_TTL_JOB_INTERVAL, OLD_DEFAULT_TTL_JOB_INTERVAL,
+    GoShared, GoSharedPointerSlice, HistoryInfo, IndexColumn, IndexInfo, Job, TTLInfo, TableInfo,
+    TruncateTableArgs, DEFAULT_TTL_JOB_INTERVAL, OLD_DEFAULT_TTL_JOB_INTERVAL,
 };
 
 fn new_column_for_test(id: i64, offset: i64) -> GoShared<ColumnInfo> {
@@ -84,24 +84,37 @@ fn is_index_prefix_covered_prefix_matrix_and_fk_partial_conditions() {
                 // c0/c1/c2 handles moved above; rebuild lookups by offset.
                 &(0..3).map(col).collect::<Vec<_>>(),
             ))),
-            Some(GoShared::new(new_index_for_test(
-                1,
-                &[col(4), col(2)],
-            ))),
+            Some(GoShared::new(new_index_for_test(1, &[col(4), col(2)]))),
         ]),
         ..Default::default()
     };
     let i0 = tbl.indices.get(0).unwrap();
     let i1 = tbl.indices.get(1).unwrap();
 
-    assert!(is_index_prefix_covered(&tbl, &i0.read(), &[CiString::new("c_0")]));
     assert!(is_index_prefix_covered(
         &tbl,
         &i0.read(),
-        &[CiString::new("c_0"), CiString::new("c_1"), CiString::new("c_2")]
+        &[CiString::new("c_0")]
     ));
-    assert!(!is_index_prefix_covered(&tbl, &i0.read(), &[CiString::new("c_1")]));
-    assert!(!is_index_prefix_covered(&tbl, &i0.read(), &[CiString::new("c_2")]));
+    assert!(is_index_prefix_covered(
+        &tbl,
+        &i0.read(),
+        &[
+            CiString::new("c_0"),
+            CiString::new("c_1"),
+            CiString::new("c_2")
+        ]
+    ));
+    assert!(!is_index_prefix_covered(
+        &tbl,
+        &i0.read(),
+        &[CiString::new("c_1")]
+    ));
+    assert!(!is_index_prefix_covered(
+        &tbl,
+        &i0.read(),
+        &[CiString::new("c_2")]
+    ));
     assert!(!is_index_prefix_covered(
         &tbl,
         &i0.read(),
@@ -113,13 +126,21 @@ fn is_index_prefix_covered_prefix_matrix_and_fk_partial_conditions() {
         &[CiString::new("c_0"), CiString::new("c_2")]
     ));
 
-    assert!(is_index_prefix_covered(&tbl, &i1.read(), &[CiString::new("c_4")]));
+    assert!(is_index_prefix_covered(
+        &tbl,
+        &i1.read(),
+        &[CiString::new("c_4")]
+    ));
     assert!(is_index_prefix_covered(
         &tbl,
         &i1.read(),
         &[CiString::new("c_4"), CiString::new("c_2")]
     ));
-    assert!(!is_index_prefix_covered(&tbl, &i0.read(), &[CiString::new("c_2")]));
+    assert!(!is_index_prefix_covered(
+        &tbl,
+        &i0.read(),
+        &[CiString::new("c_2")]
+    ));
 
     // Partial-index FK coverage: only an "IS NOT NULL" condition over the FK
     // column prefix keeps an index usable for a foreign key.
@@ -412,24 +433,22 @@ fn job_codec_round_trips_binlog_reorg_meta_and_resume_reason() {
         fk_check: tidb_model::GoField::new(true),
         ..Default::default()
     })));
-    job.binlog_info
-        .as_mut()
-        .unwrap()
-        .write()
-        .add_db_info(123, Some(GoShared::new(DBInfo {
+    job.binlog_info.as_mut().unwrap().write().add_db_info(
+        123,
+        Some(GoShared::new(DBInfo {
             id: 1,
             name: CiString::new("test_history_db"),
             ..Default::default()
-        })));
-    job.binlog_info
-        .as_mut()
-        .unwrap()
-        .write()
-        .add_table_info(123, Some(GoShared::new(TableInfo {
+        })),
+    );
+    job.binlog_info.as_mut().unwrap().write().add_table_info(
+        123,
+        Some(GoShared::new(TableInfo {
             id: 1,
             name: CiString::new("test_history_tbl"),
             ..Default::default()
-        })));
+        })),
+    );
     job.set_resume_reason(kv_disk_full);
 
     assert!(!job.is_cancelled());
@@ -503,13 +522,22 @@ fn action_type_string_names_match_go_action_map() {
             ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE,
             "modify schema charset and collate",
         ),
-        (ActionType::ACTION_ALTER_TABLE_PLACEMENT, "alter table placement"),
+        (
+            ActionType::ACTION_ALTER_TABLE_PLACEMENT,
+            "alter table placement",
+        ),
         (
             ActionType::ACTION_ALTER_TABLE_PARTITION_PLACEMENT,
             "alter table partition placement",
         ),
-        (ActionType::ACTION_ALTER_NO_CACHE_TABLE, "alter table nocache"),
-        (ActionType::ACTION_ALTER_TABLE_AFFINITY, "alter table affinity"),
+        (
+            ActionType::ACTION_ALTER_NO_CACHE_TABLE,
+            "alter table nocache",
+        ),
+        (
+            ActionType::ACTION_ALTER_TABLE_AFFINITY,
+            "alter table affinity",
+        ),
         (
             ActionType::ACTION_ALTER_TABLE_SOFT_DELETE_INFO,
             "alter soft delete info",

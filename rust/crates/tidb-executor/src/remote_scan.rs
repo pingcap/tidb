@@ -162,61 +162,11 @@ pub fn extreme_replaces(
     })
 }
 
-/// One function in a global partial aggregation. Unlike the older bounded
-/// column-offset variants, Go permits any TiKV-pushable scalar expression as
-/// an aggregate argument.
-#[derive(Clone, Debug)]
-pub struct PushdownGlobalAggregateFunction {
-    /// The aggregate function implemented by TiKV.
-    pub kind: PushdownAggregateKind,
-    /// The expression evaluated for each qualifying scan row. `None` is
-    /// `COUNT(1)`/`COUNT(*)`.
-    pub input: Option<Expression>,
-    /// The partial result column returned by TiKV.
-    pub output_type: FieldType,
-}
-
 /// One aggregation the base scan may execute inside TiKV before rows cross
 /// the network. This deliberately covers only partial stages with a typed
 /// planner representation and a corresponding TiKV DAG lowering.
 #[derive(Clone, Debug)]
 pub enum PushdownPartialAggregate {
-    /// A partial `COUNT`; the root stage sums the per-region counts.
-    Count {
-        /// Offset in [`PushdownScanRequest::columns`], or `None` for
-        /// `COUNT(*)`/`COUNT(1)` whose input is the constant one.
-        input_offset: Option<usize>,
-        /// The partial count column returned by TiKV.
-        output_type: FieldType,
-    },
-    /// A partial `SUM(column)`; the root stage sums the per-region sums.
-    Sum {
-        /// Offset in [`PushdownScanRequest::columns`].
-        input_offset: usize,
-        /// The partial sum column returned by TiKV.
-        output_type: FieldType,
-    },
-    /// A partial hash aggregation with one group key and no aggregate
-    /// functions, used by one-column `SELECT DISTINCT`.
-    GroupBy {
-        /// Offset in [`PushdownScanRequest::columns`].
-        input_offset: usize,
-        /// The group-key column returned by TiKV.
-        output_type: FieldType,
-    },
-    /// A partial hash aggregation with one group key and one `SUM` function.
-    /// The partial row is returned in TiKV's aggregation-schema order:
-    /// aggregate result first, then the group key.
-    GroupBySum {
-        /// Offset of the group key in [`PushdownScanRequest::columns`].
-        group_offset: usize,
-        /// Offset of the summed column in [`PushdownScanRequest::columns`].
-        sum_offset: usize,
-        /// The partial sum column returned by TiKV.
-        sum_type: FieldType,
-        /// The group-key column returned by TiKV.
-        group_type: FieldType,
-    },
     /// A grouped partial aggregation. TiKV returns aggregate results first
     /// and group keys last, matching its aggregation-schema contract.
     Grouped {
@@ -229,11 +179,13 @@ pub enum PushdownPartialAggregate {
         /// `true` for StreamAgg over ordered input, `false` for HashAgg.
         streamed: bool,
     },
-    /// A global partial HashAgg. TiKV returns exactly one row containing the
-    /// function states, including for empty input.
+    /// A global partial aggregation. TiKV returns exactly one row containing
+    /// the function states, including for empty input.
     Global {
         /// Aggregate functions in physical output order.
-        functions: Vec<PushdownGlobalAggregateFunction>,
+        functions: Vec<PushdownAggregateFunction>,
+        /// `true` for StreamAgg over ordered input, `false` for HashAgg.
+        streamed: bool,
     },
 }
 
@@ -242,9 +194,6 @@ impl PushdownPartialAggregate {
     #[must_use]
     pub fn input_offset(&self) -> usize {
         match self {
-            Self::Count { input_offset, .. } => input_offset.unwrap_or(0),
-            Self::Sum { input_offset, .. } | Self::GroupBy { input_offset, .. } => *input_offset,
-            Self::GroupBySum { group_offset, .. } => *group_offset,
             Self::Grouped {
                 group_offsets,
                 functions,
@@ -261,7 +210,7 @@ impl PushdownPartialAggregate {
                         .next()
                 })
                 .unwrap_or(0),
-            Self::Global { functions } => functions
+            Self::Global { functions, .. } => functions
                 .iter()
                 .flat_map(|function| function.input.iter().flat_map(expression_column_offsets))
                 .next()
@@ -274,14 +223,6 @@ impl PushdownPartialAggregate {
     #[must_use]
     pub fn output_types(&self) -> Vec<FieldType> {
         match self {
-            Self::Count { output_type, .. }
-            | Self::Sum { output_type, .. }
-            | Self::GroupBy { output_type, .. } => vec![output_type.clone()],
-            Self::GroupBySum {
-                sum_type,
-                group_type,
-                ..
-            } => vec![sum_type.clone(), group_type.clone()],
             Self::Grouped {
                 group_types,
                 functions,
@@ -291,7 +232,7 @@ impl PushdownPartialAggregate {
                 .map(|function| function.output_type.clone())
                 .chain(group_types.iter().cloned())
                 .collect(),
-            Self::Global { functions } => functions
+            Self::Global { functions, .. } => functions
                 .iter()
                 .map(|function| function.output_type.clone())
                 .collect(),
@@ -302,15 +243,6 @@ impl PushdownPartialAggregate {
     #[must_use]
     pub fn input_offsets(&self) -> Vec<usize> {
         match self {
-            Self::Count { input_offset, .. } => input_offset.iter().copied().collect(),
-            Self::Sum { input_offset, .. } | Self::GroupBy { input_offset, .. } => {
-                vec![*input_offset]
-            }
-            Self::GroupBySum {
-                group_offset,
-                sum_offset,
-                ..
-            } => vec![*group_offset, *sum_offset],
             Self::Grouped {
                 group_offsets,
                 functions,
@@ -327,7 +259,7 @@ impl PushdownPartialAggregate {
                 offsets.dedup();
                 offsets
             }
-            Self::Global { functions } => {
+            Self::Global { functions, .. } => {
                 let mut offsets = functions
                     .iter()
                     .flat_map(|function| function.input.iter().flat_map(expression_column_offsets))
@@ -484,7 +416,7 @@ pub struct PushdownScanRequest {
 /// without the sink turns a failing query into a silently truncating one --
 /// strictly worse than the failure it replaced -- so no call site may thread
 /// one and forget the other.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct PushdownStatementContext {
     /// Go `StatementContext.PushDownFlags()`; see
     /// [`crate::StmtContext::push_down_flags`].
@@ -508,6 +440,19 @@ pub struct PushdownStatementContext {
     /// The `Default` is UTC, which is the zone a caller with no session behind
     /// it evaluates in.
     pub time_zone: SessionTimeZone,
+    /// Go `StmtCtx.ResourceGroupName`, copied to every DistSQL request.
+    pub resource_group_name: String,
+}
+
+impl Default for PushdownStatementContext {
+    fn default() -> Self {
+        Self {
+            push_down_flags: 0,
+            warnings: WarningCollector::default(),
+            time_zone: SessionTimeZone::default(),
+            resource_group_name: "default".to_owned(),
+        }
+    }
 }
 
 impl PushdownStatementContext {
@@ -518,12 +463,13 @@ impl PushdownStatementContext {
             push_down_flags: ctx.push_down_flags(),
             warnings: ctx.cop_warning_sink(),
             time_zone: ctx.session_zone(),
+            resource_group_name: ctx.resource_group_name().to_owned(),
         }
     }
 }
 
 /// A lazily pulled stream of snapshot rows a backend served remotely.
-pub trait PushdownRowStream: Send {
+pub trait PushdownRowStream {
     /// The next row in record-key order, as the requested columns, or `None`
     /// at the end of the answer.
     fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError>;
@@ -580,7 +526,10 @@ impl ChainedPushdownStream {
     /// Chains the parts in READ order: part 0's rows all precede part 1's.
     #[must_use]
     pub fn new(parts: Vec<Box<dyn PushdownRowStream>>) -> Box<dyn PushdownRowStream> {
-        assert!(!parts.is_empty(), "a chained stream needs at least one part");
+        assert!(
+            !parts.is_empty(),
+            "a chained stream needs at least one part"
+        );
         Box::new(ChainedPushdownStream {
             parts,
             current: 0,
@@ -1142,17 +1091,20 @@ mod tests {
     fn common_handle_fixture() -> Fixture {
         let mut fixture = fixture_with(None);
         fixture.table.set_common_handle_offsets(vec![0, 1]);
-        fixture.table.add_index(KvIndex {
-            id: 1,
-            name: "PRIMARY".to_owned(),
-            comment: String::new(),
-            unique: true,
-            column_offsets: vec![0, 1],
-            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
+        fixture.table.add_index(
+            KvIndex {
+                id: 1,
+                name: "PRIMARY".to_owned(),
+                comment: String::new(),
+                unique: true,
+                column_offsets: vec![0, 1],
+                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+                visible: true,
+                global: false,
+                clustered_primary: false,
+            },
+            false,
+        );
         fixture
     }
 

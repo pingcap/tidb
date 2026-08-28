@@ -21,11 +21,11 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use tidb_ast::Stmt;
 use tidb_exec::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
 use tidb_exec::real_tikv_analyze::ClusterAnalyzeError;
 use tidb_exec::real_tikv_ddl::ClusterDdlError;
 use tidb_exec::real_tikv_dml::ConfiguredWriteError;
-use tidb_ast::Stmt;
 use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
 use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
@@ -573,6 +573,8 @@ pub struct PreparedGeneral {
     template: Option<Stmt>,
     /// A schema-versioned point-get plan compiled at PREPARE time.
     point_get_plan: Option<std::sync::Arc<tidb_executor::PreparedPointGetPlan>>,
+    /// A prepared SELECT descriptor backed by Go-parity physical-plan cache entries.
+    select_plan: Option<std::sync::Arc<tidb_executor::PreparedSelectPlan>>,
 }
 
 impl PreparedGeneral {
@@ -585,6 +587,7 @@ impl PreparedGeneral {
             result_columns,
             template: None,
             point_get_plan: None,
+            select_plan: None,
         }
     }
 
@@ -603,6 +606,7 @@ impl PreparedGeneral {
             result_columns,
             template: Some(template),
             point_get_plan: None,
+            select_plan: None,
         }
     }
 
@@ -615,6 +619,7 @@ impl PreparedGeneral {
         result_columns: Vec<ColumnInfo>,
         template: Stmt,
         point_get_plan: Option<std::sync::Arc<tidb_executor::PreparedPointGetPlan>>,
+        select_plan: Option<std::sync::Arc<tidb_executor::PreparedSelectPlan>>,
     ) -> Self {
         Self {
             sql,
@@ -622,6 +627,7 @@ impl PreparedGeneral {
             result_columns,
             template: Some(template),
             point_get_plan,
+            select_plan,
         }
     }
 
@@ -653,10 +659,16 @@ impl PreparedGeneral {
 
     /// The immutable point-get cache candidate compiled at PREPARE time.
     #[must_use]
-    pub fn point_get_plan(
-        &self,
-    ) -> Option<&std::sync::Arc<tidb_executor::PreparedPointGetPlan>> {
+    pub fn point_get_plan(&self) -> Option<&std::sync::Arc<tidb_executor::PreparedPointGetPlan>> {
         self.point_get_plan.as_ref()
+    }
+
+    /// The immutable prepared SELECT cache descriptor.
+    #[must_use]
+    pub fn select_plan(
+        &self,
+    ) -> Option<&std::sync::Arc<tidb_executor::PreparedSelectPlan>> {
+        self.select_plan.as_ref()
     }
 }
 
@@ -2090,10 +2102,11 @@ impl std::error::Error for SqlNodeError {
 /// more than one small write and the client's delayed ACK loses that race --
 /// which is precisely what an OLTP pooler's request/response pattern produces
 /// through any proxy or tunnel hop between the peers.
-pub(crate) fn prepare_accepted_stream(stream: &TcpStream, timeout: Duration) -> Result<(), SqlNodeError> {
-    stream
-        .set_nodelay(true)
-        .map_err(SqlNodeError::Listener)?;
+pub(crate) fn prepare_accepted_stream(
+    stream: &TcpStream,
+    timeout: Duration,
+) -> Result<(), SqlNodeError> {
+    stream.set_nodelay(true).map_err(SqlNodeError::Listener)?;
     stream
         .set_nonblocking(false)
         .map_err(SqlNodeError::Listener)?;
@@ -2542,8 +2555,14 @@ mod tests {
         // hop between server and client stalls small responses behind the
         // client's delayed ACK.
         assert_eq!(server.nodelay().unwrap(), true);
-        assert_eq!(server.read_timeout().unwrap(), Some(Duration::from_secs(30)));
-        assert_eq!(server.write_timeout().unwrap(), Some(Duration::from_secs(30)));
+        assert_eq!(
+            server.read_timeout().unwrap(),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            server.write_timeout().unwrap(),
+            Some(Duration::from_secs(30))
+        );
         drop(client);
     }
 }

@@ -31,9 +31,7 @@ fn const_arg(datum: Datum) -> Expression {
     let field_type = match &datum {
         Datum::Null => FieldType::new(C::Null),
         Datum::Int(_) => FieldType::new(C::LongLong),
-        Datum::UInt(_) => {
-            FieldType::new(C::LongLong).with_added_flags(FieldTypeFlags::UNSIGNED)
-        }
+        Datum::UInt(_) => FieldType::new(C::LongLong).with_added_flags(FieldTypeFlags::UNSIGNED),
         Datum::Float32(_) | Datum::Real(_) => FieldType::new(C::Double),
         Datum::String(_) | Datum::Bytes(_) => FieldType::new(C::VarString),
         Datum::Decimal(_) => FieldType::new(C::NewDecimal),
@@ -88,9 +86,12 @@ fn go_test_if() {
         (i(0), Datum::Bytes(b"x".to_vec()), i(2), i(2)),
     ];
     for (condition, left, right, expected) in cases {
-        let value =
-            eval_as("if", vec![condition.clone(), left.clone(), right.clone()], int_ret())
-                .unwrap_or_else(|error| panic!("{condition:?}: {error:?}"));
+        let value = eval_as(
+            "if",
+            vec![condition.clone(), left.clone(), right.clone()],
+            int_ret(),
+        )
+        .unwrap_or_else(|error| panic!("{condition:?}: {error:?}"));
         assert_eq!(value, *expected, "condition {condition:?}");
     }
     // Decimal / real / numeric-string conditions.
@@ -102,12 +103,8 @@ fn go_test_if() {
         (decimal("0.1"), i(1)),
         (decimal("0.0"), i(2)),
     ] {
-        let value = eval_as(
-            "if",
-            vec![condition.clone(), i(1), i(2)],
-            int_result(),
-        )
-        .unwrap_or_else(|error| panic!("{condition:?}: {error:?}"));
+        let value = eval_as("if", vec![condition.clone(), i(1), i(2)], int_result())
+            .unwrap_or_else(|error| panic!("{condition:?}: {error:?}"));
         assert_eq!(value, expected, "condition {condition:?}");
     }
 }
@@ -120,7 +117,11 @@ fn go_test_ifnull() {
         (i(1), i(2), i(1)),
         (Datum::Null, i(2), i(2)),
         (Datum::Null, Datum::Null, Datum::Null),
-        (Datum::Bytes(b"abc".to_vec()), Datum::Null, Datum::Bytes(b"abc".to_vec())),
+        (
+            Datum::Bytes(b"abc".to_vec()),
+            Datum::Null,
+            Datum::Bytes(b"abc".to_vec()),
+        ),
     ];
     for (left, right, expected) in cases {
         let value = eval_as("ifnull", vec![left.clone(), right.clone()], int_result())
@@ -151,11 +152,9 @@ fn go_test_shifts() {
     let value = eval_as("rightshift", vec![i(123), i(2)], uint_result()).unwrap();
     assert_eq!(value, Datum::UInt(30));
     // NULL propagates.
-    assert!(
-        eval_as("leftshift", vec![Datum::Null, i(1)], uint_result())
-            .unwrap()
-            .is_null()
-    );
+    assert!(eval_as("leftshift", vec![Datum::Null, i(1)], uint_result())
+        .unwrap()
+        .is_null());
 }
 
 /// Go `TestBitXor`/`TestBitOr`/`TestBitAnd` (`builtin_op_test.go:246-436`).
@@ -189,11 +188,9 @@ fn go_test_bit_neg() {
 fn go_test_unary_not() {
     assert_eq!(eval_as("not", vec![i(1)], int_result()).unwrap(), i(0));
     assert_eq!(eval_as("not", vec![i(0)], int_result()).unwrap(), i(1));
-    assert!(
-        eval_as("not", vec![Datum::Null], int_result())
-            .unwrap()
-            .is_null()
-    );
+    assert!(eval_as("not", vec![Datum::Null], int_result())
+        .unwrap()
+        .is_null());
     assert_eq!(eval_as("not", vec![r(0.5)], int_result()).unwrap(), i(0));
     assert_eq!(eval_as("not", vec![r(0.0)], int_result()).unwrap(), i(1));
 }

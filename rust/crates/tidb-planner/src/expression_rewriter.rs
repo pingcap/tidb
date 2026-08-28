@@ -290,6 +290,43 @@ pub struct RewriterHints {
     pub prefer_agg_to_cop: bool,
 }
 
+/// Go `hint.PreferHashAgg`. Keep the source bit position because
+/// `LogicalAggregation.PreferAggType` is the same bit set, not a Rust-only
+/// classification.
+pub const PREFER_HASH_AGG: u32 = 1 << 25;
+/// Go `hint.PreferStreamAgg`.
+pub const PREFER_STREAM_AGG: u32 = 1 << 26;
+
+impl RewriterHints {
+    /// Resolves the current SELECT block's aggregation hints into the same
+    /// fields Go copies from `TableHintInfo` to every logical aggregation.
+    #[must_use]
+    pub fn from_select(select: &tidb_ast::SelectStmt) -> Self {
+        let mut hints = Self::default();
+        for hint in &select.hints {
+            match (&*hint.name, &hint.kind) {
+                ("HASH_AGG", tidb_ast::HintKind::Nullary { qb_name: None }) => {
+                    hints.prefer_agg_type |= PREFER_HASH_AGG;
+                }
+                ("STREAM_AGG", tidb_ast::HintKind::Nullary { qb_name: None }) => {
+                    hints.prefer_agg_type |= PREFER_STREAM_AGG;
+                }
+                ("AGG_TO_COP", tidb_ast::HintKind::Tables { qb_name: None, .. }) => {
+                    hints.prefer_agg_to_cop = true
+                }
+                _ => {}
+            }
+        }
+        hints
+    }
+
+    /// Go `LogicalAggregation.ResetHintIfConflicted`'s conflict test.
+    #[must_use]
+    pub const fn aggregation_type_conflicted(self) -> bool {
+        self.prefer_agg_type & PREFER_HASH_AGG != 0 && self.prefer_agg_type & PREFER_STREAM_AGG != 0
+    }
+}
+
 /// Everything the rewriter needs from its surroundings: the expression
 /// builder's context, the two id counters, and the session state.
 pub struct RewriterEnv<'a, C: Columns> {

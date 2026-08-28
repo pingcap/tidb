@@ -587,7 +587,6 @@ fn update_and_delete_rows() {
     }
 }
 
-
 /// The fast prepared UPDATE keeps a table WITH secondary indexes on the fast
 /// arm -- `update_row_with_old` maintains the entries -- and its residual
 /// equalities answer against the OLD row before any assignment lands.
@@ -631,7 +630,11 @@ fn fast_prepared_update_maintains_indexes_and_answers_residuals() {
     // Handle pin plus a residual the row answers: one row updated.
     let affected = run(
         "UPDATE upi SET v = ? WHERE id = ? AND a = ?",
-        &[Datum::Int(99), Datum::Bytes(b"k1".to_vec()), Datum::Bytes(b"a1".to_vec())],
+        &[
+            Datum::Int(99),
+            Datum::Bytes(b"k1".to_vec()),
+            Datum::Bytes(b"a1".to_vec()),
+        ],
         &mut catalog,
     );
     assert_eq!(affected, 1);
@@ -641,14 +644,20 @@ fn fast_prepared_update_maintains_indexes_and_answers_residuals() {
     );
     // The secondary index still finds the row after the maintenance.
     assert_eq!(
-        run_select_on("SELECT id FROM upi WHERE a = 'a1'", &catalog, &ctx).unwrap().len(),
+        run_select_on("SELECT id FROM upi WHERE a = 'a1'", &catalog, &ctx)
+            .unwrap()
+            .len(),
         1
     );
 
     // A residual no row answers changes nothing.
     let affected = run(
         "UPDATE upi SET v = ? WHERE id = ? AND a = ?",
-        &[Datum::Int(50), Datum::Bytes(b"k1".to_vec()), Datum::Bytes(b"zz".to_vec())],
+        &[
+            Datum::Int(50),
+            Datum::Bytes(b"k1".to_vec()),
+            Datum::Bytes(b"zz".to_vec()),
+        ],
         &mut catalog,
     );
     assert_eq!(affected, 0);
@@ -696,20 +705,30 @@ fn fast_prepared_insert_maintains_secondary_indexes() {
             .map(|result| result.map(|(affected, _)| affected))
     };
 
-    let affected = bind(&[Datum::Bytes(b"k2".to_vec()), Datum::Bytes(b"c2".to_vec()), Datum::Int(20)])
-        .unwrap()
-        .expect("fast insert");
+    let affected = bind(&[
+        Datum::Bytes(b"k2".to_vec()),
+        Datum::Bytes(b"c2".to_vec()),
+        Datum::Int(20),
+    ])
+    .unwrap()
+    .expect("fast insert");
     assert_eq!(affected, 1);
 
     // The unique index sees the new entry: a second 'c2' under a PLAIN
     // insert raises the duplicate-key error instead of writing.
-    let duplicated = bind(&[Datum::Bytes(b"k3".to_vec()), Datum::Bytes(b"c2".to_vec()), Datum::Int(30)]);
+    let duplicated = bind(&[
+        Datum::Bytes(b"k3".to_vec()),
+        Datum::Bytes(b"c2".to_vec()),
+        Datum::Int(30),
+    ]);
     match duplicated {
         Err(DriverError::DuplicateEntry { .. }) => {}
         other => panic!("expected a duplicate-key error, got {other:?}"),
     }
     assert_eq!(
-        run_select_on("SELECT id FROM ini WHERE code = 'c2'", &catalog, &ctx).unwrap().len(),
+        run_select_on("SELECT id FROM ini WHERE code = 'c2'", &catalog, &ctx)
+            .unwrap()
+            .len(),
         1
     );
 }

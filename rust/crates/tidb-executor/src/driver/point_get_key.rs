@@ -105,7 +105,11 @@ pub(crate) fn names_no_rows(column: &FieldType, value: &Datum) -> bool {
     }
     let mut significant = payload.len();
     if tidb_datatype::is_pad_space_collation(column.collation().name()) {
-        significant -= payload.iter().rev().take_while(|byte| **byte == b' ').count();
+        significant -= payload
+            .iter()
+            .rev()
+            .take_while(|byte| **byte == b' ')
+            .count();
     }
     column.flen() >= 0 && significant > column.flen() as usize
 }
@@ -207,7 +211,10 @@ mod tests {
             &varchar_column(10),
             &Datum::new_string("310110194401061214")
         ));
-        assert!(!names_no_rows(&varchar_column(10), &Datum::new_string("1002041840")));
+        assert!(!names_no_rows(
+            &varchar_column(10),
+            &Datum::new_string("1002041840")
+        ));
     }
 
     #[test]
@@ -215,9 +222,15 @@ mod tests {
         // utf8mb4_bin is PAD SPACE: 'stored' + spaces equals 'stored', so a
         // payload whose significant part fits must still be read.
         let value = format!("{}{}", "0123456789", " ".repeat(8));
-        assert!(!names_no_rows(&varchar_column(10), &Datum::new_string(value)));
+        assert!(!names_no_rows(
+            &varchar_column(10),
+            &Datum::new_string(value)
+        ));
         let longer = format!("{}{}", "01234567890", " ".repeat(8));
-        assert!(names_no_rows(&varchar_column(10), &Datum::new_string(longer)));
+        assert!(names_no_rows(
+            &varchar_column(10),
+            &Datum::new_string(longer)
+        ));
     }
 
     #[test]

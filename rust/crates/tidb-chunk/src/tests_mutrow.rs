@@ -63,10 +63,7 @@ fn mut_row() {
     }
 
     // MutRowFromValues("abc", 123) then SetValues / SetDatums.
-    let mut mut_row = MutRow::from_datums(&[
-        Datum::String(string_datum("abc")),
-        Datum::Int(123),
-    ]);
+    let mut mut_row = MutRow::from_datums(&[Datum::String(string_datum("abc")), Datum::Int(123)]);
     assert_eq!(mut_row.to_row().get_string(0), "abc");
     assert_eq!(mut_row.to_row().get_int64(1), 123);
 
@@ -163,7 +160,10 @@ fn issue_29947_set_null_datum_on_every_type() {
     for i in 0..field_types.len() {
         mut_row.set_datum(i, &Datum::Null);
         let row = mut_row.to_row();
-        assert!(row.is_null(i), "column {i} must be NULL after SetDatum(nil)");
+        assert!(
+            row.is_null(i),
+            "column {i} must be NULL after SetDatum(nil)"
+        );
         // Variable-length columns keep empty cells (Go: every offset stays 0);
         // fixed columns' untouched buffers are internal to both languages.
         if !matches!(

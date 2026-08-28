@@ -78,9 +78,9 @@
 //! short-circuits on an empty blacklist, so a session that never ran `ADMIN
 //! RELOAD` takes exactly the path it took before.
 
+use tidb_expr::expression::Expression;
 use tidb_expr::infer_pushdown::{is_push_down_enabled, ExprPushDownBlacklist, PushDownStore};
 use tidb_expr::rewriter::ColumnResolver;
-use tidb_expr::expression::Expression;
 
 /// Go `ast.TypeStr(mysql.TypeBit)`, the name `columnToPBExpr` looks a BIT
 /// column up under.
@@ -136,25 +136,17 @@ pub(crate) fn aggregate_admits(
         PushdownAggregateKind::Min => "min",
         PushdownAggregateKind::Max => "max",
     };
-    let admits_name =
-        |name: &str| is_push_down_enabled(blacklist, name, PushDownStore::TiKv);
+    let admits_name = |name: &str| is_push_down_enabled(blacklist, name, PushDownStore::TiKv);
     let admits_arg = |input: Option<&Expression>| {
         input.is_none_or(|expr| admits(expr, blacklist, PushDownStore::TiKv))
     };
     match aggregate {
-        // `GroupBy` is a one-column `SELECT DISTINCT` with no aggregate
-        // function at all, so there is no name to ask about; its group key is
-        // a scan column, which the column arm below would answer for.
-        Agg::GroupBy { .. } => true,
-        Agg::Count { .. } => admits_name("count"),
-        Agg::Sum { .. } => admits_name("sum"),
-        Agg::GroupBySum { .. } => admits_name("sum"),
-        Agg::Grouped { functions, .. } => functions
-            .iter()
-            .all(|function| admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())),
-        Agg::Global { functions } => functions
-            .iter()
-            .all(|function| admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())),
+        Agg::Grouped { functions, .. } => functions.iter().all(|function| {
+            admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())
+        }),
+        Agg::Global { functions, .. } => functions.iter().all(|function| {
+            admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())
+        }),
     }
 }
 

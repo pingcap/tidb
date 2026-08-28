@@ -101,10 +101,10 @@ pub(crate) struct PreparedStatement {
     /// at `PREPARE` by `IsASTCacheable` -- an uncacheable statement never
     /// reports a hit, and never pays the walk again.
     cacheable: Result<(), String>,
-    /// The [`crate::prepared_plan_cache::PreparedPlanKey`] the LAST `EXECUTE`
-    /// planned against. An `EXECUTE` whose key equals it is the one Go serves
-    /// from the cache, and is what `@@last_plan_from_cache` reports.
-    last_plan_key: Option<crate::prepared_plan_cache::PreparedPlanKey>,
+    /// The general shared-planner SELECT cache. Its first EXECUTE generates a
+    /// physical tree for the current schema and parameter types; later hits
+    /// clone and recursively rebuild that tree.
+    select_plan: Option<std::sync::Arc<tidb_executor::PreparedSelectPlan>>,
     /// The marker orders that stand in a `LIMIT`, whose bound values Go admits
     /// only as a non-negative `int64` or a `uint64`
     /// (`CheckParamTypeInt64orUint64` / `getUintFromNode`). Captured: with
@@ -181,6 +181,21 @@ impl Session {
         } else {
             text
         };
+        let select_plan = if cacheable.is_ok() {
+            let ctx = self.statement_context(false);
+            self.lock_catalog().ok().and_then(|catalog| {
+                tidb_executor::build_prepared_select_plan(
+                    &statement,
+                    param_count,
+                    &catalog,
+                    self.current_database(),
+                    &ctx,
+                )
+                .map(std::sync::Arc::new)
+            })
+        } else {
+            None
+        };
         self.prepared_statements.insert(
             name.to_owned(),
             PreparedStatement {
@@ -188,7 +203,7 @@ impl Session {
                 param_count,
                 limit_markers,
                 cacheable,
-                last_plan_key: None,
+                select_plan,
             },
         );
         Ok(())
@@ -255,20 +270,20 @@ impl Session {
                 _ => return Err(DriverError::WrongArguments("LIMIT")),
             }
         }
+        if prepared.cacheable.is_ok() {
+            if let Some(cached) = prepared
+                .select_plan
+                .as_ref()
+                .and_then(|plan| self.bind_cached_prepared_select(plan, &values))
+            {
+                return self.execute_cached_prepared_select(cached);
+            }
+        }
         let sql = if values.is_empty() {
             prepared.sql.clone()
         } else {
             tidb_executor::bind_parameters(&prepared.sql, &values, self.scanner_sql_mode())?
         };
-        // Go `GetPlanFromPlanCache`: a hit is this statement, cacheable,
-        // planned before under an IDENTICAL key -- schema version, database,
-        // sql_mode, time zone, and the push-down blacklist's reload counter.
-        // Decided BEFORE the run (the key describes what planning would see),
-        // reported AFTER it succeeds, so a failing statement publishes
-        // nothing, and recorded back onto the session's copy of the handle.
-        let cache_enabled = self.prepared_plan_cache_enabled();
-        let key = cache_enabled.then(|| self.prepared_plan_key());
-        let hit = prepared.cacheable.is_ok() && key.is_some() && prepared.last_plan_key == key;
         // Go builds the prepared statement's own plan and runs it as this
         // statement's body, so the inner statement goes through the same
         // dispatch every other statement does -- including DDL's implicit
@@ -280,16 +295,11 @@ impl Session {
         // Apply is refused outright -- neither stored nor reported -- because
         // a per-outer-row executor cannot be reused across parameter sets.
         // The driver reports it through the statement context's channel.
-        if self.planned_apply.load(std::sync::atomic::Ordering::Relaxed) {
+        if self
+            .planned_apply
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
             return Ok(output);
-        }
-        if hit {
-            self.found_in_plan_cache = true;
-        }
-        if let (Ok(()), Some(key)) = (&prepared.cacheable, key) {
-            if let Some(stored) = self.prepared_statements.get_mut(name) {
-                stored.last_plan_key = Some(key);
-            }
         }
         Ok(output)
     }

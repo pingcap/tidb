@@ -1029,7 +1029,7 @@ fn format_duration(seconds: f64, fsp: usize) -> String {
     // Doing the arithmetic in f64 first re-derives 30.0000005 as
     // ...4999996µs and loses the digit -- so round off the SHORTEST decimal
     // rendering instead.
-        // Go formats the REAL second value with %v (shortest repr): 30.1 stays
+    // Go formats the REAL second value with %v (shortest repr): 30.1 stays
     // "30.1", 30.0000005 stays "30.0000005".
     let digits = format!("{seconds}");
     let mut digits_fraction = match digits.split_once('.') {
@@ -1038,8 +1038,7 @@ fn format_duration(seconds: f64, fsp: usize) -> String {
     };
     // Round half-up at the requested precision off the FIRST DISCARDED
     // digit, carrying into the whole part when the fraction overflows.
-    let round_up = digits_fraction.len() > fsp
-        && digits_fraction.as_bytes()[fsp] >= b'5';
+    let round_up = digits_fraction.len() > fsp && digits_fraction.as_bytes()[fsp] >= b'5';
     digits_fraction.truncate(fsp);
     while digits_fraction.len() < fsp {
         digits_fraction.push('0');

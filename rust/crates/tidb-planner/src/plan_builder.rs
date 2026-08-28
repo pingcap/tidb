@@ -947,6 +947,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         schema_columns.push(commit_ts);
         names.push(commit_ts_name);
 
+        // Go keeps `DataSource.TblCols` unchanged when `PruneColumns`
+        // narrows `Schema`/`Columns`; physical table-scan cost is based on
+        // the complete stored row, not only the requested projection.
+        let table_columns = schema_columns.clone();
+
         let common_handle_cols: Vec<Column> = table
             .common_handle_col_offsets
             .iter()
@@ -971,6 +976,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             partition_def_idx: table.partition_def_idx,
             partition_definition_names: table.partition_definition_names.clone(),
             columns,
+            table_columns,
             pk_is_handle: table.pk_is_handle,
             handle_cols,
             handle_is_int,
@@ -1388,11 +1394,22 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 _ => None,
             };
             let name = Self::projection_field_name(field, &names, resolved_index);
-            let ret_type = built
-                .static_type()
-                .cloned()
-                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
-            let mut output = Column::new(self.column_ids.alloc(), ret_type);
+            // Go `buildProjectionField`: a rewritten Column is the projection
+            // output column itself. Only a computed expression allocates a
+            // fresh UniqueID. Preserving this identity is also what lets an
+            // IndexJoinRuntimeProp pass through a derived-table projection
+            // and still match the underlying data-source key.
+            let mut output = match &built {
+                Expression::Column(column) => column.clone(),
+                _ => {
+                    let ret_type = built
+                        .static_type()
+                        .cloned()
+                        .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+                    Column::new(self.column_ids.alloc(), ret_type)
+                }
+            };
+            output.index = projection_columns.len() as i64;
             output.orig_name = name.display_name();
             output.is_hidden = field.hidden;
             projection_columns.push(output);
@@ -1608,9 +1625,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             Expr::Int(digits) => digits
                 .parse()
                 .map_err(|_| PlanError::internal("Incorrect arguments to LIMIT")),
-            _ => Err(PlanError::internal(
-                "Incorrect arguments to LIMIT: only an integer literal is ported",
-            )),
+            Expr::ParamMarker {
+                in_execute: true,
+                value: Some(Datum::Int(value)),
+                ..
+            } if *value >= 0 => Ok(*value as u64),
+            Expr::ParamMarker {
+                in_execute: true,
+                value: Some(Datum::UInt(value)),
+                ..
+            } => Ok(*value),
+            _ => Err(PlanError::internal("Incorrect arguments to LIMIT")),
         }
     }
 
@@ -1667,7 +1692,23 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             },
             None => Vec::new(),
         };
+        // Go installs the current query block's resolved table hints before
+        // building its operators and restores the parent block on exit.
+        // Parsing the AST here keeps nested SELECT hints scoped and ensures
+        // physical dispatch sees every preference on the one logical tree it
+        // enumerates.
+        let mut current_hints = RewriterHints::from_select(select);
+        if current_hints.aggregation_type_conflicted() {
+            self.ctx
+                .append_warning(1815, "Optimizer aggregation hints are conflicted");
+            current_hints.prefer_agg_type = 0;
+        }
+        let parent_hints = std::mem::replace(&mut self.hints, current_hints);
+        let parent_join_hints =
+            std::mem::replace(&mut self.join_hints, from::JoinHints::from_select(select));
         let built = self.build_select_body(select);
+        self.hints = parent_hints;
+        self.join_hints = parent_join_hints;
         let result = built.map(|(plan, flag)| {
             // `:4652` the trailing `return b.tryToBuildSequence(currentLayerCTEs, p)`,
             // which Go evaluates BEFORE the deferred truncation runs.

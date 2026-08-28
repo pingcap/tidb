@@ -135,7 +135,9 @@ fn test_get_default_collation() {
     for charset in supported {
         let desc = default_collation(charset).expect("supported charset");
         assert!(
-            crate::collation::COLLATION_NAMES.binary_search(&desc).is_ok(),
+            crate::collation::COLLATION_NAMES
+                .binary_search(&desc)
+                .is_ok(),
             "default collation {desc} missing from catalog"
         );
         charset_num += 1;

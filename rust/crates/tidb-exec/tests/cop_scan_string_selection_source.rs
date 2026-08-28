@@ -514,15 +514,16 @@ fn each_request_carries_the_issuing_statements_time_zone() {
 /// and resource group `default`, which is what `RequestContext::default()`
 /// holds and what the resource-control context on the wire is keyed by.
 #[test]
-fn the_request_carries_the_stock_session_concurrency_and_resource_group() {
+fn the_request_carries_the_statement_concurrency_and_resource_group() {
     let (catalog, region) = fixture("utf8mb4_bin");
+    let context = StmtContext::for_query().with_resource_group_name("analytics");
     run_select_on(
         "SELECT id, s FROM t WHERE s = 'a'",
         &catalog,
-        &StmtContext::for_query(),
+        &context,
     )
     .expect("the scan is served by the coprocessor");
     let observation = sole_observation(&region);
     assert_eq!(observation.concurrency, 15);
-    assert_eq!(observation.resource_group_name, "default");
+    assert_eq!(observation.resource_group_name, "analytics");
 }

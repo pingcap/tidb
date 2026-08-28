@@ -65,6 +65,7 @@ fn parser_numbers_parameter_markers_left_to_right_and_per_statement() {
                 offset: first_offset,
                 order: 0,
                 in_execute: false,
+                value: None,
                 projection_offset: 0,
             },
         ..
@@ -74,6 +75,7 @@ fn parser_numbers_parameter_markers_left_to_right_and_per_statement() {
                 offset: second_offset,
                 order: 1,
                 in_execute: false,
+                value: None,
                 projection_offset: 0,
             },
         ..
@@ -91,6 +93,7 @@ fn parser_numbers_parameter_markers_left_to_right_and_per_statement() {
             offset,
             order: 2,
             in_execute: false,
+            value: None,
             projection_offset: 0,
         } if *offset == offsets[2]
     ));
@@ -227,6 +230,7 @@ fn unbound_markers_are_rejected_by_generic_residual_planning() {
         offset: 0,
         order: 3,
         in_execute: false,
+        value: None,
         projection_offset: 0,
     };
     assert_eq!(

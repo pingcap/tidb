@@ -26,7 +26,6 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use bytes::{Buf, BufMut};
-use std::sync::atomic::Ordering;
 use tidb_pd_client::ClusterSecurity;
 use tokio::sync::watch;
 use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
@@ -380,8 +379,7 @@ impl RawTransportClient {
         self.route()?.batch_submit(address, entries)
     }
 
-    /// [`Self::submit_batch_with_call`] without the receipt wait -- see
-    /// `TransportHandle::batch_submit_deferred`.
+    /// Submits without the receipt wait -- see `TransportHandle::batch_submit_deferred`.
     pub(super) fn submit_batch_deferred(
         &self,
         address: &str,
@@ -390,15 +388,6 @@ impl RawTransportClient {
     ) -> Result<super::transport_runtime::DeferredReceipts, DirectUnaryClientError> {
         self.route()?
             .batch_submit_deferred_with_call(address, entries, call)
-    }
-
-    pub(super) fn submit_batch_with_call(
-        &self,
-        address: &str,
-        entries: Vec<BatchCommandEntry>,
-        call: &UnaryCallContext,
-    ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
-        self.route()?.batch_submit_with_call(address, entries, call)
     }
 
     pub(super) fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {

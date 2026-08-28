@@ -732,6 +732,33 @@ fn test_join_hints_set_the_preferred_type_on_the_named_side() {
 }
 
 #[test]
+fn test_select_ast_join_hints_reach_the_logical_join() {
+    let harness = Harness::new();
+    for (hint, expected) in [
+        ("TIDB_SMJ(t1, t2)", join_hint_flags::MERGE_JOIN),
+        ("TIDB_HJ(t1, t2)", join_hint_flags::HASH_JOIN),
+        ("TIDB_INLJ(t2)", join_hint_flags::RIGHT_AS_INLJ_INNER),
+    ] {
+        let mut builder = harness.builder();
+        let select = parse_select(&format!(
+            "SELECT /*+ {hint} */ * FROM t1 JOIN t2 ON t1.a = t2.a"
+        ));
+        let (plan, _) = builder.build_select(&select).expect("the SELECT builds");
+        let LogicalPlan::Projection(projection) = plan else {
+            panic!("the SELECT keeps its output projection");
+        };
+        let LogicalPlan::Join(join) = &projection.base.children()[0] else {
+            panic!("the projection child is the hinted join");
+        };
+        assert_ne!(
+            join.prefer_join_type & expected,
+            0,
+            "{hint} did not reach LogicalJoin"
+        );
+    }
+}
+
+#[test]
 fn test_find_join_full_schema_looks_through_a_selection_but_not_a_projection() {
     // Go `findJoinFullSchema` (:645) and its own comment: a Selection from an
     // ON clause is transparent, a Projection is a derived-table boundary.

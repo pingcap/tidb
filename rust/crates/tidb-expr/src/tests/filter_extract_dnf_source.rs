@@ -26,11 +26,11 @@
 //! (`test.t.a/b/c`) — the plan-building steps the Go harness performs are what
 //! this evaluator cannot see, not the transforms under test.
 
-use crate::expr_util::normal_form::extract_filters_from_dnfs;
-use crate::expr_util::push_not::push_down_not;
-use crate::expr_util::builder::PreservingFunctionBuilder;
 use crate::column::Column;
 use crate::constant::Constant;
+use crate::expr_util::builder::PreservingFunctionBuilder;
+use crate::expr_util::normal_form::extract_filters_from_dnfs;
+use crate::expr_util::push_not::push_down_not;
 use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
 use tidb_ast::CiString;
@@ -46,7 +46,10 @@ fn table_column(unique_id: i64, name: &str) -> Expression {
 }
 
 fn int_const(v: i64) -> Expression {
-    Expression::Constant(Constant::new(Datum::Int(v), FieldType::new(FieldTypeCode::LongLong)))
+    Expression::Constant(Constant::new(
+        Datum::Int(v),
+        FieldType::new(FieldTypeCode::LongLong),
+    ))
 }
 
 /// `newFunctionWithMockCtx` shape: no inference, direct name + args.
@@ -139,11 +142,7 @@ fn test_filter_extract_from_dnf_case_table() {
 
     // Case 1: repeated identical disjuncts collapse to the common conjunct.
     assert_eq!(
-        push_down_extract_and_render(or(vec![
-            eq(&a, 1),
-            eq(&a, 1),
-            eq(&a, 1),
-        ])),
+        push_down_extract_and_render(or(vec![eq(&a, 1), eq(&a, 1), eq(&a, 1),])),
         "[eq(test.t.a, 1)]"
     );
 

@@ -29,18 +29,13 @@
 //! and the heap is never larger than `offset + count`. A TopN that spills
 //! writes `runs * (offset + count)` rows, not the whole input.
 //!
-//! # Single-threaded adaptation, and where it differs
+//! # Parallel spill adaptation
 //!
-//! Go runs the post-spill phase on a pool of `topNWorker`s, each with its own
-//! heap, all fed from one chunk channel; this tier has one thread, so it has
-//! one heap and the "workers" phase is the same loop the pre-spill phase runs.
-//! Two consequences, both named:
+//! Like Go, the post-spill phase runs a pool of workers, each with its own
+//! bounded heap, fed through bounded chunk channels. Each final worker heap is
+//! written as a sorted run and all run heads are merged through Go-compatible
+//! heap operations. One remaining execution-shape difference is named:
 //!
-//! * Go's worker heap accumulates whole chunks until it holds at least
-//!   `offset + count` rows and then never pops down to that bound, so a Go run
-//!   can hold up to a chunk more than this port's does. Both are SUPERSETS of
-//!   the segment's true top-N and the merge cuts both at `offset + count`, so
-//!   the answer is the same.
 //! * Go also re-checks for a spill WHILE EMITTING results
 //!   (`generateTopNResultsWhenNoSpillTriggered` polls every 10 rows, and
 //!   `inMemoryThenSpillFlag` marks that case). That trigger exists because

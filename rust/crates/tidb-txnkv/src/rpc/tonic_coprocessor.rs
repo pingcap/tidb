@@ -87,7 +87,7 @@ impl TonicCoprocessorClient {
         self.transport.submit_batch(address, entries)
     }
 
-    /// [`Self::submit_batch_commands_with_call`] without the receipt wait.
+    /// Submits one or more commands without waiting for their publication receipts.
     pub(in crate::rpc) fn submit_batch_commands_deferred(
         &mut self,
         address: &str,
@@ -95,16 +95,6 @@ impl TonicCoprocessorClient {
         call: &UnaryCallContext,
     ) -> Result<super::transport_runtime::DeferredReceipts, DirectUnaryClientError> {
         self.transport.submit_batch_deferred(address, entries, call)
-    }
-
-    pub(in crate::rpc) fn submit_batch_commands_with_call(
-        &mut self,
-        address: &str,
-        entries: Vec<BatchCommandEntry>,
-        call: &UnaryCallContext,
-    ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
-        self.transport
-            .submit_batch_with_call(address, entries, call)
     }
 
     /// Returns the active BatchCommands generation for one physical/logical route.
@@ -341,20 +331,15 @@ impl AsyncRequestDispatcher for TonicCoprocessorClient {
         }
         let body = replace_top_level_context(&request.encoded_request, &request.context)?;
         let (entry, mut pending) = BatchCoprocessorPending::entry(body, forwarded_host);
-        let receipts =
-            match self.submit_batch_commands_with_call(physical_address, vec![entry], call) {
-                Ok(receipts) => receipts,
+        let deferred =
+            match self.submit_batch_commands_deferred(physical_address, vec![entry], call) {
+                Ok(deferred) => deferred,
                 Err(error) => {
                     pending.cancel();
                     return Err(error);
                 }
             };
-        if !receipts.is_empty() {
-            if let Err(error) = pending.bind_publication(&receipts) {
-                pending.cancel();
-                return Err(error);
-            }
-        }
+        pending.retain_deferred(deferred);
         if call.cancellation().is_cancelled() {
             pending.cancel();
             return Err(DirectUnaryClientError::CallerCancelled);

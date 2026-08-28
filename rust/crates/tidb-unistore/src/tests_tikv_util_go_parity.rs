@@ -64,7 +64,9 @@ fn sort_and_dedup_hash_vals_table_vectors() {
     // [7,7,7,7] → [7]
     // [3,3] → [3]
     // [3,1] → [1,3]
-    panic!("blocked on transcreating pkg/store/mockstore/unistore/tikv/util.go sortAndDedupHashVals");
+    panic!(
+        "blocked on transcreating pkg/store/mockstore/unistore/tikv/util.go sortAndDedupHashVals"
+    );
 }
 
 /// Go `TestSafeCopy` (`tikv/util_test.go:142`): returns a byte-for-byte equal

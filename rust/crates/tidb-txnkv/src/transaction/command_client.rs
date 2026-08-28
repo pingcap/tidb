@@ -49,8 +49,7 @@ const DETACHED_SECONDARY_COMMIT_BUDGET: Duration = Duration::from_millis(41_500)
 /// Detached secondary Commits that ended in a transport, region, or key error.
 /// The transaction is committed regardless; the counter exists so a probe can
 /// notice systematic flush failures without touching the session path.
-static DETACHED_FLUSH_FAILURES: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static DETACHED_FLUSH_FAILURES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Reads the detached secondary-flush failure counter.
 ///
@@ -70,14 +69,12 @@ struct DetachedFlushJob {
     client_authority: std::sync::Arc<std::sync::Mutex<TonicCoprocessorClient>>,
 }
 
-static DETACHED_FLUSH_QUEUE: std::sync::OnceLock<
-    std::sync::mpsc::Sender<DetachedFlushJob>,
-> = std::sync::OnceLock::new();
+static DETACHED_FLUSH_QUEUE: std::sync::OnceLock<std::sync::mpsc::Sender<DetachedFlushJob>> =
+    std::sync::OnceLock::new();
 
 fn detached_flush_sender() -> &'static std::sync::mpsc::Sender<DetachedFlushJob> {
     DETACHED_FLUSH_QUEUE.get_or_init(|| {
-        let (sender, receiver) =
-            std::sync::mpsc::channel::<DetachedFlushJob>();
+        let (sender, receiver) = std::sync::mpsc::channel::<DetachedFlushJob>();
         // Go hands the secondary-mutation flush to the transaction's own
         // goroutine (client-go `2pc.go :: twoPhaseCommitter.execute` ->
         // `commitMutations`), so no store resource is created or torn down
@@ -123,20 +120,16 @@ fn run_detached_flush(
     for published in client.publish_commits(&refs, &call) {
         match published {
             PublishedCommand::Response(response) => {
-                if response.response.region_error.is_some()
-                    || response.response.error.is_some()
-                {
+                if response.response.region_error.is_some() || response.response.error.is_some() {
                     // The transaction is committed either way —
                     // Go logs and moves on; an unmaterialized
                     // secondary write record resolves through
                     // the primary lock on read.
-                    DETACHED_FLUSH_FAILURES
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    DETACHED_FLUSH_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             }
             _ => {
-                DETACHED_FLUSH_FAILURES
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                DETACHED_FLUSH_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
     }
@@ -686,11 +679,12 @@ impl TransactionCommandClient for TonicCoprocessorClient {
         // thread per COMMIT. A send failure means the worker is gone (it is
         // never taken down once started); report the job as not accepted,
         // exactly as a spawn failure did.
-        detached_flush_sender().send(DetachedFlushJob {
-            requests,
-            client_authority,
-        })
-        .is_ok()
+        detached_flush_sender()
+            .send(DetachedFlushJob {
+                requests,
+                client_authority,
+            })
+            .is_ok()
     }
 
     fn publish_pessimistic_locks(
@@ -868,14 +862,10 @@ mod detached_flusher_tests {
         let client = TonicCoprocessorClient::new().expect("client constructs without a socket");
         let authority = std::sync::Arc::new(std::sync::Mutex::new(client));
         let mut client = authority.lock().expect("fresh authority is unlocked");
-        let first = client.publish_commits_detached(
-            vec![one_request()],
-            std::sync::Arc::clone(&authority),
-        );
-        let second = client.publish_commits_detached(
-            vec![one_request()],
-            std::sync::Arc::clone(&authority),
-        );
+        let first =
+            client.publish_commits_detached(vec![one_request()], std::sync::Arc::clone(&authority));
+        let second =
+            client.publish_commits_detached(vec![one_request()], std::sync::Arc::clone(&authority));
         drop(client);
         assert!(first, "first detached publish must be accepted");
         assert!(second, "second detached publish must be accepted");

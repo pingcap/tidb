@@ -15,15 +15,13 @@
 //! The plan trace: the record [`crate::driver`] leaves behind of the
 //! executors it built, which [`crate::explain`] prints.
 //!
-//! This tier has no plan object: the driver decides point-get vs
-//! batch-point-get vs index-range vs full scan, and whether a selection /
-//! sort / projection / aggregate / limit is needed, WHILE it builds the
-//! executor pipeline. EXPLAIN therefore cannot ask a planner what the plan
-//! is -- it has to watch the driver build one. A [`PlanTrace`] is that
-//! watcher: the driver threads `Option<&mut PlanTrace>` down its build path
-//! and calls one of the node constructors below at each site where it
-//! commits to an operator, so a described plan and an executed plan cannot
-//! drift apart -- they are the same control flow.
+//! The shared logical/physical planner owns operator-family and access-path
+//! choices. The executor lowers those receipts into runtime operators, while
+//! a few not-yet-ported logical rules still enter through explicit fail-closed
+//! seams. EXPLAIN watches that lowering rather than reconstructing a second
+//! tree: the driver threads `Option<&mut PlanTrace>` down its build path and
+//! calls one of the node constructors below at each installed operator, so a
+//! described plan and an executed plan cannot drift apart.
 //!
 //! Three things live here, and only here:
 //!
@@ -555,7 +553,9 @@ impl PlanTrace {
         }
         self.reserve_plan_column_ids(own);
         self.reserve_plan_column_ids(own + subtree);
-        self.join_cast_frames.borrow_mut().push((depth, own + subtree));
+        self.join_cast_frames
+            .borrow_mut()
+            .push((depth, own + subtree));
         (0..rewritten)
             .map(|_| self.alloc_plan_column_id())
             .collect()
@@ -643,22 +643,8 @@ impl PlanTrace {
         recursive: bool,
     ) {
         const CTE_NAMES: [&str; 16] = [
-            "CTE_0",
-            "CTE_1",
-            "CTE_2",
-            "CTE_3",
-            "CTE_4",
-            "CTE_5",
-            "CTE_6",
-            "CTE_7",
-            "CTE_8",
-            "CTE_9",
-            "CTE_10",
-            "CTE_11",
-            "CTE_12",
-            "CTE_13",
-            "CTE_14",
-            "CTE_15",
+            "CTE_0", "CTE_1", "CTE_2", "CTE_3", "CTE_4", "CTE_5", "CTE_6", "CTE_7", "CTE_8",
+            "CTE_9", "CTE_10", "CTE_11", "CTE_12", "CTE_13", "CTE_14", "CTE_15",
         ];
         let index = self
             .cte_names
@@ -1491,16 +1477,6 @@ impl PlanTrace {
         self.mark_top_access_consumed();
     }
 
-    pub(crate) fn index_point_get(&mut self, visible: &str, partitions: &[String], index: &str) {
-        self.replace_top(PlanNode::new(
-            "Point_Get",
-            Some(1.0),
-            format!("table:{visible}{}, {index}", partition_object(partitions)),
-            String::new(),
-        ));
-        self.mark_top_access_consumed();
-    }
-
     /// Go's `Point_Get` fast path. `None` is a handle no row can carry --
     /// Go still plans a `Point_Get` and reads nothing.
     pub(crate) fn point_get(
@@ -1720,24 +1696,6 @@ impl PlanTrace {
         self.mark_top_access_consumed();
     }
 
-    pub(crate) fn index_merge(&mut self, visible: &str, indexes: &[String], intersection: bool) {
-        self.replace_top(PlanNode::new(
-            "IndexMerge",
-            None,
-            format!("table:{visible}"),
-            format!(
-                "type:{}, indexes:{}",
-                if intersection {
-                    "intersection"
-                } else {
-                    "union"
-                },
-                indexes.join(", ")
-            ),
-        ));
-        self.mark_top_access_consumed();
-    }
-
     /// Exposes the two stages already performed by a non-covering
     /// [`crate::access_path::IndexRangeSourceExec`]: build a handle batch from
     /// the secondary index, then probe the table rows by those handles.
@@ -1815,20 +1773,6 @@ impl PlanTrace {
         reader_node.children.push(scan);
         self.stack.push(reader_node);
         true
-    }
-
-    /// Leaves an already-root `Point_Get` in place, or moves a physical scan
-    /// below its reader. Go's global aggregation may have either child shape.
-    pub(crate) fn scan_reader_or_point_get(&mut self) -> bool {
-        if self
-            .stack
-            .last()
-            .is_some_and(|node| node.name == "Point_Get")
-        {
-            true
-        } else {
-            self.scan_reader_or_cop_selection()
-        }
     }
 
     /// The cop `Selection` and its reader, for a read whose `WHERE` ALSO left
@@ -2080,21 +2024,23 @@ impl PlanTrace {
 
     /// Moves a bare scan and a global partial StreamAgg into the TiKV task,
     /// leaving the root reader above it. This is the physical split Go picks
-    /// for high-estimate Sysbench `COUNT`/`SUM` ranges.
+    /// for decomposable global aggregates.
     pub(crate) fn partial_stream_agg(
         &mut self,
         select: &tidb_ast::SelectStmt,
         qualify: &Qualifier<'_>,
-        sum: bool,
+        functions: &[(&str, usize)],
     ) -> bool {
-        self.in_cop_task(|trace| trace.partial_stream_agg_inside_cop_task(select, qualify, sum))
+        self.in_cop_task(|trace| {
+            trace.partial_stream_agg_inside_cop_task(select, qualify, functions)
+        })
     }
 
     fn partial_stream_agg_inside_cop_task(
         &mut self,
         select: &tidb_ast::SelectStmt,
         qualify: &Qualifier<'_>,
-        sum: bool,
+        functions: &[(&str, usize)],
     ) -> bool {
         let Some(mut top) = self.stack.pop() else {
             return false;
@@ -2165,16 +2111,14 @@ impl PlanTrace {
             }
             None => scan,
         };
-        let mut partial = PlanNode::new(
-            "StreamAgg",
-            Some(1.0),
-            String::new(),
-            format!(
-                "funcs:{}({})->Column#0",
-                if sum { "sum" } else { "count" },
-                qualify.expr(argument)
-            ),
-        );
+        let partial_functions = functions
+            .iter()
+            .map(|(name, column)| {
+                format!("funcs:{name}({})->Column#{column}", qualify.expr(argument))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut partial = PlanNode::new("StreamAgg", Some(1.0), String::new(), partial_functions);
         partial.task = "cop[tikv]";
         partial.act_rows = act_rows.clone();
         partial.children.push(scan);
@@ -2263,70 +2207,6 @@ impl PlanTrace {
         reader_node.act_rows = act_rows;
         reader_node.children.push(partial);
         self.stack.push(reader_node);
-        true
-    }
-
-    /// Moves a one-key, one-SUM partial HashAgg below the table reader.  The
-    /// estimate is the logical group-key NDV rather than the access scan's
-    /// lower-bound-adjusted rows, matching Go's aggregation statistics
-    /// pipeline. The fallback is retained for shapes whose logical row source
-    /// cannot be modeled.
-    pub(crate) fn partial_grouped_sum(
-        &mut self,
-        select: &tidb_ast::SelectStmt,
-        qualify: &Qualifier<'_>,
-        grouped_rows: Option<f64>,
-    ) -> bool {
-        let Some(mut scan) = self.stack.pop() else {
-            return false;
-        };
-        if !matches!(scan.name, "TableFullScan" | "TableRangeScan") {
-            self.stack.push(scan);
-            return false;
-        }
-        let Some(group) = select.group_by.first() else {
-            self.stack.push(scan);
-            return false;
-        };
-        let Some(sum_argument) = select.fields.fields().iter().find_map(|field| match field {
-            tidb_ast::SelectField::Expr {
-                expr: tidb_ast::Expr::Aggregate { name, args, .. },
-                ..
-            } if name.eq_ignore_ascii_case("SUM") => args.first(),
-            _ => None,
-        }) else {
-            self.stack.push(scan);
-            return false;
-        };
-
-        let estimate = grouped_rows
-            .map(|rows| rows.max(1.0))
-            .or_else(|| Est::ScaleFloorOne(DISTINCT_FACTOR).apply(scan.est_rows));
-        let group = qualify.expr(&group.expr);
-        let sum_argument = qualify.expr(sum_argument);
-        scan.task = "cop[tikv]";
-        let act_rows = scan.act_rows.clone();
-        let key_ndv_ratio = scan.key_ndv_ratio;
-        let mut partial = PlanNode::new(
-            "HashAgg",
-            estimate,
-            String::new(),
-            format!("group by:{group}, funcs:sum({sum_argument})->Column#0"),
-        );
-        partial.task = "cop[tikv]";
-        partial.act_rows = act_rows.clone();
-        partial.children.push(scan);
-
-        let mut reader = PlanNode::new(
-            "TableReader",
-            estimate,
-            String::new(),
-            "data:HashAgg".to_owned(),
-        );
-        reader.key_ndv_ratio = key_ndv_ratio;
-        reader.act_rows = act_rows;
-        reader.children.push(partial);
-        self.stack.push(reader);
         true
     }
 
@@ -2531,15 +2411,6 @@ impl PlanTrace {
         // an injected Projection, or the reader carrying a TiKV partial
         // aggregate (`data:StreamAgg`). Either makes Go print projected
         // columns; anything else keeps the written expression.
-        if std::env::var("TIDB_DEBUG_TRACE").is_ok() {
-            if let Some(child) = self.stack.last() {
-                eprintln!(
-                    "[fgsa] child={} info={}",
-                    child.name,
-                    &child.info[..child.info.len().min(40)]
-                );
-            }
-        }
         let projected = self.stack.last().is_some_and(|child| {
             child.name == "Projection"
                 || (child.name == "TableReader" && child.info.starts_with("data:StreamAgg"))
@@ -2550,30 +2421,6 @@ impl PlanTrace {
             Est::Inherit,
             grouped_aggregate_info_with(select, qualify, false, true, projected),
         );
-    }
-
-    /// Relabels the recorded partial/final `HashAgg` pair (and its reader's
-    /// `data:HashAgg` info) as the STREAM aggregate Go prints when the same
-    /// global split is costed as a serial fold -- TPC-H q6/q17/q19 over
-    /// pseudo statistics answer `StreamAgg / TableReader data:StreamAgg /
-    /// StreamAgg cop` where analyzed statistics answer `HashAgg`.
-    pub(crate) fn rename_partial_hash_agg_to_stream(&mut self) {
-        fn walk(node: &mut PlanNode, is_root_of_pair: bool) {
-            if node.name == "HashAgg" {
-                node.name = "StreamAgg";
-            }
-            if let Some(info) = node.info.strip_prefix("data:HashAgg") {
-                let owned = format!("data:StreamAgg{info}");
-                node.info = owned;
-            }
-            let _ = is_root_of_pair;
-            for child in &mut node.children {
-                walk(child, false);
-            }
-        }
-        for root in &mut self.stack {
-            walk(root, false);
-        }
     }
 
     /// Root merger for [`Self::partial_grouped_hash_agg`]. Aggregate
@@ -2588,43 +2435,6 @@ impl PlanTrace {
             "HashAgg",
             Est::Inherit,
             grouped_aggregate_info(select, qualify, true, true),
-        );
-    }
-
-    /// The root final stage for [`Self::partial_grouped_sum`].
-    pub(crate) fn final_grouped_sum_hash_agg(
-        &mut self,
-        select: &tidb_ast::SelectStmt,
-        qualify: &Qualifier<'_>,
-    ) {
-        let Some(group) = select.group_by.first() else {
-            self.refuse("grouped SUM final stage has no group key");
-            return;
-        };
-        let group = qualify.expr(&group.expr);
-        self.wrap(
-            "HashAgg",
-            Est::Inherit,
-            format!(
-                "group by:{group}, funcs:sum(Column#0)->Column#1, funcs:firstrow({group})->{group}"
-            ),
-        );
-    }
-
-    /// The select-order projection above a grouped SUM final stage.
-    pub(crate) fn grouped_sum_projection(
-        &mut self,
-        select: &tidb_ast::SelectStmt,
-        qualify: &Qualifier<'_>,
-    ) {
-        let Some(group) = select.group_by.first() else {
-            self.refuse("grouped SUM projection has no group key");
-            return;
-        };
-        self.wrap(
-            "Projection",
-            Est::Inherit,
-            format!("{}, Column#1", qualify.expr(&group.expr)),
         );
     }
 
@@ -2679,7 +2489,6 @@ impl PlanTrace {
         } = path;
         let depth = self.stack.len();
         if depth < 2 {
-
             return Err(());
         }
         let at = if lookup_is_left { depth - 2 } else { depth - 1 };
@@ -2757,12 +2566,7 @@ impl PlanTrace {
                 })
                 .is_some()
             };
-            if node.name == "IndexLookUp"
-                && node
-                    .children
-                    .iter()
-                    .any(|child| rebuilt_scan(child))
-            {
+            if node.name == "IndexLookUp" && node.children.iter().any(|child| rebuilt_scan(child)) {
                 return true;
             }
             node.children
@@ -2829,25 +2633,24 @@ impl PlanTrace {
                     // under `prop.IndexJoinProp`
                     // (`enumerateIndexJoinByOuterIdx`,
                     // `pkg/planner/core/exhaust_physical_plans.go:461`).
-                    let partial_hides_target = matches!(
-                        node.children[0].name,
-                        "HashAgg" | "StreamAgg"
-                    ) && node.children[0].task == "cop[tikv]"
-                        && node.children[0].children.len() == 1
-                        && {
-                            let below = &node.children[0].children[0];
-                            let scan = if is_scan(below) {
-                                Some(below)
-                            } else if below.name == "Selection"
-                                && below.children.len() == 1
-                                && is_scan(&below.children[0])
-                            {
-                                Some(&below.children[0])
-                            } else {
-                                None
+                    let partial_hides_target =
+                        matches!(node.children[0].name, "HashAgg" | "StreamAgg")
+                            && node.children[0].task == "cop[tikv]"
+                            && node.children[0].children.len() == 1
+                            && {
+                                let below = &node.children[0].children[0];
+                                let scan = if is_scan(below) {
+                                    Some(below)
+                                } else if below.name == "Selection"
+                                    && below.children.len() == 1
+                                    && is_scan(&below.children[0])
+                                {
+                                    Some(&below.children[0])
+                                } else {
+                                    None
+                                };
+                                scan.is_some_and(|scan| scan.access.starts_with(&target))
                             };
-                            scan.is_some_and(|scan| scan.access.starts_with(&target))
-                        };
                     if partial_hides_target {
                         let label = node.children[0].label;
                         let mut partial_child = node.children[0]
@@ -2910,42 +2713,6 @@ impl PlanTrace {
                 false
             }
 
-            // The Go IndexJoinProp rebuild chooses the dynamic lookup leaf as
-            // the build side of the first hash join that consumes it. The
-            // initial executor-first trace may have priced the same subtree
-            // with the opposite orientation; repair that physical receipt
-            // after rewriting the target scan, keeping the logical row order
-            // unchanged while matching Go's Build/Probe display.
-            fn contains_lookup_target(node: &PlanNode, target: &str) -> bool {
-                node.access.starts_with(target)
-                    || node
-                        .children
-                        .iter()
-                        .any(|child| contains_lookup_target(child, target))
-            }
-
-            fn prefer_lookup_build(node: &mut PlanNode, visible: &str) -> bool {
-                let target = format!("table:{visible}");
-                for child in &mut node.children {
-                    if prefer_lookup_build(child, visible) {
-                        return true;
-                    }
-                }
-                if node.name == "HashJoin" && node.children.len() == 2 {
-                    let left_has = contains_lookup_target(&node.children[0], &target);
-                    let right_has = contains_lookup_target(&node.children[1], &target);
-                    if left_has || right_has {
-                        if right_has {
-                            node.children.swap(0, 1);
-                        }
-                        node.children[0].label = "(Build)";
-                        node.children[1].label = "(Probe)";
-                        return true;
-                    }
-                }
-                false
-            }
-
             // A NESTED index join was already rebuilt while its own trace
             // printed: its lookup now stands in the subtree directly as an
             // \`IndexLookUp\` over the dynamic-range scan (\`range: decided
@@ -2976,11 +2743,7 @@ impl PlanTrace {
                 scan.task = "cop[tikv]";
                 scan.access = access.clone();
                 let mut reader = PlanNode::new(
-                    if index {
-                        "IndexReader"
-                    } else {
-                        "TableReader"
-                    },
+                    if index { "IndexReader" } else { "TableReader" },
                     estimated_rows,
                     String::new(),
                     String::new(),
@@ -2999,7 +2762,6 @@ impl PlanTrace {
                     estimated_access_rows.or(outer_rows),
                 )
             {
-                prefer_lookup_build(&mut self.stack[at], visible);
                 if scan_is_index_join_outer(&self.stack[outer_at]).is_some() {
                     let outer = std::mem::replace(
                         &mut self.stack[outer_at],
@@ -3047,7 +2809,6 @@ impl PlanTrace {
                     }
                 }
             }
-            retract_keep_order(outer);
         }
 
         if grouped_derived {
@@ -3059,7 +2820,6 @@ impl PlanTrace {
                         .iter()
                         .any(|offset| *offset >= outer.projection_outputs.len())
                 {
-
                     return Err(());
                 }
                 let predicates = outer_not_null
@@ -3070,14 +2830,12 @@ impl PlanTrace {
                 outer.est_rows = outer_estimate;
                 let reader = &mut outer.children[0];
                 if reader.name != "TableReader" || reader.children.len() != 1 {
-
                     return Err(());
                 }
                 reader.est_rows = outer_estimate.or(reader.est_rows);
                 reader.info = "data:Selection".to_owned();
                 let scan = &mut reader.children[0];
                 if !is_scan(scan) {
-
                     return Err(());
                 }
                 let mut selection = PlanNode::new(
@@ -3121,7 +2879,6 @@ impl PlanTrace {
             // place instead of requiring the HashAgg + IndexLookUp shape.
             if node.name == "StreamAgg" {
                 if node.children.len() != 1 {
-
                     return Err(());
                 }
                 node.info = aggregation_info.ok_or(())?.to_owned();
@@ -3130,14 +2887,12 @@ impl PlanTrace {
                 if !matches!(reader.name, "IndexReader" | "TableReader")
                     || reader.children.len() != 1
                 {
-
                     return Err(());
                 }
                 reader.est_rows = estimated_rows.or(reader.est_rows);
                 if matches!(reader.children[0].name, "StreamAgg" | "HashAgg") {
                     let partial = &mut reader.children[0];
                     if partial.children.len() != 1 {
-
                         return Err(());
                     }
                     let label = partial.label;
@@ -3155,7 +2910,6 @@ impl PlanTrace {
                 {
                     &mut scan_holder.children[0]
                 } else {
-
                     return Err(());
                 };
                 let pseudo = if scan.info.contains("stats:pseudo") {
@@ -3237,7 +2991,6 @@ impl PlanTrace {
             // aggregation, so retaining this tree is plan reporting of the
             // operator that actually runs rather than a trace-only rewrite.
             if node.name != "HashAgg" || node.children.len() != 1 {
-
                 return Err(());
             }
             node.info = if index_lookup {
@@ -3307,7 +3060,6 @@ impl PlanTrace {
                 *lookup = rebuilt;
             }
             if lookup.name != "IndexLookUp" || lookup.children.len() != 2 || !index_lookup {
-
                 return Err(());
             }
             lookup.est_rows = estimated_rows.or(lookup.est_rows);
@@ -3320,7 +3072,6 @@ impl PlanTrace {
             {
                 (&mut scan_holder.children[0], true)
             } else {
-
                 return Err(());
             };
             let pseudo = if scan.info.contains("stats:pseudo") {
@@ -3380,7 +3131,6 @@ impl PlanTrace {
                 || table_read.children.len() != 1
                 || table_read.children[0].name != "TableRowIDScan"
             {
-
                 return Err(());
             }
             table_read.info = aggregation_partial_info.ok_or(())?.to_owned();
@@ -3423,7 +3173,6 @@ impl PlanTrace {
         {
             &mut source.children[0]
         } else {
-
             return Err(());
         };
         // `stats:pseudo` is a property of the TABLE, not of the path, so it
@@ -3544,52 +3293,6 @@ impl PlanTrace {
         Ok(())
     }
 
-    /// UNSAYS a `keep order:true` this join asked its children for and then
-    /// did not use.
-    ///
-    /// `build_join` decides its merge join BEFORE its children exist, out of
-    /// the PROMISE (`merge_decision`'s `Phase::Promise` -- Go's
-    /// `PreparePossibleProperties` union), and hands each child a property
-    /// over its own join keys. A leaf that can answer such a property records
-    /// `keep order:true`, because that is what Go prints for a scan a parent
-    /// relies on. When the promise is then not VERIFIED -- the built child did
-    /// not deliver, or the key did not survive to the executor's own equality
-    /// split -- the join falls back to hashing and nothing relies on that
-    /// order any more. Go never printed the flag at all in that case: it
-    /// costed the ordered and unordered plans and kept the one it used.
-    ///
-    /// `asked` says, per child, whether this join handed that child a
-    /// NON-EMPTY property. Only a child that was asked can carry a request to
-    /// unsay, and a child that was not asked keeps whatever its own subtree
-    /// decided -- an `ORDER BY` inside a derived table, say.
-    ///
-    /// The request lands on a scan that may be SEVERAL nodes down: a derived
-    /// table forwards the property through its select list onto its own
-    /// `FROM` (`merge_decision::from_required_prop`), so the leaf that
-    /// answered it can sit under a `Projection`, a `Selection` and a
-    /// `HashJoin`. The descent below therefore walks exactly those
-    /// pass-through shapes and STOPS at a `MergeJoin` or an index join, which
-    /// are the two operators that RELY on a child's order -- unsaying a flag
-    /// under one of those would describe a plan that cannot run.
-    ///
-    /// Measured: leaving these standing is the whole of a 13-plan
-    /// `join_shape` regression across `planner/core/join_reorder2` and
-    /// `planner/core/join_reorder_through_projection`, in every case a plan
-    /// whose JOIN operators already agree with TiDB's recording and whose
-    /// only divergence is one leaf saying `keep order:true` where TiDB says
-    /// `false`.
-    pub(crate) fn retract_child_keep_order(&mut self, asked: [bool; 2]) {
-        let depth = self.stack.len();
-        if depth < 2 {
-            return;
-        }
-        for (at, asked) in [(depth - 2, asked[0]), (depth - 1, asked[1])] {
-            if asked {
-                retract_keep_order(&mut self.stack[at]);
-            }
-        }
-    }
-
     /// A `WHERE` over whatever the access path produced.
     ///
     /// The access path's own estimate already reflects the conditions it
@@ -3694,29 +3397,7 @@ impl PlanTrace {
         true
     }
 
-    /// A residual `Selection` above an access range. Go keeps the DataSource's
-    /// complete-predicate row count separate from the chosen path's access
-    /// count. Use that logical estimate when the caller has it; join leaves
-    /// without one still reduce the access count with the residual predicate.
-    pub(crate) fn residual_selection(
-        &mut self,
-        predicate: &tidb_ast::Expr,
-        built: Option<&[Expression]>,
-        qualify: &Qualifier<'_>,
-        logical_rows: Option<f64>,
-        stats_selectivity: Option<f64>,
-    ) {
-        self.residual_selection_with_columns(
-            predicate,
-            built,
-            qualify,
-            logical_rows,
-            stats_selectivity,
-            &[],
-        );
-    }
-
-    /// [`Self::residual_selection`] with base-table names for physical columns
+    /// Records a residual Selection with base-table names for physical columns
     /// whose SQL aliases no longer describe the optimized expression.
     pub(crate) fn residual_selection_with_columns(
         &mut self,
@@ -3951,6 +3632,32 @@ impl PlanTrace {
         let info = group_by
             .iter()
             .map(|item| qualify.expr(&item.expr))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.wrap("Sort", Est::Inherit, info);
+    }
+
+    /// The root sort Go's enforced `STREAM_AGG()` places below the
+    /// aggregation synthesized for `SELECT DISTINCT`.
+    pub(crate) fn enforced_distinct_sort(
+        &mut self,
+        fields: &[tidb_ast::SelectField],
+        qualify: &Qualifier<'_>,
+    ) {
+        self.wrap("Sort", Est::Inherit, field_list(fields, qualify));
+    }
+
+    /// A physical Sort retained on one child of a planner-selected join.
+    pub(crate) fn planner_join_child_sort(&mut self, columns: &[String], desc: bool) {
+        let info = columns
+            .iter()
+            .map(|column| {
+                if desc {
+                    format!("{column}:desc")
+                } else {
+                    column.clone()
+                }
+            })
             .collect::<Vec<_>>()
             .join(", ");
         self.wrap("Sort", Est::Inherit, info);
@@ -4203,46 +3910,6 @@ impl PlanTrace {
         }
     }
 
-    /// The Projection Go's `InjectProjBelowAgg` injects BELOW a global
-    /// StreamAgg whose argument is a scalar expression: it evaluates the
-    /// written expression once per row so the aggregate folds a column.
-    /// Returns whether a Projection was actually added — the aggregate then
-    /// reads the projected column, not the written expression.
-    pub(crate) fn injected_below_agg_projection(
-        &mut self,
-        select: &tidb_ast::SelectStmt,
-        qualify: &Qualifier<'_>,
-    ) -> bool {
-        // Each hoisted aggregate's ARGUMENT becomes the projected column:
-        // Go prints e.g. `Projection mul(l_price, minus(1, l_disc))->Col#?`
-        // directly below `StreamAgg funcs:sum(Col#?)->Col#?`.
-        let mut lines = Vec::new();
-        for field in select.fields.fields() {
-            if let tidb_ast::SelectField::Expr { expr, .. } = field {
-                // Go injects a Projection only for SCALAR-EXPRESSION
-                // arguments; a bare-column argument reads its column
-                // directly and no Projection exists to print.
-                for aggregate in aggregate_exprs(expr) {
-                    if let tidb_ast::Expr::Aggregate { args, .. } = &aggregate {
-                        match args.first() {
-                            Some(arg @ tidb_ast::Expr::Column(_)) => {}
-                            Some(arg @ tidb_ast::Expr::Paren(_)) => {}
-                            Some(arg) => {
-                                lines.push(format!("{}->Column#0", qualify.expr(arg)));
-                            }
-                            None => {}
-                        }
-                    }
-                }
-            }
-        }
-        let injected = !lines.is_empty();
-        if injected {
-            self.wrap("Projection", Est::Inherit, lines.join(", "));
-        }
-        injected
-    }
-
     /// The visible Projection retained above an Aggregation after Go's
     /// `Aggregation -> Projection` pushdown arm removed the child Projection.
     /// Plain fields now read aggregation result columns; scalar expressions
@@ -4295,35 +3962,6 @@ impl PlanTrace {
         }
     }
 
-    /// The root projection Go inserts before an integer `SUM`, converting the
-    /// integer argument to the exact DECIMAL input domain consumed by SUM.
-    pub(crate) fn sum_cast_projection(
-        &mut self,
-        select: &tidb_ast::SelectStmt,
-        qualify: &Qualifier<'_>,
-        precision: i64,
-    ) {
-        let argument = select.fields.fields().iter().find_map(|field| match field {
-            tidb_ast::SelectField::Expr {
-                expr: tidb_ast::Expr::Aggregate { name, args, .. },
-                ..
-            } if name.eq_ignore_ascii_case("SUM") => args.first(),
-            _ => None,
-        });
-        let Some(argument) = argument else {
-            self.refuse("integer SUM projection has no source argument");
-            return;
-        };
-        self.wrap(
-            "Projection",
-            Est::Inherit,
-            format!(
-                "cast({}, decimal({precision},0) BINARY)->Column#0",
-                qualify.expr(argument)
-            ),
-        );
-    }
-
     /// A global root StreamAgg over the single aggregate selected by the
     /// Sysbench range plans. `projected` names the cast projection's output;
     /// COUNT reads its source column directly.
@@ -4363,7 +4001,9 @@ impl PlanTrace {
             self.refuse("stream aggregation has no aggregate expression");
             return;
         };
-        let input = if projected {
+        let input = if projected && name.eq_ignore_ascii_case("AVG") {
+            "Column#0, Column#1".to_owned()
+        } else if projected {
             "Column#0".to_owned()
         } else {
             fn without_parens(mut expr: &tidb_ast::Expr) -> &tidb_ast::Expr {
@@ -4566,9 +4206,10 @@ impl PlanTrace {
                                 .iter()
                                 .any(|order| candidates.iter().any(|candidate| candidate == order))
                         })
-                        .map_or_else(|| qualify.expr(&item.expr), |(index, _)| {
-                            format!("Column#{index}")
-                        }),
+                        .map_or_else(
+                            || qualify.expr(&item.expr),
+                            |(index, _)| format!("Column#{index}"),
+                        ),
                 };
                 if item.desc {
                     format!("{expression}:desc")
@@ -4597,23 +4238,6 @@ impl PlanTrace {
                 column_names,
             ),
         );
-    }
-
-    /// The root Sort inserted by Go `getEnforcedMergeJoin` for a child whose
-    /// access path does not already provide the hinted merge-key order.
-    pub(crate) fn enforced_merge_sort(&mut self, keys: &[String], desc: bool) {
-        let info = keys
-            .iter()
-            .map(|key| {
-                if desc {
-                    format!("{key}:desc")
-                } else {
-                    key.clone()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        self.wrap("Sort", Est::Inherit, info);
     }
 
     /// `ORDER BY` + `LIMIT` fused into Go's `TopN`
@@ -4840,125 +4464,6 @@ impl PlanTrace {
         lookup.info = format!("limit embedded(offset:{offset}, count:{count})");
         lookup.children[1].est_rows = output_estimate;
         self.stack.push(lookup);
-        true
-    }
-
-    /// Moves a residual filter below a non-covering lookup, onto its Probe.
-    pub(crate) fn lookup_probe_selection(&mut self, logical_rows: Option<f64>) -> bool {
-        // A residual over a batch point get is already placed: Go's
-        // `convertToBatchPointGet` keeps `IndexFilters`/`TableFilters` in a
-        // ROOT `Selection` above the root read (`find_best_task.go`), so
-        // there is no cop Probe to move anything onto. The per-partition
-        // shape was distributed when the Selection was recorded (see
-        // [`Self::residual_selection`]), leaving the union on top.
-        if self.stack.last().is_some_and(|top| {
-            top.name == "PartitionUnion"
-                && !top.children.is_empty()
-                && top.children.iter().all(|child| {
-                    child.name == "Selection"
-                        && child.children.len() == 1
-                        && child.children[0].name == "Batch_Point_Get"
-                })
-        }) {
-            return true;
-        }
-        let Some(mut selection) = self.stack.pop() else {
-            return false;
-        };
-        // The residual filter belongs to each partition's own reader. Go's
-        // `PartitionProcessor` divided the `DataSource` before this filter
-        // was ever placed, so the recorded plan shows one `Selection(Probe)`
-        // INSIDE every branch -- never one above the union. This tier records
-        // the plan bottom-up, so the filter arrives after the fan-out and is
-        // distributed into the branches here.
-        if selection
-            .children
-            .first()
-            .is_some_and(|child| child.name == "PartitionUnion")
-        {
-            let mut union = selection.children.pop().expect("the union was just seen");
-            let branches = std::mem::take(&mut union.children);
-            let mut placed = true;
-            for branch in branches {
-                let mut per_branch = selection.clone();
-                per_branch.act_rows = None;
-                per_branch.children = vec![branch];
-                self.stack.push(per_branch);
-                placed &= self.lookup_probe_selection(logical_rows);
-                union
-                    .children
-                    .push(self.stack.pop().expect("every branch is left on the stack"));
-            }
-            self.stack.push(union);
-            return placed;
-        }
-        if selection.name != "Selection" || selection.children.len() != 1 {
-            self.stack.push(selection);
-            return false;
-        }
-        let lookup = selection.children.pop().expect("selection child");
-        // A single-partition (or unpartitioned) batch point get also keeps
-        // its residual as the root Selection it already is.
-        if lookup.name == "Batch_Point_Get" {
-            selection.children.push(lookup);
-            self.stack.push(selection);
-            return true;
-        }
-        if lookup.name != "IndexLookUp" || lookup.children.len() != 2 {
-            selection.children.push(lookup);
-            self.stack.push(selection);
-            return false;
-        }
-        let mut lookup = lookup;
-        let mut probe = lookup.children.remove(1);
-        probe.label = "";
-        // Go reports the probe selection and the lookup output using the
-        // logical filtered-row estimate when one is available. The index-side
-        // access estimate can be higher (for example, pseudo statistics on a
-        // wide IN/range path); retaining it at the reader boundary leaves a
-        // root LIMIT/Projection at that inflated cardinality even though the
-        // residual Selection has already reduced the rows. Keep the physical
-        // estimate only as a fallback for traces without a logical estimate.
-        let output_estimate = logical_rows.or(lookup.est_rows);
-        selection.task = "cop[tikv]";
-        selection.label = "(Probe)";
-        selection.est_rows = output_estimate;
-        selection.children.push(probe);
-        lookup.children.insert(1, selection);
-        lookup.est_rows = output_estimate;
-        self.stack.push(lookup);
-        true
-    }
-
-    /// Caps the visible output estimate of an ordered lookup whose residual
-    /// predicate is evaluated on Probe.
-    pub(crate) fn cap_lookup_output(&mut self, count: u64) -> bool {
-        let Some(top) = self.stack.last_mut() else {
-            return false;
-        };
-        let mut lookup = top;
-        if lookup.name == "Projection" {
-            lookup.est_rows = lookup
-                .est_rows
-                .map_or(Some(count as f64), |rows| Some(rows.min(count as f64)));
-            let Some(child) = lookup.children.get_mut(0) else {
-                return false;
-            };
-            lookup = child;
-        }
-        if lookup.name != "IndexLookUp" || lookup.children.len() != 2 {
-            return false;
-        }
-        lookup.est_rows = lookup
-            .est_rows
-            .map_or(Some(count as f64), |rows| Some(rows.min(count as f64)));
-        if let Some(selection) = lookup.children.get_mut(1) {
-            if selection.name == "Selection" {
-                selection.est_rows = selection
-                    .est_rows
-                    .map_or(Some(count as f64), |rows| Some(rows.min(count as f64)));
-            }
-        }
         true
     }
 
@@ -5343,100 +4848,6 @@ impl PlanTrace {
         true
     }
 
-    /// Records a simple projection executed by the TiKV request and the
-    /// TableReader boundary that returns it to the root task. The source has
-    /// already accepted the matching kept-column list, so these nodes
-    /// describe the pushed execution rather than changing EXPLAIN alone.
-    pub(crate) fn cop_table_projection(
-        &mut self,
-        fields: &[tidb_ast::SelectField],
-        qualify: &Qualifier<'_>,
-        logical_rows: Option<f64>,
-    ) {
-        let Some(mut scan) = self.stack.pop() else {
-            return;
-        };
-        scan.task = "cop[tikv]";
-        let estimate = logical_rows.or(scan.est_rows);
-        let key_ndv_ratio = scan.key_ndv_ratio;
-        let act_rows = scan.act_rows.clone();
-
-        let mut projection = PlanNode::new(
-            "Projection",
-            estimate,
-            String::new(),
-            field_list(fields, qualify),
-        );
-        projection.task = "cop[tikv]";
-        projection.key_ndv_ratio = key_ndv_ratio;
-        projection.act_rows = act_rows.clone();
-        projection.children.push(scan);
-
-        let mut reader = PlanNode::new(
-            "TableReader",
-            estimate,
-            String::new(),
-            "data:Projection".to_owned(),
-        );
-        reader.key_ndv_ratio = key_ndv_ratio;
-        reader.act_rows = act_rows;
-        reader.children.push(projection);
-        self.stack.push(reader);
-    }
-
-    /// Places an access-path residual Selection and the scan's accepted
-    /// column projection in the TiKV task, then returns them through a table
-    /// reader. The executor has already pushed the same residual into the
-    /// scan and pruned its output schema before this method is called.
-    pub(crate) fn cop_selection_projection_reader(
-        &mut self,
-        fields: &[tidb_ast::SelectField],
-        qualify: &Qualifier<'_>,
-    ) -> bool {
-        let Some(mut selection) = self.stack.pop() else {
-            return false;
-        };
-        if selection.name != "Selection" || selection.children.len() != 1 {
-            self.stack.push(selection);
-            return false;
-        }
-        let mut scan = selection.children.pop().expect("one Selection child");
-        if !matches!(scan.name, "TableFullScan" | "TableRangeScan") {
-            selection.children.push(scan);
-            self.stack.push(selection);
-            return false;
-        }
-        scan.task = "cop[tikv]";
-        selection.task = "cop[tikv]";
-        selection.children.push(scan);
-        let estimate = selection.est_rows;
-        let act_rows = selection.act_rows.clone();
-        let key_ndv_ratio = selection.key_ndv_ratio;
-
-        let mut projection = PlanNode::new(
-            "Projection",
-            estimate,
-            String::new(),
-            field_list(fields, qualify),
-        );
-        projection.task = "cop[tikv]";
-        projection.key_ndv_ratio = key_ndv_ratio;
-        projection.act_rows = act_rows.clone();
-        projection.children.push(selection);
-
-        let mut reader = PlanNode::new(
-            "TableReader",
-            estimate,
-            String::new(),
-            "data:Projection".to_owned(),
-        );
-        reader.key_ndv_ratio = key_ndv_ratio;
-        reader.act_rows = act_rows;
-        reader.children.push(projection);
-        self.stack.push(reader);
-        true
-    }
-
     /// `SELECT DISTINCT`: Go's `buildDistinct` is an aggregation grouping by
     /// every projected column, so it carries the same NDV assumption.
     pub(crate) fn distinct(
@@ -5591,8 +5002,7 @@ impl PlanTrace {
         }
         conjuncts.extend_from_slice(pushed);
         if conjuncts.len() != equal_mask.len() {
-
-            return Err(())
+            return Err(());
         }
         let mut equal = Vec::new();
         let mut other = Vec::new();
@@ -5696,8 +5106,7 @@ impl PlanTrace {
             tail.push_str(&other.join(", "));
         }
         let (Some(mut right), Some(mut left)) = (self.stack.pop(), self.stack.pop()) else {
-
-            return Err(())
+            return Err(());
         };
         // Go prints the BUILD child first and labels both sides
         // (`flat_plan.go`'s `BuildSide`/`ProbeSide`).
@@ -5739,27 +5148,10 @@ impl PlanTrace {
                 .flatten()
                 .collect()
         });
-        // Which index-join executor this site's row names, decided by the one
-        // cost term that differs between them (`index_join_operator`).
-        //
-        // `probe_rows_one` is Go's `AvgInnerRowCnt`, and it is defined in
-        // `enumerateIndexJoinByOuterIdx` as `p.EqualCondOutCnt / buildRows` --
-        // the join's EQUAL-CONDITION output count over the outer row count,
-        // which is what the inner side is then planned for and therefore what
-        // `getCardinality(probe)` reads back. `est_rows` here IS that
-        // equal-condition estimate (`full_join_row_count`), so the division
-        // below is Go's own line rather than a proxy for it.
-        let index_join_name = index_lookup.as_ref().map(|text| {
-            // `build`, in Go's naming: `p.Children()[1-p.InnerChildIdx]`.
-            let outer = if text.lookup_is_left { &right } else { &left };
-            let build_rows = outer.est_rows;
-            let probe_rows_one = est_rows
-                .zip(build_rows)
-                .map(|(equal_cond_out, rows)| equal_cond_out / rows);
-            text.forced_name.unwrap_or_else(|| {
-                index_join_operator(build_rows, probe_rows_one, text, equal.len())
-            })
-        });
+        // The shared physical receipt already names the exact index-join
+        // executor selected by Go's candidate enumeration and coster. The
+        // trace only renders that choice; it must not re-cost the two kinds.
+        let index_join_name = index_lookup.as_ref().map(|text| text.operator);
         let children = if build_is_left {
             vec![left, right]
         } else {
@@ -5834,8 +5226,7 @@ impl PlanTrace {
         anti: bool,
     ) -> Result<(), ()> {
         if conditions.len() != equal_mask.len() {
-
-            return Err(())
+            return Err(());
         }
         let qualify = Qualifier {
             db: current_db,
@@ -5869,8 +5260,7 @@ impl PlanTrace {
         }
 
         let (Some(mut right), Some(mut left)) = (self.stack.pop(), self.stack.pop()) else {
-
-            return Err(())
+            return Err(());
         };
         right.label = "(Build)";
         left.label = "(Probe)";
@@ -6751,7 +6141,7 @@ fn full_join_row_count(
     merge_keys: Option<&[(String, String)]>,
 ) -> Option<f64> {
     use tidb_planner::cardinality::join::{
-        FullJoinRowCountInput, JoinKeyEstimate, estimate_full_join_row_count,
+        estimate_full_join_row_count, FullJoinRowCountInput, JoinKeyEstimate,
     };
     let (left_rows, right_rows) = (left.est_rows?, right.est_rows?);
     let key = |node: &PlanNode, left_side: bool| {
@@ -6844,6 +6234,8 @@ pub(crate) struct JoinStrategy {
 /// the scan itself -- so it is named from the probed object rather than read
 /// off a child that does not exist here.
 pub(crate) struct IndexJoinText {
+    /// Exact physical index-join family selected by the shared planner.
+    pub(crate) operator: &'static str,
     /// `IndexReader` for a covering index probe, `IndexLookUp` for a double
     /// read, and `TableReader` for a handle probe.
     pub(crate) reader: &'static str,
@@ -6854,26 +6246,10 @@ pub(crate) struct IndexJoinText {
     /// base columns Go's `OrigName` prints. The dynamic access key above is a
     /// subset; Go still repeats it in `equal cond:`.
     pub(crate) equal_conditions: Vec<String>,
-    /// Whether the LOOKED-UP (inner) side is the join's left child. The two
-    /// sides are not interchangeable in the cost below: the hash table is
-    /// built over the outer side for `IndexHashJoin` and over the inner one
-    /// for `IndexJoin`.
+    /// Whether the LOOKED-UP (inner) side is the join's left child.
     pub(crate) lookup_is_left: bool,
     /// Whether one complete probe tuple can return at most one inner row.
     pub(crate) unique: bool,
-    /// The exact index-family executor a statement hint forced, or `None`
-    /// when Go's coster chooses between the lookup variants.
-    pub(crate) forced_name: Option<&'static str>,
-    /// `getAvgRowSize(build.StatsInfo(), build.Schema().Columns)` for the
-    /// OUTER side, and the same for the INNER one. Computed where the two
-    /// sides' column types are known (`driver::from::build_join`), because a
-    /// plan row carries only their text.
-    pub(crate) outer_row_size: f64,
-    pub(crate) inner_row_size: f64,
-    /// Statement-owned estimates used to choose `IndexJoin` versus
-    /// `IndexHashJoin`. They are independent of whether EXPLAIN is active.
-    pub(crate) estimated_outer_rows: Option<f64>,
-    pub(crate) estimated_probe_rows_one: Option<f64>,
     /// The statement-owned equality-join output estimate.
     pub(crate) estimated_join_rows: Option<f64>,
 }
@@ -6928,116 +6304,6 @@ pub(crate) struct IndexJoinInnerPathText<'a> {
     /// this residual on the lookup's Probe table read; grouped probes render
     /// carrier columns as `Column#N` below.
     pub(crate) inner_not_null_info: &'a str,
-}
-
-/// Unsays `keep order:true` on every leaf under `node` that a join above it
-/// asked for and then did not use.
-///
-/// The walk stops at the two operators that RELY on their child's order --
-/// a `MergeJoin` on both sides, an index join on its outer one -- and passes
-/// through the shapes that do not: a `Projection` and a `Selection` carry
-/// their child's order without needing it, and a `HashJoin` needs none at all
-/// (Go's `getHashJoins` opens with "hash join doesn't promise any orders" and
-/// asks its children for none either).
-fn retract_keep_order(node: &mut PlanNode) {
-    if node.children.is_empty() {
-        if node.info.contains("keep order:true") {
-            node.info = node.info.replacen("keep order:true", "keep order:false", 1);
-        }
-        return;
-    }
-    if !matches!(
-        node.name,
-        "Projection"
-            | "Selection"
-            | "HashAgg"
-            | "HashJoin"
-            | "TableReader"
-            | "IndexReader"
-            | "IndexLookUp"
-    ) {
-        return;
-    }
-    for child in &mut node.children {
-        retract_keep_order(child);
-    }
-}
-
-/// Which of Go's three index-join executors this site's plan row names.
-///
-/// Go ENUMERATES them as separate candidates -- `constructIndexJoinStatic`
-/// for `PhysicalIndexJoin` and `constructIndexHashJoinStatic` for
-/// `PhysicalIndexHashJoin`, both from `enumerateIndexJoinByOuterIdx`, in that
-/// order -- and `findBestTask` keeps the cheaper. Every term of
-/// `getIndexJoinCostVer24PhysicalIndexJoin` is shared between the two except
-/// the HASH TABLE, so the whole of the choice is that one term:
-///
-/// ```text
-/// case 1: // IndexHashJoin
-///     hashTableCost = hashBuildCostVer2(option, buildRows, buildRowSize,
-///         float64(len(p.RightJoinKeys)), cpuFactor, memFactor)
-/// default: // IndexJoin
-///     hashTableCost = hashBuildCostVer2(option, probeRowsTot, probeRowSize,
-///         float64(len(p.LeftJoinKeys)), cpuFactor, memFactor)
-/// ```
-///
-/// `IndexJoin` is enumerated FIRST and `findBestTask` replaces the incumbent
-/// only on a STRICT improvement, so an exact tie -- one inner row per outer
-/// row and two sides of equal width -- keeps `IndexJoin`. That is why the
-/// comparison below is `<` and not `<=`.
-///
-/// MEASURED, on `gorun` against this repo's own tree, for the statement
-/// `r/planner/core/join_reorder_through_projection.result:1319` records an
-/// `IndexHashJoin` for, with the two kinds forced by hint so both plans are
-/// costed at the SAME site:
-///
-/// ```text
-/// /*+ INL_JOIN(t1) */       IndexJoin_40     12500.00  6065326.13
-/// /*+ INL_HASH_JOIN(t1) */  IndexHashJoin_44 12500.00  6030776.13
-/// ```
-///
-/// 34550.00 apart, which is exactly the hash-table term's difference divided
-/// by `tidb_index_lookup_join_concurrency`. So the label at that site is a
-/// COST decision and not a structural one, which is what the census in
-/// `difftest-result-tests`' `join_shape` had left open.
-///
-/// `IndexMergeJoin` is NOT reachable here: its candidate is built only when
-/// the inner side can deliver the join keys' order, which this tier's index
-/// probe never claims (`index_join_inner_scan` writes `keep order:false` on
-/// every one of them), so its zero hash-table term never competes.
-fn index_join_operator(
-    outer: Option<f64>,
-    inner_rows_one: Option<f64>,
-    text: &IndexJoinText,
-    num_keys: usize,
-) -> &'static str {
-    use tidb_planner::plan_cost_ver2::{Ver2Factors, hash_build_cost};
-    use tidb_planner::task_type::TaskType;
-    let outer = text.estimated_outer_rows.or(outer);
-    let inner_rows_one = text.estimated_probe_rows_one.or(inner_rows_one);
-    let (Some(build_rows), Some(probe_rows_one)) = (outer, inner_rows_one) else {
-        // No estimate on one of the two sides: Go always has one, and this
-        // tier's fallback is the candidate Go enumerates first.
-        return "IndexJoin";
-    };
-    let factors = Ver2Factors::default();
-    let cpu = factors.task_cpu(TaskType::Root);
-    let mem = factors.task_mem(TaskType::Root);
-    let keys = num_keys as f64;
-    let hash_join = hash_build_cost(None, build_rows, text.outer_row_size, keys, cpu, mem);
-    let index_join = hash_build_cost(
-        None,
-        probe_rows_one * build_rows,
-        text.inner_row_size,
-        keys,
-        cpu,
-        mem,
-    );
-    if hash_join.value() < index_join.value() {
-        "IndexHashJoin"
-    } else {
-        "IndexJoin"
-    }
 }
 
 pub(crate) fn collect_and<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
@@ -7358,38 +6624,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn probe_residual_uses_filtered_logical_rows_for_lookup_output() {
-        let mut trace = PlanTrace::planning();
-        let mut lookup = PlanNode::new("IndexLookUp", Some(1.25), String::new(), String::new());
-        lookup.children.push(PlanNode::new(
-            "IndexRangeScan",
-            Some(1.25),
-            String::new(),
-            String::new(),
-        ));
-        lookup.children.push(PlanNode::new(
-            "TableRowIDScan",
-            Some(1.25),
-            String::new(),
-            String::new(),
-        ));
-        let mut residual = PlanNode::new("Selection", Some(1.0), String::new(), String::new());
-        residual.children.push(lookup);
-        trace.stack.push(residual);
-
-        assert!(trace.lookup_probe_selection(Some(1.0)));
-        assert_eq!(trace.stack.last().and_then(|node| node.est_rows), Some(1.0));
-        assert_eq!(
-            trace
-                .stack
-                .last()
-                .and_then(|node| node.children.get(1))
-                .and_then(|node| node.est_rows),
-            Some(1.0)
-        );
-    }
-
-    #[test]
     fn embedded_lookup_limit_preserves_scan_estimate_and_caps_reader_output() {
         let mut trace = PlanTrace::planning();
         let mut lookup = PlanNode::new("IndexLookUp", Some(5177.55), String::new(), String::new());
@@ -7522,59 +6756,6 @@ mod tests {
         );
 
         assert_eq!(pseudo_selectivity(&predicate), 1.0);
-    }
-
-    fn index_join_text(outer_row_size: f64, inner_row_size: f64) -> IndexJoinText {
-        IndexJoinText {
-            reader: "IndexReader",
-            keys: vec![("a".to_owned(), "b".to_owned())],
-            equal_conditions: vec!["eq(a, b)".to_owned()],
-            lookup_is_left: false,
-            unique: false,
-            forced_name: None,
-            outer_row_size,
-            inner_row_size,
-            estimated_outer_rows: None,
-            estimated_probe_rows_one: None,
-            estimated_join_rows: None,
-        }
-    }
-
-    /// MUTATION PROBE for the kind ENUMERATION: a rule that always answered
-    /// one name fails one of these two.
-    ///
-    /// The two cases are Go's own two regimes. With MORE than one inner row
-    /// per outer row the index join's hash table is the bigger one -- it is
-    /// built over `probeRowsTot = probeRowsOne * buildRows` -- so
-    /// `IndexHashJoin`, whose table is only `buildRows` tall, is cheaper.
-    /// With exactly ONE inner row per outer row the two tables are the same
-    /// height and only the ROW WIDTH is left, so a wide outer side makes
-    /// `IndexJoin` the cheaper of the two.
-    #[test]
-    fn both_index_join_kinds_are_reachable() {
-        assert_eq!(
-            index_join_operator(Some(10000.0), Some(10.0), &index_join_text(16.0, 16.0), 1),
-            "IndexHashJoin",
-            "ten inner rows per outer row: the index join's table is ten times taller",
-        );
-        assert_eq!(
-            index_join_operator(Some(10000.0), Some(1.0), &index_join_text(400.0, 8.0), 1),
-            "IndexJoin",
-            "one inner row per outer row and a wide outer side",
-        );
-    }
-
-    /// MUTATION PROBE for the per-kind cost TERM: the two `hash_build_cost`
-    /// calls read different sides, and swapping their arguments flips both
-    /// answers above. Pinned as the exact tie Go's enumeration order settles:
-    /// `IndexJoin` is enumerated first and `findBestTask` replaces the
-    /// incumbent only on a STRICT improvement, so equal costs keep it.
-    #[test]
-    fn an_exact_tie_keeps_the_kind_go_enumerates_first() {
-        assert_eq!(
-            index_join_operator(Some(10000.0), Some(1.0), &index_join_text(16.0, 16.0), 1),
-            "IndexJoin",
-        );
     }
 
     #[test]
@@ -7840,42 +7021,5 @@ mod tests {
         assert_eq!(reader.children[0].task, "cop[tikv]");
         assert_eq!(reader.children[0].children[0].name, "Selection");
         assert_eq!(reader.children[0].children[0].task, "cop[tikv]");
-    }
-
-    /// MUTATION PROBE for the RETRACTION's descent: it passes through the
-    /// shapes that do not rely on their child's order and stops at the ones
-    /// that do.
-    #[test]
-    fn a_retraction_walks_past_a_projection_and_stops_at_a_merge_join() {
-        let leaf = || {
-            PlanNode::new(
-                "TableFullScan",
-                Some(1.0),
-                "table:t".to_owned(),
-                "keep order:true, stats:pseudo".to_owned(),
-            )
-        };
-        let mut through = PlanNode::new("Projection", None, String::new(), String::new());
-        through.children.push(leaf());
-        retract_keep_order(&mut through);
-        assert_eq!(through.children[0].info, "keep order:false, stats:pseudo");
-
-        let mut ranged = PlanNode::new("HashAgg", None, String::new(), String::new());
-        ranged.children.push(PlanNode::new(
-            "TableRangeScan",
-            Some(1.0),
-            "table:t".to_owned(),
-            "range:[1,1], keep order:true".to_owned(),
-        ));
-        retract_keep_order(&mut ranged);
-        assert_eq!(ranged.children[0].info, "range:[1,1], keep order:false");
-
-        let mut relied_on = PlanNode::new("MergeJoin", None, String::new(), String::new());
-        relied_on.children.push(leaf());
-        retract_keep_order(&mut relied_on);
-        assert_eq!(
-            relied_on.children[0].info, "keep order:true, stats:pseudo",
-            "a merge join RELIES on that order; unsaying it describes a plan that cannot run",
-        );
     }
 }

@@ -82,14 +82,14 @@ use tidb_executor::ddl::column_field_type::{
     build_field_type as build_shared_field_type, column_type_code as shared_column_type_code,
     process_column_flags, ColumnTypeError,
 };
+use tidb_executor::kv_table::KvIndex;
 use tidb_model::column::{
     ColumnDefaultValue, ColumnInfo, GoAny, GoStringSet, CURR_LATEST_COLUMN_INFO_VERSION,
 };
-use tidb_executor::kv_table::KvIndex;
 use tidb_model::index::{IndexColumn, IndexInfo};
 use tidb_model::schema_state::SchemaState;
-use tidb_model::GoShared;
 use tidb_model::table_info::{TableInfo, TABLE_INFO_VERSION5};
+use tidb_model::GoShared;
 
 /// Go `types.UnspecifiedLength`.
 pub const UNSPECIFIED_LENGTH: i64 = -1;
@@ -503,10 +503,9 @@ pub fn build_table_info_with_context(
                     let column = column.read();
                     // Every index here was built from this table's own
                     // columns a few lines above, so each name resolves.
-                    if let Some(offset) = names
-                        .iter()
-                        .position(|candidate| candidate.eq_ignore_ascii_case(column.name.original()))
-                    {
+                    if let Some(offset) = names.iter().position(|candidate| {
+                        candidate.eq_ignore_ascii_case(column.name.original())
+                    }) {
                         column_offsets.push(offset);
                         prefix_lengths.push(column.length);
                     }

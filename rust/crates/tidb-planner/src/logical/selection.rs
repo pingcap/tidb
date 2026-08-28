@@ -46,6 +46,20 @@ pub struct LogicalSelection {
 }
 
 impl LogicalSelection {
+    /// Go `LogicalSelection.PreparePossibleProperties`: a filter preserves
+    /// every order its child can provide.
+    pub fn prepare_possible_properties(
+        &mut self,
+        child: Option<&crate::plan_base::PossiblePropertiesInfo>,
+    ) -> crate::plan_base::PossiblePropertiesInfo {
+        let Some(child) = child else {
+            self.base.set_has_tiflash(false);
+            return crate::plan_base::PossiblePropertiesInfo::default();
+        };
+        self.base.set_has_tiflash(child.has_tiflash);
+        child.clone()
+    }
+
     /// Go `LogicalSelection.Init(ctx, qbOffset)` (`logical_selection.go:48`),
     /// whose plan-codec type is `plancodec.TypeSel`.
     #[must_use]

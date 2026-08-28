@@ -307,6 +307,7 @@ fn a_pushed_equality_charges_gos_pseudo_rate() {
     let LogicalPlan::DataSource(op) = &mut source else {
         unreachable!()
     };
+    op.table_scan_penalty.pseudo_stats = true;
     op.columns = vec![super::data_source::DataSourceColumn {
         id: 1,
         name: "a".to_owned(),
@@ -323,6 +324,35 @@ fn a_pushed_equality_charges_gos_pseudo_rate() {
 }
 
 #[test]
+fn two_pseudo_bounds_form_one_column_range() {
+    // Go's pseudo table still owns one pseudo histogram per column, so
+    // `Selectivity` merges these two predicates before estimating them.
+    // A finite non-point range is `1/pseudoBetweenRate = 1/40`.
+    let allocator = PlanIdAllocator::new();
+    let mut source = stated_source(&allocator, &[1], 10_000.0, &[(1, 8_000.0)]);
+    let LogicalPlan::DataSource(op) = &mut source else {
+        unreachable!()
+    };
+    op.table_scan_penalty.pseudo_stats = true;
+    op.columns = vec![super::data_source::DataSourceColumn {
+        id: 1,
+        name: "a".to_owned(),
+        is_primary_key: false,
+    }];
+    op.pushed_down_conds = vec![
+        Expression::ScalarFunction(comparison_condition_to_constant("ge", 1, 1)),
+        Expression::ScalarFunction(comparison_condition_to_constant("le", 1, 3)),
+    ];
+
+    let (stats, _) = derive(&mut source).expect("an unanalyzed bounded range derives");
+    assert!(
+        (stats.row_count() - 250.0).abs() < f64::EPSILON,
+        "10000 / pseudoBetweenRate, got {}",
+        stats.row_count()
+    );
+}
+
+#[test]
 fn no_conditions_still_answer_the_full_table() {
     // `Selectivity` with no conditions is 100% (`selectivity.go:61`).
     let allocator = PlanIdAllocator::new();
@@ -333,8 +363,12 @@ fn no_conditions_still_answer_the_full_table() {
 
 /// `col = const`, the shape `getConstantColumnID` resolves.
 fn eq_condition_to_constant(col: i64, value: i64) -> ScalarFunction {
+    comparison_condition_to_constant("eq", col, value)
+}
+
+fn comparison_condition_to_constant(name: &str, col: i64, value: i64) -> ScalarFunction {
     ScalarFunction::new(
-        CiString::new("eq"),
+        CiString::new(name),
         FieldType::new(FieldTypeCode::Long),
         vec![
             Expression::Column(column(col)),

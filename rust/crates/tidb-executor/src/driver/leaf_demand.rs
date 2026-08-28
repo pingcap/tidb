@@ -18,22 +18,17 @@
 //!
 //! # Why a leaf needs this at all
 //!
-//! Go costs an access path per `DataSource`, and the single input that decides
-//! whether an index path is a SINGLE scan or a double read is
-//! `isCoveringIndex(path.IdxCols, ds.schema.Columns)` -- the columns the
-//! `DataSource`'s parents still need after pruning. A leaf under a join has
-//! exactly the same question to answer as a lone table does, so the same
-//! answer has to reach it; without one, every leaf declares that it needs
-//! every column, no index ever covers, and `TableFullScan` wins by
-//! construction rather than by cost.
+//! Go prunes each `DataSource` schema before physical enumeration. The shared
+//! planner now owns that cost-sensitive schema and covering-index choice;
+//! this AST walk is retained only to compact the already-selected executor
+//! leaf to the columns its parent consumes.
 //!
 //! [`crate::column_prune`] cannot supply it. That module NARROWS a source's
 //! output, so it must be exact in both directions and refuses every shape it
 //! cannot prove (any subquery, three or more tables, a derived table). This
-//! one only feeds the COST MODEL: the source it informs still emits the whole
-//! row, so a demand that is too wide costs a covering index as a double read
-//! and falls back to the scan that would have run anyway. That asymmetry is
-//! what lets this analysis be a name-level over-approximation and stay safe.
+//! walk is a name-level over-approximation: a demand that is too wide merely
+//! retains an extra executor column and cannot change the physical access
+//! receipt selected by the planner.
 //!
 //! # The over-approximation, stated
 //!
@@ -60,13 +55,6 @@
 //! The [`Expr`] match is EXHAUSTIVE with no wildcard arm, so a new expression
 //! variant is a compile error here rather than a subtree nobody walks -- the
 //! same rule [`crate::column_prune`] holds itself to.
-//!
-//! # The second fact this walk carries
-//!
-//! [`LeafDemand::forces_index`] is Go's `StmtCtx.GetIndexForce()`, the other
-//! statement-wide input [`crate::access_cost::enumerate_paths`] reads. It
-//! rides here because it is the same question asked of the same nodes and has
-//! the same one consumer; its own doc says why, and what Go does with it.
 //!
 //! # Where the walk is rooted, and the gap that leaves
 //!
@@ -109,15 +97,6 @@ pub(crate) struct FromDemand<'a> {
     /// the caller has no statement to compute them from -- which every leaf
     /// reads as "every column", the answer it gave before this existed.
     pub(crate) columns: Option<&'a LeafDemand>,
-    /// The same walk, but supplied whether or not the leaf plans its own
-    /// access path -- `columns` is withheld from a single-KV-table `SELECT`
-    /// because `commit_fast_path_source` costs that one later.
-    ///
-    /// It answers only questions about which names the statement WRITES, not
-    /// which columns a leaf must produce, so withholding it would change an
-    /// answer rather than defer a decision. [`LeafDemand::names_extra_handle`]
-    /// is the one such question.
-    pub(crate) all_names: Option<&'a LeafDemand>,
     /// The columns this `FROM` must expose to its parent logical operator.
     /// Unlike `columns`, this excludes predicates that a join below can
     /// consume. Join costing uses it to reproduce the schemas left by Go's
@@ -129,11 +108,12 @@ pub(crate) struct FromDemand<'a> {
     /// [`crate::driver::join_reorder::row_source`] declines, which the search
     /// reads as "this site cannot be priced" and refuses.
     pub(crate) rows: Option<&'a crate::driver::join_reorder::RowSource>,
-    /// The join algorithms the statement NAMED, or `None` when it named none
-    /// -- Go's `hintInfo == nil` in `SetPreferredJoinTypeAndOrder`. A join
-    /// site reads it before it decides a merge join; see
-    /// [`crate::driver::join_method_hints`].
-    pub(crate) join_hints: Option<&'a crate::driver::join_method_hints::JoinMethodHints>,
+    /// The physical join selected by the shared planner for this `FROM` root.
+    /// Child joins receive the corresponding child receipt.
+    pub(crate) planner_join: Option<&'a crate::driver::planner_bridge::JoinDecision>,
+    /// Physical access paths selected below this SELECT by the same shared
+    /// planner search. Leaf lowering consumes these receipts mechanically.
+    pub(crate) planner_access: Option<&'a [crate::driver::planner_bridge::AccessDecision]>,
     /// Render optimizer-created joins with the base-column identities Go
     /// preserves after projection elimination, rather than with AST aliases.
     pub(crate) physical_source_names: bool,
@@ -165,9 +145,6 @@ pub(crate) struct RuntimeLookupDemand {
     pub(crate) probe_parts: Vec<crate::access_path::LookupProbePart>,
     pub(crate) probes: Rc<RefCell<crate::access_path::SharedIndexJoinProbes>>,
     pub(crate) filter_exprs: Vec<tidb_expr::expression::Expression>,
-    /// The leaf receipt from Go's re-planned inner task. Runtime lookup
-    /// construction needs the same candidate for cost-only child rebuilds.
-    pub(crate) probe_candidate: tidb_planner::candidate_cost::Candidate,
 }
 
 impl FromDemand<'_> {
@@ -177,10 +154,10 @@ impl FromDemand<'_> {
             offered: &[],
             pushdown: None,
             columns: None,
-            all_names: None,
             output_columns: None,
             rows: None,
-            join_hints: None,
+            planner_join: None,
+            planner_access: None,
             physical_source_names: false,
             plan_columns: &[],
             runtime_lookup: None,
@@ -206,24 +183,6 @@ pub(crate) struct LeafDemand {
     unqualified: BTreeSet<String>,
     /// Lowercased column names written as `t.c`, keyed by lowercased `t`.
     qualified: BTreeMap<String, BTreeSet<String>>,
-    /// Go `StmtCtx.SetIndexForce`, the OTHER statement-wide fact
-    /// [`crate::access_cost::enumerate_paths`] reads: whether ANY table of
-    /// the statement carries a `USE`/`FORCE INDEX`.
-    ///
-    /// It rides this walk rather than a second one because it is the same
-    /// question asked of the same nodes -- what the whole statement, its
-    /// subqueries included, says about the leaves below it -- and it has the
-    /// same one consumer. A second exhaustive [`Expr`] match would be a
-    /// second traversal that could silently disagree with this one about
-    /// which subqueries exist.
-    ///
-    /// Go raises this from `stats.go`'s `getGeneralAttributesFromPaths` the
-    /// moment any `AccessPath` of the statement is `path.Forced`, and
-    /// `getTableScanPenalty` then charges EVERY full table scan of the
-    /// statement -- including one over a table no hint named. `IGNORE INDEX`
-    /// does not force; `USE INDEX ()` does, because Go forces the table path
-    /// itself there.
-    forces_index: bool,
 }
 
 impl LeafDemand {
@@ -297,7 +256,7 @@ impl LeafDemand {
     /// visible under the name `visible`.
     ///
     /// The offsets are ascending and unique, which is the shape
-    /// [`crate::access_cost::enumerate_paths`] reads them in.
+    /// the shared planner's column pruning reads them in.
     pub(crate) fn needed(&self, visible: &str, columns: &[(String, FieldType)]) -> Vec<usize> {
         let visible = visible.to_ascii_lowercase();
         if self.all || self.star_tables.contains(&visible) {
@@ -349,11 +308,6 @@ impl LeafDemand {
                     .map(|offset| table.offset + offset)
             })
             .collect()
-    }
-
-    /// Go `StmtCtx.GetIndexForce()`: see [`LeafDemand::forces_index`].
-    pub(crate) const fn statement_forces_an_index(&self) -> bool {
-        self.forces_index
     }
 
     /// Records one written column path in whichever of the two spellings it
@@ -499,19 +453,9 @@ impl LeafDemand {
 
     fn add_join_node(&mut self, node: &JoinNode) {
         match node {
-            // A base table writes no expression of its own -- but it is
-            // where a `USE`/`FORCE INDEX` is written, and that is a
-            // STATEMENT-wide fact (see [`LeafDemand::forces_index`]).
-            JoinNode::Table(table_ref) => {
-                if table_ref.hints.iter().any(|hint| {
-                    // Go: a hint outside `HintForScan` is skipped before its
-                    // names are even looked at, so `FOR JOIN` never forces.
-                    hint.scope == tidb_ast::IndexHintScope::All
-                        && hint.kind != tidb_ast::IndexHintKind::Ignore
-                }) {
-                    self.forces_index = true;
-                }
-            }
+            // A base table writes no expression of its own. Its access hints
+            // are interpreted by the shared planner.
+            JoinNode::Table(_) => {}
             JoinNode::Join(join) => self.add_join(join),
             JoinNode::Derived { subquery, .. } => self.add_query(subquery),
         }

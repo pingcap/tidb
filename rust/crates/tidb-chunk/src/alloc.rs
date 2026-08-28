@@ -1071,10 +1071,8 @@ mod tests {
         let codec = crate::codec::Codec::new(fields());
         let buf = codec.encode(&chk);
 
-        let mut decoder = crate::codec::Decoder::new(
-            Chunk::new_with_capacity(&fields(), 0),
-            fields(),
-        );
+        let mut decoder =
+            crate::codec::Decoder::new(Chunk::new_with_capacity(&fields(), 0), fields());
         decoder.reset(&buf);
         decoder.reuse_intermediate_chunk(&mut chk);
         for index in 0..chk.num_cols() {
@@ -1176,8 +1174,11 @@ mod tests {
             assert!(chunk.column(1).elem_buf.is_none());
             for index in 2..8 {
                 let elem_len = chunk.column(index).elem_buf.as_ref().map_or(0, Vec::len);
-                assert_eq!(chunk.column(index).type_size() as usize, elem_len,
-                    "fixed-length column {index} stores its elem size");
+                assert_eq!(
+                    chunk.column(index).type_size() as usize,
+                    elem_len,
+                    "fixed-length column {index} stores its elem size"
+                );
             }
             for index in 2..8 {
                 assert_eq!(
@@ -1238,7 +1239,8 @@ mod tests {
                         bytes.as_ptr()
                     })
                     .collect();
-                let unique: std::collections::HashSet<*const u8> = identities.iter().copied().collect();
+                let unique: std::collections::HashSet<*const u8> =
+                    identities.iter().copied().collect();
                 assert_eq!(
                     identities.len(),
                     unique.len(),

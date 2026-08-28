@@ -30,7 +30,7 @@ use super::catalog::{SourceColumn, SourceIndex, SourceIndexColumn, SourceTable, 
 use super::marker::{MarkerKind, PlanMarker};
 use super::{PlanBuilder, ProjectionField};
 use crate::expression_rewriter::ColumnIdAllocator;
-use crate::logical::LogicalPlan;
+use crate::logical::{prepare_possible_properties, LogicalPlan};
 use crate::plan_base::PlanIdAllocator;
 
 // ***** the catalogue *****
@@ -175,6 +175,47 @@ fn find<'a>(plan: &'a LogicalPlan, tp: &str) -> Option<&'a LogicalPlan> {
     plan.children().iter().find_map(|child| find(child, tp))
 }
 
+#[test]
+fn possible_properties_use_equalities_above_the_data_source() {
+    let mut harness = Harness::new();
+    harness.catalog.tables[0].indexes.push(SourceIndex {
+        id: 2,
+        name: "idx_bc".to_owned(),
+        columns: vec![
+            SourceIndexColumn {
+                name: "b".to_owned(),
+                offset: 1,
+                length: -1,
+            },
+            SourceIndexColumn {
+                name: "c".to_owned(),
+                offset: 2,
+                length: -1,
+            },
+        ],
+        is_public: true,
+        is_visible: true,
+        ..SourceIndex::default()
+    });
+    let mut builder = harness.builder();
+    let (plan, _) = builder
+        .build_select(&parse_select(
+            "SELECT c, COUNT(*) FROM t WHERE b = 1 GROUP BY c",
+        ))
+        .expect("the grouped select builds");
+    let (plan, _) = prepare_possible_properties(plan);
+    let LogicalPlan::Aggregation(aggregation) =
+        find(&plan, "Aggregation").expect("the plan contains an aggregation")
+    else {
+        panic!("the located operator is not an aggregation");
+    };
+    assert!(aggregation
+        .possible_properties
+        .orders
+        .iter()
+        .any(|order| { order.len() == 1 && order[0].id == 3 }));
+}
+
 // ***** GROUP BY + aggregate builds a LogicalAggregation *****
 
 #[test]
@@ -208,6 +249,19 @@ fn test_group_by_builds_an_aggregation_with_gos_schema() {
         panic!("expected a Projection at the root, got {}", plan.tp());
     };
     assert_eq!(projection.exprs.len(), 2);
+    let Expression::Column(group_expr) = &projection.exprs[0] else {
+        panic!("the grouped select field resolves to an aggregation column");
+    };
+    let group_output = projection
+        .base
+        .base
+        .schema()
+        .and_then(|schema| schema.columns.first())
+        .expect("the projection output column");
+    assert_eq!(
+        group_output.unique_id, group_expr.unique_id,
+        "Go buildProjectionField preserves an already-rewritten Column identity"
+    );
 }
 
 #[test]
@@ -807,4 +861,24 @@ fn test_build_distinct_reports_every_child_column() {
     };
     assert_eq!(agg.group_by_items.len(), 1, "grouped on the first column");
     assert_eq!(agg.agg_funcs.len(), child_width);
+}
+
+#[test]
+fn aggregation_hints_reach_the_logical_aggregation() {
+    const PREFER_HASH_AGG: u32 = 1 << 25;
+    const PREFER_STREAM_AGG: u32 = 1 << 26;
+
+    for (hint, expected) in [
+        ("HASH_AGG", PREFER_HASH_AGG),
+        ("STREAM_AGG", PREFER_STREAM_AGG),
+    ] {
+        let plan = build(&format!("SELECT /*+ {hint}() */ COUNT(*) FROM t"));
+        let mut found = None;
+        plan.walk_preorder(&mut |node| {
+            if let LogicalPlan::Aggregation(aggregation) = node {
+                found = Some(aggregation.prefer_agg_type);
+            }
+        });
+        assert_eq!(found, Some(expected), "{hint} must reach physical search");
+    }
 }

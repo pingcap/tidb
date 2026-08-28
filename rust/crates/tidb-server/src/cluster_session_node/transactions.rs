@@ -96,12 +96,15 @@ pub(crate) fn sql_error(error: LockSqlError) -> SqlQueryError {
 pub trait ClusterTransactions: Send + Sync {
     /// Starts preparing one ordinary autocommit snapshot without waiting for
     /// its timestamp. The first read consumes the returned future.
-    fn prepare_snapshot(&self) -> Result<Box<dyn PendingClusterSnapshot>, String>;
+    fn prepare_snapshot(
+        &self,
+        resource_group: &str,
+    ) -> Result<Box<dyn PendingClusterSnapshot>, String>;
 
     /// Synchronously opens one autocommit statement's read snapshot at its own
     /// timestamp. This is the fail-closed fallback when no prepared future was
     /// installed; ordinary statements use [`Self::prepare_snapshot`].
-    fn open_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String>;
+    fn open_snapshot(&self, resource_group: &str) -> Result<Box<dyn ClusterSnapshot>, String>;
 
     /// Opens one autocommit statement's read snapshot at `u64::MAX` -- the
     /// latest committed version -- spending no PD timestamp.
@@ -109,7 +112,10 @@ pub trait ClusterTransactions: Send + Sync {
     /// Reached only from a statement that DECLARED its whole read is one point
     /// get on the clustered handle; see
     /// [`ClusterSnapshot::declare_autocommit_point_get`].
-    fn open_max_ts_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String>;
+    fn open_max_ts_snapshot(
+        &self,
+        resource_group: &str,
+    ) -> Result<Box<dyn ClusterSnapshot>, String>;
 
     /// Opens one reusable read-only transaction at `u64::MAX` for the
     /// connection's repeated clustered-common-handle point gets.  Unlike the
@@ -117,7 +123,8 @@ pub trait ClusterTransactions: Send + Sync {
     /// statements; reads at the max marker still resolve the latest committed
     /// value on every request, while avoiding an open/finish handshake for
     /// every YCSB point read.
-    fn begin_max_ts(&self) -> Result<Box<dyn OpenClusterTransaction>, String>;
+    fn begin_max_ts(&self, resource_group: &str)
+        -> Result<Box<dyn OpenClusterTransaction>, String>;
 
     /// Opens the writable transaction owned by one autocommit UPDATE/DELETE.
     ///
@@ -125,7 +132,10 @@ pub trait ClusterTransactions: Send + Sync {
     /// open is started before DML planning so its timestamp/worker setup can
     /// overlap the CPU work, while the transaction itself remains statement
     /// owned and is handed back to the session at the statement boundary.
-    fn begin_autocommit_write(&self) -> Result<Box<dyn OpenClusterTransaction>, String>;
+    fn begin_autocommit_write(
+        &self,
+        resource_group: &str,
+    ) -> Result<Box<dyn OpenClusterTransaction>, String>;
 
     /// Publishes one autocommit statement's staged writes as its own
     /// transaction **at `read_ts`**, then empties the buffer. An empty buffer
@@ -140,14 +150,23 @@ pub trait ClusterTransactions: Send + Sync {
     ///
     /// The error is the client-visible one, because a publication TiKV refused
     /// has a code of its own: a lost race is 9007, not a generic failure.
-    fn commit(&self, buffer: &MutationBuffer, read_ts: Option<u64>) -> Result<(), SqlQueryError>;
+    fn commit(
+        &self,
+        buffer: &MutationBuffer,
+        read_ts: Option<u64>,
+        resource_group: &str,
+    ) -> Result<(), SqlQueryError>;
 
     /// Opens the one transaction an explicit `BEGIN` holds until `COMMIT` or
     /// `ROLLBACK`. `pessimistic` is the session's `tidb_txn_mode` verdict at
     /// `BEGIN` -- Go's default is pessimistic (`DefTiDBTxnMode`), and the
     /// pessimistic transaction locks per statement instead of first learning
     /// of a conflict at `COMMIT`.
-    fn begin(&self, pessimistic: bool) -> Result<Box<dyn OpenClusterTransaction>, String>;
+    fn begin(
+        &self,
+        pessimistic: bool,
+        resource_group: &str,
+    ) -> Result<Box<dyn OpenClusterTransaction>, String>;
 
     /// Acquires the TiKV pessimistic key backing one advisory lock.
     fn acquire_advisory_lock(
@@ -203,6 +222,10 @@ pub trait PendingClusterSnapshot: Send {
 pub trait OpenClusterTransaction: Send {
     /// The transaction timestamp shared by every statement until it ends.
     fn start_ts(&self) -> u64;
+
+    /// Rebinds all subsequent requests to the statement's resolved resource
+    /// group while retaining the transaction and its timestamp.
+    fn set_resource_group_name(&self, name: &str) -> Result<(), String>;
 
     /// One statement's read handle. Dropping it ends the statement, never the
     /// transaction.
@@ -271,10 +294,7 @@ pub trait OpenClusterTransaction: Send {
     /// key's row WITH the lock and serving later reads of those keys from the
     /// answers — Go's point-write fold (`InitReturnValues` /
     /// `TxnCtx.SetPessimisticLockCache`, `pkg/executor/point_get.go:612-624`).
-    fn lock_staged_keys_with_values(
-        &self,
-        _keys: Vec<Vec<u8>>,
-    ) -> Result<LockKeysOutcome, String> {
+    fn lock_staged_keys_with_values(&self, _keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, String> {
         Err("only a pessimistic transaction locks statement keys".to_owned())
     }
 
@@ -347,6 +367,8 @@ impl StatementReadTs {
 /// `with_open` is the wait/activation boundary.
 struct DeferredSnapshot {
     transactions: Arc<dyn ClusterTransactions>,
+    /// The statement-scoped group every lazy/prefetched open must retain.
+    resource_group: Arc<str>,
     /// Where the open publishes the statement's timestamp, so the publication
     /// can find it after this handle is gone.
     read_ts: StatementReadTs,
@@ -399,9 +421,14 @@ impl fmt::Debug for DeferredSnapshot {
 }
 
 impl DeferredSnapshot {
-    fn new(transactions: Arc<dyn ClusterTransactions>, read_ts: StatementReadTs) -> Self {
+    fn new(
+        transactions: Arc<dyn ClusterTransactions>,
+        read_ts: StatementReadTs,
+        resource_group: Arc<str>,
+    ) -> Self {
         Self {
             transactions,
+            resource_group,
             read_ts,
             write_handoff: None,
             state: Mutex::new(DeferredState::default()),
@@ -412,18 +439,21 @@ impl DeferredSnapshot {
         transactions: Arc<dyn ClusterTransactions>,
         read_ts: StatementReadTs,
         write_handoff: WriteTransactionSlot,
+        resource_group: Arc<str>,
     ) -> Self {
         let (reply, answer) = mpsc::sync_channel(1);
         let opener = Arc::clone(&transactions);
+        let prefetch_resource_group = Arc::clone(&resource_group);
         let prefetched_write = std::thread::Builder::new()
             .name("cluster-write-prefetch".to_owned())
             .spawn(move || {
-                let _ = reply.send(opener.begin_autocommit_write());
+                let _ = reply.send(opener.begin_autocommit_write(&prefetch_resource_group));
             })
             .ok()
             .map(|_| answer);
         Self {
             transactions,
+            resource_group,
             read_ts,
             write_handoff: Some(write_handoff),
             state: Mutex::new(DeferredState {
@@ -446,7 +476,7 @@ impl DeferredSnapshot {
         }
         state.prepared = Some(
             self.transactions
-                .prepare_snapshot()
+                .prepare_snapshot(&self.resource_group)
                 .map_err(StorageError::Backend)?,
         );
         Ok(())
@@ -466,7 +496,7 @@ impl DeferredSnapshot {
         let mut guard = self.state();
         if guard.opened.is_none() {
             let opened = if guard.max_ts {
-                self.transactions.open_max_ts_snapshot()
+                self.transactions.open_max_ts_snapshot(&self.resource_group)
             } else if let Some(prefetched_write) = guard.prefetched_write.take() {
                 let transaction = prefetched_write
                     .recv()
@@ -482,14 +512,16 @@ impl DeferredSnapshot {
                 Ok(snapshot)
             } else if let Some(prepared) = guard.prepared.take() {
                 prepared.wait().or_else(|prepared_error| {
-                    self.transactions.open_snapshot().map_err(|fallback_error| {
+                    self.transactions
+                        .open_snapshot(&self.resource_group)
+                        .map_err(|fallback_error| {
                         format!(
                             "prepared snapshot failed ({prepared_error}); replacement snapshot failed ({fallback_error})"
                         )
                     })
                 })
             } else {
-                self.transactions.open_snapshot()
+                self.transactions.open_snapshot(&self.resource_group)
             };
             let opened = opened.map_err(StorageError::Backend)?;
             // Recorded at the open, under the same lock, so the timestamp the
@@ -592,8 +624,9 @@ impl ClusterSnapshot for DeferredSnapshot {
 pub(crate) fn deferred_snapshot(
     transactions: Arc<dyn ClusterTransactions>,
     read_ts: StatementReadTs,
+    resource_group: Arc<str>,
 ) -> Box<dyn ClusterSnapshot> {
-    Box::new(DeferredSnapshot::new(transactions, read_ts))
+    Box::new(DeferredSnapshot::new(transactions, read_ts, resource_group))
 }
 
 /// [`deferred_snapshot`] with a writable transaction opened in parallel with
@@ -602,11 +635,13 @@ pub(crate) fn prefetched_write_snapshot(
     transactions: Arc<dyn ClusterTransactions>,
     read_ts: StatementReadTs,
     write_handoff: WriteTransactionSlot,
+    resource_group: Arc<str>,
 ) -> Box<dyn ClusterSnapshot> {
     Box::new(DeferredSnapshot::new_prefetched_write(
         transactions,
         read_ts,
         write_handoff,
+        resource_group,
     ))
 }
 
@@ -655,6 +690,18 @@ where
             opener: Arc::new(opener),
             timeout,
         }
+    }
+
+    fn opener_for_resource_group(
+        &self,
+        resource_group: &str,
+    ) -> Arc<RealOptimisticTransactionOpener<C, L, P>> {
+        Arc::new(
+            self.opener
+                .as_ref()
+                .clone()
+                .with_resource_group_name(Arc::<str>::from(resource_group)),
+        )
     }
 
     fn acquire_advisory_lock_lease(
@@ -787,36 +834,51 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
-    fn prepare_snapshot(&self) -> Result<Box<dyn PendingClusterSnapshot>, String> {
-        StatementSnapshot::prepare(Arc::clone(&self.opener), self.timeout)
+    fn prepare_snapshot(
+        &self,
+        resource_group: &str,
+    ) -> Result<Box<dyn PendingClusterSnapshot>, String> {
+        StatementSnapshot::prepare(self.opener_for_resource_group(resource_group), self.timeout)
             .map(|snapshot| {
                 Box::new(RealPendingSnapshot(snapshot)) as Box<dyn PendingClusterSnapshot>
             })
             .map_err(|error| error.to_string())
     }
 
-    fn open_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
-        StatementSnapshot::open(Arc::clone(&self.opener), self.timeout)
+    fn open_snapshot(&self, resource_group: &str) -> Result<Box<dyn ClusterSnapshot>, String> {
+        StatementSnapshot::open(self.opener_for_resource_group(resource_group), self.timeout)
             .map(|snapshot| Box::new(snapshot) as Box<dyn ClusterSnapshot>)
             .map_err(|error| error.to_string())
     }
 
-    fn open_max_ts_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+    fn open_max_ts_snapshot(
+        &self,
+        resource_group: &str,
+    ) -> Result<Box<dyn ClusterSnapshot>, String> {
         Ok(Box::new(MaxTsSnapshot::new(
-            Arc::clone(&self.opener),
+            self.opener_for_resource_group(resource_group),
             self.timeout,
         )))
     }
 
-    fn begin_max_ts(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
-        SessionTransaction::begin_read_only_at_max_ts(Arc::clone(&self.opener), self.timeout)
-            .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
-            .map_err(|error| error.to_string())
+    fn begin_max_ts(
+        &self,
+        resource_group: &str,
+    ) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        SessionTransaction::begin_read_only_at_max_ts(
+            self.opener_for_resource_group(resource_group),
+            self.timeout,
+        )
+        .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
+        .map_err(|error| error.to_string())
     }
 
-    fn begin_autocommit_write(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+    fn begin_autocommit_write(
+        &self,
+        resource_group: &str,
+    ) -> Result<Box<dyn OpenClusterTransaction>, String> {
         SessionTransaction::begin(
-            Arc::clone(&self.opener),
+            self.opener_for_resource_group(resource_group),
             self.timeout,
             tidb_exec::session_commit_protocol::session_commit_protocol(),
         )
@@ -824,9 +886,15 @@ where
         .map_err(|error| error.to_string())
     }
 
-    fn commit(&self, buffer: &MutationBuffer, read_ts: Option<u64>) -> Result<(), SqlQueryError> {
+    fn commit(
+        &self,
+        buffer: &MutationBuffer,
+        read_ts: Option<u64>,
+        resource_group: &str,
+    ) -> Result<(), SqlQueryError> {
+        let opener = self.opener_for_resource_group(resource_group);
         commit_staged_buffer(
-            &self.opener,
+            &opener,
             buffer,
             read_ts,
             self.timeout,
@@ -836,16 +904,21 @@ where
         .map_err(sql_error)
     }
 
-    fn begin(&self, pessimistic: bool) -> Result<Box<dyn OpenClusterTransaction>, String> {
+    fn begin(
+        &self,
+        pessimistic: bool,
+        resource_group: &str,
+    ) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        let opener = self.opener_for_resource_group(resource_group);
         let transaction = if pessimistic {
             SessionTransaction::begin_pessimistic(
-                Arc::clone(&self.opener),
+                opener,
                 self.timeout,
                 tidb_exec::session_commit_protocol::session_commit_protocol(),
             )
         } else {
             SessionTransaction::begin(
-                Arc::clone(&self.opener),
+                opener,
                 self.timeout,
                 tidb_exec::session_commit_protocol::session_commit_protocol(),
             )
@@ -875,9 +948,18 @@ where
     }
 }
 
-impl OpenClusterTransaction for SessionTransaction {
+impl<C, L, P> OpenClusterTransaction for SessionTransaction<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     fn start_ts(&self) -> u64 {
         SessionTransaction::start_ts(self)
+    }
+
+    fn set_resource_group_name(&self, name: &str) -> Result<(), String> {
+        SessionTransaction::set_resource_group_name(self, name).map_err(|error| error.to_string())
     }
 
     fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
@@ -986,38 +1068,55 @@ mod tests {
     }
 
     impl ClusterTransactions for BatchCountingTransactions {
-        fn prepare_snapshot(&self) -> Result<Box<dyn PendingClusterSnapshot>, String> {
+        fn prepare_snapshot(
+            &self,
+            _resource_group: &str,
+        ) -> Result<Box<dyn PendingClusterSnapshot>, String> {
             panic!("the test opens its snapshot directly")
         }
 
-        fn open_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+        fn open_snapshot(&self, _resource_group: &str) -> Result<Box<dyn ClusterSnapshot>, String> {
             Ok(Box::new(BatchCountingSnapshot {
                 get_calls: Arc::clone(&self.get_calls),
                 batch_get_calls: Arc::clone(&self.batch_get_calls),
             }))
         }
 
-        fn open_max_ts_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
-            self.open_snapshot()
+        fn open_max_ts_snapshot(
+            &self,
+            resource_group: &str,
+        ) -> Result<Box<dyn ClusterSnapshot>, String> {
+            self.open_snapshot(resource_group)
         }
 
         fn commit(
             &self,
             _buffer: &MutationBuffer,
             _read_ts: Option<u64>,
+            _resource_group: &str,
         ) -> Result<(), SqlQueryError> {
             panic!("unused in batch-get forwarding test")
         }
 
-        fn begin(&self, _pessimistic: bool) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        fn begin(
+            &self,
+            _pessimistic: bool,
+            _resource_group: &str,
+        ) -> Result<Box<dyn OpenClusterTransaction>, String> {
             panic!("unused in batch-get forwarding test")
         }
 
-        fn begin_max_ts(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        fn begin_max_ts(
+            &self,
+            _resource_group: &str,
+        ) -> Result<Box<dyn OpenClusterTransaction>, String> {
             panic!("unused in batch-get forwarding test")
         }
 
-        fn begin_autocommit_write(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        fn begin_autocommit_write(
+            &self,
+            _resource_group: &str,
+        ) -> Result<Box<dyn OpenClusterTransaction>, String> {
             panic!("unused in batch-get forwarding test")
         }
 
@@ -1042,7 +1141,11 @@ mod tests {
             get_calls: Arc::clone(&get_calls),
             batch_get_calls: Arc::clone(&batch_get_calls),
         });
-        let mut snapshot = DeferredSnapshot::new(transactions, StatementReadTs::default());
+        let mut snapshot = DeferredSnapshot::new(
+            transactions,
+            StatementReadTs::default(),
+            Arc::<str>::from("default"),
+        );
         let keys = vec![Key::from_bytes(b"k1"), Key::from_bytes(b"k2")];
 
         let pairs = snapshot.batch_get(&keys).expect("batch get succeeds");

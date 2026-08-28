@@ -38,33 +38,33 @@ use super::*;
 /// values-only re-evaluations returning identical answers.
 #[test]
 fn find_in_set_const_strlist_pad_space_lookup_value_rows() {
-    let general_ci = |sql: &str| {
-        format!("{sql} collate utf8mb4_general_ci")
-    };
+    let general_ci = |sql: &str| format!("{sql} collate utf8mb4_general_ci");
     // Needle " ", list "  , , ,": the two-space leading field does NOT match,
     // so the first genuine one-space member lands at index 2. Trailing spaces
     // are NOT equal even under a PAD SPACE collation.
     for tier_evaluator in [e, chunk_e] {
         assert_eq!(
-            tier_evaluator(&general_ci(
-                "find_in_set(' ', '  , , ,')"
-            )),
+            tier_evaluator(&general_ci("find_in_set(' ', '  , , ,')")),
             "INT:2"
         );
         // Repeated evaluation keeps answering identically (the Go cache's
         // observable contract).
         assert_eq!(
-            tier_evaluator(&general_ci(
-                "find_in_set(' ', '  , , ,')"
-            )),
+            tier_evaluator(&general_ci("find_in_set(' ', '  , , ,')")),
             "INT:2"
         );
         // First-match semantics on the duplicated 'a' list, len(lookup)=2 rows.
-        assert_eq!(tier_evaluator(&general_ci("find_in_set('a', 'a,b,a')")), "INT:1");
+        assert_eq!(
+            tier_evaluator(&general_ci("find_in_set('a', 'a,b,a')")),
+            "INT:1"
+        );
     }
     // And under plain comparison the pad-space collation behaves like any
     // other general_ci membership decision: case-insensitive.
-    assert_eq!(chunk_e("find_in_set('B' collate utf8mb4_general_ci, 'a,b,c' collate utf8mb4_general_ci)"), "INT:2");
+    assert_eq!(
+        chunk_e("find_in_set('B' collate utf8mb4_general_ci, 'a,b,c' collate utf8mb4_general_ci)"),
+        "INT:2"
+    );
 }
 
 /// GO PORT of `pkg/expression/builtin_string_test.go:1173
@@ -111,7 +111,9 @@ fn find_in_set_const_only_in_context_value_rows() {
     let general_ci = " collate utf8mb4_general_ci";
     // Parameter values stand in as literals carrying the same collation.
     assert_eq!(
-        chunk_e(&format!("find_in_set(' '{general_ci}, '  , , ,'{general_ci})")),
+        chunk_e(&format!(
+            "find_in_set(' '{general_ci}, '  , , ,'{general_ci})"
+        )),
         "INT:2"
     );
     assert_eq!(

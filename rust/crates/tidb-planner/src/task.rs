@@ -62,11 +62,10 @@
 //!
 //! * `context.SQLWarn` carries a Go `error`; [`SqlWarn`] carries the
 //!   rendered message. Level and the `math.MaxUint16` cap are Go's.
-//! * `physicalop.IndexJoinInfo` (the runtime range info an index join
-//!   fetches from the data source) is unported; `RootTask.IndexJoinInfo` and
-//!   `CopTask.IndexJoinInfo` are therefore absent, and
-//!   [`crate::find_best_task::LeafRole`] remains the crate's stand-in for
-//!   the property half of that mechanism.
+//! * `physicalop.IndexJoinInfo` also carries key-to-index offsets, prefix
+//!   lengths, and compare filters. The ported slice carries the chosen access
+//!   identity and ranges needed by the current executor; those remaining
+//!   fields are still absent rather than fabricated.
 //! * `statistics.HistColl` (`TblColHists`) is unported; the fields carrying
 //!   it are absent. Network/scan-width costing that reads them is cost-model
 //!   work, not representation work.
@@ -82,6 +81,19 @@ use crate::physical_property::MppPartitionType;
 use crate::physical_table_reader::StoreType;
 use crate::plan_base::PlanError;
 use tidb_expr::expression::Expression;
+
+/// The bottom-up feedback produced by an inner data source planned under an
+/// index-join runtime property. This is the ported slice of Go
+/// `physicalop.IndexJoinInfo` consumed when the physical index join attaches.
+#[derive(Clone, Debug, Default)]
+pub struct IndexJoinInfo {
+    /// The selected physical table.
+    pub table_id: i64,
+    /// The selected secondary index, or `None` for a table/common-handle path.
+    pub index_id: Option<i64>,
+    /// The ranges built for the selected inner access.
+    pub ranges: crate::ranger::types::Ranges,
+}
 
 /// Go `context.WarnLevelWarning` / `WarnLevelNote` — the two levels this
 /// file writes.
@@ -170,6 +182,9 @@ pub struct RootTask {
     /// root task [`Task::invalid`] — `base.InvalidTask` is exactly an empty
     /// `RootTask`.
     plan: Option<Box<PhysicalPlan>>,
+    /// Go `RootTask.IndexJoinInfo`, passed through unary root operators until
+    /// the owning physical index join consumes it.
+    pub index_join_info: Option<IndexJoinInfo>,
     /// Go `Warnings`.
     pub warnings: SimpleWarnings,
 }
@@ -204,6 +219,7 @@ impl RootTask {
     pub fn copy(&self) -> RootTask {
         let mut copied = RootTask {
             plan: self.plan.clone(),
+            index_join_info: self.index_join_info.clone(),
             warnings: SimpleWarnings::default(),
         };
         copied.warnings.copy_of(&self.warnings);
@@ -294,10 +310,13 @@ pub struct CopTask {
     /// Go `ExpectCnt`: the upper task's expected row count, `0` for
     /// unlimited; decides paging distsql.
     pub expect_cnt: u64,
+    /// Go `CopTask.IndexJoinInfo`, produced only while this data source is an
+    /// index-join inner child.
+    pub index_join_info: Option<IndexJoinInfo>,
     // boundary: `OriginSchema`, `ExtraHandleCol`, `CommonHandleCols`,
     // `TblColHists`, `TblCols`, `IdxMergeAccessMVIndex`,
     // `IdxMergeMatchWithAdvisorySortItems`, `IdxMergePartPlansMatchResults`,
-    // `PhysPlanPartInfo`, `IndexJoinInfo`, `IndexLookUpPushDownBy`,
+    // `PhysPlanPartInfo`, `IndexLookUpPushDownBy`,
     // `PartialOrderMatchResult` — each blocked on an unported type named in
     // the module header, absent rather than stubbed.
     /// Go `Warnings`.
@@ -367,7 +386,21 @@ impl CopTask {
             (self.table_plan.as_deref_mut(), self.index_plan.as_deref())
         {
             let index_stats = index.base().base.stats_info().cloned();
-            table.base_mut().base.set_stats(index_stats);
+            // Go calls `FinishIndexPlan` before adding table filters. Rust's
+            // DataSource conversion builds the same tree in one pass, so a
+            // table-side Selection may already be present: the index stats
+            // still belong to the bottom row-ID scan, not to that filter.
+            fn set_bottom_stats(
+                plan: &mut PhysicalPlan,
+                stats: Option<crate::stats_info::StatsInfo>,
+            ) {
+                let Some(child) = plan.base_mut().children_mut().first_mut() else {
+                    plan.base_mut().base.set_stats(stats);
+                    return;
+                };
+                set_bottom_stats(child, stats);
+            }
+            set_bottom_stats(table, index_stats);
         }
     }
 
@@ -463,10 +496,12 @@ impl CopTask {
             table_plan: Some(table_plan),
             keep_order: self.keep_order,
             expect_cnt: self.expect_cnt,
+            paging: false,
             pushed_limit: None,
         });
         let mut root = RootTask::default();
         root.set_plan(reader);
+        root.index_join_info = self.index_join_info.take();
         if self.warnings.warning_count() > 0 {
             root.warnings.copy_of(&self.warnings);
         }
@@ -498,12 +533,14 @@ impl CopTask {
                 index_plan.query_block_offset(),
             );
             base.base.set_stats(index_plan.stats_info().cloned());
+            base.base.set_schema(index_plan.schema().cloned());
             let reader = PhysicalPlan::IndexReader(crate::physical::PhysicalIndexReader {
                 base,
                 index_plan: Some(index_plan),
             });
             let mut root = RootTask::default();
             root.set_plan(reader);
+            root.index_join_info = self.index_join_info.take();
             if self.warnings.warning_count() > 0 {
                 root.warnings.copy_of(&self.warnings);
             }
@@ -534,6 +571,7 @@ impl CopTask {
             table_plan.query_block_offset(),
         );
         base.base.set_stats(table_plan.stats_info().cloned());
+        base.base.set_schema(table_plan.schema().cloned());
         let reader = PhysicalPlan::TableReader(crate::physical::PhysicalTableReader {
             base,
             table_plan: Some(Box::new(*table_plan)),
@@ -542,6 +580,7 @@ impl CopTask {
         });
         let mut root = RootTask::default();
         root.set_plan(reader);
+        root.index_join_info = self.index_join_info.take();
         if self.warnings.warning_count() > 0 {
             root.warnings.copy_of(&self.warnings);
         }
@@ -634,6 +673,22 @@ impl Task {
         }
     }
 
+    /// Mutable counterpart of [`Self::plan`], used for the physical cost
+    /// side effects Go writes onto the selected plan tree.
+    pub fn plan_mut(&mut self) -> Option<&mut PhysicalPlan> {
+        match self {
+            Task::Root(task) => task.plan.as_deref_mut(),
+            Task::Cop(task) => {
+                if task.index_plan_finished {
+                    task.table_plan.as_deref_mut()
+                } else {
+                    task.index_plan.as_deref_mut()
+                }
+            }
+            Task::Mpp(task) => task.plan.as_deref_mut(),
+        }
+    }
+
     /// Go `Invalid()`.
     #[must_use]
     pub fn invalid(&self) -> bool {
@@ -689,6 +744,13 @@ mod tests {
         let mut base = crate::physical::BasePhysicalPlan::default();
         base.base = crate::plan_base::BasePlan::new(&allocator, DUAL_TYPE, 0);
         base.base.set_stats(Some(StatsInfo::new(rows, [])));
+        base.base
+            .set_schema(Some(tidb_expr::schema::Schema::new(vec![
+                tidb_expr::column::Column::new(
+                    1,
+                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                ),
+            ])));
         PhysicalPlan::TableDual(crate::physical::PhysicalTableDual { base, row_count: 0 })
     }
 
@@ -700,10 +762,14 @@ mod tests {
         PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
             base,
             table_id: 1,
+            table_as_name: None,
+            cost_columns: Vec::new(),
             store_type: crate::physical_table_reader::StoreType::TiKv,
             keep_order: false,
             desc: false,
             ranges: crate::ranger::types::Ranges::new(),
+            range_rebuild: None,
+            table_scan_penalty: Default::default(),
         })
     }
 
@@ -720,10 +786,14 @@ mod tests {
         let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
             base,
             table_id: 9,
+            table_as_name: None,
+            cost_columns: Vec::new(),
             store_type: crate::physical_table_reader::StoreType::TiKv,
             keep_order: false,
             desc: false,
             ranges: crate::ranger::types::Ranges::new(),
+            range_rebuild: None,
+            table_scan_penalty: Default::default(),
         });
         let mut cop = CopTask {
             table_plan: Some(Box::new(scan)),
@@ -765,7 +835,6 @@ mod tests {
         );
     }
 
-    #[test]
     #[test]
     fn a_limit_sinks_into_the_index_lookup_reader() {
         // `sinkIntoIndexLookUp` (`task.go:733`): a root Limit over a
@@ -846,6 +915,7 @@ mod tests {
         ));
     }
 
+    #[test]
     fn an_index_only_cop_task_converts_into_an_index_reader() {
         // `convertToRootTaskImpl`'s index branch (`task_base.go:563`): the
         // pushed-down index plan wraps in a PhysicalIndexReader carrying its
@@ -861,6 +931,7 @@ mod tests {
             panic!("an IndexReader, got {:?}", converted.plan());
         };
         assert!(reader.index_plan.is_some());
+        assert_eq!(reader.base.base.schema().expect("reader schema").len(), 1);
         assert!(
             (converted
                 .plan()
@@ -980,11 +1051,12 @@ mod tests {
 /// * a cop task: the plan attaches to whichever half is still OPEN — the
 ///   index half before `FinishIndexPlan`, the table half after.
 ///
-/// Go's `inheritStatsFromBottomTaskForIndexJoinInner` hook runs first there;
-/// it reads `IndexJoinInfo`, a field this port's tasks do not carry (module
-/// header), so the hook is vacuous here and not restated.
+/// Go's `inheritStatsFromBottomTaskForIndexJoinInner` hook runs first. An
+/// operator above a dynamic index-join probe must describe one probe result,
+/// not retain the cardinality derived for its ordinary full-input subtree.
 #[must_use]
 pub fn attach_plan_to_task(mut plan: PhysicalPlan, mut task: Task) -> Task {
+    inherit_stats_from_bottom_task_for_index_join_inner(&mut plan, &task);
     match &mut task {
         Task::Root(root) => {
             let child = root.take_plan();
@@ -1009,6 +1081,33 @@ pub fn attach_plan_to_task(mut plan: PhysicalPlan, mut task: Task) -> Task {
         }
     }
     task
+}
+
+/// Go `inheritStatsFromBottomTaskForIndexJoinInner` and
+/// `inheritStatsFromBottomElemForIndexJoinInner` (`core/task.go`).
+///
+/// `IndexJoinInfo` is the bottom-up proof that this task was planned as a
+/// runtime probe. Every operator admitted in that inner pattern inherits the
+/// bottom plan's statistics. The owning index join is the endpoint and keeps
+/// its own join statistics.
+fn inherit_stats_from_bottom_task_for_index_join_inner(plan: &mut PhysicalPlan, task: &Task) {
+    if matches!(plan, PhysicalPlan::IndexJoin(_)) {
+        return;
+    }
+    let (index_join_info, bottom_stats) = match task {
+        Task::Root(root) => (
+            root.index_join_info.as_ref(),
+            root.plan.as_deref().and_then(PhysicalPlan::stats_info),
+        ),
+        Task::Cop(cop) => (
+            cop.index_join_info.as_ref(),
+            cop.plan().and_then(PhysicalPlan::stats_info),
+        ),
+        Task::Mpp(_) => (None, None),
+    };
+    if index_join_info.is_some() {
+        plan.base_mut().base.set_stats(bottom_stats.cloned());
+    }
 }
 
 /// Go `Attach2Task` per operator — the ROOT-TASK slice.
@@ -1126,11 +1225,26 @@ fn sink_into_index_look_up(limit: &crate::physical::PhysicalLimit, task: &mut Ta
     sunk
 }
 
+/// Go `canPushToIndexPlan` (`core/task.go`): every referenced column must be
+/// supplied by the open index half as a full, non-prefix column.
+fn can_push_to_index_plan(
+    index_plan: Option<&PhysicalPlan>,
+    columns: &[tidb_expr::column::Column],
+) -> bool {
+    let Some(schema) = index_plan.and_then(PhysicalPlan::schema) else {
+        return false;
+    };
+    columns.iter().all(|column| {
+        let position = schema.column_index(column);
+        position >= 0 && !schema.columns[position as usize].is_prefix
+    })
+}
+
 /// The shared cop body of Go `attach2Task4PhysicalStreamAgg` and
 /// `...HashAgg` after their gates: split via `NewPartialAggregate`, hang the
 /// partial half on the cop task's live side, convert, and attach the final
-/// half at root. Go's `inheritStatsFromBottomElemForIndexJoinInner` call is
-/// an `IndexJoinInfo` no-op on this port's tasks (module header).
+/// half at root. The explicit stats inheritance is needed because this path
+/// wires the partial plan directly instead of using [`attach_plan_to_task`].
 fn attach_agg_over_cop(
     plan: PhysicalPlan,
     mut cop: CopTask,
@@ -1149,12 +1263,24 @@ fn attach_agg_over_cop(
     if let Some(mut partial) = partial {
         if let Some(table_plan) = cop.table_plan.take() {
             cop.finish_index_plan();
+            if cop.index_join_info.is_some() {
+                partial
+                    .base_mut()
+                    .base
+                    .set_stats(table_plan.stats_info().cloned());
+            }
             partial.base_mut().set_children(vec![*table_plan]);
             cop.table_plan = Some(Box::new(partial));
             // Go: the pushed agg's schema replaces the extra projection a
             // double read would otherwise re-add above the reader.
             cop.need_extra_proj = false;
         } else if let Some(index_plan) = cop.index_plan.take() {
+            if cop.index_join_info.is_some() {
+                partial
+                    .base_mut()
+                    .base
+                    .set_stats(index_plan.stats_info().cloned());
+            }
             partial.base_mut().set_children(vec![*index_plan]);
             cop.index_plan = Some(Box::new(partial));
         } else {
@@ -1218,7 +1344,13 @@ pub fn attach2_task(
                     let Task::Cop(mut cop) = first.copy() else {
                         unreachable!("the arm matched Cop");
                     };
-                    if !cop.index_plan_finished {
+                    let columns = tidb_expr::simple_expr::extract_columns_from_expressions(
+                        &projection.exprs,
+                        None,
+                    );
+                    if !cop.index_plan_finished
+                        && !can_push_to_index_plan(cop.index_plan.as_deref(), &columns)
+                    {
                         cop.finish_index_plan();
                     }
                     Ok(attach_plan_to_task(plan, Task::Cop(cop)))
@@ -1444,13 +1576,25 @@ pub fn attach2_task(
                     };
                     let by_exprs: Vec<tidb_expr::expression::Expression> =
                         topn.by_items.iter().map(|item| item.expr.clone()).collect();
-                    let need_push_down = by_exprs.iter().any(|expr| {
-                        !matches!(expr, tidb_expr::expression::Expression::Constant(_))
-                    });
+                    let columns =
+                        tidb_expr::simple_expr::extract_columns_from_expressions(&by_exprs, None);
+                    let need_push_down = !columns.is_empty();
                     let pushable = need_push_down
                         && crate::pushdown::can_exprs_push_down_tikv(&by_exprs)
                         && cop.root_task_conds.is_empty();
                     if pushable {
+                        if !cop.index_plan_finished
+                            && !can_push_to_index_plan(cop.index_plan.as_deref(), &columns)
+                        {
+                            cop.finish_index_plan();
+                        }
+                        if cop.plan().is_none() {
+                            let converted = Task::Cop(cop).convert_to_root_task()?;
+                            if !topn.partition_by.is_empty() {
+                                return Ok(converted);
+                            }
+                            return Ok(attach_plan_to_task(plan, converted));
+                        }
                         let new_count = topn.offset + topn.count;
                         let stats = cop
                             .plan()
@@ -1535,7 +1679,7 @@ pub fn attach2_task(
         // TiFlash attach in Go; the enum's hash join carries no store type,
         // with no TiFlash tier to route to. `IndexJoinInfo` is a named
         // narrowing on this port's tasks (module header).
-        PhysicalPlan::HashJoin(_) => {
+        PhysicalPlan::HashJoin(_) | PhysicalPlan::MergeJoin(_) | PhysicalPlan::IndexJoin(_) => {
             let second = tasks.drain(..1).next().ok_or_else(|| {
                 PlanError::internal("attach2Task4PhysicalHashJoin needs two tasks")
             })?;
@@ -1555,9 +1699,38 @@ pub fn attach2_task(
                 ));
             };
             let mut plan = plan;
+            let left_index_join_info = left.index_join_info.take();
+            let right_index_join_info = right.index_join_info.take();
+            let propagated_index_join_info = match &mut plan {
+                PhysicalPlan::IndexJoin(index_join) => {
+                    let info = if index_join.inner_child_idx == 0 {
+                        left_index_join_info
+                    } else {
+                        right_index_join_info
+                    }
+                    .ok_or_else(|| {
+                        PlanError::internal(format!(
+                            "completePhysicalIndexJoin: inner task has no IndexJoinInfo; \
+                             inner_child_idx={}, left={}, right={}",
+                            index_join.inner_child_idx,
+                            left_plan.tp(),
+                            right_plan.tp(),
+                        ))
+                    })?;
+                    index_join.inner_access_table_id = Some(info.table_id);
+                    index_join.inner_access_index_id = info.index_id;
+                    index_join.ranges = info.ranges;
+                    None
+                }
+                PhysicalPlan::HashJoin(_) | PhysicalPlan::MergeJoin(_) => {
+                    left_index_join_info.or(right_index_join_info)
+                }
+                _ => unreachable!("the arm matched a join"),
+            };
             plan.base_mut().set_children(vec![left_plan, right_plan]);
             let mut root = RootTask::default();
             root.set_plan(plan);
+            root.index_join_info = propagated_index_join_info;
             root.warnings.copy_from([&right.warnings, &left.warnings]);
             Ok(Task::Root(root))
         }
@@ -1584,6 +1757,15 @@ pub fn attach2_task(
         PhysicalPlan::IndexReader(_) => Err(PlanError::internal(
             "a PhysicalIndexReader is born by convertToRootTaskImpl \
              (task_base.go:563), never attached",
+        )),
+        PhysicalPlan::PointGet(_) | PhysicalPlan::BatchPointGet(_) => Err(PlanError::internal(
+            "PointGet and BatchPointGet plans are complete root plans, never attached",
+        )),
+        PhysicalPlan::IndexMergeReader(_) => Err(PlanError::internal(
+            "a PhysicalIndexMergeReader is born by index-merge task conversion, never attached",
+        )),
+        PhysicalPlan::Dml(_) => Err(PlanError::internal(
+            "a physical DML root owns its select plan and is never attached as a relational child",
         )),
         PhysicalPlan::CTETable(_) => Err(PlanError::internal(
             "a PhysicalCTETable is born inside its own root task by \
@@ -1644,6 +1826,34 @@ mod attach_tests {
         let plan = task.plan().expect("a plan");
         assert!(matches!(plan, PhysicalPlan::Selection(_)));
         assert_eq!(plan.children().len(), 1, "the old plan became the child");
+    }
+
+    #[test]
+    fn an_index_join_inner_operator_inherits_probe_stats_and_receipt() {
+        let mut child = root_task_over(3.0);
+        let Task::Root(root) = &mut child else {
+            unreachable!("the helper builds a root task");
+        };
+        root.index_join_info = Some(IndexJoinInfo {
+            table_id: 42,
+            ..IndexJoinInfo::default()
+        });
+        let projection = PhysicalPlan::Projection(crate::physical::PhysicalProjection {
+            base: op_with_stats("Projection", 30_000.0),
+            ..crate::physical::PhysicalProjection::default()
+        });
+
+        let task = attach2_task(projection, vec![child], None).expect("attaches");
+
+        assert_eq!(task.count(), 3.0, "one dynamic probe, not the full input");
+        let Task::Root(root) = task else {
+            panic!("the projection remains a root task");
+        };
+        assert_eq!(
+            root.index_join_info.as_ref().map(|info| info.table_id),
+            Some(42),
+            "the owning index join still receives the chosen access"
+        );
     }
 
     #[test]
@@ -1761,6 +1971,7 @@ mod attach_tests {
                 base: op_with_stats("Apply", 5.0),
                 join_type: crate::find_best_task::LogicalJoinType::LeftOuter,
                 inner_child_idx: 1,
+                ..crate::physical::PhysicalHashJoin::default()
             },
             ..crate::physical::PhysicalApply::default()
         });
@@ -1897,10 +2108,14 @@ mod attach_tests {
             PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
                 base,
                 table_id: 1,
+                table_as_name: None,
+                cost_columns: Vec::new(),
                 store_type: crate::physical_table_reader::StoreType::TiKv,
                 keep_order: false,
                 desc: false,
                 ranges: crate::ranger::types::Ranges::new(),
+                range_rebuild: None,
+                table_scan_penalty: Default::default(),
             })
         };
         let selection = PhysicalPlan::Selection(PhysicalSelection {

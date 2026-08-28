@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Whether a join's two sides ALREADY produce the order a merge join needs,
-//! and what the required order of each side then is.
+//! Executor order receipts used to lower a shared-planner merge join.
 //!
 //! # What this is a port of
 //!
@@ -26,12 +25,10 @@
 //! offers one order per access path: the int-handle column for a
 //! `IsIntHandlePath`, and the index columns for an index path.
 //!
-//! `GetMergeJoin` then requires the join keys to be FULLY covered by one such
-//! order on the left (`util.GetMaxSortPrefix`, and `len(offsets) <
-//! len(leftJoinKeys)` skips) and by a matching prefix on the right
-//! (`findMaxPrefixLen`). Only then does it build a `PhysicalMergeJoin` and
-//! hand each child a required property over its own join keys
-//! (`tryToGetChildReqProp`).
+//! Physical merge candidate enumeration now lives only in `tidb-planner`.
+//! This module retains the executor receipt types and the distinction between
+//! orders an access path can provide and the order a selected table scan
+//! actually delivers.
 //!
 //! # What this port covers
 //!
@@ -54,9 +51,8 @@
 //!    [`crate::driver::access::leaf_index_path`] -- and reports the index
 //!    order only when it was built with `keep order:true`, so the promise and
 //!    the delivery are two separate statements;
-//!  * the candidate list is gated by the statement's join-method HINTS before
-//!    any cost is compared ([`crate::driver::join_method_hints`]), which is
-//!    what `exhaustPhysicalPlans4LogicalJoin` does first.
+//!  * the shared planner applies the statement's join-method hints during
+//!    `findBestTask`, before the executor lowers its selected receipt.
 //!
 //! An earlier attempt at the index branch WITHOUT either measured 61 -> 101
 //! divergences; a second, with the leaf still walking in handle order,
@@ -191,162 +187,4 @@ pub(crate) fn table_scan_order(table: &KvTable) -> Vec<Vec<usize>> {
         return Vec::new();
     }
     vec![vec![offset]]
-}
-
-/// `util.GetMaxSortPrefix`: for each column of `sort_cols` in turn, its
-/// position in `all_cols`, stopping at the first column that is absent.
-///
-/// The answer is the join-key POSITIONS in the order the child provides them,
-/// which is what lets the caller reorder both key lists into merge order.
-pub(crate) fn max_sort_prefix(sort_cols: &[usize], all_cols: &[usize]) -> Vec<usize> {
-    let mut offsets = Vec::with_capacity(sort_cols.len());
-    for sort_col in sort_cols {
-        let Some(offset) = all_cols.iter().position(|col| col == sort_col) else {
-            return offsets;
-        };
-        offsets.push(offset);
-    }
-    offsets
-}
-
-/// `findMaxPrefixLen`: the longest prefix of `keys` that some candidate order
-/// begins with.
-pub(crate) fn find_max_prefix_len(candidates: &[Vec<usize>], keys: &[usize]) -> usize {
-    candidates
-        .iter()
-        .map(|candidate| {
-            keys.iter()
-                .zip(candidate)
-                .take_while(|(key, col)| key == col)
-                .count()
-        })
-        .max()
-        .unwrap_or(0)
-}
-
-/// The merge join `GetMergeJoin` would build for these keys over these two
-/// sides, or `None` when no provided order covers them.
-///
-/// `equal_keys` are the join's equal conditions as `(left offset, right
-/// offset)` pairs, in `ON` order -- Go's `p.GetJoinKeys()`.
-///
-/// `desc` is `prop.AllSameOrder()`'s second answer for the property this join
-/// is being asked for; an unordered parent asks for ascending, which is what
-/// [`tidb_planner::physical_property::PhysicalProperty::all_same_order`]
-/// returns for the empty property.
-pub(crate) fn get_merge_join(
-    equal_keys: &[MergeJoinKey],
-    left_orders: &[Vec<usize>],
-    right_orders: &[Vec<usize>],
-    desc: bool,
-) -> Option<MergeJoinPlan> {
-    if equal_keys.is_empty() {
-        // Go: `len(leftJoinKeys) == 0` skips every candidate, and a merge
-        // join with no key is only ever produced by the ENFORCED path.
-        return None;
-    }
-    let left_keys: Vec<usize> = equal_keys.iter().map(|key| key.left).collect();
-    let right_keys: Vec<usize> = equal_keys.iter().map(|key| key.right).collect();
-    for order in left_orders {
-        let offsets = max_sort_prefix(order, &left_keys);
-        // "If not all equal conditions hit properties. We ban merge join
-        // heuristically": a partially ordered side would make the executor
-        // compare groups the order does not separate.
-        if offsets.len() < left_keys.len() {
-            continue;
-        }
-        // The keys REORDERED into the order the left side provides them in.
-        let ordered_right: Vec<usize> = offsets.iter().map(|&at| right_keys[at]).collect();
-        let prefix_len = find_max_prefix_len(right_orders, &ordered_right);
-        if prefix_len < offsets.len() || prefix_len == 0 {
-            continue;
-        }
-        let keys = offsets[..prefix_len]
-            .iter()
-            .map(|&at| equal_keys[at])
-            .collect();
-        return Some(MergeJoinPlan { keys, desc });
-    }
-    None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{find_max_prefix_len, get_merge_join, max_sort_prefix, MergeJoinKey};
-
-    fn key(left: usize, right: usize) -> MergeJoinKey {
-        MergeJoinKey { left, right }
-    }
-
-    /// `GetMaxSortPrefix` stops at the FIRST provided column the key list does
-    /// not contain, so a side ordered by `(a, b)` whose join key is only `b`
-    /// answers with the empty prefix rather than with `b`'s position.
-    #[test]
-    fn max_sort_prefix_stops_at_the_first_absent_column() {
-        assert_eq!(max_sort_prefix(&[0], &[0]), vec![0]);
-        assert_eq!(max_sort_prefix(&[0, 1], &[1, 0]), vec![1, 0]);
-        assert_eq!(max_sort_prefix(&[0, 1], &[1]), Vec::<usize>::new());
-        assert_eq!(max_sort_prefix(&[1, 0], &[1]), vec![0]);
-    }
-
-    /// `findMaxPrefixLen` takes the BEST candidate, and a candidate that
-    /// starts elsewhere contributes zero.
-    #[test]
-    fn find_max_prefix_len_takes_the_best_candidate() {
-        let candidates = vec![vec![3usize], vec![1, 2]];
-        assert_eq!(find_max_prefix_len(&candidates, &[1, 2]), 2);
-        assert_eq!(find_max_prefix_len(&candidates, &[3]), 1);
-        assert_eq!(find_max_prefix_len(&candidates, &[2]), 0);
-        assert_eq!(find_max_prefix_len(&[], &[1]), 0);
-    }
-
-    /// The target shape: `t2 join t3 on t2.a = t3.a` where `a` is column 0 and
-    /// the int handle on both sides. Both sides provide `[0]`, the single key
-    /// is fully covered, and the merge join is available.
-    #[test]
-    fn both_sides_ordered_by_the_single_join_key_merge() {
-        let plan = get_merge_join(&[key(0, 0)], &[vec![0]], &[vec![0]], false)
-            .expect("both sides provide the key's order");
-        assert_eq!(plan.keys, vec![key(0, 0)]);
-        assert!(!plan.desc);
-    }
-
-    /// One side without a clustered integer primary key provides NO order, and
-    /// that alone declines the merge join -- this is the gate that keeps every
-    /// heap-ordered table on the hash path.
-    #[test]
-    fn a_side_that_provides_no_order_declines() {
-        assert!(get_merge_join(&[key(0, 0)], &[], &[vec![0]], false).is_none());
-        assert!(get_merge_join(&[key(0, 0)], &[vec![0]], &[], false).is_none());
-    }
-
-    /// A join on a NON-handle column declines even when both tables have a
-    /// clustered integer primary key: the order they provide is over the
-    /// handle, not over the key being joined.
-    #[test]
-    fn a_join_on_a_non_handle_column_declines() {
-        assert!(get_merge_join(&[key(1, 1)], &[vec![0]], &[vec![0]], false).is_none());
-    }
-
-    /// A cartesian join has no equal condition and is never a property-driven
-    /// merge join.
-    #[test]
-    fn a_join_without_equal_conditions_declines() {
-        assert!(get_merge_join(&[], &[vec![0]], &[vec![0]], false).is_none());
-    }
-
-    /// Go bans the merge join when only SOME equal conditions hit the provided
-    /// order: `len(offsets) < len(leftJoinKeys)` skips the candidate.
-    #[test]
-    fn a_partially_covered_key_list_declines() {
-        assert!(get_merge_join(&[key(0, 0), key(1, 1)], &[vec![0]], &[vec![0]], false).is_none());
-    }
-
-    /// The required direction is carried straight through from the parent's
-    /// property, which is what `PhysicalMergeJoin.Desc` is.
-    #[test]
-    fn the_required_direction_is_carried_through() {
-        let plan = get_merge_join(&[key(0, 0)], &[vec![0]], &[vec![0]], true).expect("available");
-        assert!(plan.desc);
-    }
 }

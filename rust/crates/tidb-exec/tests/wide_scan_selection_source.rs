@@ -336,6 +336,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
         TiKvScanPlan::Table(&scan),
         &conditions,
         &[aggregate],
+        false,
         &[0],
     )
     .expect("q6 DAG builds");

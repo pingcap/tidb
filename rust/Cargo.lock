@@ -3549,6 +3549,7 @@ name = "tidb-planner"
 version = "0.0.0"
 dependencies = [
  "tidb-ast",
+ "tidb-chunk",
  "tidb-codec",
  "tidb-datatype",
  "tidb-error",

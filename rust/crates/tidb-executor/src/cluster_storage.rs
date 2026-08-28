@@ -290,20 +290,20 @@ impl MutationBuffer {
     /// Stages a write, replacing any earlier staged value or tombstone.
     pub fn set(&self, key: Key, value: Vec<u8>) {
         let prior = self.lock().insert(key.clone(), Some(value));
-        self.undo()
-            .push(UndoEntry::Write { key, prior });
+        self.undo().push(UndoEntry::Write { key, prior });
     }
 
     /// Stages a delete as a tombstone, so the read path stops seeing the
     /// snapshot's value for the key.
     pub fn delete(&self, key: Key) {
         let prior = self.lock().insert(key.clone(), None);
-        self.undo()
-            .push(UndoEntry::Write { key, prior });
+        self.undo().push(UndoEntry::Write { key, prior });
     }
 
     fn undo(&self) -> std::sync::MutexGuard<'_, Vec<UndoEntry>> {
-        self.undo.lock().unwrap_or_else(|poison| poison.into_inner())
+        self.undo
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     /// The staged entry for `key`: `None` if the key was never touched,
@@ -334,14 +334,13 @@ impl MutationBuffer {
         index: impl Into<String>,
     ) {
         self.mark_presume_key_not_exists(key);
-        self.duplicate_hints()
-            .insert(
-                key.clone(),
-                DuplicateKeyHint {
-                    value: value.into(),
-                    key: index.into(),
-                },
-            );
+        self.duplicate_hints().insert(
+            key.clone(),
+            DuplicateKeyHint {
+                value: value.into(),
+                key: index.into(),
+            },
+        );
     }
 
     /// Returns the client-visible duplicate text for an encoded key, if the
@@ -436,14 +435,7 @@ impl MutationBuffer {
         let staged = self.lock();
         let before: Vec<(Key, Option<Vec<u8>>)> = keys
             .iter()
-            .map(|(key, (prior, _))| {
-                (
-                    key.clone(),
-                    prior
-                        .clone()
-                        .unwrap_or(None),
-                )
-            })
+            .map(|(key, (prior, _))| (key.clone(), prior.clone().unwrap_or(None)))
             .collect();
         let after: Vec<(Key, Option<Vec<u8>>)> = keys
             .keys()
@@ -727,12 +719,7 @@ impl TableStorage for ClusterTableStorage {
         self.buffer.mark_presume_key_not_exists(key);
     }
 
-    fn mark_presume_key_not_exists_with_hint(
-        &mut self,
-        key: &Key,
-        value: &str,
-        index: &str,
-    ) {
+    fn mark_presume_key_not_exists_with_hint(&mut self, key: &Key, value: &str, index: &str) {
         self.buffer
             .mark_presume_key_not_exists_with_hint(key, value, index);
     }
@@ -1181,17 +1168,13 @@ mod tests {
         use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
-        let record_key = Key::from_bytes(encode_row_key_with_handle(
-            42,
-            &RecordHandle::Int(1),
-        ));
+        let record_key = Key::from_bytes(encode_row_key_with_handle(42, &RecordHandle::Int(1)));
         let mut snapshot = MockSnapshot {
             ..MockSnapshot::default()
         };
-        snapshot.data.insert(
-            record_key.as_bytes().to_vec(),
-            b"committed row".to_vec(),
-        );
+        snapshot
+            .data
+            .insert(record_key.as_bytes().to_vec(), b"committed row".to_vec());
         let snapshot = std::sync::Arc::new(std::sync::Mutex::new(snapshot));
         let buffer = MutationBuffer::new();
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
@@ -1217,7 +1200,10 @@ mod tests {
         let error = table
             .insert_row_with_row_id_checked(&row, Some(1), 0, &ctx, false)
             .unwrap_err();
-        assert!(matches!(error, crate::kv_table::KvTableError::DuplicateEntry { .. }));
+        assert!(matches!(
+            error,
+            crate::kv_table::KvTableError::DuplicateEntry { .. }
+        ));
         assert!(buffer.take_presume_not_exists().is_empty());
 
         // Lazy: the same statement reads nothing from the cluster, succeeds,

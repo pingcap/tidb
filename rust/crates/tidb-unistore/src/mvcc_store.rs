@@ -373,7 +373,8 @@ impl MvccStore {
             if lock.hdr.op == KvrpcOp::PessimisticLock as i32 as u8 {
                 // Write nothing as if PessimisticRollback is called.
             } else if lock.hdr.op != KvrpcOp::Lock as i32 as u8 {
-                self.engine.set(&mutation.key, min_commit_ts, &lock.value, meta);
+                self.engine
+                    .set(&mutation.key, min_commit_ts, &lock.value, meta);
             } else if mutation.key == lock.primary {
                 let status_key = encode_extra_txn_status_key(&mutation.key, req.start_version);
                 self.engine.set(&status_key, req.start_version, &[], meta);
@@ -456,7 +457,11 @@ impl MvccStore {
         let (req, min_commit_ts) = self.effective_prewrite_req(req)?;
         // Go `reqCtx.asyncMinCommitTS` (`mvcc.go:947`), published as the
         // response's MinCommitTs.
-        let async_min_commit_ts = if req.use_async_commit { min_commit_ts } else { 0 };
+        let async_min_commit_ts = if req.use_async_commit {
+            min_commit_ts
+        } else {
+            0
+        };
         let mut outcome = PrewriteOutcome {
             async_min_commit_ts,
             one_pc_commit_ts: 0,
@@ -4290,7 +4295,10 @@ mod tests {
             })
             .expect("the 1PC prewrite lands");
         assert!(outcome.one_pc_commit_ts > 1, "the drawn ts commits");
-        assert_eq!(outcome.async_min_commit_ts, 0, "1PC alone publishes no async ts");
+        assert_eq!(
+            outcome.async_min_commit_ts, 0,
+            "1PC alone publishes no async ts"
+        );
         must_unlocked(&store, pk);
         must_get_val(&store, pk, val, u64::MAX);
         // A reader at or past the commit sees it; one before does not.
@@ -4312,7 +4320,10 @@ mod tests {
             })
             .expect("the fallback prewrite lands");
         assert_eq!(fallback.one_pc_commit_ts, 0, "the store declined 1PC");
-        assert!(!store.lock_bytes(fk).is_empty(), "a lock stands for two-phase");
+        assert!(
+            !store.lock_bytes(fk).is_empty(),
+            "a lock stands for two-phase"
+        );
         must_get_none(&store, fk, u64::MAX);
     }
 

@@ -87,6 +87,10 @@ pub struct DataSource {
     pub partition_definition_names: Vec<String>,
     /// Go `Columns`, in schema order.
     pub columns: Vec<DataSourceColumn>,
+    /// Go `TblCols`: the original table columns before logical pruning.
+    /// Physical table-scan costing uses this complete row width even when
+    /// the scan only returns a narrow projected schema.
+    pub table_columns: Vec<Column>,
     /// Go `PushedDownConds`: the conditions the storage layer will evaluate.
     pub pushed_down_conds: Vec<Expression>,
     /// Go `AllConds`: every condition on this table, pushed down or not.
@@ -133,6 +137,13 @@ pub struct DataSource {
     pub interesting_columns: Vec<Column>,
     /// Go `TableStats`: the table-level profile before any filtering.
     pub table_stats: Option<StatsInfo>,
+    /// Go table access path's already-derived `CountAfterAccess`.
+    pub table_path_count_after_access: Option<f64>,
+    /// Go index access paths' already-derived `CountAfterAccess`, by index id.
+    pub index_path_count_after_access: std::collections::BTreeMap<i64, f64>,
+    /// The table/session facts that Go retains on `PhysicalTableScan` for
+    /// `getTableScanPenalty`.
+    pub table_scan_penalty: crate::plan_cost_ver2::TableScanPenaltyInput,
     /// Whether the table has an available TiFlash replica; Go computes this
     /// through `TableInfo.TiFlashReplica` plus the hypothetical-replica
     /// session state, both of which are outside this crate.
@@ -140,8 +151,69 @@ pub struct DataSource {
 }
 
 impl DataSource {
+    /// Go `ruleutil.CheckIndexCanBeKey` plus the public-index walk in
+    /// `DataSource.BuildKeyInfo`. The source column list is pruned in lockstep
+    /// with `self_schema`, so matching by column name also rejects a key whose
+    /// column no longer appears in this plan.
+    #[must_use]
+    pub fn index_keys(&self, self_schema: &Schema) -> (Vec<Vec<Column>>, Vec<Vec<Column>>) {
+        let mut strong = Vec::new();
+        let mut nullable = Vec::new();
+        for index in &self.indexes {
+            if !index.unique || !index.is_public {
+                continue;
+            }
+            let mut key = Vec::with_capacity(index.columns.len());
+            let mut all_not_null = true;
+            let mut complete = true;
+            for index_column in &index.columns {
+                let Some(position) = self
+                    .columns
+                    .iter()
+                    .position(|column| column.name.eq_ignore_ascii_case(&index_column.name))
+                else {
+                    complete = false;
+                    break;
+                };
+                let Some(column) = self_schema.columns.get(position).cloned() else {
+                    complete = false;
+                    break;
+                };
+                all_not_null &= column.ret_type.as_ref().is_some_and(|field_type| {
+                    field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+                });
+                key.push(column);
+            }
+            if !complete {
+                continue;
+            }
+            if all_not_null {
+                strong.push(key);
+            } else {
+                nullable.push(key);
+            }
+        }
+        (strong, nullable)
+    }
+
     /// Go `plancodec.TypeTableScan`, as `DataSource.Init` sets it.
     pub const TYPE: &'static str = "DataSource";
+
+    /// Resolves an index column after logical column pruning. Catalog index
+    /// offsets address the original table column list, while `columns` and
+    /// the logical schema are pruned together; the column name is the stable
+    /// identity between those two layouts.
+    #[must_use]
+    pub fn schema_column_for_index_column(
+        &self,
+        index_column: &crate::plan_builder::catalog::SourceIndexColumn,
+    ) -> Option<&Column> {
+        let position = self
+            .columns
+            .iter()
+            .position(|column| column.name.eq_ignore_ascii_case(&index_column.name))?;
+        self.base.base.schema()?.columns.get(position)
+    }
 
     /// Go `DataSource.Init(ctx, offset)` (`logical_datasource.go:155`).
     #[must_use]
@@ -401,6 +473,7 @@ impl DataSource {
             partition_def_idx: self.partition_def_idx,
             partition_definition_names: self.partition_definition_names.clone(),
             columns: self.columns.clone(),
+            table_columns: self.table_columns.clone(),
             pushed_down_conds: self.pushed_down_conds.clone(),
             all_conds: self.all_conds.clone(),
             enumerated_paths: self.enumerated_paths.clone(),
@@ -420,6 +493,9 @@ impl DataSource {
             asked_column_group: self.asked_column_group.clone(),
             interesting_columns: self.interesting_columns.clone(),
             table_stats: self.table_stats.clone(),
+            table_path_count_after_access: self.table_path_count_after_access,
+            index_path_count_after_access: self.index_path_count_after_access.clone(),
+            table_scan_penalty: self.table_scan_penalty,
             has_tiflash_replica: self.has_tiflash_replica,
         }
     }

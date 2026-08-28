@@ -76,6 +76,19 @@ impl Constant {
         }
     }
 
+    /// Replaces the execute-time value of a cached parameter/deferred
+    /// constant and invalidates the value-derived hash.
+    ///
+    /// Go evaluates `ParamMarker`/`DeferredExpr` again when
+    /// `RebuildPlan4CachedPlan` reuses a physical plan.  A Rust cached plan
+    /// performs the same mutation on its private clone; retaining the old
+    /// `HashCode` would make expression equality disagree with the rebound
+    /// datum.
+    pub fn replace_cached_value(&mut self, value: Datum) {
+        self.value = value;
+        self.hashcode.clear();
+    }
+
     /// Go `NewOne`: the unsigned `TINYINT(1)` constant used by boolean
     /// rewrites without triggering integral promotion.
     #[must_use]

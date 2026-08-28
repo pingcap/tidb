@@ -38,10 +38,7 @@ fn const_arg(datum: Datum) -> Expression {
     Expression::Constant(crate::constant::Constant::new(datum, field_type))
 }
 
-fn eval_string_sig(
-    name: &str,
-    args: Vec<Datum>,
-) -> Result<Datum, crate::EvalError> {
+fn eval_string_sig(name: &str, args: Vec<Datum>) -> Result<Datum, crate::EvalError> {
     let mut ret = FieldType::new(C::VarString);
     // Go's string signatures declare MaxFlen-scale results; the packet
     // boundary checks read the declared length (e.g. SPACE/REPEAT's 1000).
@@ -218,20 +215,18 @@ fn go_test_ltrim_rtrim() {
         ("", ""),
     ];
     for (input, expected) in ltrim_cases {
-        let value = eval_string_sig("ltrim", vec![s(input)])
-            .unwrap_or_else(|e| panic!("ltrim: {e:?}"));
+        let value =
+            eval_string_sig("ltrim", vec![s(input)]).unwrap_or_else(|e| panic!("ltrim: {e:?}"));
         assert_eq!(str_of(&value), *expected, "ltrim({input:?})");
     }
     for (input, expected) in [("   bar   ", "   bar"), ("bar   ", "bar")] {
-        let value = eval_string_sig("rtrim", vec![s(input)])
-            .unwrap_or_else(|e| panic!("rtrim: {e:?}"));
+        let value =
+            eval_string_sig("rtrim", vec![s(input)]).unwrap_or_else(|e| panic!("rtrim: {e:?}"));
         assert_eq!(str_of(&value), expected, "rtrim({input:?})");
     }
-    assert!(
-        eval_string_sig("ltrim", vec![Datum::Null])
-            .unwrap()
-            .is_null()
-    );
+    assert!(eval_string_sig("ltrim", vec![Datum::Null])
+        .unwrap()
+        .is_null());
 }
 
 /// Go `TestInsert` (`builtin_string_test.go:2349`): the full source table,
@@ -240,26 +235,53 @@ fn go_test_ltrim_rtrim() {
 #[test]
 fn go_test_insert() {
     let cases: &[(Vec<Datum>, Option<&str>)] = &[
-        (vec![s("Quadratic"), i(3), i(4), s("What")], Some("QuWhattic")),
-        (vec![s("Quadratic"), i(-1), i(4), s("What")], Some("Quadratic")),
-        (vec![s("Quadratic"), i(3), i(100), s("What")], Some("QuWhat")),
+        (
+            vec![s("Quadratic"), i(3), i(4), s("What")],
+            Some("QuWhattic"),
+        ),
+        (
+            vec![s("Quadratic"), i(-1), i(4), s("What")],
+            Some("Quadratic"),
+        ),
+        (
+            vec![s("Quadratic"), i(3), i(100), s("What")],
+            Some("QuWhat"),
+        ),
         (vec![Datum::Null, i(3), i(100), s("What")], None),
         (vec![s("Quadratic"), Datum::Null, i(4), s("What")], None),
         (vec![s("Quadratic"), i(3), Datum::Null, s("What")], None),
         (vec![s("Quadratic"), i(3), i(4), Datum::Null], None),
         (vec![s("Quadratic"), i(3), i(-1), s("What")], Some("QuWhat")),
-        (vec![s("Quadratic"), i(3), i(1), s("What")], Some("QuWhatdratic")),
+        (
+            vec![s("Quadratic"), i(3), i(1), s("What")],
+            Some("QuWhatdratic"),
+        ),
         (vec![s("Quadratic"), i(-1), Datum::Null, s("What")], None),
         (vec![s("Quadratic"), i(-1), i(4), Datum::Null], None),
-        (vec![s("我叫小雨呀"), i(3), i(2), s("王雨叶")], Some("我叫王雨叶呀")),
-        (vec![s("我叫小雨呀"), i(-1), i(2), s("王雨叶")], Some("我叫小雨呀")),
-        (vec![s("我叫小雨呀"), i(3), i(100), s("王雨叶")], Some("我叫王雨叶")),
+        (
+            vec![s("我叫小雨呀"), i(3), i(2), s("王雨叶")],
+            Some("我叫王雨叶呀"),
+        ),
+        (
+            vec![s("我叫小雨呀"), i(-1), i(2), s("王雨叶")],
+            Some("我叫小雨呀"),
+        ),
+        (
+            vec![s("我叫小雨呀"), i(3), i(100), s("王雨叶")],
+            Some("我叫王雨叶"),
+        ),
         (vec![Datum::Null, i(3), i(100), s("王雨叶")], None),
         (vec![s("我叫小雨呀"), Datum::Null, i(4), s("王雨叶")], None),
         (vec![s("我叫小雨呀"), i(3), Datum::Null, s("王雨叶")], None),
         (vec![s("我叫小雨呀"), i(3), i(4), Datum::Null], None),
-        (vec![s("我叫小雨呀"), i(3), i(-1), s("王雨叶")], Some("我叫王雨叶")),
-        (vec![s("我叫小雨呀"), i(3), i(1), s("王雨叶")], Some("我叫王雨叶雨呀")),
+        (
+            vec![s("我叫小雨呀"), i(3), i(-1), s("王雨叶")],
+            Some("我叫王雨叶"),
+        ),
+        (
+            vec![s("我叫小雨呀"), i(3), i(1), s("王雨叶")],
+            Some("我叫王雨叶雨呀"),
+        ),
         (vec![s("我叫小雨呀"), i(-1), Datum::Null, s("王雨叶")], None),
         (vec![s("我叫小雨呀"), i(-1), i(2), Datum::Null], None),
     ];

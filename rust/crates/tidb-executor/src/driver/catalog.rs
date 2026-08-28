@@ -163,8 +163,49 @@ pub struct Catalog {
     /// `metadata_version` because exactly its mutators move the table set;
     /// [`Self::take_local_temporary_tables`] also drops it explicitly after
     /// removing entries.
-    temporary_sweep:
-        Option<(u64, Vec<(String, String)>, Vec<(String, String)>)>,
+    temporary_sweep: Option<(u64, Vec<(String, String)>, Vec<(String, String)>)>,
+}
+
+/// An owned snapshot of the catalog fields Go's logical [`PlanBuilder`]
+/// reads. The executor catalog owns storage handles and mutable row state;
+/// the planner must see only immutable table/view metadata.
+pub(crate) struct PlannerCatalog {
+    current_database: String,
+    databases: std::collections::BTreeSet<String>,
+    tables: Vec<tidb_planner::plan_builder::catalog::SourceTable>,
+    views: Vec<tidb_planner::plan_builder::catalog::SourceView>,
+}
+
+impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
+    fn current_database(&self) -> &str {
+        &self.current_database
+    }
+
+    fn find_table(
+        &self,
+        db_name: &str,
+        table_name: &str,
+    ) -> Option<&tidb_planner::plan_builder::catalog::SourceTable> {
+        self.tables.iter().find(|table| {
+            table.db_name.eq_ignore_ascii_case(db_name)
+                && table.table_name.eq_ignore_ascii_case(table_name)
+        })
+    }
+
+    fn database_exists(&self, db_name: &str) -> bool {
+        self.databases.contains(&db_name.to_ascii_lowercase())
+    }
+
+    fn find_view(
+        &self,
+        db_name: &str,
+        view_name: &str,
+    ) -> Option<&tidb_planner::plan_builder::catalog::SourceView> {
+        self.views.iter().find(|view| {
+            view.db_name.eq_ignore_ascii_case(db_name)
+                && view.view_name.eq_ignore_ascii_case(view_name)
+        })
+    }
 }
 
 /// The narrow store's commit history.
@@ -458,7 +499,7 @@ impl Catalog {
         &mut self,
         database: &str,
         name: &str,
-        table: TableEntry,
+        mut table: TableEntry,
     ) -> Result<(), DriverError> {
         let schema = self
             .databases
@@ -466,7 +507,16 @@ impl Catalog {
             .ok_or_else(|| {
                 DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(database.to_owned()))
             })?;
-        schema.tables.insert(name.to_lowercase(), std::sync::Arc::new(table));
+        // Go's infoschema key and `TableInfo.Name` are one identity. Keep the
+        // same invariant here so every metadata consumer (including the
+        // shared planner) observes the name under which the table was
+        // registered. Hand-built tables intentionally start unnamed.
+        if let TableEntry::Kv(table) = &mut table {
+            table.set_name(name);
+        }
+        schema
+            .tables
+            .insert(name.to_lowercase(), std::sync::Arc::new(table));
         self.version += 1;
         Ok(())
     }
@@ -839,6 +889,181 @@ impl Catalog {
         paths
     }
 
+    /// Materializes the narrow `infoschema` view consumed by the ported Go
+    /// logical planner. Storage handles, rows, statistics and allocators stay
+    /// in this catalog; only immutable schema metadata crosses the seam.
+    pub(crate) fn planner_catalog(&self, current_database: &str) -> PlannerCatalog {
+        use tidb_planner::plan_builder::catalog::{
+            SourceColumn, SourceIndex, SourceIndexColumn, SourceTable, SourceView,
+        };
+
+        let databases = self.databases.keys().cloned().collect();
+        let mut tables = Vec::new();
+        let mut views = Vec::new();
+        let mut synthetic_table_id = -1_i64;
+        for database in self.databases.values() {
+            for (entry_name, entry) in &database.tables {
+                match &**entry {
+                    TableEntry::Kv(table) => {
+                        let columns = table
+                            .columns
+                            .iter()
+                            .enumerate()
+                            .map(|(offset, column)| SourceColumn {
+                                id: column.id,
+                                name: column.name.clone(),
+                                is_primary_key: column
+                                    .field_type
+                                    .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
+                                offset,
+                                ret_type: column.field_type.clone(),
+                                is_public: true,
+                                is_hidden: table.is_hidden(offset),
+                                is_virtual_generated: column
+                                    .generated
+                                    .as_ref()
+                                    .is_some_and(|generated| !generated.stored),
+                            })
+                            .collect::<Vec<_>>();
+                        let indexes = table
+                            .indexes()
+                            .iter()
+                            .map(|index| SourceIndex {
+                                id: index.id,
+                                name: index.name.clone(),
+                                columns: index
+                                    .column_offsets
+                                    .iter()
+                                    .enumerate()
+                                    .filter_map(|(position, offset)| {
+                                        table.columns.get(*offset).map(|column| SourceIndexColumn {
+                                            name: column.name.clone(),
+                                            offset: *offset,
+                                            length: index.prefix_length(position),
+                                        })
+                                    })
+                                    .collect(),
+                                unique: index.unique,
+                                primary: index.clustered_primary
+                                    || index.name.eq_ignore_ascii_case("primary"),
+                                is_public: true,
+                                is_visible: index.visible,
+                                is_columnar: false,
+                                is_multi_valued: table.mv_key_part_source(index.id).is_some(),
+                            })
+                            .collect::<Vec<_>>();
+                        let common_handle_lens = table
+                            .indexes()
+                            .iter()
+                            .find(|index| {
+                                index.clustered_primary
+                                    || index.name.eq_ignore_ascii_case("primary")
+                            })
+                            .map(|index| {
+                                (0..table.common_handle_offsets().len())
+                                    .map(|position| index.prefix_length(position))
+                                    .collect()
+                            })
+                            .unwrap_or_else(|| vec![-1; table.common_handle_offsets().len()]);
+                        tables.push(SourceTable {
+                            table_id: table.table_id,
+                            table_name: table.name.clone(),
+                            db_name: database.name.clone(),
+                            physical_table_id: table.table_id,
+                            columns,
+                            indexes,
+                            pk_is_handle: table.pk_handle_offset().is_some(),
+                            is_common_handle: !table.common_handle_offsets().is_empty(),
+                            handle_col_offsets: table
+                                .pk_handle_offset()
+                                .into_iter()
+                                .chain(table.common_handle_offsets().iter().copied())
+                                .collect(),
+                            common_handle_col_offsets: table.common_handle_offsets().to_vec(),
+                            common_handle_lens,
+                            ..SourceTable::default()
+                        });
+                    }
+                    TableEntry::Mem(table) => {
+                        tables.push(SourceTable {
+                            table_id: synthetic_table_id,
+                            table_name: entry_name.clone(),
+                            db_name: database.name.clone(),
+                            physical_table_id: synthetic_table_id,
+                            columns: table
+                                .columns
+                                .iter()
+                                .enumerate()
+                                .map(|(offset, (name, ret_type))| SourceColumn {
+                                    id: offset as i64 + 1,
+                                    name: name.clone(),
+                                    offset,
+                                    ret_type: ret_type.clone(),
+                                    ..SourceColumn::default()
+                                })
+                                .collect(),
+                            ..SourceTable::default()
+                        });
+                        synthetic_table_id -= 1;
+                    }
+                    TableEntry::Cte(table) => {
+                        tables.push(SourceTable {
+                            table_id: synthetic_table_id,
+                            table_name: entry_name.clone(),
+                            db_name: database.name.clone(),
+                            physical_table_id: synthetic_table_id,
+                            columns: table
+                                .columns()
+                                .iter()
+                                .enumerate()
+                                .map(|(offset, (name, ret_type))| SourceColumn {
+                                    id: offset as i64 + 1,
+                                    name: name.clone(),
+                                    offset,
+                                    ret_type: ret_type.clone(),
+                                    ..SourceColumn::default()
+                                })
+                                .collect(),
+                            ..SourceTable::default()
+                        });
+                        synthetic_table_id -= 1;
+                    }
+                    TableEntry::View(view) => views.push(SourceView {
+                        db_name: database.name.clone(),
+                        view_name: view.name.clone(),
+                        select_sql: view.select_sql.clone(),
+                        columns: view
+                            .columns
+                            .iter()
+                            .enumerate()
+                            .map(|(offset, (name, ret_type))| SourceColumn {
+                                id: offset as i64 + 1,
+                                name: name.clone(),
+                                offset,
+                                ret_type: ret_type.clone(),
+                                ..SourceColumn::default()
+                            })
+                            .collect(),
+                        ..SourceView::default()
+                    }),
+                    TableEntry::Sequence(_) => {}
+                }
+            }
+        }
+        tables.sort_by(|left, right| {
+            (&left.db_name, &left.table_name).cmp(&(&right.db_name, &right.table_name))
+        });
+        views.sort_by(|left, right| {
+            (&left.db_name, &left.view_name).cmp(&(&right.db_name, &right.view_name))
+        });
+        PlannerCatalog {
+            current_database: current_database.to_owned(),
+            databases,
+            tables,
+            views,
+        }
+    }
+
     /// A mutable handle for the referential-integrity paths, which reach
     /// tables the statement did not name.
     pub(crate) fn get_mut_for_foreign_key(
@@ -1012,30 +1237,6 @@ impl Catalog {
         }
     }
 
-    /// Captures the shared statistics residency before a speculative planning
-    /// branch. The metadata and histogram payloads remain shared; only the
-    /// mutable Go `StatsHandle`-like load state is restored between branches.
-    pub(crate) fn statistics_load_checkpoint(
-        &self,
-    ) -> Vec<(i64, crate::access_cost::StatsLoadCheckpoint)> {
-        self.statistics
-            .iter()
-            .map(|(table_id, statistics)| (*table_id, statistics.load_checkpoint()))
-            .collect()
-    }
-
-    /// Restores a checkpoint captured by [`Self::statistics_load_checkpoint`].
-    pub(crate) fn restore_statistics_load_checkpoint(
-        &self,
-        checkpoint: &[(i64, crate::access_cost::StatsLoadCheckpoint)],
-    ) {
-        for (table_id, state) in checkpoint {
-            if let Some(statistics) = self.statistics.get(table_id) {
-                statistics.restore_load_checkpoint(state);
-            }
-        }
-    }
-
     /// A mutable table of `database`, for the schema-changing statements.
     pub fn table_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
         self.get_mut_in(database, name)
@@ -1144,10 +1345,10 @@ impl Catalog {
         let schema = self.databases.get_mut(&folded_database).ok_or_else(|| {
             DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(database.to_owned()))
         })?;
-        if let Some(displaced) = schema
-            .tables
-            .insert(folded_name.clone(), std::sync::Arc::new(TableEntry::Kv(table)))
-        {
+        if let Some(displaced) = schema.tables.insert(
+            folded_name.clone(),
+            std::sync::Arc::new(TableEntry::Kv(table)),
+        ) {
             self.shadowed_by_local_temporary
                 .push((folded_database, folded_name, displaced));
         }
@@ -1180,7 +1381,10 @@ impl Catalog {
             let Some(schema) = self.databases.get_mut(&database) else {
                 continue;
             };
-            if let Some(displaced) = schema.tables.insert(name.clone(), std::sync::Arc::new(TableEntry::Kv(table))) {
+            if let Some(displaced) = schema
+                .tables
+                .insert(name.clone(), std::sync::Arc::new(TableEntry::Kv(table)))
+            {
                 self.shadowed_by_local_temporary
                     .push((database, name, displaced));
             }

@@ -283,13 +283,12 @@ pub fn run_drop_table_in(
     // `None` is "no such object"; a view or a sequence answers
     // `TempTableType::NONE`, because Go's `TableByName` finds those too and
     // judges them by the `TempTableType` their `TableInfo` carries.
-    let kind_of = |catalog: &Catalog, database: &str, name: &str| match catalog
-        .table_in(database, name)
-    {
-        Some(crate::TableEntry::Kv(table)) => Some(table.temp_table_type()),
-        Some(_) => Some(tidb_model::TempTableType::NONE),
-        None => None,
-    };
+    let kind_of =
+        |catalog: &Catalog, database: &str, name: &str| match catalog.table_in(database, name) {
+            Some(crate::TableEntry::Kv(table)) => Some(table.temp_table_type()),
+            Some(_) => Some(tidb_model::TempTableType::NONE),
+            None => None,
+        };
 
     match drop.temporary {
         tidb_ast::DropTemporary::None => {}

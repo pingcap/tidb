@@ -51,6 +51,55 @@ pub struct LogicalProjection {
 }
 
 impl LogicalProjection {
+    /// Go `LogicalProjection.PreparePossibleProperties` maps every child
+    /// order through the projection's bare-column expressions. A computed
+    /// expression stops an order at that position; an order with no mapped
+    /// prefix is discarded.
+    pub fn prepare_possible_properties(
+        &mut self,
+        child: Option<&crate::plan_base::PossiblePropertiesInfo>,
+    ) -> crate::plan_base::PossiblePropertiesInfo {
+        let Some(child) = child else {
+            self.base.set_has_tiflash(false);
+            return crate::plan_base::PossiblePropertiesInfo::default();
+        };
+        let output_schema = self.base.base.schema();
+        let mut old_columns = Vec::new();
+        let mut new_columns = Vec::new();
+        if let Some(output_schema) = output_schema {
+            for (index, expression) in self.exprs.iter().enumerate() {
+                if let (Expression::Column(input), Some(output)) =
+                    (expression, output_schema.columns.get(index))
+                {
+                    old_columns.push(input.clone());
+                    new_columns.push(output.clone());
+                }
+            }
+        }
+        let input_schema = Schema::new(old_columns);
+        let orders = child
+            .orders
+            .iter()
+            .filter_map(|order| {
+                let mapped: Vec<Column> = order
+                    .iter()
+                    .map_while(|column| {
+                        let position = input_schema.column_index(column);
+                        usize::try_from(position)
+                            .ok()
+                            .and_then(|position| new_columns.get(position).cloned())
+                    })
+                    .collect();
+                (!mapped.is_empty()).then_some(mapped)
+            })
+            .collect();
+        self.base.set_has_tiflash(child.has_tiflash);
+        crate::plan_base::PossiblePropertiesInfo {
+            orders,
+            has_tiflash: child.has_tiflash,
+        }
+    }
+
     /// Go `tryTransformSortItems` (`logical_projection.go:553`): map each
     /// required-order column through this projection's exprs — a bare
     /// `Column` maps to the child column it projects, a `ScalarFunction`

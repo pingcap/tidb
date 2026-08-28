@@ -39,11 +39,11 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 
 use crate::column::Column;
 use crate::context::NoColumns;
-use crate::expression::Expression;
 use crate::expr_util::{
-    evaluate_expr_with_null, fold_constant_with, FoldOptions, FunctionBuilder,
-    FunctionBuildError, PreservingFunctionBuilder, RealFunctionBuilder, SubstituteOptions,
+    evaluate_expr_with_null, fold_constant_with, FoldOptions, FunctionBuildError, FunctionBuilder,
+    PreservingFunctionBuilder, RealFunctionBuilder, SubstituteOptions,
 };
+use crate::expression::Expression;
 use crate::schema::Schema;
 use tidb_ast::CiString;
 
@@ -76,7 +76,9 @@ impl<C: crate::context::Columns> FunctionBuilder for MasterFunctionBuilder<'_, C
         ret_type: Option<FieldType>,
         args: Vec<Expression>,
     ) -> Result<Expression, FunctionBuildError> {
-        let mut built = self.delegate.new_function(func_name, ret_type.clone(), args)?;
+        let mut built = self
+            .delegate
+            .new_function(func_name, ret_type.clone(), args)?;
         // Infer comparison result types exactly where Go's class inference
         // fills them in (`compareFunctionClass.getFunction`); this workspace's
         // `builtin_return_type` leaves comparisons Unspecified today.
@@ -93,7 +95,11 @@ impl<C: crate::context::Columns> FunctionBuilder for MasterFunctionBuilder<'_, C
                 }
             }
         }
-        Ok(fold_constant_with(&built, self.ctx, &FoldOptions::new(self)))
+        Ok(fold_constant_with(
+            &built,
+            self.ctx,
+            &FoldOptions::new(self),
+        ))
     }
 }
 
@@ -145,9 +151,8 @@ fn evaluate_expr_with_null_neutralizes_only_schema_columns() {
         Expression::Column(column) => column,
         _ => unreachable!(),
     }]);
-    let result =
-        evaluate_expr_with_null(&outer, &truncated, false, &ctx, &options)
-            .expect("the walk must succeed");
+    let result = evaluate_expr_with_null(&outer, &truncated, false, &ctx, &options)
+        .expect("the walk must succeed");
 
     // The surviving node wraps the UNNULLED column and the literal.
     let Expression::ScalarFunction(function) = &result else {
@@ -179,9 +184,8 @@ fn evaluate_expr_with_null_neutralizes_only_schema_columns() {
         },
         full_schema_column,
     ]);
-    let folded =
-        evaluate_expr_with_null(&result, &full, false, &ctx, &options)
-            .expect("the walk must succeed");
+    let folded = evaluate_expr_with_null(&result, &full, false, &ctx, &options)
+        .expect("the walk must succeed");
     let Expression::Constant(constant) = &folded else {
         panic!("expected a fully folded constant, got {folded:?}")
     };
@@ -316,16 +320,12 @@ fn the_walk_requires_the_folding_builder_to_reduce_rebuilt_nodes() {
         .new_function("ifnull", Some(longlong()), vec![col1, one()])
         .expect("must build");
     let outer = PreservingFunctionBuilder
-        .new_function(
-            "ifnull",
-            Some(longlong()),
-            vec![null_longlong(), inner],
-        )
+        .new_function("ifnull", Some(longlong()), vec![null_longlong(), inner])
         .expect("must build");
     let schema = Schema::new(vec![Column::new(0, longlong())]);
     let options = SubstituteOptions::new(&preserving);
-    let result = evaluate_expr_with_null(&outer, &schema, false, &ctx, &options)
-        .expect("must succeed");
+    let result =
+        evaluate_expr_with_null(&outer, &schema, false, &ctx, &options).expect("must succeed");
     let Expression::ScalarFunction(function) = &result else {
         panic!("preserving builder must not fold")
     };

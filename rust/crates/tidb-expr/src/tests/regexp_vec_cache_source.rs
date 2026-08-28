@@ -93,7 +93,9 @@ fn regexp_substr_vec_generator_matrix_agrees_across_tiers() {
         "Good\nday",
         "\n\n\n\n\n\n",
     ];
-    let patterns = ["^$", "ab.", "aB.", "abc", "好", "好.", "od$", "^day", "day$", "."];
+    let patterns = [
+        "^$", "ab.", "aB.", "abc", "好", "好.", "od$", "^day", "day$", ".",
+    ];
     let positions = [1_i64, 5];
     let occurrences = [-1_i64, 10];
     let match_types = ["m", "i", "icc", "cii", "s", "msi"];
@@ -132,7 +134,9 @@ fn regexp_instr_vec_generator_matrix_agrees_across_tiers() {
         "Good\nday",
         "\n\n\n\n\n\n",
     ];
-    let patterns = ["^$", "ab.", "aB.", "abc", "好", "好.", "od$", "^day", "day$", "."];
+    let patterns = [
+        "^$", "ab.", "aB.", "abc", "好", "好.", "od$", "^day", "day$", ".",
+    ];
     let positions = [1_i64, 5];
     let occurrences = [-1_i64, 10];
     let return_options = [0_i64, 1];
@@ -177,18 +181,8 @@ fn regexp_replace_vec_generator_matrix_agrees_across_tiers() {
         "seafood fool",
     ];
     let patterns = [
-        "(^$)",
-        "(a)b.",
-        "a(B).",
-        "(ab)c",
-        "(好)",
-        "(好).",
-        "(o)d$",
-        "^da(y)",
-        "(d)ay$",
-        "(.)",
-        "foo(.?)",
-        "foo(d|l)",
+        "(^$)", "(a)b.", "a(B).", "(ab)c", "(好)", "(好).", "(o)d$", "^da(y)", "(d)ay$", "(.)",
+        "foo(.?)", "foo(d|l)",
     ];
     let replacements = ["cc", "的", "a\\12"];
     let positions = [1_i64, 5];
@@ -244,12 +238,30 @@ fn regexp_constant_pattern_corpus_matches_scalar_evaluation() {
         "aB3ZZZzzzz",        // mixed case everywhere
     ];
     for text in corpus {
-        let sql = format!("regexp_like({}, {})", sql_literal(text), sql_literal(pattern));
+        let sql = format!(
+            "regexp_like({}, {})",
+            sql_literal(text),
+            sql_literal(pattern)
+        );
         assert_eq!(e(&sql), chunk_e(&sql), "{sql}");
     }
     // Anchor behavior spot checks so the corpus cannot hide a dropped anchor.
-    assert_eq!(chunk_e(&format!("regexp_like({},{})", sql_literal("abc12"), sql_literal(pattern))), "INT:1");
-    assert_eq!(chunk_e(&format!("regexp_like({},{})", sql_literal(" abc12"), sql_literal(pattern))), "INT:0");
+    assert_eq!(
+        chunk_e(&format!(
+            "regexp_like({},{})",
+            sql_literal("abc12"),
+            sql_literal(pattern)
+        )),
+        "INT:1"
+    );
+    assert_eq!(
+        chunk_e(&format!(
+            "regexp_like({},{})",
+            sql_literal(" abc12"),
+            sql_literal(pattern)
+        )),
+        "INT:0"
+    );
     // POSIX classes are honored, not matched literally.
     assert_eq!(
         chunk_e("regexp_like('abc99x', '[[:alpha:]]+[[:digit:]]+[[:alpha:]]')"),

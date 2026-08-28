@@ -185,6 +185,7 @@ fn flag() {
             offset: 0,
             order: 0,
             in_execute: false,
+            value: None,
             projection_offset: 0,
         },
     );

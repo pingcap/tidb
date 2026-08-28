@@ -1361,7 +1361,10 @@ fn a_retried_range_dml_recomputes_at_the_advanced_for_update_ts() {
         Some(true)
     );
     // Take the row lock so the contender below must wait and then retry.
-    rows(&mut first, "UPDATE test.retry_range SET v = v + 1 WHERE v > 0");
+    rows(
+        &mut first,
+        "UPDATE test.retry_range SET v = v + 1 WHERE v > 0",
+    );
 
     let second = std::thread::scope(|scope| {
         let contender = scope.spawn(|| {
@@ -1387,7 +1390,10 @@ fn a_retried_range_dml_recomputes_at_the_advanced_for_update_ts() {
     second.expect("the contending transaction commits after waiting the lock out");
 
     assert_eq!(
-        displayed(rows(&mut first, "SELECT v FROM test.retry_range WHERE k = 7")),
+        displayed(rows(
+            &mut first,
+            "SELECT v FROM test.retry_range WHERE k = 7"
+        )),
         [["12"]],
         "both increments landed: the retry re-read the winner's commit \
          through the coprocessor, not through the stale start_ts snapshot"
@@ -1425,7 +1431,10 @@ fn a_plain_read_is_not_answered_from_the_pessimistic_lock_cache() {
         Some(true)
     );
     assert_eq!(
-        displayed(rows(&mut reader, "SELECT v FROM test.lock_cache WHERE id = 1")),
+        displayed(rows(
+            &mut reader,
+            "SELECT v FROM test.lock_cache WHERE id = 1"
+        )),
         [["10"]],
         "the transaction's snapshot is the row as of BEGIN"
     );
@@ -1433,7 +1442,10 @@ fn a_plain_read_is_not_answered_from_the_pessimistic_lock_cache() {
     let mut writer = factory
         .open_session(session_context(85))
         .expect("session opens");
-    rows(&mut writer, "UPDATE test.lock_cache SET v = 99 WHERE id = 1");
+    rows(
+        &mut writer,
+        "UPDATE test.lock_cache SET v = 99 WHERE id = 1",
+    );
 
     // The LOCKING read may see the newer row -- it takes its own
     // `for_update_ts`, which is Go's behaviour too. This is what fills the
@@ -1441,7 +1453,10 @@ fn a_plain_read_is_not_answered_from_the_pessimistic_lock_cache() {
     let _ = reader.execute("SELECT v FROM test.lock_cache WHERE id = 1 FOR UPDATE");
 
     assert_eq!(
-        displayed(rows(&mut reader, "SELECT v FROM test.lock_cache WHERE id = 1")),
+        displayed(rows(
+            &mut reader,
+            "SELECT v FROM test.lock_cache WHERE id = 1"
+        )),
         [["10"]],
         "the plain read that follows still reads at start_ts: the lock cache \
          belongs to locking reads only (`point_get.go:677`)"

@@ -349,6 +349,7 @@ impl Parser {
                     offset: t.offset,
                     order: self.next_param_marker_position(),
                     in_execute: false,
+                    value: None,
                     projection_offset: 0,
                 })
             }

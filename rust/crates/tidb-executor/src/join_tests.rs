@@ -15,10 +15,10 @@
 use super::*;
 use tidb_ast::CiString;
 use tidb_datatype::FieldTypeCode;
-pub(super) use tidb_expr::NoColumns;
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::scalar_function::ScalarFunction;
+pub(super) use tidb_expr::NoColumns;
 
 const CHUNK: usize = 1024;
 
@@ -30,106 +30,6 @@ fn decimal(text: &str) -> Decimal {
     let (value, error) = Decimal::parse_mysql(text);
     assert_eq!(error, None, "invalid decimal fixture {text}");
     value
-}
-
-#[test]
-fn compact_count_join_key_and_decimal_comparison_are_bounded() {
-    let short = CompactBinaryKey::from_bytes(b"0xabc").expect("short key fits");
-    assert_eq!(short.bytes.len(), 5);
-    assert_eq!(&short.bytes[..5], b"0xabc");
-    assert!(CompactBinaryKey::from_bytes(&[b'x'; COMPACT_BINARY_KEY_BYTES + 1]).is_none());
-
-    let lower = compact_join_decimal(
-        decimal("12.30")
-            .to_my_decimal()
-            .expect("decimal fits MyDecimal"),
-    );
-    let upper = compact_join_decimal(
-        decimal("12.31")
-            .to_my_decimal()
-            .expect("decimal fits MyDecimal"),
-    );
-    assert_eq!(compare_compact_join_decimal(lower, upper), Ordering::Less);
-    assert!(compact_matches(
-        2,
-        compare_compact_join_decimal(lower, upper)
-    ));
-    assert!(!compact_matches(
-        4,
-        compare_compact_join_decimal(lower, upper)
-    ));
-}
-
-#[test]
-fn sorted_compact_decimal_counts_match_pairwise_comparison() {
-    let values = [-3, -1, -1, 0, 4, 9];
-    for build_on_left in [false, true] {
-        for probe in [-4, -1, 0, 5, 10] {
-            for op in 0..=5 {
-                let expected = values
-                    .iter()
-                    .filter(|&&value| {
-                        let ordering = if build_on_left {
-                            value.cmp(&probe)
-                        } else {
-                            probe.cmp(&value)
-                        };
-                        compact_matches(op, ordering)
-                    })
-                    .count() as u64;
-                assert_eq!(
-                    count_sorted_compact_matches(&values, probe, build_on_left, op),
-                    expected,
-                    "op={op}, build_on_left={build_on_left}, probe={probe}"
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn compact_binary_join_key_matches_go_pad_space_and_null_rules() {
-    let field_type = FieldType::new(FieldTypeCode::Varchar)
-        .with_flen(42)
-        .with_collation(Collation::Utf8Mb4Bin);
-    let types = [field_type];
-    let mut chunk = Chunk::new(&types, 4, 4);
-    chunk.append_bytes(0, b"abc   ");
-    chunk.append_bytes(0, b"abc");
-    chunk.append_null(0);
-    let key = EquiKey {
-        left: 0,
-        right: 0,
-        class: KeyClass::Str(Collation::Utf8Mb4Bin),
-        null_safe: false,
-    };
-
-    let padded = JoinExec::<NoColumns>::compact_binary_key(&chunk, 0, &types, &key, |key| key.left)
-        .flatten()
-        .expect("non-NULL key");
-    let plain = JoinExec::<NoColumns>::compact_binary_key(&chunk, 1, &types, &key, |key| key.left)
-        .flatten()
-        .expect("non-NULL key");
-    assert_eq!(padded, plain, "utf8mb4_bin is PAD SPACE in Go");
-    assert_eq!(
-        JoinExec::<NoColumns>::compact_binary_key(&chunk, 2, &types, &key, |key| key.left),
-        Some(None),
-        "NULL is represented separately from an empty string"
-    );
-}
-
-#[test]
-fn decimal_residual_multiply_preserves_mysql_hidden_scale() {
-    let average = Decimal::from_int(100)
-        .div_mysql(&Decimal::from_int(4), 4)
-        .expect("nonzero divisor");
-    let factor = decimal("0.2");
-
-    // `div_mysql` retains whole base-1e9 fraction words behind the visible
-    // scale. The fast predicate must still use the bounded SQL multiplication
-    // API and compare the same value as the expression evaluator.
-    assert!(decimal_mul_lt_mysql(&decimal("4.99999"), &factor, &average,).unwrap());
-    assert!(!decimal_mul_lt_mysql(&decimal("5.00000"), &factor, &average,).unwrap());
 }
 
 fn schema_of(width: usize) -> Schema {
@@ -343,7 +243,7 @@ fn run_datums(join: &mut JoinExec<NoColumns>) -> Vec<Vec<Datum>> {
 }
 
 #[test]
-fn decimal_residual_fast_path_matches_general_join_evaluator() {
+fn decimal_residual_uses_the_general_join_evaluator() {
     let decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
     let column = |index: usize, field_type: FieldType| {
         let mut column = Column::new(index as i64 + 1, field_type);
@@ -376,23 +276,11 @@ fn decimal_residual_fast_path_matches_general_join_evaluator() {
     let right = vec![vec![Datum::Int(1), Datum::Decimal(decimal("25.00"))]];
     let types = [long(), decimal_type];
 
-    let mut fast = join_with_types(
-        conditions.clone(),
-        left.clone(),
-        &types,
-        right.clone(),
-        &types,
-    );
-    assert!(fast.residual_decimal_mul_lt.is_some());
-    let fast_rows = run_datums(&mut fast);
+    let mut join = join_with_types(conditions, left, &types, right, &types);
+    let rows = run_datums(&mut join);
 
-    let mut general = join_with_types(conditions, left, &types, right, &types);
-    general.residual_decimal_mul_lt = None;
-    let general_rows = run_datums(&mut general);
-
-    assert_eq!(fast_rows, general_rows);
     assert_eq!(
-        fast_rows,
+        rows,
         vec![vec![
             Datum::Int(1),
             Datum::Decimal(decimal("3.00")),
@@ -443,7 +331,33 @@ fn decimal_residual_unique_integer_join_uses_parallel_probe_window() {
     assert_eq!(run_datums(&mut join).len(), 5_000);
     assert!(
         join.parallel_probe_windows() > 0,
-        "q17-shaped decimal residual joins must use the parallel probe path"
+        "Go evaluates decimal hash-join residuals on its probe workers"
+    );
+}
+
+#[test]
+fn general_residual_unique_integer_join_uses_parallel_probe_window() {
+    let column = |index: usize| {
+        let mut column = Column::new(index as i64 + 1, long());
+        column.index = index as i64;
+        Expression::Column(column)
+    };
+    let residual = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("lt"),
+        long(),
+        vec![column(1), column(3)],
+    ));
+    let left = (0..10_000)
+        .map(|row| vec![Datum::Int(1), Datum::Int(if row % 2 == 0 { 3 } else { 12 })])
+        .collect();
+    let right = vec![vec![Datum::Int(1), Datum::Int(5)]];
+    let types = [long(), long()];
+    let mut join = join_with_types(vec![eq_on(0, 0, 2), residual], left, &types, right, &types);
+
+    assert_eq!(run_datums(&mut join).len(), 5_000);
+    assert!(
+        join.parallel_probe_windows() > 0,
+        "Go evaluates arbitrary hash-join residuals on its probe workers"
     );
 }
 

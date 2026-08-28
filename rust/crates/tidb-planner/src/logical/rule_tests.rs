@@ -24,6 +24,7 @@
 
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_expr::aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::expr_util::builder::PreservingFunctionBuilder;
@@ -344,16 +345,13 @@ fn logical_optimize_runs_the_ported_rules_in_order_and_reports_the_rest() {
         vec![
             RuleId::ColumnPruner,
             RuleId::BuildKeySolver,
+            RuleId::AggregationEliminator,
             RuleId::PpdSolver,
             RuleId::PushDownTopNOptimizer,
         ],
         "Go's execution order, not the flag-bit order"
     );
-    assert_eq!(
-        outcome.skipped,
-        vec![RuleId::AggregationEliminator],
-        "an unported rule is reported, never silently treated as a no-op"
-    );
+    assert!(outcome.skipped.is_empty());
     outcome.plan.dismantle();
 }
 
@@ -365,6 +363,70 @@ fn logical_optimize_honours_the_flag_mask() {
     let outcome = logical_optimize(&ctx, 0, plan).expect("nothing runs");
     assert!(outcome.applied.is_empty());
     assert!(outcome.skipped.is_empty());
+    outcome.plan.dismantle();
+}
+
+#[test]
+fn aggregation_elimination_requires_the_complete_strong_unique_key() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let mut source_schema = schema_of(&[1, 2, 3]);
+    source_schema.pk_or_uk = vec![vec![column(1), column(2)]];
+    let source = LogicalPlan::DataSource(DataSource::new(
+        base(&allocator, "DataSource", Some(source_schema)),
+        1,
+        "t",
+    ));
+    let count = tidb_expr::aggregation::AggFuncDesc {
+        base: tidb_expr::aggregation::BaseFuncDesc {
+            name: AGG_FUNC_COUNT.to_owned(),
+            args: vec![col_expr(3)],
+            ret_type: int_type(),
+        },
+        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        has_distinct: false,
+        order_by_items: Vec::new(),
+        grouping_id: 0,
+    };
+    let mut aggregation = LogicalPlan::Aggregation(LogicalAggregation::new(
+        base(&allocator, "Aggregation", Some(schema_of(&[9]))),
+        vec![count],
+        vec![col_expr(1), col_expr(2)],
+    ));
+    aggregation.set_children(vec![source]);
+
+    let outcome = logical_optimize(&ctx, flags::ELIMINATE_AGG, aggregation)
+        .expect("aggregation elimination must build the replacement projection");
+    assert!(matches!(outcome.plan, LogicalPlan::Projection(_)));
+    outcome.plan.dismantle();
+
+    let mut incomplete_schema = schema_of(&[1, 2, 3]);
+    incomplete_schema.pk_or_uk = vec![vec![column(1), column(2)]];
+    let source = LogicalPlan::DataSource(DataSource::new(
+        base(&allocator, "DataSource", Some(incomplete_schema)),
+        1,
+        "t",
+    ));
+    let count = tidb_expr::aggregation::AggFuncDesc {
+        base: tidb_expr::aggregation::BaseFuncDesc {
+            name: AGG_FUNC_COUNT.to_owned(),
+            args: vec![col_expr(3)],
+            ret_type: int_type(),
+        },
+        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        has_distinct: false,
+        order_by_items: Vec::new(),
+        grouping_id: 0,
+    };
+    let mut aggregation = LogicalPlan::Aggregation(LogicalAggregation::new(
+        base(&allocator, "Aggregation", Some(schema_of(&[9]))),
+        vec![count],
+        vec![col_expr(1)],
+    ));
+    aggregation.set_children(vec![source]);
+    let outcome = logical_optimize(&ctx, flags::ELIMINATE_AGG, aggregation)
+        .expect("an ineligible aggregation remains intact");
+    assert!(matches!(outcome.plan, LogicalPlan::Aggregation(_)));
     outcome.plan.dismantle();
 }
 
@@ -489,12 +551,11 @@ fn predicate_push_down_moves_a_selection_below_a_projection() {
     let out = push(&ctx, root);
     // Go's `LogicalProjection` arm rewrites the predicate through the
     // projection's expressions and hands it to the child; the DataSource
-    // records it in `AllConds`, which is the proof that it crossed. The
-    // Selection stays above because the narrowed DataSource arm claims
-    // nothing as coprocessor-pushable — see that arm's note in `rewrite.rs`.
-    assert!(matches!(out, LogicalPlan::Selection(_)));
-    let projection = &out.children()[0];
-    assert!(matches!(projection, LogicalPlan::Projection(_)));
+    // records it in `AllConds`, which is the proof that it crossed. Equality
+    // is in TiKV's expression catalogue, so the Selection disappears and the
+    // predicate is owned by the DataSource.
+    assert!(matches!(out, LogicalPlan::Projection(_)));
+    let projection = &out;
     let LogicalPlan::DataSource(source) = &projection.children()[0] else {
         panic!("expected a DataSource under the Projection");
     };
@@ -576,12 +637,129 @@ fn predicate_push_down_splits_an_inner_join_condition_by_side() {
     );
     assert!(join.left_conditions.is_empty() && join.right_conditions.is_empty());
     for (side, child) in ["left", "right"].iter().zip(out.children()) {
+        let LogicalPlan::DataSource(source) = child else {
+            panic!("the {side} filter should be owned by its DataSource, got {child:?}");
+        };
         assert!(
-            matches!(child, LogicalPlan::Selection(_)),
-            "the {side} filter was re-attached as a Selection, got {child:?}"
+            !source.pushed_down_conds.is_empty(),
+            "the {side} source should carry its pushed predicate"
         );
     }
     out.dismantle();
+}
+
+#[test]
+fn predicate_push_down_propagates_a_constant_across_an_inner_join_key() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let left = data_source(&allocator, &[1]);
+    let right = data_source(&allocator, &[2]);
+    let mut join = LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::Inner,
+    );
+    join.other_conditions = vec![eq_cols(1, 2)];
+    let mut join = LogicalPlan::Join(join);
+    join.set_children(vec![left, right]);
+    let root = selection_over(&allocator, vec![eq_const(2, 7)], join);
+
+    let out = push(&ctx, root);
+    let LogicalPlan::Join(join) = &out else {
+        panic!("the Selection should have collapsed into the Join, got {out:?}");
+    };
+    assert_eq!(
+        join.equal_conditions.len(),
+        1,
+        "constant propagation must retain the cross-side equality as a join key"
+    );
+    for ((side, column_id), child) in [("left", 1), ("right", 2)].iter().zip(out.children()) {
+        let LogicalPlan::DataSource(source) = child else {
+            panic!("the {side} filter should be owned by its DataSource, got {child:?}");
+        };
+        assert!(
+            source.pushed_down_conds.iter().any(|condition| {
+                let Expression::ScalarFunction(function) = condition else {
+                    return false;
+                };
+                let [Expression::Column(column), Expression::Constant(constant)] =
+                    function.get_args()
+                else {
+                    return false;
+                };
+                function.func_name.lowercase() == "eq"
+                    && column.unique_id == *column_id
+                    && matches!(constant.value, Datum::Int(7))
+            }),
+            "Go PropagateConstantForJoin derives the equality filter on the {side} side"
+        );
+    }
+    out.dismantle();
+}
+
+#[test]
+fn predicate_push_down_does_not_synthesize_a_transitive_join_key() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+
+    let mut lower_join = LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::Inner,
+    );
+    lower_join.other_conditions = vec![eq_cols(1, 2)];
+    let mut lower_join = LogicalPlan::Join(lower_join);
+    lower_join.set_children(vec![
+        data_source(&allocator, &[1]),
+        data_source(&allocator, &[2]),
+    ]);
+
+    let mut upper_join = LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2, 3]))),
+        LogicalJoinType::Inner,
+    );
+    upper_join.other_conditions = vec![eq_cols(1, 3)];
+    let mut root = LogicalPlan::Join(upper_join);
+    root.set_children(vec![lower_join, data_source(&allocator, &[3])]);
+
+    let out = push(&ctx, root);
+    let LogicalPlan::Join(upper_join) = &out else {
+        panic!("the upper join should remain the root, got {out:?}");
+    };
+    assert_eq!(
+        upper_join.equal_conditions.len(),
+        1,
+        "Go uses column equalities to build equivalence classes but does not substitute them into additional join keys"
+    );
+    let LogicalPlan::Join(lower_join) = &out.children()[0] else {
+        panic!("the lower join should remain the left child");
+    };
+    assert_eq!(lower_join.equal_conditions.len(), 1);
+    out.dismantle();
+}
+
+#[test]
+fn join_simplification_does_not_substitute_column_equalities() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let conditions = super::rule::apply_predicate_simplification_for_join(
+        &ctx,
+        vec![eq_cols(1, 2), eq_cols(1, 3)],
+    );
+
+    assert!(
+        !conditions.iter().any(|condition| {
+            let Expression::ScalarFunction(function) = condition else {
+                return false;
+            };
+            let [Expression::Column(left), Expression::Column(right)] = function.get_args() else {
+                return false;
+            };
+            function.func_name.lowercase() == "eq"
+                && [left.unique_id, right.unique_id]
+                    .into_iter()
+                    .all(|id| id == 2 || id == 3)
+        }),
+        "Go marks column-column equalities visited before substitution, so they cannot synthesize the transitive 2 = 3 join key"
+    );
 }
 
 #[test]
@@ -612,29 +790,26 @@ fn predicate_push_down_keeps_an_aggregate_filter_above_a_non_group_by_column() {
     assert_eq!(kept.conditions.len(), 1);
     let agg = &out.children()[0];
     assert!(matches!(agg, LogicalPlan::Aggregation(_)));
-    assert!(
-        matches!(agg.children()[0], LogicalPlan::Selection(_)),
-        "the group-by filter crossed the aggregate"
-    );
+    let LogicalPlan::DataSource(source) = &agg.children()[0] else {
+        panic!("the group-by filter should reach the aggregate's DataSource");
+    };
+    assert_eq!(source.pushed_down_conds.len(), 1);
     out.dismantle();
 }
 
 #[test]
-fn predicate_push_down_records_every_condition_on_a_data_source() {
+fn predicate_push_down_moves_supported_conditions_into_a_data_source() {
     let allocator = PlanIdAllocator::new();
     let ctx = test_context(&allocator);
     let source = data_source(&allocator, &[1]);
     let root = selection_over(&allocator, vec![eq_const(1, 7)], source);
     let out = push(&ctx, root);
-    // The DataSource cannot claim the predicate without the pushdown
-    // whitelist, so the Selection stays — and `AllConds` still records it,
-    // which is what column pruning reads.
-    assert!(matches!(out, LogicalPlan::Selection(_)));
-    let LogicalPlan::DataSource(source) = &out.children()[0] else {
+    assert!(matches!(out, LogicalPlan::DataSource(_)));
+    let LogicalPlan::DataSource(source) = &out else {
         panic!("expected a DataSource");
     };
     assert_eq!(source.all_conds.len(), 1);
-    assert!(source.pushed_down_conds.is_empty());
+    assert_eq!(source.pushed_down_conds.len(), 1);
     out.dismantle();
 }
 
@@ -786,6 +961,47 @@ fn topn_push_down_absorbs_a_sort_below_a_topn() {
 }
 
 #[test]
+fn topn_keeps_travelling_after_it_absorbs_a_sort() {
+    // Go `LogicalSort.PushDownTopN` returns
+    // `ls.Children()[0].PushDownTopN(topN)`: with a Projection below the Sort,
+    // the Projection stays above the pushed TopN. Stopping at the removed
+    // Sort leaves `TopN -> Projection`, which prevents a cop LIMIT candidate
+    // from reaching a double-read DataSource.
+    let allocator = PlanIdAllocator::new();
+    let source = data_source(&allocator, &[1]);
+    let mut projection = LogicalPlan::Projection(LogicalProjection::new(
+        base(&allocator, "Projection", Some(schema_of(&[1]))),
+        vec![Expression::Column(column(1))],
+    ));
+    projection.set_children(vec![source]);
+    let sort = unary(
+        &allocator,
+        "Sort",
+        LogicalPlan::Sort(LogicalSort::new(
+            base(&allocator, "Sort", None),
+            vec![ByItems::new(Expression::Column(column(1)), false)],
+        )),
+        projection,
+    );
+    let mut limit = LogicalPlan::Limit(LogicalLimit::new(
+        base(&allocator, "Limit", Some(schema_of(&[1]))),
+        0,
+        3,
+    ));
+    limit.set_children(vec![sort]);
+
+    let out = super::rewrite::push_down_topn(limit, None);
+    let LogicalPlan::Projection(projection) = &out else {
+        panic!("Projection should remain above the pushed TopN: {out:#?}");
+    };
+    assert!(matches!(
+        projection.base.children().first(),
+        Some(LogicalPlan::TopN(_))
+    ));
+    out.dismantle();
+}
+
+#[test]
 fn topn_push_down_leaves_a_join_alone() {
     // Go `LogicalJoin.PushDownTopN` (`logical_join.go:428`): without a unique
     // inner side the offset cannot travel, so the limit re-attaches above the
@@ -836,11 +1052,7 @@ fn topn_push_down_enters_a_left_join_whose_inner_side_is_unique() {
         "t",
     );
     let left = LogicalPlan::DataSource(left);
-    let right = DataSource::new(
-        base(&allocator, "DataSource", Some(right_schema)),
-        1,
-        "t",
-    );
+    let right = DataSource::new(base(&allocator, "DataSource", Some(right_schema)), 1, "t");
     let right = LogicalPlan::DataSource(right);
     let mut join = LogicalPlan::Join(LogicalJoin::new(
         base(&allocator, "Join", Some(schema_of(&[1, 2]))),
@@ -920,7 +1132,10 @@ fn topn_push_down_keeps_the_limit_above_a_left_join_with_a_wide_inner_side() {
     let out = super::rewrite::push_down_topn(limit, None);
     // The original limit stays ABOVE the join...
     let LogicalPlan::Limit(root) = &out else {
-        panic!("expected the limit above the join, got {}", out.explain_info())
+        panic!(
+            "expected the limit above the join, got {}",
+            out.explain_info()
+        )
     };
     assert_eq!(root.offset, 3, "the incoming limit keeps its own offset");
     assert_eq!(root.count, 5);
@@ -946,11 +1161,7 @@ fn topn_push_down_over_an_inner_join_takes_the_base_body() {
     let mut right_schema = schema_of(&[2]);
     right_schema.pk_or_uk = vec![vec![column(2)]];
     let left = data_source(&allocator, &[1]);
-    let right = DataSource::new(
-        base(&allocator, "DataSource", Some(right_schema)),
-        1,
-        "t",
-    );
+    let right = DataSource::new(base(&allocator, "DataSource", Some(right_schema)), 1, "t");
     let right = LogicalPlan::DataSource(right);
     let mut join = LogicalPlan::Join(LogicalJoin::new(
         base(&allocator, "Join", Some(schema_of(&[1, 2]))),
@@ -967,10 +1178,7 @@ fn topn_push_down_over_an_inner_join_takes_the_base_body() {
 
     let out = super::rewrite::push_down_topn(topn, None);
     // The TopN stays above the join (as the limit it becomes on attach).
-    assert!(matches!(
-        out,
-        LogicalPlan::TopN(_) | LogicalPlan::Limit(_)
-    ));
+    assert!(matches!(out, LogicalPlan::TopN(_) | LogicalPlan::Limit(_)));
     out.dismantle();
 }
 
@@ -981,7 +1189,20 @@ fn build_key_info_portal_runs_bottom_up_over_the_whole_tree() {
     let allocator = PlanIdAllocator::new();
     let mut source_schema = schema_of(&[1, 2]);
     source_schema.pk_or_uk = vec![vec![column(1)]];
-    let source = DataSource::new(base(&allocator, "DataSource", Some(source_schema)), 1, "t");
+    let mut source = DataSource::new(base(&allocator, "DataSource", Some(source_schema)), 1, "t");
+    source.pk_is_handle = true;
+    source.columns = vec![
+        super::data_source::DataSourceColumn {
+            id: 1,
+            name: "a".to_owned(),
+            is_primary_key: true,
+        },
+        super::data_source::DataSourceColumn {
+            id: 2,
+            name: "b".to_owned(),
+            is_primary_key: false,
+        },
+    ];
     let source = LogicalPlan::DataSource(source);
 
     let mut limit = LogicalPlan::Limit(LogicalLimit::new(

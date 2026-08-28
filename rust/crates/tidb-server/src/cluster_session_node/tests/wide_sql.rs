@@ -34,6 +34,55 @@ fn execute_prepared_rows(
     rows
 }
 
+#[test]
+fn statement_resource_group_reaches_snapshot_and_open_transaction_requests() {
+    let (mut session, node) = open_session();
+
+    let _ = rows(
+        &mut session,
+        "SELECT /*+ RESOURCE_GROUP(analytics) */ id FROM t WHERE id = 1",
+    );
+    assert_eq!(
+        node.cluster
+            .resource_groups
+            .lock()
+            .expect("resource groups")
+            .last()
+            .map(String::as_str),
+        Some("analytics")
+    );
+
+    session
+        .execute_write("SET RESOURCE GROUP batch")
+        .expect("select persistent resource group");
+    let _ = rows(&mut session, "SELECT id FROM t WHERE id = 1");
+    assert_eq!(
+        node.cluster
+            .resource_groups
+            .lock()
+            .expect("resource groups")
+            .last()
+            .map(String::as_str),
+        Some("batch")
+    );
+
+    session.control_transaction("BEGIN").expect("begin");
+    let _ = rows(
+        &mut session,
+        "SELECT /*+ RESOURCE_GROUP(interactive) */ id FROM t WHERE id = 1",
+    );
+    assert_eq!(
+        node.cluster
+            .resource_groups
+            .lock()
+            .expect("resource groups")
+            .last()
+            .map(String::as_str),
+        Some("interactive")
+    );
+    session.control_transaction("ROLLBACK").expect("rollback");
+}
+
 /// Go retains `PlanCacheStmt.PreparedAst`, so changing `sql_mode` after
 /// PREPARE cannot re-lex the prepared text. Captured from Go TiDB:
 ///

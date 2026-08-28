@@ -346,9 +346,11 @@ pub mod limit;
 pub mod lock;
 pub mod max_one_row;
 pub mod mem_table;
+pub mod possible_properties;
 pub mod projection;
 pub mod rewrite;
 pub mod rule;
+pub mod rule_aggregation_elimination;
 pub mod rule_derive_topn_from_window;
 pub mod rule_eliminate_empty_selection;
 pub mod rule_eliminate_unionall_dual_item;
@@ -380,6 +382,7 @@ pub use limit::LogicalLimit;
 pub use lock::{LogicalLock, SelectLockType};
 pub use max_one_row::LogicalMaxOneRow;
 pub use mem_table::LogicalMemTable;
+pub use possible_properties::prepare_possible_properties;
 pub use projection::LogicalProjection;
 pub use selection::LogicalSelection;
 pub use sequence::LogicalSequence;
@@ -722,12 +725,26 @@ impl LogicalPlan {
             Self::Projection(op) => op.build_key_info(self_schema, child_schema),
             Self::Join(op) => op.build_key_info(self_schema, child_schema),
             Self::Aggregation(op) => op.build_key_info(self_schema, child_schema),
-            // `DataSource::build_key_info` needs the index definitions, which
-            // the catalogue owns; call it directly with them.
-            // `LogicalTableScan` delegates to the source and `LogicalIndexScan`
-            // needs `ruleutil.CheckIndexCanBeKey`; both take the index
-            // definitions the catalogue owns, so call them directly with them.
-            Self::DataSource(_) | Self::TableScan(_) | Self::IndexScan(_) => {}
+            Self::DataSource(op) => {
+                let (index_keys, nullable_unique_keys) = op.index_keys(self_schema);
+                op.build_key_info(self_schema, index_keys);
+                self_schema.nullable_uk = nullable_unique_keys;
+            }
+            Self::TableScan(op) => {
+                let (index_keys, nullable_unique_keys) = op.source.as_ref().map_or_else(
+                    || (Vec::new(), Vec::new()),
+                    |source| source.index_keys(self_schema),
+                );
+                op.build_key_info(self_schema, index_keys);
+                self_schema.nullable_uk = nullable_unique_keys;
+            }
+            Self::IndexScan(op) => {
+                let (index_keys, nullable_unique_keys) = op.source.as_ref().map_or_else(
+                    || (Vec::new(), Vec::new()),
+                    |source| source.index_keys(self_schema),
+                );
+                op.build_key_info(self_schema, index_keys, nullable_unique_keys);
+            }
             Self::Limit(op) => op.build_key_info(self_schema, child_schema),
             Self::TopN(op) => op.build_key_info(self_schema, child_schema),
             Self::TiKVSingleGather(_) => {

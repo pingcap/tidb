@@ -62,14 +62,10 @@
 //! `u64::MAX`, calls `[-inf,-1)` the whole domain, and the adjustment lifts
 //! the printed 3333.33 to 10000.00.
 //!
-//! [`crate::access_cost::adjust_count_after_access`] applies that lower bound
-//! after the complete predicate's data-source estimate is available. Keeping
-//! the converted-range estimate and the data-source estimate separate is
-//! load-bearing: the former remains 3333.33 while the physical scan prints
-//! Go's adjusted 10000.00.
+//! The shared planner owns that estimate and lower bound; this module now
+//! performs range algebra only.
 
-use crate::access_cost::realtime_row_count;
-use crate::access_cost::TableStatistics;
+use crate::access_cost::{realtime_row_count, TableStatistics};
 use crate::index_range::IndexRanges;
 use crate::kv_table::{IndexRange, KvIndex, KvTable};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -233,29 +229,50 @@ pub(crate) fn clustered_primary_metadata(table: &KvTable) -> Option<std::borrow:
     }))
 }
 
-fn build_common_handle_ranges<'a>(
+/// Go `deriveTablePathStats`' `path.CountAfterAccess` for clustered handles.
+pub(crate) fn handle_range_row_count(
     table: &KvTable,
-    where_clause: &'a tidb_ast::Expr,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Option<IndexRanges<'a>> {
-    let index = clustered_primary_metadata(table)?;
-    let columns: Vec<crate::index_range::RangeColumn> = index
-        .column_offsets
-        .iter()
-        .enumerate()
-        .filter_map(|(position, offset)| {
-            let column = table.columns.get(*offset)?;
-            Some(crate::index_range::RangeColumn {
-                name: column.name.clone(),
-                field_type: column.field_type.clone(),
-                prefix_len: index.prefix_length(position),
-            })
-        })
-        .collect();
-    if columns.len() != index.column_offsets.len() {
-        return None;
+    ranges: &[IndexRange],
+    stats: Option<&TableStatistics>,
+) -> f64 {
+    let realtime = realtime_row_count(stats);
+    if let Some(index) = clustered_primary_metadata(table) {
+        return crate::access_cost::index_range_row_count(&index, table, ranges, stats, realtime);
     }
-    crate::index_range::detach_cond_and_build_range_for_index(&columns, where_clause, zone)
+    let Some(column) = handle_column(table) else {
+        return realtime;
+    };
+    let unsigned = column.field_type.is_unsigned();
+    let column_ranges = ranges
+        .iter()
+        .map(|range| {
+            let materialized = materialize_open_bounds(range, unsigned);
+            ColumnRange {
+                low: materialized
+                    .low
+                    .first()
+                    .cloned()
+                    .unwrap_or(Datum::MinNotNull),
+                high: materialized
+                    .high
+                    .first()
+                    .cloned()
+                    .unwrap_or(Datum::MaxValue),
+                low_exclude: materialized.low_exclusive,
+                high_exclude: materialized.high_exclusive,
+            }
+        })
+        .collect::<Vec<_>>();
+    get_row_count_by_column_ranges(
+        stats.and_then(|stats| stats.columns.get(&column.id)),
+        &column_ranges,
+        column.field_type.collation(),
+        realtime as i64,
+        stats.map_or(0, |stats| stats.modify_count),
+        true,
+        EstimatorOptions::default(),
+    )
+    .est
 }
 
 /// The primary-key column that IS the row handle, when the table has one and
@@ -277,8 +294,8 @@ fn handle_column(table: &KvTable) -> Option<HandleColumn> {
         }
         return Some(HandleColumn {
             name: column.name.clone(),
-            field_type: column.field_type.clone(),
             id: column.id,
+            field_type: column.field_type.clone(),
         });
     }
     // Go `buildDataSource`: a table with neither an integer primary key nor a
@@ -287,8 +304,8 @@ fn handle_column(table: &KvTable) -> Option<HandleColumn> {
     // handle for range building exactly as an integer primary key is, and
     // `WHERE _tidb_rowid > 0` reads a TABLE RANGE rather than every row.
     //
-    // A common-handle table never reaches here (the caller routes it to
-    // `build_common_handle_ranges`), and a table WITH an integer primary key
+    // A common-handle table never reaches here (the general clustered-primary
+    // range builder handles it), and a table WITH an integer primary key
     // has no `_tidb_rowid` to name -- which is why TiDB answers "Unknown
     // column" for it there. Both are the same test
     // `crate::driver::from::extra_handle_column` applies to the name.
@@ -297,11 +314,11 @@ fn handle_column(table: &KvTable) -> Option<HandleColumn> {
         .map_or(
             Some(HandleColumn {
                 name: crate::driver::leaf_demand::EXTRA_HANDLE_NAME.to_owned(),
+                id: tidb_model::column::EXTRA_HANDLE_ID,
                 // Go `NewExtraHandleSchemaCol`: `TypeLonglong`, signed, with
                 // `PriKeyFlag | NotNullFlag`.
                 field_type: FieldType::new(FieldTypeCode::LongLong)
                     .with_flags(tidb_datatype::FieldTypeFlags::NOT_NULL),
-                id: crate::remote_scan::EXTRA_HANDLE_COLUMN_ID,
             }),
             |()| None,
         )
@@ -311,10 +328,8 @@ fn handle_column(table: &KvTable) -> Option<HandleColumn> {
 /// `_tidb_rowid` when it has none.
 struct HandleColumn {
     name: String,
-    field_type: FieldType,
-    /// The statistics column id: a real column's own, or Go's
-    /// `model.ExtraHandleID` for the extra handle.
     id: i64,
+    field_type: FieldType,
 }
 
 /// Whether this table's row handle spans the UNSIGNED domain.
@@ -390,61 +405,6 @@ fn materialize_open_bounds(range: &IndexRange, unsigned: bool) -> IndexRange {
     }
 }
 
-/// One range as the estimator's column range, after step 2's conversion --
-/// which is what puts a real `KindInt64` in the low bound, and so decides
-/// which arm of the estimator runs (see the module doc).
-fn column_range(range: &IndexRange, unsigned: bool) -> ColumnRange {
-    // `GetRowCountByColumnRanges` dispatches on the first range's low-bound
-    // KIND, so the bound has to keep the domain's own datum kind: a `KindInt64`
-    // takes the signed pseudo estimator and anything else the unsigned one.
-    // Go reaches the unsigned arm on an unsigned handle for exactly this
-    // reason -- `convertPointsInPlace` casts every endpoint into the column's
-    // type first.
-    let materialized = materialize_open_bounds(range, unsigned);
-    ColumnRange {
-        low: materialized.low[0].clone(),
-        high: materialized.high[0].clone(),
-        low_exclude: materialized.low_exclusive,
-        high_exclude: materialized.high_exclusive,
-    }
-}
-
-/// Go `deriveTablePathStats`' `path.CountAfterAccess`:
-/// `cardinality.GetRowCountByColumnRanges` with `pkIsHandle` over the
-/// table-converted handle ranges.
-///
-/// This is the number `EXPLAIN` prints on the scan node AND the number the
-/// path is costed at; the module doc explains why they are the same here and
-/// what the one un-ported step (`adjustCountAfterAccess`) would change.
-pub(crate) fn handle_range_row_count(
-    table: &KvTable,
-    ranges: &[IndexRange],
-    stats: Option<&TableStatistics>,
-) -> f64 {
-    let realtime = realtime_row_count(stats);
-    if let Some(index) = clustered_primary_metadata(table) {
-        return crate::access_cost::index_range_row_count(&index, table, ranges, stats, realtime);
-    }
-    let Some(column) = handle_column(table) else {
-        return realtime;
-    };
-    let unsigned = column.field_type.is_unsigned();
-    let column_ranges: Vec<ColumnRange> = ranges
-        .iter()
-        .map(|range| column_range(range, unsigned))
-        .collect();
-    get_row_count_by_column_ranges(
-        stats.and_then(|stats| stats.columns.get(&column.id)),
-        &column_ranges,
-        column.field_type.collation(),
-        realtime as i64,
-        stats.map_or(0, |stats| stats.modify_count),
-        true,
-        EstimatorOptions::default(),
-    )
-    .est
-}
-
 /// The record-key intervals `ranges` cover, as the storage seam's half-open
 /// `[start, end)` pairs in ascending key order.
 ///
@@ -473,9 +433,7 @@ pub(crate) fn record_key_ranges(
                 // Go's ordered answer reads the signed half first
                 // (`keepOrder = true, desc = false); a descending caller
                 // reverses this one list, which puts the unsigned half first.
-                Ok(Some(
-                    signed_half.into_iter().chain(unsigned_half).collect(),
-                ))
+                Ok(Some(signed_half.into_iter().chain(unsigned_half).collect()))
             } else {
                 // Go's unordered wire order merges both halves into ONE
                 // request: `append(unsignedRanges, signedRanges...) ascends
@@ -567,8 +525,7 @@ pub(crate) fn record_key_range_value_halves(
             // An empty range is not an error: `id > 100 AND id < 100 admits
             // no row, and Go plans a `TableDual` for it. The caller reads
             // nothing from this interval.
-            let Ok(handle_range) =
-                SignedHandleRange::new(low, high, low_exclusive, high_exclusive)
+            let Ok(handle_range) = SignedHandleRange::new(low, high, low_exclusive, high_exclusive)
             else {
                 continue;
             };
@@ -581,7 +538,7 @@ pub(crate) fn record_key_range_value_halves(
             }
         }
         key_ranges
-    };
+    }
     Ok(Some([
         encode(&signed_side, &ids, unsigned),
         encode(&unsigned_side, &ids, unsigned),

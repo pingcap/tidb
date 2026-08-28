@@ -15,8 +15,11 @@
 //! Semantic tests for the physical plan tree. Written, not transcreated; see
 //! the note in `crate::logical::tests`.
 
-use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
+use tidb_expr::constant::{Constant, ParamMarker};
+use tidb_expr::expression::Expression;
+use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 
 use super::*;
@@ -32,10 +35,14 @@ fn scan(id: i32, columns: &[i64]) -> PhysicalPlan {
     PhysicalPlan::TableScan(PhysicalTableScan {
         base,
         table_id: i64::from(id),
+        table_as_name: None,
+        cost_columns: Vec::new(),
         store_type: Default::default(),
         keep_order: false,
         desc: false,
         ranges: crate::ranger::types::Ranges::new(),
+        range_rebuild: None,
+        table_scan_penalty: Default::default(),
     })
 }
 
@@ -55,6 +62,277 @@ fn hash_join(id: i32, left: PhysicalPlan, right: PhysicalPlan) -> PhysicalPlan {
         base,
         ..PhysicalHashJoin::default()
     })
+}
+
+fn parameter_condition(name: &str, column: Column, order: i64) -> Expression {
+    let mut parameter = Constant::new(Datum::Int(0), FieldType::new(FieldTypeCode::LongLong));
+    parameter.param_marker = Some(ParamMarker { order });
+    Expression::ScalarFunction(ScalarFunction::new(
+        tidb_ast::CiString::new(name),
+        FieldType::new(FieldTypeCode::Tiny),
+        vec![Expression::Column(column), Expression::Constant(parameter)],
+    ))
+}
+
+fn parameter_value(order: i64) -> Expression {
+    let mut parameter = Constant::new(Datum::Int(0), FieldType::new(FieldTypeCode::LongLong));
+    parameter.param_marker = Some(ParamMarker { order });
+    Expression::Constant(parameter)
+}
+
+fn parameter_in_condition(column: Column, orders: &[i64]) -> Expression {
+    let mut arguments = Vec::with_capacity(orders.len() + 1);
+    arguments.push(Expression::Column(column));
+    arguments.extend(orders.iter().copied().map(parameter_value));
+    Expression::ScalarFunction(ScalarFunction::new(
+        tidb_ast::CiString::new("in"),
+        FieldType::new(FieldTypeCode::Tiny),
+        arguments,
+    ))
+}
+
+fn point_range(value: i64) -> crate::ranger::types::Range {
+    crate::ranger::types::Range {
+        low_val: vec![Datum::Int(value)],
+        high_val: vec![Datum::Int(value)],
+        collators: vec![tidb_datatype::Collation::DEFAULT],
+        low_exclude: false,
+        high_exclude: false,
+    }
+}
+
+#[test]
+fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template() {
+    use crate::physical_plan_cache::{
+        CachedPlanRebuildContext, IndexRangeRebuild, TableRangeRebuild,
+    };
+
+    let int_type = FieldType::new(FieldTypeCode::LongLong);
+    let handle = Column::new(1, int_type.clone());
+    let mut table_scan = scan(1, &[1]);
+    let PhysicalPlan::TableScan(scan) = &mut table_scan else {
+        unreachable!();
+    };
+    scan.ranges = vec![point_range(0)];
+    scan.range_rebuild = Some(TableRangeRebuild::int_handle(
+        vec![
+            parameter_condition("ge", handle.clone(), 0),
+            parameter_condition("le", handle, 1),
+        ],
+        int_type.clone(),
+        false,
+    ));
+    let table_reader = PhysicalPlan::TableReader(PhysicalTableReader {
+        base: BasePhysicalPlan::with_id(2, "TableReader", 0),
+        table_plan: Some(Box::new(table_scan)),
+        ..PhysicalTableReader::default()
+    });
+
+    let index_column = Column::new(2, int_type.clone());
+    let mut index_scan = PhysicalPlan::IndexScan(PhysicalIndexScan {
+        base: BasePhysicalPlan::with_id(3, "IndexRangeScan", 0),
+        table_id: 1,
+        table_as_name: None,
+        cost_columns: Vec::new(),
+        index_id: 2,
+        index_name: "idx_v".to_owned(),
+        keep_order: false,
+        desc: false,
+        ranges: vec![point_range(0)],
+        range_rebuild: None,
+    });
+    let PhysicalPlan::IndexScan(scan) = &mut index_scan else {
+        unreachable!();
+    };
+    scan.range_rebuild = Some(IndexRangeRebuild::new(
+        vec![parameter_condition("eq", index_column.clone(), 2)],
+        vec![index_column],
+        vec![tidb_datatype::UNSPECIFIED_LENGTH],
+    ));
+    let index_reader = PhysicalPlan::IndexLookUpReader(PhysicalIndexLookUpReader {
+        base: BasePhysicalPlan::with_id(4, "IndexLookUp", 0),
+        index_plan: Some(Box::new(index_scan)),
+        ..PhysicalIndexLookUpReader::default()
+    });
+
+    let template = hash_join(5, table_reader, index_reader);
+    let rebuilt = template
+        .rebuild_plan_for_cache(&CachedPlanRebuildContext::new(&[
+            Datum::Int(3),
+            Datum::Int(7),
+            Datum::Int(9),
+        ]))
+        .expect("every reader tier and its parameterized scan rebuilds");
+
+    let PhysicalPlan::TableReader(original_reader) = &template.children()[0] else {
+        panic!("table reader");
+    };
+    let Some(original_scan) = original_reader.table_plan.as_deref() else {
+        panic!("table scan");
+    };
+    let PhysicalPlan::TableScan(original_scan) = original_scan else {
+        panic!("table scan");
+    };
+    assert_eq!(original_scan.ranges[0].low_val, vec![Datum::Int(0)]);
+
+    let PhysicalPlan::TableReader(rebuilt_reader) = &rebuilt.children()[0] else {
+        panic!("table reader");
+    };
+    let PhysicalPlan::TableScan(rebuilt_scan) = rebuilt_reader
+        .table_plan
+        .as_deref()
+        .expect("rebuilt table plan")
+    else {
+        panic!("table scan");
+    };
+    assert_eq!(rebuilt_scan.ranges[0].low_val, vec![Datum::Int(3)]);
+    assert_eq!(rebuilt_scan.ranges[0].high_val, vec![Datum::Int(7)]);
+
+    let PhysicalPlan::IndexLookUpReader(rebuilt_lookup) = &rebuilt.children()[1] else {
+        panic!("index lookup reader");
+    };
+    let PhysicalPlan::IndexScan(rebuilt_index) = rebuilt_lookup
+        .index_plan
+        .as_deref()
+        .expect("rebuilt index plan")
+    else {
+        panic!("index scan");
+    };
+    assert_eq!(rebuilt_index.ranges[0].low_val, vec![Datum::Int(9)]);
+    assert_eq!(rebuilt_index.ranges[0].high_val, vec![Datum::Int(9)]);
+    assert_eq!(rebuilt.id(), template.id(), "the operator shape is reused");
+}
+
+#[test]
+fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
+    use crate::physical_plan_cache::{
+        CachedPlanRebuildContext, IndexRangeRebuild, PointRangeRebuild, TableRangeRebuild,
+    };
+
+    let int_type = FieldType::new(FieldTypeCode::LongLong);
+    let handle = Column::new(1, int_type.clone());
+    let point = PhysicalPlan::PointGet(PhysicalPointGet {
+        base: BasePhysicalPlan::with_id(11, "PointGet", 0),
+        table_id: 1,
+        index_id: None,
+        ranges: vec![point_range(0)],
+        range_rebuild: Some(PointRangeRebuild::Table(TableRangeRebuild::int_handle(
+            vec![parameter_condition("eq", handle, 0)],
+            int_type.clone(),
+            false,
+        ))),
+    });
+
+    let index_column = Column::new(2, int_type);
+    let batch = PhysicalPlan::BatchPointGet(PhysicalBatchPointGet {
+        base: BasePhysicalPlan::with_id(12, "BatchPointGet", 0),
+        table_id: 1,
+        index_id: Some(2),
+        ranges: vec![point_range(0), point_range(1)],
+        range_rebuild: Some(PointRangeRebuild::Index(IndexRangeRebuild::new(
+            vec![parameter_in_condition(index_column.clone(), &[1, 2])],
+            vec![index_column],
+            vec![tidb_datatype::UNSPECIFIED_LENGTH],
+        ))),
+    });
+    let index_merge = PhysicalPlan::IndexMergeReader(PhysicalIndexMergeReader {
+        base: BasePhysicalPlan::with_id(13, "IndexMerge", 0),
+        partial_plans: vec![vec![point], vec![batch]],
+        table_plan: None,
+    });
+    let template = PhysicalPlan::Dml(PhysicalDmlRoot {
+        base: BasePhysicalPlan::with_id(14, "Update", 0),
+        go_operator: "Update".to_owned(),
+        select_plan: Some(Box::new(index_merge)),
+    });
+
+    let rebuilt = template
+        .rebuild_plan_for_cache(&CachedPlanRebuildContext::new(&[
+            Datum::Int(5),
+            Datum::Int(7),
+            Datum::Int(9),
+        ]))
+        .expect("every owned point plan rebuilds through the DML root");
+    let PhysicalPlan::Dml(dml) = rebuilt else {
+        panic!("DML root");
+    };
+    let PhysicalPlan::IndexMergeReader(index_merge) = *dml.select_plan.expect("select plan") else {
+        panic!("index merge");
+    };
+    let PhysicalPlan::PointGet(point) = &index_merge.partial_plans[0][0] else {
+        panic!("point get");
+    };
+    assert_eq!(point.ranges[0].low_val, vec![Datum::Int(5)]);
+    let PhysicalPlan::BatchPointGet(batch) = &index_merge.partial_plans[1][0] else {
+        panic!("batch point get");
+    };
+    assert_eq!(batch.ranges[0].low_val, vec![Datum::Int(7)]);
+    assert_eq!(batch.ranges[1].low_val, vec![Datum::Int(9)]);
+}
+
+#[test]
+fn cached_plan_rebuilds_index_join_range_and_updates_inner_reader() {
+    use crate::physical_plan_cache::{
+        CachedPlanRebuildContext, IndexRangeRebuild, PointRangeRebuild,
+    };
+
+    let index_column = Column::new(2, FieldType::new(FieldTypeCode::LongLong));
+    let inner_scan = PhysicalPlan::IndexScan(PhysicalIndexScan {
+        base: BasePhysicalPlan::with_id(21, "IndexRangeScan", 0),
+        table_id: 2,
+        index_id: 3,
+        index_name: "idx_probe".to_owned(),
+        ranges: vec![point_range(0)],
+        ..PhysicalIndexScan::default()
+    });
+    let inner_reader = PhysicalPlan::IndexReader(PhysicalIndexReader {
+        base: BasePhysicalPlan::with_id(22, "IndexReader", 0),
+        index_plan: Some(Box::new(inner_scan)),
+    });
+    let mut base = BasePhysicalPlan::with_id(23, "IndexJoin", 0);
+    base.set_children(vec![
+        PhysicalPlan::TableDual(PhysicalTableDual {
+            base: BasePhysicalPlan::with_id(20, "TableDual", 0),
+            row_count: 1,
+        }),
+        inner_reader,
+    ]);
+    let template = PhysicalPlan::IndexJoin(PhysicalIndexJoin {
+        base,
+        join_type: LogicalJoinType::Inner,
+        inner_child_idx: 1,
+        ranges: vec![point_range(0)],
+        range_rebuild: Some(PointRangeRebuild::Index(IndexRangeRebuild::new(
+            vec![parameter_condition("eq", index_column.clone(), 0)],
+            vec![index_column],
+            vec![tidb_datatype::UNSPECIFIED_LENGTH],
+        ))),
+        ..PhysicalIndexJoin::default()
+    });
+
+    let rebuilt = template
+        .rebuild_plan_for_cache(&CachedPlanRebuildContext::new(&[Datum::Int(42)]))
+        .expect("index-join mutable ranges rebuild and reach the inner scan");
+    let PhysicalPlan::IndexJoin(rebuilt_join) = rebuilt else {
+        panic!("index join");
+    };
+    assert_eq!(rebuilt_join.ranges[0].low_val, vec![Datum::Int(42)]);
+    let PhysicalPlan::IndexReader(inner_reader) = &rebuilt_join.base.children()[1] else {
+        panic!("inner index reader");
+    };
+    let PhysicalPlan::IndexScan(inner_scan) = inner_reader
+        .index_plan
+        .as_deref()
+        .expect("inner reader plan")
+    else {
+        panic!("inner index scan");
+    };
+    assert_eq!(inner_scan.ranges[0].low_val, vec![Datum::Int(42)]);
+
+    let PhysicalPlan::IndexJoin(template_join) = template else {
+        unreachable!();
+    };
+    assert_eq!(template_join.ranges[0].low_val, vec![Datum::Int(0)]);
 }
 
 #[test]
@@ -473,7 +751,8 @@ fn a_projection_maps_the_order_or_refuses_and_drops_constant_items() {
     // A scalar-function item refuses the enumeration entirely.
     let prop = PhysicalProperty::new(TaskType::Root, &[103], false, f64::MAX, false);
     assert!(
-        exhaust_physical_plans_4_logical_projection(&projection, &prop, &allocator, 1.0).is_empty()
+        exhaust_physical_plans_4_logical_projection(&projection, &prop, &allocator, 1.0, true)
+            .is_empty()
     );
 }
 

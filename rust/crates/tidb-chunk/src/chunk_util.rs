@@ -325,8 +325,7 @@ mod tests {
         let column_eval = ColumnSwapHelper::from_mapping(input_idx_to_output_idxes);
 
         let long_long = FieldType::new(FieldTypeCode::LongLong);
-        let mut input =
-            Chunk::new_empty(&[long_long.clone(), long_long.clone()]);
+        let mut input = Chunk::new_empty(&[long_long.clone(), long_long.clone()]);
         input.append_int64(0, 99);
         // The input chunk's columns 0 and 1 designate one owner.
         input.make_ref(0, 1);

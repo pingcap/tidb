@@ -12,97 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! WHAT ORDER A `FROM` SUBTREE ALREADY PRODUCES, and the merge join a join
-//! node can therefore build over it.
+//! Mechanical lowering for the shared planner's merge-join receipt.
 //!
-//! # The Go this ports
+//! The shared planner owns Go's `preparePossibleProperties`, `GetMergeJoin`,
+//! property enforcement, enumeration, and costing. This module keeps only the
+//! mechanical boundary that Go's executor builder performs after selection:
+//! resolve stable relation-qualified columns to executor offsets, lower any
+//! selected Sort enforcer, and verify the built children deliver the received
+//! requirements.
 //!
-//! `preparePossibleProperties` (`pkg/planner/core/property_cols_prune.go:23`)
-//! walks the logical plan bottom-up and asks each node
-//! `PreparePossibleProperties(schema, childrenProperties...)` for the column
-//! orders its output already carries. Three of those implementations are what
-//! this module is:
-//!
-//!  * `DataSource` (`logical_datasource.go:343`) -- one order per access
-//!    path. Only the int-handle branch is ported; see
-//!    [`crate::merge_join_plan`] for why the index branch is a separate
-//!    increment.
-//!  * `LogicalProjection` (`logical_projection.go:334`) -- each child order
-//!    rewritten through the projection's BARE-COLUMN expressions, truncated
-//!    at the first order column the projection does not carry, and dropped
-//!    when nothing survives. A derived table is exactly this node.
-//!  * `LogicalJoin` (`logical_join.go:646`) -- see the divergence below.
-//!  * `LogicalSelection` (`logical_selection.go:243`) -- passes its child's
-//!    orders through unchanged, which is why a `WHERE` inside a derived table
-//!    does not stop the propagation here either.
-//!
-//! `GetMergeJoin` (`physicalop/physical_merge_join.go:50`) then reads the two
-//! children's orders off the `LogicalJoin` and requires the join keys to be
-//! FULLY covered on the left and matched as a prefix on the right.
-//!
-//! # CORRECTION (this file used to report something narrower)
-//!
-//! This module ONCE reported, for a join node, the order that join's own
-//! chosen plan produces -- its merge keys when it merged, and NOTHING when it
-//! hashed -- rather than Go's union. The reasoning was sound for a one-pass
-//! builder: promising an order a hash join then fails to deliver would let a
-//! parent merge join silently drop rows.
-//!
-//! The consequence was measured over the enrolled replay: the bottom join of
-//! a three-way tree hashes, therefore reports no order, therefore no parent
-//! merge ever forms, therefore no site ever REQUIRES an order -- and the
-//! index-join path, which only Go's non-empty property unlocks (`getHashJoins`
-//! returns nothing under a non-empty `prop.SortItems`), was reachable at zero
-//! sites.
-//!
-//! Go's escape is TWO PHASES, and this tier now has both:
-//!
-//!  * PROMISE (logical, this module). `LogicalJoin.PreparePossibleProperties`
-//!    reports the UNION of its two children's orders -- `resultProperties :=
-//!    leftProperties ++ rightProperties` -- with the null-extended side
-//!    dropped for an outer join. It is a claim about which orders the join's
-//!    output COULD be produced in, NOT about the plan finally chosen. That
-//!    union is what [`possible_properties`] returns again, verbatim.
-//!  * VERIFY (physical, [`super::from::build_join`]). Go re-asks a child
-//!    through `findBestTask(prop)` and the child either answers with a plan
-//!    that satisfies the property or loses on cost. This tier cannot re-ask,
-//!    but it CAN check: `build_from` now reports the orders the executor it
-//!    just built ACTUALLY produces, and `build_join` keeps its merge plan only
-//!    when both children delivered. A promise verification cannot deliver
-//!    falls back to the hash join.
-//!
-//! The verification is not a prediction, so it cannot drift from the build:
-//! it reads the built plan's own answer. That is what makes the row-drop
-//! hazard the narrowing existed to prevent structurally impossible rather than
-//! argued away -- see `from::tests` `a_promise_the_child_cannot_deliver_falls_back`.
-//!
-//! A merged join's output is sorted by BOTH key lists -- the two are equal in
-//! every row it emits -- so both are reported by the DELIVERY side, minus the
-//! side an outer join null-extends (Go's own `JoinType` check in the same
-//! function).
-//!
-//! # The residue here is NOT a missing cost comparison -- measured
-//!
-//! [`merge_join_decision`] answers `Some` whenever `GetMergeJoin` succeeds
-//! STRUCTURALLY, where Go builds the merge as one candidate among several and
-//! lets `findBestTask`'s `getTaskPlanCost` pick. That gap is real, and the
-//! standing reading was that it is what the `join_shape` CASETEST's EXTRA
-//! ordered-merge pairs measure. It is not. Every one of the seven was opened
-//! against its recording and none is a merge-vs-hash cost decision: in each,
-//! TiDB's join TREE puts a different pair of leaves adjacent than this tier's
-//! does, so the pair this tier merges is one TiDB never forms at all. The
-//! per-pair witnesses, and the two mutation probes that separate the causes,
-//! are in [`super::join_reorder`]'s module doc.
-//!
-//! One of those probes is this function's own: making it return `None`
-//! unconditionally takes the `join_shape` 5-tuple from `(229, 144, 88, 80, 7)`
-//! to `(229, 69, 88, 0, 0)`. The seven EXTRA pairs go, and all 80 AGREED go
-//! with them. A cost gate here would still be Go, but it is not what those
-//! seven need, and it cannot reach TiDB's tree from this one.
+//! [`super::from::build_join`] still checks the built children's physical
+//! delivery receipts before constructing the selected merge join. A mismatch
+//! is an unsupported planner/executor boundary and is rejected; it is never
+//! repaired by locally choosing hash join. A merged join reports both equal
+//! key orders, except for a side null-extended by an outer join, matching
+//! `LogicalJoin.PreparePossibleProperties`.
 
 use super::catalog::split_table_path;
 use super::catalog::{Catalog, TableEntry};
-use super::predicate_push_down::{offered_conjuncts, Offered};
 use crate::merge_join_plan::{MergeJoinKey, MergeJoinPlan};
 use std::collections::BTreeSet;
 use tidb_ast::{Expr, Join, JoinNode, JoinType, QueryStmt, SelectField, SelectStmt};
@@ -130,22 +57,19 @@ pub(crate) struct RelColumn {
     pub(crate) column: String,
 }
 
-/// Go's `PossiblePropertiesInfo` for one `FROM` subtree, in this tier's
-/// physical reading (see the module doc).
+/// The stable relation/column layout of one `FROM` subtree. Physical order
+/// comes from the selected planner tree and is deliberately absent here.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct SideProperties {
     /// The relations the subtree exposes, in row order.
     pub(crate) relations: Vec<Relation>,
     /// The subtree's row width.
     pub(crate) width: usize,
-    /// The column orders its output already carries, as offsets into its own
-    /// row. Go's `PossiblePropertiesInfo.Orders`.
-    pub(crate) orders: Vec<Vec<usize>>,
 }
 
 impl SideProperties {
     /// One relation, starting at offset zero.
-    fn single(visible: String, columns: Vec<String>, orders: Vec<Vec<usize>>) -> Self {
+    fn single(visible: String, columns: Vec<String>) -> Self {
         let width = columns.len();
         Self {
             relations: vec![Relation {
@@ -154,7 +78,6 @@ impl SideProperties {
                 offset: 0,
             }],
             width,
-            orders,
         }
     }
 
@@ -228,7 +151,6 @@ impl SideProperties {
         Some(Self {
             relations,
             width: left.width + right.width,
-            orders: Vec::new(),
         })
     }
 }
@@ -240,86 +162,22 @@ pub(crate) struct MergeDecision {
     pub(crate) plan: MergeJoinPlan,
     /// The same keys as `(left, right)` relation-qualified names.
     pub(crate) names: Vec<(RelColumn, RelColumn)>,
-    /// The complete order the left child must build, including any leading
-    /// columns fixed by equality predicates.
-    pub(crate) left_required: Vec<usize>,
-    /// The complete order the right child must build, including any leading
-    /// columns fixed by equality predicates.
-    pub(crate) right_required: Vec<usize>,
-    /// [`Self::left_required`] named so it survives column pruning.
+    /// The complete left-child order named so it survives column pruning.
     pub(crate) left_required_names: Vec<RelColumn>,
-    /// [`Self::right_required`] named so it survives column pruning.
+    /// The complete right-child order named so it survives column pruning.
     pub(crate) right_required_names: Vec<RelColumn>,
 }
 
-/// WHICH of the two questions a properties walk is answering.
-///
-/// The pair is Go's own split, and the reason the narrowing this module once
-/// carried is gone (see the CORRECTION at the top).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Phase {
-    /// `PreparePossibleProperties`: which orders this subtree's output COULD
-    /// be produced in. A join unions its two children's, because a parent that
-    /// wants one of them will re-ask for it.
-    Promise,
-    /// What the subtree WOULD be built as under the EMPTY property, which is
-    /// the only property anything below a derived table is ever asked for. A
-    /// join reports the order its own chosen plan produces -- its merge keys
-    /// when it merges, and nothing when it hashes.
-    ///
-    /// This is a conservative LOWER bound: the real build forms its merge
-    /// candidates from [`Phase::Promise`] and can therefore deliver MORE than
-    /// this says. Under-reporting only ever declines a parent's merge, which
-    /// is the safe direction; over-reporting would drop rows.
-    Delivered,
-}
-
-/// The orders a `FROM` node's output already carries, or `None` when this
-/// tier cannot describe the node at all.
-///
-/// `None` and an empty `orders` are different answers: `None` means no column
-/// path can be resolved against the subtree either, so no join above it can
-/// name a key.
-pub(crate) fn possible_properties(
+/// Resolves the row identity needed to lower stable planner columns. This is
+/// intentionally not Go's `preparePossibleProperties`: the shared logical
+/// planner has already run that rule and selected a physical tree.
+pub(crate) fn source_layout(
     node: &JoinNode,
     catalog: &Catalog,
     current_db: &str,
-    offered: Offered<'_>,
-) -> Option<SideProperties> {
-    properties(node, catalog, current_db, offered, Phase::Promise)
-}
-
-/// [`possible_properties`] in the [`Phase::Delivered`] reading: what the
-/// executor `build_from` would build for this node under the EMPTY property
-/// actually produces.
-pub(crate) fn delivered_properties(
-    node: &JoinNode,
-    catalog: &Catalog,
-    current_db: &str,
-    offered: Offered<'_>,
-) -> Option<SideProperties> {
-    properties(node, catalog, current_db, offered, Phase::Delivered)
-}
-
-/// Both readings, one walk.
-fn properties(
-    node: &JoinNode,
-    catalog: &Catalog,
-    current_db: &str,
-    offered: Offered<'_>,
-    phase: Phase,
 ) -> Option<SideProperties> {
     match node {
         JoinNode::Table(table_ref) => {
-            if table_ref.as_of.is_some() || !table_ref.partitions.is_empty() {
-                // A historical read is refused outright below this tier, and
-                // a PARTITION restriction reads partition by partition, so
-                // the stream is ordered WITHIN each partition and not across
-                // them. Go reaches the same answer through
-                // `PartitionProcessor`, whose `PartitionUnion` offers no
-                // order.
-                return None;
-            }
             let (database, name) = split_table_path(&table_ref.name, current_db).ok()?;
             let entry = catalog.get_in(database, name)?;
             let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
@@ -328,12 +186,9 @@ fn properties(
                 .into_iter()
                 .map(|(column, _)| column)
                 .collect();
-            let orders = table_orders(entry, &columns);
-            Some(SideProperties::single(visible, columns, orders))
+            Some(SideProperties::single(visible, columns))
         }
-        // A nested join is offered the SAME `WHERE` conjuncts, which is
-        // what `build_from` hands it.
-        JoinNode::Join(join) => join_properties(join, catalog, current_db, offered, phase),
+        JoinNode::Join(join) => join_layout(join, catalog, current_db),
         JoinNode::Derived {
             subquery,
             alias,
@@ -344,16 +199,37 @@ fn properties(
                 // An Apply, not a join.
                 return None;
             }
-            derived_properties(
-                subquery,
-                alias.as_deref()?,
-                column_names,
-                catalog,
-                current_db,
-                phase,
-            )
+            let mut columns = super::from::derived_field_names_query(subquery)?;
+            if !column_names.is_empty() {
+                if column_names.len() != columns.len() {
+                    return None;
+                }
+                columns = column_names.to_vec();
+            }
+            Some(SideProperties::single(
+                alias.as_deref()?.to_owned(),
+                columns,
+            ))
         }
     }
+}
+
+/// The concatenated row identity of a join. Algorithm and order selection
+/// remain exclusively in the shared physical planner.
+pub(crate) fn join_layout(
+    join: &Join,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<SideProperties> {
+    let Some(right_node) = &join.right else {
+        return source_layout(&join.left, catalog, current_db);
+    };
+    if join.natural || !join.using.is_empty() {
+        return None;
+    }
+    let left = source_layout(&join.left, catalog, current_db)?;
+    let right = source_layout(right_node, catalog, current_db)?;
+    SideProperties::concat(&left, &right)
 }
 
 /// `DataSource.PreparePossibleProperties` for one catalog entry, as offsets
@@ -431,13 +307,32 @@ pub(crate) fn delivers(delivered: &[Vec<usize>], wanted: &[usize]) -> bool {
 /// scan request -- the record/index walk really delivers them -- and records
 /// that the Selection below the aggregate fixes them, so the remaining suffix
 /// is ordered by the written group items.
+#[derive(Clone, Debug)]
 pub(crate) struct AggregationOrder {
-    required: tidb_planner::physical_property::PhysicalProperty,
     required_columns: Vec<RelColumn>,
+    fixed_columns: Vec<RelColumn>,
     physical_group_columns: Vec<RelColumn>,
+    desc: bool,
+    enforced: bool,
 }
 
 impl AggregationOrder {
+    pub(crate) fn from_planner_columns(
+        required_columns: Vec<RelColumn>,
+        fixed_columns: Vec<RelColumn>,
+        physical_group_columns: Vec<RelColumn>,
+        desc: bool,
+        enforced: bool,
+    ) -> Self {
+        Self {
+            required_columns,
+            fixed_columns,
+            physical_group_columns,
+            desc,
+            enforced,
+        }
+    }
+
     /// Re-resolves the order after logical join reorder. Go's property keeps
     /// column `UniqueID`s stable while the join tree moves; this driver uses
     /// row offsets, so the equivalent identity is the relation-qualified
@@ -447,18 +342,28 @@ impl AggregationOrder {
         from: &Join,
         catalog: &Catalog,
         current_db: &str,
-        offered: Offered<'_>,
     ) -> Option<tidb_planner::physical_property::PhysicalProperty> {
-        let source = join_properties(from, catalog, current_db, offered, Phase::Promise)?;
-        let (_, desc) = self.required.all_same_order();
-        let offsets = self
+        if self.enforced {
+            return Some(tidb_planner::physical_property::PhysicalProperty::default());
+        }
+        let source = join_layout(from, catalog, current_db)?;
+        let required_offsets = self
             .required_columns
             .iter()
-            .map(|column| source.offset_of(&[column.relation.clone(), column.column.clone()]));
-        Some(child_required_prop(
-            offsets.collect::<Option<Vec<_>>>()?.into_iter(),
-            desc,
-        ))
+            .map(|column| source.offset_of(&[column.relation.clone(), column.column.clone()]))
+            .collect::<Option<Vec<_>>>()?;
+        Some(child_required_prop(required_offsets.into_iter(), self.desc))
+    }
+
+    /// The selected physical StreamAgg has a `PhysicalSort` child rather
+    /// than an access path that naturally supplies the group order.
+    #[must_use]
+    pub(crate) const fn enforced_sort_direction(&self) -> Option<bool> {
+        if self.enforced {
+            Some(self.desc)
+        } else {
+            None
+        }
     }
 
     /// Whether the committed executor, rather than merely a catalog promise,
@@ -486,7 +391,35 @@ impl AggregationOrder {
                     })
             })
             .collect::<Option<Vec<_>>>();
-        required_offsets.is_some_and(|required| delivers(delivered, &required))
+        let fixed_offsets = self
+            .fixed_columns
+            .iter()
+            .filter_map(|required| {
+                scope
+                    .tables
+                    .iter()
+                    .find(|table| table.name.eq_ignore_ascii_case(&required.relation))
+                    .and_then(|table| {
+                        table
+                            .columns
+                            .iter()
+                            .position(|(column, _)| column.eq_ignore_ascii_case(&required.column))
+                            .map(|offset| table.offset + offset)
+                    })
+            })
+            .collect::<BTreeSet<_>>();
+        required_offsets.is_some_and(|required| {
+            delivered.iter().any(|order| {
+                if order.starts_with(&required) {
+                    return true;
+                }
+                let fixed_prefix = order
+                    .iter()
+                    .take_while(|offset| fixed_offsets.contains(offset))
+                    .count();
+                order[fixed_prefix..].starts_with(&required)
+            })
+        })
     }
 
     /// Group-key offsets in the physical StreamAgg tuple: ordered non-fixed
@@ -510,198 +443,6 @@ impl AggregationOrder {
             })
             .collect()
     }
-}
-
-/// Finds Go's grouped-StreamAgg child property for this query block.
-pub(crate) fn aggregation_order(
-    select: &SelectStmt,
-    from: &Join,
-    catalog: &Catalog,
-    current_db: &str,
-    offered: Offered<'_>,
-) -> Option<AggregationOrder> {
-    if select.rollup || (select.group_by.is_empty() && !select.distinct) {
-        return None;
-    }
-    let source = join_properties(from, catalog, current_db, offered, Phase::Promise)?;
-    // Go builds `DISTINCT` as a LogicalAggregation of its own --
-    // `PlanBuilder.buildDistinct`
-    // (`pkg/planner/core/logical_plan_builder.go:1966`) sets
-    // `GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length])`
-    // and one `FIRST_ROW` per column -- so it reaches `getStreamAggs` with
-    // exactly the same shape a written `GROUP BY` does, and asks its child
-    // for the same order. The items are the PROJECTION's output columns, so
-    // a computed field has no source column to order by; refusing here is
-    // what the candidate orders do for it anyway --
-    // `getStreamAggs` only ever matches against
-    // `la.PossibleProperties.Orders`
-    // (`pkg/planner/core/operator/physicalop/physical_stream_agg.go:121`),
-    // and `DataSource.PreparePossibleProperties`
-    // (`pkg/planner/core/operator/logicalop/logical_datasource.go:343`)
-    // fills those with index-prefix COLUMNS only.
-    let group_items: Vec<&Expr> = if select.group_by.is_empty() {
-        select
-            .fields
-            .fields()
-            .iter()
-            .map(|field| match field {
-                tidb_ast::SelectField::Expr { expr, .. } => Some(expr),
-                tidb_ast::SelectField::Wildcard(_) => None,
-            })
-            .collect::<Option<_>>()?
-    } else {
-        select.group_by.iter().map(|item| &item.expr).collect()
-    };
-    let group_offsets: Vec<usize> = group_items
-        .iter()
-        .map(|expr| match expr {
-            Expr::Column(path) => source.offset_of(path),
-            _ => None,
-        })
-        .collect::<Option<_>>()?;
-    let mut fixed = BTreeSet::new();
-    let mut conjuncts = Vec::new();
-    if let Some(predicate) = &select.where_clause {
-        crate::plan_trace::collect_and(predicate, &mut conjuncts);
-    }
-    for conjunct in conjuncts {
-        let Expr::Binary(tidb_ast::BinaryOp::Eq, left, right) = conjunct else {
-            continue;
-        };
-        let fixed_path = match (
-            strip_aggregation_parens(left),
-            strip_aggregation_parens(right),
-        ) {
-            (Expr::Column(path), value) if aggregation_constant(value) => Some(path),
-            (value, Expr::Column(path)) if aggregation_constant(value) => Some(path),
-            _ => None,
-        };
-        if let Some(offset) = fixed_path.and_then(|path| source.offset_of(path)) {
-            fixed.insert(offset);
-        }
-    }
-
-    for order in &source.orders {
-        let fixed_prefix = order
-            .iter()
-            .take_while(|offset| fixed.contains(offset))
-            .count();
-        // A fixed group key contributes no ordering demand of its own. Go's
-        // `EqCondCount` removes it while matching the property, even when the
-        // same column is also written in GROUP BY. Counting it a second time
-        // would ask `(w,d,o,n)` of an index that already delivers the needed
-        // `(w,d,o)` order for `WHERE w=1 GROUP BY w,d,o`.
-        let ordered_group_offsets: Vec<usize> = group_offsets
-            .iter()
-            .copied()
-            .filter(|offset| !fixed.contains(offset))
-            .collect();
-        if !order[fixed_prefix..].starts_with(&ordered_group_offsets) {
-            continue;
-        }
-        let required_offsets = order[..fixed_prefix + ordered_group_offsets.len()].to_vec();
-        let required_columns = required_offsets
-            .iter()
-            .map(|offset| source.column_at(*offset))
-            .collect::<Option<Vec<_>>>()?;
-        let physical_group_offsets = ordered_group_offsets
-            .iter()
-            .copied()
-            .chain(
-                group_offsets
-                    .iter()
-                    .copied()
-                    .filter(|offset| fixed.contains(offset)),
-            )
-            .collect::<Vec<_>>();
-        let physical_group_columns = physical_group_offsets
-            .iter()
-            .map(|offset| source.column_at(*offset))
-            .collect::<Option<Vec<_>>>()?;
-        return Some(AggregationOrder {
-            required: child_required_prop(required_offsets.iter().copied(), false),
-            required_columns,
-            physical_group_columns,
-        });
-    }
-    None
-}
-
-fn strip_aggregation_parens(mut expr: &Expr) -> &Expr {
-    while let Expr::Paren(inner) = expr {
-        expr = inner;
-    }
-    expr
-}
-
-fn aggregation_constant(expr: &Expr) -> bool {
-    match expr {
-        Expr::Paren(inner) => aggregation_constant(inner),
-        Expr::Unary(tidb_ast::UnaryOp::Minus | tidb_ast::UnaryOp::Plus, inner) => {
-            aggregation_constant(inner)
-        }
-        Expr::Int(_)
-        | Expr::Decimal(_)
-        | Expr::Float(_)
-        | Expr::Hex(_)
-        | Expr::Bit(_)
-        | Expr::String(_)
-        | Expr::RawString(_)
-        | Expr::CharsetString { .. }
-        | Expr::Bool(_) => true,
-        _ => false,
-    }
-}
-
-/// [`possible_properties`] for a join node: the two sides' relations
-/// concatenated, and the order the join's OWN chosen plan produces.
-pub(crate) fn join_properties(
-    join: &Join,
-    catalog: &Catalog,
-    current_db: &str,
-    offered: Offered<'_>,
-    phase: Phase,
-) -> Option<SideProperties> {
-    let Some(right_node) = &join.right else {
-        // The single-relation wrapper the parser always produces.
-        return properties(&join.left, catalog, current_db, offered, phase);
-    };
-    if join.natural || !join.using.is_empty() {
-        // A coalesced join's scope addresses columns by row offset rather
-        // than by name, and its output row is not the two sides concatenated.
-        return None;
-    }
-    let left = properties(&join.left, catalog, current_db, offered, phase)?;
-    let right = properties(right_node, catalog, current_db, offered, phase)?;
-    let mut joined = SideProperties::concat(&left, &right)?;
-    let shift = |orders: &[Vec<usize>]| -> Vec<Vec<usize>> {
-        orders
-            .iter()
-            .map(|order| order.iter().map(|at| at + left.width).collect())
-            .collect()
-    };
-    joined.orders = match phase {
-        // Go's union, verbatim -- see the CORRECTION at the top of this
-        // module for what it replaced and what now makes it safe.
-        Phase::Promise => union_orders(join.tp, left.orders.clone(), shift(&right.orders)),
-        // The order this join's own chosen plan produces under the EMPTY
-        // property, which is the only property a subtree reached this way is
-        // asked for. A merge join emits its rows in key order and its two key
-        // lists are equal in every row it emits, so both describe the output;
-        // a hash join describes none.
-        Phase::Delivered => {
-            let required = tidb_planner::physical_property::PhysicalProperty::default();
-            match decide(join, &left, &right, &joined, &required, offered, None) {
-                Some(decision) => union_orders(
-                    join.tp,
-                    vec![decision.plan.keys.iter().map(|key| key.left).collect()],
-                    shift(&[decision.plan.keys.iter().map(|key| key.right).collect()]),
-                ),
-                None => Vec::new(),
-            }
-        }
-    };
-    Some(joined)
 }
 
 /// `LogicalJoin.PreparePossibleProperties`'s body: the two children's orders
@@ -737,193 +478,6 @@ pub(crate) fn union_orders(
         JoinType::Right => (Vec::new(), right_orders),
     };
     left_orders.into_iter().chain(right_orders).collect()
-}
-
-/// [`possible_properties`] for a derived table:
-/// `LogicalProjection.PreparePossibleProperties` over its `FROM`.
-///
-/// `DISTINCT`, `ORDER BY`, `LIMIT`, a window and a set operation each replace
-/// the row order rather than carrying it. `GROUP BY` is different: Go's
-/// `LogicalAggregation.PreparePossibleProperties` preserves a complete child
-/// order over the group columns (and a `HAVING` selection above the aggregate
-/// preserves that order too).
-fn derived_properties(
-    subquery: &QueryStmt,
-    alias: &str,
-    column_names: &[String],
-    catalog: &Catalog,
-    current_db: &str,
-    phase: Phase,
-) -> Option<SideProperties> {
-    let QueryStmt::Select(select) = subquery else {
-        return None;
-    };
-    if !select.group_by.is_empty() {
-        return grouped_derived_properties(select, alias, column_names, catalog, current_db, phase);
-    }
-    // A derived table's own `WHERE` is the one offered INSIDE it, which is
-    // what `run_select_stmt` hands its `FROM`.
-    let inner_offered = offered_conjuncts(select.where_clause.as_ref());
-    let inner = order_preserving_source(select, catalog, current_db, &inner_offered, phase)?;
-    // Go's `oldCols`/`newCols`: the projection's BARE-COLUMN expressions, and
-    // where each lands in the projection's own schema.
-    let mut columns = Vec::with_capacity(select.fields.fields().len());
-    let mut sources = Vec::with_capacity(select.fields.fields().len());
-    for field in select.fields.fields() {
-        let SelectField::Expr { expr, alias } = field else {
-            // A `*` expands against the subquery's own scope, which this
-            // decision does not build.
-            return None;
-        };
-        match expr {
-            Expr::Column(path) => {
-                let name = match alias {
-                    Some(alias) => alias.clone(),
-                    None => path.last()?.clone(),
-                };
-                columns.push(name);
-                sources.push(inner.offset_of(path));
-            }
-            // An unaliased expression's result-field name is its SOURCE TEXT
-            // in Go, which this decision does not carry. Refusing keeps every
-            // name it does resolve a name the statement actually wrote.
-            _ => {
-                columns.push(alias.clone()?);
-                sources.push(None);
-            }
-        }
-    }
-    if !column_names.is_empty() {
-        // `derived (c1, c2, ...)` renames positionally, and a count mismatch
-        // is an error the builder raises later.
-        if column_names.len() != columns.len() {
-            return None;
-        }
-        columns = column_names.to_vec();
-    }
-    Some(SideProperties::single(
-        alias.to_owned(),
-        columns,
-        project_orders(&inner.orders, &sources),
-    ))
-}
-
-/// Go `LogicalAggregation.PreparePossibleProperties` projected into a
-/// derived table's output. A grouped StreamAgg can promise the selected group
-/// keys in written order; delivery is reported by the actual materialized
-/// SELECT build, so this function never guesses it in the delivered phase.
-fn grouped_derived_properties(
-    select: &SelectStmt,
-    alias: &str,
-    column_names: &[String],
-    catalog: &Catalog,
-    current_db: &str,
-    phase: Phase,
-) -> Option<SideProperties> {
-    if phase == Phase::Delivered
-        || select.rollup
-        || select.distinct
-        || select.limit.is_some()
-        || !select.windows.is_empty()
-    {
-        return None;
-    }
-    let group_paths = select
-        .group_by
-        .iter()
-        .map(|item| match &item.expr {
-            Expr::Column(path) => Some(path),
-            _ => None,
-        })
-        .collect::<Option<Vec<_>>>()?;
-    // `LogicalAggregation.PreparePossibleProperties` only propagates a
-    // property when the child already provides all GROUP BY columns as a
-    // prefix. A grouped derived table is a projection of that aggregation,
-    // so resolve the same child orders before claiming an output order.
-    let inner_offered = offered_conjuncts(select.where_clause.as_ref());
-    let inner = join_properties(
-        select.from.as_ref()?,
-        catalog,
-        current_db,
-        &inner_offered,
-        phase,
-    )?;
-    let group_offsets = group_paths
-        .iter()
-        .map(|path| inner.offset_of(path))
-        .collect::<Option<Vec<_>>>()?;
-    if !select.order_by.is_empty()
-        && (select.order_by.len() != group_paths.len()
-            || select
-                .order_by
-                .iter()
-                .zip(&group_paths)
-                .any(|(item, group)| {
-                    item.desc || !matches!(&item.expr, Expr::Column(path) if path == *group)
-                }))
-    {
-        return None;
-    }
-
-    let mut columns = Vec::with_capacity(select.fields.fields().len());
-    for field in select.fields.fields() {
-        let SelectField::Expr {
-            expr,
-            alias: field_alias,
-        } = field
-        else {
-            return None;
-        };
-        columns.push(match expr {
-            Expr::Column(path) => field_alias
-                .clone()
-                .unwrap_or_else(|| path.last().cloned().unwrap_or_default()),
-            _ => field_alias.clone()?,
-        });
-    }
-    if !column_names.is_empty() {
-        if column_names.len() != columns.len() {
-            return None;
-        }
-        columns = column_names.to_vec();
-    }
-    let output_positions = group_paths
-        .iter()
-        .map(|group| {
-            select.fields.fields().iter().position(|field| {
-                matches!(field, SelectField::Expr { expr: Expr::Column(path), .. } if path == *group)
-            })
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let group_offsets_i64 = group_offsets
-        .iter()
-        .map(|offset| *offset as i64)
-        .collect::<Vec<_>>();
-    let order = inner.orders.iter().find_map(|child_order| {
-        let child_order_i64 = child_order
-            .iter()
-            .map(|offset| *offset as i64)
-            .collect::<Vec<_>>();
-        let matched =
-            tidb_planner::find_best_task::max_sort_prefix(&child_order_i64, &group_offsets_i64);
-        if matched.len() != group_offsets.len() || child_order.len() < group_offsets.len() {
-            return None;
-        }
-        child_order[..group_offsets.len()]
-            .iter()
-            .map(|offset| {
-                group_offsets
-                    .iter()
-                    .position(|group_offset| group_offset == offset)
-                    .and_then(|group_index| output_positions.get(group_index).copied())
-            })
-            .collect::<Option<Vec<_>>>()
-    })?;
-    Some(SideProperties::single(
-        alias.to_owned(),
-        columns,
-        vec![order],
-    ))
 }
 
 /// The source-column name behind a physical join key. Go's projection
@@ -1088,17 +642,11 @@ fn select_output_origin(
     }
     let from = select.from.as_ref()?;
     let promised_origin = || {
-        let source = join_properties(
-            from,
-            catalog,
-            current_db,
-            &offered_conjuncts(select.where_clause.as_ref()),
-            Phase::Promise,
-        )?;
+        let source = join_layout(from, catalog, current_db)?;
         source.column_at(source.offset_of(path)?)
     };
     // A projection can retain a directly qualified child column even when
-    // the child's complete possible-property model is unavailable (for
+    // the child's complete layout model is unavailable (for
     // example, a grouped decorrelation wrapper over a left join). Go's
     // projection elimination still carries that Column's UniqueID through.
     // Resolve that direct path before giving up on the richer property model.
@@ -1326,8 +874,7 @@ fn project_orders(orders: &[Vec<usize>], sources: &[Option<usize>]) -> Vec<Vec<u
 }
 
 /// Maps orders the built input actually delivered through a projection's
-/// output-to-input column mapping. This is the physical verification sibling
-/// of [`project_orders`]'s logical-property use in [`derived_properties`].
+/// output-to-input column mapping.
 pub(crate) fn project_delivered_orders(
     orders: &[Vec<usize>],
     sources: &[Option<usize>],
@@ -1335,269 +882,13 @@ pub(crate) fn project_delivered_orders(
     project_orders(orders, sources)
 }
 
-/// The `FROM` of a `SELECT` that carries its source's row order through
-/// unchanged, or `None`.
-fn order_preserving_source(
-    select: &SelectStmt,
-    catalog: &Catalog,
-    current_db: &str,
-    offered: Offered<'_>,
-    phase: Phase,
-) -> Option<SideProperties> {
-    if select.distinct
-        || !select.group_by.is_empty()
-        || select.having.is_some()
-        || !select.order_by.is_empty()
-        || select.limit.is_some()
-        || !select.windows.is_empty()
-    {
-        return None;
-    }
-    if select
-        .fields
-        .fields()
-        .iter()
-        .any(|field| projected_expr(field).is_some_and(Expr::has_aggregate_flag))
-    {
-        return None;
-    }
-    // A `WHERE` is `LogicalSelection`, which passes its child's orders
-    // through unchanged.
-    join_properties(select.from.as_ref()?, catalog, current_db, offered, phase)
-}
-
-/// The expression a select field projects, when it projects one.
-fn projected_expr(field: &SelectField) -> Option<&Expr> {
-    match field {
-        SelectField::Expr { expr, .. } => Some(expr),
-        SelectField::Wildcard(_) => None,
-    }
-}
-
-/// The merge join `GetMergeJoin` would build for this join over these two
-/// sides' properties, or `None`.
-///
-/// `joined` is the two sides concatenated, and is what the key NAMES are read
-/// out of -- the offsets themselves cannot be handed to the executor, because
-/// column pruning renumbers both sides after the children are built.
-pub(crate) fn decide(
-    join: &Join,
-    left: &SideProperties,
-    right: &SideProperties,
-    joined: &SideProperties,
-    required: &tidb_planner::physical_property::PhysicalProperty,
-    offered: Offered<'_>,
-    rows: Option<&crate::driver::join_reorder::RowSource>,
-) -> Option<MergeDecision> {
-    let mut conjuncts = Vec::new();
-    if let Some(on) = join.on.as_ref() {
-        crate::plan_trace::collect_and(on, &mut conjuncts);
-    }
-    // Go's `LogicalJoin.PredicatePushDown` moves a `WHERE` equality that
-    // spans the two sides into `EqualConditions`, and `GetJoinKeys` -- what
-    // `GetMergeJoin` reads -- returns it alongside the ones written in `ON`.
-    // The same conjuncts reach the executor through
-    // [`super::predicate_push_down::spanning_conjuncts`], and only for an
-    // inner, non-coalesced join, which is the gate repeated here. The pairing
-    // loop below is itself the "spans both sides" test.
-    if join.tp == JoinType::Cross && !join.natural && join.using.is_empty() {
-        // A conjunct the `ON` already spells is not counted twice. The two
-        // spellings meet whenever a `WHERE` equality became an `ON` -- which
-        // is every edge the join reorder rebuilt a tree from
-        // (`driver::join_reorder`) -- and the duplicate would ask
-        // `GetMergeJoin` to cover the SAME key twice, which no single-column
-        // order can do.
-        let repeated: Vec<&Expr> = offered
-            .iter()
-            .filter(|conjunct| !conjuncts.contains(conjunct))
-            .collect();
-        conjuncts.extend(repeated);
-    }
-    // Go reads constant columns from the join's functional dependencies, so
-    // predicates already pushed into either child still shorten an ordered
-    // access path's fixed prefix. `RowSource` is this driver's statement-owned
-    // predicate inventory; unlike `offered`, it also retains those leaf-local
-    // predicates after decorrelation and join reorder.
-    if let Some(rows) = rows {
-        for relation in left.relations.iter().chain(&right.relations) {
-            if let Some(filters) = rows.filters_for(&relation.visible) {
-                conjuncts.extend(filters);
-            }
-        }
-    }
-    let mut left_fixed = BTreeSet::new();
-    let mut right_fixed = BTreeSet::new();
-    for conjunct in &conjuncts {
-        let Expr::Binary(tidb_ast::BinaryOp::Eq, lhs, rhs) = conjunct else {
-            continue;
-        };
-        let fixed_path = match (strip_aggregation_parens(lhs), strip_aggregation_parens(rhs)) {
-            (Expr::Column(path), value) if aggregation_constant(value) => Some(path),
-            (value, Expr::Column(path)) if aggregation_constant(value) => Some(path),
-            _ => None,
-        };
-        let Some(path) = fixed_path else {
-            continue;
-        };
-        if let Some(offset) = left.offset_of(path) {
-            left_fixed.insert(offset);
-        }
-        if let Some(offset) = right.offset_of(path) {
-            right_fixed.insert(offset);
-        }
-    }
-    let mut keys = Vec::new();
-    for conjunct in conjuncts {
-        let Expr::Binary(tidb_ast::BinaryOp::Eq, lhs, rhs) = conjunct else {
-            continue;
-        };
-        let (Expr::Column(left_path), Expr::Column(right_path)) = (&**lhs, &**rhs) else {
-            continue;
-        };
-        // `ON` may write either side first; a key is a key whichever way
-        // round it was spelled.
-        let pair = match (left.offset_of(left_path), right.offset_of(right_path)) {
-            (Some(l), Some(r)) => Some((l, r)),
-            _ => match (left.offset_of(right_path), right.offset_of(left_path)) {
-                (Some(l), Some(r)) => Some((l, r)),
-                _ => None,
-            },
-        };
-        if let Some((l, r)) = pair {
-            keys.push(MergeJoinKey { left: l, right: r });
-        }
-    }
-    // A fixed column that is itself a join key remains part of the merge
-    // order. Only constant columns BEFORE the first join key are neutral: in
-    // `d_w_id=w_id AND w_id=1`, both key columns are fixed but Go still
-    // merges on `d_w_id=w_id`; trimming them would erase the join key and
-    // incorrectly fall back to an index/hash join.
-    for key in &keys {
-        left_fixed.remove(&key.left);
-        right_fixed.remove(&key.right);
-    }
-    let left_effective = trim_fixed_prefixes(&left.orders, &left_fixed);
-    let right_effective = trim_fixed_prefixes(&right.orders, &right_fixed);
-    let plan = crate::merge_join_plan::get_merge_join(
-        &keys,
-        &left_effective,
-        &right_effective,
-        required.all_same_order().1,
-    )?;
-    if !merge_satisfies_required_property(
-        join.tp,
-        &plan,
-        left.width,
-        required,
-        &left_fixed,
-        &right_fixed,
-    ) {
-        return None;
-    }
-    let left_keys: Vec<usize> = plan.keys.iter().map(|key| key.left).collect();
-    let right_keys: Vec<usize> = plan.keys.iter().map(|key| key.right).collect();
-    let left_required = required_order(&left.orders, &left_fixed, &left_keys)?;
-    let right_required = required_order(&right.orders, &right_fixed, &right_keys)?;
-    let names = plan
-        .keys
-        .iter()
-        .map(|key| {
-            Some((
-                joined.column_at(key.left)?,
-                joined.column_at(key.right + left.width)?,
-            ))
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let left_required_names = left_required
-        .iter()
-        .map(|offset| left.column_at(*offset))
-        .collect::<Option<Vec<_>>>()?;
-    let right_required_names = right_required
-        .iter()
-        .map(|offset| right.column_at(*offset))
-        .collect::<Option<Vec<_>>>()?;
-    Some(MergeDecision {
-        plan,
-        names,
-        left_required,
-        right_required,
-        left_required_names,
-        right_required_names,
-    })
-}
-
-/// Go `PhysicalMergeJoin.tryToGetChildReqProp`, expressed in this driver's
-/// joined-row offsets. A leading constant in `required` is the local
-/// equivalent of the access path suffix Go adds for `EqCondCount`: it does
-/// not participate in the varying order and is skipped before join-key
-/// compatibility is checked.
-fn merge_satisfies_required_property(
-    join_type: JoinType,
-    plan: &MergeJoinPlan,
-    left_width: usize,
-    required: &tidb_planner::physical_property::PhysicalProperty,
-    left_constants: &BTreeSet<usize>,
-    right_constants: &BTreeSet<usize>,
-) -> bool {
-    if required.is_sort_item_empty() {
-        return true;
-    }
-    if !required.all_same_order().0 {
-        return false;
-    }
-    let left_keys = plan
-        .keys
-        .iter()
-        .map(|key| key.left as i64)
-        .collect::<Vec<_>>();
-    let right_keys = plan
-        .keys
-        .iter()
-        .map(|key| (key.right + left_width) as i64)
-        .collect::<Vec<_>>();
-    let left_constants = left_constants
-        .iter()
-        .map(|offset| *offset as i64)
-        .collect::<BTreeSet<_>>();
-    let right_constants = right_constants
-        .iter()
-        .map(|offset| (*offset + left_width) as i64)
-        .collect::<BTreeSet<_>>();
-    let compatible = |keys: &[i64], constants: &BTreeSet<i64>| {
-        let mut key_pos = 0;
-        for item in &required.sort_items {
-            if constants.contains(&item.col) {
-                continue;
-            }
-            let mut matched = false;
-            while let Some(key) = keys.get(key_pos) {
-                key_pos += 1;
-                if item.col == *key {
-                    matched = true;
-                    break;
-                }
-                if !constants.contains(key) {
-                    return false;
-                }
-            }
-            if !matched {
-                return false;
-            }
-        }
-        true
-    };
-    let match_left = compatible(&left_keys, &left_constants);
-    let match_right = compatible(&right_keys, &right_constants);
-    (match_left || match_right)
-        && !(match_right && join_type == JoinType::Left)
-        && !(match_left && join_type == JoinType::Right)
-}
-
 /// Removes only the leading columns whose equality predicates make them
-/// constant for every row. The remaining suffix is the order a merge join
-/// can compare; the original prefix is restored in [`required_order`] so the
-/// child still chooses the access path and range that provide it.
-fn trim_fixed_prefixes(orders: &[Vec<usize>], fixed: &BTreeSet<usize>) -> Vec<Vec<usize>> {
+/// constant for every row. The remaining suffix is the order the shared
+/// planner can use when enumerating a merge join.
+pub(crate) fn trim_fixed_prefixes(
+    orders: &[Vec<usize>],
+    fixed: &BTreeSet<usize>,
+) -> Vec<Vec<usize>> {
     orders
         .iter()
         .filter_map(|order| {
@@ -1610,151 +901,149 @@ fn trim_fixed_prefixes(orders: &[Vec<usize>], fixed: &BTreeSet<usize>) -> Vec<Ve
         .collect()
 }
 
-/// Finds the original child order whose fixed-prefix-trimmed suffix starts
-/// with `keys`, and returns the whole prefix the child must actually build.
-fn required_order(
-    orders: &[Vec<usize>],
-    fixed: &BTreeSet<usize>,
-    keys: &[usize],
-) -> Option<Vec<usize>> {
-    orders.iter().find_map(|order| {
-        let fixed_prefix = order
-            .iter()
-            .take_while(|offset| fixed.contains(offset))
-            .count();
-        order[fixed_prefix..]
-            .starts_with(keys)
-            .then(|| order[..fixed_prefix + keys.len()].to_vec())
-    })
-}
-
-/// The merge join this join node commits to, read straight off the catalog
-/// and the `ON` clause.
-pub(crate) fn merge_join_decision(
-    join: &Join,
+/// Lowers the exact merge-key receipt selected by the shared physical planner
+/// into this executor's child-relative offsets. This is mechanical identity
+/// resolution only; algorithm selection and key ordering remain owned by the
+/// shared planner.
+pub(crate) fn merge_join_decision_from_planner(
+    left_node: &JoinNode,
+    right_node: &JoinNode,
+    left: &SideProperties,
+    right: &SideProperties,
+    keys: &[(RelColumn, RelColumn)],
+    desc: bool,
+    left_requirement: &crate::driver::planner_bridge::JoinChildRequirement,
+    right_requirement: &crate::driver::planner_bridge::JoinChildRequirement,
     catalog: &Catalog,
     current_db: &str,
-    required: &tidb_planner::physical_property::PhysicalProperty,
-    offered: Offered<'_>,
-    rows: Option<&crate::driver::join_reorder::RowSource>,
 ) -> Option<MergeDecision> {
-    let right_node = join.right.as_ref()?;
-    if join.natural || !join.using.is_empty() {
-        return None;
-    }
-    let left = possible_properties(&join.left, catalog, current_db, offered)?;
-    let right = possible_properties(right_node, catalog, current_db, offered)?;
-    let joined = SideProperties::concat(&left, &right)?;
-    decide(join, &left, &right, &joined, required, offered, rows)
-}
-
-/// Go `getEnforcedMergeJoin`: a `MERGE_JOIN` hint may admit a merge plan even
-/// when neither child already offers the join-key order. The caller installs
-/// a root Sort on every child that does not deliver the returned requirement.
-pub(crate) fn enforced_merge_join_decision(
-    join: &Join,
-    catalog: &Catalog,
-    current_db: &str,
-    required: &tidb_planner::physical_property::PhysicalProperty,
-    offered: Offered<'_>,
-) -> Option<MergeDecision> {
-    let right_node = join.right.as_ref()?;
-    if join.natural || !join.using.is_empty() {
-        return None;
-    }
-    let left = possible_properties(&join.left, catalog, current_db, offered)?;
-    let right = possible_properties(right_node, catalog, current_db, offered)?;
-    let joined = SideProperties::concat(&left, &right)?;
-
-    let mut conjuncts = Vec::new();
-    if let Some(on) = join.on.as_ref() {
-        crate::plan_trace::collect_and(on, &mut conjuncts);
-    }
-    if join.tp == JoinType::Cross {
-        let repeated = offered
-            .iter()
-            .filter(|conjunct| !conjuncts.contains(conjunct))
-            .collect::<Vec<_>>();
-        conjuncts.extend(repeated);
-    }
-    let mut keys = Vec::new();
-    for conjunct in conjuncts {
-        let Expr::Binary(tidb_ast::BinaryOp::Eq, lhs, rhs) = conjunct else {
-            continue;
+    let mut offsets = Vec::with_capacity(keys.len());
+    let mut names = Vec::with_capacity(keys.len());
+    for (planner_left, planner_right) in keys {
+        let (left_offset, right_offset, left_name, right_name) = match (
+            planner_column_offset(left_node, left, planner_left, catalog, current_db),
+            planner_column_offset(right_node, right, planner_right, catalog, current_db),
+        ) {
+            (Some((left_offset, left_name)), Some((right_offset, right_name))) => {
+                (left_offset, right_offset, left_name, right_name)
+            }
+            _ => {
+                let (left_offset, left_name) =
+                    planner_column_offset(left_node, left, planner_right, catalog, current_db)?;
+                let (right_offset, right_name) =
+                    planner_column_offset(right_node, right, planner_left, catalog, current_db)?;
+                (left_offset, right_offset, left_name, right_name)
+            }
         };
-        let (Expr::Column(left_path), Expr::Column(right_path)) = (&**lhs, &**rhs) else {
-            continue;
-        };
-        let pair = match (left.offset_of(left_path), right.offset_of(right_path)) {
-            (Some(left), Some(right)) => Some((left, right)),
-            _ => match (left.offset_of(right_path), right.offset_of(left_path)) {
-                (Some(left), Some(right)) => Some((left, right)),
-                _ => None,
-            },
-        };
-        if let Some((left, right)) = pair {
-            keys.push(MergeJoinKey { left, right });
-        }
+        offsets.push(MergeJoinKey {
+            left: left_offset,
+            right: right_offset,
+        });
+        names.push((left_name, right_name));
     }
-    if keys.is_empty() {
+    if offsets.is_empty() {
         return None;
     }
-
-    let (all_same, desc) = required.all_same_order();
-    if !all_same {
-        return None;
-    }
-    let mut front = Vec::new();
-    for item in &required.sort_items {
-        let column = item.col as usize;
-        let at = keys
-            .iter()
-            .position(|key| key.left == column || key.right + left.width == column)?;
-        if !front.contains(&at) {
-            front.push(at);
-        }
-        if (join.tp == JoinType::Left && keys[at].right + left.width == column)
-            || (join.tp == JoinType::Right && keys[at].left == column)
-        {
-            return None;
-        }
-    }
-    let mut ordered = Vec::with_capacity(keys.len());
-    ordered.extend(front.iter().map(|at| keys[*at]));
-    ordered.extend(
-        keys.into_iter()
-            .enumerate()
-            .filter_map(|(at, key)| (!front.contains(&at)).then_some(key)),
-    );
-    let names = ordered
-        .iter()
-        .map(|key| {
-            Some((
-                joined.column_at(key.left)?,
-                joined.column_at(key.right + left.width)?,
-            ))
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let left_required = ordered.iter().map(|key| key.left).collect::<Vec<_>>();
-    let right_required = ordered.iter().map(|key| key.right).collect::<Vec<_>>();
-    let left_required_names = names.iter().map(|(left, _)| left.clone()).collect();
-    let right_required_names = names.iter().map(|(_, right)| right.clone()).collect();
+    let (_, left_required_names) = planner_required_offsets(
+        left_node,
+        left,
+        &left_requirement.columns,
+        catalog,
+        current_db,
+    )?;
+    let (_, right_required_names) = planner_required_offsets(
+        right_node,
+        right,
+        &right_requirement.columns,
+        catalog,
+        current_db,
+    )?;
     Some(MergeDecision {
         plan: MergeJoinPlan {
-            keys: ordered,
+            keys: offsets,
             desc,
         },
         names,
-        left_required,
-        right_required,
         left_required_names,
         right_required_names,
     })
 }
 
-/// The property a `SELECT`'s own `FROM` must satisfy so that the `SELECT`'s
-/// OUTPUT carries `required` -- the DOWNWARD half of the projection rule
-/// [`derived_properties`] already ports upward.
+fn planner_required_offsets(
+    node: &JoinNode,
+    side: &SideProperties,
+    columns: &[RelColumn],
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<(Vec<usize>, Vec<RelColumn>)> {
+    let pairs = columns
+        .iter()
+        .map(|column| planner_column_offset(node, side, column, catalog, current_db))
+        .collect::<Option<Vec<_>>>()?;
+    Some(pairs.into_iter().unzip())
+}
+
+/// Translates a selected physical join's child property into the positional
+/// property understood by executor construction. This is identity lowering,
+/// not another property derivation: the columns and direction come directly
+/// from the shared physical node.
+pub(crate) fn child_required_prop_from_planner(
+    node: &JoinNode,
+    side: &SideProperties,
+    requirement: &crate::driver::planner_bridge::JoinChildRequirement,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<tidb_planner::physical_property::PhysicalProperty> {
+    if requirement.enforced_sort {
+        return Some(tidb_planner::physical_property::PhysicalProperty::default());
+    }
+    let (offsets, _) =
+        planner_required_offsets(node, side, &requirement.columns, catalog, current_db)?;
+    Some(child_required_prop(offsets.into_iter(), requirement.desc))
+}
+
+fn planner_column_offset(
+    node: &JoinNode,
+    side: &SideProperties,
+    planner_column: &RelColumn,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<(usize, RelColumn)> {
+    let direct_path = [
+        planner_column.relation.clone(),
+        planner_column.column.clone(),
+    ];
+    if let Some(offset) = side.offset_of(&direct_path) {
+        return Some((offset, planner_column.clone()));
+    }
+
+    let mut resolved = None;
+    for relation in &side.relations {
+        for (column_offset, column) in relation.columns.iter().enumerate() {
+            let visible = RelColumn {
+                relation: relation.visible.clone(),
+                column: column.clone(),
+            };
+            let Some(origin) = physical_column_origin(node, &visible, catalog, current_db, true)
+            else {
+                continue;
+            };
+            if !origin.table.eq_ignore_ascii_case(&planner_column.relation)
+                || !origin.column.eq_ignore_ascii_case(&planner_column.column)
+            {
+                continue;
+            }
+            if resolved.is_some() {
+                return None;
+            }
+            resolved = Some((relation.offset + column_offset, visible));
+        }
+    }
+    resolved
+}
+
+/// The property a `SELECT`'s own `FROM` must satisfy so that the selected
+/// planner projection carries `required`.
 ///
 /// Go's `PhysicalProjection.exhaustPhysicalPlans` is the source:
 ///
@@ -1777,8 +1066,8 @@ pub(crate) fn enforced_merge_join_decision(
 /// the leaf is the whole of delivering it.
 ///
 /// The `SELECT` clauses that REPLACE the row order rather than carry it are
-/// refused by the same list [`order_preserving_source`] holds, for the same
-/// reason: `DISTINCT`, `GROUP BY`, `ORDER BY`, `LIMIT` and a window each have
+/// refused for the same reason: `DISTINCT`, `GROUP BY`, `ORDER BY`, `LIMIT`
+/// and a window each have
 /// their own `exhaustPhysicalPlans`, and none of them hands its child the
 /// parent's property.
 pub(crate) fn from_required_prop(
@@ -1787,7 +1076,6 @@ pub(crate) fn from_required_prop(
     required: &tidb_planner::physical_property::PhysicalProperty,
     catalog: &Catalog,
     current_db: &str,
-    offered: Offered<'_>,
 ) -> tidb_planner::physical_property::PhysicalProperty {
     let empty = tidb_planner::physical_property::PhysicalProperty::default();
     if required.is_sort_item_empty() {
@@ -1809,11 +1097,11 @@ pub(crate) fn from_required_prop(
     let fields = select.fields.fields();
     if fields
         .iter()
-        .any(|field| projected_expr(field).is_some_and(Expr::has_aggregate_flag))
+        .any(|field| matches!(field, SelectField::Expr { expr, .. } if expr.has_aggregate_flag()))
     {
         return empty;
     }
-    let Some(source) = join_properties(from, catalog, current_db, offered, Phase::Promise) else {
+    let Some(source) = join_layout(from, catalog, current_db) else {
         return empty;
     };
     let mut offsets = Vec::with_capacity(required.sort_items.len());
@@ -1859,7 +1147,7 @@ pub(crate) fn child_required_prop(
 mod tests {
     use super::*;
 
-    fn side(relations: &[(&str, &[&str])], orders: &[&[usize]]) -> SideProperties {
+    fn side(relations: &[(&str, &[&str])]) -> SideProperties {
         let mut offset = 0;
         let relations = relations
             .iter()
@@ -1876,7 +1164,6 @@ mod tests {
         SideProperties {
             relations,
             width: offset,
-            orders: orders.iter().map(|o| o.to_vec()).collect(),
         }
     }
 
@@ -1897,7 +1184,7 @@ mod tests {
     /// join on a column nobody named.
     #[test]
     fn a_bare_name_resolves_only_when_one_relation_holds_it() {
-        let props = side(&[("t1", &["a", "b"]), ("t2", &["a", "c"])], &[]);
+        let props = side(&[("t1", &["a", "b"]), ("t2", &["a", "c"])]);
         assert_eq!(props.offset_of(&path(&["t1", "a"])), Some(0));
         assert_eq!(props.offset_of(&path(&["t2", "a"])), Some(2));
         assert_eq!(props.offset_of(&path(&["db", "t2", "c"])), Some(3));
@@ -1910,8 +1197,8 @@ mod tests {
     /// refuses a name that would then answer for two relations at once.
     #[test]
     fn concat_shifts_the_right_side_and_refuses_a_repeated_name() {
-        let left = side(&[("t1", &["a"])], &[&[0]]);
-        let right = side(&[("t2", &["a", "b"])], &[&[0]]);
+        let left = side(&[("t1", &["a"])]);
+        let right = side(&[("t2", &["a", "b"])]);
         let joined = SideProperties::concat(&left, &right).expect("distinct names");
         assert_eq!(joined.width, 3);
         assert_eq!(joined.offset_of(&path(&["t2", "b"])), Some(2));
@@ -1989,7 +1276,7 @@ mod tests {
     /// rather than silently wrong.
     #[test]
     fn column_at_covers_the_row_and_stops_at_its_end() {
-        let props = side(&[("t1", &["a"]), ("t2", &["b"])], &[]);
+        let props = side(&[("t1", &["a"]), ("t2", &["b"])]);
         assert_eq!(props.column_at(0).map(|c| c.column), Some("a".to_owned()));
         assert_eq!(
             props.column_at(1).map(|c| c.relation),
@@ -1999,67 +1286,14 @@ mod tests {
     }
 
     /// A leading index column fixed by `column = constant` no longer blocks
-    /// a merge on the following key, but the child is still required to build
-    /// the complete `(fixed, key)` order so its access path remains truthful.
+    /// matching the following key in Go's possible-property preparation.
     #[test]
-    fn a_fixed_index_prefix_is_trimmed_for_matching_and_restored_for_building() {
+    fn a_fixed_index_prefix_is_trimmed_for_matching() {
         let fixed = BTreeSet::from([0]);
         let orders = vec![vec![0, 1, 2], vec![3]];
         assert_eq!(
             trim_fixed_prefixes(&orders, &fixed),
             vec![vec![1, 2], vec![3]]
         );
-        assert_eq!(required_order(&orders, &fixed, &[1]), Some(vec![0, 1]));
-        assert_eq!(required_order(&orders, &fixed, &[2]), None);
-    }
-
-    #[test]
-    fn a_merge_property_skips_a_required_constant_prefix() {
-        let plan = MergeJoinPlan {
-            keys: vec![MergeJoinKey { left: 1, right: 0 }],
-            desc: false,
-        };
-        let required = child_required_prop([2, 1].into_iter(), false);
-        assert!(merge_satisfies_required_property(
-            JoinType::Cross,
-            &plan,
-            3,
-            &required,
-            &BTreeSet::from([2]),
-            &BTreeSet::new(),
-        ));
-
-        let required = child_required_prop([1, 2].into_iter(), false);
-        assert!(!merge_satisfies_required_property(
-            JoinType::Cross,
-            &plan,
-            3,
-            &required,
-            &BTreeSet::new(),
-            &BTreeSet::new(),
-        ));
-    }
-
-    /// Go keeps a grouped aggregate's order through the Selection that
-    /// implements HAVING. The order is available only when the child really
-    /// provides the complete GROUP BY prefix.
-    #[test]
-    fn grouped_derived_having_preserves_a_child_group_order() {
-        let mut catalog = Catalog::default();
-        crate::run_create_table_on("CREATE TABLE t (a INT PRIMARY KEY, b INT)", &mut catalog)
-            .unwrap();
-        let stmt =
-            tidb_parser::parse("SELECT a, SUM(b) AS total FROM t GROUP BY a HAVING SUM(b) > 0")
-                .unwrap();
-        let tidb_ast::Stmt::Query(query) = stmt else {
-            panic!("not a query");
-        };
-        let tidb_ast::QueryStmt::Select(select) = &*query else {
-            panic!("not a SELECT");
-        };
-        let properties =
-            grouped_derived_properties(&select, "g", &[], &catalog, "test", Phase::Promise)
-                .expect("the primary-key child provides the group order");
-        assert_eq!(properties.orders, vec![vec![0]]);
     }
 }

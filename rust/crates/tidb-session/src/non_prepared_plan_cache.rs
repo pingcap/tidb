@@ -566,6 +566,7 @@ impl Walk<'_> {
             offset: 0,
             order: self.params.len() - 1,
             in_execute: false,
+            value: None,
             projection_offset: 0,
         };
         Ok(())

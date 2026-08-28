@@ -77,12 +77,14 @@ mod kv_contract;
 pub mod lock;
 mod mem_storage;
 mod mpp;
+mod mpp_probe;
 mod mvcc_metadata;
 mod new_txn;
 mod option;
 pub mod pd_capability;
 mod pd_loader;
 mod prefix_ops;
+mod range_diagnostics;
 mod read_runtime;
 pub mod region;
 mod resource_group;
@@ -181,6 +183,11 @@ pub use mpp::{
     MppClient, MppCoordinator, MppDispatchRequest, MppQueryId, MppTask, MppTaskLocation,
     MppTaskMeta, MppTaskState, MppVersion,
 };
+pub use mpp_probe::{
+    global_mpp_failed_store_prober, global_mpp_server_info_manager, MppAliveClient,
+    MppFailedStoreProber, MppServerInfo, MppServerInfoManager, DETECT_PERIOD, DETECT_TIMEOUT_LIMIT,
+    MAX_OBSOLETE_TIME_LIMIT, MAX_RECOVERY_TIME_LIMIT, MPP_SERVER_INFO_CACHE_SIZE,
+};
 pub use mvcc_metadata::{
     decode_extra_txn_status_key, decode_key_ts, encode_extra_txn_status_key, encode_write_cf_value,
     parse_write_cf_value, DbUserMeta, LockType, MvccLockMetadata, MvccMetadataError, WriteCfValue,
@@ -204,6 +211,10 @@ pub use option::{
 };
 pub use pd_loader::PdRegionLoader;
 pub use prefix_ops::{del_key_with_prefix, scan_meta_with_prefix};
+pub use range_diagnostics::{
+    ensure_monotonic_key_ranges, first_out_of_bound_key_range, min_start_and_max_end_key,
+    range_issues_for_key_ranges, OutOfBoundReason, RangeIssueStats,
+};
 pub use read_runtime::{SharedReadAuthority, SharedReadOpener, SharedReadRuntime};
 pub use resource_group::{
     decode_resource_group_tag, get_first_key_from_request, get_resource_group_label_by_key,

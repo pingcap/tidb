@@ -298,7 +298,6 @@ use tidb_expr::schema::Schema;
 
 pub mod access;
 mod agg_build;
-mod agg_predicate_pushdown;
 mod agg_select;
 mod catalog;
 mod clause_resolve;
@@ -318,9 +317,7 @@ mod having;
 pub(crate) mod index_join_decision;
 pub mod infoschema_meta;
 pub(crate) mod join_key_cast;
-pub(crate) mod join_method_hints;
 pub(crate) mod join_reorder;
-pub(crate) mod join_search;
 pub(crate) mod leaf_access;
 pub(crate) mod leaf_demand;
 pub mod legacy_stats;
@@ -330,6 +327,7 @@ mod only_full_group_by;
 mod outer_join_elimination;
 pub(crate) mod outer_join_simplify;
 mod params;
+pub(crate) mod planner_bridge;
 pub(crate) mod point_get_key;
 mod predicate_push_down;
 mod recursive_cte;
@@ -1410,11 +1408,49 @@ pub(crate) fn run_select_traced(
     )
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AggregationChoice {
-    Auto,
-    Hash,
-    Stream,
+/// Executes a prepared SELECT using the physical decision rebuilt from its
+/// cached planner tree.  The ordinary lowering pipeline is reused, but its
+/// planner seam consumes `decision` instead of invoking `findBestTask` again.
+pub(crate) fn run_select_with_cached_decision(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    decision: &planner_bridge::AggregationDecision,
+) -> Result<SelectMeta, DriverError> {
+    stacker::maybe_grow(2 * 1024 * 1024, 16 * 1024 * 1024, || {
+        run_select_traced_with_delivery_choice_inner(
+            select,
+            catalog,
+            current_db,
+            ctx,
+            None,
+            &tidb_planner::physical_property::PhysicalProperty::default(),
+            None,
+            None,
+            false,
+            Some(decision),
+        )
+    })
+}
+
+#[cfg(test)]
+pub(crate) mod select_plan_visit_count {
+    std::thread_local! {
+        static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    pub(crate) fn reset() {
+        VISITS.with(|visits| visits.set(0));
+    }
+
+    pub(crate) fn increment() {
+        VISITS.with(|visits| visits.set(visits.get() + 1));
+    }
+
+    pub(crate) fn get() -> usize {
+        VISITS.with(std::cell::Cell::get)
+    }
 }
 
 /// [`run_select_traced`] plus the order the built SELECT output actually
@@ -1442,7 +1478,6 @@ pub(super) fn run_select_traced_with_delivery(
         output_delivered,
         deferred_exec,
         parent_duplicate_agnostic,
-        AggregationChoice::Auto,
     );
     if let (Some(trace), Some(depth)) = (trace, query_source_frame_depth) {
         trace.truncate_query_source_frames(depth);
@@ -1461,7 +1496,6 @@ fn run_select_traced_with_delivery_choice(
     output_delivered: Option<&mut from::Delivered>,
     deferred_exec: Option<&mut Option<Box<dyn Executor>>>,
     parent_duplicate_agnostic: bool,
-    aggregation_choice: AggregationChoice,
 ) -> Result<SelectMeta, DriverError> {
     // Every nested SELECT -- a derived table, a subquery, a view -- plans by
     // recursing through here, and a debug build's planner frames run to
@@ -1482,7 +1516,7 @@ fn run_select_traced_with_delivery_choice(
             output_delivered,
             deferred_exec,
             parent_duplicate_agnostic,
-            aggregation_choice,
+            None,
         )
     })
 }
@@ -1526,8 +1560,10 @@ fn run_select_traced_with_delivery_choice_inner(
     mut output_delivered: Option<&mut from::Delivered>,
     mut deferred_exec: Option<&mut Option<Box<dyn Executor>>>,
     parent_duplicate_agnostic: bool,
-    aggregation_choice: AggregationChoice,
+    cached_planner_decision: Option<&planner_bridge::AggregationDecision>,
 ) -> Result<SelectMeta, DriverError> {
+    #[cfg(test)]
+    select_plan_visit_count::increment();
     // Go `pkg/planner/core/logical_plan_builder.go::computeCTEInlineFlag`
     // inlines a non-recursive CTE only when preprocess counted exactly one
     // consumer, and `buildDataSourceFromCTEMerge` plans its body as the
@@ -1556,194 +1592,10 @@ fn run_select_traced_with_delivery_choice_inner(
         }
         None => select,
     };
-    // Go enumerates HashAgg before StreamAgg for an empty required property,
-    // rebuilds the child under each candidate's property, and keeps the first
-    // candidate on an exact tie. Build both pipelines without executing or
-    // tracing them, then DELIVER the cheaper one -- Go costs the candidates it
-    // already built and keeps the winner (`ExhaustPhysicalPlans4Logical\
-    // Aggregation` -> `findBestTask`), it does not plan a third time.
-    // `DISTINCT` is enumerated with them: Go's `buildDistinct`
-    // (`pkg/planner/core/logical_plan_builder.go:1966`) builds a
-    // LogicalAggregation whose `GroupByItems` are the projection's columns,
-    // and `ExhaustPhysicalPlans4LogicalAggregation`
-    // (`pkg/planner/core/operator/physicalop/base_physical_agg.go:935`) costs
-    // `getStreamAggs` beside `getHashAggs` for it exactly as for a written
-    // `GROUP BY` -- `aggs := append(hashAggs, streamAggs...)` (`:946`) hands
-    // BOTH families to the coster and keeps neither by preference.
-    if aggregation_choice == AggregationChoice::Auto
-        && (!select.group_by.is_empty() || select.distinct)
-        && required.is_sort_item_empty()
-    {
-        // Prepared plan-cache REPLAY, the aggregation half. Go's cached plan
-        // already HAS its aggregation operator: a hit executes whichever of
-        // `getStreamAggs`/`getHashAggs` won when the plan was first
-        // optimized, and never re-costs the pair (`GetPlanFromPlanCache` ->
-        // `adjustCachedPlan`, which rebuilds RANGES and nothing else). This
-        // tier compares the families by planning the whole select once per
-        // family, so replaying the winner is what turns three passes into
-        // one. Correctness never depends on it: both families compute the
-        // same groups from the same input, so forcing one changes what the
-        // statement COSTS, never what it answers.
-        if let Some(pinned) = ctx.prepared_aggregation_pin() {
-            return run_select_traced_with_delivery_choice(
-                select,
-                catalog,
-                current_db,
-                ctx,
-                trace,
-                required,
-                output_delivered,
-                deferred_exec,
-                parent_duplicate_agnostic,
-                match pinned {
-                    crate::stmt_context::PinnedAggregation::Stream => AggregationChoice::Stream,
-                    crate::stmt_context::PinnedAggregation::Hash => AggregationChoice::Hash,
-                },
-            );
-        }
-        // Go's logical statistics collection runs once before physical
-        // aggregation alternatives are compared. Each speculative branch
-        // must therefore start from the same shared residency snapshot;
-        // otherwise a derived source can make a later branch use a different
-        // NDV and change its join order/cardinality.
-        let stats_checkpoint = catalog.statistics_load_checkpoint();
-        let plan_only = trace.as_deref().is_some_and(PlanTrace::is_plan_only);
-        // Each speculative pass plans in the CALLER's mode -- derived only if
-        // the caller is a derived relation -- so the pipeline the winner built
-        // is the one the statement runs.
-        let speculative_receipt = || {
-            if output_delivered
-                .as_deref()
-                .is_some_and(|delivered| !delivered.cost_only)
-            {
-                from::Delivered::new()
-            } else {
-                from::Delivered::for_cost()
-            }
-        };
-        let mut stream_delivered = speculative_receipt();
-        let mut stream_exec = None;
-        let mut stream_trace = plan_only.then(PlanTrace::planning);
-        let stream = run_select_traced_with_delivery_choice(
-            select,
-            catalog,
-            current_db,
-            ctx,
-            stream_trace.as_mut(),
-            required,
-            Some(&mut stream_delivered),
-            Some(&mut stream_exec),
-            parent_duplicate_agnostic,
-            AggregationChoice::Stream,
-        );
-        catalog.restore_statistics_load_checkpoint(&stats_checkpoint);
-        let mut hash_delivered = speculative_receipt();
-        let mut hash_exec = None;
-        let mut hash_trace = plan_only.then(PlanTrace::planning);
-        let hash = run_select_traced_with_delivery_choice(
-            select,
-            catalog,
-            current_db,
-            ctx,
-            hash_trace.as_mut(),
-            required,
-            Some(&mut hash_delivered),
-            Some(&mut hash_exec),
-            parent_duplicate_agnostic,
-            AggregationChoice::Hash,
-        );
-        catalog.restore_statistics_load_checkpoint(&stats_checkpoint);
-        let costed = |result: &Result<SelectMeta, DriverError>,
-                      delivered: &from::Delivered,
-                      stream: bool| {
-            result.as_ref().ok()?;
-            let candidate = delivered.candidate.as_ref()?;
-            if stream
-                != matches!(
-                    candidate,
-                    tidb_planner::candidate_cost::Candidate::StreamAgg { .. }
-                )
-            {
-                return None;
-            }
-            Some(tidb_planner::candidate_cost::evaluate(
-                candidate,
-                ctx.optimizer_cost_env(),
-                tidb_planner::task_type::TaskType::Root,
-            ))
-        };
-        let stream_cost = costed(&stream, &stream_delivered, true);
-        let hash_cost = costed(&hash, &hash_delivered, false);
-        let chosen = match (&stream_cost, &hash_cost) {
-            (Some(stream), Some(hash)) => {
-                if tidb_planner::candidate_cost::prefer(stream, hash) {
-                    Some(AggregationChoice::Stream)
-                } else {
-                    Some(AggregationChoice::Hash)
-                }
-            }
-            (Some(_), None) => Some(AggregationChoice::Stream),
-            (None, Some(_)) => Some(AggregationChoice::Hash),
-            (None, None) => None,
-        };
-        // Delivering the winner is only sound when there is no trace to
-        // build. A traced pass APPENDS its frames to the caller's trace, and
-        // the caller may already hold the outer plan's frames -- a derived
-        // table's, a correlated subquery's -- which a speculative pass writing
-        // into its own trace cannot reproduce. EXPLAIN and EXPLAIN ANALYZE
-        // therefore keep the third pass, and neither is on a hot path.
-        // Record the winner for this statement's next EXECUTE -- the capture
-        // half of the same contract as the leaf access-path pins.
-        if let Some(chosen) = chosen {
-            ctx.capture_aggregation_pin(if chosen == AggregationChoice::Stream {
-                crate::stmt_context::PinnedAggregation::Stream
-            } else {
-                crate::stmt_context::PinnedAggregation::Hash
-            });
-        }
-        if let Some(chosen) = chosen.filter(|_| trace.is_none()) {
-            let (winner, mut winner_exec, winner_delivered, _winner_trace) =
-                if chosen == AggregationChoice::Stream {
-                    (stream, stream_exec, stream_delivered, stream_trace)
-                } else {
-                    (hash, hash_exec, hash_delivered, hash_trace)
-                };
-            let (columns, _) = winner?;
-            // Both speculative passes ran from the SAME statistics snapshot --
-            // the checkpoint is restored after each -- so the pipeline the
-            // winner built is the one a third pass fixed to `chosen` would
-            // build. Restoring only rewinds which columns are resident, which
-            // is a planning input; a built pipeline holds derived values.
-            if let Some(delivered) = output_delivered {
-                *delivered = winner_delivered;
-                delivered.cost_only = false;
-            }
-            let Some(root) = winner_exec.take() else {
-                // A shape that delivers no pipeline (an empty aggregate folded
-                // to a constant, say) has nothing to run; its columns stand.
-                return Ok((columns, Vec::new()));
-            };
-            if let Some(deferred) = deferred_exec {
-                *deferred = Some(root);
-                return Ok((columns, Vec::new()));
-            }
-            return drain_root_executor(root, columns, ctx);
-        }
-        if let Some(chosen) = chosen {
-            return run_select_traced_with_delivery_choice(
-                select,
-                catalog,
-                current_db,
-                ctx,
-                trace,
-                required,
-                output_delivered,
-                deferred_exec,
-                parent_duplicate_agnostic,
-                chosen,
-            );
-        }
-    }
+    // The shared planner enumerates HashAgg/StreamAgg over one logical child.
+    // `build_aggregation` only instantiates that selected receipt and lowers
+    // its partial/final state layout; it must not plan this SELECT again per
+    // family.
     // Go invokes `TryFastPlan` before `PlanBuilder`: a complete point read does
     // not materialize CTEs, run logical rewrites, derive statistics, or build a
     // full-scan source first. Only the statement-level call is eligible; a
@@ -1759,13 +1611,7 @@ fn run_select_traced_with_delivery_choice_inner(
     // projection elimination can then map the outer relation directly onto
     // an aggregation's schema, while a top-level SELECT retains the visible
     // Projection that restores function-first partial aggregate outputs.
-    // A receipt raised for COSTING does not make this a derived relation:
-    // only a derived-table caller wants the output-order half, and switching
-    // modes under a cost comparison would compare a plan the statement will
-    // not run.
-    let derived_output = output_delivered
-        .as_deref()
-        .is_some_and(|delivered| !delivered.cost_only);
+    let derived_output = output_delivered.is_some();
     if let Some(delivered) = output_delivered.as_deref_mut() {
         delivered.clear();
     }
@@ -2009,7 +1855,7 @@ fn run_select_traced_with_delivery_choice_inner(
         || correlated_agg_decorrelate::is_pulled_scalar_sum_wrapper(select)
         || (decorrelate_exists::has_top_level_exists(select.where_clause.as_ref())
             && access::single_kv_table(&select.from, catalog, current_db).is_none());
-    let distinct_eliminated = agg_select::distinct_can_be_eliminated(select, catalog, current_db);
+    let mut distinct_eliminated = false;
 
     // Go's `buildSelect` pushes this block's `/*+ ... */` hints and its
     // deferred `popTableHints` reports the ones no `DataSource` of the block
@@ -2023,16 +1869,15 @@ fn run_select_traced_with_delivery_choice_inner(
     // and join equalities consumed the whole predicate.
     let mut join_residual_where: Option<Option<tidb_ast::Expr>> = None;
     let mut aggregation_order = None;
+    let mut aggregation_family = None;
+    let mut aggregation_cop_family = None;
+    let mut aggregation_eliminated = false;
+    let mut planner_order_satisfied = false;
     let mut grouped_logical_rows = None;
     let mut distinct_logical_rows = None;
     let mut joined_logical_rows = None;
     let mut restored_join_output = None;
     let mut aggregate_join_projection = None;
-    // The ORDER this select's `FROM` source was asked for, in the sole
-    // table's own column offsets -- carried out of the arm below so
-    // `commit_fast_path_source` can refuse to replace the ordered scan with
-    // an unordered path (see its `required_order` doc).
-    let mut source_required_order: Option<Vec<usize>> = None;
     let (mut from_source, mut scope, mut from_delivered): (
         Option<Box<dyn Executor>>,
         FromScope,
@@ -2060,6 +1905,24 @@ fn run_select_traced_with_delivery_choice_inner(
                 current_db,
             );
             let logical_join = simplified.as_ref().unwrap_or(join);
+            // Go's logical join reorder runs before physical enumeration.
+            // The shared planner receipt and executor lowering must therefore
+            // see the same rebuilt FROM tree; generating a receipt from the
+            // written tree and applying it to reordered child ordinals makes
+            // every recursive join choice structurally ambiguous.
+            let reordered = join_reorder::reorder(
+                logical_join,
+                select,
+                select.where_clause.as_ref(),
+                catalog,
+                current_db,
+                ctx,
+            );
+            let planned = reordered.as_ref().map_or(logical_join, |plan| &plan.join);
+            let mut planner_select = select.clone();
+            if let Some(reordered) = &reordered {
+                planner_select.from = Some(reordered.join.clone());
+            }
             // Go's `rule_predicate_push_down`: the `WHERE` equalities are
             // offered to the joins below, so a comma join does not have to
             // build the cross product the filter would then throw away. See
@@ -2077,60 +1940,66 @@ fn run_select_traced_with_delivery_choice_inner(
             // source no longer owes a group-key order; asking for it here
             // would make the eventual scan claim `keep order:true` for work
             // the executable plan does not require.
-            aggregation_order = (aggregation_choice != AggregationChoice::Hash
-                && !physical_source_names
-                && !decorrelate_exists::has_top_level_exists(select.where_clause.as_ref())
-                && !distinct_eliminated
-                && !agg_select::aggregation_can_be_eliminated(select, catalog, current_db))
-            .then(|| {
-                merge_decision::aggregation_order(
-                    select,
-                    logical_join,
-                    catalog,
-                    current_db,
-                    &offered,
-                )
-            })
-            .flatten();
-            // Go's `rule_column_pruning`: what every `DataSource` below still
-            // has to produce, which is the input its access-path costing
-            // needs (`isCoveringIndex`). A `FROM` of ONE base table is
-            // deliberately excluded -- `commit_fast_path_source` below costs
-            // that table's paths WITH its `WHERE`, and a second, condition-
-            // blind choice here could only be the worse of the two. A
-            // grouping order is the exception: it is a non-empty physical
-            // property that has to reach the leaf before the aggregate is
-            // built, so the leaf must cost its WHERE-constrained ordered path
-            // here instead of waiting for the later empty-property fast path.
-            let plan_at_leaf = access::single_kv_table(&select.from, catalog, current_db).is_none()
-                || aggregation_order.is_some();
-            // The statement-wide name walk, always taken: `wanted` below is
-            // withheld from a single-KV-table `SELECT` because that leaf is
-            // costed later, and a question about which names the statement
-            // WRITES cannot be deferred with it.
-            let all_names = leaf_demand::LeafDemand::of_select(select);
-            let wanted = plan_at_leaf.then(|| all_names.clone());
+            let planned_aggregation_decision;
+            let aggregation_decision = if let Some(cached) = cached_planner_decision {
+                Some(cached)
+            } else {
+                let planner_is_authoritative = !select.rollup
+                    && !physical_source_names
+                    && !decorrelate_exists::has_top_level_exists(select.where_clause.as_ref());
+                planned_aggregation_decision = if planner_is_authoritative {
+                    Some(
+                        planner_bridge::select_decision(&planner_select, catalog, current_db, ctx)
+                            .ok_or_else(|| {
+                                DriverError::unsupported(
+                                "the shared logical/physical planner did not produce a SELECT plan",
+                            )
+                            })?,
+                    )
+                } else {
+                    None
+                };
+                planned_aggregation_decision.as_ref()
+            };
+            aggregation_eliminated = aggregation_decision
+                .as_ref()
+                .is_some_and(|decision| decision.eliminated);
+            distinct_eliminated = select.distinct && aggregation_eliminated;
+            aggregation_order = aggregation_decision
+                .as_ref()
+                .and_then(|decision| decision.order.clone());
+            aggregation_family = aggregation_decision
+                .as_ref()
+                .and_then(|decision| decision.family);
+            aggregation_cop_family = aggregation_decision
+                .as_ref()
+                .and_then(|decision| decision.cop_family);
+            planner_order_satisfied = aggregation_decision
+                .as_ref()
+                .is_some_and(|decision| decision.order_satisfied);
+            let planner_join = aggregation_decision
+                .as_ref()
+                .and_then(|decision| decision.join.as_ref());
+            let planner_access = aggregation_decision
+                .as_ref()
+                .map(|decision| decision.access.as_slice());
+            // Go's `findBestTask` has selected the access path for every
+            // DataSource, including an ordinary one-table SELECT. Lower that
+            // exact receipt at the leaf; the statement-level TryFastPlan
+            // already ran before this normal-planner path, in Go's order.
+            let plan_at_leaf = planner_access.is_some_and(|access| !access.is_empty());
+            let wanted = leaf_demand::LeafDemand::of_select(select);
             let output_wanted = leaf_demand::LeafDemand::of_select_output(select);
             // The estimate owner: every relation of this `FROM` with the row
             // count `derive_stats` derives for it, read off the statement,
             // the catalog and the statistics. It is built here, beside the
             // reorder that costs the same models, because both need the join
             // group as WRITTEN -- and NOT off `PlanTrace`, which exists only
-            // under `EXPLAIN`. See `driver::join_search`.
-            // A plain single-KV-table SELECT is costed later by
-            // `commit_fast_path_source`, with its original WHERE intact. If
-            // RowSource consumes that predicate here while column demand is
-            // deliberately absent, the later point/range chooser sees no
-            // key condition and the statement degenerates to a full scan.
-            // A grouped stream plan is the exception above: its non-empty
-            // property has already committed leaf planning at this site.
-            // A plain single-table SELECT has one statistics owner below:
-            // `commit_fast_path_source` derives the DataSource rows while it
-            // costs the access paths. Running `row_source` here as well used
-            // to repeat the full selectivity/ranger pass, which is especially
-            // visible for large IN predicates. Joins still need the complete
-            // relation map before they are built, while GROUP BY / DISTINCT
-            // need its per-expression NDV estimates; retain those cases.
+            // under `EXPLAIN`.
+            // Rewritten shapes that do not yet enter the shared planner still
+            // need RowSource for predicate routing and EXPLAIN estimates.
+            // Ordinary plans already have an access receipt, so this walk
+            // cannot choose or re-cost a leaf path.
             let needs_row_source_estimate = plan_at_leaf
                 || !select.group_by.is_empty()
                 || select.distinct
@@ -2190,19 +2059,19 @@ fn run_select_traced_with_delivery_choice_inner(
             // physical access decision; otherwise the empty-property fast
             // path below must remain the sole owner of predicate consumption.
             let row_source = plan_at_leaf.then_some(row_source).flatten();
-            // Go's `SetPreferredJoinTypeAndOrder`: the statement's own join
-            // hints, which decide at some sites which physical families are
-            // enumerated AT ALL. See `driver::join_method_hints`.
-            let join_hints =
-                join_method_hints::JoinMethodHints::of_select_reporting(select, Some(ctx));
             let demand = leaf_demand::FromDemand {
                 offered: &offered,
                 pushdown: Some(&pushdown),
-                columns: wanted.as_ref(),
-                all_names: Some(&all_names),
+                columns: Some(&wanted),
                 output_columns: Some(&output_wanted),
                 rows: row_source.as_ref(),
-                join_hints: (!join_hints.is_empty()).then_some(&join_hints),
+                planner_join,
+                // A sole table whose access path is still committed below
+                // must not receive the same receipt here: that would ask the
+                // leaf builder to lower it without the statement context the
+                // single-table bridge owns. Every path planned at this site
+                // consumes the receipt exactly once.
+                planner_access: if plan_at_leaf { planner_access } else { None },
                 physical_source_names,
                 plan_columns: &plan_columns,
                 runtime_lookup: None,
@@ -2213,19 +2082,6 @@ fn run_select_traced_with_delivery_choice_inner(
                 partition_fan_out: access::sole_kv_table(&select.from, catalog, current_db)
                     .is_none(),
             };
-            // Go's `join_reorder` rule, which runs on the logical plan
-            // between predicate pushdown and physical planning. It only ever
-            // fires for a session that raised
-            // `tidb_opt_join_reorder_threshold`; see
-            // `driver::join_reorder`'s module doc for why that bounds it.
-            let reordered = join_reorder::reorder(
-                logical_join,
-                select,
-                select.where_clause.as_ref(),
-                catalog,
-                current_db,
-                ctx,
-            );
             if let (Some(reordered), Some(rows)) = (&reordered, row_source.as_ref()) {
                 grouped_logical_rows = rows
                     .grouped_rows_for_join(&reordered.join, &select.group_by)
@@ -2248,13 +2104,11 @@ fn run_select_traced_with_delivery_choice_inner(
                     .root_rows_for_join(&reordered.join)
                     .or(joined_logical_rows);
             }
-            let planned = reordered.as_ref().map_or(logical_join, |plan| &plan.join);
-            let parent_required = merge_decision::from_required_prop(
-                select, planned, required, catalog, current_db, &offered,
-            );
+            let parent_required =
+                merge_decision::from_required_prop(select, planned, required, catalog, current_db);
             let aggregation_required = aggregation_order
                 .as_ref()
-                .and_then(|order| order.required_for(planned, catalog, current_db, &offered));
+                .and_then(|order| order.required_for(planned, catalog, current_db));
             let semi_join_required = tidb_planner::physical_property::PhysicalProperty::default();
             let source_required =
                 if decorrelate_exists::has_top_level_exists(select.where_clause.as_ref()) {
@@ -2262,15 +2116,6 @@ fn run_select_traced_with_delivery_choice_inner(
                 } else {
                     aggregation_required.as_ref().unwrap_or(&parent_required)
                 };
-            if !source_required.is_sort_item_empty() {
-                source_required_order = Some(
-                    source_required
-                        .sort_items
-                        .iter()
-                        .map(|item| item.col as usize)
-                        .collect(),
-                );
-            }
             let (exec, mut scope, delivered) = build_join(
                 planned,
                 catalog,
@@ -2284,9 +2129,6 @@ fn run_select_traced_with_delivery_choice_inner(
                 // rather than the written join, because a reorder renumbers
                 // the leaves and the offsets are the reordered ones.
                 source_required,
-                // Each join level derives its own preserved-side scan cap
-                // (`from::preserved_side_scan_cap`); none arrives from here.
-                None,
             )?;
             // Read the residue only after both leaves committed their
             // physical paths and reported which local filters those paths
@@ -2401,115 +2243,21 @@ fn run_select_traced_with_delivery_choice_inner(
         None => (select, traced_select),
     };
 
-    // The access-path decision and the work handed down to it live in
-    // `driver::access`; `index_order` is set when the committed source emits
-    // rows in an index's order, which is what lets a `LIMIT` under a matching
-    // `ORDER BY` stop the scan early.
-    // A grouped StreamAgg's non-empty property was already costed and
-    // committed by the leaf builder. Re-entering the empty-property chooser
-    // here loses both its range predicate (already marked consumed) and its
-    // required order, replacing the real `[w_id,w_id]` path with an
-    // `IndexFullScan`. Go keeps the task returned for the requested property.
-    // Go `LogicalAggregation.PredicatePushDown`
-    // (`pkg/planner/core/operator/logicalop/logical_aggregation.go:106`,
-    // `splitCondForAggregation` `:631`): a HAVING conjunct whose columns are
-    // all grouping columns descends below the aggregation, so the
-    // `DataSource` builds its ranges and prunes its partitions from the
-    // WHERE *and* that HAVING. The access view is the only thing that
-    // changes here -- the HAVING `Selection` above the aggregation still
-    // evaluates ([`having`]), which filters exactly the groups the pushed
-    // predicate already removed whole.
-    let grouped_access_select = agg_predicate_pushdown::for_access(select);
-    let access_select = grouped_access_select.as_ref().unwrap_or(select);
-    let access_path = if aggregation_order.is_some() {
-        AccessPathCommit::default()
-    } else {
-        commit_fast_path_source(
-            access_select,
-            catalog,
-            current_db,
-            &scope,
-            &mut from_source,
-            trace.as_deref_mut(),
-            ctx,
-            source_required_order.as_deref(),
-        )?
-    };
-    let AccessPathCommit {
-        mut index_order,
-        candidate: access_candidate,
-        direct_output,
-        direct_output_offsets,
-        cop_projection_offsets,
-        filtered_cop_projection_offsets,
-        consumed_where,
-        handle_range_residual,
-        access_residual,
-        logical_rows,
-        reader_ready,
-        order_satisfied,
-    } = access_path;
-    // For the plain single-table case `row_source` deliberately deferred this
-    // number to the access-path owner above. Both values are Go's logical
-    // DataSource row count; sharing it here keeps downstream Selection/TopN
-    // estimates unchanged without a second ranger pass.
-    if joined_logical_rows.is_none() {
-        joined_logical_rows = logical_rows;
-    }
-    let consumed_where = consumed_where || join_consumed_where;
+    let consumed_where = join_consumed_where;
+    let logical_rows = joined_logical_rows;
+    let reader_ready = from_delivered.planned;
     let grouped_stream_ordered = aggregation_order
         .as_ref()
         .is_some_and(|order| order.is_delivered_by(&from_delivered, &scope));
+    let grouped_stream_enforced_sort = aggregation_order
+        .as_ref()
+        .and_then(merge_decision::AggregationOrder::enforced_sort_direction);
     if grouped_stream_ordered {
         if let (Some(delivered), Some(order)) = (
             output_delivered.as_deref_mut(),
             grouped_select_output_order(traced_select),
         ) {
             delivered.push(order);
-        }
-    }
-    // Go's `TryFastPlan` makes a simple select list part of PointGetPlan or
-    // BatchPointGetPlan itself. The lookup source already emits exactly that
-    // schema, and the equality/IN predicate was fully consumed by the key,
-    // so returning it here is the real one-node executor tree Go explains --
-    // not a display-only suppression of Selection and Projection.
-    if let Some(columns) = direct_output {
-        let direct_ready = match direct_output_offsets {
-            Some(offsets) => {
-                let accepted = from_source
-                    .as_mut()
-                    .and_then(|source| source.table_access())
-                    .is_some_and(|access| access.accept_column_prune(&offsets));
-                if accepted {
-                    if let Some(trace) = trace.as_deref_mut() {
-                        trace.cop_table_projection(
-                            traced_select.fields.fields(),
-                            &Qualifier {
-                                db: current_db,
-                                scope: &scope,
-                                catalog: Some(catalog),
-                            },
-                            logical_rows,
-                        );
-                    }
-                }
-                accepted
-            }
-            None => true,
-        };
-        if direct_ready {
-            if trace.as_deref().is_some_and(PlanTrace::is_plan_only) {
-                return Ok((columns, Vec::new()));
-            }
-            let types: Vec<FieldType> = columns
-                .iter()
-                .map(|(_, field_type)| field_type.clone())
-                .collect();
-            let source = from_source
-                .take()
-                .expect("a direct access plan installed its source");
-            let rows = drain_executor_rows(source, &types, &ctx.statement_memory())?;
-            return Ok((columns, rows));
         }
     }
     // Go's `rule_partition_processor` runs after the access path is chosen
@@ -2548,67 +2296,12 @@ fn run_select_traced_with_delivery_choice_inner(
             }
         }
     }
-    // An exact ordered handle range still has root work to do, so it cannot
-    // take the early-return path above. When its ORDER BY reads only the
-    // simple projected columns, the scan can nevertheless emit that narrow
-    // schema from the cop task. Mutate the scope together with the real scan
-    // offer so every expression built below resolves against the executor's
-    // actual row layout.
-    let mut cop_projection_ready = false;
-    if let (Some(offsets), Some(source)) = (cop_projection_offsets, from_source.as_mut()) {
-        if source
-            .table_access()
-            .is_some_and(|access| access.accept_column_prune(&offsets))
-        {
-            scope = crate::column_prune::pruned_scope(&scope, &offsets);
-            if let Some(trace) = trace.as_deref_mut() {
-                trace.cop_table_projection(
-                    traced_select.fields.fields(),
-                    &Qualifier {
-                        db: current_db,
-                        scope: &scope,
-                        catalog: Some(catalog),
-                    },
-                    logical_rows,
-                );
-            }
-            cop_projection_ready = true;
-        }
-    }
     let mut full_row_projection = projects_entire_single_table_in_order(select, &scope);
 
     // Column pruning: over a single base-table scan the fast paths left
     // alone, narrow the scan -- and with it the scope -- to the columns the
     // statement actually reads.
-    let scope_before_prune = scope.clone();
-    let general_prune_offsets = crate::column_prune::prunable_columns(select, &scope);
     prune_scan_columns(select, &mut scope, &mut from_source);
-    if let Some(keep) = general_prune_offsets
-        .as_deref()
-        .filter(|keep| keep.len() < scope_before_prune.width() && scope.width() == keep.len())
-    {
-        if let Some(order) = index_order.as_mut() {
-            order.remap_columns(keep);
-        }
-    }
-    // A filtered cop projection is deliberately NOT offered as ordinary
-    // column pruning: its residual predicate still needs columns outside the
-    // final SELECT list. Translate the final projection into the wider,
-    // generally-pruned scan layout and offer it only after the scan accepts
-    // that predicate below.
-    let filtered_cop_projection_offsets = filtered_cop_projection_offsets.and_then(|offsets| {
-        let scan_offsets = match general_prune_offsets.as_ref() {
-            Some(general) if scope.width() == general.len() => general,
-            _ if scope.width() == scope_before_prune.width() => {
-                return Some(offsets);
-            }
-            _ => return None,
-        };
-        offsets
-            .into_iter()
-            .map(|offset| scan_offsets.iter().position(|kept| *kept == offset))
-            .collect()
-    });
 
     // GROUPING() reads which grouping set produced a row, so it means nothing
     // without WITH ROLLUP: Go rejects it with ErrInvalidGroupFuncUse (1111),
@@ -2656,18 +2349,19 @@ fn run_select_traced_with_delivery_choice_inner(
             current_db,
             ctx,
             consumed_where,
-            logical_rows,
             joined_logical_rows,
             grouped_logical_rows,
-            grouped_stream_ordered,
+            grouped_stream_enforced_sort,
+            aggregation_family,
+            aggregation_cop_family,
+            planner_order_satisfied,
+            aggregation_eliminated,
             grouped_stream_physical_order,
             derived_output,
             grouped_derived_output_pruned || physical_source_names,
             aggregation_inputs_pushed,
             from_delivered.semi_join,
             aggregate_join_projection,
-            from_delivered.candidate.clone().or(access_candidate),
-            output_delivered.as_deref_mut(),
             deferred_exec.as_deref_mut(),
             trace,
         );
@@ -2717,88 +2411,14 @@ fn run_select_traced_with_delivery_choice_inner(
         consumed_where,
         trace.as_deref_mut(),
     );
-    let cop_filtered_projection_ready = handle_range_residual.is_some()
-        && executed_where.is_none()
-        && select.limit.is_none()
-        && !select.order_by.is_empty()
-        && filtered_cop_projection_offsets
-            .as_ref()
-            .is_some_and(|offsets| {
-                source
-                    .table_access()
-                    .is_some_and(|access| access.accept_post_filter_projection(offsets))
-            });
-    if cop_filtered_projection_ready {
-        scope = crate::column_prune::pruned_scope(
-            &scope,
-            filtered_cop_projection_offsets
-                .as_deref()
-                .expect("a ready filtered projection has offsets"),
-        );
-    }
-    let resolver = ScopeResolver { scope: &scope };
     let mut current_scope = scope.clone();
-    // `keep order`: whether the source's own walk order is the answer's, which
-    // is what decides whether an index lookup reorders its handle batch.
-    let order_from_access = offer_keep_order(select, index_order.as_ref(), &resolver, &mut source);
-    // A DESCENDING order is discharged only by a source that actually
-    // REVERSES its walk -- Go reads the range backwards (`desc` on the
-    // scan). The index sources do (see `IndexRangeSourceExec`); the table
-    // scan walks the record keys forward only, so its handle-order claim
-    // stands for ASC alone. Without this demotion a `WHERE id > 1 ORDER BY
-    // id DESC LIMIT 2` dropped its sort, capped the FORWARD walk, and
-    // answered the two SMALLEST ids.
-    let descending_order = select.order_by.first().is_some_and(|item| item.desc);
-    let order_satisfied = order_satisfied && (!descending_order || order_from_access);
-    if order_satisfied && order_from_access {
-        if let Some(limit) = select.limit.as_ref() {
-            let count = eval_limit_bound(&limit.count)?;
-            let offset = match &limit.offset {
-                Some(offset) => eval_limit_bound(offset)?,
-                None => 0,
-            };
-            // Go seeds `IndexLookUpExecutor.calculateBatchSize` with the
-            // parent's `RequiredRows`, which is offset + count for this root
-            // Limit. Successive lookup tasks grow inside the source; inflating
-            // the first task here changes Go's request shape and delays the
-            // first table lookup for a selective residual.
-            let window = offset.saturating_add(count);
-            if window > 0 {
-                let _ = source
-                    .table_access()
-                    .is_some_and(|access| access.accept_lookup_batch_size(window));
-            }
-        }
-    }
-    let residual_on_index = access_residual.as_ref().is_none_or(|residual| {
-        index_order
-            .as_ref()
-            .is_some_and(|order| order.residual_uses_only_index(residual, &resolver))
-    });
-    // When the lookup residual is covered by the index, let the source ask
-    // TiKV to evaluate it while producing handles. The row-level probe stays
-    // installed for correctness if the backend refuses the request.
-    let index_filter_ready = access_residual.is_some()
-        && residual_on_index
-        && source
-            .table_access()
-            .is_some_and(|access| access.accept_index_filter());
-    // A non-covering lookup still materializes the table row before the
-    // residual is evaluated. Go keeps the SELECT * Projection above that
-    // lookup even when it is an identity projection; retaining it here also
-    // keeps the row shape distinct from the covering/index-only paths.
-    if access_residual.is_some() && !residual_on_index {
-        full_row_projection = false;
-    }
-    // Go keeps the written `SELECT *` Projection above a non-covering,
-    // ordered index lookup only when the lookup itself satisfies the written
-    // order and its LIMIT is fused into the lookup window (Web3Bench R21/R23).
-    // When an ordered index only supplies a pushed TopN below a root TopN, Go's
-    // ProjectionEliminator still removes the identity projection above the
-    // TopN. The scan already returns the same values, but the operator
-    // boundary is observable in EXPLAIN and is part of the plan contract;
-    // table scans and covering-index paths remain elided.
-    if index_order.is_some() && select.limit.is_some() && order_satisfied {
+    let order_satisfied = planner_order_satisfied;
+    if matches!(
+        from_delivered.access_reader,
+        Some(planner_bridge::AccessReader::IndexLookup)
+    ) && from_delivered.lookup_limit.is_some()
+        && order_satisfied
+    {
         full_row_projection = false;
     }
     if order_satisfied {
@@ -2806,36 +2426,32 @@ fn run_select_traced_with_delivery_choice_inner(
             trace.keep_order(select.order_by.first().is_some_and(|item| item.desc));
         }
     }
-    let embedded_lookup_limit = (order_satisfied && order_from_access && residual_on_index)
-        .then(|| {
-            offer_embedded_lookup_limit(
-                select,
-                if residual_on_index {
-                    executed_where.as_ref()
-                } else {
-                    access_residual.as_ref().or(executed_where.as_ref())
-                },
-                index_order.as_ref(),
-                &resolver,
-                &mut source,
-            )
-        })
-        .flatten();
-    // LIMIT push-down: an ordered double read consumes its offset from the
-    // handle stream. Other scans take the ordinary `offset + count` cap.
-    let scan_limit_pushed = embedded_lookup_limit.is_some()
-        || ((select.order_by.is_empty() || order_satisfied)
-            && offer_scan_limit(
-                select,
-                if residual_on_index {
-                    executed_where.as_ref()
-                } else {
-                    access_residual.as_ref().or(executed_where.as_ref())
-                },
-                index_order.as_ref(),
-                &resolver,
-                &mut source,
-            ));
+    if let Some(size) = from_delivered.lookup_batch_size {
+        let _ = source
+            .table_access()
+            .is_some_and(|access| access.accept_lookup_batch_size(size));
+    }
+    // These offers are the mechanical lowering of the selected reader tree.
+    // The planner, not this executor stage, decided whether the partial Limit
+    // or lookup window exists.
+    let embedded_lookup_limit = (executed_where.is_none())
+        .then_some(from_delivered.lookup_limit)
+        .flatten()
+        .filter(|(offset, count)| {
+            source
+                .table_access()
+                .is_some_and(|access| access.accept_embedded_lookup_limit(*offset, *count))
+        });
+    let reader_limit_pushed = (executed_where.is_none())
+        .then_some(from_delivered.reader_limit)
+        .flatten()
+        .and_then(|(offset, count)| offset.checked_add(count))
+        .is_some_and(|cap| {
+            source
+                .table_access()
+                .is_some_and(|access| access.accept_scan_limit(cap))
+        });
+    let scan_limit_pushed = embedded_lookup_limit.is_some() || reader_limit_pushed;
 
     // A `WHERE` whose conjuncts all moved into the scan still records its
     // `Selection`, over the predicate as written, and meters the filtered
@@ -2843,33 +2459,8 @@ fn run_select_traced_with_delivery_choice_inner(
     if !consumed_where && executed_where.is_none() && select.where_clause.is_some() {
         if let Some(trace) = trace.as_deref_mut() {
             if let Some(written) = &traced_select.where_clause {
-                let predicate = access_residual
-                    .as_ref()
-                    .or(handle_range_residual.as_ref())
-                    .unwrap_or(written);
-                if access_residual.is_some() || handle_range_residual.is_some() {
-                    let resolver = ScopeResolver {
-                        scope: &filter_scope,
-                    };
-                    let mut physical = rewrite_expr_resolved(predicate, &resolver)
-                        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-                    refine_comparisons(&mut physical, ctx)
-                        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-                    trace.residual_selection(
-                        predicate,
-                        Some(std::slice::from_ref(&physical)),
-                        &qualify,
-                        logical_rows,
-                        crate::driver::access::select_predicate_stats_selectivity_in_session(
-                            select,
-                            predicate,
-                            catalog,
-                            current_db,
-                            &filter_scope,
-                            ctx.default_string_match_selectivity(),
-                        ),
-                    );
-                } else if grouped_derived_output_pruned {
+                let predicate = written;
+                if grouped_derived_output_pruned {
                     let resolver = ScopeResolver {
                         scope: &filter_scope,
                     };
@@ -2893,23 +2484,6 @@ fn run_select_traced_with_delivery_choice_inner(
                         &qualify,
                         select_stats_selectivity(select, catalog, current_db, &filter_scope),
                     );
-                }
-                if cop_filtered_projection_ready
-                    && !trace
-                        .cop_selection_projection_reader(traced_select.fields.fields(), &qualify)
-                {
-                    trace.refuse("cop Selection/Projection child is not a bare table scan");
-                }
-                if !residual_on_index {
-                    if !trace.lookup_probe_selection(logical_rows) {
-                        trace.refuse("probe residual child is not an IndexLookUp");
-                    } else if let Some(count) = select
-                        .limit
-                        .as_ref()
-                        .and_then(|limit| eval_limit_bound(&limit.count).ok())
-                    {
-                        trace.cap_lookup_output(count);
-                    }
                 }
                 source = trace.meter(source);
             }
@@ -3350,7 +2924,8 @@ fn run_select_traced_with_delivery_choice_inner(
     // outputs. Report that ACTUAL mapping to a parent join so its merge-plan
     // verification reads the executor just built rather than a catalog
     // promise. Clauses with their own physical ordering semantics stay
-    // fail-closed here, matching `merge_decision::order_preserving_source`.
+    // fail-closed here; these clauses have their own physical ordering
+    // semantics and do not transparently preserve their input order.
     let projection_sources = exprs
         .iter()
         .map(|expr| {
@@ -3439,58 +3014,9 @@ fn run_select_traced_with_delivery_choice_inner(
         });
     let logical_column_prune =
         !inlined_computed_output && (derived_column_prune || joined_column_prune);
-    // A derived SELECT whose DISTINCT and Projection were both eliminated has
-    // no physical operator above its access path. Preserve that complete task
-    // for a parent join's cost comparison. AccessPathCommit already costs its
-    // complete WHERE even when the executable Selection remains above the scan.
-    if let Some(delivered) = output_delivered.as_deref_mut() {
-        delivered.candidate = logical_column_prune
-            .then(|| {
-                from_delivered
-                    .candidate
-                    .clone()
-                    .or_else(|| access_candidate.clone())
-            })
-            .flatten();
-        // A COMPUTED simple projection is Go's `PhysicalProjection` over the
-        // child task, priced by `getPlanCostVer24PhysicalProjection` -- child
-        // cost plus a per-row expression CPU term. Delivering it lets the
-        // parent join PRICE the site: without a receipt, `build_join`'s
-        // `unpriced_merge` arm keeps a structural merge preference, and a
-        // committed merge then forces an index join by elimination below
-        // (measured: `planner/core/join_reorder_through_projection`'s five
-        // recorded divergences, all of them `dt`-shaped derived tables of
-        // exactly this projection). `simple_projection` plus an empty ORDER
-        // BY bounds the claim to selects whose ONLY root operator is that
-        // projection -- a Sort, Limit, Aggregation or DISTINCT above it would
-        // make this receipt understate the task.
-        if delivered.candidate.is_none()
-            && !logical_column_prune
-            && simple_projection
-            && select.order_by.is_empty()
-        {
-            if let Some(child) = from_delivered
-                .candidate
-                .clone()
-                .or_else(|| access_candidate.clone())
-            {
-                let input_rows = tidb_planner::candidate_cost::evaluate(
-                    &child,
-                    ctx.optimizer_cost_env(),
-                    tidb_planner::task_type::TaskType::Root,
-                )
-                .rows;
-                delivered.candidate = Some(tidb_planner::candidate_cost::Candidate::Projection {
-                    child: Box::new(child),
-                    input_rows,
-                    exprs: exprs
-                        .iter()
-                        .map(|expr| matches!(expr, Expression::ScalarFunction(_)))
-                        .collect(),
-                });
-            }
-        }
-    }
+    // Projection elimination is represented by the selected shared physical
+    // tree. The executor only records delivered order; it must not construct
+    // another physical candidate tree for a parent to re-price.
 
     // Output schema: one column per field, typed by the expression's static type.
     let out_columns: Vec<Column> = exprs
@@ -3526,11 +3052,6 @@ fn run_select_traced_with_delivery_choice_inner(
     //
     // Whether the `LIMIT` below was already consumed by a fused `TopN`.
     let mut fused_topn = false;
-    // Whether an ORDER BY operator was installed BELOW the DISTINCT
-    // aggregation. It replaces the source's own order with the written one,
-    // so the group keys are no longer adjacent and only a hash dedup is
-    // correct there.
-    let mut source_reordered = false;
     if !select.order_by.is_empty() && !order_satisfied {
         let mut by_items = Vec::with_capacity(select.order_by.len());
         for item in &select.order_by {
@@ -3593,7 +3114,10 @@ fn run_select_traced_with_delivery_choice_inner(
                 Some(expr) => eval_limit_bound(expr)?,
                 None => 0,
             };
-            let remote_topn_ready = offset.checked_add(count).is_some_and(|cap| {
+            let remote_topn_ready = matches!(
+                from_delivered.reader_topn,
+                Some(planner_bridge::ReaderTopN::Cop)
+            ) && offset.checked_add(count).is_some_and(|cap| {
                 let order_by: Option<Vec<PushdownTopNOrder>> = by_items
                     .iter()
                     .map(|item| {
@@ -3618,40 +3142,45 @@ fn run_select_traced_with_delivery_choice_inner(
             // The source retains the equivalent local root TopN when the
             // backend cannot expose a cop request, but the physical contract
             // and result bound are still the same.
-            let index_topn_ready =
-                if !order_satisfied && index_filter_ready && index_order.is_some() {
-                    let order_by = by_items
-                        .iter()
-                        .map(|item| {
-                            Some((
-                                usize::try_from(item.expr.as_column()?.index).ok()?,
-                                item.desc,
-                            ))
-                        })
-                        .collect::<Option<Vec<_>>>();
-                    order_by.is_some_and(|order_by| {
-                        offset.checked_add(count).is_some_and(|cap| {
-                            source
-                                .table_access()
-                                .is_some_and(|access| access.accept_index_top_n(&order_by, cap))
-                        })
+            let index_topn_ready = if matches!(
+                from_delivered.reader_topn,
+                Some(planner_bridge::ReaderTopN::IndexLookup)
+            ) {
+                let order_by = by_items
+                    .iter()
+                    .map(|item| {
+                        Some((
+                            usize::try_from(item.expr.as_column()?.index).ok()?,
+                            item.desc,
+                        ))
                     })
-                } else {
-                    false
-                };
+                    .collect::<Option<Vec<_>>>();
+                order_by.is_some_and(|order_by| {
+                    offset.checked_add(count).is_some_and(|cap| {
+                        source
+                            .table_access()
+                            .is_some_and(|access| access.accept_index_top_n(&order_by, cap))
+                    })
+                })
+            } else {
+                false
+            };
             if remote_topn_ready || index_topn_ready {
                 let cap = offset
                     .checked_add(count)
                     .expect("a ready remote TopN has a bounded cap");
-                source = Box::new(TopNExec::new(
-                    ExecutorMeta::new(sort_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
-                    by_items.clone(),
-                    source,
-                    ctx.clone(),
-                    0,
-                    cap,
-                    ctx.statement_memory(),
-                ));
+                source = Box::new(
+                    TopNExec::new(
+                        ExecutorMeta::new(sort_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
+                        by_items.clone(),
+                        source,
+                        ctx.clone(),
+                        0,
+                        cap,
+                        ctx.statement_memory(),
+                    )
+                    .with_parallelism(ctx.executor_concurrency()),
+                );
                 if let Some(trace) = trace.as_deref_mut() {
                     let pushed = if index_topn_ready {
                         trace.pushed_topn_lookup(
@@ -3671,17 +3200,19 @@ fn run_select_traced_with_delivery_choice_inner(
                     }
                 }
             }
-            source = Box::new(TopNExec::new(
-                ExecutorMeta::new(sort_schema, 3, INIT_CAP, MAX_CHUNK_SIZE),
-                by_items,
-                source,
-                ctx.clone(),
-                offset,
-                count,
-                ctx.statement_memory(),
-            ));
+            source = Box::new(
+                TopNExec::new(
+                    ExecutorMeta::new(sort_schema, 3, INIT_CAP, MAX_CHUNK_SIZE),
+                    by_items,
+                    source,
+                    ctx.clone(),
+                    offset,
+                    count,
+                    ctx.statement_memory(),
+                )
+                .with_parallelism(ctx.executor_concurrency()),
+            );
             fused_topn = true;
-            source_reordered = true;
             if let Some(trace) = trace.as_deref_mut() {
                 if !index_topn_ready {
                     trace.topn(&traced_select.order_by, &qualify, offset, count);
@@ -3689,14 +3220,16 @@ fn run_select_traced_with_delivery_choice_inner(
                 source = trace.meter(source);
             }
         } else {
-            source = Box::new(SortExec::new(
-                ExecutorMeta::new(sort_schema, 3, INIT_CAP, MAX_CHUNK_SIZE),
-                by_items,
-                source,
-                ctx.clone(),
-                ctx.statement_memory(),
-            ));
-            source_reordered = true;
+            source = Box::new(
+                SortExec::new(
+                    ExecutorMeta::new(sort_schema, 3, INIT_CAP, MAX_CHUNK_SIZE),
+                    by_items,
+                    source,
+                    ctx.clone(),
+                    ctx.statement_memory(),
+                )
+                .with_parallelism(ctx.executor_concurrency()),
+            );
             if let Some(trace) = trace.as_deref_mut() {
                 trace.sort(&traced_select.order_by, &qualify);
                 source = trace.meter(source);
@@ -3748,56 +3281,43 @@ fn run_select_traced_with_delivery_choice_inner(
     let direct_distinct_input = direct_distinct_candidate
         .filter(|_| select.order_by.is_empty() || deferred_distinct_sort.is_some());
 
-    // Go's `buildDistinct` aggregation is enumerated by `getStreamAggs`
-    // (`pkg/planner/core/operator/physicalop/physical_stream_agg.go:89`) too,
-    // and a StreamAgg is admissible exactly when a child property delivers
-    // the group keys in order -- which is what `grouped_stream_ordered`
-    // records after the committed source actually delivered it. The choice
-    // between the two families is then costed in
-    // `run_select_traced_with_delivery_choice_inner`; this flag only says
-    // which family THIS branch is building.
-    let distinct_streamed =
-        select.distinct && !distinct_eliminated && grouped_stream_ordered && !source_reordered;
+    // Go's `buildDistinct` produces the same LogicalAggregation as an
+    // explicit GROUP BY. `findBestTask` has therefore already selected both
+    // the root and cop aggregation families. Lower those receipts directly;
+    // re-inferring StreamAgg from the executor's delivered-order bookkeeping
+    // loses an enforced StreamAgg child Sort and recreates a second planner.
+    let distinct_streamed = aggregation_family == Some(planner_bridge::AggregationFamily::Stream);
+    let partial_distinct_selected = aggregation_cop_family.is_some();
+    let partial_distinct_streamed =
+        aggregation_cop_family == Some(planner_bridge::AggregationFamily::Stream);
 
-    let partial_distinct = direct_distinct_input.as_ref().is_some_and(|input| {
-        let Some(input_offset) = input
-            .as_column()
-            .and_then(|column| usize::try_from(column.index).ok())
-        else {
-            return false;
-        };
-        let output_type = out_schema.columns[0]
-            .ret_type
-            .clone()
-            .expect("distinct output has a type");
-        // Both spellings are the same cop stage -- one group key, no
-        // aggregate function -- but only the general `Grouped` form carries
-        // the streamed flag TiKV needs, and only it is offered by an index
-        // source. Keep the older single-key form for the unordered HashAgg
-        // so its accepted shapes are unchanged.
-        let aggregate = if distinct_streamed {
-            PushdownPartialAggregate::Grouped {
+    let partial_distinct = partial_distinct_selected
+        && direct_distinct_input.as_ref().is_some_and(|input| {
+            let Some(input_offset) = input
+                .as_column()
+                .and_then(|column| usize::try_from(column.index).ok())
+            else {
+                return false;
+            };
+            let output_type = out_schema.columns[0]
+                .ret_type
+                .clone()
+                .expect("distinct output has a type");
+            let aggregate = PushdownPartialAggregate::Grouped {
                 group_offsets: vec![input_offset],
                 group_types: vec![output_type],
                 functions: Vec::new(),
-                streamed: true,
-            }
-        } else {
-            PushdownPartialAggregate::GroupBy {
-                input_offset,
-                output_type,
-            }
-        };
-        source
-            .table_access()
-            .is_some_and(|access| access.accept_partial_aggregate(&aggregate, ctx))
-    });
+                streamed: partial_distinct_streamed,
+            };
+            source
+                .table_access()
+                .is_some_and(|access| access.accept_partial_aggregate(&aggregate, ctx))
+        });
 
     // A direct one-column DISTINCT groups the source expression itself. Go
     // absorbs its FIRST_ROW output projection into HashAgg, and places a
     // valid ORDER BY on that output above the aggregate.
-    let projection_elision_candidate =
-        cop_projection_ready || cop_filtered_projection_ready || full_row_projection;
+    let projection_elision_candidate = full_row_projection;
     // A correlated subquery in HAVING appends its Apply result to the source
     // row after the identity-projection decision above was made.  The final
     // projection is no longer an identity in that case: it has to trim the
@@ -3877,6 +3397,21 @@ fn run_select_traced_with_delivery_choice_inner(
         } else {
             input.clone()
         };
+        if let Some(desc) = grouped_stream_enforced_sort.filter(|_| distinct_streamed) {
+            source = Box::new(
+                SortExec::new(
+                    ExecutorMeta::new(source.schema().clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
+                    vec![SortByItem {
+                        expr: input.clone(),
+                        desc,
+                    }],
+                    source,
+                    ctx.clone(),
+                    ctx.statement_memory(),
+                )
+                .with_parallelism(ctx.executor_concurrency()),
+            );
+        }
         let meta = ExecutorMeta::new(out_schema.clone(), 5, INIT_CAP, MAX_CHUNK_SIZE);
         let group_by = vec![input.clone()];
         let agg_funcs = vec![AggFunc::new(AggKind::FirstRow, Some(input.clone()))];
@@ -3891,20 +3426,14 @@ fn run_select_traced_with_delivery_choice_inner(
                 ctx.clone(),
             ))
         } else {
-            Box::new(
-                HashAggExec::new(
-                    meta,
-                    group_by,
-                    agg_funcs,
-                    source,
-                    ctx.clone(),
-                    ctx.statement_memory(),
-                )
-                // A `DISTINCT` this narrow never repays the parallel
-                // pipeline's thread handoffs; the planner's own estimate is
-                // what decides.
-                .with_estimated_input_rows(joined_logical_rows),
-            )
+            Box::new(HashAggExec::new(
+                meta,
+                group_by,
+                agg_funcs,
+                source,
+                ctx.clone(),
+                ctx.statement_memory(),
+            ))
         };
         if let Some(trace) = trace.as_deref_mut() {
             if partial_distinct {
@@ -3918,9 +3447,12 @@ fn run_select_traced_with_delivery_choice_inner(
                     traced_select.fields.fields(),
                     &qualify,
                     distinct_logical_rows,
-                    distinct_streamed,
+                    partial_distinct_streamed,
                 );
                 if partial_traced {
+                    if grouped_stream_enforced_sort.is_some() && distinct_streamed {
+                        trace.enforced_distinct_sort(traced_select.fields.fields(), &qualify);
+                    }
                     trace.final_distinct(
                         traced_select.fields.fields(),
                         &qualify,
@@ -3936,6 +3468,9 @@ fn run_select_traced_with_delivery_choice_inner(
                 }
             } else {
                 trace.scan_reader();
+                if grouped_stream_enforced_sort.is_some() && distinct_streamed {
+                    trace.enforced_distinct_sort(traced_select.fields.fields(), &qualify);
+                }
                 if physical_source_names {
                     let column_names =
                         physical_source_column_names(select, &current_scope, catalog, current_db);
@@ -4002,6 +3537,31 @@ fn run_select_traced_with_delivery_choice_inner(
     // exactly a deduplication. It sits above the projection and below LIMIT.
     if select.distinct && !distinct_eliminated && direct_distinct_input.is_none() {
         let all: Vec<usize> = (0..out_schema.columns.len()).collect();
+        if let Some(desc) = grouped_stream_enforced_sort.filter(|_| distinct_streamed) {
+            let by_items = out_schema
+                .columns
+                .iter()
+                .cloned()
+                .map(|column| SortByItem {
+                    expr: Expression::Column(column),
+                    desc,
+                })
+                .collect();
+            root = Box::new(
+                SortExec::new(
+                    ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
+                    by_items,
+                    root,
+                    ctx.clone(),
+                    ctx.statement_memory(),
+                )
+                .with_parallelism(ctx.executor_concurrency()),
+            );
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.enforced_distinct_sort(traced_select.fields.fields(), &qualify);
+                root = trace.meter(root);
+            }
+        }
         root = distinct_over(root, &out_schema, &all, ctx, distinct_streamed);
         if let Some(trace) = trace.as_deref_mut() {
             trace.distinct(
@@ -4021,28 +3581,34 @@ fn run_select_traced_with_delivery_choice_inner(
                 Some(expr) => eval_limit_bound(expr)?,
                 None => 0,
             };
-            root = Box::new(TopNExec::new(
-                ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
-                by_items,
-                root,
-                ctx.clone(),
-                offset,
-                count,
-                ctx.statement_memory(),
-            ));
+            root = Box::new(
+                TopNExec::new(
+                    ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
+                    by_items,
+                    root,
+                    ctx.clone(),
+                    offset,
+                    count,
+                    ctx.statement_memory(),
+                )
+                .with_parallelism(ctx.executor_concurrency()),
+            );
             fused_topn = true;
             if let Some(trace) = trace.as_deref_mut() {
                 trace.topn(&traced_select.order_by, &qualify, offset, count);
                 root = trace.meter(root);
             }
         } else {
-            root = Box::new(SortExec::new(
-                ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
-                by_items,
-                root,
-                ctx.clone(),
-                ctx.statement_memory(),
-            ));
+            root = Box::new(
+                SortExec::new(
+                    ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
+                    by_items,
+                    root,
+                    ctx.clone(),
+                    ctx.statement_memory(),
+                )
+                .with_parallelism(ctx.executor_concurrency()),
+            );
             if let Some(trace) = trace.as_deref_mut() {
                 trace.sort(&traced_select.order_by, &qualify);
                 root = trace.meter(root);

@@ -386,13 +386,9 @@ fn truncate_partition_action(
         } else {
             let mut ordinals = Vec::with_capacity(names.len());
             for name in names {
-                let Some(ordinal) = partition
-                    .definitions
-                    .iter()
-                    .position(|definition| {
-                        super::table_partition::partition_names_equal(&definition.name, name)
-                    })
-                else {
+                let Some(ordinal) = partition.definitions.iter().position(|definition| {
+                    super::table_partition::partition_names_equal(&definition.name, name)
+                }) else {
                     // Go `TruncateTablePartition` (`ddl/executor.go:2851`)
                     // passes `name.L` here -- the FOLDED name -- while the
                     // SELECT/DML partition-list errors (`builder.go:6258`,
@@ -456,13 +452,9 @@ fn drop_partition_action(
         }
         let mut ordinals = Vec::with_capacity(names.len());
         for name in names {
-            let Some(ordinal) = partition
-                .definitions
-                .iter()
-                .position(|definition| {
-                    super::table_partition::partition_names_equal(&definition.name, name)
-                })
-            else {
+            let Some(ordinal) = partition.definitions.iter().position(|definition| {
+                super::table_partition::partition_names_equal(&definition.name, name)
+            }) else {
                 if if_exists {
                     ctx.append_suppressed(&DriverError::PartitionDropNonexistent);
                     return Ok(());
@@ -528,12 +520,9 @@ fn add_partition_action(
             return Err(DriverError::PartitionTooMany);
         }
         for definition in definitions {
-            let duplicate_existing = partition
-                .definitions
-                .iter()
-                .any(|old| {
-                    super::table_partition::partition_names_equal(&old.name, &definition.name)
-                });
+            let duplicate_existing = partition.definitions.iter().any(|old| {
+                super::table_partition::partition_names_equal(&old.name, &definition.name)
+            });
             let duplicate_added = definitions
                 .iter()
                 .filter(|candidate| {
@@ -588,16 +577,18 @@ fn add_partition_action(
                         definitions,
                         *unsigned,
                         ctx,
-                    // Go reaches these builders through the SAME
-                    // `buildPartitionDefinitionsInfo` loop a CREATE uses, so
-                    // an added partition's name faces the 64-rune rule at the
-                    // same point. Per-partition options are refused above, so
-                    // there is no comment to validate.
-                    &mut |ordinal: usize| {
-                        definitions.get(ordinal).map_or(Ok(()), |definition| {
-                            super::table_partition::check_too_long_partition_name(&definition.name)
-                        })
-                    },
+                        // Go reaches these builders through the SAME
+                        // `buildPartitionDefinitionsInfo` loop a CREATE uses, so
+                        // an added partition's name faces the 64-rune rule at the
+                        // same point. Per-partition options are refused above, so
+                        // there is no comment to validate.
+                        &mut |ordinal: usize| {
+                            definitions.get(ordinal).map_or(Ok(()), |definition| {
+                                super::table_partition::check_too_long_partition_name(
+                                    &definition.name,
+                                )
+                            })
+                        },
                     )?;
                 if let Some(duplicate) = duplicate {
                     return Err(duplicate);
@@ -752,10 +743,12 @@ fn add_partition_action(
                         ctx,
                         super::table_partition::PartitionBuildMode::Create,
                         &mut |ordinal: usize| {
-                        definitions.get(ordinal).map_or(Ok(()), |definition| {
-                            super::table_partition::check_too_long_partition_name(&definition.name)
-                        })
-                    },
+                            definitions.get(ordinal).map_or(Ok(()), |definition| {
+                                super::table_partition::check_too_long_partition_name(
+                                    &definition.name,
+                                )
+                            })
+                        },
                     )?;
                 // Go validates an addition by CONCATENATING it onto the
                 // existing definitions and running the whole CREATE-time
@@ -803,7 +796,10 @@ fn add_partition_action(
     // The bound TEXT a RANGE addition prints, rendered from the folded bound
     // by the SAME helper a CREATE uses, so the two cannot drift.
     let range_bound_text = |ordinal: usize| match &added_kind {
-        PartitionKind::Range { less_than, unsigned } => less_than
+        PartitionKind::Range {
+            less_than,
+            unsigned,
+        } => less_than
             .get(ordinal)
             .map(|bound| {
                 vec![super::table_partition::stored_range_bound_text(
@@ -1009,19 +1005,25 @@ fn add_foreign_key_action(
     };
     if !covered(&clustered) && !table.indexes().iter().any(covered_index) {
         let id = table.next_index_id();
-        table.add_index(super::KvIndex {
-            id,
-            name: foreign_key.name.clone(),
-            comment: String::new(),
-            unique: false,
-            column_offsets: fk_offsets.clone(),
-            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; fk_offsets.len()],
-            visible: true,
-            // A foreign key's auto-created index is local to the table it
-            // constrains; Go's `FKInfo` carries no `GLOBAL` to record.
-            global: false,
-            clustered_primary: false,
-        }, false);
+        table.add_index(
+            super::KvIndex {
+                id,
+                name: foreign_key.name.clone(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: fk_offsets.clone(),
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                    fk_offsets.len()
+                ],
+                visible: true,
+                // A foreign key's auto-created index is local to the table it
+                // constrains; Go's `FKInfo` carries no `GLOBAL` to record.
+                global: false,
+                clustered_primary: false,
+            },
+            false,
+        );
     }
     table.add_foreign_key(foreign_key);
     Ok(())

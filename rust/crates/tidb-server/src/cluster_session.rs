@@ -43,7 +43,7 @@ use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use tidb_exec::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_executor::access_cost::TableStatistics;
 use tidb_executor::cluster_storage::ClusterTableStorage;
-use tidb_executor::driver::{SequenceDef, Catalog, ViewDef};
+use tidb_executor::driver::{Catalog, SequenceDef, ViewDef};
 use tidb_executor::kv_table::{KvColumn, KvIndex, KvTable, TableAutoId};
 use tidb_executor::storage::TableStorage;
 use tidb_model::{GoShared, SchemaState, TableInfo};
@@ -368,7 +368,8 @@ impl KvTableTemplates {
     }
 
     fn insert(&mut self, schema: &str, name: &str, table: KvTable) {
-        self.tables.insert((schema.to_owned(), name.to_owned()), table);
+        self.tables
+            .insert((schema.to_owned(), name.to_owned()), table);
     }
 }
 
@@ -426,8 +427,7 @@ pub fn cluster_session_catalog_with_templates(
                         .expect("the schema was created just above this loop"),
                     None => skipped.push(SkippedTable {
                         name: format!("{schema}.{}", table.name.original()),
-                        reason: "it is a sequence and this tier has no sequence counter"
-                            .to_owned(),
+                        reason: "it is a sequence and this tier has no sequence counter".to_owned(),
                     }),
                 }
                 continue;
@@ -461,9 +461,8 @@ pub fn cluster_session_catalog_with_templates(
                     if let Some(loaded_stats) =
                         stats.get(&table.id).and_then(TableStatsState::loaded)
                     {
-                        let statistics = stats_templates.get_or_build(table.id, || {
-                            planner_statistics(loaded_stats, table)
-                        });
+                        let statistics = stats_templates
+                            .get_or_build(table.id, || planner_statistics(loaded_stats, table));
                         catalog.set_table_statistics(table.id, statistics);
                     }
                     catalog
@@ -809,10 +808,7 @@ pub(crate) fn cluster_table(
         });
         if let Some(dependences) = array_part {
             if dependences.len() == 1 {
-                kv_table.set_mv_key_part_source(
-                    index.id,
-                    dependences[0].to_utf8_lossy_go(),
-                );
+                kv_table.set_mv_key_part_source(index.id, dependences[0].to_utf8_lossy_go());
             }
         }
     }
@@ -2166,8 +2162,11 @@ mod tests {
             enable: true,
             ..tidb_model::partition::PartitionInfo::default()
         };
-        partition.definitions =
-            vec![partition_definition(401, "p0"), partition_definition(402, "p1")].into();
+        partition.definitions = vec![
+            partition_definition(401, "p0"),
+            partition_definition(402, "p1"),
+        ]
+        .into();
         let table = TableInfo {
             id: 400,
             name: CiString::new("hashed"),
@@ -2241,8 +2240,11 @@ mod tests {
             enable: false,
             ..tidb_model::partition::PartitionInfo::default()
         };
-        partition.definitions =
-            vec![partition_definition(601, "p0"), partition_definition(602, "p1")].into();
+        partition.definitions = vec![
+            partition_definition(601, "p0"),
+            partition_definition(602, "p1"),
+        ]
+        .into();
         let table = TableInfo {
             id: 600,
             name: CiString::new("disabled"),
@@ -2253,8 +2255,8 @@ mod tests {
             ..TableInfo::default()
         };
         let (storage, _, _) = cluster_storage();
-        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
-            .expect("the table loads");
+        let loaded =
+            cluster_table(&table, &storage, &AutoIdSource::Unavailable).expect("the table loads");
         assert!(
             loaded.partition().is_none(),
             "disabled partitioning must not route"
@@ -2301,7 +2303,10 @@ mod tests {
         assert_eq!(spec.physical_ids(), vec![701, 702]);
         let tidb_executor::partition_routing::PartitionKind::Range { less_than, .. } = &spec.kind
         else {
-            panic!("RANGE metadata must rebuild as a RANGE spec, got {:?}", spec.kind);
+            panic!(
+                "RANGE metadata must rebuild as a RANGE spec, got {:?}",
+                spec.kind
+            );
         };
         assert!(
             matches!(
@@ -2351,7 +2356,10 @@ mod tests {
             ..
         } = &spec.kind
         else {
-            panic!("LIST COLUMNS metadata must rebuild as one, got {:?}", spec.kind);
+            panic!(
+                "LIST COLUMNS metadata must rebuild as one, got {:?}",
+                spec.kind
+            );
         };
         assert_eq!(values.len(), 2, "both listed values kept their owner");
         assert_eq!(

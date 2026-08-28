@@ -599,11 +599,7 @@ fn stale_observation_while_the_entry_is_cached_keeps_the_same_outcome() {
 
     assert_eq!(
         cache
-            .on_region_error(
-                &error,
-                stale,
-                &mut RegionBackoffBudget::campaign_default(),
-            )
+            .on_region_error(&error, stale, &mut RegionBackoffBudget::campaign_default(),)
             .unwrap(),
         RegionErrorDisposition::RebuildRanges {
             delay: Duration::ZERO,
@@ -1291,7 +1287,10 @@ fn capped_delay_charges_what_it_sleeps() {
         let delay = budget
             .next_delay_capped(RegionBackoffKind::TxnLockFast, Duration::from_millis(10))
             .unwrap();
-        assert!(delay <= Duration::from_millis(10), "clamp violated: {delay:?}");
+        assert!(
+            delay <= Duration::from_millis(10),
+            "clamp violated: {delay:?}"
+        );
     }
     // Ten clamped waits cost at most 100ms of the 20s budget, where the
     // unclamped TxnLockFast schedule would have charged multiple seconds.

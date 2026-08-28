@@ -256,19 +256,12 @@ struct SequenceStoreState {
 pub trait SequenceCounter: std::fmt::Debug + Send + Sync {
     /// Go `Allocator.AllocSeqCache`: atomically reserve one batch from the
     /// shared counter, returning `(base, end, round)` of the reserved window.
-    fn alloc_seq_cache(
-        &self,
-        info: &SequenceInfo,
-    ) -> Result<(i64, i64, i64), SequenceError>;
+    fn alloc_seq_cache(&self, info: &SequenceInfo) -> Result<(i64, i64, i64), SequenceError>;
 
     /// Go `Allocator.RebaseSeq`: move the shared counter forward to
     /// `required`. `(0, true)` is Go's `alreadySatisfied`, meaning the counter
     /// was already at or past it and nothing was written.
-    fn rebase_seq(
-        &self,
-        info: &SequenceInfo,
-        required: i64,
-    ) -> Result<(i64, bool), SequenceError>;
+    fn rebase_seq(&self, info: &SequenceInfo, required: i64) -> Result<(i64, bool), SequenceError>;
 
     /// Go `AlterSequence` with `RESTART`: the stored counter goes one integer
     /// outside `with`, so the next congruence seek returns `with` itself.
@@ -283,18 +276,12 @@ pub struct LocalSequenceCounter(Mutex<SequenceStoreState>);
 impl LocalSequenceCounter {
     #[must_use]
     pub fn new(stored: i64) -> Self {
-        LocalSequenceCounter(Mutex::new(SequenceStoreState {
-            stored,
-            round: 0,
-        }))
+        LocalSequenceCounter(Mutex::new(SequenceStoreState { stored, round: 0 }))
     }
 }
 
 impl SequenceCounter for LocalSequenceCounter {
-    fn alloc_seq_cache(
-        &self,
-        info: &SequenceInfo,
-    ) -> Result<(i64, i64, i64), SequenceError> {
+    fn alloc_seq_cache(&self, info: &SequenceInfo) -> Result<(i64, i64, i64), SequenceError> {
         let size = if info.cache { info.cache_value } else { 1 };
         let mut store = self.0.lock().expect("sequence store state");
         let mut base = store.stored;
@@ -339,11 +326,7 @@ impl SequenceCounter for LocalSequenceCounter {
         Ok((base, store.stored, store.round))
     }
 
-    fn rebase_seq(
-        &self,
-        info: &SequenceInfo,
-        required: i64,
-    ) -> Result<(i64, bool), SequenceError> {
+    fn rebase_seq(&self, info: &SequenceInfo, required: i64) -> Result<(i64, bool), SequenceError> {
         let mut store = self.0.lock().expect("sequence store state");
         let already_satisfied = if info.increment > 0 {
             store.stored >= required
@@ -358,7 +341,11 @@ impl SequenceCounter for LocalSequenceCounter {
 
     fn restart(&self, info: &SequenceInfo, with: i64) {
         let mut store = self.0.lock().expect("sequence store state");
-        store.stored = if info.increment > 0 { with - 1 } else { with + 1 };
+        store.stored = if info.increment > 0 {
+            with - 1
+        } else {
+            with + 1
+        };
         store.round = 0;
     }
 }

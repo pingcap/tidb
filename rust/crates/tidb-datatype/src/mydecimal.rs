@@ -1292,7 +1292,11 @@ impl MyDecimal {
                 carry = 1;
             }
         }
-        if (carry > 0) == from1.negative { 1 } else { -1 }
+        if (carry > 0) == from1.negative {
+            1
+        } else {
+            -1
+        }
     }
     /// Go `digitsFrac`: the decimal digits after the point.
     #[must_use]
@@ -1591,8 +1595,8 @@ impl MyDecimal {
                 .checked_mul(i128::from(WORD_BASE))?
                 .checked_add(i128::from(word))?;
         }
-        let fraction_padding = fraction_words * DIGITS_PER_WORD as usize
-            - usize::try_from(digits_frac).ok()?;
+        let fraction_padding =
+            fraction_words * DIGITS_PER_WORD as usize - usize::try_from(digits_frac).ok()?;
         if fraction_padding > 0 {
             magnitude /= i128::from(POWERS10[fraction_padding]);
         }

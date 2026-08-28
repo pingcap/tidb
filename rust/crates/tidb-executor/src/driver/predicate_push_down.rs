@@ -155,13 +155,7 @@ pub(crate) fn plan(
     let inherited = where_clause.map(extracted_conjuncts).unwrap_or_default();
     let mut plan = Plan::default();
     distribute_join(
-        join,
-        &inherited,
-        &bindings,
-        catalog,
-        current_db,
-        anti_semi,
-        &mut plan,
+        join, &inherited, &bindings, catalog, current_db, anti_semi, &mut plan,
     );
     plan
 }
@@ -584,10 +578,7 @@ fn solver_column(path: &[String], bindings: &[Binding]) -> Option<SolverColumn> 
     })
 }
 
-fn column_field_type<'a>(
-    column: &SolverColumn,
-    bindings: &'a [Binding],
-) -> Option<&'a FieldType> {
+fn column_field_type<'a>(column: &SolverColumn, bindings: &'a [Binding]) -> Option<&'a FieldType> {
     bindings
         .iter()
         .find(|binding| binding.qualifier.eq_ignore_ascii_case(&column.qualifier))?
@@ -653,8 +644,13 @@ fn try_to_replace_cond(
     }
     if matches!(
         strip_parens(condition),
-        Expr::Column(_) | Expr::Int(_) | Expr::Decimal(_) | Expr::Float(_) | Expr::String(_)
-            | Expr::Null | Expr::Bool(_)
+        Expr::Column(_)
+            | Expr::Int(_)
+            | Expr::Decimal(_)
+            | Expr::Float(_)
+            | Expr::String(_)
+            | Expr::Null
+            | Expr::Bool(_)
     ) {
         return;
     }
@@ -676,9 +672,7 @@ fn try_to_replace_cond(
                     let name = name.to_ascii_lowercase();
                     // nullAware refusals plus the shared unfoldable set;
                     // mutable effects were screened by `safe_to_duplicate`.
-                    if name == "ifnull"
-                        || name == "if"
-                        || super::through_proj::is_unfoldable(&name)
+                    if name == "ifnull" || name == "if" || super::through_proj::is_unfoldable(&name)
                     {
                         self.refused = true;
                     }

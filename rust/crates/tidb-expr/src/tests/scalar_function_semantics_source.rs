@@ -93,13 +93,9 @@ fn test_scalar_function() {
     // `sf.Decorrelate(nil).Equal(ctx, sf)`'s clone-is-equal half, expressed at
     // this crate's structural equality: an independent clone stays equal.
     let cloned = sf.clone();
-    assert!(Expression::ScalarFunction(cloned.clone())
-        .equal(&Expression::ScalarFunction(sf)));
+    assert!(Expression::ScalarFunction(cloned.clone()).equal(&Expression::ScalarFunction(sf)));
     assert_eq!(cloned.func_name.lowercase(), "lt");
-    assert!(cloned
-        .get_static_type()
-        .unwrap()
-        .equal(&longlong_type()));
+    assert!(cloned.get_static_type().unwrap().equal(&longlong_type()));
 }
 
 /// go-parity-gap: the second half of `TestScalarFunction`
@@ -131,8 +127,9 @@ fn test_scalar_function_equal_after_clean_hash_code() {
     let mut zero = lt_column_vs_real_const(0.0);
     let mut one = lt_column_vs_real_const(1.0);
 
-    assert!(!Expression::ScalarFunction(zero.clone())
-        .equal(&Expression::ScalarFunction(one.clone())));
+    assert!(
+        !Expression::ScalarFunction(zero.clone()).equal(&Expression::ScalarFunction(one.clone()))
+    );
 
     // Compute the codes (both caches are now filled), then clear them.
     let zero_cached = zero.hash_code().to_vec();
@@ -141,8 +138,9 @@ fn test_scalar_function_equal_after_clean_hash_code() {
     zero.clean_hash_code();
     one.clean_hash_code();
 
-    assert!(!Expression::ScalarFunction(zero.clone())
-        .equal(&Expression::ScalarFunction(one.clone())));
+    assert!(
+        !Expression::ScalarFunction(zero.clone()).equal(&Expression::ScalarFunction(one.clone()))
+    );
     // Recomputation after cleaning reproduces the pre-clean bytes.
     assert_eq!(zero.hash_code(), zero_cached.as_slice());
     assert_eq!(one.hash_code(), one_cached.as_slice());

@@ -132,7 +132,9 @@ pub fn run_alter_placement_policy(
         ));
         return Ok(());
     }
-    Err(DriverError::PlacementPolicyNotExists(statement.name.clone()))
+    Err(DriverError::PlacementPolicyNotExists(
+        statement.name.clone(),
+    ))
 }
 
 /// Go `executor.DropPlacementPolicy` (`ddl/executor.go:6829`).
@@ -151,7 +153,9 @@ pub fn run_drop_placement_policy(
             ));
             return Ok(());
         }
-        return Err(DriverError::PlacementPolicyNotExists(statement.name.clone()));
+        return Err(DriverError::PlacementPolicyNotExists(
+            statement.name.clone(),
+        ));
     }
     // Go `CheckPlacementPolicyNotInUseFromInfoSchema`: dropping a policy that
     // something still names would leave that object pointing at nothing.

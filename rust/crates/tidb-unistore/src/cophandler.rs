@@ -1044,15 +1044,14 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
         let (_, packed) = tidb_codec::decode_uint(expr.val())
             .map_err(|err| format!("invalid time literal: {err:?}"))?;
         let field_type = expr.field_type.as_ref();
-        let kind = field_type
-            .and_then(|ft| u8::try_from(ft.tp()).ok())
-            .map_or(tidb_datatype::TimeType::DateTime, |tp| {
-                match tidb_datatype::FieldTypeCode::from_mysql_type(tp) {
-                    tidb_datatype::FieldTypeCode::Date => tidb_datatype::TimeType::Date,
-                    tidb_datatype::FieldTypeCode::Timestamp => tidb_datatype::TimeType::Timestamp,
-                    _ => tidb_datatype::TimeType::DateTime,
-                }
-            });
+        let kind = field_type.and_then(|ft| u8::try_from(ft.tp()).ok()).map_or(
+            tidb_datatype::TimeType::DateTime,
+            |tp| match tidb_datatype::FieldTypeCode::from_mysql_type(tp) {
+                tidb_datatype::FieldTypeCode::Date => tidb_datatype::TimeType::Date,
+                tidb_datatype::FieldTypeCode::Timestamp => tidb_datatype::TimeType::Timestamp,
+                _ => tidb_datatype::TimeType::DateTime,
+            },
+        );
         let fsp = field_type.map_or(0, |ft| i64::from(ft.decimal()));
         let value = tidb_datatype::Time::from_packed_uint(packed, kind, fsp)
             .map_err(|err| format!("invalid time literal: {err:?}"))?;
@@ -1139,10 +1138,7 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
 /// still reach here through `dc > i`, where Go wraps the int side in
 /// `CastIntAsDecimal`; that cast is a signature of its own and is refused
 /// above rather than approximated, so only exact decimal operands get here.
-fn eval_decimal(
-    expr: &SimpleExpr,
-    row: &[tidb_datatype::Datum],
-) -> Option<tidb_datatype::Decimal> {
+fn eval_decimal(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<tidb_datatype::Decimal> {
     use tidb_datatype::Datum;
     match expr {
         SimpleExpr::Decimal(value) => Some(value.clone()),
@@ -1156,10 +1152,7 @@ fn eval_decimal(
 
 /// The TIME value of one operand of a temporal comparison; see
 /// [`eval_decimal`] for why only exact operands reach here.
-fn eval_time(
-    expr: &SimpleExpr,
-    row: &[tidb_datatype::Datum],
-) -> Option<tidb_datatype::Time> {
+fn eval_time(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<tidb_datatype::Time> {
     use tidb_datatype::Datum;
     match expr {
         SimpleExpr::Time(value) => Some(*value),

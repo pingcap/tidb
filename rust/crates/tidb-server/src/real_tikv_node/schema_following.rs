@@ -233,11 +233,7 @@ where
             let ids: Vec<i64> = targets.iter().map(|(id, _)| *id).collect();
             match load_stats_meta_versions(&opener, timeout, &loader, &ids) {
                 Ok(versions) => {
-                    if stats_snapshot_unchanged_since(
-                        shared.load().as_ref(),
-                        &versions,
-                        &targets,
-                    ) {
+                    if stats_snapshot_unchanged_since(shared.load().as_ref(), &versions, &targets) {
                         Ok(None)
                     } else {
                         load_stats_snapshot_from_cluster(&opener, timeout, &targets)

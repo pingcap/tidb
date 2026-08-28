@@ -12,19 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The index strategy's own gate: the rows it produces, against the hash
-//! strategy over the SAME data.
-//!
-//! # Why the hash strategy is the oracle here
-//!
-//! `crate::driver::index_join_decision::CHOOSER_IS_FAITHFUL` is `false`, so
-//! no statement reaches the index strategy through SQL yet and no recorded
-//! `.result` can pin it. What CAN pin it is the answer this tier already
-//! proves against TiDB everywhere else: the hash join over the same two
-//! relations. The two strategies share `emit_outer_row`, the `ON`
-//! evaluation, and the outer-join padding, so a difference between them is
-//! never "a different but equal answer" -- it is the lookup reading the wrong
-//! rows.
+//! Index-join lowering and execution against the hash strategy over the same
+//! data. The shared physical planner owns strategy selection; these tests pin
+//! the exact receipt-to-lookup translation and the rows that lookup produces.
 //!
 //! Every test below runs the SAME join twice, once each way, and requires the
 //! two row lists to be equal ELEMENT BY ELEMENT: an index join preserves its
@@ -261,7 +251,7 @@ fn both_ways(
         outer_not_null: Vec::new(),
         inner_not_null: Vec::new(),
         probe_cast: None,
-            probe_bounds: Vec::new(),
+        probe_bounds: Vec::new(),
     });
     assert!(looked_up.is_index_join());
     let index_rows = drain(&mut looked_up, &types);
@@ -525,7 +515,7 @@ fn one_key_repeated_across_a_batch_is_probed_once() {
         outer_not_null: Vec::new(),
         inner_not_null: Vec::new(),
         probe_cast: None,
-            probe_bounds: Vec::new(),
+        probe_bounds: Vec::new(),
     });
     let rows = drain(&mut exec, &types);
     assert_eq!(
@@ -542,14 +532,14 @@ fn one_key_repeated_across_a_batch_is_probed_once() {
 
 /// The decision itself: WHICH side, WHICH object, WHICH range text.
 ///
-/// `index_join_decision` is what `driver::from::build_join` calls, and it is
-/// reached only where [`crate::driver::join_search`] answered `Index` -- which
-/// over the whole replay is nowhere, so everything below is pinned by these
-/// tests alone. See `crate::tests_join_search` for the census that says so.
+/// `index_join_decision` is the mechanical lowerer used after the shared
+/// planner selects an index-join receipt.
 mod decision {
     use super::{column, common_handle_table, inner_table, long};
     use crate::access_path::LookupObject;
-    use crate::driver::index_join_decision::{index_join_decision, JoinSide};
+    use crate::driver::index_join_decision::{
+        index_join_decision_for_planner, IndexJoinDecision, JoinSide,
+    };
     use crate::hash_join::EquiKey;
     use crate::join::JoinKind;
     use crate::kv_table::KvTable;
@@ -589,6 +579,39 @@ mod decision {
         aliased_inner_side(table, "t")
     }
 
+    fn selected_access(
+        kind: JoinKind,
+        keys: &[EquiKey],
+        left: &JoinSide<'_>,
+        right: &JoinSide<'_>,
+        inner_child_idx: usize,
+        inner_index_id: Option<i64>,
+    ) -> Option<IndexJoinDecision> {
+        let table_id = if inner_child_idx == 0 {
+            left.table?.table_id
+        } else {
+            right.table?.table_id
+        };
+        index_join_decision_for_planner(
+            kind,
+            keys,
+            left,
+            right,
+            inner_child_idx,
+            Some(table_id),
+            inner_index_id,
+            Some(if inner_index_id.is_some() {
+                crate::driver::planner_bridge::AccessReader::IndexLookup
+            } else {
+                crate::driver::planner_bridge::AccessReader::Table
+            }),
+            None,
+            None,
+            None,
+            &crate::StmtContext::for_query(),
+        )
+    }
+
     /// The same side written under `visible`, whose `origin` stays the
     /// table's own `db.t` however it is aliased -- which is what the range
     /// text is qualified from.
@@ -619,17 +642,61 @@ mod decision {
     #[test]
     fn an_index_on_the_join_key_is_a_candidate_with_gos_range_text() {
         let table = inner_table(&[(1, 1)]);
-        let decision = index_join_decision(
+        let decision = selected_access(
             JoinKind::Inner,
             &key(),
             &outer_side(),
             &inner_side(&table),
-            false,
+            1,
+            Some(1),
         )
         .expect("an index on `b` and a computed outer key");
         assert!(!decision.lookup_is_left);
         assert_eq!(decision.probe_keys, vec![0]);
         assert_eq!(decision.range_info, "[eq(db.t.b, Column)]");
+    }
+
+    /// `completePhysicalIndexJoin` carries the selected index id from the
+    /// inner task.  Two equally usable indexes make a local "best prefix"
+    /// reconstruction observably wrong: it picks catalog order, while
+    /// lowering must construct the exact received id.
+    #[test]
+    fn a_planner_receipt_selects_the_exact_index_without_local_reenumeration() {
+        let mut table = inner_table(&[(1, 1)]);
+        table
+            .create_index_with_context(
+                crate::kv_table::KvIndex {
+                    id: 2,
+                    name: "ib_duplicate".to_owned(),
+                    comment: String::new(),
+                    unique: false,
+                    column_offsets: vec![1],
+                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                    visible: true,
+                    global: false,
+                    clustered_primary: false,
+                },
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
+
+        let decision = index_join_decision_for_planner(
+            JoinKind::Inner,
+            &key(),
+            &outer_side(),
+            &inner_side(&table),
+            1,
+            Some(table.table_id),
+            Some(2),
+            Some(crate::driver::planner_bridge::AccessReader::IndexLookup),
+            None,
+            None,
+            None,
+            &crate::StmtContext::for_query(),
+        )
+        .expect("the selected index is a valid dynamic probe");
+
+        assert!(matches!(decision.object, LookupObject::Index(2)));
     }
 
     /// A join key that covers only the leading common-handle column still
@@ -644,12 +711,13 @@ mod decision {
             class: crate::hash_join::KeyClass::Int,
             null_safe: false,
         }];
-        let decision = index_join_decision(
+        let decision = selected_access(
             JoinKind::Inner,
             &keys,
             &outer_side(),
             &inner_side(&table),
-            false,
+            1,
+            None,
         )
         .expect("the leading clustered-key column builds a table range");
 
@@ -672,12 +740,13 @@ mod decision {
     #[test]
     fn an_aliased_inner_side_keeps_the_tables_own_name_inside_the_range() {
         let table = inner_table(&[(1, 1)]);
-        let decision = index_join_decision(
+        let decision = selected_access(
             JoinKind::Inner,
             &key(),
             &outer_side(),
             &aliased_inner_side(&table, "outer_t"),
-            false,
+            1,
+            Some(1),
         )
         .expect("an index on `b` and a computed outer key");
         assert_eq!(
@@ -690,32 +759,18 @@ mod decision {
         );
     }
 
-    /// A merge join already chosen wins: Go never costs an index join for a
-    /// property the merge path already satisfies here.
-    #[test]
-    fn a_chosen_merge_join_refuses_the_candidate() {
-        let table = inner_table(&[(1, 1)]);
-        assert!(index_join_decision(
-            JoinKind::Inner,
-            &key(),
-            &outer_side(),
-            &inner_side(&table),
-            true,
-        )
-        .is_none());
-    }
-
     /// A LEFT join may not look up its PRESERVED side.
     #[test]
     fn an_outer_join_never_looks_up_the_preserved_side() {
         let table = inner_table(&[(1, 1)]);
         // The table is on the LEFT, which a LEFT join preserves.
-        assert!(index_join_decision(
+        assert!(selected_access(
             JoinKind::Left,
             &key(),
             &inner_side(&table),
             &outer_side(),
-            false,
+            0,
+            Some(1),
         )
         .is_none());
     }
@@ -724,19 +779,23 @@ mod decision {
     ///
     /// This decision used to refuse a NAMED outer key -- a proxy for "no
     /// index can pre-sort this key, so Go is choosing between an index join
-    /// and a hash join". The proxy is gone: whether the index strategy is
-    /// admissible at all is `driver::join_search`'s question, asked of Go's
-    /// own enumeration under the property the site was required to produce.
-    /// This decision answers only WHICH side, WHICH object and WHICH ranges,
-    /// and the name is now irrelevant to it.
+    /// and a hash join". The proxy is gone: the shared physical planner owns
+    /// admissibility and selection. This decision answers only WHICH side,
+    /// WHICH object and WHICH ranges, and the name is now irrelevant to it.
     #[test]
     fn a_named_outer_key_is_no_longer_this_decisions_business() {
         let table = inner_table(&[(1, 1)]);
         let mut outer = outer_side();
         outer.names = vec!["db.o.a".to_owned(), "db.o.b".to_owned()];
-        let decision =
-            index_join_decision(JoinKind::Inner, &key(), &outer, &inner_side(&table), false)
-                .expect("the side is still a base table with an index on the key");
+        let decision = selected_access(
+            JoinKind::Inner,
+            &key(),
+            &outer,
+            &inner_side(&table),
+            1,
+            Some(1),
+        )
+        .expect("the selected index remains probeable by the named key");
         assert!(
             !decision.lookup_is_left,
             "the inner side is the RIGHT one here"
@@ -782,16 +841,43 @@ mod decision {
             .insert_row(&[Datum::Int(1), Datum::UInt(1)], &tidb_expr::NoColumns)
             .unwrap();
         assert!(
-            index_join_decision(
+            selected_access(
                 JoinKind::Inner,
                 &key(),
                 &outer_side(),
                 &inner_side(&table),
-                false,
+                1,
+                Some(1),
             )
             .is_some(),
             "the probe converts to the indexed column's type, so the pair is \
              admissible -- Go accepts it too"
+        );
+    }
+
+    /// `completePhysicalIndexJoin` does not re-run a static key-type gate.
+    /// Go converts each outer value to the selected inner column's type and
+    /// discards that probe unless comparison with the original is equal.
+    /// Decimal-to-integer is therefore a valid physical receipt even though
+    /// only integral decimal values can produce lookup rows.
+    #[test]
+    fn a_decimal_probe_of_an_integer_index_is_lowered_from_the_planner_receipt() {
+        let table = inner_table(&[(1, 1)]);
+        let mut outer = outer_side();
+        outer.types[1] = FieldType::new(FieldTypeCode::NewDecimal);
+
+        assert!(
+            selected_access(
+                JoinKind::Inner,
+                &key(),
+                &outer,
+                &inner_side(&table),
+                1,
+                Some(1),
+            )
+            .is_some(),
+            "the executor must lower the exact planner receipt; runtime \
+             ConvertTo plus equality decides each probe"
         );
     }
 }

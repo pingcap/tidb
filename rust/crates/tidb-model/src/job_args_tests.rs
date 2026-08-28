@@ -1374,9 +1374,12 @@ pub(crate) fn go_test_modify_schema_args() {
     for in_policy_id in [Some(123i64), None] {
         for version in [JobVersion::V1, JobVersion::V2] {
             let args = GoShared::new(ModifySchemaArgs {
-                policy_ref: GoField::new(
-                    in_policy_id.map(|id| GoShared::new(PolicyRefInfo { id, ..Default::default() })),
-                ),
+                policy_ref: GoField::new(in_policy_id.map(|id| {
+                    GoShared::new(PolicyRefInfo {
+                        id,
+                        ..Default::default()
+                    })
+                })),
                 ..Default::default()
             });
             let mut job = encoded_job(
@@ -1408,10 +1411,7 @@ pub(crate) fn go_test_create_table_args() {
         let mut job = encoded_job(version, ActionType::ACTION_CREATE_TABLE, args);
         let decoded = get_create_table_args(&mut job).unwrap().unwrap();
         let decoded = decoded.read();
-        assert_eq!(
-            decoded.table_info.get().map(|t| t.read().id),
-            Some(100)
-        );
+        assert_eq!(decoded.table_info.get().map(|t| t.read().id), Some(100));
         assert!(decoded.fk_check.get());
     }
     // Subtest "create view": ID 122, OnExistReplace, OldViewTblID 123.

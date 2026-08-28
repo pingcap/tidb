@@ -80,8 +80,7 @@ fn convert_using_result_type_carries_target_charset_metadata() {
     // {"haha", "binary"} / {"haha", "bInAry"}: mixed-case target names fold
     // like Go's strings.ToLower, and binary is flagged.
     for target in ["binary", "bInAry"] {
-        let binary_type =
-            rewritten_convert_result_type(&format!("convert('haha' using {target})"));
+        let binary_type = rewritten_convert_result_type(&format!("convert('haha' using {target})"));
         assert_eq!(binary_type.charset_name(), "binary", "{target}");
         assert_eq!(binary_type.collation_name(), "binary", "{target}");
         assert!(binary_type.has_flag(FieldTypeFlags::BINARY), "{target}");
@@ -90,12 +89,10 @@ fn convert_using_result_type_carries_target_charset_metadata() {
     // The binary-literal rows: values already verified by the earlier test;
     // their TYPES must be retagged identically ({"0x7e","BiNarY"} → '~'
     // binary-flagged; {"0xe4b8ade696870a","uTf8"} → '中文\n' unflagged).
-    let bin_literal_to_binary =
-        rewritten_convert_result_type("convert(0x7e using bInArY)");
+    let bin_literal_to_binary = rewritten_convert_result_type("convert(0x7e using bInArY)");
     assert_eq!(bin_literal_to_binary.charset_name(), "binary");
     assert!(bin_literal_to_binary.has_flag(FieldTypeFlags::BINARY));
-    let bin_literal_to_utf8 =
-        rewritten_convert_result_type("convert(0xe4b8ade696870a using uTf8)");
+    let bin_literal_to_utf8 = rewritten_convert_result_type("convert(0xe4b8ade696870a using uTf8)");
     assert_eq!(bin_literal_to_utf8.charset_name(), "utf8");
     assert!(!bin_literal_to_utf8.has_flag(FieldTypeFlags::BINARY));
 }

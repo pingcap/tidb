@@ -182,13 +182,19 @@ fn iterator_flavors() {
     let mut it = check_equal!(Iterator4Chunk::new(&chk), expected);
     it.begin();
     for i in 0..5 {
-        assert_eq!(it.current().unwrap().get_int64(0), chk.get_row(i).get_int64(0));
+        assert_eq!(
+            it.current().unwrap().get_int64(0),
+            chk.get_row(i).get_int64(0)
+        );
         it.next_row();
     }
     it.reach_end();
     assert_eq!(it.end(), it.current());
     let mut it = Iterator4Chunk::new(&chk);
-    assert_eq!(it.begin().unwrap().get_int64(0), chk.get_row(0).get_int64(0));
+    assert_eq!(
+        it.begin().unwrap().get_int64(0),
+        chk.get_row(0).get_int64(0)
+    );
 
     // List iterator.
     let mut it = check_equal!(Iterator4List::new(&li), expected);
