@@ -402,6 +402,10 @@ both `oltp_read_only` and `oltp_read_write`.
   Live DML never called its narrowed table/transaction traits, so enabling
   `tidb_enable_mutation_checker` still has no Go-equivalent enforcement; the
   system-variable catalogue now states that gap at the user-visible switch.
+- [x] 2026-08-28: deleted the disconnected executor-local
+  `analyze_col_sampling` driver. Live in-process and cluster `ANALYZE` both
+  use `analyze` plus `tidb-stats`; no analyze plan called the parallel
+  sampling implementation or its self-only tests.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer

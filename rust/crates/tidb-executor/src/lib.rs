@@ -61,7 +61,6 @@ pub fn worker_pool_available() -> bool {
 }
 pub mod agg_spill;
 pub mod analyze;
-pub mod analyze_col_sampling;
 pub mod apply;
 pub mod apply_cache;
 mod approx_count_distinct;
