@@ -46,9 +46,8 @@ pub use region_batches::RegionMutationBatch;
 pub use state::{
     CleanupBatchFailure, CleanupFailedTransaction, CommittedProtocol, CommittedTransaction,
     OptimisticCommitOutcome, OptimisticTransactionReceipt, OptimisticTransactionState,
-    ReadOnlyTransaction, RolledBackTransaction, SecondaryCommitFailure, SnapshotReadReceipt,
-    TransactionAttemptPhase, TransactionAttemptReceipt, TransactionAttemptResult, TransactionCause,
-    UndeterminedTransaction,
+    ReadOnlyTransaction, RolledBackTransaction, SecondaryCommitFailure, TransactionAttemptPhase,
+    TransactionAttemptReceipt, TransactionAttemptResult, TransactionCause, UndeterminedTransaction,
 };
 pub use ttl::{
     HeartBeatFailure, KeepAliveReport, KeepAliveStop, LockKeepAlive, TxnHeartBeatSender,

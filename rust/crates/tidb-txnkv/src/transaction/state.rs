@@ -121,17 +121,6 @@ pub struct CleanupBatchFailure {
     pub cause: TransactionCause,
 }
 
-/// One real snapshot Get publication retained by a zero-write completion.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SnapshotReadReceipt {
-    /// Encoded key read at the transaction start timestamp.
-    pub key: Vec<u8>,
-    /// Exact region epoch used for the successful Get.
-    pub region: RegionVerId,
-    /// Physical BatchCommands publication.
-    pub publication: TransactionBatchPublication,
-}
-
 /// Transaction command represented by one causal physical attempt receipt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TransactionAttemptPhase {
@@ -363,8 +352,6 @@ pub struct ReadOnlyTransaction {
     pub start_ts: u64,
     /// No Prewrite, Commit, or BatchRollback was published.
     pub state: OptimisticTransactionState,
-    /// Every real snapshot Get performed before the zero-write finish.
-    pub snapshot_reads: Vec<SnapshotReadReceipt>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

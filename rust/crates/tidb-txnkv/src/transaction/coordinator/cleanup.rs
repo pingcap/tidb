@@ -57,7 +57,6 @@ where
             authority_id: self.authority_id,
             start_ts: self.start_ts,
             state: OptimisticTransactionState::ReadOnly,
-            snapshot_reads: self.snapshot_reads,
         })
     }
 

@@ -36,7 +36,7 @@ use super::super::command_client::{
     PublishedCommand, TransactionBatchGetRequest, TransactionCommandClient,
 };
 use super::super::region_batches::{group_keys, point_route, RegionKeyBatch};
-use super::super::state::{CoordinatorState, SnapshotReadReceipt};
+use super::super::state::CoordinatorState;
 use super::{
     alive_retry_delay, recover_region_error_with, wait_with_call, OptimisticCoordinatorError,
     RealOptimisticTransaction, RecoveryPhase, RPC_READ_TIMEOUT_MEDIUM,
@@ -258,14 +258,12 @@ where
 {
     let mut forward_backoff = RegionBackoffBudget::campaign_default();
     let mut resolved_locks = crate::lock::SnapshotLockSet::default();
-    let mut snapshot_reads = Vec::new();
     snapshot_scan_with(
         runtime,
         timestamps,
         gc_state,
         &mut forward_backoff,
         &mut resolved_locks,
-        &mut snapshot_reads,
         resource_group_name,
         start_key,
         end_key,
@@ -282,7 +280,6 @@ fn snapshot_scan_with<C, L, T>(
     gc_state: &GcStateCache,
     forward_backoff: &mut RegionBackoffBudget,
     resolved_locks: &mut crate::lock::SnapshotLockSet,
-    snapshot_reads: &mut Vec<SnapshotReadReceipt>,
     resource_group_name: Option<&str>,
     start_key: &[u8],
     end_key: &[u8],
@@ -407,11 +404,6 @@ where
         for pair in response.response.pairs {
             pairs.push((pair.key, pair.value));
         }
-        snapshot_reads.push(SnapshotReadReceipt {
-            key: cursor.clone(),
-            region: route.region(),
-            publication: response.publication,
-        });
         if limit.is_some_and(|limit| pairs.len() >= limit) {
             break;
         }
@@ -595,7 +587,7 @@ where
             } else {
                 Some(response.response.value)
             };
-            let result = SnapshotGetResult {
+            return Ok(SnapshotGetResult {
                 // This receipt identifies the transaction which owns the
                 // coordinator, not the point-read version. A pessimistic
                 // statement may read at a newer for-update timestamp while
@@ -604,13 +596,7 @@ where
                 value,
                 region: route.region(),
                 publication: response.publication,
-            };
-            self.snapshot_reads.push(SnapshotReadReceipt {
-                key: key.to_vec(),
-                region: route.region(),
-                publication: result.publication.clone(),
             });
-            return Ok(result);
         }
     }
 
@@ -654,7 +640,6 @@ where
             let groups = group_keys(&self.runtime, keys)
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
             let mut values = Vec::new();
-            let mut successful_reads = Vec::new();
             let mut locked = Vec::new();
             let mut lock_context = None;
             let mut retry_region = false;
@@ -715,7 +700,6 @@ where
                         "TiKV key error: {key_error:?}"
                     )));
                 }
-                let mut batch_has_locks = false;
                 for pair in response.response.pairs {
                     if let Some(key_error) = pair.error.as_ref() {
                         if let Some(lock_info) = key_error.locked.as_ref() {
@@ -723,7 +707,6 @@ where
                                 |error| OptimisticCoordinatorError::SnapshotGet(error.to_string()),
                             )?);
                             lock_context = Some(request.context.clone());
-                            batch_has_locks = true;
                             continue;
                         }
                         return Err(OptimisticCoordinatorError::SnapshotGet(format!(
@@ -731,15 +714,6 @@ where
                         )));
                     }
                     values.push((pair.key, pair.value));
-                }
-                if !batch_has_locks {
-                    successful_reads.extend(batch.keys().iter().cloned().map(|key| {
-                        SnapshotReadReceipt {
-                            key,
-                            region: batch.region(),
-                            publication: response.publication.clone(),
-                        }
-                    }));
                 }
             }
             if retry_region {
@@ -783,7 +757,6 @@ where
                 continue;
             }
             self.check_visibility_at(read_ts)?;
-            self.snapshot_reads.extend(successful_reads);
             return Ok(values);
         }
     }
@@ -834,7 +807,6 @@ where
             &self.gc_state,
             &mut self.forward_backoff,
             &mut self.resolved_locks,
-            &mut self.snapshot_reads,
             self.resource_group_name.as_deref(),
             start_key,
             end_key,

@@ -55,7 +55,7 @@ use super::command_client::TransactionCommandClient;
 use super::mutation::{validate_plan, MutationSetError};
 use super::region_batches::{RegionKeyBatch, RegionMutationBatch};
 use super::state::{
-    CoordinatorState, OptimisticTransactionReceipt, SnapshotReadReceipt, TransactionAttemptPhase,
+    CoordinatorState, OptimisticTransactionReceipt, TransactionAttemptPhase,
     TransactionAttemptReceipt, TransactionAttemptResult, TransactionCause,
 };
 
@@ -205,7 +205,6 @@ pub struct RealOptimisticTransaction<C, L, T> {
     planned_mutation_count: usize,
     planned_aggregate_bytes: usize,
     state: CoordinatorState,
-    snapshot_reads: Vec<SnapshotReadReceipt>,
     opened_at: Instant,
     authority_id: u64,
     forward_backoff: RegionBackoffBudget,
@@ -360,7 +359,6 @@ where
             planned_mutation_count,
             planned_aggregate_bytes,
             state: CoordinatorState::New,
-            snapshot_reads: Vec::new(),
             opened_at,
             authority_id,
             forward_backoff: RegionBackoffBudget::campaign_default(),
