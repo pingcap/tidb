@@ -150,6 +150,10 @@ both `oltp_read_only` and `oltp_read_write`.
   enqueued the same task before and after its synchronous send, then panicked
   when terminal close removed both entries. BatchCommands remains the
   production-first path.
+- [x] 2026-08-27: made HashAgg partial-worker admission work-driven. The
+  configured partial/final concurrency and round-robin assignment are
+  unchanged, but a persistent-pool lane is submitted only when it receives a
+  chunk, and zero/one active partial lane no longer submits no-op final merges.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -389,6 +393,22 @@ both `oltp_read_only` and `oltp_read_write`.
   the ready-token guard, all five paging/close tests, and the alternating
   synchronous diagnostic at 2,644.03/2,979.65 Rust/Go TPS.
 
+- Observation: after Sort retained source chunks, the current production
+  profile showed a one-chunk DISTINCT aggregation still submitting all five
+  configured partial lanes and five final merge tasks. Four partial lanes
+  received no input, and every final task merely adopted one map. Go creates
+  the same logical goroutines, but an idle goroutine is cheap; each Rust lane
+  occupied a persistent-pool task and paid queue/channel completion. Lazy lane
+  admission preserves configured parallelism for multi-chunk input without a
+  row threshold. The focused median moved to 2,803.22/2,773.79 TPS (1.011x).
+  A complete split measured simple 3,987.23/4,340.52 (0.919x), SUM
+  4,518.25/4,678.35 (0.966x), ORDER 3,543.73/3,611.00 (0.981x), and DISTINCT
+  2,811.49/2,825.26 (0.995x), with zero errors.
+  Evidence: fail-before five versus expected one worker in
+  `single_chunk_pipeline_submits_only_one_partial_worker`, its pass after lazy
+  admission, all 13 parallel HashAgg tests, the release build, and both paired
+  benchmark receipts.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -505,6 +525,14 @@ both `oltp_read_only` and `oltp_read_write`.
   by production admission policy.
   Date/Author: 2026-08-27, Codex.
 
+- Decision: submit a HashAgg lane on its first chunk and bypass final merge
+  submission when no second partial map exists.
+  Rationale: this removes idle scheduler work rather than selecting a serial
+  plan or introducing an input-size policy. Every configured lane still runs
+  once round-robin dispatch has useful work for it, and the existing spill,
+  error, cancellation, and multi-worker tests retain the Go lifecycle.
+  Date/Author: 2026-08-27, Codex.
+
 ## Outcomes & Retrospective
 
 Work is in progress. After restoring point-plan precedence and removing the
@@ -547,6 +575,11 @@ measured Rust/Go medians of 2,644.03/2,979.65 TPS (0.887x), zero errors, after
 fixing the fallback's duplicate ready-token panic. Because synchronous Rust
 was about 2.2% slower than the production batched Rust median, the diagnostic
 was reverted and BatchCommands-first dispatch remains production behavior.
+Making HashAgg lane submission work-driven then measured a focused DISTINCT
+median of 2,803.22/2,773.79 TPS (1.011x). The complete split measured DISTINCT
+at 2,811.49/2,825.26 TPS (0.995x), ORDER at 0.981x, SUM at 0.966x, and simple
+range at 0.919x, all with zero errors. The remaining range-read target is now
+the shared scan/request path rather than HashAgg's fixed scheduler lifecycle.
 
 ## Context and Orientation
 

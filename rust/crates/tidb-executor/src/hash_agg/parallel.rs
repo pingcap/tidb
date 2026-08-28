@@ -1026,6 +1026,49 @@ struct PipelineEpoch {
 }
 
 #[allow(clippy::too_many_arguments)]
+fn spawn_partial_lane<C: Columns + Send + Sync + Clone + 'static>(
+    lane_rx: std::sync::mpsc::Receiver<(Chunk, i64)>,
+    abort: PipelineAbort,
+    plan: Arc<PipelinePlan<C>>,
+    final_concurrency: usize,
+    tracker: Arc<Tracker>,
+    #[cfg(test)] stats: Arc<PipelineStats>,
+) -> std::sync::mpsc::Receiver<Result<Vec<PipelineMap>, ExecError>> {
+    crate::worker_pool::spawn(move || {
+        #[cfg(test)]
+        stats.record_partial_worker();
+        let mut maps: Vec<PipelineMap> = (0..final_concurrency)
+            .map(|_| PipelineMap::default())
+            .collect();
+        let mut error: Option<ExecError> = None;
+        while let Ok((chunk, chunk_charge)) = lane_rx.recv() {
+            if error.is_none() {
+                let fold = fold_chunk(
+                    FoldInputs {
+                        ctx: &plan.ctx,
+                        group_by: &plan.group_by,
+                        integer_columns: plan.integer_columns.as_deref(),
+                        agg_funcs: &plan.agg_funcs,
+                    },
+                    &mut maps,
+                    final_concurrency,
+                    &tracker,
+                    &chunk,
+                );
+                if let Err(fold_error) = fold {
+                    error = Some(fold_error);
+                    abort.raise();
+                }
+            }
+            // Go returns the consumed input chunk to the fetcher's pool; this
+            // releases the exact growth charged while filling it.
+            tracker.consume(-chunk_charge);
+        }
+        error.map_or(Ok(maps), Err)
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
     child: &mut dyn Executor,
     child_chunk: &mut Chunk,
@@ -1040,55 +1083,16 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
 ) -> Result<PipelineEpoch, ExecError> {
     let abort = PipelineAbort::default();
 
-    let mut lane_txs = Vec::with_capacity(partial_concurrency);
-    let mut lane_rxs = Vec::with_capacity(partial_concurrency);
-    for _ in 0..partial_concurrency {
-        let (tx, rx) = sync_channel::<(Chunk, i64)>(1);
-        lane_txs.push(tx);
-        lane_rxs.push(rx);
-    }
-
-    let mut partial_handles = Vec::with_capacity(partial_concurrency);
-    for _ in 0..partial_concurrency {
-        let lane_rx = lane_rxs.pop().expect("one receiver per partial worker");
-        let abort = abort.clone();
-        #[cfg(test)]
-        let stats_ref = Arc::clone(stats);
-        let tracker = Arc::clone(tracker);
-        let plan = Arc::clone(plan);
-        partial_handles.push(crate::worker_pool::spawn(move || {
-            #[cfg(test)]
-            stats_ref.record_partial_worker();
-            let mut maps: Vec<PipelineMap> = (0..final_concurrency)
-                .map(|_| PipelineMap::default())
-                .collect();
-            let mut error: Option<ExecError> = None;
-            while let Ok((chunk, chunk_charge)) = lane_rx.recv() {
-                if error.is_none() {
-                    let fold = fold_chunk(
-                        FoldInputs {
-                            ctx: &plan.ctx,
-                            group_by: &plan.group_by,
-                            integer_columns: plan.integer_columns.as_deref(),
-                            agg_funcs: &plan.agg_funcs,
-                        },
-                        &mut maps,
-                        final_concurrency,
-                        &tracker,
-                        &chunk,
-                    );
-                    if let Err(fold_error) = fold {
-                        error = Some(fold_error);
-                        abort.raise();
-                    }
-                }
-                // Go returns the consumed input chunk to the fetcher's pool;
-                // this releases the exact growth charged while filling it.
-                tracker.consume(-chunk_charge);
-            }
-            error.map_or(Ok(maps), Err)
-        }));
-    }
+    // Go can park an idle goroutine for each configured lane almost for free.
+    // A Rust pool task occupies a worker while it waits on the lane channel,
+    // so admit the same lane only when the fetcher has a chunk for it. This is
+    // work-driven admission, not a row-count/concurrency policy: multi-chunk
+    // input still activates every configured lane through round-robin dispatch.
+    let mut lane_txs: Vec<Option<std::sync::mpsc::SyncSender<(Chunk, i64)>>> =
+        (0..partial_concurrency).map(|_| None).collect();
+    let mut partial_handles: Vec<
+        Option<std::sync::mpsc::Receiver<Result<Vec<PipelineMap>, ExecError>>>,
+    > = (0..partial_concurrency).map(|_| None).collect();
 
     let mut next_lane = 0usize;
     let mut fetch_error: Option<ExecError> = None;
@@ -1113,7 +1117,25 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
         tracker.consume(chunk_charge);
         let replacement = child.new_chunk();
         let chunk = std::mem::replace(child_chunk, replacement);
-        if lane_txs[next_lane].send((chunk, chunk_charge)).is_err() {
+        if lane_txs[next_lane].is_none() {
+            let (lane_tx, lane_rx) = sync_channel::<(Chunk, i64)>(1);
+            partial_handles[next_lane] = Some(spawn_partial_lane(
+                lane_rx,
+                abort.clone(),
+                Arc::clone(plan),
+                final_concurrency,
+                Arc::clone(tracker),
+                #[cfg(test)]
+                Arc::clone(stats),
+            ));
+            lane_txs[next_lane] = Some(lane_tx);
+        }
+        if lane_txs[next_lane]
+            .as_ref()
+            .expect("a dispatched lane has a sender")
+            .send((chunk, chunk_charge))
+            .is_err()
+        {
             break;
         }
         #[cfg(test)]
@@ -1126,7 +1148,7 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
     drop(lane_txs);
     let mut partial_maps = Vec::with_capacity(partial_concurrency);
     let mut first_error = fetch_error;
-    for handle in partial_handles {
+    for handle in partial_handles.into_iter().flatten() {
         match handle.recv() {
             Ok(Ok(maps)) => partial_maps.push(maps),
             Ok(Err(error)) => {
@@ -1143,29 +1165,42 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
         return Err(error);
     }
 
-    let mut bucket_inputs: Vec<Vec<PipelineMap>> = (0..final_concurrency)
-        .map(|_| Vec::with_capacity(partial_maps.len()))
-        .collect();
-    for maps in partial_maps {
-        for (bucket, map) in maps.into_iter().enumerate() {
-            bucket_inputs[bucket].push(map);
-        }
-    }
-    let maps = crate::worker_pool::map(
-        bucket_inputs.into_iter().map(|inputs| {
-            move || {
-                let mut inputs = inputs.into_iter();
-                let mut acc = inputs.next().unwrap_or_default();
-                for map in inputs {
-                    merge_map(&mut acc, map)?;
-                }
-                Ok::<_, ExecError>(acc)
+    // Go's final worker adopts the first partial map before merging later
+    // inputs. Zero or one active partial lane therefore has no merge work to
+    // submit to the pool; its maps already are the exact final-worker inputs.
+    let maps = if partial_maps.is_empty() {
+        (0..final_concurrency)
+            .map(|_| PipelineMap::default())
+            .collect()
+    } else if partial_maps.len() == 1 {
+        partial_maps
+            .pop()
+            .expect("one partial worker returned maps")
+    } else {
+        let mut bucket_inputs: Vec<Vec<PipelineMap>> = (0..final_concurrency)
+            .map(|_| Vec::with_capacity(partial_maps.len()))
+            .collect();
+        for maps in partial_maps {
+            for (bucket, map) in maps.into_iter().enumerate() {
+                bucket_inputs[bucket].push(map);
             }
-        }),
-        final_concurrency,
-    )
-    .into_iter()
-    .collect::<Result<Vec<_>, _>>()?;
+        }
+        crate::worker_pool::map(
+            bucket_inputs.into_iter().map(|inputs| {
+                move || {
+                    let mut inputs = inputs.into_iter();
+                    let mut acc = inputs.next().unwrap_or_default();
+                    for map in inputs {
+                        merge_map(&mut acc, map)?;
+                    }
+                    Ok::<_, ExecError>(acc)
+                }
+            }),
+            final_concurrency,
+        )
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?
+    };
     Ok(PipelineEpoch {
         maps,
         child_drained,
@@ -1942,6 +1977,36 @@ mod tests {
         let expected_chunks = data.len().div_ceil(CHUNK_SIZE);
         assert_eq!(dispatched, expected_chunks, "every chunk was folded");
         assert!(threads > 1, "multiple partial-worker threads ran");
+    }
+
+    #[test]
+    fn single_chunk_pipeline_submits_only_one_partial_worker() {
+        let data: Vec<(i64, i64)> = (0..CHUNK_SIZE)
+            .map(|row| ((row % 7) as i64, row as i64))
+            .collect();
+        let mut exec = build(
+            vec![col(0)],
+            count_sum_min_max_first_funcs(),
+            MultiChunkSource::new(&data, CHUNK_SIZE),
+            &wide_out_types(),
+        );
+        assert!(
+            exec.pipeline_eligibility().is_some(),
+            "one chunk still uses Go's configured parallel HashAgg shape"
+        );
+
+        exec.open().unwrap();
+        let rows = drain_rows(&mut exec);
+        let info = exec.pipeline_run_info().expect("pipeline ran");
+        exec.close().unwrap();
+
+        assert_eq!(rows.len(), 7);
+        let (_partial, _final_, dispatched, threads) = info;
+        assert_eq!(dispatched, 1);
+        assert_eq!(
+            threads, 1,
+            "an idle lane must not consume a persistent worker-pool task"
+        );
     }
 
     /// The Go builder's workaround rule: concurrency 1/1 stays serial even
