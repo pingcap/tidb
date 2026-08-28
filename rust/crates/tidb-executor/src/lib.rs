@@ -400,6 +400,8 @@ mod tests_distsql_test_source;
 #[cfg(test)]
 mod tests_set_show_stats_slow_query_source;
 #[cfg(test)]
+mod tests_executor_internal_source;
+#[cfg(test)]
 mod tests_executor_suite_metadata_source;
 #[cfg(test)]
 mod tests_executor_suite_statements_source;
