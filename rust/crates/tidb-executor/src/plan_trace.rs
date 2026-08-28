@@ -165,11 +165,6 @@ impl PlanNode {
         }
     }
 
-    fn with_task(mut self, task: &'static str) -> Self {
-        self.task = task;
-        self
-    }
-
     /// The same node, marked as carrying Go's pseudo NDV ratio for every
     /// column (`distinctFactor`), which only a PSEUDO scan does.
     fn with_pseudo_ndv(mut self, estimate: ScanEstimate) -> Self {
@@ -1544,87 +1539,6 @@ impl PlanTrace {
             String::new(),
         ));
         self.point_get(visible, table, handle, None);
-    }
-
-    /// The complete clustered-primary point plan used by the connection
-    /// fast path. A common handle is identified by PRIMARY columns rather
-    /// than printing its encoded bytes as an integer handle.
-    pub(crate) fn fast_clustered_point_get(
-        &mut self,
-        visible: &str,
-        table: &crate::kv_table::KvTable,
-        handle: Option<&TableHandle>,
-    ) {
-        let common_offsets = table.common_handle_offsets();
-        if common_offsets.is_empty() {
-            self.point_get(visible, table, handle, None);
-            return;
-        }
-        let columns = common_offsets
-            .iter()
-            .filter_map(|offset| table.visible_columns().get(*offset))
-            .map(|column| column.name.as_str())
-            .collect::<Vec<_>>();
-        self.replace_top(PlanNode::new(
-            "Point_Get",
-            Some(1.0),
-            format!(
-                "table:{visible}, clustered index:PRIMARY({})",
-                columns.join(", ")
-            ),
-            String::new(),
-        ));
-        self.mark_top_access_consumed();
-    }
-
-    /// The exact physical tree served by the bounded one-row connection
-    /// path: root Limit over a TableReader whose cop task applies the same
-    /// Limit to a clustered TableRangeScan.
-    pub(crate) fn fast_single_row_range(
-        &mut self,
-        visible: &str,
-        ranges: &[crate::kv_table::IndexRange],
-        pseudo: bool,
-    ) {
-        let printed = ranges.iter().map(range_text).collect::<Vec<_>>();
-        let mut scan = PlanNode::new(
-            "TableRangeScan",
-            Some(1.0),
-            format!("table:{visible}"),
-            format!(
-                "range:{}, keep order:false{}",
-                printed.join(", "),
-                if pseudo { ", stats:pseudo" } else { "" }
-            ),
-        )
-        .with_task("cop[tikv]");
-        scan.key_ndv_ratio = pseudo.then_some(DISTINCT_FACTOR);
-
-        let mut cop_limit = PlanNode::new(
-            "Limit",
-            Some(1.0),
-            String::new(),
-            "offset:0, count:1".to_owned(),
-        )
-        .with_task("cop[tikv]");
-        cop_limit.children.push(scan);
-        let mut reader = PlanNode::new(
-            "TableReader",
-            Some(1.0),
-            String::new(),
-            "data:Limit".to_owned(),
-        );
-        reader.children.push(cop_limit);
-        let mut root_limit = PlanNode::new(
-            "Limit",
-            Some(1.0),
-            String::new(),
-            "offset:0, count:1".to_owned(),
-        );
-        root_limit.children.push(reader);
-        self.stack.clear();
-        self.stack.push(root_limit);
-        self.mark_top_access_consumed();
     }
 
     /// A read of the WHOLE of a covering index, which also REPLACES the

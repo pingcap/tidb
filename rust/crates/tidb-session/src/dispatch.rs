@@ -1156,22 +1156,6 @@ impl Session {
                     },
                     _ => select,
                 };
-                // Go keeps YCSB-E's clustered `LIMIT 1` range on its narrow
-                // table-reader path. The bound prepared AST already contains
-                // the execute-time key, so try the equivalent range/coprocessor
-                // path before constructing the complete logical and physical
-                // tree. Every unsupported clause, hint, residual predicate,
-                // dirty table, or backend refusal remains on the ordinary
-                // planner path below.
-                let current_db = self.current_db.clone();
-                let ctx = self.statement_context(false);
-                let fast_range = self.with_catalog_mut(|catalog| {
-                    tidb_executor::run_fast_single_row_scan(select, catalog, &current_db, &ctx)
-                })?;
-                if let Some((columns, rows)) = fast_range {
-                    self.drain_eval_warnings(&ctx);
-                    return Ok(StmtOutput::Rows { columns, rows });
-                }
                 if let Some(cached) = cached_point_get.as_ref() {
                     let current_db = self.current_db.clone();
                     let ctx = self.prepared_point_get_context();

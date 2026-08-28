@@ -951,10 +951,10 @@ fn prepared_point_cache_answers_an_is_null_residual() {
     assert_eq!(datum_text_for_test(&rows[0][1]), "n1");
 }
 
-/// The YCSB E scan fast path reads one clustered-handle range row and refuses
-/// a wider limit, leaving every non-admitted shape on the general planner.
+/// The shared planner keeps YCSB E's bounded clustered range on its ordinary
+/// Limit/TableReader path and applies the requested limit.
 #[test]
-fn fast_single_row_scan_reads_the_first_clustered_handle() {
+fn shared_planner_reads_the_bounded_clustered_handle_range() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
         "CREATE TABLE ycsb_scan (id VARCHAR(32) PRIMARY KEY CLUSTERED, v VARCHAR(32))",
@@ -977,11 +977,11 @@ fn fast_single_row_scan_reads_the_first_clustered_handle() {
         },
         _ => panic!("expected a query"),
     };
-    let fast = run_fast_single_row_scan(select, &catalog, "test", &crate::StmtContext::for_query())
-        .unwrap()
-        .expect("bounded clustered-handle scan should use the fast path");
-    assert_eq!(datum_text_for_test(&fast.1[0][0]), "user-0002");
-    assert_eq!(datum_text_for_test(&fast.1[0][1]), "value-2");
+    let planned =
+        crate::run_select_meta_stmt(select, &catalog, "test", &crate::StmtContext::for_query())
+            .unwrap();
+    assert_eq!(datum_text_for_test(&planned.1[0][0]), "user-0002");
+    assert_eq!(datum_text_for_test(&planned.1[0][1]), "value-2");
     let scan_select = select;
 
     let wider =
@@ -992,11 +992,10 @@ fn fast_single_row_scan_reads_the_first_clustered_handle() {
     let QueryStmt::Select(select) = &**query else {
         panic!("expected a select");
     };
-    assert!(
-        run_fast_single_row_scan(select, &catalog, "test", &crate::StmtContext::for_query(),)
-            .unwrap()
-            .is_none()
-    );
+    let wider =
+        crate::run_select_meta_stmt(select, &catalog, "test", &crate::StmtContext::for_query())
+            .unwrap();
+    assert_eq!(wider.1.len(), 2);
 
     let cell = |datum: &Datum| match datum {
         Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
@@ -1904,14 +1903,11 @@ fn a_single_point_handle_range_with_a_filter_is_a_point_get() {
     );
 }
 
-/// A `LIMIT 1` whose WHERE never detaches into clustered-handle ranges (an
-/// `IS NOT NULL`, or a predicate naming no primary column) is the general
-/// planner's statement: Go plans a table reader over it and answers. The fast
-/// path must FALL BACK (`None`), never refuse the statement -- captured
-/// against TiDB, where `select prdaccno from dpm_prd_acc where prdaccno is
-/// not null limit 1` returns a row while an erroring fast path rejected it.
+/// A `LIMIT 1` whose WHERE does not detach into clustered-handle ranges (an
+/// `IS NOT NULL`, or a predicate naming no primary column) is answered by the
+/// shared planner's table reader, as it is in Go.
 #[test]
-fn fast_single_row_scan_falls_back_when_the_where_detaches_nothing() {
+fn shared_planner_answers_limit_when_the_where_detaches_nothing() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
         "CREATE TABLE ycsb_fb (id VARCHAR(32) PRIMARY KEY CLUSTERED, v VARCHAR(32))",
@@ -1937,13 +1933,6 @@ fn fast_single_row_scan_falls_back_when_the_where_detaches_nothing() {
             panic!("expected a select");
         };
         let ctx = crate::StmtContext::for_query();
-        assert!(
-            crate::driver::plan_fast_single_row_scan(select, &catalog, "test", &ctx)
-                .unwrap()
-                .is_none(),
-            "{sql} should fall back to the general planner"
-        );
-        // The general planner answers it, as Go's does.
         let rows =
             crate::run_select_meta_stmt(select, &catalog, "test", &ctx).expect("{sql} should run");
         let (_, values) = rows;

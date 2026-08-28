@@ -217,8 +217,8 @@ use std::rc::Rc;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 use crate::driver::{
-    plan_fast_point_get, plan_fast_single_row_scan, run_delete_traced, run_insert_traced,
-    run_select_traced, run_set_opr_traced, run_update_traced, Catalog, DriverError, SelectMeta,
+    run_delete_traced, run_insert_traced, run_select_traced, run_set_opr_traced, run_update_traced,
+    Catalog, DriverError, SelectMeta,
 };
 use crate::plan_trace::{PlanNode, PlanTrace};
 
@@ -319,14 +319,6 @@ pub fn explain_select_stmt(
     refuse_untraced_select(select)?;
     let mut trace = PlanTrace::planning();
     trace.set_cte_names(cte_names);
-    if let Some(plan) = plan_fast_single_row_scan(select, catalog, current_db, ctx)? {
-        trace.fast_single_row_range(&plan.visible, &plan.ranges, plan.pseudo);
-        return Ok(render(recorded(trace)?, format));
-    }
-    if let Some(plan) = plan_fast_point_get(select, catalog, current_db, ctx)? {
-        trace.fast_clustered_point_get(&plan.visible, &plan.table, plan.handle.as_ref());
-        return Ok(render(recorded(trace)?, format));
-    }
     run_select_traced(
         select,
         catalog,

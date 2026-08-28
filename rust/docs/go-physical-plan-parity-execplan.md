@@ -200,6 +200,11 @@ both `oltp_read_only` and `oltp_read_write`.
   can therefore disable PointGet before snapshot declaration exactly as it
   does during physical planning; persistent, statement-local, invalid-first,
   and prepared cases share one first-hint-wins rule.
+- [x] 2026-08-28: removed the executor-local YCSB-E `LIMIT 1` clustered-range
+  shortcut and the older duplicate PointGet plan/EXPLAIN builder. Go has no
+  direct range-seek policy for that shape, and Rust's shared planner already
+  owns PointGet/BatchPointGet and ordinary Limit/TableReader construction.
+  The retained SQL tests now exercise that single planner authority.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
