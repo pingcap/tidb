@@ -107,6 +107,10 @@ pub(crate) struct AccessDecision {
     pub(crate) index_filter: AccessFilter,
     /// Go's cop-side `Selection` over the table plan.
     pub(crate) table_filter: AccessFilter,
+    /// Direct-column `PhysicalProjection` retained inside the selected
+    /// reader's cop task, in output order. Stable source identities let
+    /// executor lowering remap the cached tree after column pruning.
+    pub(crate) cop_projection: Option<Vec<RelColumn>>,
     /// The partial Limit inside the selected reader, as `(offset, count)`.
     pub(crate) pushed_limit: Option<(u64, u64)>,
     /// The selected reader-local TopN family, if any.
@@ -296,6 +300,7 @@ fn scan_access(plan: &PhysicalPlan, reader: AccessReader) -> Option<AccessDecisi
             estimated_rows: scan.base.base.stats_info().map(StatsInfo::row_count),
             index_filter: AccessFilter::default(),
             table_filter: AccessFilter::default(),
+            cop_projection: None,
             pushed_limit: None,
             pushed_topn: None,
             lookup_limit: None,
@@ -315,6 +320,7 @@ fn scan_access(plan: &PhysicalPlan, reader: AccessReader) -> Option<AccessDecisi
             estimated_rows: scan.base.base.stats_info().map(StatsInfo::row_count),
             index_filter: AccessFilter::default(),
             table_filter: AccessFilter::default(),
+            cop_projection: None,
             pushed_limit: None,
             pushed_topn: None,
             lookup_limit: None,
@@ -341,6 +347,7 @@ fn scan_access(plan: &PhysicalPlan, reader: AccessReader) -> Option<AccessDecisi
             estimated_rows: get.base.base.stats_info().map(StatsInfo::row_count),
             index_filter: AccessFilter::default(),
             table_filter: AccessFilter::default(),
+            cop_projection: None,
             pushed_limit: None,
             pushed_topn: None,
             lookup_limit: None,
@@ -367,6 +374,7 @@ fn scan_access(plan: &PhysicalPlan, reader: AccessReader) -> Option<AccessDecisi
             estimated_rows: get.base.base.stats_info().map(StatsInfo::row_count),
             index_filter: AccessFilter::default(),
             table_filter: AccessFilter::default(),
+            cop_projection: None,
             pushed_limit: None,
             pushed_topn: None,
             lookup_limit: None,
@@ -495,6 +503,30 @@ fn reader_filter(plan: &PhysicalPlan, logical: &LogicalPlan) -> Option<AccessFil
     access_filter(&conditions, logical)
 }
 
+/// Finds the direct-column projection inside one reader-owned cop plan. A
+/// computed projection cannot be represented by `DAGRequest.output_offsets`,
+/// so it deliberately produces no lowering receipt and stays as an executor
+/// projection.
+fn reader_projection(plan: &PhysicalPlan, logical: &LogicalPlan) -> Option<Vec<RelColumn>> {
+    if let PhysicalPlan::Projection(projection) = plan {
+        return projection
+            .exprs
+            .iter()
+            .map(|expression| {
+                expression
+                    .as_column()
+                    .and_then(|column| physical_column_name(column, logical))
+            })
+            .collect();
+    }
+    let mut projections = plan
+        .children()
+        .iter()
+        .filter_map(|child| reader_projection(child, logical));
+    let projection = projections.next()?;
+    projections.next().is_none().then_some(projection)
+}
+
 fn access_filter(conditions: &[Expression], logical: &LogicalPlan) -> Option<AccessFilter> {
     let mut columns = Vec::new();
     for condition in conditions {
@@ -618,6 +650,7 @@ fn access_decisions(plan: &PhysicalPlan, logical: &LogicalPlan) -> Option<Vec<Ac
             PhysicalPlan::TableReader(reader) => reader.table_plan.as_deref().and_then(|plan| {
                 let mut access = scan_access_in_plan(plan, AccessReader::Table)?;
                 access.table_filter = reader_filter(plan, logical)?;
+                access.cop_projection = reader_projection(plan, logical);
                 access.pushed_limit = reader_limit(plan);
                 access.pushed_topn = reader_has_topn(plan).then_some(ReaderTopN::Cop);
                 Some(access)
@@ -625,6 +658,7 @@ fn access_decisions(plan: &PhysicalPlan, logical: &LogicalPlan) -> Option<Vec<Ac
             PhysicalPlan::IndexReader(reader) => reader.index_plan.as_deref().and_then(|plan| {
                 let mut access = scan_access_in_plan(plan, AccessReader::Index)?;
                 access.index_filter = reader_filter(plan, logical)?;
+                access.cop_projection = reader_projection(plan, logical);
                 access.pushed_limit = reader_limit(plan);
                 access.pushed_topn = reader_has_topn(plan).then_some(ReaderTopN::Cop);
                 Some(access)
@@ -639,6 +673,11 @@ fn access_decisions(plan: &PhysicalPlan, logical: &LogicalPlan) -> Option<Vec<Ac
                         Some(plan) => reader_filter(plan, logical)?,
                         None => AccessFilter::default(),
                     };
+                    access.cop_projection = reader
+                        .table_plan
+                        .as_deref()
+                        .and_then(|plan| reader_projection(plan, logical))
+                        .or_else(|| reader_projection(plan, logical));
                     access.pushed_limit = reader_limit(plan);
                     access.pushed_topn = reader_has_topn(plan).then_some(ReaderTopN::IndexLookup);
                     access.lookup_limit =

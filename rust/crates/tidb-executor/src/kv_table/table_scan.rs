@@ -678,6 +678,20 @@ impl KvTable {
             // logical table and could shadow the wrong partition.  Refuse the
             // whole partitioned remote read in that case; the byte-level
             // cursor has the exact UnionScan semantics and is safe.
+            if output_offsets.is_some() && !scan.staged.is_empty() {
+                // A projected remote row may no longer contain the integer
+                // handle needed by UnionScan's staged-row merge. The caller
+                // normally refuses projection as soon as the table is dirty;
+                // retain this storage-boundary guard for a concurrent staged
+                // write or a backend that reports staged content late.
+                scan.stream.close();
+                for (_, opened_parts) in partition_scans.drain(..) {
+                    for mut opened in opened_parts {
+                        opened.stream.close();
+                    }
+                }
+                return Ok(None);
+            }
             if partitioned && !scan.staged.is_empty() {
                 scan.stream.close();
                 for (_, opened_parts) in partition_scans.drain(..) {
@@ -4303,16 +4317,20 @@ impl crate::table_access::TableAccess for TableScanExec {
     }
 
     fn accept_post_filter_projection(&mut self, keep: &[usize]) -> bool {
-        // The only current consumer is a clean clustered common-handle range.
-        // An integer-handle remote scan needs its handle column after the
-        // projection in order to merge staged rows, so it must keep using the
-        // unchanged wider-row contract until that handle is modelled as a
-        // separate transport field.
-        if self.filter.is_none()
-            || self.table.common_handle_offsets.is_empty()
+        // DAGRequest.output_offsets is safe for either clustered-handle
+        // family while the table is clean: no UnionScan row needs a handle
+        // reconstructed from the narrowed response. Local fallback applies
+        // the same projection after the optional scan filter.
+        if self.table.has_dirty_content()
             || self.partial_aggregate.is_some()
+            || self.post_filter_projection.is_some()
             || keep.is_empty()
             || keep.iter().any(|offset| *offset >= self.keep.len())
+            || (keep.len() == self.keep.len()
+                && keep
+                    .iter()
+                    .enumerate()
+                    .all(|(output, input)| output == *input))
         {
             return false;
         }

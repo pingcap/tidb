@@ -648,7 +648,10 @@ mod tests {
     use crate::cluster_storage::{
         ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
     };
-    use crate::driver::{run_select_on, Catalog};
+    use crate::driver::{
+        build_prepared_select_plan, run_prepared_select, run_select_on, Catalog,
+        PreparedPlanCacheEnvironment, DEFAULT_DATABASE,
+    };
     use crate::executor::{Executor, ExecutorMeta};
     use crate::join::{IndexLookupPlan, IndexLookupSource, JoinExec, JoinKind};
     use crate::kv_table::{KvColumn, KvIndex, KvTable, TableHandle};
@@ -723,6 +726,9 @@ mod tests {
         requested_read_aheads: Arc<Mutex<Vec<usize>>>,
         /// Whether each remote scan was required to preserve key order.
         requested_keep_orders: Arc<Mutex<Vec<bool>>>,
+        /// The reader-local output projection each request asked TiKV to
+        /// apply after its predicates.
+        requested_output_offsets: Arc<Mutex<Vec<Option<Vec<usize>>>>>,
         /// A warning the region reports on each request, standing in for
         /// TiKV's `SelectResponse.warnings`.
         region_warning: Mutex<Option<(i32, String)>>,
@@ -752,6 +758,10 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(request.keep_order);
+            self.requested_output_offsets
+                .lock()
+                .unwrap()
+                .push(request.output_offsets.clone());
             if let Some((code, message)) = self.region_warning.lock().unwrap().clone() {
                 // Exactly what `tidb_distsql`'s `response_channel` does with
                 // `SelectResponse.warnings`, into whatever collector it was
@@ -841,6 +851,9 @@ mod tests {
                 }
                 if appended_handle {
                     row.push(Datum::Int(handle.int_value().unwrap()));
+                }
+                if let Some(offsets) = &request.output_offsets {
+                    row = offsets.iter().map(|offset| row[*offset].clone()).collect();
                 }
                 rows.push(row);
                 if request.limit.is_some_and(|cap| rows.len() as u64 >= cap) {
@@ -1137,6 +1150,7 @@ mod tests {
             requested_flags: Arc::default(),
             requested_read_aheads: Arc::default(),
             requested_keep_orders: Arc::default(),
+            requested_output_offsets: Arc::default(),
             region_warning: Mutex::new(None),
             opened: Arc::default(),
             minimum_opens_before_read: Arc::default(),
@@ -2003,6 +2017,99 @@ mod tests {
         });
         assert_eq!(ops.gets, 0);
         assert_eq!((ops.cop_scans, ops.cop_rows), (1, 3));
+    }
+
+    /// Go keeps the selected PhysicalProjection inside the TableReader cop
+    /// task. The physical-plan receipt must therefore narrow the remote row,
+    /// not merely print that projection in EXPLAIN while a root ProjectionExec
+    /// still receives every scan column.
+    #[test]
+    fn a_clean_clustered_range_sends_the_cop_projection() {
+        let mut fixture = clustered_fixture();
+        for a in 1..=10 {
+            fixture
+                .table
+                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_expr::NoColumns)
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.table.clear_dirty_content();
+        let scanner = Arc::clone(&fixture.scanner);
+        let catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+
+        let rows =
+            run_select_on("SELECT b FROM t WHERE a BETWEEN 5 AND 7", &catalog, &ctx).unwrap();
+
+        assert_eq!(
+            rows,
+            vec![
+                vec![Datum::Int(50)],
+                vec![Datum::Int(60)],
+                vec![Datum::Int(70)]
+            ]
+        );
+        assert_eq!(
+            *scanner.requested_output_offsets.lock().unwrap(),
+            vec![Some(vec![1])],
+            "the selected cop projection must reach DAGRequest.output_offsets",
+        );
+    }
+
+    /// A prepared cache hit recursively rebuilds the retained range tree and
+    /// must preserve the same reader-local projection receipt as ordinary
+    /// planning.
+    #[test]
+    fn a_cached_clustered_range_sends_the_cop_projection_after_rebuild() {
+        let mut fixture = clustered_fixture();
+        for a in 1..=10 {
+            fixture
+                .table
+                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_expr::NoColumns)
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.table.clear_dirty_content();
+        let scanner = Arc::clone(&fixture.scanner);
+        let mut catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+        let statement = tidb_parser::parse("SELECT b FROM t WHERE a BETWEEN ? AND ?").unwrap();
+        let plan = Arc::new(
+            build_prepared_select_plan(&statement, 2, &catalog, DEFAULT_DATABASE, &ctx)
+                .expect("the range statement is cacheable"),
+        );
+        let environment = PreparedPlanCacheEnvironment::default();
+
+        for (bounds, expected, cache_hit) in [
+            (
+                [Datum::Int(5), Datum::Int(7)],
+                vec![Datum::Int(50), Datum::Int(60), Datum::Int(70)],
+                false,
+            ),
+            (
+                [Datum::Int(8), Datum::Int(9)],
+                vec![Datum::Int(80), Datum::Int(90)],
+                true,
+            ),
+        ] {
+            let execution = plan
+                .bind(&bounds, &catalog, DEFAULT_DATABASE, &ctx, &environment)
+                .expect("the integer bounds bind");
+            assert_eq!(execution.cache_hit(), cache_hit);
+            let (_, rows) = run_prepared_select(&execution, &mut catalog, DEFAULT_DATABASE, &ctx)
+                .unwrap()
+                .expect("the schema is unchanged");
+            let expected = expected
+                .into_iter()
+                .map(|value| vec![value])
+                .collect::<Vec<_>>();
+            assert_eq!(rows, expected);
+        }
+        assert_eq!(
+            *scanner.requested_output_offsets.lock().unwrap(),
+            vec![Some(vec![1]), Some(vec![1])],
+            "both the first build and recursive cache rebuild keep the cop projection",
+        );
     }
 
     /// MUTATION PROBE, with its control. A backend that lowers NONE of the

@@ -3179,6 +3179,41 @@ fn run_select_traced_with_delivery_choice_inner(
                 .is_some_and(|access| access.accept_partial_aggregate(&aggregate, ctx))
         });
 
+    // Lower the direct-column PhysicalProjection retained inside the selected
+    // reader. The receipt names source columns rather than stale physical
+    // offsets, so remap it only after statement column pruning and require it
+    // to match the final written projection exactly. Any operator that still
+    // needs the wider row keeps the existing root ProjectionExec path.
+    let direct_projection_offsets = projection_sources
+        .iter()
+        .copied()
+        .collect::<Option<Vec<_>>>();
+    let cop_projection_offsets = from_delivered
+        .cop_projection
+        .as_deref()
+        .and_then(|columns| {
+            columns
+                .iter()
+                .map(|column| crate::driver::from::scope_offset_of(&current_scope, column))
+                .collect::<Option<Vec<_>>>()
+        });
+    let cop_projection_accepted = !select.distinct
+        && select.group_by.is_empty()
+        && select.having.is_none()
+        && select.order_by.is_empty()
+        && select.windows.is_empty()
+        && executed_where.is_none()
+        && direct_projection_offsets
+            .as_deref()
+            .zip(cop_projection_offsets.as_deref())
+            .is_some_and(|(written, planned)| written == planned)
+        && source.table_access().is_some_and(|access| {
+            access.accept_post_filter_projection(
+                cop_projection_offsets
+                    .as_deref()
+                    .expect("matched cop projection offsets"),
+            )
+        });
     // A direct one-column DISTINCT groups the source expression itself. Go
     // absorbs its FIRST_ROW output projection into HashAgg, and places a
     // valid ORDER BY on that output above the aggregate.
@@ -3197,6 +3232,7 @@ fn run_select_traced_with_delivery_choice_inner(
     let projection_trace_exprs = (trace.is_some()
         && direct_distinct_input.is_none()
         && !projection_elided
+        && !cop_projection_accepted
         && !logical_column_prune)
         .then(|| exprs.clone());
     let projection_trace_columns = projection_trace_exprs.as_ref().map(|_| {
@@ -3359,7 +3395,7 @@ fn run_select_traced_with_delivery_choice_inner(
             aggregate = trace.meter(aggregate);
         }
         aggregate
-    } else if projection_elided {
+    } else if projection_elided || cop_projection_accepted {
         source
     } else {
         Box::new(ProjectionExec::new(
@@ -3369,7 +3405,11 @@ fn run_select_traced_with_delivery_choice_inner(
             ctx.clone(),
         ))
     };
-    if direct_distinct_input.is_none() && !projection_elided && !logical_column_prune {
+    if direct_distinct_input.is_none()
+        && !projection_elided
+        && !cop_projection_accepted
+        && !logical_column_prune
+    {
         if !(index_lookup_projection_fields.is_some() && !limit_before_projection) {
             if let Some(trace) = trace.as_deref_mut() {
                 let physical = projection_trace_exprs
@@ -3515,6 +3555,7 @@ fn run_select_traced_with_delivery_choice_inner(
         && !limit_before_projection
         && direct_distinct_input.is_none()
         && !projection_elided
+        && !cop_projection_accepted
         && !logical_column_prune
     {
         if let Some(trace) = trace.as_deref_mut() {

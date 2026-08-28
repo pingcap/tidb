@@ -525,6 +525,8 @@ pub(crate) struct Delivered {
     pub(crate) lookup_batch_size: Option<u64>,
     /// Reader family selected for this single access subtree.
     pub(crate) access_reader: Option<crate::driver::planner_bridge::AccessReader>,
+    /// Direct-column projection selected inside this reader's cop task.
+    pub(crate) cop_projection: Option<Vec<crate::driver::merge_decision::RelColumn>>,
 }
 
 impl Delivered {
@@ -538,6 +540,7 @@ impl Delivered {
             lookup_limit: None,
             lookup_batch_size: None,
             access_reader: None,
+            cop_projection: None,
         }
     }
 
@@ -551,6 +554,7 @@ impl Delivered {
             lookup_limit: None,
             lookup_batch_size: None,
             access_reader: None,
+            cop_projection: None,
         }
     }
 
@@ -563,6 +567,7 @@ impl Delivered {
         self.lookup_limit = None;
         self.lookup_batch_size = None;
         self.access_reader = None;
+        self.cop_projection = None;
     }
 }
 
@@ -1513,6 +1518,7 @@ fn build_from_inner(
                 delivered.lookup_limit = access.lookup_limit;
                 delivered.lookup_batch_size = access.lookup_batch_size;
                 delivered.access_reader = Some(access.reader);
+                delivered.cop_projection = access.cop_projection.clone();
             }
             Ok((meter(exec, trace), scope, delivered))
         }

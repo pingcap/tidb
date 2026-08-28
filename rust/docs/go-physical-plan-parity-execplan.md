@@ -154,6 +154,12 @@ both `oltp_read_only` and `oltp_read_write`.
   configured partial/final concurrency and round-robin assignment are
   unchanged, but a persistent-pool lane is submitted only when it receives a
   chunk, and zero/one active partial lane no longer submits no-op final merges.
+- [x] 2026-08-27: retained the shared planner's reader-local direct-column
+  projection in the access receipt and lowered it to coprocessor
+  `output_offsets` for clean table scans. Ordinary and recursively rebuilt
+  prepared ranges now receive narrow remote rows without constructing a
+  duplicate root `ProjectionExec`; dirty/staged scans fail closed to the local
+  projection path.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -409,6 +415,21 @@ both `oltp_read_only` and `oltp_read_write`.
   admission, all 13 parallel HashAgg tests, the release build, and both paired
   benchmark receipts.
 
+- Observation: Go's selected range plan put a direct-column
+  `PhysicalProjection` inside `TableReader`, while Rust's planner bridge
+  recorded only the reader and scan and rebuilt a root `ProjectionExec`.
+  Consequently Rust asked TiKV for every scan column and copied the selected
+  column locally. Retaining stable projection columns in the physical access
+  receipt and accepting them at the clean-storage boundary now emits
+  `DAGRequest.output_offsets = [1]` on both ordinary execution and a recursive
+  prepared-cache rebuild. The focused alternating benchmark remained
+  3,953.16/4,314.64 TPS (0.916x median, zero errors), so this was a concrete
+  plan/execution parity bug but not the whole remaining shared-scan cost.
+  Evidence: the fail-before `[None]` versus expected `[Some([1])]` assertion in
+  `a_clean_clustered_range_sends_the_cop_projection`, its pass after lowering,
+  the prepared rebuild and staged-row fallback regressions, the narrowed
+  `tidb-exec` source test, and the release benchmark receipt.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -533,6 +554,15 @@ both `oltp_read_only` and `oltp_read_write`.
   error, cancellation, and multi-worker tests retain the Go lifecycle.
   Date/Author: 2026-08-27, Codex.
 
+- Decision: lower only a planner-selected direct-column cop projection whose
+  stable columns exactly match the final root projection, and let the table
+  scan accept it only when remote rows need no dirty/staged merge.
+  Rationale: TiKV output offsets cannot represent computed expressions, while
+  dirty-row reconciliation may require handle/column data that a narrowed
+  remote response no longer carries. Exact matching removes only the
+  redundant executor layer and fails closed for every unsupported shape.
+  Date/Author: 2026-08-27, Codex.
+
 ## Outcomes & Retrospective
 
 Work is in progress. After restoring point-plan precedence and removing the
@@ -580,6 +610,11 @@ median of 2,803.22/2,773.79 TPS (1.011x). The complete split measured DISTINCT
 at 2,811.49/2,825.26 TPS (0.995x), ORDER at 0.981x, SUM at 0.966x, and simple
 range at 0.919x, all with zero errors. The remaining range-read target is now
 the shared scan/request path rather than HashAgg's fixed scheduler lifecycle.
+Lowering the selected cop projection then produced narrow remote rows for the
+same simple-range query, but the fresh alternating medians were
+3,953.16/4,314.64 TPS (0.916x), also with zero errors. The remaining delta is
+therefore below the projection boundary, in request/response execution or
+decoding rather than planner shape alone.
 
 ## Context and Orientation
 
