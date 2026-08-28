@@ -392,6 +392,8 @@ pub use view::{resolve_view_definition, run_create_view_in, run_drop_view_in, vi
 #[cfg(test)]
 mod tests_distsql_test_source;
 #[cfg(test)]
+mod tests_set_show_stats_slow_query_source;
+#[cfg(test)]
 mod tests_executor_suite_metadata_source;
 #[cfg(test)]
 mod tests_executor_suite_statements_source;
