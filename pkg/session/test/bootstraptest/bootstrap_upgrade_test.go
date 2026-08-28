@@ -1231,15 +1231,15 @@ func TestUpgradeVersion285MaterializedViewBootstrap(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
+	err = m.FinishBootstrap(285 - 1)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	revertVersionAndVariables(t, se, int(session.CurrentBootstrapVersion-1))
+	revertVersionAndVariables(t, se, 285-1)
 	store.SetOption(session.StoreBootstrappedKey, nil)
 	ver, err := session.GetBootstrapVersion(se)
 	require.NoError(t, err)
-	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
+	require.Equal(t, int64(285-1), ver)
 
 	dom.Close()
 	newDom, err := session.BootstrapSession(store)
@@ -1251,6 +1251,39 @@ func TestUpgradeVersion285MaterializedViewBootstrap(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
 	checkMaterializedViewBootstrapSchema(t, tk)
+}
+
+func TestUpgradeVersion286OperateViewPrivilege(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("ALTER TABLE mysql.user DROP COLUMN Operate_view_priv")
+	tk.MustExec("ALTER TABLE mysql.db DROP COLUMN Operate_view_priv")
+	tk.MustExec("ALTER TABLE mysql.tables_priv MODIFY COLUMN Table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References')")
+
+	se := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(286-1))
+	require.NoError(t, txn.Commit(context.Background()))
+	revertVersionAndVariables(t, se, 286-1)
+	store.SetOption(session.StoreBootstrappedKey, nil)
+
+	dom.Close()
+	newDom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer newDom.Close()
+
+	tk = testkit.NewTestKit(t, store)
+	ver, err := session.GetBootstrapVersion(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+	checkOperateViewPrivilegeBootstrapSchema(t, tk)
 }
 
 func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
