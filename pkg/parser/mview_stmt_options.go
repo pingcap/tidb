@@ -16,15 +16,8 @@ package parser
 import "github.com/pingcap/tidb/pkg/parser/ast"
 
 type mviewCreateOptions struct {
-	hasComment bool
-	comment    string
-
-	hasRefresh bool
-	refresh    *ast.MViewRefreshClause
-
-	hasAttributes bool
-	attributes    string
-
+	hasComment        bool
+	comment           string
 	hasShardRowIDBits bool
 	hasPreSplitRegion bool
 	options           []*ast.TableOption

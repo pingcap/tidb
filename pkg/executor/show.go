@@ -2055,6 +2055,13 @@ func fetchShowCreateTable4MaterializedView(ctx sessionctx.Context, tb *model.Tab
 		fmt.Fprintf(buf, " COMMENT = '%s'", format.OutputFormat(tb.Comment))
 	}
 
+	if tb.ShardRowIDBits > 0 {
+		fmt.Fprintf(buf, " SHARD_ROW_ID_BITS = %d", tb.ShardRowIDBits)
+	}
+	if tb.PreSplitRegions > 0 {
+		fmt.Fprintf(buf, " PRE_SPLIT_REGIONS = %d", tb.PreSplitRegions)
+	}
+
 	refreshMethod := mviewInfo.RefreshMethod
 	if refreshMethod == "" {
 		refreshMethod = "FAST"
@@ -2067,13 +2074,6 @@ func fetchShowCreateTable4MaterializedView(ctx sessionctx.Context, tb *model.Tab
 		if mviewInfo.RefreshNext != "" {
 			fmt.Fprintf(buf, " NEXT %s", mviewInfo.RefreshNext)
 		}
-	}
-
-	if tb.ShardRowIDBits > 0 {
-		fmt.Fprintf(buf, " SHARD_ROW_ID_BITS = %d", tb.ShardRowIDBits)
-	}
-	if tb.PreSplitRegions > 0 {
-		fmt.Fprintf(buf, " PRE_SPLIT_REGIONS = %d", tb.PreSplitRegions)
 	}
 	attrPairs := make([]string, 0, 3)
 	if mviewInfo.AlertWarningSec > 0 {

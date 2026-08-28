@@ -5236,20 +5236,12 @@ func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
 			substring: "Duplicate COMMENT specified in CREATE MATERIALIZED VIEW",
 		},
 		{
-			sql:       "CREATE MATERIALIZED VIEW mv (a) REFRESH FAST REFRESH FAST AS SELECT 1",
-			substring: "Duplicate REFRESH clause specified in CREATE MATERIALIZED VIEW",
-		},
-		{
 			sql:       "CREATE MATERIALIZED VIEW mv (a) SHARD_ROW_ID_BITS = 1 SHARD_ROW_ID_BITS = 2 AS SELECT 1",
 			substring: "Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW",
 		},
 		{
 			sql:       "CREATE MATERIALIZED VIEW mv (a) PRE_SPLIT_REGIONS = 1 PRE_SPLIT_REGIONS = 2 AS SELECT 1",
 			substring: "Duplicate PRE_SPLIT_REGIONS specified in CREATE MATERIALIZED VIEW",
-		},
-		{
-			sql:       "CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES='a=b' ATTRIBUTES='c=d' AS SELECT 1",
-			substring: "Duplicate ATTRIBUTES specified in CREATE MATERIALIZED VIEW",
 		},
 		{
 			sql:       "CREATE MATERIALIZED VIEW LOG ON t (a) SHARD_ROW_ID_BITS = 1 SHARD_ROW_ID_BITS = 2",
@@ -5361,9 +5353,9 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"CREATE MATERIALIZED VIEW `mv` (`a`) REFRESH FAST AS SELECT 1",
 		},
 		{
-			"CREATE MATERIALIZED VIEW mv (a) PRE_SPLIT_REGIONS = 2 REFRESH FAST SHARD_ROW_ID_BITS = 4 AS SELECT 1",
+			"CREATE MATERIALIZED VIEW mv (a) SHARD_ROW_ID_BITS = 4 PRE_SPLIT_REGIONS = 2 REFRESH FAST ATTRIBUTES = 'x' AS SELECT 1",
 			true,
-			"CREATE MATERIALIZED VIEW `mv` (`a`) REFRESH FAST PRE_SPLIT_REGIONS = 2 SHARD_ROW_ID_BITS = 4 AS SELECT 1",
+			"CREATE MATERIALIZED VIEW `mv` (`a`) SHARD_ROW_ID_BITS = 4 PRE_SPLIT_REGIONS = 2 REFRESH FAST ATTRIBUTES='x' AS SELECT 1",
 		},
 		{
 			"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST START WITH now() NEXT 300 AS SELECT 1",
@@ -5638,6 +5630,20 @@ func TestMaterializedViewCreateRefreshOnClauseSyntax(t *testing.T) {
 	p := parser.New()
 	_, err := p.ParseOneStmt("CREATE MATERIALIZED VIEW mv (a) REFRESH FAST START WITH now() AS SELECT 1", "", "")
 	require.Error(t, err)
+}
+
+func TestMaterializedViewCreateOptionOrder(t *testing.T) {
+	p := parser.New()
+	invalidCases := []string{
+		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST SHARD_ROW_ID_BITS = 4 AS SELECT 1",
+		"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES = 'x' REFRESH FAST AS SELECT 1",
+		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST REFRESH FAST AS SELECT 1",
+		"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES = 'x' ATTRIBUTES = 'y' AS SELECT 1",
+	}
+	for _, sql := range invalidCases {
+		_, err := p.ParseOneStmt(sql, "", "")
+		require.Error(t, err, sql)
+	}
 }
 
 func TestMaterializedViewLogCreatePurgeClauseSyntax(t *testing.T) {

@@ -1120,7 +1120,7 @@ func TestShowCreateMaterializedView(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t_show_mv (a int, b int not null)")
 	tk.MustExec("create materialized view log on t_show_mv (a, b) purge next date_add(now(), interval 1 hour)")
-	tk.MustExec("create materialized view mv_show_mv (a, s, cnt) comment = 'c1' refresh fast next date_add(now(), interval 1 hour) shard_row_id_bits = 2 pre_split_regions = 2 as select a, sum(b), count(1) from t_show_mv group by a")
+	tk.MustExec("create materialized view mv_show_mv (a, s, cnt) comment = 'c1' shard_row_id_bits = 2 pre_split_regions = 2 refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_show_mv group by a")
 
 	rows := tk.MustQuery("show create materialized view mv_show_mv").Rows()
 	require.Len(t, rows, 1)
@@ -1129,8 +1129,8 @@ func TestShowCreateMaterializedView(t *testing.T) {
 	require.True(t, ok)
 	require.Contains(t, showCreate, "CREATE MATERIALIZED VIEW `mv_show_mv` (`a`, `s`, `cnt`)")
 	require.Contains(t, showCreate, "COMMENT = 'c1'")
-	require.Contains(t, showCreate, "REFRESH FAST NEXT DATE_ADD(NOW(), INTERVAL 1 HOUR)")
 	require.Contains(t, showCreate, "SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 2")
+	require.Contains(t, showCreate, "REFRESH FAST NEXT DATE_ADD(NOW(), INTERVAL 1 HOUR)")
 	require.NotContains(t, showCreate, "ATTRIBUTES='")
 	require.Contains(t, showCreate, "AS SELECT `a`,SUM(`b`),COUNT(1) FROM `test`.`t_show_mv` GROUP BY `a`")
 	_, err := parser.New().ParseOneStmt(showCreate, "", "")
