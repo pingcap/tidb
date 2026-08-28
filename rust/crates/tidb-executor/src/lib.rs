@@ -408,6 +408,14 @@ mod tests_indexmergeread_b134_source;
 #[cfg(test)]
 mod tests_infoschema_b134_source;
 #[cfg(test)]
+mod tests_infoschema_b135_source;
+#[cfg(test)]
+mod tests_issuetest_b135_source;
+#[cfg(test)]
+mod tests_jointest_hashjoin_b135_source;
+#[cfg(test)]
+mod tests_jointest_join_b135_source;
+#[cfg(test)]
 mod tests_admin_check_admintest_source;
 #[cfg(test)]
 mod tests_hashagg_aggregate_suite_source;
