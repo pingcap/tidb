@@ -125,12 +125,22 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 		isoLevel = kv.SI
 	}
 	// Full-sampling analyze sorts collected samples by handle before computing
-	// correlation, so this request does not need KeepOrder. Version 1 still does.
+	// correlation, so this request does not need KeepOrder. Version 1 still does,
+	// and copr does not batch ordered requests, so it does not use store batching.
+	keepOrder := e.StatsVersion < statistics.Version2
+	storeBatchSize := 0
+	if !keepOrder {
+		storeBatchSize = e.ctx.GetSessionVars().AnalyzeStoreBatchSize
+	}
+	enableStoreBatch := storeBatchSize > 0
 	kvReq, err := reqBuilder.
 		SetAnalyzeRequest(e.analyzePB, isoLevel).
 		SetStartTS(startTS).
-		SetKeepOrder(e.StatsVersion < statistics.Version2).
+		SetKeepOrder(keepOrder).
 		SetConcurrency(e.concurrency).
+		SetStoreBatchSize(storeBatchSize).
+		SetAllowBatchTaskDataMerge(enableStoreBatch).
+		SetExecuteBatchTasksSerially(enableStoreBatch).
 		SetMemTracker(e.memTracker).
 		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
 		SetExplicitRequestSourceType(e.ctx.GetSessionVars().ExplicitRequestSourceType).
