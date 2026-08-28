@@ -1187,8 +1187,8 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver
 	}
 	replicaInfo := args.TiflashReplica
 
-	failpoint.Inject("forceSetTiFlashReplicaInternal", func() {
-		args.Internal = true
+	failpoint.Inject("forceSetTiFlashReplicaSkipColumnarStorageGate", func() {
+		args.SkipColumnarStorageGate = true
 	})
 
 	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
@@ -1208,7 +1208,7 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver
 		return ver, errors.Trace(err)
 	}
 
-	err = w.checkColumnarStorageEnabled(replicaInfo.Count, args.Internal)
+	err = w.checkColumnarStorageEnabled(replicaInfo.Count, args.SkipColumnarStorageGate)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1282,9 +1282,10 @@ func (w *worker) checkTiFlashReplicaCount(replicaCount uint64) error {
 	return checkTiFlashReplicaCount(ctx, replicaCount)
 }
 
-func (w *worker) checkColumnarStorageEnabled(replicaCount uint64, internal bool) error {
-	// Removing TiFlash replica or setting TiFlash replica with internal=true does not require tidb_columnar_storage_enabled to be enabled.
-	if replicaCount == 0 || internal {
+func (w *worker) checkColumnarStorageEnabled(replicaCount uint64, skipColumnarStorageGate bool) error {
+	// Removing TiFlash replica or skipping the gate (e.g. placement-rule repair)
+	// does not require tidb_columnar_storage_enabled to be enabled.
+	if replicaCount == 0 || skipColumnarStorageGate {
 		return nil
 	}
 	ctx, err := w.sessPool.Get()

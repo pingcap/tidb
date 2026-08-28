@@ -1035,9 +1035,10 @@ type SetTiFlashReplicaArgs struct {
 	TiflashReplica ast.TiFlashReplicaSpec `json:"tiflash_replica,omitempty"`
 	// Note that ResetAvailable is only used in v2 job.
 	ResetAvailable bool `json:"reset_available,omitempty"`
-	// Internal marks a job submitted by TiDB itself (e.g. placement-rule repair).
-	// Internal jobs skip the Columnar Storage enabled gate. v2 job only.
-	Internal bool `json:"internal,omitempty"`
+	// SkipColumnarStorageGate skips the tidb_columnar_storage_enabled check.
+	// Used by TiDB-internal paths such as placement-rule repair that only
+	// reconstruct PD rules for existing replica metadata. v2 job only.
+	SkipColumnarStorageGate bool `json:"skip_columnar_storage_gate,omitempty"`
 }
 
 func (a *SetTiFlashReplicaArgs) getArgsV1(*Job) []any {

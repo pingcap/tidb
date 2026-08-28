@@ -722,7 +722,7 @@ func TestColumnarStorageEnabledGateJobSide(t *testing.T) {
 	require.Nil(t, external.GetTableByName(t, tk, "test", "t_job").Meta().TiFlashReplica)
 }
 
-func TestColumnarStorageEnabledGateInternalBypass(t *testing.T) {
+func TestColumnarStorageEnabledGateSkipBypass(t *testing.T) {
 	restore := config.RestoreFunc()
 	t.Cleanup(restore)
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -733,16 +733,16 @@ func TestColumnarStorageEnabledGateInternalBypass(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t_internal(a int)")
+	tk.MustExec("create table t_skip_gate(a int)")
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceSetTiFlashReplicaInternal", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceSetTiFlashReplicaSkipColumnarStorageGate", `return(true)`)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionSetTiFlashReplica {
 			tk2.MustExec("set global tidb_columnar_storage_enabled = 'OFF'")
 		}
 	})
-	tk.MustExec("alter table t_internal set tiflash replica 1")
-	tbl := external.GetTableByName(t, tk, "test", "t_internal")
+	tk.MustExec("alter table t_skip_gate set tiflash replica 1")
+	tbl := external.GetTableByName(t, tk, "test", "t_skip_gate")
 	require.NotNil(t, tbl.Meta().TiFlashReplica)
 	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
 }

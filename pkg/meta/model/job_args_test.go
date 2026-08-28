@@ -766,27 +766,27 @@ func TestGetSetTiFlashReplicaArgs(t *testing.T) {
 			require.Equal(t, inArgsWithReset.ResetAvailable, true)
 		}
 	}
-	// With the `Internal` field
-	inArgsWithInternal := &SetTiFlashReplicaArgs{
+	// With the `SkipColumnarStorageGate` field
+	inArgsWithSkipGate := &SetTiFlashReplicaArgs{
 		TiflashReplica: ast.TiFlashReplicaSpec{
 			Count:  3,
 			Labels: []string{"TiFlash1", "TiFlash2", "TiFlash3"},
 			Hypo:   true,
 		},
-		ResetAvailable: true,
-		Internal:       true,
+		ResetAvailable:          true,
+		SkipColumnarStorageGate: true,
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		j4 := &Job{}
-		require.NoError(t, j4.Decode(getJobBytes(t, inArgsWithInternal, v, ActionSetTiFlashReplica)))
+		require.NoError(t, j4.Decode(getJobBytes(t, inArgsWithSkipGate, v, ActionSetTiFlashReplica)))
 		args, err := GetSetTiFlashReplicaArgs(j4)
 		require.NoError(t, err)
-		require.Equal(t, inArgsWithInternal.TiflashReplica, args.TiflashReplica)
+		require.Equal(t, inArgsWithSkipGate.TiflashReplica, args.TiflashReplica)
 		if v == JobVersion2 {
-			require.Equal(t, inArgsWithInternal.ResetAvailable, true)
-			require.Equal(t, inArgsWithInternal.Internal, true)
+			require.Equal(t, inArgsWithSkipGate.ResetAvailable, true)
+			require.Equal(t, inArgsWithSkipGate.SkipColumnarStorageGate, true)
 		} else {
-			require.False(t, args.Internal)
+			require.False(t, args.SkipColumnarStorageGate)
 		}
 	}
 }
