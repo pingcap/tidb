@@ -2844,6 +2844,62 @@ fn global_sum_expression_uses_partial_and_final_stream_agg() {
     assert!(cell(2, 4).contains("sum(mul(test.revenue.price, test.revenue.discount))"));
 }
 
+/// A single integer SUM above a joined source uses Go's serial root
+/// StreamAgg, including the decimal input projection required by SUM.
+#[test]
+fn joined_integer_sum_uses_root_stream_agg() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE sum_orders (id INT PRIMARY KEY, customer_id INT, quantity INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE sum_customers (id INT PRIMARY KEY)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO sum_orders VALUES (1,10,7),(2,20,11),(3,30,13)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO sum_customers VALUES (10),(20),(30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql =
+        "SELECT SUM(o.quantity) FROM sum_orders o JOIN sum_customers c ON o.customer_id = c.id";
+    let result = run_select_on(sql, &catalog, &ctx).unwrap();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0][0].sql_string().unwrap(), "31");
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let operator = |row: &[Datum]| match &row[0] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(operator(&rows[0]), "StreamAgg");
+    assert!(rows.iter().any(|row| {
+        operator(row).trim_start_matches(&[' ', '│', '├', '└', '─'][..]) == "Projection"
+    }));
+}
+
 /// Go's `BasePhysicalAgg.NewPartialAggregate` expands a global AVG into a
 /// cop COUNT/SUM pair and a root final AVG over those two partial columns.
 #[test]

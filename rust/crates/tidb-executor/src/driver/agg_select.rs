@@ -3641,6 +3641,26 @@ fn build_aggregation(
         && matches!(state.agg_funcs[0].kind, AggKind::Count);
     let complex_stream_agg =
         complex_global_count && prefer_stream_agg_for_small_global(aggregate_input_rows);
+    // Go keeps a serial root StreamAgg for a single integer SUM above a
+    // joined source.  Unlike COUNT, this choice is not gated by the input
+    // cardinality: the one-group StreamAgg avoids HashAgg's fixed startup
+    // cost, while the integer SUM cast is already represented by the
+    // projection below the aggregate.  The previous Rust path only
+    // considered direct scans here, leaving TPC-DS Q48 as a root HashAgg.
+    let complex_global_integer_sum = select.from.is_some()
+        && crate::driver::access::single_kv_table(&select.from, catalog, current_db).is_none()
+        && !has_pre_agg_applies
+        && state.agg_funcs.len() == 1
+        && matches!(state.agg_funcs[0].kind, AggKind::Sum)
+        && !state.agg_funcs[0].distinct
+        && state.agg_funcs[0].extra_args.is_empty()
+        && state.agg_funcs[0].order_by.is_empty()
+        && state.agg_funcs[0]
+            .arg
+            .as_ref()
+            .and_then(|argument| argument.static_type())
+            .and_then(integer_decimal_precision)
+            .is_some();
     // A decorrelated `EXISTS`/`NOT EXISTS` places the aggregate above a semi/
     // anti join rather than a bare consumed scan, so the scan shortcut below
     // must not fire. Go enumerates BOTH root implementations there and lets
@@ -3721,6 +3741,7 @@ fn build_aggregation(
         && group_by.is_empty()
         && !has_pre_agg_applies
         && (complex_stream_agg
+            || complex_global_integer_sum
             || semi_join_stream_preferred
             || global_decimal_sum_preferred
             || small_index_global_count
@@ -4693,6 +4714,10 @@ fn build_aggregation(
                                 // the root; Go prints that StreamAgg over ANY
                                 // child shape.
                                 | GlobalStreamAggPlan::DecimalSum
+                                // The integer SUM path likewise owns its
+                                // decimal cast Projection at the root and
+                                // can sit above a joined child.
+                                | GlobalStreamAggPlan::IntegerSum { .. }
                         )
                     {
                         trace.refuse("global StreamAgg child is not a point get or bare scan");
