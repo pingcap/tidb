@@ -1,0 +1,47 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Ownership guard for prepared SELECT cache hits.
+
+#[test]
+fn cached_select_execution_is_borrowed_across_the_statement_retry_boundary() {
+    let server = include_str!("../src/cluster_session_node/mod.rs");
+    let session = include_str!("../../tidb-session/src/dispatch.rs");
+    let executor = include_str!("../../tidb-executor/src/driver/access.rs");
+
+    assert!(server.contains("session.execute_cached_prepared_select(cached)"));
+    assert!(session.contains("cached: &tidb_executor::PreparedSelectExecution"));
+    assert!(!executor.contains("#[derive(Clone, Debug)]\npub struct PreparedSelectExecution"));
+}
+
+#[test]
+fn cached_select_hit_does_not_build_a_second_statement_context() {
+    let source = include_str!("../../tidb-session/src/prepared_ast.rs");
+    let function = source
+        .split_once("pub fn bind_cached_prepared_select(")
+        .expect("prepared SELECT cache binder")
+        .1;
+    let cache_probe = function
+        .find("plan.bind_cached(")
+        .expect("retained physical tree is probed without a planner context");
+    let planner_context = function
+        .find("let ctx = self.statement_context(false);")
+        .expect("a cache miss still gets a planner context");
+    let cache_fill = function[planner_context..]
+        .find("plan.bind(")
+        .map(|offset| planner_context + offset)
+        .expect("a cache miss fills the retained physical tree");
+
+    assert!(cache_probe < planner_context && planner_context < cache_fill);
+}

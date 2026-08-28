@@ -468,7 +468,7 @@ impl Session {
     /// hit; this method only builds fresh runtime executors and drains them.
     pub fn execute_cached_prepared_select(
         &mut self,
-        cached: tidb_executor::PreparedSelectExecution,
+        cached: &tidb_executor::PreparedSelectExecution,
     ) -> Result<StmtOutput, DriverError> {
         self.activate_select_resource_group(cached.select());
         let cache_hit = cached.cache_hit();

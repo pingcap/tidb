@@ -2293,12 +2293,10 @@ impl QuerySession for ClusterServerSession {
         let output =
             self.with_prelocked_statement(shape, prelock_keys, &resource_group, move |session| {
                 if fast_select {
-                    match session.execute_cached_prepared_select(
-                        cached_select
-                            .as_ref()
-                            .expect("cached prepared SELECT carries its execution")
-                            .clone(),
-                    ) {
+                    let cached = cached_select
+                        .as_ref()
+                        .expect("cached prepared SELECT carries its execution");
+                    match session.execute_cached_prepared_select(cached) {
                         Ok(output) => return Ok(output),
                         Err(error)
                             if error

@@ -464,7 +464,7 @@ enum PreparedParameterType {
 
 /// One cache hit: a privately bound AST plus the decision extracted from the
 /// cache-owned, recursively rebuilt physical tree.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PreparedSelectExecution {
     plan: Arc<PreparedSelectPlan>,
     schema_version: u64,
@@ -491,6 +491,31 @@ impl PreparedSelectPlan {
         catalog: &Catalog,
         current_database: &str,
         ctx: &crate::StmtContext,
+        environment: &PreparedPlanCacheEnvironment,
+    ) -> Option<PreparedSelectExecution> {
+        self.bind_inner(values, catalog, current_database, Some(ctx), environment)
+    }
+
+    /// Rebuilds an existing cache entry without constructing a planner
+    /// statement context. A miss returns `None`; the caller can then build
+    /// the context and call [`Self::bind`] to enumerate and retain a plan.
+    #[must_use]
+    pub fn bind_cached(
+        self: &Arc<Self>,
+        values: &[Datum],
+        catalog: &Catalog,
+        current_database: &str,
+        environment: &PreparedPlanCacheEnvironment,
+    ) -> Option<PreparedSelectExecution> {
+        self.bind_inner(values, catalog, current_database, None, environment)
+    }
+
+    fn bind_inner(
+        self: &Arc<Self>,
+        values: &[Datum],
+        catalog: &Catalog,
+        current_database: &str,
+        ctx: Option<&crate::StmtContext>,
         environment: &PreparedPlanCacheEnvironment,
     ) -> Option<PreparedSelectExecution> {
         if !self.current_database.eq_ignore_ascii_case(current_database) {
@@ -538,6 +563,7 @@ impl PreparedSelectPlan {
                 }
             },
             None => {
+                let ctx = ctx?;
                 cached_plans.retain(|entry| {
                     entry.schema_version == schema_version
                         && entry.stats_version_hash == stats_version_hash

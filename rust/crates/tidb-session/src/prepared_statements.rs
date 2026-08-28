@@ -276,7 +276,7 @@ impl Session {
                 .as_ref()
                 .and_then(|plan| self.bind_cached_prepared_select(plan, &values))
             {
-                return self.execute_cached_prepared_select(cached);
+                return self.execute_cached_prepared_select(&cached);
             }
         }
         let sql = if values.is_empty() {

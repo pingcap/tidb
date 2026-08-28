@@ -238,6 +238,14 @@ both `oltp_read_only` and `oltp_read_write`.
   execution now reports a plan-cache hit, while the mutation keeps ordinary
   secondary-index, foreign-key, memory-accounting, and Go SELECT+DELETE
   privilege behavior.
+- [x] 2026-08-28: removed the cached SELECT execution's second deep clone at
+  the cluster statement-retry boundary. The bound AST and physical receipt are
+  borrowed for every attempt, and `PreparedSelectExecution` is deliberately
+  non-`Clone` so this allocation cannot return unnoticed.
+- [x] 2026-08-28: made prepared SELECT cache hits rebuild before constructing
+  a planner `StmtContext`. Only a real miss takes the catalog-backed sequence
+  and decode-key snapshots needed by physical enumeration; a hit builds the
+  one runtime statement context Go resets for execution.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -359,6 +367,24 @@ both `oltp_read_only` and `oltp_read_write`.
   chosen operator shape.
   Evidence: `physical_plan_cache::bind_expression`,
   `PreparedSelectPlan::bind`, and the consecutive-parameter rebuild regression.
+
+- Observation: even after the retained physical tree was rebuilt in place,
+  the cluster boundary cloned `PreparedSelectExecution` before every attempt.
+  That recursively copied its bound `SelectStmt`, expressions, hints, and
+  receipt. Borrowing the same immutable execution across retries removes the
+  copy and makes the type non-`Clone`; the source regression failed before and
+  passes after. In isolation this cleanup did not move the simple-range median
+  beyond run noise (3,308.85 Rust versus 3,436.54 Go TPS, 0.963x), so it is a
+  parity cleanup rather than the remaining throughput root.
+
+- Observation: `bind_cached_prepared_select` built a complete planner
+  `StmtContext` before it knew whether the retained physical tree was a cache
+  hit, although `CachedSelectPlan::bind` consumes only parameter values. The
+  execution path then built a second context for the actual executor. Probing
+  and rebuilding the entry first makes context construction miss-only. The
+  paired simple-range Rust median rose from 3,308.85 to 3,374.98 TPS while the
+  paired Go median was 3,459.09 (0.976x), and the new profile contains only the
+  runtime context beneath `execute_cached_prepared_select`.
 
 - Observation: Rust also retained one successful publication receipt per
   snapshot point/batch/scan read. Go's `KVSnapshot` retains lock-resolution,

@@ -229,7 +229,6 @@ impl Session {
         {
             return None;
         }
-        let ctx = self.statement_context(false);
         let environment = tidb_executor::PreparedPlanCacheEnvironment::new(
             self.vars.get_system("sql_mode").unwrap_or_default(),
             self.vars.get_system("time_zone").unwrap_or_default(),
@@ -256,9 +255,18 @@ impl Session {
                 .as_deref()
                 != Ok("OFF"),
         );
-        // `statement_context` takes its sequence snapshot from the catalog.
-        // Build it before holding the catalog guard; taking the guard first
-        // would recursively lock the same mutex on every general cache bind.
+        {
+            let catalog = self.lock_catalog().ok()?;
+            if let Some(execution) =
+                plan.bind_cached(values, &catalog, self.current_database(), &environment)
+            {
+                return Some(execution);
+            }
+        }
+        // Planning a cache miss needs sequence and decode-key snapshots from
+        // the catalog. Build them before holding the catalog guard; taking
+        // the guard first would recursively lock the same mutex.
+        let ctx = self.statement_context(false);
         let catalog = self.lock_catalog().ok()?;
         plan.bind(
             values,
