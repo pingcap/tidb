@@ -91,6 +91,68 @@ fn cached_physical_plan_does_not_rerun_legacy_row_estimation() {
 }
 
 #[test]
+fn cached_physical_index_readers_build_without_legacy_planner() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE cache_index_reader (\
+            id BIGINT PRIMARY KEY, c BIGINT NOT NULL, payload BIGINT NOT NULL, \
+            INDEX c_idx(c))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO cache_index_reader VALUES (1,10,100),(2,20,200),(3,30,300),(4,40,400)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let environment = PreparedPlanCacheEnvironment::default();
+
+    for (prepared, ordinary_first, ordinary_second) in [
+        (
+            "SELECT c, id FROM cache_index_reader FORCE INDEX (c_idx) \
+             WHERE c BETWEEN ? AND ? ORDER BY c, id",
+            "SELECT c, id FROM cache_index_reader FORCE INDEX (c_idx) \
+             WHERE c BETWEEN 20 AND 40 ORDER BY c, id",
+            "SELECT c, id FROM cache_index_reader FORCE INDEX (c_idx) \
+             WHERE c BETWEEN 10 AND 20 ORDER BY c, id",
+        ),
+        (
+            "SELECT payload FROM cache_index_reader FORCE INDEX (c_idx) \
+             WHERE c BETWEEN ? AND ? ORDER BY c, id",
+            "SELECT payload FROM cache_index_reader FORCE INDEX (c_idx) \
+             WHERE c BETWEEN 20 AND 40 ORDER BY c, id",
+            "SELECT payload FROM cache_index_reader FORCE INDEX (c_idx) \
+             WHERE c BETWEEN 10 AND 20 ORDER BY c, id",
+        ),
+    ] {
+        let statement = tidb_parser::parse(prepared).unwrap();
+        let plan = std::sync::Arc::new(
+            build_prepared_select_plan(&statement, 2, &catalog, DEFAULT_DATABASE, &ctx)
+                .expect("the physical index reader is cacheable"),
+        );
+        for (execution_index, (values, ordinary)) in [
+            ([Datum::Int(20), Datum::Int(40)], ordinary_first),
+            ([Datum::Int(10), Datum::Int(20)], ordinary_second),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let execution = plan
+                .bind(&values, &catalog, DEFAULT_DATABASE, &ctx, &environment)
+                .expect("the cached index ranges rebuild");
+            assert_eq!(execution.cache_hit(), execution_index != 0);
+            let expected = run_select_on(ordinary, &catalog, &ctx).unwrap();
+            let (_, actual) = run_prepared_select(&execution, &mut catalog, DEFAULT_DATABASE, &ctx)
+                .unwrap()
+                .expect("the schema is unchanged");
+            assert_eq!(actual, expected, "{prepared} with {values:?}");
+        }
+    }
+}
+
+#[test]
 fn prepared_sysbench_sum_retains_gos_stream_aggregation_receipt() {
     let mut catalog = Catalog::default();
     let ctx = crate::StmtContext::for_query();

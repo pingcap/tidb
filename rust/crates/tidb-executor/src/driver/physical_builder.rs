@@ -20,6 +20,7 @@
 //! inspect the SQL AST to choose access, aggregation, join, sort, or reader
 //! policy; the AST is used only for client-visible result-column labels.
 
+use crate::access_path::IndexRangeSourceExec;
 use crate::executor::{Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggExec, StreamAggExec};
 use crate::join::{JoinExec, JoinKind};
@@ -39,7 +40,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 use tidb_planner::find_best_task::LogicalJoinType;
-use tidb_planner::physical::{PhysicalPlan, PhysicalTableScan};
+use tidb_planner::physical::{PhysicalIndexScan, PhysicalPlan, PhysicalTableScan};
 
 use super::{Catalog, DriverError, SelectMeta, INIT_CAP, MAX_CHUNK_SIZE};
 
@@ -300,6 +301,186 @@ fn build_reader(
     )
 }
 
+fn embedded_index_scan(plan: &PhysicalPlan) -> Option<&PhysicalIndexScan> {
+    match plan {
+        PhysicalPlan::IndexScan(scan) => Some(scan),
+        _ => plan.children().iter().find_map(embedded_index_scan),
+    }
+}
+
+fn collect_reader_conditions(plan: &PhysicalPlan, conditions: &mut Vec<Expression>) {
+    if let PhysicalPlan::Selection(selection) = plan {
+        conditions.extend(selection.conditions.iter().cloned());
+    }
+    for child in plan.children() {
+        collect_reader_conditions(child, conditions);
+    }
+}
+
+fn direct_reader_shape(plan: &PhysicalPlan, leaf: fn(&PhysicalPlan) -> bool) -> bool {
+    if leaf(plan) {
+        return true;
+    }
+    match plan {
+        PhysicalPlan::Selection(_) | PhysicalPlan::NominalSort(_) => {
+            matches!(plan.children(), [child] if direct_reader_shape(child, leaf))
+        }
+        PhysicalPlan::Projection(projection)
+            if projection
+                .exprs
+                .iter()
+                .all(|expression| matches!(expression, Expression::Column(_))) =>
+        {
+            matches!(plan.children(), [child] if direct_reader_shape(child, leaf))
+        }
+        _ => false,
+    }
+}
+
+fn reader_output_offsets(
+    schema: &Schema,
+    scan: &PhysicalIndexScan,
+    table: &crate::KvTable,
+) -> Result<(Vec<usize>, Option<usize>), DriverError> {
+    let extra_handle =
+        schema.columns.iter().position(|column| {
+            column.orig_name.rsplit('.').next().is_some_and(|name| {
+                name.eq_ignore_ascii_case(super::leaf_demand::EXTRA_HANDLE_NAME)
+            })
+        });
+    let offsets = schema
+        .columns
+        .iter()
+        .enumerate()
+        .filter(|(slot, _)| Some(*slot) != extra_handle)
+        .map(|(_, output)| {
+            let source = scan
+                .cost_columns
+                .iter()
+                .find(|column| column.unique_id == output.unique_id)
+                .unwrap_or(output);
+            table
+                .columns
+                .iter()
+                .position(|column| column.id == source.id)
+                .or_else(|| {
+                    source.orig_name.rsplit('.').next().and_then(|name| {
+                        table
+                            .columns
+                            .iter()
+                            .position(|column| column.name.eq_ignore_ascii_case(name))
+                    })
+                })
+                .ok_or_else(|| {
+                    DriverError::unsupported(
+                        "a cached index reader output is absent from its table",
+                    )
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((offsets, extra_handle))
+}
+
+fn build_index_reader(
+    plan: &PhysicalPlan,
+    index_plan: &PhysicalPlan,
+    table_plan: Option<&PhysicalPlan>,
+    covering: bool,
+    keep_order: bool,
+    pushed_limit: Option<tidb_planner::physical::PushedDownLimit>,
+    expect_cnt: Option<u64>,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<Box<dyn Executor>, DriverError> {
+    if !direct_reader_shape(index_plan, |plan| {
+        matches!(plan, PhysicalPlan::IndexScan(_))
+    }) || table_plan.is_some_and(|table_plan| {
+        !direct_reader_shape(table_plan, |plan| {
+            matches!(plan, PhysicalPlan::TableScan(_))
+        })
+    }) {
+        return Err(DriverError::unsupported(
+            "a cached index reader contains an unimplemented coprocessor operator",
+        ));
+    }
+    let scan = embedded_index_scan(index_plan)
+        .ok_or_else(|| DriverError::unsupported("a cached index reader has no index scan"))?;
+    let table = catalog.kv_table_by_id(scan.table_id).ok_or_else(|| {
+        DriverError::unsupported("cached index table ID is absent from the catalog")
+    })?;
+    if !table
+        .indexes()
+        .iter()
+        .any(|index| index.id == scan.index_id)
+    {
+        return Err(DriverError::unsupported(
+            "cached index ID is absent from its table",
+        ));
+    }
+    let schema = plan_schema(plan)?;
+    let (keep, extra_handle) = reader_output_offsets(&schema, scan, table)?;
+    let ranges = if scan.ranges.is_empty() {
+        vec![IndexRange::full()]
+    } else {
+        executor_ranges(&scan.ranges)
+    };
+    let mut source = IndexRangeSourceExec::new_with_statement(
+        meta(plan, schema.clone()),
+        table.clone(),
+        scan.index_id,
+        ranges,
+        RowDecodeContext::for_query(ctx),
+        PushdownStatementContext::from_stmt(ctx),
+    );
+    if let Some(slot) = extra_handle {
+        source.read_extra_handle(slot);
+    }
+    source.read_table_columns(keep);
+    source.set_lookup_concurrency(ctx.executor_concurrency());
+    if covering {
+        source.mark_covering();
+        source.answer_in_index_order();
+    }
+    if (scan.keep_order || keep_order) && !source.accept_keep_order(scan.desc) {
+        return Err(DriverError::unsupported(
+            "the cached index reader cannot preserve its physical order",
+        ));
+    }
+    if let Some(rows) = scan.base.base.stats_info().map(|stats| stats.row_count()) {
+        source.accept_scan_estimate(rows);
+    }
+    if let Some(limit) = pushed_limit {
+        if !source.accept_embedded_lookup_limit(limit.offset, limit.count) {
+            return Err(DriverError::unsupported(
+                "the cached index lookup cannot apply its pushed limit",
+            ));
+        }
+    }
+    if let Some(expect_cnt) = expect_cnt.filter(|_| !covering) {
+        if !source.accept_lookup_batch_size(expect_cnt) {
+            return Err(DriverError::unsupported(
+                "the cached index lookup cannot apply its paging size",
+            ));
+        }
+    }
+    let mut conditions = Vec::new();
+    collect_reader_conditions(index_plan, &mut conditions);
+    if let Some(table_plan) = table_plan {
+        collect_reader_conditions(table_plan, &mut conditions);
+    }
+    if conditions.is_empty() {
+        return Ok(Box::new(source));
+    }
+    let filters = resolve_expressions(&conditions, &schema)?;
+    Ok(Box::new(SelectionExec::new(
+        meta(plan, schema),
+        filters,
+        Box::new(source),
+        ctx.clone(),
+        ctx.statement_memory(),
+    )))
+}
+
 fn join_kind(join_type: LogicalJoinType) -> Result<JoinKind, DriverError> {
     match join_type {
         LogicalJoinType::Inner => Ok(JoinKind::Inner),
@@ -434,6 +615,33 @@ pub(super) fn build(
         PhysicalPlan::TableReader(reader) => {
             build_reader(reader.table_plan.as_deref(), catalog, ctx)
         }
+        PhysicalPlan::IndexReader(reader) => build_index_reader(
+            plan,
+            reader
+                .index_plan
+                .as_deref()
+                .ok_or_else(|| DriverError::unsupported("a cached index reader has no plan"))?,
+            None,
+            true,
+            false,
+            None,
+            None,
+            catalog,
+            ctx,
+        ),
+        PhysicalPlan::IndexLookUpReader(reader) => build_index_reader(
+            plan,
+            reader.index_plan.as_deref().ok_or_else(|| {
+                DriverError::unsupported("a cached index lookup has no index plan")
+            })?,
+            reader.table_plan.as_deref(),
+            false,
+            reader.keep_order,
+            reader.pushed_limit,
+            reader.paging.then_some(reader.expect_cnt),
+            catalog,
+            ctx,
+        ),
         PhysicalPlan::Projection(projection) => {
             let child = build(only_child(plan)?, catalog, ctx)?;
             let expressions = resolve_expressions(&projection.exprs, child.schema())?;

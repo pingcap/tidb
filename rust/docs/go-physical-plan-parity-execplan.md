@@ -270,6 +270,13 @@ both `oltp_read_only` and `oltp_read_write`.
   regression was observed failing before the constructor
   switch and passing afterward; a broader cache-shape test covers range,
   order, DISTINCT, scalar/grouped SUM, join, residual markers, and LIMIT.
+- [x] 2026-08-28: extended the cached physical constructor through Go's
+  `PhysicalIndexReader` and `PhysicalIndexLookUpReader` boundaries. Covering
+  and table-double-read paths lower the selected stable table/index IDs,
+  rebuilt index ranges, output schema, order, estimate, pushed limit, paging
+  size, and cop-side selections without re-running executor-local access-path
+  selection. A focused covering/double-read test was observed failing before
+  the constructors and passes for both the initial plan and cache-hit rebind.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
@@ -1691,14 +1698,17 @@ regression subsequently exposed two representation gaps: planner aggregate
 names use canonical `FIRSTROW`, and a cloned executor constant must detach its
 parameter/deferred marker after reading the rebuilt value. Both are fixed and
 the regression now passes for range/order, DISTINCT, scalar and grouped SUM,
-HashJoin, residual marker rebinding, and parameterized LIMIT. Index readers,
-index lookup/index merge, Apply, Union, Window, Lock, and DML SELECT children
-remain explicit constructor gaps; no fallback to the AST planner was added.
+HashJoin, residual marker rebinding, and parameterized LIMIT. A second
+fail-before/pass-after regression covers both a covering IndexReader and an
+IndexLookUp double read across the initial plan and cache-hit rebind. Index
+merge, Apply, Union, Window, Lock, and DML SELECT children remain explicit
+constructor gaps; no fallback to the AST planner was added.
 Exact WIP validation commands:
 
     cd rust
     cargo test -q -p tidb-executor cached_physical_plan_does_not_rerun_legacy_row_estimation --lib
     cargo test -q -p tidb-executor prepared_select_plan_reuses_shape_and_rebinds_parameters --lib
+    cargo test -q -p tidb-executor cached_physical_index_readers_build_without_legacy_planner --lib
     cd ..
     git diff --check
 
