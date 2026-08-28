@@ -406,6 +406,9 @@ both `oltp_read_only` and `oltp_read_write`.
   `analyze_col_sampling` driver. Live in-process and cluster `ANALYZE` both
   use `analyze` plus `tidb-stats`; no analyze plan called the parallel
   sampling implementation or its self-only tests.
+- [x] 2026-08-28: deleted the unconstructed `ddl_exec` façade. Session DDL
+  dispatch uses `ddl` and `tidb-exec::cluster_ddl`; recover/flashback remains
+  wholly unwired, and its gap receipt no longer credits a self-only precheck.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer

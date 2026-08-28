@@ -22,12 +22,10 @@
 //!
 //! Go drives RECOVER TABLE / FLASHBACK through the online-DDL job queue over
 //! a mock store, gated by `mysql.tidb` GC variables (`tikv_gc_safe_point`,
-//! `tikv_gc_enable`) and emulator-GC switches. This tier's recover support
-//! is the statement-level pre-checks only (`crate::ddl_exec`'s
-//! `RecoverTableCheck`, from Go `executeRecoverTable` `pkg/ddl/executor.go`
-//! :434/:448); the job machinery, GC worker and schema-history scan do not
-//! exist, so every test below carries its re-derived Go contract and an
-//! honest gap note. Nothing is approximated.
+//! `tikv_gc_enable`) and emulator-GC switches. This tier has no wired
+//! recover/flashback executor, job machinery, GC worker, or schema-history
+//! scan, so every test below carries its re-derived Go contract and an honest
+//! gap note. Nothing is approximated.
 
 /// Go `serial_test.go:467-529::TestRecoverTableWithTTL`: a dropped table
 /// whose columns carry a TTL policy (`TTL=`t`+INTERVAL 1 DAY`) recovers —
@@ -37,7 +35,7 @@
 /// TTL_ENABLE to OFF).
 // go-parity-gap: RECOVER/FLASHBACK job execution, the DDL history scan
 // (GetDropOrTruncateTableInfoFromJobs) and the GC safe-point table are not
-// transcreated; this tier only models the recover pre-checks.
+// transcreated.
 #[test]
 #[ignore]
 fn recover_table_with_ttl_keeps_the_ttl_policy_but_disables_it() {
