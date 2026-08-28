@@ -348,6 +348,14 @@ pub use view::{resolve_view_definition, run_create_view_in, run_drop_view_in, vi
 
 /// Explicit isolated spill authorities for executor tests.
 #[cfg(test)]
+mod tests_distsql_test_source;
+#[cfg(test)]
+mod tests_executor_suite_metadata_source;
+#[cfg(test)]
+mod tests_executor_suite_statements_source;
+#[cfg(test)]
+mod tests_fktest_source;
+#[cfg(test)]
 pub(crate) mod test_temp_storage {
     use std::path::Path;
     use std::path::PathBuf;
