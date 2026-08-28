@@ -3438,7 +3438,7 @@ pub(crate) fn try_batch_point_get_stmt(
             if positions.len() != index.column_offsets.len() {
                 continue;
             }
-            let mut handles = Vec::with_capacity(list.len());
+            let mut index_values = Vec::with_capacity(list.len());
             for candidate in list {
                 let tidb_ast::Expr::Row(values) = candidate else {
                     return Ok(None);
@@ -3462,13 +3462,17 @@ pub(crate) fn try_batch_point_get_stmt(
                     };
                     key_values.push(value);
                 }
-                if let Some(handle) = table
-                    .lookup_unique(index.id, &key_values, zone)
-                    .map_err(|e| DriverError::Parse(format!("index lookup failed: {e:?}")))?
-                {
-                    if !handles.contains(&handle) {
-                        handles.push(handle);
-                    }
+                index_values.push(key_values);
+            }
+            let mut handles = Vec::with_capacity(index_values.len());
+            for handle in table
+                .lookup_unique_batched(index.id, &index_values, zone)
+                .map_err(|e| DriverError::Parse(format!("index batch lookup failed: {e:?}")))?
+                .into_iter()
+                .flatten()
+            {
+                if !handles.contains(&handle) {
+                    handles.push(handle);
                 }
             }
             return Ok(Some(BatchPointLookup::index(
@@ -3564,16 +3568,19 @@ pub(crate) fn try_batch_point_get_stmt(
             };
             converted.push(value);
         }
-        let values = converted;
-        let mut handles = Vec::new();
-        for value in &values {
-            if let Some(handle) = table
-                .lookup_unique(index.id, std::slice::from_ref(value), zone)
-                .map_err(|e| DriverError::Parse(format!("index lookup failed: {e:?}")))?
-            {
-                if !handles.contains(&handle) {
-                    handles.push(handle);
-                }
+        let index_values = converted
+            .into_iter()
+            .map(|value| vec![value])
+            .collect::<Vec<_>>();
+        let mut handles = Vec::with_capacity(index_values.len());
+        for handle in table
+            .lookup_unique_batched(index.id, &index_values, zone)
+            .map_err(|e| DriverError::Parse(format!("index batch lookup failed: {e:?}")))?
+            .into_iter()
+            .flatten()
+        {
+            if !handles.contains(&handle) {
+                handles.push(handle);
             }
         }
         return Ok(Some(BatchPointLookup::index(

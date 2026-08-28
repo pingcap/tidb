@@ -335,6 +335,11 @@ both `oltp_read_only` and `oltp_read_write`.
   record-key `Get`. The request-shape regression first observed one Get plus
   one scan and now observes exactly two Gets and no scan. The adjacent second,
   unreachable copy of the common-handle matcher was deleted.
+- [x] 2026-08-28: replaced both scalar and composite unique-index `IN`
+  fast-plan matchers' per-key `lookup_unique` loops with the shared unique
+  index BatchGet. The matcher now issues one index batch read and hands the
+  deduplicated handles to the existing record batch read, matching Go's two
+  batched request boundaries instead of performing N index Gets.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
