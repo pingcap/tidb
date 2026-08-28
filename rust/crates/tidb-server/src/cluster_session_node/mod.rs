@@ -2279,10 +2279,9 @@ impl QuerySession for ClusterServerSession {
         let prelock_keys = match self.explicit.as_ref() {
             Some(transaction) if transaction.is_pessimistic() => {
                 if let Some(bound) = bound_template.as_ref() {
-                    self.session.statement_prelock_keys(bound)
+                    self.session.statement_prelock_keys(bound, &[])
                 } else if let Some(template) = retained {
-                    self.session
-                        .prepared_statement_prelock_keys(template, &params)
+                    self.session.statement_prelock_keys(template, &params)
                 } else {
                     Vec::new()
                 }

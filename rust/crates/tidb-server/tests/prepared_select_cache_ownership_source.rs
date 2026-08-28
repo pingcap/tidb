@@ -113,3 +113,17 @@ fn statement_context_reuses_the_typed_tidb_identity() {
     assert!(!scope.contains("pub(crate) tidb_info_len: usize"));
     assert!(scope.contains("Some(ctx) => ctx.tidb_info_len()"));
 }
+
+#[test]
+fn prepared_prelock_classification_borrows_the_retained_ast() {
+    let classify = include_str!("../../tidb-session/src/classify.rs");
+    let access = include_str!("../../tidb-executor/src/access_path.rs");
+    let server = include_str!("../src/cluster_session_node/mod.rs");
+
+    assert!(!classify.contains("pub fn prepared_statement_prelock_keys"));
+    assert!(!classify.contains("bind_statement(stmt.clone()"));
+    assert!(access.contains(
+        "pessimistic_statement_prelock_keys(\n    stmt: &tidb_ast::Stmt,\n    params: &[Datum],"
+    ));
+    assert!(!server.contains(".prepared_statement_prelock_keys"));
+}

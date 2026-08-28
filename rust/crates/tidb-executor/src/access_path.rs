@@ -186,7 +186,8 @@ pub fn pessimistic_write_point_keys(
 /// shape's classifier: a single-table `SELECT FOR UPDATE` whose WHERE pins
 /// every clustered-primary-key column returns the row's encoded record keys;
 /// everything else returns an empty vector and keeps today's read-then-lock
-/// order.
+/// order. Prepared-statement markers resolve directly from `params`, the same
+/// representation the write arm consumes.
 ///
 /// The refusals mirror the write arm plus two read-only ones:
 ///
@@ -198,6 +199,7 @@ pub fn pessimistic_write_point_keys(
 #[must_use]
 pub fn pessimistic_read_lock_point_keys(
     stmt: &tidb_ast::Stmt,
+    params: &[Datum],
     catalog: &crate::driver::Catalog,
     current_db: &str,
     zone: &tidb_datatype::SessionTimeZone,
@@ -246,7 +248,7 @@ pub fn pessimistic_read_lock_point_keys(
     let Some(table) = single_table_entry(table_ref, catalog, current_db) else {
         return Vec::new();
     };
-    crate::driver::access::point_write_prelock_keys(&table, where_clause, &[], zone)
+    crate::driver::access::point_write_prelock_keys(&table, where_clause, params, zone)
 }
 
 /// Both pre-lock arms at once, for a caller holding only SQL text: the write
@@ -255,15 +257,16 @@ pub fn pessimistic_read_lock_point_keys(
 #[must_use]
 pub fn pessimistic_statement_prelock_keys(
     stmt: &tidb_ast::Stmt,
+    params: &[Datum],
     catalog: &crate::driver::Catalog,
     current_db: &str,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Vec<Vec<u8>> {
-    let keys = pessimistic_write_point_keys(stmt, &[], catalog, current_db, zone);
+    let keys = pessimistic_write_point_keys(stmt, params, catalog, current_db, zone);
     if !keys.is_empty() {
         return keys;
     }
-    pessimistic_read_lock_point_keys(stmt, catalog, current_db, zone)
+    pessimistic_read_lock_point_keys(stmt, params, catalog, current_db, zone)
 }
 
 /// Resolves one single-table reference to its KV table, refusing partitioned
@@ -504,6 +507,56 @@ mod common_handle_shape_tests {
             ),
             StatementReadShape::AutocommitPointGet
         );
+    }
+
+    #[test]
+    fn prepared_locking_read_resolves_its_handle_parameter_without_ast_binding() {
+        let mut catalog = crate::driver::Catalog::default();
+        catalog.create_database("test");
+        let mut table = crate::kv_table::KvTable::new(
+            1,
+            vec![
+                crate::kv_table::KvColumn {
+                    name: "k".to_owned(),
+                    id: 1,
+                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    comment: String::new(),
+                    default_value: None,
+                    origin_default: None,
+                    generated: None,
+                },
+                crate::kv_table::KvColumn {
+                    name: "v".to_owned(),
+                    id: 2,
+                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    comment: String::new(),
+                    default_value: None,
+                    origin_default: None,
+                    generated: None,
+                },
+            ],
+        );
+        table.set_name("t");
+        table.set_common_handle_offsets(vec![0]);
+        catalog.register_kv_in("test", "t", table).unwrap();
+        let marker = tidb_parser::parse("SELECT v FROM t WHERE k = ? FOR UPDATE").unwrap();
+        let literal = tidb_parser::parse("SELECT v FROM t WHERE k = 'x' FOR UPDATE").unwrap();
+        let zone = tidb_datatype::SessionTimeZone::utc();
+
+        let marker_keys = pessimistic_statement_prelock_keys(
+            &marker,
+            &[Datum::Bytes(b"x".to_vec())],
+            &catalog,
+            "test",
+            &zone,
+        );
+        let literal_keys =
+            pessimistic_statement_prelock_keys(&literal, &[], &catalog, "test", &zone);
+
+        assert!(!marker_keys.is_empty());
+        assert_eq!(marker_keys, literal_keys);
     }
 
     #[test]

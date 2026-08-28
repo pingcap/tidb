@@ -273,6 +273,10 @@ both `oltp_read_only` and `oltp_read_write`.
   planner `FromScope`'s eagerly computed identity-length field. Ordinary
   statements no longer format the multi-line server identity; the builtin
   formats it only when Go's expression build/evaluation boundaries require it.
+- [x] 2026-08-28: made both pessimistic point-lock classifiers consume the
+  retained prepared AST plus its parameter slice. The prepared-only wrapper
+  and its full-tree clone/bind pass were removed; writes and locking reads now
+  resolve marker values through the same point-key walker.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -501,6 +505,20 @@ both `oltp_read_only` and `oltp_read_write`.
   mutation test, both `TIDB_VERSION()` result/metadata regressions,
   executor/session/server checks, release build, and the alternating exact
   A/B receipt.
+
+- Observation: Rust's prepared pessimistic pre-lock path cloned and bound the
+  whole retained AST only because its locking-SELECT classifier accepted
+  literals but not parameter markers. The adjacent point-write classifier
+  already consumed marker values directly. Both arms now take the parameter
+  slice, and the prepared-only session wrapper is deleted. Exact one-cluster
+  A/B medians against `a37b4c3f4b` were 510.51 versus 503.93 TPS for stock
+  read-only, with Go at 472.51 TPS. Read-write medians were 245.96, 220.43,
+  and 213.89 TPS but retained the workload's high variance; every benchmark
+  leg reported zero SQL errors.
+  Evidence: fail-before/pass-after
+  `prepared_prelock_classification_borrows_the_retained_ast`, the marker versus
+  literal locking-key regression, executor/session/server checks, release
+  build, and the alternating exact A/B receipt.
 
 - Observation: Rust also retained one successful publication receipt per
   snapshot point/batch/scan read. Go's `KVSnapshot` retains lock-resolution,

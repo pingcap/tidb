@@ -190,27 +190,6 @@ impl Session {
         }
     }
 
-    /// The record keys a pessimistic point write locks BEFORE it runs -- the
-    /// session-layer entry to [`tidb_executor::access_path::pessimistic_write_point_keys`].
-    /// An EXECUTE template resolves its `?` markers against `params`; an
-    /// already-bound tree carries constants and takes an empty slice. Empty
-    /// output means "no fold": the statement keeps today's read-then-lock
-    /// order.
-    #[must_use]
-    pub fn pessimistic_write_point_keys(&self, stmt: &Stmt, params: &[Datum]) -> Vec<Vec<u8>> {
-        let catalog = self
-            .catalog
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        tidb_executor::access_path::pessimistic_write_point_keys(
-            stmt,
-            params,
-            &catalog,
-            self.current_database(),
-            &self.session_time_zone(),
-        )
-    }
-
     /// The record keys a text-protocol statement locks BEFORE it runs: both
     /// pre-lock arms ([`tidb_executor::access_path::pessimistic_statement_prelock_keys`])
     /// over one parse of the statement. A statement that is not a pessimistic
@@ -221,39 +200,21 @@ impl Session {
         let Ok(stmt) = self.parse(sql) else {
             return Vec::new();
         };
-        self.statement_prelock_keys(&stmt)
+        self.statement_prelock_keys(&stmt, &[])
     }
 
-    /// [`Self::statement_prelock_keys`] for an EXECUTE template: the `?`
-    /// markers resolve against the execute parameters before classification,
-    /// exactly as [`Self::pessimistic_write_point_keys`] binds them.
+    /// [`Self::text_statement_prelock_keys`] over an already-parsed statement
+    /// or prepared template. `params` resolves the latter's marker values;
+    /// an already-bound or text tree passes an empty slice.
     #[must_use]
-    pub fn prepared_statement_prelock_keys(&self, stmt: &Stmt, params: &[Datum]) -> Vec<Vec<u8>> {
-        let bound;
-        let stmt: &Stmt = if params.is_empty() {
-            stmt
-        } else {
-            match tidb_executor::bind_statement(stmt.clone(), params) {
-                Ok(bound_stmt) => {
-                    bound = bound_stmt;
-                    &bound
-                }
-                Err(_) => return Vec::new(),
-            }
-        };
-        self.statement_prelock_keys(stmt)
-    }
-
-    /// [`Self::text_statement_prelock_keys`] over an already-parsed
-    /// statement.
-    #[must_use]
-    pub fn statement_prelock_keys(&self, stmt: &Stmt) -> Vec<Vec<u8>> {
+    pub fn statement_prelock_keys(&self, stmt: &Stmt, params: &[Datum]) -> Vec<Vec<u8>> {
         let catalog = self
             .catalog
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         tidb_executor::access_path::pessimistic_statement_prelock_keys(
             stmt,
+            params,
             &catalog,
             self.current_database(),
             &self.session_time_zone(),
