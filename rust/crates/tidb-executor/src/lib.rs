@@ -402,6 +402,8 @@ mod tests_executor_suite_metadata_source;
 #[cfg(test)]
 mod tests_executor_suite_statements_source;
 #[cfg(test)]
+mod tests_executor_part22_source;
+#[cfg(test)]
 mod tests_fktest_source;
 #[cfg(test)]
 mod tests_fktest_b134_source;
