@@ -3103,7 +3103,7 @@ pub(crate) fn run_update_traced(
                     )
                 };
                 let mut source = restricted_to_partitions(kv, &table_ref.partitions, &name)?;
-                let mut rows = fetch_write_rows(&mut source, read_path.as_ref(), &zone)?;
+                let mut rows = fetch_write_rows(&mut source, read_path.as_ref(), ctx)?;
                 order_rows_for_dml(
                     &mut rows,
                     &update.order_by,
@@ -3644,7 +3644,7 @@ pub(crate) fn run_delete_traced(
             TableEntry::Mem(mem) => SourceRows::Mem(mem.rows.clone()),
             TableEntry::Kv(kv) => {
                 let mut source = restricted_to_partitions(kv, &table_ref.partitions, &name)?;
-                let mut rows = fetch_write_rows(&mut source, read_path.as_ref(), &zone)?;
+                let mut rows = fetch_write_rows(&mut source, read_path.as_ref(), ctx)?;
                 order_rows_for_dml(
                     &mut rows,
                     &delete.order_by,
@@ -3772,7 +3772,7 @@ pub(crate) fn run_delete_traced(
 fn fetch_write_rows(
     kv: &mut crate::kv_table::KvTable,
     read_path: Option<&super::access::WriteReadPath>,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Result<Vec<(crate::kv_table::TableHandle, Vec<Datum>)>, DriverError> {
     // Through `kv_read_error`, not a bare parse error: the fetch reads
     // storage, and a retryable storage failure (a lock wait or region retry
@@ -3780,29 +3780,29 @@ fn fetch_write_rows(
     // rendering it as 1064 told a sysbench client its `UPDATE ... WHERE
     // id=?` had a SYNTAX error.
     let decode_failed = |e| kv_read_error("row decode failed", e);
+    let decode_context = crate::kv_table::RowDecodeContext::for_write(ctx);
+    let zone = decode_context.zone();
     match read_path {
         Some(super::access::WriteReadPath::Point(pin)) => {
             let Some(handle) = pin.handle.as_ref() else {
                 return Ok(Vec::new());
             };
             Ok(kv
-                .get_row_by_handle(handle, zone)
+                .get_row_by_handle_with_context(handle, &decode_context)
                 .map_err(decode_failed)?
                 .map(|row| vec![(handle.clone(), row)])
                 .unwrap_or_default())
         }
         Some(super::access::WriteReadPath::Ranges(ranges, _)) => kv
-            .scan_rows_with_handles_in(Some(ranges), zone)
+            .scan_rows_with_handles_in_with_context(Some(ranges), &decode_context)
             .map_err(decode_failed),
-        Some(super::access::WriteReadPath::Batch(handles)) => {
-            let mut rows = Vec::with_capacity(handles.len());
-            for handle in handles {
-                if let Some(row) = kv.get_row_by_handle(handle, zone).map_err(decode_failed)? {
-                    rows.push((handle.clone(), row));
-                }
-            }
-            Ok(rows)
-        }
+        Some(super::access::WriteReadPath::Batch(handles)) => Ok(kv
+            .stored_records_batched(handles, None, &decode_context)
+            .map_err(decode_failed)?
+            .into_iter()
+            .zip(handles)
+            .filter_map(|(row, handle)| row.map(|row| (handle.clone(), row)))
+            .collect()),
         Some(super::access::WriteReadPath::IndexRanges(index_id, ranges, _)) => {
             // The index range narrows WHICH records are fetched, in index
             // order; the row is then read by its handle, and the `WHERE` above
@@ -3814,7 +3814,10 @@ fn fetch_write_rows(
                     .scan_index_range(*index_id, range, zone)
                     .map_err(decode_failed)?
                 {
-                    if let Some(row) = kv.get_row_by_handle(&handle, zone).map_err(decode_failed)? {
+                    if let Some(row) = kv
+                        .get_row_by_handle_with_context(&handle, &decode_context)
+                        .map_err(decode_failed)?
+                    {
                         rows.push((handle, row));
                     }
                 }
@@ -3822,7 +3825,7 @@ fn fetch_write_rows(
             Ok(rows)
         }
         None => kv
-            .scan_rows_with_handles_in(None, zone)
+            .scan_rows_with_handles_in_with_context(None, &decode_context)
             .map_err(decode_failed),
     }
 }

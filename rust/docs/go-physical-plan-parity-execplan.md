@@ -345,6 +345,12 @@ both `oltp_read_only` and `oltp_read_write`.
   because the bridge overwrote both `KeepOrder` and `Desc` with `false`; it
   now passes for a retained descending unique-index batch point plan without
   inventing executor-local ordering policy.
+- [x] 2026-08-28: replaced the shared UPDATE/DELETE batch-point reader's
+  per-handle record Gets with one record BatchGet, preserving handle order
+  and absent-row filtering. Its end-to-end request-boundary regression first
+  observed zero BatchGets and now observes exactly one. The same reader now
+  uses the statement's write decode context for point, range, batch, index,
+  and full-table arms instead of the legacy query-default row wrapper.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer

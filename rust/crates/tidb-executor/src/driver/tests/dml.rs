@@ -7,6 +7,110 @@
 
 use super::*;
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+use tidb_txnkv::Key;
+
+use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
+
+#[derive(Clone, Debug, Default)]
+struct BatchReadCountingStorage {
+    inner: MemTableStorage,
+    gets: Arc<AtomicUsize>,
+    batch_gets: Arc<AtomicUsize>,
+}
+
+impl TableStorage for BatchReadCountingStorage {
+    fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+        self.gets.fetch_add(1, Ordering::Relaxed);
+        self.inner.get(key)
+    }
+
+    fn batch_get(&mut self, keys: &[Key]) -> Result<HashMap<Key, Vec<u8>>, StorageError> {
+        self.batch_gets.fetch_add(1, Ordering::Relaxed);
+        self.inner.batch_get(keys)
+    }
+
+    fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), StorageError> {
+        self.inner.set(key, value)
+    }
+
+    fn delete(&mut self, key: Key) -> Result<(), StorageError> {
+        self.inner.delete(key)
+    }
+
+    fn iter(
+        &mut self,
+        start: Option<&Key>,
+        upper_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        self.inner.iter(start, upper_bound)
+    }
+
+    fn iter_reverse(
+        &mut self,
+        upper_bound: Option<&Key>,
+        lower_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        self.inner.iter_reverse(upper_bound, lower_bound)
+    }
+
+    fn key_count(&self) -> usize {
+        self.inner.key_count()
+    }
+
+    fn clear(&mut self) {
+        self.inner.clear();
+    }
+
+    fn clone_box(&self) -> Box<dyn TableStorage> {
+        Box::new(self.clone())
+    }
+}
+
+#[test]
+fn batch_point_delete_reads_records_with_one_batch_get() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE batch_delete (id BIGINT PRIMARY KEY, value INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let gets = Arc::new(AtomicUsize::new(0));
+    let batch_gets = Arc::new(AtomicUsize::new(0));
+    let TableEntry::Kv(table) = catalog.get_mut_in("test", "batch_delete").unwrap() else {
+        panic!("batch_delete is not a byte-backed table")
+    };
+    let _ = table.replace_storage(Box::new(BatchReadCountingStorage {
+        inner: MemTableStorage::new(),
+        gets: Arc::clone(&gets),
+        batch_gets: Arc::clone(&batch_gets),
+    }));
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO batch_delete VALUES (1, 10), (2, 20), (3, 30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    gets.store(0, Ordering::Relaxed);
+    batch_gets.store(0, Ordering::Relaxed);
+
+    assert_eq!(
+        run_delete_on(
+            "DELETE FROM batch_delete WHERE id IN (1, 3, 9)",
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap(),
+        2,
+    );
+    assert_eq!(batch_gets.load(Ordering::Relaxed), 1);
+    assert_eq!(gets.load(Ordering::Relaxed), 0);
+}
+
 #[test]
 fn retryable_storage_errors_keep_their_transaction_identity() {
     let retryable = || {
