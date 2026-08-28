@@ -5242,6 +5242,10 @@ fn build_order_and_limit(
                         offset,
                         count,
                     );
+                } else if select.group_by.is_empty()
+                    && crate::plan_trace::order_by_has_aggregate(&traced_select.order_by)
+                {
+                    trace.global_aggregate_topn(&traced_select.order_by, &qualify, offset, count);
                 } else {
                     trace.topn(&traced_select.order_by, &qualify, offset, count);
                 }

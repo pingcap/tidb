@@ -4639,6 +4639,40 @@ impl PlanTrace {
         );
     }
 
+    /// A TopN above a global aggregate. Go resolves a direct aggregate in
+    /// `ORDER BY` to the single output column of the aggregate before
+    /// rendering `LogicalTopN.ExplainInfo`, so `ORDER BY COUNT(*)` is shown
+    /// as `Column` rather than `count(1)`.
+    pub(crate) fn global_aggregate_topn(
+        &mut self,
+        order_by: &[tidb_ast::OrderItem],
+        qualify: &Qualifier<'_>,
+        offset: u64,
+        count: u64,
+    ) {
+        let items = order_by
+            .iter()
+            .map(|item| {
+                let expression = if matches!(item.expr, tidb_ast::Expr::Aggregate { .. }) {
+                    "Column".to_owned()
+                } else {
+                    qualify.expr(&item.expr)
+                };
+                if item.desc {
+                    format!("{expression}:desc")
+                } else {
+                    expression
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.wrap(
+            "TopN",
+            Est::CapAt(count as f64),
+            format!("{items}, offset:{offset}, count:{count}"),
+        );
+    }
+
     /// A TopN pushed below the final projection of a grouped aggregate.
     /// Aggregate aliases resolve to the aggregation's result columns, while
     /// ordinary order items retain their qualified source names.
@@ -7571,6 +7605,32 @@ mod tests {
         assert_eq!(
             trace.stack.last().expect("TopN").info,
             "test.t.y, Column#0:desc, test.t.brand_id, offset:0, count:100"
+        );
+    }
+
+    #[test]
+    fn global_topn_resolves_direct_aggregate_to_output_column() {
+        let stmt = tidb_parser::parse(
+            "select count(*) from t order by count(*) desc limit 100",
+        )
+        .expect("global aggregate TopN SQL parses");
+        let tidb_ast::Stmt::Query(query) = stmt else {
+            panic!("expected query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            panic!("expected select")
+        };
+        let scope = PlanTrace::single_table_scope("t", Some("test".to_owned()), vec![]);
+        let qualify = Qualifier {
+            db: "test",
+            scope: &scope,
+            catalog: None,
+        };
+        let mut trace = PlanTrace::planning();
+        trace.global_aggregate_topn(&select.order_by, &qualify, 0, 100);
+        assert_eq!(
+            trace.stack.last().expect("TopN").info,
+            "Column:desc, offset:0, count:100"
         );
     }
 
