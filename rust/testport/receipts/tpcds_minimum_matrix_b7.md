@@ -6,7 +6,7 @@ Run date: 2026-08-28 (Asia/Shanghai)
 
 - Go source of truth: nightly TiDB from `tiup playground nightly`, PD/TiKV
   shared by both SQL endpoints, Go port `17000`.
-- Rust revision: `fdfd91c19f2270cd35ccb1b9ea3c2d3a856c63c1` on
+- Rust revision: `285bb06a5289eb0f8f31676b5455c190b3303669` on
   `hparser-integration`, release binary on port `18000`.
 - Workload source: `pingcap/tidb-bench` commit
   `e9f058ae9bee089afdbf9b3397ed9948bf7e560b`; `genquery.sh` generated 42
@@ -40,7 +40,7 @@ PYTHONPATH=/private/tmp/pymysql \
   /Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 \
   rust/testport/tpcds/compare_workload.py \
   --queries /private/tmp/tidb-bench-tpcds/tpcds/queries \
-  --output /private/tmp/tpcds-q48-streamsum-fdf.json \
+  --output /private/tmp/tpcds-matrix-285bb06.json \
   --go-port 17000 --rust-port 18000 --warmups 1 --runs 3
 ```
 
@@ -49,15 +49,15 @@ broadcast thresholds, and all scan/lookup/join/aggregation/projection/window
 and optimizer concurrency variables to one. `source` requests
 `tikv,tiflash,tidb`; `control` permits only `tikv`.
 
-The refreshed matrix is `/private/tmp/tpcds-q48-streamsum-fdf.json`
-(SHA-256 `f0483d9b515d30a607e4fcde27da246c222177c31c4a796b6b2016edcc026dbd`).
+The refreshed matrix is `/private/tmp/tpcds-matrix-285bb06.json`
+(SHA-256 `2a88892c6a19d7f6b716c95108620407001689c3c6660092fec2eb9d2c269d85`).
 
 ## Results
 
 | mode | Go plan errors | Rust plan errors | result hashes equal | normalized plan hashes equal | Go p50 median | Rust p50 median | Rust/Go p50 median |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| source (MPP requested) | 0 | 0 | 42/42 | 0/42 | 31.03 ms | 75.85 ms | 3.23x |
-| control (TiKV only) | 0 | 0 | 42/42 | 10/42 | 41.27 ms | 76.60 ms | 1.47x |
+| source (MPP requested) | 0 | 0 | 42/42 | 0/42 | 45.57 ms | 84.98 ms | 2.00x |
+| control (TiKV only) | 0 | 0 | 42/42 | 10/42 | 41.09 ms | 75.18 ms | 1.40x |
 
 All result hashes include row order and encoded values. No result errors were
 observed. Source-mode Go plans contain `mpp[tiflash]` operators (for example
@@ -80,8 +80,9 @@ coverage includes `driver::tests::aggregates::tpcds_q43_injected_case_projection
 
 The ten control-mode plan hashes that match are Q3, Q19, Q25, Q29, Q42,
 Q43, Q48, Q50, Q52, and Q55. Q48 now follows Go's root StreamAgg choice for
-a single integer SUM above a joined source. The remaining control-mode mismatches are Q6, Q7,
-Q9, Q10, Q13, Q15, Q26, Q28, Q34, Q35, Q41, Q45, Q46, Q48, Q61, Q62, Q65,
+a single integer SUM above a joined source. The remaining control-mode
+mismatches are Q6, Q7, Q9, Q10, Q13, Q15, Q26, Q28, Q34, Q35, Q41, Q45,
+Q46, Q61, Q62, Q65,
 Q66, Q68, Q69, Q71, Q72, Q73, Q76, Q79, Q84, Q85, Q88, Q90, Q91, Q93, Q96,
 and Q99. Their normalized plan rows are retained per query in the JSON
 matrix; the differences are a mix of physical-plan shape (aggregate/join/
@@ -101,7 +102,7 @@ to 80.58 ms (0.97x); its result hash stayed equal to Go.
 
 - Minimum-fixture result correctness: **met for all 42 statements**.
 - Q6 EXPLAIN regression: **fixed and covered by a Rust unit test**.
-- Exact Go physical-plan parity: **not met** (source 0/42; control 9/42).
+- Exact Go physical-plan parity: **not met** (source 0/42; control 10/42).
 - Rust no-performance-regression check: **no broad regression established**
   (post/fix-to-pre-fix p50 geometric ratios 1.03x source and 1.04x control),
   but Q25 was a 1.53x outlier and needs a repeated baseline run before it can
