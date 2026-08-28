@@ -91,8 +91,8 @@ func GetActiveTaskSummary(ctx context.Context) (*storage.ActiveTaskSummary, erro
 	return summary, nil
 }
 
-// GetDXFNodes returns all nodes registered in mysql.dist_framework_meta.
-func GetDXFNodes(ctx context.Context) ([]proto.ManagedNode, error) {
+// ListManagedNodes returns all nodes registered in mysql.dist_framework_meta.
+func ListManagedNodes(ctx context.Context) ([]proto.ManagedNode, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	manager, err := storage.GetTaskManager()
 	if err != nil {
