@@ -1671,6 +1671,8 @@ mod tests_session_part1_source;
 #[cfg(test)]
 mod tests_session_part2_source;
 #[cfg(test)]
+mod tests_session_part5_source;
+#[cfg(test)]
 mod tests_session_bootstrap_common_source;
 #[cfg(test)]
 mod tests_session_var_hooks;
