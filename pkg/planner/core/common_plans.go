@@ -1117,31 +1117,69 @@ func ExplainFlatPlanInRUFormat(flat *FlatPhysicalPlan, runtimeStatsColl *execdet
 	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
 		return
 	}
+	totalRU := getExplainRUTotal(flat.Main, runtimeStatsColl)
 	for _, flatOp := range flat.Main {
-		rows = prepareRUOperatorInfo(flatOp, runtimeStatsColl, rows)
+		rows = prepareRUOperatorInfo(flatOp, runtimeStatsColl, totalRU, rows)
 	}
 	for _, cte := range flat.CTEs {
 		for _, flatOp := range cte {
-			rows = prepareRUOperatorInfo(flatOp, runtimeStatsColl, rows)
+			rows = prepareRUOperatorInfo(flatOp, runtimeStatsColl, totalRU, rows)
 		}
 	}
 	for _, subQ := range flat.ScalarSubQueries {
 		for _, flatOp := range subQ {
-			rows = prepareRUOperatorInfo(flatOp, runtimeStatsColl, rows)
+			rows = prepareRUOperatorInfo(flatOp, runtimeStatsColl, totalRU, rows)
 		}
 	}
 	return
 }
 
-func prepareRUOperatorInfo(flatOp *FlatOperator, runtimeStatsColl *execdetails.RuntimeStatsColl, rows [][]string) [][]string {
+func prepareRUOperatorInfo(flatOp *FlatOperator, runtimeStatsColl *execdetails.RuntimeStatsColl, totalRU float64, rows [][]string) [][]string {
 	p := flatOp.Origin
 	if p.ExplainID().String() == "_0" {
 		return rows
 	}
 	taskType, id := getExplainIDAndTaskTp(flatOp)
 	actRows, _, _, _ := getRuntimeInfoStr(p.SCtx(), p, runtimeStatsColl)
-	// TODO: Replace the empty RU columns with real selfRU, cumRU, cumRU%, and detail values.
-	return append(rows, []string{id, taskType, actRows, "", "", "", ""})
+	selfRU, cumRU, cumRUPct := "", "", ""
+	if ruStats := getExplainRURuntimeStats(runtimeStatsColl, p); ruStats != nil {
+		selfRU = strconv.FormatFloat(ruStats.SelfRU, 'f', 2, 64)
+		cumRU = strconv.FormatFloat(ruStats.CumRU, 'f', 2, 64)
+		if totalRU > 0 {
+			cumRUPct = fmt.Sprintf("%.2f%%", ruStats.CumRU/totalRU*100)
+		} else {
+			cumRUPct = "0.00%"
+		}
+	}
+	return append(rows, []string{id, taskType, actRows, selfRU, cumRU, cumRUPct, ""})
+}
+
+func getExplainRUTotal(tree FlatPlanTree, runtimeStatsColl *execdetails.RuntimeStatsColl) float64 {
+	if len(tree) == 0 || tree[0] == nil || tree[0].Origin == nil {
+		return 0
+	}
+	if ruStats := getExplainRURuntimeStats(runtimeStatsColl, tree[0].Origin); ruStats != nil {
+		return ruStats.CumRU
+	}
+	return 0
+}
+
+func getExplainRURuntimeStats(runtimeStatsColl *execdetails.RuntimeStatsColl, p base.Plan) *execdetails.ExplainRURuntimeStats {
+	if runtimeStatsColl == nil && p != nil && p.SCtx() != nil &&
+		p.SCtx().GetSessionVars() != nil && p.SCtx().GetSessionVars().StmtCtx != nil {
+		runtimeStatsColl = p.SCtx().GetSessionVars().StmtCtx.RuntimeStatsColl
+	}
+	if runtimeStatsColl == nil || p == nil || !runtimeStatsColl.ExistsRootStats(p.ID()) {
+		return nil
+	}
+	rootStats := runtimeStatsColl.GetRootStats(p.ID())
+	_, groups := rootStats.MergeStats()
+	for _, group := range groups {
+		if ruStats, ok := group.(*execdetails.ExplainRURuntimeStats); ok {
+			return ruStats
+		}
+	}
+	return nil
 }
 
 func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, explainID string) *ExplainInfoForEncode {

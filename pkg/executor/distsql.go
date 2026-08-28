@@ -258,6 +258,8 @@ type IndexReaderExecutor struct {
 	plans          []base.PhysicalPlan
 
 	memTracker *memory.Tracker
+	// rangeMemTracker tracks KV range construction for an Index Join inner task.
+	rangeMemTracker *memory.Tracker
 
 	selectResultHook // for testing
 
@@ -350,7 +352,7 @@ func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, erro
 
 	results := make([]kv.KeyRange, 0, len(groupedRanges))
 	for _, ranges := range groupedRanges {
-		kvRanges, err := buildKeyRanges(e.dctx, ranges, e.partRangeMap, tableIDs, e.index.ID, nil)
+		kvRanges, err := buildKeyRanges(e.dctx, ranges, e.partRangeMap, tableIDs, e.index.ID, e.rangeMemTracker)
 		if err != nil {
 			return nil, err
 		}
@@ -514,6 +516,8 @@ type IndexLookUpExecutor struct {
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
+	// rangeMemTracker tracks KV range construction for an Index Join inner task.
+	rangeMemTracker *memory.Tracker
 
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
@@ -674,8 +678,12 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 
 	kvRanges := make([][]kv.KeyRange, 0, len(groupedRanges))
 	physicalTblIDsForPartitionKVRanges := make([]int64, 0, len(tableIDs)*len(groupedRanges))
+	rangeMemTracker := e.memTracker
+	if e.rangeMemTracker != nil {
+		rangeMemTracker = e.rangeMemTracker
+	}
 	for _, ranges := range groupedRanges {
-		kvRange, err := buildKeyRanges(e.dctx, ranges, e.partitionRangeMap, tableIDs, e.index.ID, e.memTracker)
+		kvRange, err := buildKeyRanges(e.dctx, ranges, e.partitionRangeMap, tableIDs, e.index.ID, rangeMemTracker)
 		if err != nil {
 			return err
 		}

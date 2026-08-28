@@ -1,0 +1,11 @@
+name = "pd"
+data-dir = "/var/lib/pd"
+client-urls = "http://0.0.0.0:2379"
+advertise-client-urls = "http://pd:2379"
+peer-urls = "http://0.0.0.0:2380"
+advertise-peer-urls = "http://pd:2380"
+initial-cluster = "pd=http://pd:2380"
+initial-cluster-token = "compose-local"
+
+[log.file]
+filename = "/var/log/pd/pd.log"

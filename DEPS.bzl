@@ -299,13 +299,6 @@ def go_deps():
         version = "v0.2.0",
     )
     go_repository(
-        name = "com_github_aliyun_alibaba_cloud_sdk_go",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/aliyun/alibaba-cloud-sdk-go",
-        sum = "h1:Q/yk4z/cHUVZfgTqtD09qeYBxHwshQAjVRX73qs8UH0=",
-        version = "v1.61.1581",
-    )
-    go_repository(
         name = "com_github_aliyun_alibabacloud_oss_go_sdk_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aliyun/alibabacloud-oss-go-sdk-v2",
@@ -1992,13 +1985,6 @@ def go_deps():
         importpath = "github.com/gogo/status",
         sum = "h1:+eIkrewn5q6b30y+g/BJINVVdi2xH7je5MPJ3ZPK3JA=",
         version = "v1.1.0",
-    )
-    go_repository(
-        name = "com_github_goji_httpauth",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/goji/httpauth",
-        sum = "h1:lBXNCxVENCipq4D1Is42JVOP4eQjlB8TQ6H69Yx5J9Q=",
-        version = "v0.0.0-20160601135302-2da839ab0f4d",
     )
     go_repository(
         name = "com_github_golang_freetype",
@@ -3791,8 +3777,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:JBrbgynAz4RkeXUvqXAOhySZK5FYFCeHdKWUrj+Z2Vw=",
-        version = "v0.0.0-20260724054804-059694ae4472",
+        sum = "h1:Z1gFEBIzhT7Cuc0IBAsKgUxMapL2kwqe3QQq7g9XiJw=",
+        version = "v0.0.0-20260820070758-623e58e60fa9",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -4541,9 +4527,8 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        replace = "github.com/solotzg/client-go/v2",
-        sum = "h1:j0a+mnPoC7sDuBxMVbItflzc+CjSTNvGzRaAizHvhd8=",
-        version = "v2.0.0-20260820012253-f2f673ac5f5d",
+        sum = "h1:9BgxfWWDwBk8cUcc8prc4tP0x/TZjP+VDVtGiPI1ZCg=",
+        version = "v2.0.8-0.20260828060750-ba4e403f86ea",
     )
     go_repository(
         name = "com_github_tikv_pd_client",

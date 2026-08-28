@@ -85,6 +85,7 @@ func BenchmarkStatementRUTreeTraversal(b *testing.B) {
 			0,
 			stmtCtx.RuntimeStatsColl,
 			&calculator,
+			nil,
 		)
 		statementRUCalculatorSink = calculator
 	}
