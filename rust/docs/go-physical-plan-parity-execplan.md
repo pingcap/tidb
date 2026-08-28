@@ -1421,6 +1421,35 @@ legs reported zero ignored errors. Exact validation commands:
     git diff --check
     EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
 
+Progress receipt (2026-08-28, single cached historical-read admission): Go's
+`GetPlanFromPlanCache` preprocesses and admits a prepared plan before returning
+the execution plan; physical execution does not repeat string-backed snapshot
+and staleness checks. Rust's cached point-get and SELECT binders already used
+the shared prepared-plan environment admission, but their executors checked
+the two sysvars again, and cached DML had no equivalent bind-time gate. Cached
+DML now passes through the same environment admission, and all three cached
+executors trust that admission. The ordinary statement guard remains in place
+because this tier cannot answer historical reads without MVCC history. The DML
+admission regression and the cached-executor source regression were both
+observed failing before the implementation and passing afterward; the
+ordinary historical-read regression also passes. The release server builds.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`65e08aeeb7` and the same Go server over one TiKV/PD cluster. Read-only median
+TPS was 512.79 candidate, 512.48 baseline, and 475.14 Go. Read-write median TPS
+was 258.72 candidate, 230.62 baseline, and 216.26 Go; those samples remain
+latency-noisy, so no read-write increase is attributed to this change. All 18
+legs reported zero ignored errors. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session cached_dml_binding_refuses_a_pinned_historical_read --lib
+    cargo test -q -p tidb-session a_pinned_historical_read_is_refused_rather_than_answered_from_the_present --lib
+    cargo test -q -p tidb-server --test all cached_execution_trusts_the_shared_historical_read_admission
+    cargo build -q --release -p tidb-server --bin tidb-server
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
 Plan revision note (2026-08-27): created after the user confirmed the
 performance-preserving route to full Go parity across plan cache, aggregation,
 parallel execution, resource groups, sort, and coprocessor packages.

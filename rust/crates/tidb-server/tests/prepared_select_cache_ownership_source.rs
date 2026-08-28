@@ -84,6 +84,37 @@ fn cached_select_key_reuses_the_typed_session_environment() {
 }
 
 #[test]
+fn cached_execution_trusts_the_shared_historical_read_admission() {
+    let source = include_str!("../../tidb-session/src/dispatch.rs");
+    let cached_execution = source
+        .split_once("pub fn execute_prepared_point_get(")
+        .expect("cached point-get execution")
+        .1
+        .split_once("fn execute_parsed_statement(")
+        .expect("ordinary execution boundary")
+        .0;
+    let ordinary_execution = source
+        .split_once("fn execute_parsed_statement(")
+        .expect("ordinary execution")
+        .1
+        .split_once("fn refuse_pinned_historical_read(")
+        .expect("historical-read helper boundary")
+        .0;
+    let binder = include_str!("../../tidb-session/src/prepared_ast.rs");
+    let dml_binder = binder
+        .split_once("pub fn bind_cached_prepared_dml(")
+        .expect("cached DML binder")
+        .1
+        .split_once("pub fn bind_cached_prepared_select(")
+        .expect("cached DML binder boundary")
+        .0;
+
+    assert!(!cached_execution.contains("refuse_pinned_historical_read"));
+    assert!(ordinary_execution.contains("self.refuse_pinned_historical_read()?"));
+    assert!(dml_binder.contains("self.prepared_plan_cache_environment()"));
+}
+
+#[test]
 fn prepared_execution_reuses_the_typed_session_time_zone() {
     let source = include_str!("../../tidb-session/src/stmt_ctx.rs");
     let accessor = source

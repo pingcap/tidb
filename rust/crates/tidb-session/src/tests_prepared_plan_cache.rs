@@ -16,6 +16,8 @@
 //! `@@last_plan_from_cache` reports across `EXECUTE`s. See
 //! [`crate::prepared_plan_cache`] for what is and is not modelled.
 
+use tidb_datatype::Datum;
+
 use crate::tests_support::row_text;
 use crate::Session;
 
@@ -50,6 +52,26 @@ fn unchanged_session_reuses_the_prepared_plan_cache_environment() {
         .expect("set a plan-cache-incompatible limit");
     assert!(session.prepared_plan_cache_environment().is_none());
     assert!(session.prepared_plan_cache_environment().is_none());
+}
+
+#[test]
+fn cached_dml_binding_refuses_a_pinned_historical_read() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (id int primary key, v int)")
+        .unwrap();
+    let prepared = session
+        .prepare_ast("UPDATE t SET v = ? WHERE id = ?")
+        .unwrap();
+    let plan = prepared.dml_plan().expect("prepared point UPDATE plan");
+
+    assert!(session
+        .bind_cached_prepared_dml(&plan, &[Datum::Int(20), Datum::Int(1)])
+        .is_some());
+    session.run("SET tidb_read_staleness = -1").unwrap();
+    assert!(session
+        .bind_cached_prepared_dml(&plan, &[Datum::Int(20), Datum::Int(1)])
+        .is_none());
 }
 
 fn cache_flag(session: &mut Session) -> String {

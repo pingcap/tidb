@@ -24,8 +24,8 @@
 use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
 
-use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
 use crate::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
+use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
 use crate::{
     Session, StatementKind, StmtOutput, WarningLevel, infoschema, privilege, statement_kind_of,
 };
@@ -441,7 +441,6 @@ impl Session {
         // executor owns one handle read and the admission gate already refuses
         // an open transaction, so walking every catalog table cannot affect
         // its result.
-        self.refuse_pinned_historical_read()?;
         self.statement_insert_id = 0;
         self.statement_kind = StatementKind::Select;
 
@@ -473,7 +472,6 @@ impl Session {
         self.activate_select_resource_group(cached.plan().select_template());
         let cache_hit = cached.cache_hit();
         self.begin_cached_prepared_query_boundary();
-        self.refuse_pinned_historical_read()?;
         self.statement_insert_id = 0;
         self.statement_kind = StatementKind::Select;
 
@@ -497,7 +495,8 @@ impl Session {
     }
 
     /// Executes one retained prepared DML plan with fresh parameter values
-    /// and statement-local mutation state.
+    /// and statement-local mutation state. The execution has already passed
+    /// the shared prepared-cache session-state admission.
     pub fn execute_prepared_dml(
         &mut self,
         execution: tidb_executor::PreparedDmlExecution,
@@ -524,7 +523,6 @@ impl Session {
                 self.require_named_table_privilege(database, table, privilege::GlobalPriv::Delete)?;
             }
         }
-        self.refuse_pinned_historical_read()?;
         self.record_mdl_related_table_names(&[(database.to_owned(), table.to_owned())]);
         self.statement_insert_id = 0;
         self.statement_kind = StatementKind::Dml;

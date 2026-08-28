@@ -252,7 +252,7 @@ impl Session {
     }
 
     /// Binds fresh values into a retained DML plan after applying the prepared
-    /// cache, binding, fix-control, database, and schema gates.
+    /// cache, session-state, binding, fix-control, database, and schema gates.
     pub fn bind_cached_prepared_dml(
         &self,
         plan: &Arc<PreparedDmlPlan>,
@@ -267,6 +267,7 @@ impl Session {
         {
             return None;
         }
+        self.prepared_plan_cache_environment()?;
         let catalog = self.lock_catalog().ok()?;
         plan.bind(values, &catalog, self.current_database())
     }
