@@ -2097,12 +2097,14 @@ pub struct HashAggExec<C: HashAggContext> {
     /// (Go `parallelExecValid`). Decided once per Open; `execute` never
     /// re-decides mid-run.
     pipeline_mode: bool,
-    /// Resolved worker counts for the current Open (diagnostics).
+    /// Resolved worker counts for the current Open.
     pipeline_partial_concurrency: usize,
     pipeline_final_concurrency: usize,
     /// Test/diagnostic override standing in for SET concurrency variables.
+    #[cfg(test)]
     pipeline_concurrency_override: Option<(usize, usize)>,
-    /// Diagnostics shared with the pipeline's workers while it runs.
+    /// Unit-test observations shared with pipeline workers.
+    #[cfg(test)]
     pipeline_stats: Option<Arc<parallel::PipelineStats>>,
 }
 
@@ -2172,7 +2174,9 @@ impl<C: HashAggContext> HashAggExec<C> {
             pipeline_mode: false,
             pipeline_partial_concurrency: 1,
             pipeline_final_concurrency: 1,
+            #[cfg(test)]
             pipeline_concurrency_override: None,
+            #[cfg(test)]
             pipeline_stats: None,
         }
     }
@@ -2464,7 +2468,10 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
         {
             self.pipeline_concurrency_override = None;
         }
-        self.pipeline_stats = None;
+        #[cfg(test)]
+        {
+            self.pipeline_stats = None;
+        }
         self.in_spill_mode.store(false, SeqCst);
         self.parallel_spill_requested.store(false, SeqCst);
         // Go `HashAggExec.Open` -> `e.memTracker.Reset()`: an aggregation
@@ -2482,10 +2489,13 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
             if <C as HashAggContext>::PARALLEL_WORKERS_MAY_EVAL {
                 // Go `initForParallelExec`: worker counts resolved from the
                 // session variables; the pipeline takes this aggregation over.
-                self.pipeline_stats = Some(Arc::new(parallel::PipelineStats::new(
-                    partial_concurrency,
-                    final_concurrency,
-                )));
+                #[cfg(test)]
+                {
+                    self.pipeline_stats = Some(Arc::new(parallel::PipelineStats::new(
+                        partial_concurrency,
+                        final_concurrency,
+                    )));
+                }
                 self.pipeline_mode = true;
                 self.pipeline_partial_concurrency = partial_concurrency;
                 self.pipeline_final_concurrency = final_concurrency;
@@ -2579,7 +2589,10 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
         self.parallel_output_cursor = 0;
         self.parallel_output_active = false;
         self.pipeline_mode = false;
-        self.pipeline_stats = None;
+        #[cfg(test)]
+        {
+            self.pipeline_stats = None;
+        }
         if let Some(in_disk) = &mut self.data_in_disk {
             in_disk.close();
         }

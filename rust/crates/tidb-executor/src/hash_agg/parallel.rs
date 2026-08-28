@@ -95,9 +95,13 @@ use super::spill::parallel_new_group_bytes;
 use super::*;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::atomic::AtomicBool;
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::sync_channel;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::Mutex;
 use tidb_vardef::tidb_vars::{
     TIDB_ENABLE_PARALLEL_HASHAGG_SPILL, TIDB_TRACK_AGGREGATE_MEMORY_USAGE,
 };
@@ -165,8 +169,8 @@ const _: () = {
     assert_sync::<crate::StmtContext>();
 };
 
-/// Diagnostics shared with the pipeline's workers, mirroring in spirit Go's
-/// per-worker `AggWorkerStat` registration.
+/// Unit-test observations kept out of production HashAgg execution.
+#[cfg(test)]
 #[derive(Default)]
 pub(super) struct PipelineStats {
     /// Resolved worker counts (Go's session concurrency variables).
@@ -178,6 +182,7 @@ pub(super) struct PipelineStats {
     pub(super) partial_worker_threads: Mutex<Vec<std::thread::ThreadId>>,
 }
 
+#[cfg(test)]
 impl PipelineStats {
     pub(super) fn new(partial_concurrency: usize, final_concurrency: usize) -> Self {
         PipelineStats {
@@ -754,18 +759,26 @@ struct ParallelSpillPartitions {
 
 impl ParallelSpillPartitions {
     fn new(memory: &StatementMemory, disk_tracker: &Arc<disk::Tracker>) -> Self {
-        let field_types = vec![FieldType::new(FieldTypeCode::LongBlob)];
-        let chunks = (0..SPILLED_PARTITION_NUM)
-            .map(|_| Chunk::new_with_capacity(&field_types, SPILL_CHUNK_SIZE))
-            .collect();
         Self {
-            field_types,
-            chunks,
-            files: (0..SPILLED_PARTITION_NUM).map(|_| None).collect(),
+            field_types: vec![FieldType::new(FieldTypeCode::LongBlob)],
+            chunks: Vec::new(),
+            files: Vec::new(),
             storage: memory.spill_storage(),
             disk_tracker: Arc::clone(disk_tracker),
             has_data: false,
         }
+    }
+
+    /// Go `HashAggPartialWorker.prepareForSpill`: allocate the 256 temporary
+    /// chunks only after the memory action actually requests a spill.
+    fn prepare(&mut self) {
+        if !self.chunks.is_empty() {
+            return;
+        }
+        self.chunks = (0..SPILLED_PARTITION_NUM)
+            .map(|_| Chunk::new_with_capacity(&self.field_types, SPILL_CHUNK_SIZE))
+            .collect();
+        self.files = (0..SPILLED_PARTITION_NUM).map(|_| None).collect();
     }
 
     fn bucket(key: &PipelineMapKey) -> usize {
@@ -793,6 +806,7 @@ impl ParallelSpillPartitions {
     }
 
     fn spill_maps(&mut self, maps: Vec<PipelineMap>) -> Result<(), ExecError> {
+        self.prepare();
         for map in maps {
             for (key, group) in map {
                 let partition = Self::bucket(&key);
@@ -945,6 +959,7 @@ impl<C: HashAggContext> HashAggExec<C> {
     /// `HashAggFinalConcurrency()`: the variable if set (> 0), else
     /// `tidb_executor_concurrency`, else the process default.
     pub(super) fn resolved_pipeline_concurrency(&self) -> (usize, usize) {
+        #[cfg(test)]
         if let Some((partial, final_)) = self.pipeline_concurrency_override {
             return (partial, final_);
         }
@@ -1016,13 +1031,13 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
     child_chunk: &mut Chunk,
     child_returned_empty: &mut bool,
     plan: &Arc<PipelinePlan<C>>,
-    stats: &Arc<PipelineStats>,
+    partial_concurrency: usize,
+    final_concurrency: usize,
+    #[cfg(test)] stats: &Arc<PipelineStats>,
     memory: &StatementMemory,
     tracker: &Arc<Tracker>,
     spill_requested: &Arc<AtomicBool>,
 ) -> Result<PipelineEpoch, ExecError> {
-    let partial_concurrency = stats.partial_concurrency;
-    let final_concurrency = stats.final_concurrency;
     let abort = PipelineAbort::default();
 
     let mut lane_txs = Vec::with_capacity(partial_concurrency);
@@ -1037,10 +1052,12 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
     for _ in 0..partial_concurrency {
         let lane_rx = lane_rxs.pop().expect("one receiver per partial worker");
         let abort = abort.clone();
+        #[cfg(test)]
         let stats_ref = Arc::clone(stats);
         let tracker = Arc::clone(tracker);
         let plan = Arc::clone(plan);
         partial_handles.push(crate::worker_pool::spawn(move || {
+            #[cfg(test)]
             stats_ref.record_partial_worker();
             let mut maps: Vec<PipelineMap> = (0..final_concurrency)
                 .map(|_| PipelineMap::default())
@@ -1099,6 +1116,7 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
         if lane_txs[next_lane].send((chunk, chunk_charge)).is_err() {
             break;
         }
+        #[cfg(test)]
         stats
             .dispatched_chunks
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1162,6 +1180,7 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
     /// one final task merges each bucket and hands one map back; the main
     /// thread then finishes values in first-seen order.
     pub(super) fn execute_parallel_pipeline(&mut self) -> Result<(), ExecError> {
+        #[cfg(test)]
         let stats = Arc::clone(
             self.pipeline_stats
                 .as_ref()
@@ -1174,7 +1193,10 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
             agg_funcs: self.agg_funcs.clone(),
         });
         let spill_requested = Arc::clone(&self.parallel_spill_requested);
-        let mut spilled = ParallelSpillPartitions::new(&self.memory, &self.disk_tracker);
+        let mut spilled = self
+            .parallel_spill_action
+            .as_ref()
+            .map(|_| ParallelSpillPartitions::new(&self.memory, &self.disk_tracker));
         let mut in_memory_maps = None;
         let child_drained;
 
@@ -1184,13 +1206,20 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
                 &mut self.child_chunk,
                 &mut self.child_returned_empty,
                 &plan,
+                self.pipeline_partial_concurrency,
+                self.pipeline_final_concurrency,
+                #[cfg(test)]
                 &stats,
                 &self.memory,
                 &self.tracker,
                 &spill_requested,
             )?;
             let requested = spill_requested.swap(false, std::sync::atomic::Ordering::SeqCst);
-            if requested || spilled.has_data {
+            let has_spilled_data = spilled.as_ref().is_some_and(|spill| spill.has_data);
+            if requested || has_spilled_data {
+                let spilled = spilled.as_mut().ok_or_else(|| {
+                    ExecError::unsupported("parallel HashAgg spill requested without spill action")
+                })?;
                 spilled.spill_maps(epoch.maps)?;
                 self.tracker.replace_bytes_used(0);
                 if epoch.child_drained {
@@ -1205,7 +1234,8 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
         }
 
         let mut groups = Vec::new();
-        if spilled.has_data {
+        if spilled.as_ref().is_some_and(|spill| spill.has_data) {
+            let spilled = spilled.as_mut().expect("spilled data owns its partitions");
             // Go restores one of the 256 partitions at a time and merges all
             // partial-result files for that partition before moving on.
             for partition in (0..SPILLED_PARTITION_NUM).rev() {
@@ -1811,6 +1841,20 @@ mod tests {
                 (g, v)
             })
             .collect()
+    }
+
+    /// FAIL-BEFORE/PASS-AFTER: Go allocates its 256 spill chunks only from
+    /// `HashAggPartialWorker.prepareForSpill`. Rust used to allocate all 256
+    /// for every parallel aggregation, including DISTINCT where spill is
+    /// deliberately disabled.
+    #[test]
+    fn spill_partitions_allocate_chunks_only_when_spill_starts() {
+        let memory = StatementMemory::default();
+        let disk_tracker = tidb_util::disk::Tracker::new(1, -1);
+        let spill = ParallelSpillPartitions::new(&memory, &disk_tracker);
+
+        assert!(spill.chunks.is_empty());
+        assert!(spill.files.is_empty());
     }
 
     fn count_sum_min_max_first_funcs() -> Vec<AggFunc> {

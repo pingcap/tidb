@@ -134,6 +134,13 @@ both `oltp_read_only` and `oltp_read_write`.
   message protocol. Partial tasks return their owned, already-partitioned maps;
   after all partial receipts arrive, one persistent-pool merge task runs per
   final bucket, preserving Go's partial-worker barrier and N-to-M partitioning.
+- [x] 2026-08-27: removed production-only HashAgg worker-id/mutex/dispatch
+  diagnostics and concurrency overrides; equivalent observations now compile
+  only in unit tests and drive no production allocation or synchronization.
+- [x] 2026-08-27: made Rust's 256 parallel-spill chunks lazy at the actual
+  spill transition, matching Go's `prepareForSpill`. Parallel DISTINCT now
+  constructs no spill-partition owner because Go's spill gate rejects
+  DISTINCT before execution.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -330,6 +337,21 @@ both `oltp_read_only` and `oltp_read_write`.
   `hash_agg::parallel::tests` (11 passing tests), and the paired range-split
   benchmark with zero errors.
 
+- Observation: after the channel cleanup, a 12-second production sample put
+  2,773 main-thread samples in `execute_parallel_pipeline`, including only
+  1,615 in the child-reading epoch. The largest Rust-only setup outside that
+  epoch was `ParallelSpillPartitions::new`, which allocated 256 capacity-bearing
+  `Chunk`s for every parallel statement. Go's spill helper allocates its outer
+  metadata at open but creates the 256 spill chunks only inside the partial
+  worker's `prepareForSpill`; DISTINCT never enters that method because Go
+  disables parallel spill for DISTINCT. Making the Rust chunks lazy moved the
+  focused DISTINCT median from 2,271 to 2,674 TPS while Go stayed at roughly
+  3,002 TPS.
+  Evidence: fail-before assertion that `spill.chunks` was nonempty in
+  `spill_partitions_allocate_chunks_only_when_spill_starts`, its pass after
+  lazy preparation, `parallel_hashagg_spills_partial_results_and_finishes`,
+  the 12-test HashAgg module pass, and the paired benchmark with zero errors.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -428,6 +450,16 @@ both `oltp_read_only` and `oltp_read_write`.
   without a row-count policy, a workload rule, or a concurrency cutoff.
   Date/Author: 2026-08-27, Codex.
 
+- Decision: compile HashAgg worker-thread observations and concurrency
+  overrides only for unit tests, and allocate spill partitions only after a
+  real spill request.
+  Rationale: neither state participates in Go's execution decision. Production
+  test receipts imposed mutex/atomic work, and eager spill chunks were a large
+  fixed cost even when the Go spill gate made spilling impossible. Behavioral
+  tests and fail-before/pass-after allocation coverage retain the evidence
+  without production mirrors.
+  Date/Author: 2026-08-27, Codex.
+
 ## Outcomes & Retrospective
 
 Work is in progress. After restoring point-plan precedence and removing the
@@ -456,8 +488,14 @@ measured Rust/Go medians of 2,771.86/3,052.33 TPS (0.908x), confirming fixed
 parallel-lifecycle cost as the dominant DISTINCT regression. Removing the
 redundant N*M shuffle/result channel topology while retaining the configured
 5/5 worker shape measured 2,196.59/2,828.20 TPS (0.777x), approximately 3.2%
-above the preceding Rust median. The gap remains open and the next target is
-the sort/coprocessor execution boundary rather than a Rust-only serial cutoff.
+above the preceding Rust median. A fresh profile then exposed 256 eagerly
+allocated spill chunks per parallel statement. After matching Go's lazy
+`prepareForSpill`, the focused DISTINCT median was 2,674.32/3,005.65 TPS
+(0.890x); a second complete split measured 2,668.43/3,011.55 TPS (0.886x).
+The latter run measured simple 4,185.53/4,590.04 (0.912x), SUM
+4,707.43/4,903.58 (0.960x), and ORDER 3,468.13/3,817.57 (0.908x), with zero
+errors. DISTINCT's large regression is removed without a serial cutoff, but
+the acceptance gap remains open.
 
 ## Context and Orientation
 
