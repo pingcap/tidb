@@ -195,6 +195,11 @@ both `oltp_read_only` and `oltp_read_write`.
   Production already follows Go's statement-declared direct MaxTS snapshot;
   the dead trait seam, real/mock implementations, and lower transaction
   constructors had no callers and retained obsolete worker-era ownership.
+- [x] 2026-08-27: made direct and prepared MaxTS classification consume the
+  existing effective `SET_VAR(tidb_opt_fix_control=...)` authority. Fix 52592
+  can therefore disable PointGet before snapshot declaration exactly as it
+  does during physical planning; persistent, statement-local, invalid-first,
+  and prepared cases share one first-hint-wins rule.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and

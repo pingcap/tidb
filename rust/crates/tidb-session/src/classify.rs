@@ -194,16 +194,23 @@ impl Session {
     /// executor, which binds once and shares the resulting tree with planning.
     #[must_use]
     pub fn statement_read_shape_bound(&self, stmt: &Stmt) -> StatementReadShape {
+        let disable_point_get =
+            crate::variables::effective_fix_52592(stmt, self.vars.optimizer_fix_control());
         let catalog = self
             .catalog
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        tidb_executor::access_path::statement_read_shape(
+        let shape = tidb_executor::access_path::statement_read_shape(
             stmt,
             &catalog,
             self.current_database(),
             &self.session_time_zone(),
-        )
+        );
+        if disable_point_get && shape == StatementReadShape::AutocommitPointGet {
+            StatementReadShape::Unknown
+        } else {
+            shape
+        }
     }
 
     /// The record keys a pessimistic point write locks BEFORE it runs -- the
@@ -287,6 +294,9 @@ impl Session {
         statement: &Stmt,
         params: &[Datum],
     ) -> StatementReadShape {
+        if crate::variables::effective_fix_52592(statement, self.vars.optimizer_fix_control()) {
+            return StatementReadShape::Unknown;
+        }
         let catalog = self
             .catalog
             .lock()
