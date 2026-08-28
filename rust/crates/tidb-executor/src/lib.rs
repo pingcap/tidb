@@ -208,6 +208,16 @@ mod tests_cluster_slow_query_gaps;
 mod tests_compact_table_tiflash_gaps;
 #[cfg(test)]
 mod tests_index_join_cte_build_cleanup_gaps;
+#[cfg(test)]
+mod tests_parallel_apply_sql_source;
+#[cfg(test)]
+mod tests_partition_table_sql_source;
+#[cfg(test)]
+mod tests_memtable_cluster_source;
+#[cfg(test)]
+mod tests_merge_join_in_disk_source;
+#[cfg(test)]
+mod tests_pkg_nested_loop_apply_source;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
 pub mod fts_like_rewrite;
 pub mod plan_hints;
