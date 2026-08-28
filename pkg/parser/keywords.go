@@ -484,6 +484,7 @@ var Keywords = []KeywordsType{
 	{"ONLY", false, "unreserved"},
 	{"ON_DUPLICATE", false, "unreserved"},
 	{"OPEN", false, "unreserved"},
+	{"OPERATE", false, "unreserved"},
 	{"OPTIONAL", false, "unreserved"},
 	{"PACK_KEYS", false, "unreserved"},
 	{"PAGE", false, "unreserved"},

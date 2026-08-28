@@ -562,6 +562,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	only                       "ONLY"
 	onDuplicate                "ON_DUPLICATE"
 	open                       "OPEN"
+	operate                    "OPERATE"
 	optional                   "OPTIONAL"
 	packKeys                   "PACK_KEYS"
 	pageSym                    "PAGE"
@@ -7396,6 +7397,7 @@ UnReservedKeyword:
 |	"NAMES"
 |	"NVARCHAR"
 |	"OFFSET"
+|	"OPERATE"
 |	"PACK_KEYS"
 |	"PARSER"
 |	"PASSWORD" %prec lowerThanEq
@@ -15715,6 +15717,10 @@ PrivType:
 |	"SHOW" "VIEW"
 	{
 		$$ = mysql.ShowViewPriv
+	}
+|	"OPERATE" "VIEW"
+	{
+		$$ = mysql.OperateViewPriv
 	}
 |	"CREATE" "ROLE"
 	{
