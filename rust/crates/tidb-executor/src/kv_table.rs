@@ -2541,8 +2541,13 @@ impl KvTable {
             });
         }
         // Go writes the row first, then its index entries; a duplicate on a
-        // unique index aborts the statement.
-        self.write_index_entries(row, &handle, physical_id, &zone)?;
+        // unique index aborts the statement. A table that only has its
+        // clustered PRIMARY has no physical index entry to maintain. Avoid
+        // cloning and walking the index descriptor for every row in that
+        // common bulk-insert shape.
+        if self.indexes.iter().any(|index| !index.clustered_primary) {
+            self.write_index_entries(row, &handle, physical_id, &zone)?;
+        }
         self.store
             .set(key, value)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;

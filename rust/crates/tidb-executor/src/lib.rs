@@ -72,6 +72,8 @@ pub mod cte_storage;
 pub mod ddl;
 pub mod ddl_label;
 #[cfg(test)]
+mod tests_ddl_b100_source;
+#[cfg(test)]
 mod tests_ddl_job_submitter_worker_gaps;
 #[cfg(test)]
 mod tests_ddl_masking_policy_ddl_gaps;
@@ -209,6 +211,8 @@ mod tests_index_join_cte_build_cleanup_gaps;
 mod tests_parallel_apply_sql_source;
 #[cfg(test)]
 mod tests_table_part2_source;
+#[cfg(test)]
+mod tests_table_part1_source;
 #[cfg(test)]
 mod tests_partition_table_sql_source;
 #[cfg(test)]
