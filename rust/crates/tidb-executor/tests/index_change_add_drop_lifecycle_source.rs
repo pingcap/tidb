@@ -158,12 +158,12 @@ fn fast_reorg_and_ddl_vars_are_read_only_on_nextgen() {
 // expected handle values: _tidb_rowid 1..8 for the non-clustered shape, the
 // a-values 0..7 for pk-is-handle.
 //
-// go-parity-gap: the cop CONTEXT is transcreated (tidb-executor::ddl_copr,
-// with copr_ctx.go's own tests ported there), but the storage fetch and
+// go-parity-gap: neither the DDL reorg cop context nor the storage fetch and
 // row->(handle, index datum) conversion half (FetchChunk4Test /
-// ConvertRowToHandleAndIndexDatum against a live store) is not.
+// ConvertRowToHandleAndIndexDatum against a live store) is wired into the
+// runtime.
 #[test]
-#[ignore = "go-parity-gap: the coprocessor row fetch (FetchChunk4Test + ConvertRowToHandleAndIndexDatum) is not transcreated"]
+#[ignore = "go-parity-gap: DDL reorg cop context plus FetchChunk4Test and ConvertRowToHandleAndIndexDatum are not wired"]
 fn add_index_fetch_rows_from_coprocessor_reads_expected_handles() {
     // Contract (pkg/ddl/index_cop_test.go:35-107): one (handle, index
     // datum) pair per row, handles 1..8 (non-clustered) / 0..7

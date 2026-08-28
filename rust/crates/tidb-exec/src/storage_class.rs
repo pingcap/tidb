@@ -990,8 +990,7 @@ fn get_range_value(value: &str, unsigned: bool) -> Result<RangeValue, DdlAdmissi
 }
 
 /// The `model.ColumnInfo` fields [`ColumnInfoSource`] reads, borrowed from an
-/// owned snapshot -- see `tidb_executor::ddl_copr::CopColumnInfo` for the
-/// same pattern against the same trait.
+/// owned snapshot.
 struct PartitionExprColumnInfo<'a>(&'a ColumnInfo);
 
 impl ColumnInfoSource for PartitionExprColumnInfo<'_> {

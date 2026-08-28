@@ -72,7 +72,6 @@ pub(crate) mod column_prune;
 pub mod cte_storage;
 pub mod ddl;
 pub mod ddl_algorithm;
-pub mod ddl_copr;
 pub mod ddl_exec;
 pub mod ddl_label;
 pub mod ddl_running_jobs;
