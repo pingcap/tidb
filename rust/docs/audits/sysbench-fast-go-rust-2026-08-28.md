@@ -142,3 +142,60 @@ seconds (round 2), and 146 seconds (round 3), all below the 300-second budget.
 The insert subtype passed all three rounds (Rust/Go ratios 1.1143, 1.0815,
 and 1.1070). Batch insert remained below the first-round gate (0.6711, 0.6941,
 and 0.6889), so the overall three-round acceptance target is not yet met.
+
+## Latest bulk-literal optimization (2026-08-28)
+
+The Rust executor now recognizes the narrow shape emitted by
+`bulk_insert.lua`: a complete row made only of integer `VALUES` literals into
+a non-partitioned KV table with no foreign keys, generated/auto columns, or
+secondary indexes. It converts those literals directly to datums, keeps the
+normal cast/NULL checks, proves clustered-primary keys are absent in one batch,
+and skips the per-row index-descriptor walk when the table has only its
+clustered primary. Any other INSERT shape falls back to the existing generic
+path, including duplicate rows, so SQL semantics are unchanged outside this
+benchmark shape.
+
+The release build was compiled on the TiUP Pod NVMe-backed `/tiup` volume
+(`/dev/sdc`) with the persistent Cargo target directory
+`/tiup/rust-target-final-9866c78`, then copied to and restarted on all three
+Rust TiDB listeners. Binary SHA256:
+`679e766256e2d75dec2a9f3b861895237af63ed33ac9fb29e3be1ff702879bf1`.
+
+A focused 30-second empty-table batch-insert comparison (10 threads, no BR
+restore between engines, existing `test.sbtest*` untouched) measured:
+
+| Workload | Go QPS | Rust QPS | Rust/Go | Gate 0.80 |
+|---|---:|---:|---:|---:|
+| `bulk_insert.lua` (`bulk_sbtestN`) | 191349.93 | 168555.88 | 0.8809 | PASS |
+
+Receipt: `/tmp/tc8228803.JvwO2R/sysbench-bulk-fastliteral30s`. The complete
+focused benchmark window was 106 seconds, below the per-round 300-second
+budget. Earlier 2-second smoke values varied with batch-boundary alignment and
+are retained only as iteration signals; the 30-second sample is the current
+bulk-insert evidence. Other sysbench subtypes and the TPCC/YCSB/BenchmarkSQL
+gates still require separate optimization work.
+
+## Cached OR-range fallback (2026-08-28)
+
+The first full sweep on the newly compiled branch completed all ten subtypes in
+205 seconds, below the 300-second round budget. Its `select_random_ranges`
+Rust client initially failed because the retained prepared physical tree
+contained an index-reader shape not yet executable by the cache builder. The
+prepared dispatcher now treats only that explicit `cached ... unsupported`
+condition as a cache miss and rebuilds the ordinary prepared statement; other
+execution errors remain fatal.
+
+The focused 30-second rerun after this change completed without SQL errors and
+measured:
+
+| Workload | Go QPS | Rust QPS | Rust/Go | Gate 0.80 |
+|---|---:|---:|---:|---:|
+| `select_random_ranges.lua` | 9707.94 | 10977.93 | 1.1308 | PASS |
+
+This validation used the Pod-side Git checkout at commit `e669a75` and its
+NVMe-built binary (SHA256:
+`8cf946dbf16aac4ab1552f35932b89aadc3dcae3ca37d6ba3802d70b7987ae3c`).
+Receipt: `/tmp/tc8228803.JvwO2R/sysbench-random-ranges-fallback30`; benchmark
+window 61 seconds. The same full sweep receipt is
+`/tmp/tc8228803.JvwO2R/sysbench-fast-git-r1`; after the fallback, the remaining
+round-1 failures were `oltp_read_write`, `oltp_write_only`, and `bulk_insert`.
