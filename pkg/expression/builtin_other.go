@@ -197,11 +197,21 @@ type baseInSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
+// inIntSeen records, for a given int64 bit pattern, whether that pattern has
+// been seen as a signed constant, an unsigned constant, or both. A bit
+// pattern >= 0 means the signed and unsigned interpretations denote the same
+// value, so seeing it as either is enough to recognize a duplicate. A bit
+// pattern < 0 means the two interpretations denote different values (e.g.
+// signed -1 vs unsigned 18446744073709551615), so both must be tracked
+// independently.
+type inIntSeen struct {
+	signed, unsigned bool
+}
+
 // builtinInIntSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInIntSig struct {
 	baseInSig
-	// the bool value in the map is used to identify whether the constant stored in key is signed or unsigned
-	hashSet map[int64]bool
+	hashSet map[int64]inIntSeen
 
 	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
 	// as this expression may be shared across sessions.
@@ -210,7 +220,7 @@ type builtinInIntSig struct {
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
-	b.hashSet = make(map[int64]bool, len(b.args)-1)
+	b.hashSet = make(map[int64]inIntSeen, len(b.args)-1)
 
 	// Keep track of unique args count for in-place modification
 	uniqueArgCount := 1 // Start with 1 for the first arg (value to check)
@@ -234,9 +244,23 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				continue
 			}
 
-			// Only keep this arg if value wasn't seen before
-			if _, exists := b.hashSet[val]; !exists {
-				b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType(ctx.GetEvalCtx()).GetFlag())
+			isUnsigned := mysql.HasUnsignedFlag(b.args[i].GetType(ctx.GetEvalCtx()).GetFlag())
+			seen := b.hashSet[val]
+			// For a negative bit pattern, the signed and unsigned interpretations
+			// are different values, so a duplicate requires matching signedness.
+			// For a non-negative bit pattern, both interpretations agree, so
+			// either previously-seen signedness makes this a duplicate.
+			isDuplicate := seen.signed || seen.unsigned
+			if val < 0 {
+				isDuplicate = (isUnsigned && seen.unsigned) || (!isUnsigned && seen.signed)
+			}
+			if !isDuplicate {
+				if isUnsigned {
+					seen.unsigned = true
+				} else {
+					seen.signed = true
+				}
+				b.hashSet[val] = seen
 				b.args[uniqueArgCount] = b.args[i]
 				uniqueArgCount++
 			}
@@ -279,11 +303,14 @@ func (b *builtinInIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 
 	args := b.args[1:]
 	if len(b.hashSet) != 0 {
-		if isUnsigned, ok := b.hashSet[arg0]; ok {
-			if (isUnsigned0 && isUnsigned) || (!isUnsigned0 && !isUnsigned) {
+		if seen, ok := b.hashSet[arg0]; ok {
+			if arg0 >= 0 && (seen.signed || seen.unsigned) {
 				return 1, false, nil
 			}
-			if arg0 >= 0 {
+			if isUnsigned0 && seen.unsigned {
+				return 1, false, nil
+			}
+			if !isUnsigned0 && seen.signed {
 				return 1, false, nil
 			}
 		}
