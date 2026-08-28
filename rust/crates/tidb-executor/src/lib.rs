@@ -220,6 +220,20 @@ mod tests_cluster_slow_query_gaps;
 #[cfg(test)]
 mod tests_compact_table_tiflash_gaps;
 #[cfg(test)]
+mod tests_compact_table_continuation_gaps;
+#[cfg(test)]
+mod tests_copr_cache_delete_gaps;
+#[cfg(test)]
+mod tests_detach_recordset_gaps;
+#[cfg(test)]
+mod tests_distribution_pd_gaps;
+#[cfg(test)]
+mod tests_distsql_storage_gaps;
+#[cfg(test)]
+mod tests_executor_failpoint_gaps;
+#[cfg(test)]
+mod tests_executor_pkg_helpers_gaps;
+#[cfg(test)]
 mod tests_index_join_cte_build_cleanup_gaps;
 #[cfg(test)]
 mod tests_parallel_apply_sql_source;
