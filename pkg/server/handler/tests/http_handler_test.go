@@ -1779,7 +1779,12 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 
 func fetchTiFlashReplicaSummary(t *testing.T, ts *basicHTTPHandlerTestSuite) tikvhandler.FlashReplicaSummary {
 	t.Helper()
-	resp, err := ts.FetchStatus("/tiflash/replica")
+	return fetchTiFlashReplicaSummaryPath(t, ts, "/tiflash/replica")
+}
+
+func fetchTiFlashReplicaSummaryPath(t *testing.T, ts *basicHTTPHandlerTestSuite, path string) tikvhandler.FlashReplicaSummary {
+	t.Helper()
+	resp, err := ts.FetchStatus(path)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, resp.Body.Close())
@@ -1812,6 +1817,7 @@ partition by range (a)
 	summary := fetchTiFlashReplicaSummary(t, ts)
 	require.True(t, summary.CanDisable)
 	require.Equal(t, 0, summary.TableCount)
+	require.False(t, summary.Reloaded)
 	require.Equal(t, "ON", summary.TiDBColumnarStorageEnabled)
 	require.Equal(t, config.GetGlobalConfig().CSE.ColumnarStoreType, summary.ColumnarStoreType)
 	require.Equal(t, ts.store.GetKeyspace(), summary.Keyspace)
@@ -1834,6 +1840,12 @@ partition by range (a)
 	summary = fetchTiFlashReplicaSummary(t, ts)
 	require.False(t, summary.CanDisable)
 	require.Equal(t, 1, summary.TableCount)
+	require.False(t, summary.Reloaded)
+
+	summary = fetchTiFlashReplicaSummaryPath(t, ts, "/tiflash/replica?reload=true")
+	require.False(t, summary.CanDisable)
+	require.Equal(t, 1, summary.TableCount)
+	require.True(t, summary.Reloaded)
 
 	tk.MustExec("alter table t_part set tiflash replica 1")
 	summary = fetchTiFlashReplicaSummary(t, ts)
@@ -1886,9 +1898,22 @@ partition by range (a)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
 
+	resp, err = ts.FetchStatus("/tiflash/replica?reload=maybe")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed")
-	resp, err = ts.FetchStatus("/tiflash/replica")
+
+	summary = fetchTiFlashReplicaSummary(t, ts)
+	require.False(t, summary.Reloaded)
+	require.True(t, summary.CanDisable)
+
+	summary = fetchTiFlashReplicaSummaryPath(t, ts, "/tiflash/replica?reload=false")
+	require.False(t, summary.Reloaded)
+
+	resp, err = ts.FetchStatus("/tiflash/replica?reload=true")
 	require.NoError(t, err)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)

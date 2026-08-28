@@ -16,6 +16,7 @@ package tikvhandler
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
@@ -26,8 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
-// FlashReplicaSummary is the live TiFlash replica count for cluster operators.
-// It does not include per-table identity or drop/truncate leftovers.
+// FlashReplicaSummary is a best-effort live TiFlash replica count for cluster
+// operators. It does not include per-table identity or drop/truncate leftovers.
+// Callers that set `tidb_columnar_storage_enabled=OFF` must not treat can_disable
+// as a distributed lock: coordinate the database users so workloads do not add
+// replicas during the check/operate window, and verify again afterward.
 type FlashReplicaSummary struct {
 	Keyspace                   string `json:"keyspace"`
 	KeyspaceID                 uint32 `json:"keyspace_id"`
@@ -35,6 +39,8 @@ type FlashReplicaSummary struct {
 	ColumnarStoreType          string `json:"columnar_store_type"`
 	CanDisable                 bool   `json:"can_disable"`
 	TableCount                 int    `json:"table_count"`
+	// synced schema before counting
+	Reloaded bool `json:"reloaded"`
 }
 
 // FlashReplicaSummaryHandler serves GET /tiflash/replica.
@@ -54,18 +60,31 @@ func (h FlashReplicaSummaryHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 		return
 	}
 
+	doReload, err := parseFlashReplicaReloadQuery(req)
+	if err != nil {
+		handler.WriteErrorWithCode(w, http.StatusBadRequest, err)
+		return
+	}
+
 	dom, err := session.GetDomain(h.Store)
 	if err != nil {
 		handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
-	// Reload from the latest committed schema version before counting.
-	// Non-owner nodes learn schema versions through etcd watch and may lag by a
-	// lease; a stale snapshot can under-count live replicas and report a false
-	// can_disable. Fail closed on Reload error instead of using that snapshot.
-	if err := dom.Reload(); err != nil {
-		handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
-		return
+
+	// Default (?reload omitted or false): return a cheap in-memory tiflash
+	// replica summary snapshot of InfoSchema without Domain.Reload.
+	//
+	// Optional (?reload=true): Domain.Reload reduces lease-lag
+	// under-counts on non-owner nodes (stale InfoSchema missing a recent
+	// SET TIFLASH REPLICA 1 can inflate can_disable), but still is not a
+	// linearizable cluster lock and serializes with other schema sync /
+	// Reload callers.
+	if doReload {
+		if err := dom.Reload(); err != nil {
+			handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 	is := dom.InfoSchema()
 	if is == nil {
@@ -91,5 +110,20 @@ func (h FlashReplicaSummaryHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 		ColumnarStoreType:          config.GetGlobalConfig().CSE.ColumnarStoreType,
 		CanDisable:                 tableCount == 0,
 		TableCount:                 tableCount,
+		Reloaded:                   doReload,
 	})
+}
+
+// parseFlashReplicaReloadQuery returns whether to Reload InfoSchema.
+// Missing reload defaults to false. Explicit values use strconv.ParseBool.
+func parseFlashReplicaReloadQuery(req *http.Request) (bool, error) {
+	raw := req.URL.Query().Get("reload")
+	if raw == "" {
+		return false, nil
+	}
+	doReload, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, errors.Errorf("invalid reload query value %q, expect true/false/1/0", raw)
+	}
+	return doReload, nil
 }
