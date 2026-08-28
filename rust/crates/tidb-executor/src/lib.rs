@@ -146,6 +146,26 @@ pub mod partition_pruning;
 pub mod partition_routing;
 pub(crate) mod ranger_detacher;
 mod tidb_decode_key;
+#[cfg(test)]
+mod tests_admin_checksum_gaps;
+#[cfg(test)]
+mod tests_analyze_broadcast_flush_gaps;
+#[cfg(test)]
+mod tests_analyze_kill_save_gaps;
+#[cfg(test)]
+mod tests_analyze_panic_recovery_source;
+#[cfg(test)]
+mod tests_batch_point_get_locking_gaps;
+#[cfg(test)]
+mod tests_batch_point_get_temporary_source;
+#[cfg(test)]
+mod tests_brie_task_surface_gaps;
+#[cfg(test)]
+mod tests_cluster_slow_query_gaps;
+#[cfg(test)]
+mod tests_compact_table_tiflash_gaps;
+#[cfg(test)]
+mod tests_index_join_cte_build_cleanup_gaps;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
 pub mod fts_like_rewrite;
 pub mod plan_hints;
