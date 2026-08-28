@@ -37,7 +37,7 @@ use crate::remote_scan::{
     PushdownScanColumn, PushdownScanRequest, PushdownStatementContext, PushdownTopN,
     EXTRA_HANDLE_COLUMN_ID,
 };
-use crate::storage::StorageIterator;
+use crate::storage::{StorageError, StorageIterator};
 use std::collections::{BTreeMap, BinaryHeap, HashMap};
 use tidb_chunk::chunk::Chunk;
 use tidb_codec::table_key::{
@@ -630,11 +630,44 @@ impl KvTable {
             range_hints: request_range_hints.map_or_else(Vec::new, <[usize]>::to_vec),
             statement: statement.clone(),
         };
-        let mut scans: Vec<crate::remote_scan::PushdownScan> = Vec::with_capacity(groups.len());
-        for ranges in &groups {
-            let Some(scan) = self.store.open_remote_scan(&build_request(ranges.clone())) else {
-                for mut opened in scans.drain(..) {
-                    opened.stream.close();
+        // Keep the physical id beside each opened stream. A clean remote
+        // stream does not need record-key reconstruction, but an ordered
+        // partitioned read still has to merge the per-partition streams by
+        // their decoded integer handles.
+        let mut partition_scans: Vec<(i64, Vec<crate::remote_scan::PushdownScan>)> = Vec::new();
+        let request_groups: Vec<(i64, Vec<(Key, Key)>)> = if partitioned {
+            let mut requests = Vec::new();
+            // `groups` is in value order (and is reversed for DESC). Keep
+            // that order inside each partition so an unsigned handle's two
+            // halves can be chained exactly like Go's two SelectResults.
+            for physical_id in &physical_ids {
+                for group in &groups {
+                    let ranges = group
+                        .iter()
+                        .filter(|(start, _)| decode_table_id(start.as_bytes()) == *physical_id)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if !ranges.is_empty() {
+                        requests.push((*physical_id, ranges));
+                    }
+                }
+            }
+            requests
+        } else {
+            groups
+                .into_iter()
+                .map(|ranges| (self.table_id, ranges))
+                .collect()
+        };
+        for (physical_id, ranges) in request_groups {
+            let Some(scan) = self
+                .store
+                .open_remote_scan(&build_request(physical_id, ranges))
+            else {
+                for (_, opened_parts) in partition_scans.drain(..) {
+                    for mut opened in opened_parts {
+                        opened.stream.close();
+                    }
                 }
                 return Ok(None);
             };
