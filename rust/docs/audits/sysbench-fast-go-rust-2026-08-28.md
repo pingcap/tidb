@@ -6,8 +6,9 @@
 - Shape: three Go TiDB listeners and three Rust listeners sharing three TiKV
   stores; `lbhover` listeners were used for engine selection.
 - Concurrency: 10 threads.
-- Rust source: `hparser-integration` at `1cd8fc3507e0070f532c2d5a50bbb7a5c07ff0ff`.
-- Rust release binary SHA256: `bb32f8ef92cf3a0ac42b624618ab02228dc7679271dba939be3030e001f00452`.
+- Rust source: `hparser-integration` (latest validation commit `827a0de`).
+- Rust release binary SHA256 (latest validation):
+  `7a7d898a13fd6cf29cb177b31cad5c0ed10f051213a4c0d637157cde19f08197`.
 
 ## Changes validated
 
@@ -98,3 +99,29 @@ The fast sweep is an iteration signal, not a replacement for the formal
 30-second/multi-sample gates: write workloads share one dataset and can show
 lock or state contamination, while insert/bulk use the isolated empty tables
 above. The full three-round 0.8/0.9/1.0 acceptance sequence remains pending.
+
+## Latest review: empty-table insert and NVMe build (2026-08-28)
+
+The requested insert workloads were rerun against newly created, namespaced
+empty tables. The existing restored `test.sbtest*` tables were not dropped or
+written; `oltp_insert.lua` used `insert_sbtestN` and `bulk_insert.lua` used
+`bulk_sbtestN`. The gate script ran with `FAST_DB_READY=1`, so no BR restore
+was performed for either check and the benchmark window stayed below five
+minutes.
+
+| Workload | Go QPS | Rust QPS | Rust/Go | Gate 0.80 | Receipt |
+|---|---:|---:|---:|---:|---|
+| `oltp_insert.lua` (`insert_sbtestN`) | 7845.02 | 9069.18 | 1.1560 | PASS | `/tmp/tc8228803.JvwO2R/sysbench-insert-latest` |
+| `bulk_insert.lua` (`bulk_sbtestN`) | 216237.16 | 138569.93 | 0.6408 | FAIL | `/tmp/tc8228803.JvwO2R/sysbench-bulk-latest` |
+
+Rust was compiled on the TiUP Pod's persistent `/tiup` volume (`/dev/sdc`,
+2.2 TB ext4 PVC) using the long-lived Cargo target directory
+`/tiup/rust-target-final-9866c78`; no local/container overlay build path was
+used. The resulting binary was copied to all three Rust TiDB Pods and each
+4001 listener was restarted with the same verified SHA256.
+
+The latest executor change keeps transformed IndexLookUp LIMIT traces
+printable under `EXPLAIN` (commit `827a0de`). A YCSB literal range `EXPLAIN`
+now succeeds, but the Rust cost model still selects a full table scan for a
+low `>=` bound where Go selects `IndexLookUp`; YCSB Workload E therefore remains
+an optimization target rather than a passing gate.
