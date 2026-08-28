@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "spiffetls",
+    srcs = ["source.go"],
+    importpath = "github.com/pingcap/tidb/pkg/server/internal/spiffetls",
+    visibility = ["//pkg/server:__subpackages__"],
+    deps = [
+        "//pkg/util",
+        "//pkg/util/logutil",
+        "@com_github_spiffe_go_spiffe_v2//bundle/x509bundle",
+        "@com_github_spiffe_go_spiffe_v2//spiffeid",
+        "@com_github_spiffe_go_spiffe_v2//svid/x509svid",
+        "@com_github_spiffe_go_spiffe_v2//workloadapi",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "spiffetls_test",
+    timeout = "short",
+    srcs = ["source_test.go"],
+    embed = [":spiffetls"],
+    flaky = True,
+    shard_count = 7,
+    deps = [
+        "@com_github_spiffe_go_spiffe_v2//bundle/x509bundle",
+        "@com_github_spiffe_go_spiffe_v2//spiffeid",
+        "@com_github_spiffe_go_spiffe_v2//svid/x509svid",
+        "@com_github_spiffe_go_spiffe_v2//workloadapi",
+        "@com_github_stretchr_testify//require",
+    ],
+)
