@@ -27,7 +27,8 @@ use super::batch::{BatchCommandEntry, BatchCoprocessorPending, BatchPublicationR
 use super::liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
 use super::unary::{RawTransportClient, RawUnaryRequest, UnaryCallContext};
 use super::{
-    AsyncRequestDispatcher, DirectUnaryClientError, PendingRequest, TransportShutdownCancellation,
+    AsyncRequestDispatcher, CompletionRunLoop, DirectUnaryClientError, PendingRequest,
+    TransportShutdownCancellation,
 };
 
 pub(super) use super::unary::RawProtobufCodec;
@@ -326,11 +327,28 @@ impl AsyncRequestDispatcher for TonicCoprocessorClient {
         request: &DirectUnaryRequest,
         call: &UnaryCallContext,
     ) -> Result<Self::Pending, DirectUnaryClientError> {
+        self.begin_with_run_loop(
+            physical_address,
+            forwarded_host,
+            request,
+            call,
+            CompletionRunLoop::new(),
+        )
+    }
+
+    fn begin_with_run_loop(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+        run_loop: CompletionRunLoop,
+    ) -> Result<Self::Pending, DirectUnaryClientError> {
         if call.cancellation().is_cancelled() {
             return Err(DirectUnaryClientError::CallerCancelled);
         }
         let body = replace_top_level_context(&request.encoded_request, &request.context)?;
-        let (entry, mut pending) = BatchCoprocessorPending::entry(body, forwarded_host);
+        let (entry, mut pending) = BatchCoprocessorPending::entry(body, forwarded_host, run_loop);
         let deferred =
             match self.submit_batch_commands_deferred(physical_address, vec![entry], call) {
                 Ok(deferred) => deferred,

@@ -25,8 +25,8 @@ use super::{
     OpaqueBatchCommand,
 };
 use crate::rpc::{
-    completion_pair, AsyncRequestPublication, CompletionError, CompletionNotifier, CompletionPull,
-    CompletionRunLoop, PendingRequest,
+    completion_pair, AsyncRequestPublication, CompletionError, CompletionPull, CompletionRunLoop,
+    PendingRequest,
 };
 
 /// Pull-side owner of one concrete Coprocessor BatchCommands attempt.
@@ -40,8 +40,9 @@ impl BatchCoprocessorPending {
     pub(in crate::rpc) fn entry(
         encoded_request: Vec<u8>,
         forwarded_host: Option<&str>,
+        run_loop: CompletionRunLoop,
     ) -> (BatchCommandEntry, Self) {
-        let (completion, pull) = completion_pair(CompletionRunLoop::new(), || {});
+        let (completion, pull) = completion_pair(run_loop, || {});
         let command = OpaqueBatchCommand::new(BatchCommandTag::Coprocessor, encoded_request);
         let mut entry = BatchCommandEntry::new(command, completion);
         if let Some(forwarded_host) = forwarded_host {
@@ -131,10 +132,6 @@ impl BatchCoprocessorPending {
 }
 
 impl PendingRequest for BatchCoprocessorPending {
-    fn set_notifier(&mut self, notifier: CompletionNotifier, token: u64) {
-        self.completion.set_notifier(notifier, token);
-    }
-
     fn publication(&self) -> Option<AsyncRequestPublication> {
         self.publication_route.as_ref().map(|route| {
             AsyncRequestPublication::new(

@@ -160,6 +160,11 @@ both `oltp_read_only` and `oltp_read_write`.
   prepared ranges now receive narrow remote rows without constructing a
   duplicate root `ProjectionExec`; dirty/staged scans fail closed to the local
   projection path.
+- [x] 2026-08-27: removed the Rust-only second completion-notifier loop from
+  direct coprocessor reads. One response-owned `CompletionRunLoop` now drives
+  every pending BatchCommands region, and unordered delivery scans the
+  completed attempts after each callback batch. Region rebuild, admission,
+  retry, cancellation, and bounded-window regressions pass.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -430,6 +435,25 @@ both `oltp_read_only` and `oltp_read_write`.
   the prepared rebuild and staged-row fallback regressions, the narrowed
   `tidb-exec` source test, and the release benchmark receipt.
 
+- Observation: every Rust BatchCommands coprocessor attempt previously owned
+  a callback run loop, while the query response also registered a separate
+  `CompletionNotifier`. Publication therefore enqueued the real completion
+  callback, pushed a token through another mutex, and enqueued an empty
+  callback solely to wake the response. Client-go's synchronous
+  `sendBatchRequest` gives each entry a one-shot result channel and lets the
+  cop iterator own the wait; it has no corresponding second notifier. Sharing
+  one response-owned callback executor removes the duplicate queue, token,
+  mutex, and wake path while retaining BatchCommands and unordered region
+  completion. A region-error rebuild also exposed that completion progress
+  must be recorded even when recovery has already populated the ready queue.
+  The focused simple-range benchmark after the cleanup measured Rust
+  4,142.42 TPS and Go 4,584.00 TPS (0.904x median, zero errors), so the cleanup
+  is parity work but not closure of the remaining scan latency.
+  Evidence: fail-before source assertion in
+  `one_response_owned_run_loop_drives_every_pending_region`, the shared-loop
+  library regression, all six `unordered_` distsql tests, focused
+  admission/retry tests, and the release benchmark receipt.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -502,6 +526,14 @@ both `oltp_read_only` and `oltp_read_write`.
   the mirror imposed allocation, cloning, callback, and per-row counter costs
   on ordinary execution. Scripted transports and row sources can count calls
   without changing production state.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: one coprocessor query response owns the callback executor shared
+  by its pending BatchCommands regions; do not retain a token notifier or
+  per-request executor beside it.
+  Rationale: the response is already the sole consumer and can scan its
+  bounded pending window after driving ready callbacks. A second notification
+  graph duplicates synchronization without adding ordering or correctness.
   Date/Author: 2026-08-27, Codex.
 
 - Decision: the PREPARE-time planner owns PointGet shape and access-path

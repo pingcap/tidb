@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use tidb_txnkv::rpc::{
     completion_pair, CompletionCallback, CompletionCancellation, CompletionCancellationReason,
-    CompletionError, CompletionNotifier, CompletionRunLoop, CompletionRunLoopState, CompletionSpawner,
+    CompletionError, CompletionRunLoop, CompletionRunLoopState, CompletionSpawner,
     UnaryCallContext,
 };
 
@@ -485,22 +485,18 @@ fn pull_completion_drives_ready_delivery_and_cancellation_suppresses_it() {
 }
 
 #[test]
-fn shared_notifier_wakes_before_the_pending_pull_drives_delivery() {
+fn one_run_loop_drives_any_of_its_pending_requests() {
     let run_loop = CompletionRunLoop::new();
-    let notifier = CompletionNotifier::new();
-    let (request, mut pending) = completion_pair::<i32, (), _>(run_loop.clone(), || {});
-    pending.set_notifier(notifier.clone(), 17);
+    let (_first_request, mut first_pending) =
+        completion_pair::<i32, (), _>(run_loop.clone(), || {});
+    let (second_request, mut second_pending) =
+        completion_pair::<i32, (), _>(run_loop.clone(), || {});
 
-    request.schedule(Ok(7));
+    second_request.schedule(Ok(7));
 
     assert_eq!(run_loop.num_runnable(), 1);
-    assert_eq!(
-        notifier
-            .wait(&UnaryCallContext::with_timeout(Duration::from_secs(1)))
-            .unwrap(),
-        17
-    );
-    assert_eq!(pending.try_complete(), Ok(Some(Ok(7))));
+    assert_eq!(first_pending.try_complete(), Ok(None));
+    assert_eq!(second_pending.try_complete(), Ok(Some(Ok(7))));
 }
 
 #[test]

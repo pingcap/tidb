@@ -110,3 +110,21 @@ fn forwarding_and_async_unavailable_fakes_keep_their_existing_contracts() {
     let base = owner("pub fn with_locked_response_delegate", "impl<C, L>");
     assert!(base.contains("async_begin: None"));
 }
+
+#[test]
+fn one_response_owned_run_loop_drives_every_pending_region() {
+    assert!(!SOURCE.contains("CompletionNotifier"));
+    assert!(SOURCE.contains("completion_run_loop: CompletionRunLoop"));
+
+    let begin = owner("fn begin_async_request", "/// One transport-owned rotating");
+    assert!(begin.contains("completion_run_loop: CompletionRunLoop"));
+    assert!(begin.contains(".begin_with_run_loop("));
+    assert!(begin.contains("completion_run_loop,"));
+
+    let dispatch = owner("fn dispatch_attempt(", "fn complete_batch_attempt(");
+    assert!(dispatch.contains("self.completion_run_loop.clone()"));
+
+    let unordered = owner("fn pull_unordered(", "fn completion_error(");
+    assert!(unordered.contains("self.completion_run_loop.execute_with_call(&self.call)"));
+    assert!(!unordered.contains("completion_notifier"));
+}

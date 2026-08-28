@@ -43,7 +43,7 @@ use tidb_txnkv::region::{
     StoreLabel as RoutingStoreLabel,
 };
 use tidb_txnkv::{
-    rpc::{AsyncRequestDispatcher, CompletionError, CompletionNotifier, PendingRequest},
+    rpc::{AsyncRequestDispatcher, CompletionError, CompletionRunLoop, PendingRequest},
     EndpointType, SharedReadOpener, SharedReadRuntime, TraceInfo, UnaryCallContext,
     UnaryCancellation, DEFAULT_STORE_LIVENESS_TIMEOUT,
 };
@@ -362,6 +362,7 @@ type AsyncBegin<C> = fn(
     &LeaderRequest,
     &DirectUnaryRequest,
     &UnaryCallContext,
+    CompletionRunLoop,
 ) -> Result<
     Result<Box<dyn PendingRequest>, DirectUnaryClientError>,
     DirectUnaryTransportError,
@@ -372,17 +373,19 @@ fn begin_async_request<C>(
     selected: &LeaderRequest,
     request: &DirectUnaryRequest,
     call: &UnaryCallContext,
+    completion_run_loop: CompletionRunLoop,
 ) -> Result<Result<Box<dyn PendingRequest>, DirectUnaryClientError>, DirectUnaryTransportError>
 where
     C: AsyncRequestDispatcher,
     C::Pending: 'static,
 {
     Ok(try_borrow_client(client)?
-        .begin(
+        .begin_with_run_loop(
             selected.dispatch_address(),
             selected.forwarded_host(),
             request,
             call,
+            completion_run_loop,
         )
         .map(|pending| Box::new(pending) as Box<dyn PendingRequest>))
 }
@@ -655,7 +658,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             request_selectors: BTreeMap::new(),
             sync_only_chains: BTreeSet::new(),
             pending_batches: BTreeMap::new(),
-            completion_notifier: CompletionNotifier::new(),
+            completion_run_loop: CompletionRunLoop::new(),
             unordered_inflight: BTreeSet::new(),
             unordered_ready: VecDeque::new(),
             network_metrics: UnaryNetworkMetrics::default(),
@@ -796,9 +799,12 @@ pub struct DirectUnaryQueryResponse<C, L> {
     /// concurrent so a large table scan does not serialize one region RPC at
     /// a time.
     pending_batches: BTreeMap<u64, PendingBatchAttempt>,
-    /// Shared completion-order queue corresponding to Go's unordered
-    /// `copIterator.respChan`.
-    completion_notifier: CompletionNotifier,
+    /// One callback executor shared by every outstanding region request.
+    ///
+    /// Go's synchronous BatchCommands entries all wake the cop iterator's
+    /// response owner. Rust uses the same ownership boundary instead of one
+    /// run loop per request plus a second notification loop.
+    completion_run_loop: CompletionRunLoop,
     /// Logical tasks occupying the bounded unordered worker window.
     unordered_inflight: BTreeSet<u64>,
     /// Settled tasks whose response channels still need to be drained.
@@ -931,7 +937,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             // completions. A paging task is requeued after delivering one
             // page; if its continuation has not completed yet, immediately
             // popping the same task again spins forever and never reaches the
-            // completion notifier.
+            // shared completion run loop.
             let ready_count = self.unordered_ready.len();
             for _ in 0..ready_count {
                 let logical_task_id = self
@@ -981,19 +987,10 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             self.prefetch_attempts()
                 .map_err(|error| QueryResponseError::Source(error.to_string()))?;
 
-            let completion = self
-                .completion_notifier
-                .try_take()
-                .map_err(Self::completion_error)?;
-            if let Some(logical_task_id) = completion {
-                if self.pending_batches.contains_key(&logical_task_id)
-                    && self
-                        .try_complete_batch_attempt(logical_task_id)
-                        .map_err(|error| QueryResponseError::Source(error.to_string()))?
-                    && !self.unordered_ready.contains(&logical_task_id)
-                {
-                    self.unordered_ready.push_back(logical_task_id);
-                }
+            if self
+                .collect_ready_batch_attempts()
+                .map_err(|error| QueryResponseError::Source(error.to_string()))?
+            {
                 continue;
             }
 
@@ -1008,19 +1005,27 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 continue;
             }
 
-            let logical_task_id = self
-                .completion_notifier
-                .wait(&self.call)
-                .map_err(Self::completion_error)?;
-            if self.pending_batches.contains_key(&logical_task_id)
-                && self
-                    .try_complete_batch_attempt(logical_task_id)
-                    .map_err(|error| QueryResponseError::Source(error.to_string()))?
-                && !self.unordered_ready.contains(&logical_task_id)
-            {
-                self.unordered_ready.push_back(logical_task_id);
+            let outcome = self.completion_run_loop.execute_with_call(&self.call);
+            if let Some(error) = outcome.error() {
+                return Err(Self::completion_error(error));
             }
         }
+    }
+
+    fn collect_ready_batch_attempts(&mut self) -> Result<bool, DirectUnaryTransportError> {
+        let logical_task_ids = self.pending_batches.keys().copied().collect::<Vec<_>>();
+        let mut collected = false;
+        for logical_task_id in logical_task_ids {
+            if self.pending_batches.contains_key(&logical_task_id)
+                && self.try_complete_batch_attempt(logical_task_id)?
+            {
+                collected = true;
+                if !self.unordered_ready.contains(&logical_task_id) {
+                    self.unordered_ready.push_back(logical_task_id);
+                }
+            }
+        }
+        Ok(collected)
     }
 
     fn completion_error(error: CompletionError) -> QueryResponseError {
@@ -1248,6 +1253,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 &prepared_dispatch.selected,
                 &prepared_dispatch.client_request,
                 &call,
+                self.completion_run_loop.clone(),
             )?;
             if let Err(error) = self.check_retry_active() {
                 if let Ok(pending) = &mut begin_result {
@@ -1261,13 +1267,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 prepared_dispatch.traffic_location,
             );
             match begin_result {
-                Ok(mut pending) => {
-                    if !self.metadata.keep_order {
-                        pending.set_notifier(
-                            self.completion_notifier.clone(),
-                            prepared_dispatch.logical_task_id,
-                        );
-                    }
+                Ok(pending) => {
                     self.pending_batches.insert(
                         prepared_dispatch.logical_task_id,
                         PendingBatchAttempt {

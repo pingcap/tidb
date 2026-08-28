@@ -61,8 +61,8 @@ pub use tidb_txnkv::region::{
     RegionRecoveryLoader, RegionRouteError, RegionVerId, Store, StoreLiveness,
 };
 pub use tidb_txnkv::rpc::{
-    completion_pair, AsyncRequestDispatcher, CompletionError, CompletionNotifier, CompletionPull,
-    CompletionRequest, CompletionRunLoop, PendingRequest,
+    completion_pair, AsyncRequestDispatcher, CompletionError, CompletionPull, CompletionRequest,
+    CompletionRunLoop, PendingRequest,
 };
 pub use tidb_txnkv::UnaryCallContext;
 pub use tidb_txnkv::{
@@ -166,10 +166,6 @@ pub struct ScriptedPending {
 }
 
 impl PendingRequest for ScriptedPending {
-    fn set_notifier(&mut self, notifier: CompletionNotifier, token: u64) {
-        self.completion.set_notifier(notifier, token);
-    }
-
     fn try_complete(
         &mut self,
     ) -> Result<Option<Result<DirectUnaryResponse, DirectUnaryClientError>>, CompletionError> {
@@ -335,14 +331,31 @@ impl AsyncRequestDispatcher for ScriptedClient {
     fn begin(
         &mut self,
         physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<Self::Pending, DirectUnaryClientError> {
+        self.begin_with_run_loop(
+            physical_address,
+            forwarded_host,
+            request,
+            call,
+            CompletionRunLoop::new(),
+        )
+    }
+
+    fn begin_with_run_loop(
+        &mut self,
+        physical_address: &str,
         _forwarded_host: Option<&str>,
         request: &DirectUnaryRequest,
         call: &UnaryCallContext,
+        run_loop: CompletionRunLoop,
     ) -> Result<Self::Pending, DirectUnaryClientError> {
         if let Some(count) = &self.batch_begin_count {
             count.set(count.get() + 1);
         }
-        let (completion, pull) = completion_pair(CompletionRunLoop::new(), || {});
+        let (completion, pull) = completion_pair(run_loop, || {});
         if let Some(error) = self.batch_errors.borrow_mut().pop_front() {
             completion.schedule(Err(error));
             return Ok(ScriptedPending {

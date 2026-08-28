@@ -327,68 +327,6 @@ pub struct CompletionRunLoop {
     spawner: Option<Arc<dyn CompletionSpawner>>,
 }
 
-/// Shared wakeup used by one consumer waiting for any of several pending
-/// requests. Each notification is queued, so a completion published between a
-/// non-blocking scan and the following wait cannot be lost.
-#[derive(Clone, Debug)]
-pub struct CompletionNotifier {
-    run_loop: CompletionRunLoop,
-    ready: Arc<Mutex<VecDeque<u64>>>,
-}
-
-impl Default for CompletionNotifier {
-    fn default() -> Self {
-        Self {
-            run_loop: CompletionRunLoop::new(),
-            ready: Arc::new(Mutex::new(VecDeque::new())),
-        }
-    }
-}
-
-impl CompletionNotifier {
-    /// Creates an empty notification queue.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Publishes one wakeup without blocking the completion producer.
-    pub fn notify(&self, token: u64) {
-        self.ready
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push_back(token);
-        self.run_loop.append(|| {});
-    }
-
-    /// Returns the oldest already-published completion without waiting.
-    pub fn try_take(&self) -> Result<Option<u64>, CompletionError> {
-        let outcome = self.run_loop.execute_ready();
-        match outcome.error() {
-            Some(error) => Err(error),
-            None => Ok(self
-                .ready
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .pop_front()),
-        }
-    }
-
-    /// Waits for the oldest completion token, caller cancellation, or the call
-    /// deadline.
-    pub fn wait(&self, call: &UnaryCallContext) -> Result<u64, CompletionError> {
-        loop {
-            if let Some(token) = self.try_take()? {
-                return Ok(token);
-            }
-            let outcome = self.run_loop.execute_with_call(call);
-            if let Some(error) = outcome.error() {
-                return Err(error);
-            }
-        }
-    }
-}
-
 impl Default for CompletionRunLoop {
     fn default() -> Self {
         Self {
@@ -519,7 +457,11 @@ impl CompletionRunLoop {
         self.run(running, Some(cancellation))
     }
 
-    fn execute_with_call(&self, call: &UnaryCallContext) -> CompletionRunOutcome {
+    /// Waits for one or more callbacks and drives every callback made ready in
+    /// the same batch. One response owner can use this method for all of its
+    /// pending requests, matching client-go's one executor per async owner.
+    #[must_use]
+    pub fn execute_with_call(&self, call: &UnaryCallContext) -> CompletionRunOutcome {
         let mut inner = self.lock_inner();
         if inner.state != CompletionRunLoopState::Idle {
             return CompletionRunOutcome::failed(0, CompletionError::ConcurrentDriver);
@@ -824,8 +766,6 @@ struct PullState<T, E> {
     cancelled: bool,
     result: Option<Result<T, E>>,
     cancel_listeners: Vec<Box<dyn FnOnce() + Send + 'static>>,
-    completion_announced: bool,
-    notifier: Option<(CompletionNotifier, u64)>,
 }
 
 /// Cloneable source-side authority for one asynchronous request.
@@ -891,13 +831,11 @@ where
     /// semantics.
     pub fn invoke(&self, result: Result<T, E>) {
         self.callback.schedule(result);
-        self.announce_completion();
     }
 
     /// Schedules this request's completion on its shared run loop.
     pub fn schedule(&self, result: Result<T, E>) {
         self.callback.schedule(result);
-        self.announce_completion();
     }
 
     /// Schedules one typed terminal failure through the same once-only gate.
@@ -941,20 +879,6 @@ where
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .cancelled
     }
-
-    fn announce_completion(&self) {
-        let notifier = {
-            let mut inner = self
-                .inner
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            inner.completion_announced = true;
-            inner.notifier.clone()
-        };
-        if let Some((notifier, token)) = notifier {
-            notifier.notify(token);
-        }
-    }
 }
 
 /// Pull-side owner of one scheduled completion result.
@@ -970,23 +894,6 @@ pub struct CompletionPull<T, E> {
 }
 
 impl<T, E> CompletionPull<T, E> {
-    /// Registers the shared wakeup used by a consumer waiting for any pending
-    /// request. Registration after publication replays the notification.
-    pub fn set_notifier(&mut self, notifier: CompletionNotifier, token: u64) {
-        let notify_now = {
-            let mut inner = self
-                .inner
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let notify_now = inner.completion_announced;
-            inner.notifier = Some((notifier.clone(), token));
-            notify_now
-        };
-        if notify_now {
-            notifier.notify(token);
-        }
-    }
-
     /// Drives ready callbacks and returns this request's terminal result.
     pub fn try_complete(&mut self) -> Result<Option<Result<T, E>>, CompletionError> {
         let outcome = self.run_loop.execute_ready();
@@ -1083,8 +990,6 @@ where
         cancelled: false,
         result: None,
         cancel_listeners: Vec::new(),
-        completion_announced: false,
-        notifier: None,
     }));
     let terminal_inner = Arc::clone(&inner);
     let callback = CompletionCallback::new(run_loop.clone(), move |result| {
@@ -1110,10 +1015,6 @@ where
 }
 
 impl PendingRequest for CompletionPull<DirectUnaryResponse, DirectUnaryClientError> {
-    fn set_notifier(&mut self, notifier: CompletionNotifier, token: u64) {
-        CompletionPull::set_notifier(self, notifier, token);
-    }
-
     fn try_complete(
         &mut self,
     ) -> Result<Option<Result<DirectUnaryResponse, DirectUnaryClientError>>, CompletionError> {
@@ -1142,11 +1043,6 @@ pub trait PendingRequest {
     fn publication(&self) -> Option<AsyncRequestPublication> {
         None
     }
-
-    /// Registers a shared wakeup for a consumer waiting on several requests.
-    /// Implementations that cannot publish asynchronously may leave the
-    /// default no-op and continue to use [`Self::complete`].
-    fn set_notifier(&mut self, _notifier: CompletionNotifier, _token: u64) {}
 
     /// Polls without blocking. `None` means the exact attempt is still pending.
     fn try_complete(
@@ -1177,4 +1073,36 @@ pub trait AsyncRequestDispatcher {
         request: &DirectUnaryRequest,
         call: &UnaryCallContext,
     ) -> Result<Self::Pending, DirectUnaryClientError>;
+
+    /// Begins one attempt on the response owner's shared callback executor.
+    fn begin_with_run_loop(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+        _run_loop: CompletionRunLoop,
+    ) -> Result<Self::Pending, DirectUnaryClientError> {
+        self.begin(physical_address, forwarded_host, request, call)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{completion_pair, CompletionRunLoop};
+
+    #[test]
+    fn one_run_loop_drives_any_of_its_pending_requests() {
+        let run_loop = CompletionRunLoop::new();
+        let (_first_request, mut first_pending) =
+            completion_pair::<i32, (), _>(run_loop.clone(), || {});
+        let (second_request, mut second_pending) =
+            completion_pair::<i32, (), _>(run_loop.clone(), || {});
+
+        second_request.schedule(Ok(7));
+
+        assert_eq!(run_loop.num_runnable(), 1);
+        assert_eq!(first_pending.try_complete(), Ok(None));
+        assert_eq!(second_pending.try_complete(), Ok(Some(Ok(7))));
+    }
 }
