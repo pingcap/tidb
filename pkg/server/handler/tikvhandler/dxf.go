@@ -111,7 +111,7 @@ type DXFNodesHandler struct {
 
 // NewDXFNodesHandler creates a new DXFNodesHandler.
 func NewDXFNodesHandler() *DXFNodesHandler {
-	return &DXFNodesHandler{getNodes: handle.GetDXFNodes}
+	return &DXFNodesHandler{getNodes: handle.ListManagedNodes}
 }
 
 // ServeHTTP implements http.Handler interface.
