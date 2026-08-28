@@ -99,6 +99,20 @@ mod tests_ddl_options_owner_manager_gaps;
 mod tests_ddl_partition_operations_sql;
 #[cfg(test)]
 mod tests_ddl_partition_reorganize_exchange_gaps;
+#[cfg(test)]
+mod tests_ddl_check_constraints;
+#[cfg(test)]
+mod tests_ddl_copr_collation;
+#[cfg(test)]
+mod tests_ddl_column_jobs;
+#[cfg(test)]
+mod tests_ddl_column_type_change;
+#[cfg(test)]
+mod tests_ddl_db_change_states;
+#[cfg(test)]
+mod tests_ddl_db_change_failpoints;
+#[cfg(test)]
+mod tests_ddl_table_cache;
 pub mod ddl_sequence;
 pub mod deadlock_history;
 pub mod driver;
