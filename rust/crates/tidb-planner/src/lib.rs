@@ -145,7 +145,6 @@ pub mod memo_group_id;
 pub mod pattern;
 pub mod pattern_engine;
 pub mod physical;
-pub mod physical_apply;
 pub mod physical_cte_table;
 pub mod physical_exchange_receiver;
 pub mod physical_exchange_sender;

@@ -23,8 +23,8 @@
 //! (`pkg/planner/core/rule_generate_subquery.go`) chooses parallelism, its
 //! `outerExpectedCnt` computation inside
 //! `exhaustPhysicalPlans4LogicalApply`, and the ordered-apply KeepOrder
-//! setting — have no Rust port; `tidb-planner/src/physical_apply.rs` carries
-//! only PhysicalApply's Init/explain identity leaf.
+//! setting — remain explicit gaps on the wired `physical::PhysicalApply`
+//! operator.
 
 /// GO PORT of `pkg/planner/core/casetest/parallelapply/
 /// parallel_apply_test.go:36 TestLateralHierarchyParallelApply`.

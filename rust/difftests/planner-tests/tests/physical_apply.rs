@@ -12,23 +12,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Dependency-closed vectors for PhysicalApply's join-dispatch boundary.
+//! Vectors for the wired PhysicalApply join-dispatch boundary.
 //!
 //! The Go anchor is `TestPhysicalApplyIsNotPhysicalJoin` at
 //! `pkg/planner/core/casetest/physicalplantest/physical_plan_test.go:1537`.
 
-use tidb_planner::physical_apply::PhysicalApplyPlan;
+use tidb_planner::physical::{BasePhysicalPlan, PhysicalApply, PhysicalPlan};
+
+fn apply(offset: i32) -> PhysicalPlan {
+    let mut apply = PhysicalApply::default();
+    apply.hash_join.base = BasePhysicalPlan::with_id(1, "Apply", offset);
+    PhysicalPlan::Apply(apply)
+}
 
 #[test]
 fn apply_keeps_apply_plan_identity_and_is_not_a_physical_join() {
-    let plan = PhysicalApplyPlan::init(3);
-    assert_eq!(plan.plan_type(), "Apply");
-    assert_eq!(plan.query_block_offset(), 3);
-    assert!(!plan.physical_join_implement());
+    let plan = apply(3);
+    assert_eq!(plan.base().base.tp(), "Apply");
+    assert_eq!(plan.base().base.query_block_offset(), 3);
+    assert_eq!(plan.join_type(), None);
+    assert_eq!(plan.inner_child_idx(), None);
 }
 
 #[test]
 fn join_dispatch_boundary_does_not_depend_on_offset() {
-    assert!(!PhysicalApplyPlan::init(i32::MIN).physical_join_implement());
-    assert!(!PhysicalApplyPlan::init(i32::MAX).physical_join_implement());
+    for offset in [i32::MIN, i32::MAX] {
+        let plan = apply(offset);
+        assert_eq!(plan.join_type(), None);
+        assert_eq!(plan.inner_child_idx(), None);
+    }
 }

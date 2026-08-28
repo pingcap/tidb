@@ -417,6 +417,11 @@ both `oltp_read_only` and `oltp_read_write`.
   orphan. Rust never compiled that file; common-handle point and batch-point
   planning is implemented by the live `driver/access` and `access_path`
   paths.
+- [x] 2026-08-28: deleted the duplicate standalone `physical_apply` metadata
+  facade. Its only production claim—Apply does not implement Go's
+  `PhysicalJoin` interface—is represented directly by the wired
+  `PhysicalPlan::Apply` dispatch, and both the casetest and difftest now run
+  against that real operator instead of a second test-only type.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer

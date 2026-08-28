@@ -36,7 +36,6 @@
 //! not port; none is approximated.
 
 use tidb_planner::physical::{PhysicalApply, PhysicalHashJoin, PhysicalPlan};
-use tidb_planner::physical_apply::PhysicalApplyPlan;
 
 /// GO PORT of `physical_plan_test.go:252 TestMPPHints`.
 ///
@@ -358,25 +357,17 @@ fn explain_expand_rollup_grouping_error_3602_then_goldens() {}
 /// `require.NotImplements(t, (*base.PhysicalJoin)(nil), new(physicalop.PhysicalApply))`
 /// i.e. PhysicalApply embeds a hash join but deliberately does NOT satisfy
 /// the `base.PhysicalJoin` interface (GetJoinType/GetInnerChildIdx,
-/// plan_base.go:378-380). In this crate's enum model the same fact exists
-/// twice and both halves are asserted structurally:
+/// plan_base.go:378-380). In this crate's enum model the same fact is asserted
+/// structurally:
 /// - [`PhysicalPlan::join_type`] answers Some ONLY for true join variants
 ///   (src/physical/mod.rs), mirroring the interface boundary Go enforces by
-///   making Apply omit those methods;
-/// - the preserved leaf hook [`PhysicalApplyPlan::physical_join_implement`]
-///   (src/physical_apply.rs) keeps Go's explicit false override answerable
-///   for any init offset.
+///   making Apply omit those methods.
 #[test]
 fn physical_apply_is_not_physical_join() {
     let apply = PhysicalPlan::Apply(PhysicalApply::default());
     // Go: new(physicalop.PhysicalApply) does not implement base.PhysicalJoin.
     assert_eq!(apply.join_type(), None);
     assert_eq!(apply.inner_child_idx(), None);
-
-    // Go: the deliberate PhysicalJoinImplement override stays false
-    // regardless of initialization state (physical_apply.go Init offsets).
-    assert!(!PhysicalApplyPlan::init(0).physical_join_implement());
-    assert!(!PhysicalApplyPlan::init(-4).physical_join_implement());
 
     // And a genuine hash join still DOES answer GetJoinType, showing the
     // boundary separates Apply from the join interface rather than being
