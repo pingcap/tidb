@@ -158,6 +158,23 @@ impl PreparedPointGetPlan {
         (&self.database, &self.table)
     }
 
+    /// The transaction read policy this retained point plan can safely use.
+    /// A row-handle lookup performs one read and may use Go's autocommit
+    /// MaxTS optimization. A secondary-unique lookup reads the index entry
+    /// and then the row, so Go's `noSecondRead` guard keeps it on an ordinary
+    /// timestamped snapshot even though the point executor itself is reusable.
+    #[must_use]
+    pub const fn statement_read_shape(&self) -> crate::access_path::StatementReadShape {
+        match self.target {
+            PreparedPointTarget::RowHandle => {
+                crate::access_path::StatementReadShape::AutocommitPointGet
+            }
+            PreparedPointTarget::UniqueIndex { .. } => {
+                crate::access_path::StatementReadShape::Unknown
+            }
+        }
+    }
+
     /// Rebuilds the parameter-dependent handle and resolves every residual
     /// bound against this EXECUTE's parameters. A value that cannot be moved
     /// exactly into its column's domain declines the cache and must be

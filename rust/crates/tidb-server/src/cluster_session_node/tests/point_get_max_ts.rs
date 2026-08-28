@@ -694,6 +694,50 @@ fn a_double_reads_row_lookup_does_not_take_the_shortcut() {
     );
 }
 
+/// The binary prepared protocol retains a reusable point plan for a complete
+/// unique-secondary key, but that plan still performs two reads. Reusing the
+/// plan must not turn it into the single-read MaxTS case.
+#[test]
+fn a_prepared_unique_index_point_get_does_not_take_the_shortcut() {
+    use tidb_protocol::PreparedValue;
+
+    let (mut session, node) = open_session();
+    session
+        .execute_write("CREATE TABLE u (id BIGINT PRIMARY KEY, uk BIGINT UNIQUE, v BIGINT)")
+        .expect("create");
+    session
+        .execute_write("INSERT INTO u (id, uk, v) VALUES (1, 10, 100), (2, 20, 200)")
+        .expect("seed");
+    let statement = session
+        .prepare_general("SELECT v FROM u WHERE uk = ?")
+        .expect("prepare");
+
+    for (key, expected) in [(10, 100), (20, 200)] {
+        let mut answer = Vec::new();
+        let opens = opens_of(&node, || {
+            let outcome = session
+                .execute_general(&statement, &[PreparedValue::SignedLongLong(key)])
+                .expect("execute");
+            let GeneralExecuteOutcome::Rows(mut result) = outcome else {
+                panic!("a query must answer with rows");
+            };
+            let source = result.source();
+            while let Ok(batch) = source.next_batch(8) {
+                if batch.is_empty() {
+                    break;
+                }
+                answer.extend(batch);
+            }
+        });
+
+        assert_eq!(answer, vec![vec![Datum::Int(expected)]]);
+        assert_eq!(
+            opens, PAID,
+            "a prepared unique-index double read opened at MaxUint64"
+        );
+    }
+}
+
 // -- #146's pins, re-run against this path ---------------------------------
 
 /// Go starts the ordinary TSO future after planning, even when execution never

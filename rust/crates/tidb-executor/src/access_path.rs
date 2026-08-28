@@ -455,35 +455,6 @@ pub fn statement_read_shape(
         .unwrap_or(StatementReadShape::Unknown)
 }
 
-/// Classifies a retained binary-protocol template without cloning it merely
-/// to replace parameter markers. The cached point-read shape is recognized
-/// here by the SAME analyzer that builds its plan (`usize::MAX` leaves every
-/// marker order admissible; each execute's own parameters are validated when
-/// the plan binds); every other prepared statement keeps the ordinary
-/// bound-tree classifier.
-#[must_use]
-pub fn prepared_statement_read_shape(
-    stmt: &tidb_ast::Stmt,
-    _params: &[Datum],
-    catalog: &crate::driver::Catalog,
-    current_db: &str,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> StatementReadShape {
-    if crate::driver::access::build_prepared_point_get_plan(
-        stmt,
-        usize::MAX,
-        catalog,
-        current_db,
-        zone,
-    )
-    .is_some()
-    {
-        return StatementReadShape::AutocommitPointGet;
-    }
-    let _ = _params;
-    StatementReadShape::Unknown
-}
-
 #[cfg(test)]
 mod common_handle_shape_tests {
     use super::*;

@@ -210,6 +210,11 @@ both `oltp_read_only` and `oltp_read_write`.
   solely owns the protocol plan-cache hit state, while `PreparedAst` retains
   only Go's immutable parsed AST plus the planner-built PointGet/general
   SELECT descriptors handed to that protocol cache.
+- [x] 2026-08-28: made the retained prepared PointGet plan own both its bound
+  execution and Go's `noSecondRead` timestamp policy. Binary EXECUTE no longer
+  rebuilds and discards the point-plan matcher before binding the cached plan;
+  secondary-unique double reads remain reusable but now refuse MaxTS exactly
+  as Go does. The two obsolete prepared read-shape classifiers were deleted.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and

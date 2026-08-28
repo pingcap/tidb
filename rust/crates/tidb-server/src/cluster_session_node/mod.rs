@@ -758,7 +758,6 @@ impl ClusterServerSession {
         resource_group: &str,
         run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
-        self.rebuild_catalog_if_stale();
         self.begin_if_autocommit_off(resource_group)?;
         self.with_bound_statement(shape, &prelock_keys, resource_group, run)
     }
@@ -1973,6 +1972,10 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        // Go resolves and plans against the current infoschema before it
+        // chooses a statement snapshot. Keep schema refresh ahead of routing,
+        // access-shape classification, and the statement lifecycle.
+        self.rebuild_catalog_if_stale();
         // Routed before anything else: what happens to a stored-state change
         // must not depend on which answer shape it would otherwise have taken.
         match self.schema_route(sql)? {
@@ -2192,6 +2195,11 @@ impl QuerySession for ClusterServerSession {
         let params = crate::pipeline_session::prepared_parameters(values);
         let sql = statement.sql().to_owned();
         let retained = statement.template();
+        // Plan-cache validation must see the current schema before the read
+        // policy is declared. Rebuilding only inside the statement lifecycle
+        // would let a stale row-handle plan choose MaxTS and then fall back to
+        // a newly rebuilt, potentially multi-read plan.
+        self.rebuild_catalog_if_stale();
         let resource_group = match retained {
             Some(template) => self.session.statement_resource_group(template).to_owned(),
             None => self
@@ -2203,19 +2211,18 @@ impl QuerySession for ClusterServerSession {
         // planner-built PointGet plan; only `FoundInPlanCache` differs. Keep
         // the candidate available on the miss as well, instead of asking the
         // retired executor-local fast planner to rediscover a narrower shape.
-        let point_get_plan = statement.point_get_plan().cloned();
         let point_get_cache_hit = statement.point_get_cache_ready();
-        // YCSB's prepared point reads are a retained SELECT template whose
-        // only changing value is the clustered key.  Resolve that key directly
-        // from the template and execute values; cloning/binding the complete
-        // AST is deferred to the refusal path.
-        let fast_shape = retained
-            .filter(|_| !self.session.has_session_bindings())
-            .map(|template| {
-                self.session
-                    .fast_prepared_statement_read_shape(template, &params)
-            });
-        let fast = fast_shape == Some(StatementReadShape::AutocommitPointGet);
+        // Bind the retained point plan once and use that same plan's
+        // `noSecondRead` classification for snapshot selection. The previous
+        // path rebuilt the whole point matcher on every EXECUTE, discarded
+        // it, then bound this cached plan separately.
+        let cached_point_get = statement
+            .point_get_plan()
+            .and_then(|plan| self.session.bind_cached_prepared_point_get(plan, &params));
+        let point_read_shape = cached_point_get
+            .as_ref()
+            .map(|execution| execution.plan().statement_read_shape());
+        let fast = cached_point_get.is_some();
         // On a Go plan-cache miss, physical optimization first gives
         // TryFastPlan this shape; the point plan it returns is what later
         // cache hits rebuild. Do not substitute the generic SELECT tree for
@@ -2248,7 +2255,7 @@ impl QuerySession for ClusterServerSession {
                 .map_err(map_error)?
         };
         let shape = if fast {
-            StatementReadShape::AutocommitPointGet
+            point_read_shape.unwrap_or(StatementReadShape::Unknown)
         } else if fast_select {
             StatementReadShape::Unknown
         } else if fast_dml {
@@ -2321,10 +2328,7 @@ impl QuerySession for ClusterServerSession {
                         .map_err(map_error);
                 }
                 if fast {
-                    if let Some(cached) = point_get_plan
-                        .as_ref()
-                        .and_then(|plan| session.bind_cached_prepared_point_get(plan, &params))
-                    {
+                    if let Some(cached) = cached_point_get.clone() {
                         match session.execute_prepared_point_get(cached, point_get_cache_hit) {
                             Ok(output) => {
                                 statement.mark_point_get_cache_ready();
@@ -2424,6 +2428,10 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        // Refresh before access-shape classification. Waiting until the
+        // statement lifecycle would allow a stale point shape to select MaxTS
+        // before the executor sees the current schema.
+        self.rebuild_catalog_if_stale();
         // The text protocol reaches DDL through `execute_write`; this covers a
         // front end that goes straight to the result-set path, so a routed
         // statement runs exactly once either way.
