@@ -52,6 +52,47 @@ fn prepared_dml_retains_the_parse_tree_for_execute() {
     assert!(statement.template().is_some());
 }
 
+/// Go retains the resolved INSERT plan and only rebuilds its parameter values
+/// on later EXECUTEs. The retired Rust fast-DML arm rediscovered the table and
+/// column layout each time and therefore never produced a plan-cache hit.
+#[test]
+fn prepared_insert_reuses_the_planned_dml() {
+    use tidb_protocol::PreparedValue;
+
+    let (mut session, _) = open_session();
+    let statement = session
+        .prepare_general("INSERT INTO t (id, v) VALUES (?, ?)")
+        .expect("prepare");
+
+    for (id, expected_cache) in [(101, 0), (102, 1)] {
+        let outcome = session
+            .execute_general(
+                &statement,
+                &[
+                    PreparedValue::SignedLongLong(id),
+                    PreparedValue::SignedLongLong(id * 10),
+                ],
+            )
+            .expect("execute");
+        assert!(matches!(outcome, GeneralExecuteOutcome::Write(_)));
+        drop(outcome);
+        assert_eq!(
+            rows(&mut session, "SELECT @@last_plan_from_cache"),
+            vec![vec![Datum::Int(expected_cache)]],
+        );
+    }
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT id, v FROM t WHERE id BETWEEN 101 AND 102 ORDER BY id"
+        ),
+        vec![
+            vec![Datum::Int(101), Datum::Int(1010)],
+            vec![Datum::Int(102), Datum::Int(1020)]
+        ],
+    );
+}
+
 /// Go caches the point-update plan produced by `tryUpdatePointPlan`: the first
 /// EXECUTE plans and the second rebuilds that same DML plan with new values.
 /// The old Rust fast-DML arm re-matched the AST and catalog on every EXECUTE,

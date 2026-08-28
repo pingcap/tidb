@@ -30,41 +30,6 @@ use crate::{
 };
 use crate::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
 
-/// Returns the one table privilege needed by the refusal-admitted prepared
-/// fast paths.  Complex statements deliberately fall back to the ordinary
-/// AST privilege collector so authorization cannot be weakened by an
-/// optimization refusal.
-fn fast_table_privilege_target(stmt: &Stmt) -> Option<(&[String], privilege::GlobalPriv)> {
-    match stmt {
-        Stmt::Query(query) => {
-            let tidb_ast::QueryStmt::Select(select) = &**query else {
-                return None;
-            };
-            let join = select.from.as_ref()?;
-            if join.right.is_some() {
-                return None;
-            }
-            let tidb_ast::JoinNode::Table(table) = &join.left else {
-                return None;
-            };
-            Some((table.name.as_slice(), privilege::GlobalPriv::Select))
-        }
-        Stmt::Dml(dml) => match &**dml {
-            DmlStmt::Insert(insert) => {
-                Some((insert.table.as_slice(), privilege::GlobalPriv::Insert))
-            }
-            DmlStmt::Update(update) => match &update.kind {
-                tidb_ast::UpdateKind::Single(table) => {
-                    Some((table.name.as_slice(), privilege::GlobalPriv::Update))
-                }
-                tidb_ast::UpdateKind::Multi { .. } => None,
-            },
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 /// Every `information_schema` base table a top-level join tree references.
 ///
 /// The ordinary executor resolves bare names against `current_db`; mirror
@@ -434,57 +399,6 @@ impl Session {
         self.execute_parsed_statement(sql, stmt, false)
     }
 
-    /// Executes the conservative one-row prepared INSERT path.  A refusal
-    /// returns `None`, allowing the complete bound AST path to answer it.
-    pub fn execute_fast_prepared_insert(
-        &mut self,
-        stmt: &Stmt,
-        params: &[tidb_datatype::Datum],
-    ) -> Result<Option<StmtOutput>, DriverError> {
-        self.activate_statement_resource_group(stmt);
-        if !self.in_transaction() {
-            self.lock_catalog()?.clear_dirty_content();
-        }
-        if let Some((path, privilege)) = fast_table_privilege_target(stmt) {
-            self.require_fast_table_privilege(path, privilege)?;
-        } else {
-            self.require_statement_table_privileges(stmt)?;
-        }
-        self.refuse_pinned_historical_read()?;
-        let Stmt::Dml(dml) = stmt else {
-            return Ok(None);
-        };
-        let DmlStmt::Insert(insert) = &**dml else {
-            return Ok(None);
-        };
-        // The ordinary funnel records every touched table on the transaction
-        // metadata-lock map from its single preprocess walk. This arm skips
-        // that walk, so it records its one target here -- a write is never
-        // exempt (only an autocommit READ is), and skipping the record would
-        // let a DDL slip past a live transaction writer.
-        let (db, table) = match insert.table.as_slice() {
-            [table] => (String::new(), table.clone()),
-            [db, table] => (db.clone(), table.clone()),
-            slice => (String::new(), slice.last().cloned().unwrap_or_default()),
-        };
-        self.record_mdl_related_table_names(&[(db, table)]);
-        let current_db = self.current_db.clone();
-        let ctx = self
-            .fast_statement_context(true, insert.ignore)
-            .with_statement_class(tidb_executor::StatementClass::Insert);
-        let result = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_fast_prepared_insert(insert, params, catalog, &current_db, &ctx)
-        })?;
-        self.drain_eval_warnings(&ctx);
-        let Some((affected, _)) = result else {
-            return Ok(None);
-        };
-        self.statement_insert_id = ctx
-            .published_last_insert_id()
-            .unwrap_or_else(|| ctx.given_insert_id());
-        Ok(Some(StmtOutput::Affected(affected)))
-    }
-
     /// Executes a statement tree already parsed and bound by the prepared
     /// protocol path.  The surrounding session lifecycle is still applied by
     /// `run_with_columns_using`; this seam only avoids reparsing the SQL text.
@@ -582,13 +496,11 @@ impl Session {
         Ok(StmtOutput::Rows { columns, rows })
     }
 
-    /// Executes one reusable clustered point-update plan. The plan already
-    /// owns name resolution, handle pins, residuals, and assignment lowering;
-    /// this method supplies the ordinary statement lifecycle and fresh write
-    /// context only.
-    pub fn execute_prepared_point_update(
+    /// Executes one retained prepared DML plan with fresh parameter values
+    /// and statement-local mutation state.
+    pub fn execute_prepared_dml(
         &mut self,
-        execution: tidb_executor::PreparedPointUpdateExecution,
+        execution: tidb_executor::PreparedDmlExecution,
         cache_hit: bool,
         resource_group: &str,
     ) -> Result<StmtOutput, DriverError> {
@@ -599,24 +511,35 @@ impl Session {
         }
         let plan = execution.plan();
         let (database, table) = plan.names();
-        self.require_named_table_privilege(database, table, privilege::GlobalPriv::Update)?;
+        let privilege = match plan.kind() {
+            tidb_executor::PreparedDmlKind::Insert => privilege::GlobalPriv::Insert,
+            tidb_executor::PreparedDmlKind::Update => privilege::GlobalPriv::Update,
+        };
+        self.require_named_table_privilege(database, table, privilege)?;
         self.refuse_pinned_historical_read()?;
         self.record_mdl_related_table_names(&[(database.to_owned(), table.to_owned())]);
         self.statement_insert_id = 0;
         self.statement_kind = StatementKind::Dml;
         let current_db = self.current_db.clone();
+        let statement_class = match plan.kind() {
+            tidb_executor::PreparedDmlKind::Insert => tidb_executor::StatementClass::Insert,
+            tidb_executor::PreparedDmlKind::Update => tidb_executor::StatementClass::UpdateOrDelete,
+        };
         let ctx = self
-            .fast_statement_context(true, false)
-            .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
+            .fast_statement_context(true, plan.ignore_errors())
+            .with_statement_class(statement_class);
         let result = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_prepared_point_update(&execution, catalog, &current_db, &ctx)
+            tidb_executor::run_prepared_dml(&execution, catalog, &current_db, &ctx)
         })?;
         self.drain_eval_warnings(&ctx);
         let Some(affected) = result else {
             return Err(DriverError::unsupported(
-                "prepared point-update cache was invalidated during the statement",
+                "prepared DML cache was invalidated during the statement",
             ));
         };
+        self.statement_insert_id = ctx
+            .published_last_insert_id()
+            .unwrap_or_else(|| ctx.given_insert_id());
         self.found_in_plan_cache = cache_hit;
         Ok(StmtOutput::Affected(affected))
     }

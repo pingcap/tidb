@@ -614,17 +614,12 @@ fn prepared_point_update_maintains_indexes_and_answers_residuals() {
         let statement = tidb_parser::parse(sql).unwrap();
         let parameter_count = parsed_parameter_count(&statement);
         let plan = Arc::new(
-            build_prepared_point_update_plan(
-                &statement,
-                parameter_count,
-                catalog,
-                DEFAULT_DATABASE,
-            )
-            .unwrap()
-            .expect("the cached prepared point update"),
+            build_prepared_dml_plan(&statement, parameter_count, catalog, DEFAULT_DATABASE)
+                .unwrap()
+                .expect("the cached prepared point update"),
         );
         let execution = plan.bind(params, catalog, DEFAULT_DATABASE).expect("bind");
-        run_prepared_point_update(&execution, catalog, DEFAULT_DATABASE, &ctx)
+        run_prepared_dml(&execution, catalog, DEFAULT_DATABASE, &ctx)
             .unwrap()
             .expect("the plan remains valid")
     };
@@ -672,11 +667,11 @@ fn prepared_point_update_maintains_indexes_and_answers_residuals() {
     assert_eq!(affected, 0);
 }
 
-/// The fast prepared INSERT writes a table WITH secondary indexes, and a
+/// The cached prepared INSERT writes a table WITH secondary indexes, and a
 /// duplicate of a unique indexed value is reported as zero rows rather than
 /// corrupting the index.
 #[test]
-fn fast_prepared_insert_maintains_secondary_indexes() {
+fn prepared_insert_maintains_secondary_indexes() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
         "CREATE TABLE ini (\
@@ -694,17 +689,17 @@ fn fast_prepared_insert_maintains_secondary_indexes() {
     .unwrap();
 
     let stmt = tidb_parser::parse("INSERT INTO ini (id, code, v) VALUES (?, ?, ?)").unwrap();
-    let insert = match &stmt {
-        Stmt::Dml(dml) => match &**dml {
-            tidb_ast::DmlStmt::Insert(insert) => insert.as_ref().clone(),
-            _ => panic!("expected an insert"),
-        },
-        _ => panic!("expected a dml"),
-    };
+    let plan = Arc::new(
+        build_prepared_dml_plan(&stmt, 3, &catalog, DEFAULT_DATABASE)
+            .unwrap()
+            .expect("prepared INSERT plan"),
+    );
     let ctx = crate::StmtContext::for_query();
     let mut bind = |values: &[Datum]| -> Result<Option<u64>, DriverError> {
-        run_fast_prepared_insert(&insert, values, &mut catalog, DEFAULT_DATABASE, &ctx)
-            .map(|result| result.map(|(affected, _)| affected))
+        let execution = plan
+            .bind(values, &catalog, DEFAULT_DATABASE)
+            .expect("bind prepared INSERT");
+        run_prepared_dml(&execution, &mut catalog, DEFAULT_DATABASE, &ctx)
     };
 
     let affected = bind(&[
@@ -713,7 +708,7 @@ fn fast_prepared_insert_maintains_secondary_indexes() {
         Datum::Int(20),
     ])
     .unwrap()
-    .expect("fast insert");
+    .expect("cached insert");
     assert_eq!(affected, 1);
 
     // The unique index sees the new entry: a second 'c2' under a PLAIN
@@ -732,5 +727,113 @@ fn fast_prepared_insert_maintains_secondary_indexes() {
             .unwrap()
             .len(),
         1
+    );
+}
+
+/// Stock sysbench writes every column explicitly even though its primary key
+/// is AUTO_INCREMENT and the other columns declare defaults. Those table
+/// properties do not require per-EXECUTE planning when every bound value is
+/// present, and the cached write still maintains the secondary index.
+#[test]
+fn prepared_insert_accepts_the_stock_sysbench_table_shape() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE sbtest1 (\
+            id INTEGER NOT NULL AUTO_INCREMENT, \
+            k INTEGER DEFAULT '0' NOT NULL, \
+            c CHAR(120) DEFAULT '' NOT NULL, \
+            pad CHAR(60) DEFAULT '' NOT NULL, \
+            PRIMARY KEY (id), KEY k_1 (k))",
+        &mut catalog,
+    )
+    .unwrap();
+    let statement =
+        tidb_parser::parse("INSERT INTO sbtest1 (id, k, c, pad) VALUES (?, ?, ?, ?)").unwrap();
+    let plan = Arc::new(
+        build_prepared_dml_plan(&statement, 4, &catalog, DEFAULT_DATABASE)
+            .unwrap()
+            .expect("stock sysbench INSERT is cacheable"),
+    );
+    let ctx = crate::StmtContext::for_query();
+    let execution = plan
+        .bind(
+            &[
+                Datum::Int(500),
+                Datum::Int(5),
+                Datum::Bytes(b"c-500".to_vec()),
+                Datum::Bytes(b"pad-500".to_vec()),
+            ],
+            &catalog,
+            DEFAULT_DATABASE,
+        )
+        .expect("bind");
+    assert_eq!(
+        run_prepared_dml(&execution, &mut catalog, DEFAULT_DATABASE, &ctx).unwrap(),
+        Some(1),
+    );
+    assert_eq!(ctx.given_insert_id(), 500);
+    assert_eq!(
+        run_select_on("SELECT id FROM sbtest1 WHERE k = 5", &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(500)]],
+    );
+    assert_eq!(
+        run_insert_reporting(
+            "INSERT INTO sbtest1 (k, c, pad) VALUES (6, 'c-auto', 'pad-auto')",
+            &mut catalog,
+            DEFAULT_DATABASE,
+            &ctx,
+        )
+        .unwrap(),
+        (1, Some(501)),
+    );
+}
+
+/// The retained INSERT plan uses the same statement error groups as the
+/// complete executor: IGNORE demotes a one-row bad NULL and a duplicate key
+/// to warnings while preserving the successful/skipped affected-row counts.
+#[test]
+fn prepared_insert_ignore_preserves_warnings() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE pii (id BIGINT PRIMARY KEY, v BIGINT NOT NULL UNIQUE)",
+        &mut catalog,
+    )
+    .unwrap();
+    let statement = tidb_parser::parse("INSERT IGNORE INTO pii (id, v) VALUES (?, ?)").unwrap();
+    let plan = Arc::new(
+        build_prepared_dml_plan(&statement, 2, &catalog, DEFAULT_DATABASE)
+            .unwrap()
+            .expect("prepared INSERT IGNORE plan"),
+    );
+    let ctx = crate::StmtContext::for_dml(true, true, true);
+
+    let execution = plan
+        .bind(&[Datum::Int(1), Datum::Null], &catalog, DEFAULT_DATABASE)
+        .expect("bind bad-NULL insert");
+    assert_eq!(
+        run_prepared_dml(&execution, &mut catalog, DEFAULT_DATABASE, &ctx).unwrap(),
+        Some(1),
+    );
+    assert_eq!(
+        ctx.take_warnings()
+            .into_iter()
+            .map(|(_, code, _)| code)
+            .collect::<Vec<_>>(),
+        vec![1048],
+    );
+
+    let execution = plan
+        .bind(&[Datum::Int(2), Datum::Int(0)], &catalog, DEFAULT_DATABASE)
+        .expect("bind duplicate insert");
+    assert_eq!(
+        run_prepared_dml(&execution, &mut catalog, DEFAULT_DATABASE, &ctx).unwrap(),
+        Some(0),
+    );
+    assert_eq!(
+        ctx.take_warnings()
+            .into_iter()
+            .map(|(_, code, _)| code)
+            .collect::<Vec<_>>(),
+        vec![1062],
     );
 }

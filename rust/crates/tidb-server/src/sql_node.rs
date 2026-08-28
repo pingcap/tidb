@@ -576,8 +576,8 @@ pub struct PreparedGeneral {
     /// Go reports the first execution as a plan-cache miss and reuses the
     /// point plan only after that execution completed successfully.
     point_get_cache_ready: Arc<AtomicBool>,
-    /// Go's cacheable clustered point-update plan, when admitted.
-    point_update_plan: Option<std::sync::Arc<tidb_executor::PreparedPointUpdatePlan>>,
+    /// The reusable prepared DML plan, when admitted.
+    dml_plan: Option<std::sync::Arc<tidb_executor::PreparedDmlPlan>>,
     /// A prepared SELECT descriptor backed by Go-parity physical-plan cache entries.
     select_plan: Option<std::sync::Arc<tidb_executor::PreparedSelectPlan>>,
 }
@@ -593,7 +593,7 @@ impl PreparedGeneral {
             template: None,
             point_get_plan: None,
             point_get_cache_ready: Arc::new(AtomicBool::new(false)),
-            point_update_plan: None,
+            dml_plan: None,
             select_plan: None,
         }
     }
@@ -614,20 +614,19 @@ impl PreparedGeneral {
             template: Some(template),
             point_get_plan: None,
             point_get_cache_ready: Arc::new(AtomicBool::new(false)),
-            point_update_plan: None,
+            dml_plan: None,
             select_plan: None,
         }
     }
 
-    /// Creates a retained DML template together with Go's reusable clustered
-    /// point-update plan, when `tryUpdatePointPlan` admitted it.
+    /// Creates a retained DML template together with its reusable write plan.
     #[must_use]
-    pub fn with_template_and_point_update_plan(
+    pub fn with_template_and_dml_plan(
         sql: String,
         parameter_count: usize,
         result_columns: Vec<ColumnInfo>,
         template: Stmt,
-        point_update_plan: Option<std::sync::Arc<tidb_executor::PreparedPointUpdatePlan>>,
+        dml_plan: Option<std::sync::Arc<tidb_executor::PreparedDmlPlan>>,
     ) -> Self {
         Self {
             sql,
@@ -636,7 +635,7 @@ impl PreparedGeneral {
             template: Some(template),
             point_get_plan: None,
             point_get_cache_ready: Arc::new(AtomicBool::new(false)),
-            point_update_plan,
+            dml_plan,
             select_plan: None,
         }
     }
@@ -659,7 +658,7 @@ impl PreparedGeneral {
             template: Some(template),
             point_get_plan,
             point_get_cache_ready: Arc::new(AtomicBool::new(false)),
-            point_update_plan: None,
+            dml_plan: None,
             select_plan,
         }
     }
@@ -716,12 +715,10 @@ impl PreparedGeneral {
         self.select_plan.as_ref()
     }
 
-    /// The immutable prepared clustered point-update plan.
+    /// The immutable prepared DML plan.
     #[must_use]
-    pub fn point_update_plan(
-        &self,
-    ) -> Option<&std::sync::Arc<tidb_executor::PreparedPointUpdatePlan>> {
-        self.point_update_plan.as_ref()
+    pub fn dml_plan(&self) -> Option<&std::sync::Arc<tidb_executor::PreparedDmlPlan>> {
+        self.dml_plan.as_ref()
     }
 }
 

@@ -28,23 +28,6 @@ use tidb_datatype::Datum;
 use crate::{privilege, process, vars, DriverError, Session};
 
 impl Session {
-    /// Checks the one table privilege needed by a retained, refusal-admitted
-    /// prepared statement without walking (and cloning) its immutable AST.
-    /// The ordinary statement gate still uses [`required_table_privileges`]
-    /// for every shape that is not admitted by a fast executor arm.
-    pub(crate) fn require_fast_table_privilege(
-        &self,
-        path: &[String],
-        privilege: privilege::GlobalPriv,
-    ) -> Result<(), DriverError> {
-        let (database, table) = match path {
-            [table] if !self.current_db.is_empty() => (self.current_db.as_str(), table.as_str()),
-            [database, table] => (database.as_str(), table.as_str()),
-            _ => return Ok(()),
-        };
-        self.require_named_table_privilege(database, table, privilege)
-    }
-
     /// Checks one already-resolved table name without rebuilding an AST path.
     pub(crate) fn require_named_table_privilege(
         &self,

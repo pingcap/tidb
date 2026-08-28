@@ -225,6 +225,13 @@ both `oltp_read_only` and `oltp_read_write`.
   PREPARE; EXECUTE only rebuilds values and fresh mutation state. The old fast
   UPDATE dispatcher, structural matcher, and duplicate assignment evaluator
   were deleted, and first-miss/later-hit reporting now matches Go.
+- [x] 2026-08-28: folded stock sysbench's explicit-column one-row INSERT into
+  the same retained DML plan authority. PREPARE now fixes its table identity,
+  marker layout, target columns, and field types; EXECUTE binds values and
+  constructs only fresh row/mutation state. The executor-local fast INSERT
+  privilege probe and per-execution AST/catalog matcher were deleted. The
+  retained path preserves secondary-index, auto-id, memory-accounting,
+  bad-NULL, duplicate-warning, and first-miss/later-hit semantics.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and

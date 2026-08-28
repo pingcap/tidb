@@ -99,19 +99,42 @@ pub fn run_insert_stmt(
     run_insert_traced(insert, catalog, current_db, ctx, None)
 }
 
-/// Executes the narrow one-row prepared INSERT shape used by go-ycsb.
-/// Unsupported shapes return `None` and stay on the complete insert planner.
-pub fn run_fast_prepared_insert(
-    insert: &tidb_ast::InsertStmt,
-    params: &[Datum],
-    catalog: &mut Catalog,
+/// The immutable INSERT plan retained inside the prepared-plan cache.
+#[derive(Debug)]
+struct PreparedInsertPlan {
+    schema_version: u64,
+    current_database: String,
+    database: String,
+    table: String,
+    table_id: i64,
+    ignore: bool,
+    parameter_orders: Vec<usize>,
+    field_types: Vec<FieldType>,
+    column_names: Vec<String>,
+    auto_increment_offset: Option<usize>,
+    cache_ready: std::sync::atomic::AtomicBool,
+}
+
+/// Builds the reusable one-row VALUES plan used by stock sysbench.
+///
+/// Target resolution, column mapping, marker layout, and type metadata are
+/// fixed here. Any shape whose runtime semantics require the complete INSERT
+/// planner declines before execution.
+fn build_prepared_insert_plan(
+    statement: &Stmt,
+    parameter_count: usize,
+    catalog: &Catalog,
     current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<Option<(u64, Option<u64>)>, DriverError> {
-    // A PLAIN single-row insert belongs here as much as an IGNORE one: the
-    // duplicate-key outcome is the only difference between them (IGNORE
-    // answers zero rows, a plain INSERT raises 1062), and both outcomes are
-    // decided at the one `insert_row` call below.
+) -> Result<Option<PreparedInsertPlan>, DriverError> {
+    if parsed_parameter_count(statement) != parameter_count {
+        return Ok(None);
+    }
+    let Stmt::Dml(dml) = statement else {
+        return Ok(None);
+    };
+    let tidb_ast::DmlStmt::Insert(insert) = dml.as_ref() else {
+        return Ok(None);
+    };
     if insert.replace
         || !insert.on_duplicate.is_empty()
         || insert.source.is_some()
@@ -124,37 +147,39 @@ pub fn run_fast_prepared_insert(
         return Ok(None);
     }
     let row_exprs = &insert.rows[0];
-    if row_exprs.len() != params.len() || row_exprs.is_empty()
-        || !row_exprs.iter().enumerate().all(|(position, expr)| {
-            matches!(expr, tidb_ast::Expr::ParamMarker { order, .. } if *order == position)
-        })
-    {
+    if row_exprs.len() != parameter_count || row_exprs.is_empty() {
         return Ok(None);
     }
-    let (database, table_name) = split_table_path(&insert.table, current_db)?;
-    let (database, table_name) = (database.to_owned(), table_name.to_owned());
-    let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &table_name) else {
+    let parameter_orders = row_exprs
+        .iter()
+        .map(|expression| match expression {
+            tidb_ast::Expr::ParamMarker { order, .. } if *order < parameter_count => Some(*order),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(parameter_orders) = parameter_orders else {
         return Ok(None);
     };
-    let handles = kv.common_handle_offsets();
-    // `insert_row` builds the clustered handle from the ROW ITSELF -- one
-    // column or a composite primary key alike -- maintains every index of
-    // the table, and runs the eager duplicate check on each unique secondary
-    // entry. A composite common handle and an indexed table no longer refuse
-    // this arm: Go's cached insert plan writes both shapes.
-    if kv.visible_column_count() != kv.columns.len()
-        || handles.is_empty()
-        || !kv.foreign_keys().is_empty()
-        || kv.auto_increment_offset().is_some()
-        || kv.partition().is_some()
-        || kv
+    let (database, table_name) = split_table_path(&insert.table, current_db)?;
+    let (database, table_name) = (database.to_owned(), table_name.to_owned());
+    let Some(TableEntry::Kv(table)) = catalog.get_in(&database, &table_name) else {
+        return Ok(None);
+    };
+    let has_clustered_handle =
+        table.pk_handle_offset().is_some() || !table.common_handle_offsets().is_empty();
+    if table.visible_column_count() != table.columns.len()
+        || !has_clustered_handle
+        || !table.foreign_keys().is_empty()
+        || table.auto_random().is_some()
+        || table.partition().is_some()
+        || table
             .columns
             .iter()
-            .any(|column| column.generated.is_some() || column.default_value.is_some())
+            .any(|column| column.generated.is_some())
     {
         return Ok(None);
     }
-    let columns = kv.visible_columns().to_vec();
+    let columns = table.visible_columns();
     if insert.columns.len() != columns.len()
         || insert
             .columns
@@ -164,34 +189,118 @@ pub fn run_fast_prepared_insert(
     {
         return Ok(None);
     }
-    let null_level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
-    let mut row = Vec::with_capacity(columns.len());
-    for (offset, column) in columns.iter().enumerate() {
-        let mut value = params[offset].clone();
+
+    Ok(Some(PreparedInsertPlan {
+        schema_version: catalog.metadata_version(),
+        current_database: current_db.to_owned(),
+        database,
+        table: table_name,
+        table_id: table.table_id,
+        ignore: insert.ignore,
+        parameter_orders,
+        field_types: columns
+            .iter()
+            .map(|column| column.field_type.clone())
+            .collect(),
+        column_names: columns.iter().map(|column| column.name.clone()).collect(),
+        auto_increment_offset: table.auto_increment_offset(),
+        cache_ready: std::sync::atomic::AtomicBool::new(false),
+    }))
+}
+
+fn run_prepared_insert(
+    plan: &PreparedInsertPlan,
+    params: &[Datum],
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<u64>, DriverError> {
+    if plan.schema_version != catalog.metadata_version()
+        || !plan.current_database.eq_ignore_ascii_case(current_db)
+    {
+        return Ok(None);
+    }
+    let Some(TableEntry::Kv(table)) = catalog.get_mut_in(&plan.database, &plan.table) else {
+        return Ok(None);
+    };
+    if table.table_id != plan.table_id {
+        return Ok(None);
+    }
+    // Go promotes bad NULL to an error for a one-row VALUES statement even
+    // outside strict mode, while INSERT IGNORE demotes it to a warning.
+    let null_level = crate::bad_null::NullLevel::from_is_error(!ctx.ignore_err());
+    let mut row = Vec::with_capacity(plan.field_types.len());
+    let mut rebase_auto_increment = false;
+    for (offset, order) in plan.parameter_orders.iter().enumerate() {
+        let mut value = params
+            .get(*order)
+            .cloned()
+            .ok_or(DriverError::WrongParamCount)?;
+        if plan.auto_increment_offset == Some(offset) {
+            rebase_auto_increment = match value {
+                Datum::Int(value) if value > 0 => true,
+                Datum::UInt(value) if value > 0 => true,
+                Datum::Int(0) | Datum::UInt(0) if ctx.auto_increment_zero_is_explicit() => false,
+                // Allocation, retry-id replay, and values that require
+                // expression coercion remain owned by the complete INSERT
+                // executor. Decline before casts can publish warnings.
+                _ => return Ok(None),
+            };
+        }
         crate::bad_null::handle_bad_null(
             &mut value,
-            &column.field_type,
-            &column.name,
+            &plan.field_types[offset],
+            &plan.column_names[offset],
             null_level,
             ctx,
         )?;
         row.push(cast_value_for_column(
             value,
-            &column.field_type,
-            &column.name,
+            &plan.field_types[offset],
+            &plan.column_names[offset],
             0,
             ctx,
         )?);
     }
-    // `insert_row` performs the authoritative clustered-key existence check
-    // immediately before the write.  An earlier `conflicting_handles` probe
-    // repeated that same KV read for this no-index shape and made every YCSB-D
-    // insert pay two round trips.  IGNORE only changes the duplicate result;
-    // the single writer-owned check still preserves that outcome.
-    match kv.insert_row(&row, ctx) {
-        Ok(_) => Ok(Some((1, None))),
-        Err(crate::kv_table::KvTableError::DuplicateEntry { .. }) if insert.ignore => {
-            Ok(Some((0, None)))
+    ctx.statement_memory()
+        .write_accountant(mem_quota::label::INSERT)
+        .account_rows(std::slice::from_ref(&row))
+        .map_err(DriverError::from)?;
+    if rebase_auto_increment {
+        let outcome = table
+            .apply_auto_increment(&mut row, ctx.auto_increment_step(), || {
+                ctx.reuse_auto_increment_id()
+            })
+            .map_err(|error| match error {
+                AutoIdError::Exhausted => DriverError::AutoincReadFailed,
+                AutoIdError::OutOfRange { value, type_name } => {
+                    DriverError::ConstantOverflows { value, type_name }
+                }
+                AutoIdError::Store(detail) => DriverError::AutoIdUnavailable(detail.0),
+            })?;
+        if let Some(placed) = outcome.placed() {
+            ctx.record_auto_increment_id(placed);
+        }
+        match outcome {
+            AutoIncrement::Given(given) => ctx.record_given_insert_id(given),
+            AutoIncrement::Absent | AutoIncrement::Reused(_) | AutoIncrement::Allocated(_) => {
+                unreachable!("the retained INSERT plan accepts only an explicit positive auto id")
+            }
+        }
+    }
+    let lazy_duplicate_check =
+        (!ctx.constraint_check_in_place() || ctx.pessimistic_lazy_dup_check()) && !plan.ignore;
+    let shard = if table.shard_row_id_bits() > 0 {
+        ctx.next_row_id_shard(1) as i64
+    } else {
+        0
+    };
+    match table.insert_row_with_row_id_checked(&row, None, shard, ctx, lazy_duplicate_check) {
+        Ok(_) => Ok(Some(1)),
+        Err(crate::kv_table::KvTableError::DuplicateEntry { value, key }) if plan.ignore => {
+            let warning = DriverError::DuplicateEntry { value, key }.to_mysql_error();
+            ctx.append_warning_parts(warning.code, &warning.message);
+            Ok(Some(0))
         }
         Err(error) => Err(kv_write_error(error)),
     }
@@ -1749,6 +1858,155 @@ pub fn run_update_stmt(
     run_update_traced(update, catalog, current_db, ctx, None)
 }
 
+/// The retained write plan produced for a cacheable prepared DML statement.
+#[derive(Debug)]
+pub struct PreparedDmlPlan {
+    inner: PreparedDmlPlanInner,
+}
+
+#[derive(Debug)]
+enum PreparedDmlPlanInner {
+    Insert(PreparedInsertPlan),
+    PointUpdate(PreparedPointUpdatePlan),
+}
+
+/// One execution rebuilt from a retained prepared DML plan.
+#[derive(Clone, Debug)]
+pub struct PreparedDmlExecution {
+    plan: Arc<PreparedDmlPlan>,
+    params: Vec<Datum>,
+}
+
+/// Which statement lifecycle a prepared DML plan requires.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PreparedDmlKind {
+    /// INSERT lifecycle and privilege checks.
+    Insert,
+    /// UPDATE lifecycle and privilege checks.
+    Update,
+}
+
+impl PreparedDmlPlan {
+    /// The resolved target identity used for privileges and MDL tracking.
+    #[must_use]
+    pub fn names(&self) -> (&str, &str) {
+        match &self.inner {
+            PreparedDmlPlanInner::Insert(plan) => (&plan.database, &plan.table),
+            PreparedDmlPlanInner::PointUpdate(plan) => (&plan.database, &plan.table),
+        }
+    }
+
+    /// The statement lifecycle required by this plan.
+    #[must_use]
+    pub const fn kind(&self) -> PreparedDmlKind {
+        match &self.inner {
+            PreparedDmlPlanInner::Insert(_) => PreparedDmlKind::Insert,
+            PreparedDmlPlanInner::PointUpdate(_) => PreparedDmlKind::Update,
+        }
+    }
+
+    /// Whether the statement's error policy is `IGNORE`.
+    #[must_use]
+    pub const fn ignore_errors(&self) -> bool {
+        match &self.inner {
+            PreparedDmlPlanInner::Insert(plan) => plan.ignore,
+            PreparedDmlPlanInner::PointUpdate(_) => false,
+        }
+    }
+
+    /// Whether one successful execution admitted this plan to the cache.
+    #[must_use]
+    pub fn cache_ready(&self) -> bool {
+        let ready = match &self.inner {
+            PreparedDmlPlanInner::Insert(plan) => &plan.cache_ready,
+            PreparedDmlPlanInner::PointUpdate(plan) => &plan.cache_ready,
+        };
+        ready.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Admits the plan after its first successful execution.
+    pub fn mark_cache_ready(&self) {
+        let ready = match &self.inner {
+            PreparedDmlPlanInner::Insert(plan) => &plan.cache_ready,
+            PreparedDmlPlanInner::PointUpdate(plan) => &plan.cache_ready,
+        };
+        ready.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Binds one EXECUTE's values after checking schema and table identity.
+    #[must_use]
+    pub fn bind(
+        self: &Arc<Self>,
+        params: &[Datum],
+        catalog: &Catalog,
+        current_database: &str,
+    ) -> Option<PreparedDmlExecution> {
+        let valid = match &self.inner {
+            PreparedDmlPlanInner::Insert(plan) => {
+                plan.schema_version == catalog.metadata_version()
+                    && plan.current_database.eq_ignore_ascii_case(current_database)
+                    && matches!(
+                        catalog.get_in(&plan.database, &plan.table),
+                        Some(TableEntry::Kv(table)) if table.table_id == plan.table_id
+                    )
+            }
+            PreparedDmlPlanInner::PointUpdate(plan) => {
+                plan.matches_catalog(catalog, current_database)
+            }
+        };
+        valid.then(|| PreparedDmlExecution {
+            plan: Arc::clone(self),
+            params: params.to_vec(),
+        })
+    }
+}
+
+impl PreparedDmlExecution {
+    /// The immutable plan this execution was rebuilt from.
+    #[must_use]
+    pub fn plan(&self) -> &PreparedDmlPlan {
+        &self.plan
+    }
+}
+
+/// Builds the prepared DML plan selected for the retained statement.
+pub fn build_prepared_dml_plan(
+    statement: &Stmt,
+    parameter_count: usize,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Result<Option<PreparedDmlPlan>, DriverError> {
+    if let Some(plan) = build_prepared_insert_plan(statement, parameter_count, catalog, current_db)?
+    {
+        return Ok(Some(PreparedDmlPlan {
+            inner: PreparedDmlPlanInner::Insert(plan),
+        }));
+    }
+    build_prepared_point_update_plan(statement, parameter_count, catalog, current_db).map(|plan| {
+        plan.map(|plan| PreparedDmlPlan {
+            inner: PreparedDmlPlanInner::PointUpdate(plan),
+        })
+    })
+}
+
+/// Executes one rebound prepared DML plan. `None` means it was invalidated or
+/// its execute-time values require the complete statement executor.
+pub fn run_prepared_dml(
+    execution: &PreparedDmlExecution,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<u64>, DriverError> {
+    match &execution.plan.inner {
+        PreparedDmlPlanInner::Insert(plan) => {
+            run_prepared_insert(plan, &execution.params, catalog, current_db, ctx)
+        }
+        PreparedDmlPlanInner::PointUpdate(plan) => {
+            run_prepared_point_update(plan, &execution.params, catalog, current_db, ctx)
+        }
+    }
+}
+
 /// The immutable point-update plan produced for a cacheable prepared UPDATE.
 ///
 /// This is Rust's counterpart of Go `tryUpdatePointPlan`: name resolution,
@@ -1756,7 +2014,7 @@ pub fn run_update_stmt(
 /// lowering happen once. Each EXECUTE only binds values and creates fresh
 /// mutation state.
 #[derive(Debug)]
-pub struct PreparedPointUpdatePlan {
+struct PreparedPointUpdatePlan {
     schema_version: u64,
     current_database: String,
     database: String,
@@ -1769,13 +2027,6 @@ pub struct PreparedPointUpdatePlan {
     field_types: Vec<FieldType>,
     column_names: Vec<String>,
     cache_ready: std::sync::atomic::AtomicBool,
-}
-
-/// One execution of a retained prepared point-update plan.
-#[derive(Clone, Debug)]
-pub struct PreparedPointUpdateExecution {
-    plan: Arc<PreparedPointUpdatePlan>,
-    params: Vec<Datum>,
 }
 
 #[derive(Clone, Debug)]
@@ -1797,33 +2048,7 @@ enum PreparedPointDelta {
 }
 
 impl PreparedPointUpdatePlan {
-    /// The resolved table identity used for privileges and MDL tracking.
-    #[must_use]
-    pub fn names(&self) -> (&str, &str) {
-        (&self.database, &self.table)
-    }
-
-    /// Whether one successful execution has admitted this plan to the cache.
-    #[must_use]
-    pub fn cache_ready(&self) -> bool {
-        self.cache_ready.load(std::sync::atomic::Ordering::Acquire)
-    }
-
-    /// Admits the plan after its first successful execution.
-    pub fn mark_cache_ready(&self) {
-        self.cache_ready
-            .store(true, std::sync::atomic::Ordering::Release);
-    }
-
-    /// Binds one EXECUTE's values after checking that DDL has not invalidated
-    /// the plan compiled at PREPARE.
-    #[must_use]
-    pub fn bind(
-        self: &Arc<Self>,
-        params: &[Datum],
-        catalog: &Catalog,
-        current_database: &str,
-    ) -> Option<PreparedPointUpdateExecution> {
+    fn matches_catalog(&self, catalog: &Catalog, current_database: &str) -> bool {
         if self.schema_version != catalog.metadata_version()
             || !self.current_database.eq_ignore_ascii_case(current_database)
             || !matches!(
@@ -1831,25 +2056,14 @@ impl PreparedPointUpdatePlan {
                 Some(TableEntry::Kv(table)) if table.table_id == self.table_id
             )
         {
-            return None;
+            return false;
         }
-        Some(PreparedPointUpdateExecution {
-            plan: Arc::clone(self),
-            params: params.to_vec(),
-        })
-    }
-}
-
-impl PreparedPointUpdateExecution {
-    /// The immutable plan this execution rebuilt with fresh values.
-    #[must_use]
-    pub fn plan(&self) -> &PreparedPointUpdatePlan {
-        &self.plan
+        true
     }
 }
 
 /// Builds Go's cacheable clustered point-update shape from a retained AST.
-pub fn build_prepared_point_update_plan(
+fn build_prepared_point_update_plan(
     statement: &Stmt,
     parameter_count: usize,
     catalog: &Catalog,
@@ -1986,13 +2200,13 @@ pub fn build_prepared_point_update_plan(
 
 /// Executes one rebound prepared point update. `None` means DDL invalidated
 /// the retained plan before the mutation began.
-pub fn run_prepared_point_update(
-    execution: &PreparedPointUpdateExecution,
+fn run_prepared_point_update(
+    plan: &PreparedPointUpdatePlan,
+    params: &[Datum],
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Option<u64>, DriverError> {
-    let plan = execution.plan();
     if plan.schema_version != catalog.metadata_version()
         || !plan.current_database.eq_ignore_ascii_case(current_db)
     {
@@ -2007,7 +2221,7 @@ pub fn run_prepared_point_update(
     let key_values = plan
         .handle_parameter_orders
         .iter()
-        .map(|order| execution.params.get(*order).cloned())
+        .map(|order| params.get(*order).cloned())
         .collect::<Option<Vec<_>>>()
         .ok_or(DriverError::WrongParamCount)?;
     let handle = if plan.int_handle {
@@ -2038,7 +2252,7 @@ pub fn run_prepared_point_update(
     };
     for (offset, bound) in &plan.residual_eqs {
         let expected = match bound {
-            ResidualEq::Param(order) => execution.params.get(*order).cloned(),
+            ResidualEq::Param(order) => params.get(*order).cloned(),
             ResidualEq::Constant(value) => Some(value.clone()),
         };
         let Some(mut expected) = expected else {
@@ -2061,10 +2275,7 @@ pub fn run_prepared_point_update(
     }
     let mut row = old_row.clone();
     for assignment in &plan.assignments {
-        let Some(value) = assignment
-            .value
-            .evaluate(&row, assignment.offset, &execution.params)
-        else {
+        let Some(value) = assignment.value.evaluate(&row, assignment.offset, params) else {
             return Ok(None);
         };
         row[assignment.offset] = cast_value_for_update_assignment(

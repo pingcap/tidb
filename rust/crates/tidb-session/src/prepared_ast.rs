@@ -23,8 +23,8 @@ use std::sync::Arc;
 use tidb_ast::Stmt;
 use tidb_datatype::Datum;
 use tidb_executor::{
-    DriverError, PreparedPointGetExecution, PreparedPointGetPlan, PreparedPointUpdateExecution,
-    PreparedPointUpdatePlan, PreparedSelectExecution, PreparedSelectPlan,
+    DriverError, PreparedDmlExecution, PreparedDmlPlan, PreparedPointGetExecution,
+    PreparedPointGetPlan, PreparedSelectExecution, PreparedSelectPlan,
 };
 
 use crate::Session;
@@ -35,7 +35,7 @@ pub struct PreparedAst {
     statement: Stmt,
     parameter_count: usize,
     point_get_plan: Option<Arc<PreparedPointGetPlan>>,
-    point_update_plan: Option<Arc<PreparedPointUpdatePlan>>,
+    dml_plan: Option<Arc<PreparedDmlPlan>>,
     select_plan: Option<Arc<PreparedSelectPlan>>,
 }
 
@@ -44,14 +44,14 @@ impl PreparedAst {
         statement: Stmt,
         parameter_count: usize,
         point_get_plan: Option<PreparedPointGetPlan>,
-        point_update_plan: Option<PreparedPointUpdatePlan>,
+        dml_plan: Option<PreparedDmlPlan>,
         select_plan: Option<PreparedSelectPlan>,
     ) -> Self {
         Self {
             statement,
             parameter_count,
             point_get_plan: point_get_plan.map(Arc::new),
-            point_update_plan: point_update_plan.map(Arc::new),
+            dml_plan: dml_plan.map(Arc::new),
             select_plan: select_plan.map(Arc::new),
         }
     }
@@ -75,11 +75,10 @@ impl PreparedAst {
         self.point_get_plan.clone()
     }
 
-    /// The immutable point-update plan compiled while the statement was
-    /// prepared, when Go's `tryUpdatePointPlan` admits the shape.
+    /// The immutable DML plan compiled while the statement was prepared.
     #[must_use]
-    pub fn point_update_plan(&self) -> Option<Arc<PreparedPointUpdatePlan>> {
-        self.point_update_plan.clone()
+    pub fn dml_plan(&self) -> Option<Arc<PreparedDmlPlan>> {
+        self.dml_plan.clone()
     }
 
     /// The prepared SELECT descriptor whose full physical tree is generated
@@ -103,7 +102,7 @@ impl Session {
         let statement = self.parse_statement(sql)?;
         let parameter_count = tidb_executor::parsed_parameter_count(&statement);
         let planner_context = self.statement_context(false);
-        let (point_get_plan, point_update_plan, select_plan) = {
+        let (point_get_plan, dml_plan, select_plan) = {
             let catalog = self.lock_catalog()?;
             (
                 tidb_executor::build_prepared_point_get_plan(
@@ -113,7 +112,7 @@ impl Session {
                     self.current_database(),
                     &self.session_time_zone(),
                 ),
-                tidb_executor::build_prepared_point_update_plan(
+                tidb_executor::build_prepared_dml_plan(
                     &statement,
                     parameter_count,
                     &catalog,
@@ -132,7 +131,7 @@ impl Session {
             statement,
             parameter_count,
             point_get_plan,
-            point_update_plan,
+            dml_plan,
             select_plan,
         ))
     }
@@ -184,13 +183,13 @@ impl Session {
         plan.bind(values, &self.session_time_zone())
     }
 
-    /// Binds fresh values into Go's cached point-update plan after applying
-    /// the prepared-cache, binding, fix-control, database, and schema gates.
-    pub fn bind_cached_prepared_point_update(
+    /// Binds fresh values into a retained DML plan after applying the prepared
+    /// cache, binding, fix-control, database, and schema gates.
+    pub fn bind_cached_prepared_dml(
         &self,
-        plan: &Arc<PreparedPointUpdatePlan>,
+        plan: &Arc<PreparedDmlPlan>,
         values: &[Datum],
-    ) -> Option<PreparedPointUpdateExecution> {
+    ) -> Option<PreparedDmlExecution> {
         if !self.prepared_plan_cache_enabled()
             || !self.session_bindings.is_empty()
             || self
