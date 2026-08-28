@@ -1646,6 +1646,8 @@ mod tests_recursive_cte;
 mod tests_savepoint;
 mod tests_sequence;
 #[cfg(test)]
+mod tests_session_part2_source;
+#[cfg(test)]
 mod tests_session_var_hooks;
 mod tests_show;
 mod tests_show_admin;
