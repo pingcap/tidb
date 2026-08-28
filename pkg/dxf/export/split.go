@@ -75,7 +75,40 @@ func generateChunks(
 	for i := range chunks {
 		total += chunks[i].Size
 	}
-	return chunks, total, nil
+	return unbatchChunks(chunks), total, nil
+}
+
+// unbatchChunks expands every batched chunk back into one chunk per table,
+// each keeping the size batching apportioned to it.
+//
+// THIS BRANCH IS AN A/B CONTROL AND MUST NOT BE MERGED. It exists to measure
+// what the batched read path is worth on its own: split output, task size and
+// node count stay exactly as they are with batching, while Dump goes back to
+// one coprocessor request per table. Comparing it against the branch it was cut
+// from isolates the read path from the node-count change that batching's size
+// accounting also causes.
+func unbatchChunks(chunks []Chunk) []Chunk {
+	out := make([]Chunk, 0, len(chunks))
+	for _, c := range chunks {
+		if !c.batched() {
+			out = append(out, c)
+			continue
+		}
+		// c.Size is the region's share for these tables, so dividing by their
+		// count gives each table back the share it contributed.
+		size := c.Size / int64(len(c.Spans))
+		for _, span := range c.Spans {
+			out = append(out, Chunk{
+				TableIdx:   span.TableIdx,
+				PhysicalID: span.PhysicalID,
+				Start:      span.Start,
+				End:        span.End,
+				Size:       size,
+				Ordinal:    span.Ordinal,
+			})
+		}
+	}
+	return out
 }
 
 // splitTable carves one table into ~chunkSize key-ordered chunks, with a
