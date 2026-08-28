@@ -290,6 +290,18 @@ mod tests_duplicate_entry_message_source;
 mod tests_global_temp_table_source;
 #[cfg(test)]
 mod tests_index_join;
+#[cfg(test)]
+mod tests_jointest_join_source;
+#[cfg(test)]
+mod tests_loaddatatest_source;
+#[cfg(test)]
+mod tests_loadremotetest_source;
+#[cfg(test)]
+mod tests_memtest_source;
+#[cfg(test)]
+mod tests_oomtest_source;
+#[cfg(test)]
+mod tests_passwordtest_source;
 pub mod tiflash_recorder;
 pub mod topn;
 pub mod topn_chunk_heap;
