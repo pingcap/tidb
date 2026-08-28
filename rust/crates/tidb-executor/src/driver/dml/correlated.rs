@@ -149,7 +149,6 @@ pub(super) fn dml_table_scope(
     let statement = FromScope::for_statement(ctx);
     scope.constant_context = statement.constant_context;
     scope.zone = statement.zone;
-    scope.tidb_info_len = statement.tidb_info_len;
     scope.like_default_escape = statement.like_default_escape;
     scope.no_unsigned_subtraction = statement.no_unsigned_subtraction;
     scope.div_precision_increment = statement.div_precision_increment;

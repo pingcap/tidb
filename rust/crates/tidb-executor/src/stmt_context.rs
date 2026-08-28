@@ -294,8 +294,8 @@ pub struct StmtContext {
     date_modes: crate::zero_date::DateModes,
     current_db: Option<String>,
     version: Option<String>,
-    /// Immutable process identity returned by `TIDB_VERSION()`.
-    tidb_info: Option<String>,
+    /// Immutable process identity read by `TIDB_VERSION()`.
+    tidb_version_info: Option<Arc<tidb_util::versioninfo::VersionInfo>>,
     current_user: Option<String>,
     login_user: Option<String>,
     /// Go `SessionVars.GlobalVarsAccessor`, consulted by the expression
@@ -682,7 +682,7 @@ impl StmtContext {
             date_modes: crate::zero_date::DateModes::default(),
             current_db: None,
             version: None,
-            tidb_info: None,
+            tidb_version_info: None,
             current_user: None,
             current_role: None,
             login_user: None,
@@ -1496,11 +1496,11 @@ impl StmtContext {
         mut self,
         current_db: Option<String>,
         version: Option<String>,
-        tidb_info: Option<String>,
+        tidb_version_info: Option<Arc<tidb_util::versioninfo::VersionInfo>>,
     ) -> Self {
         self.current_db = current_db;
         self.version = version;
-        self.tidb_info = tidb_info;
+        self.tidb_version_info = tidb_version_info;
         self
     }
 
@@ -1515,14 +1515,14 @@ impl StmtContext {
     /// `TIDB_VERSION()`.
     #[must_use]
     pub fn tidb_info_len(&self) -> usize {
-        self.tidb_info.as_ref().map_or_else(
+        self.tidb_version_info.as_ref().map_or_else(
             || {
                 tidb_util::printer::get_tidb_info(
                     &tidb_util::versioninfo::VersionInfo::build_default(),
                 )
                 .len()
             },
-            String::len,
+            |info| tidb_util::printer::get_tidb_info(info).len(),
         )
     }
 
@@ -2306,9 +2306,14 @@ impl Columns for StmtContext {
     }
 
     fn tidb_info(&self) -> String {
-        self.tidb_info.clone().unwrap_or_else(|| {
-            tidb_util::printer::get_tidb_info(&tidb_util::versioninfo::VersionInfo::build_default())
-        })
+        self.tidb_version_info.as_ref().map_or_else(
+            || {
+                tidb_util::printer::get_tidb_info(
+                    &tidb_util::versioninfo::VersionInfo::build_default(),
+                )
+            },
+            |info| tidb_util::printer::get_tidb_info(info),
+        )
     }
 
     fn block_encryption_mode(&self) -> tidb_expr::BlockEncryptionMode {

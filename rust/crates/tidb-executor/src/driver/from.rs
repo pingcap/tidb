@@ -61,7 +61,6 @@ pub(crate) struct FromScope {
     /// this `FROM` already receives; the statement build points set it from
     /// `StmtContext::session_zone` and every derived scope clones it along.
     pub(crate) zone: tidb_expr::SessionTimeZone,
-    pub(crate) tidb_info_len: usize,
     pub(crate) like_default_escape: u8,
     pub(crate) no_unsigned_subtraction: bool,
     pub(crate) div_precision_increment: u32,
@@ -132,10 +131,6 @@ impl Default for FromScope {
             star: Vec::new(),
             qualified_star_is_output_only: false,
             zone: tidb_expr::SessionTimeZone::utc(),
-            tidb_info_len: tidb_util::printer::get_tidb_info(
-                &tidb_util::versioninfo::VersionInfo::build_default(),
-            )
-            .len(),
             like_default_escape: b'\\',
             no_unsigned_subtraction: false,
             div_precision_increment: 4,
@@ -148,7 +143,6 @@ impl FromScope {
         Self {
             constant_context: Some(ctx.clone()),
             zone: ctx.session_zone(),
-            tidb_info_len: ctx.tidb_info_len(),
             like_default_escape: ctx.like_default_escape(),
             no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
             div_precision_increment: ctx.div_precision_increment(),
@@ -273,7 +267,13 @@ impl ColumnResolver for ScopeResolver<'_> {
     }
 
     fn tidb_info_len(&self) -> usize {
-        self.scope.tidb_info_len
+        match &self.scope.constant_context {
+            Some(ctx) => ctx.tidb_info_len(),
+            None => tidb_util::printer::get_tidb_info(
+                &tidb_util::versioninfo::VersionInfo::build_default(),
+            )
+            .len(),
+        }
     }
 
     fn like_default_escape(&self) -> u8 {

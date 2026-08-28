@@ -268,6 +268,11 @@ both `oltp_read_only` and `oltp_read_write`.
   one typed `SessionTimeZone`, matching Go's typed `SessionVars.TimeZone`,
   instead of re-reading `time_zone`, resolving `SYSTEM`, and parsing a named
   zone at each statement-context construction.
+- [x] 2026-08-28: replaced the statement context's eagerly rendered
+  `TIDB_VERSION()` string with shared typed `VersionInfo`, and deleted the
+  planner `FromScope`'s eagerly computed identity-length field. Ordinary
+  statements no longer format the multi-line server identity; the builtin
+  formats it only when Go's expression build/evaluation boundaries require it.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -480,6 +485,22 @@ both `oltp_read_only` and `oltp_read_write`.
   `prepared_execution_reuses_the_typed_session_time_zone`, the timestamp
   time-zone regression, session/server checks, release build, and the
   alternating exact A/B receipt.
+
+- Observation: Rust formatted the complete `TIDB_VERSION()` identity while
+  building every statement context, then eagerly copied its rendered length
+  into every `FromScope`. Go keeps immutable process version fields and calls
+  `printer.GetTiDBInfo()` only from the `TIDB_VERSION()` function's build and
+  evaluation paths. Rust now shares typed `VersionInfo` through the context,
+  and its resolver asks for the rendered length only if that builtin is
+  present. Exact one-cluster A/B medians against `c7d68b9eab` were 501.40
+  versus 498.92 TPS for stock read-only, with Go at 470.74 TPS. Read-write
+  medians were 240.62, 219.57, and 210.91 TPS but remained highly variable;
+  every benchmark leg reported zero SQL errors.
+  Evidence: fail-before/pass-after
+  `statement_context_reuses_the_typed_tidb_identity`, the shared-identity
+  mutation test, both `TIDB_VERSION()` result/metadata regressions,
+  executor/session/server checks, release build, and the alternating exact
+  A/B receipt.
 
 - Observation: Rust also retained one successful publication receipt per
   snapshot point/batch/scan read. Go's `KVSnapshot` retains lock-resolution,

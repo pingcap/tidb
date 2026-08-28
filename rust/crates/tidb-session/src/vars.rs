@@ -720,7 +720,7 @@ pub struct SessionVars {
     /// the same underlying map.
     globals: Arc<GlobalSysvars>,
     /// Immutable server identity captured when this connection opened.
-    version_info: VersionInfo,
+    version_info: Arc<VersionInfo>,
 }
 
 impl SessionVars {
@@ -862,13 +862,13 @@ impl SessionVars {
 
     /// Installs the immutable build identity supplied by the server startup.
     pub fn set_version_info(&mut self, version_info: VersionInfo) {
-        self.version_info = version_info;
+        self.version_info = Arc::new(version_info);
     }
 
-    /// The immutable build/config identity returned by `TIDB_VERSION()`.
+    /// The immutable build/config identity read by `TIDB_VERSION()`.
     #[must_use]
-    pub(crate) fn tidb_info(&self) -> String {
-        tidb_util::printer::get_tidb_info(&self.version_info)
+    pub(crate) fn version_info(&self) -> Arc<VersionInfo> {
+        Arc::clone(&self.version_info)
     }
 
     /// A snapshot of the session overrides `name` (and its alias) currently
@@ -1096,6 +1096,22 @@ impl SessionVars {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn version_identity_is_shared_until_it_changes() {
+        let mut vars = SessionVars::new();
+        let first = vars.version_info();
+        let second = vars.version_info();
+        assert!(Arc::ptr_eq(&first, &second));
+
+        let info = VersionInfo::build_default().with_configured_edition("Starter");
+        let expected = info.clone();
+        vars.set_version_info(info);
+        let changed = vars.version_info();
+
+        assert!(!Arc::ptr_eq(&first, &changed));
+        assert_eq!(*changed, expected);
+    }
 
     #[test]
     fn defaults_come_from_the_registry() {

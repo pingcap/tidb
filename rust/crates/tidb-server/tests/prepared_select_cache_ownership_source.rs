@@ -98,3 +98,18 @@ fn prepared_execution_reuses_the_typed_session_time_zone() {
     assert!(!accessor.contains("get_system(\"time_zone\")"));
     assert!(!accessor.contains("system_location()"));
 }
+
+#[test]
+fn statement_context_reuses_the_typed_tidb_identity() {
+    let vars = include_str!("../../tidb-session/src/vars.rs");
+    let context = include_str!("../../tidb-executor/src/stmt_context.rs");
+    let session = include_str!("../../tidb-session/src/stmt_ctx.rs");
+    let scope = include_str!("../../tidb-executor/src/driver/from.rs");
+
+    assert!(vars.contains("version_info: Arc<VersionInfo>"));
+    assert!(context.contains("tidb_version_info: Option<Arc<tidb_util::versioninfo::VersionInfo>>"));
+    assert!(session.contains("Some(self.vars.version_info())"));
+    assert!(!session.contains("self.vars.tidb_info()"));
+    assert!(!scope.contains("pub(crate) tidb_info_len: usize"));
+    assert!(scope.contains("Some(ctx) => ctx.tidb_info_len()"));
+}
