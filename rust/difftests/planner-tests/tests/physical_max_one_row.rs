@@ -12,26 +12,50 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Dependency-closed vectors for PhysicalMaxOneRow's planning contract.
+//! Vectors for the wired PhysicalMaxOneRow planning contract.
 //!
 //! The Go anchor is `TestMaxOneRow` at
 //! `pkg/executor/test/executor/executor_test.go:2157`; it proves the
 //! user-visible subquery error that motivates this physical operator.
 
-use tidb_planner::physical_max_one_row::{CteProducerStatus, PhysicalMaxOneRowPlan};
+use tidb_planner::logical::{BaseLogicalPlan, LogicalMaxOneRow};
+use tidb_planner::physical::{exhaust_physical_plans_4_logical_max_one_row, PhysicalPlan};
+use tidb_planner::physical_property::{CteProducerStatus, PhysicalProperty, SortItem, TaskType};
+use tidb_planner::plan_base::PlanIdAllocator;
 
 #[test]
 fn unsupported_sort_or_flash_requirements_do_not_emit_a_plan() {
-    let status = CteProducerStatus::new(1);
-    assert!(PhysicalMaxOneRowPlan::exhaust(false, false, status, false).is_none());
-    assert!(PhysicalMaxOneRowPlan::exhaust(true, true, status, false).is_none());
+    let allocator = PlanIdAllocator::new();
+    let logical =
+        LogicalMaxOneRow::new(BaseLogicalPlan::new(&allocator, LogicalMaxOneRow::TYPE, 0));
+    let sorted = PhysicalProperty {
+        sort_items: vec![SortItem::new(1, false)],
+        ..PhysicalProperty::default()
+    };
+    assert!(exhaust_physical_plans_4_logical_max_one_row(&logical, &sorted, &allocator).is_empty());
+    let mpp = PhysicalProperty {
+        task_tp: TaskType::Mpp,
+        ..PhysicalProperty::default()
+    };
+    assert!(exhaust_physical_plans_4_logical_max_one_row(&logical, &mpp, &allocator).is_empty());
 }
 
 #[test]
 fn supported_plan_requests_two_rows_and_forwards_property_fields() {
-    let status = CteProducerStatus::new(42);
-    let plan = PhysicalMaxOneRowPlan::exhaust(true, false, status, true).unwrap();
-    assert_eq!(plan.expected_cnt(), 2);
-    assert_eq!(plan.cte_producer_status().value(), 42);
-    assert!(plan.no_cop_push_down());
+    let allocator = PlanIdAllocator::new();
+    let logical =
+        LogicalMaxOneRow::new(BaseLogicalPlan::new(&allocator, LogicalMaxOneRow::TYPE, 0));
+    let required = PhysicalProperty {
+        cte_producer_status: CteProducerStatus::AllCteCanMpp,
+        no_cop_push_down: true,
+        ..PhysicalProperty::default()
+    };
+    let plans = exhaust_physical_plans_4_logical_max_one_row(&logical, &required, &allocator);
+    let PhysicalPlan::MaxOneRow(plan) = &plans[0] else {
+        panic!("a wired PhysicalMaxOneRow, got {:?}", plans[0]);
+    };
+    let child = plan.base.child_req_prop(0).expect("child property");
+    assert_eq!(child.expected_cnt, 2.0);
+    assert_eq!(child.cte_producer_status, CteProducerStatus::AllCteCanMpp);
+    assert!(child.no_cop_push_down);
 }

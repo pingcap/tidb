@@ -428,6 +428,13 @@ both `oltp_read_only` and `oltp_read_write`.
   StreamAgg. The fail-before regression observed MaxOneRow discard both the
   CTE status and root-only aggregation requirement; after the fix HashAgg and
   ordinary StreamAgg enumerate only root candidates under that property.
+- [x] 2026-08-28: migrated the CTE-table, Lock, Show, MaxOneRow, and UnionAll
+  difftests to the wired physical tree and deleted their five standalone
+  metadata facades. The migration removed two false claims: Go's Lock codec
+  type is `SelectLock`, not `Lock`, and this TiFlash-less Rust tier does not
+  implement the facade's MPP UnionAll candidates. It also exposed and fixed
+  the wired TableDual/CTETable/Show leaves accepting an index-join runtime
+  property that Go rejects before plan creation.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
@@ -546,6 +553,17 @@ both `oltp_read_only` and `oltp_read_write`.
   Go's `physical_{hash_agg,stream_agg,max_one_row,limit,topn,union_all}.go`,
   `physical_merge_join.go`, and the Rust fail-before/pass-after
   `max_one_row_and_hash_agg_preserve_the_no_cop_requirement` regression.
+
+- Observation: standalone metadata facades can disagree with both Go and the
+  wired Rust planner while their self-only tests remain green. The removed
+  Lock facade called its plan type `Lock` although Go's `plancodec.TypeLock`
+  value is `SelectLock`; the removed UnionAll facade claimed an MPP candidate
+  even though the active Rust planner deliberately has no TiFlash tier.
+  Migrating difftests to real `PhysicalPlan` construction makes such gaps
+  visible instead of preserving them as apparent coverage.
+  Evidence: `pkg/util/plancodec/id.go`,
+  `pkg/planner/core/operator/physicalop/physical_{lock,union_all}.go`, and the
+  wired planner/difftest regressions.
 
 - Observation: Rust's previous `parallelism > 1` sort path drained the entire
   child into one partition and only distributed chunks after EOF. It could

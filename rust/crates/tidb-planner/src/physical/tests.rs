@@ -744,6 +744,54 @@ fn a_show_and_its_ddl_jobs_twin_are_born_in_root_tasks() {
 }
 
 #[test]
+fn root_leaf_tasks_reject_an_index_join_runtime_property() {
+    use crate::logical::{
+        BaseLogicalPlan, LogicalCTETable, LogicalShow, LogicalShowDDLJobs, LogicalTableDual,
+        ShowContents,
+    };
+    use crate::physical_property::IndexJoinRuntimeProp;
+
+    let allocator = PlanIdAllocator::new();
+    let prop = PhysicalProperty {
+        index_join_prop: Some(IndexJoinRuntimeProp {
+            other_conditions: Vec::new(),
+            outer_join_keys: Vec::new(),
+            inner_join_keys: Vec::new(),
+            avg_inner_row_count: 1.0,
+            table_range_scan: true,
+        }),
+        ..PhysicalProperty::default()
+    };
+
+    let dual = LogicalTableDual::new(
+        BaseLogicalPlan::new(&allocator, LogicalTableDual::TYPE, 0),
+        1,
+    );
+    assert!(find_best_task_4_logical_table_dual(&dual, &prop, &allocator).invalid());
+
+    let cte = LogicalCTETable {
+        base: BaseLogicalPlan::new(&allocator, LogicalCTETable::TYPE, 0),
+        seed_stat: None,
+        name: "cte0".to_owned(),
+        id_for_storage: 1,
+        seed_schema: None,
+    };
+    assert!(find_best_task_4_logical_cte_table(&cte, &prop, &allocator).invalid());
+
+    let show = LogicalShow::new(
+        BaseLogicalPlan::new(&allocator, LogicalShow::TYPE, 0),
+        ShowContents::default(),
+    );
+    assert!(find_best_task_4_logical_show(&show, &prop, &allocator).invalid());
+
+    let jobs = LogicalShowDDLJobs::new(
+        BaseLogicalPlan::new(&allocator, LogicalShowDDLJobs::TYPE, 0),
+        10,
+    );
+    assert!(find_best_task_4_logical_show_ddl_jobs(&jobs, &prop, &allocator).invalid());
+}
+
+#[test]
 fn a_selection_enumerates_one_root_candidate_with_scaled_stats() {
     // `ExhaustPhysicalPlans4LogicalSelection` (`physical_selection.go:54`):
     // one root-side candidate; stats scale to the parent's expected count

@@ -701,15 +701,10 @@ impl PhysicalTableDual {
 /// any order vacuously. The built plan carries the logical dual's stats,
 /// query-block offset, schema, and output names.
 ///
-/// # Narrowings
-///
-/// * `prop.IndexJoinProp != nil` returns the invalid task in Go ("even
-///   enforce hint can not work with this"); the index-join runtime property
-///   is unported ([`crate::task`] module header names it), so this port's
-///   property never carries one and the arm has no input to fire on.
-/// * `base.GetGEAndLogicalOp` is cascades-enumeration plumbing for reading
-///   the operator out of a group expression; the operator arrives here
-///   directly.
+/// `prop.IndexJoinProp != nil` returns the invalid task in Go ("even enforce
+/// hint can not work with this"), as it does here. `base.GetGEAndLogicalOp`
+/// is cascades-enumeration plumbing for reading the operator out of a group
+/// expression; the operator arrives here directly.
 ///
 /// `findBestTask4LogicalMockDatasource` (same file) is NOT ported:
 /// `logicalop.MockDataSource` is benchmark scaffolding this crate's logical
@@ -720,7 +715,7 @@ pub fn find_best_task_4_logical_table_dual(
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Task {
-    if !prop.is_sort_item_empty() && p.row_count > 1 {
+    if prop.index_join_prop.is_some() || (!prop.is_sort_item_empty() && p.row_count > 1) {
         return Task::invalid_task();
     }
     let mut base = BasePhysicalPlan::new(
@@ -836,15 +831,15 @@ impl PhysicalCTETable {
 /// the invalid task. The built plan carries the logical table's stats,
 /// schema, and `IDForStorage`, at Go's fixed query-block offset 0.
 ///
-/// The `prop.IndexJoinProp != nil` arm and `base.GetGEAndLogicalOp` narrow
-/// exactly as [`find_best_task_4_logical_table_dual`]'s do.
+/// The `prop.IndexJoinProp != nil` arm rejects before the required-order gate,
+/// exactly as [`find_best_task_4_logical_table_dual`] does.
 #[must_use]
 pub fn find_best_task_4_logical_cte_table(
     p: &crate::logical::LogicalCTETable,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Task {
-    if !prop.is_sort_item_empty() {
+    if prop.index_join_prop.is_some() || !prop.is_sort_item_empty() {
         return Task::invalid_task();
     }
     let mut base = BasePhysicalPlan::new(allocator, crate::logical::LogicalCTETable::TYPE, 0);
@@ -892,15 +887,15 @@ pub struct PhysicalShowDDLJobs {
 /// invalid task, and the built plan carries the logical show's contents,
 /// extractor and schema over Go's fixed one-row pseudo stats.
 ///
-/// The `prop.IndexJoinProp != nil` arm and `base.GetGEAndLogicalOp` narrow
-/// exactly as [`find_best_task_4_logical_table_dual`]'s do.
+/// The `prop.IndexJoinProp != nil` arm rejects before the required-order gate,
+/// exactly as [`find_best_task_4_logical_table_dual`] does.
 #[must_use]
 pub fn find_best_task_4_logical_show(
     p: &crate::logical::LogicalShow,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Task {
-    if !prop.is_sort_item_empty() {
+    if prop.index_join_prop.is_some() || !prop.is_sort_item_empty() {
         return Task::invalid_task();
     }
     let mut base = BasePhysicalPlan::new(allocator, crate::logical::LogicalShow::TYPE, 0);
@@ -925,7 +920,7 @@ pub fn find_best_task_4_logical_show_ddl_jobs(
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Task {
-    if !prop.is_sort_item_empty() {
+    if prop.index_join_prop.is_some() || !prop.is_sort_item_empty() {
         return Task::invalid_task();
     }
     let mut base = BasePhysicalPlan::new(allocator, crate::logical::LogicalShowDDLJobs::TYPE, 0);
