@@ -117,19 +117,10 @@ pub trait ClusterTransactions: Send + Sync {
         resource_group: &str,
     ) -> Result<Box<dyn ClusterSnapshot>, String>;
 
-    /// Opens one reusable read-only transaction at `u64::MAX` for the
-    /// connection's repeated clustered-common-handle point gets.  Unlike the
-    /// per-statement snapshot, this keeps the transaction worker alive across
-    /// statements; reads at the max marker still resolve the latest committed
-    /// value on every request, while avoiding an open/finish handshake for
-    /// every YCSB point read.
-    fn begin_max_ts(&self, resource_group: &str)
-        -> Result<Box<dyn OpenClusterTransaction>, String>;
-
     /// Opens the writable transaction owned by one autocommit UPDATE/DELETE.
     ///
     /// The statement reads and publishes through this same transaction.  The
-    /// open is started before DML planning so its timestamp/worker setup can
+    /// open is started before DML planning so its timestamp setup can
     /// overlap the CPU work, while the transaction itself remains statement
     /// owned and is handed back to the session at the statement boundary.
     fn begin_autocommit_write(
@@ -861,18 +852,6 @@ where
         )))
     }
 
-    fn begin_max_ts(
-        &self,
-        resource_group: &str,
-    ) -> Result<Box<dyn OpenClusterTransaction>, String> {
-        SessionTransaction::begin_read_only_at_max_ts(
-            self.opener_for_resource_group(resource_group),
-            self.timeout,
-        )
-        .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
-        .map_err(|error| error.to_string())
-    }
-
     fn begin_autocommit_write(
         &self,
         resource_group: &str,
@@ -1101,13 +1080,6 @@ mod tests {
         fn begin(
             &self,
             _pessimistic: bool,
-            _resource_group: &str,
-        ) -> Result<Box<dyn OpenClusterTransaction>, String> {
-            panic!("unused in batch-get forwarding test")
-        }
-
-        fn begin_max_ts(
-            &self,
             _resource_group: &str,
         ) -> Result<Box<dyn OpenClusterTransaction>, String> {
             panic!("unused in batch-get forwarding test")

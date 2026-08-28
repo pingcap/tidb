@@ -961,7 +961,7 @@ impl ClusterServerSession {
             // line 614) so the executor's one read costs no separate get. This
             // is that fold's session half: lock the classified keys BEFORE any
             // read exists, and the statement's row read is served from the
-            // lock response through the transaction worker's value cache.
+            // lock response through the transaction's value cache.
             // Every round re-attempts until the lock stands: a fair-locking
             // conflict keeps its locks (the next attempt here is answered
             // without an RPC by the worker's held-key filter), while a rolled-
@@ -1050,8 +1050,8 @@ impl ClusterServerSession {
                 {
                     // Go's clustered-handle point-get optimisation reads
                     // directly at MaxTS. Keep this on the connection worker:
-                    // opening a reusable transaction would add a channel hop
-                    // and a pinned worker to every point read.
+                    // opening a reusable transaction would add unnecessary
+                    // transaction state to every point read.
                     self.transactions
                         .open_max_ts_snapshot(resource_group)
                         .map_err(SqlQueryError::unknown)?
@@ -1234,8 +1234,8 @@ impl ClusterServerSession {
                 Err(transactions::sql_error(error))
             }
             LockKeysOutcome::TransactionError(error) => {
-                // The transaction worker has ended itself; later statements
-                // and `ROLLBACK` report the dead thread on their own.
+                // The transaction is no longer usable; later statements and
+                // `ROLLBACK` report that state on their own.
                 self.buffer.restore(savepoint.clone());
                 Err(transactions::sql_error(error))
             }

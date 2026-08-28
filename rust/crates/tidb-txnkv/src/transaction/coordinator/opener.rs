@@ -249,9 +249,9 @@ where
     /// a commit landing between the read and a fresh write timestamp is not a
     /// conflict TiKV can see and the stale value overwrites it with no error.
     ///
-    /// `u64::MAX` is refused. It is not a timestamp — it is
-    /// [`Self::begin_read_only_at_max_ts`]'s marker for "the latest committed
-    /// version", correct only for a read that never writes. Refusing it here is
+    /// `u64::MAX` is refused. It is not a timestamp — it is the direct MaxTS
+    /// snapshot reader's marker for "the latest committed version", correct
+    /// only for a read that never writes. Refusing it here is
     /// what makes "a max-ts read must not publish" a property of the only
     /// function that can turn a read timestamp into a write one, rather than a
     /// comment somewhere upstream.
@@ -324,37 +324,12 @@ where
         self.open_at(Some(start_ts), 0, 0)
     }
 
-    /// Opens a read-only transaction at `u64::MAX` — the latest committed
-    /// version — without asking PD for a timestamp at all.
-    ///
-    /// This is Go's `forcePrepareConstStartTS(math.MaxUint64)`
-    /// (`pkg/sessiontxn/isolation/optimistic.go`), and it carries Go's whole
-    /// soundness condition with it: reading at `MaxUint64` ignores snapshot
-    /// isolation, so it is correct ONLY for a statement that reads exactly one
-    /// row once and has no second read to stay consistent with. Nothing here
-    /// can check that; the caller that DECLARES the shape owns it. This method
-    /// is deliberately not `begin_read_only`'s default and takes no `start_ts`
-    /// argument, so the only timestamp it can produce is the one Go names.
-    ///
-    /// Confirmed against a real cluster: TiKV honours `MaxUint64` as "read the
-    /// latest committed value", and a row committed between two such reads
-    /// becomes visible to the second.
-    pub fn begin_read_only_at_max_ts(
-        &self,
-    ) -> Result<
-        RealOptimisticTransaction<C, L, crate::pd_capability::CapabilityTimestampSource<P>>,
-        OptimisticCoordinatorError,
-    > {
-        self.open_at(Some(u64::MAX), 0, 0)
-    }
-
     /// Reads one point key at `u64::MAX` without activating a transaction.
     ///
     /// Go's optimistic provider returns `math.MaxUint64` directly for this
     /// plan shape; it does not call `Txn()`. Keep that distinction here too:
-    /// open a thread-local read runtime and run the snapshot RPC directly,
-    /// rather than handing the read to the pinned transaction worker used by
-    /// ordinary statements. The snapshot reader still owns the normal region
+    /// open a thread-local read runtime and run the snapshot RPC directly.
+    /// The snapshot reader still owns the normal region
     /// recovery, lock resolution, GC visibility, and call-deadline checks.
     pub fn snapshot_get_at_max_ts(
         &self,

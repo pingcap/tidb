@@ -34,7 +34,7 @@
 //! DECLARED its whole read is one point get on the clustered handle uses
 //! [`MaxTsSnapshot`] instead, at `u64::MAX`, which is Go's
 //! `AdviseOptimizeWithPlan` shortcut. That reader runs directly on the
-//! connection worker and never opens a pinned transaction worker; the
+//! connection worker and constructs no reusable transaction state; the
 //! declaration is a statement-level fact and never inferred from a read,
 //! because at this seam an `UPDATE`'s read-before-write is the same `get` on
 //! the same key.
@@ -914,25 +914,6 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
                 "the transaction is already finished".to_owned(),
             )),
         }
-    }
-
-    /// Opens a reusable read-only transaction at `u64::MAX`, the latest
-    /// committed marker used by Go for autocommit clustered-common-handle
-    /// point gets.  The transaction has no write budget and is therefore only
-    /// suitable for the connection-local point-read cache; it is deliberately
-    /// separate from [`Self::begin`] so a caller cannot accidentally publish
-    /// through it.
-    pub fn begin_read_only_at_max_ts(
-        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
-        timeout: Duration,
-    ) -> Result<Self, OptimisticCoordinatorError> {
-        let transaction = opener.begin_read_only_at(u64::MAX)?;
-        Ok(Self {
-            state: Arc::new(Mutex::new(SessionTransactionState::Optimistic(transaction))),
-            start_ts: u64::MAX,
-            timeout,
-            pessimistic: false,
-        })
     }
 
     /// The one timestamp every statement of this transaction reads at.

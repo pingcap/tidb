@@ -357,19 +357,6 @@ impl ClusterTransactions for MockTransactions {
         }))
     }
 
-    fn begin_max_ts(
-        &self,
-        resource_group: &str,
-    ) -> Result<Box<dyn OpenClusterTransaction>, String> {
-        self.0.record_resource_group(resource_group);
-        Ok(Box::new(MockSessionTransaction {
-            start_ts: u64::MAX,
-            data: self.0.snapshot(),
-            cluster: Arc::clone(&self.0),
-            max_ts: true,
-        }))
-    }
-
     fn begin_autocommit_write(
         &self,
         resource_group: &str,

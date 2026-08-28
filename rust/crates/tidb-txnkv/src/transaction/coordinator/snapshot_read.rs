@@ -238,8 +238,8 @@ where
 ///
 /// The bounded single-row path uses this alongside [`direct_snapshot_get`].
 /// It keeps the same region retry, lock resolution, and post-page GC checks as
-/// an ordinary transaction scan, while avoiding a PD timestamp and a pinned
-/// transaction worker for each YCSB E operation.
+/// an ordinary transaction scan, while avoiding a PD timestamp and transaction
+/// construction for each YCSB E operation.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn direct_snapshot_scan<C, L, T>(
     runtime: &SharedReadRuntime<C, L>,

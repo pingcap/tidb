@@ -191,6 +191,10 @@ both `oltp_read_only` and `oltp_read_write`.
   asynchronous callback completion to Go's synchronous `SendRequest`
   response-channel completion. Multi-region batches still overlap because
   their independently published pending requests are collected afterward.
+- [x] 2026-08-27: deleted the unused reusable-MaxTS transaction alternative.
+  Production already follows Go's statement-declared direct MaxTS snapshot;
+  the dead trait seam, real/mock implementations, and lower transaction
+  constructors had no callers and retained obsolete worker-era ownership.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
