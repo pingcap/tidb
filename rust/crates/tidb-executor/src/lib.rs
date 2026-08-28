@@ -297,6 +297,8 @@ mod tests_loaddatatest_source;
 #[cfg(test)]
 mod tests_loadremotetest_source;
 #[cfg(test)]
+mod tests_loadremotetest_one_csv_source;
+#[cfg(test)]
 mod tests_memtest_source;
 #[cfg(test)]
 mod tests_oomtest_source;
