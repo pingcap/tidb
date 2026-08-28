@@ -1202,6 +1202,34 @@ impl Session {
         self.run_with_columns_internal(&bound, true)
     }
 
+    /// Plans a bound prepared query for its result metadata without opening
+    /// or draining a storage reader. Go's `PrepareExec` builds the
+    /// `PlanCacheStmt` and takes its schema from the plan; it does not execute
+    /// the query with NULL marker values merely to discover the columns.
+    /// Keeping this operation separate from statement execution
+    /// prevents a large range such as sysbench's `BETWEEN ? AND ?` from
+    /// scanning its table during `COM_STMT_PREPARE`.
+    pub fn plan_bound_prepared_columns(
+        &mut self,
+        statement: Stmt,
+    ) -> Result<Vec<(String, FieldType)>, DriverError> {
+        let Stmt::Query(query) = statement else {
+            return Err(DriverError::unsupported(
+                "prepared metadata requires a query statement",
+            ));
+        };
+        let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+            return Err(DriverError::unsupported(
+                "prepared metadata for set operations is not supported here",
+            ));
+        };
+        let current_db = self.current_db.clone();
+        let ctx = self.statement_context(false);
+        self.with_catalog_mut(|catalog| {
+            tidb_executor::plan_select_meta_stmt(&select, catalog, &current_db, &ctx)
+        })
+    }
+
     /// Runs an owned bound statement while reusing the prepared SQL text.
     /// Binary-protocol callers already have both values, so restoring the AST
     /// merely to obtain text would add work to every execute.

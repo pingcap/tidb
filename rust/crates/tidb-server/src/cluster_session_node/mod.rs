@@ -2096,36 +2096,23 @@ impl QuerySession for ClusterServerSession {
                 template,
             ));
         }
-        // Go reports a query's result columns at PREPARE time, which it gets
-        // by planning the statement with every marker bound to NULL. Planning
-        // reads the catalog and may read rows, so it takes a snapshot like any
-        // other statement.
-        let resource_group = self.session.statement_resource_group(&template).to_owned();
-        // The PREPARE probe runs the statement with every marker NULL, which
-        // is not the statement the client will execute; it declares nothing,
-        // and -- see `probe_statement` -- it opens no transaction either.
+        // Go reports a query's result columns at PREPARE time from the
+        // prepared plan schema. It does not execute the query with every
+        // marker bound to NULL; doing so can make a large range scan during
+        // COM_STMT_PREPARE (and can pin a transaction under autocommit=0).
+        // The bound AST carries NULL markers solely for type inference. The
+        // plan-only path does not open or drain an executor.
         let probe: Vec<tidb_datatype::Datum> =
             std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
-        let mut bound_probe = Some(prepared_ast.bind(&probe).map_err(map_error)?);
-        let result_columns =
-            self.probe_statement(StatementReadShape::Unknown, &resource_group, |session| {
-                let bound = match bound_probe.take() {
-                    Some(bound) => bound,
-                    None => prepared_ast.bind(&probe).map_err(map_error)?,
-                };
-                match session.run_parsed_bound_owned_with_sql(bound, sql) {
-                    Ok(StmtOutput::Rows { columns, .. }) => {
-                        Ok(crate::pipeline_session::select_columns(&columns))
-                    }
-                    Err(error @ tidb_executor::DriverError::Var(_)) => Err(map_error(error)),
-                    // A query whose metadata cannot be resolved without real
-                    // values reports none at prepare time -- which a client
-                    // frames its EXECUTE against, so it is the shape that
-                    // answers `2014 Commands out of sync` rather than a harmless
-                    // omission. See `crate::pipeline_session::prepare_general`.
-                    _ => Ok(Vec::new()),
-                }
-            })?;
+        let bound_probe = prepared_ast.bind(&probe).map_err(map_error)?;
+        let result_columns = match self.session.plan_bound_prepared_columns(bound_probe) {
+            Ok(columns) => crate::pipeline_session::select_columns(&columns),
+            Err(error @ tidb_executor::DriverError::Var(_)) => return Err(map_error(error)),
+            // A query whose metadata cannot be resolved without real values
+            // reports none at prepare time, matching the existing wire
+            // fallback. Such shapes remain on the ordinary execute path.
+            Err(_) => Vec::new(),
+        };
         Ok(PreparedGeneral::with_template_and_point_get_plan(
             sql.to_owned(),
             parameter_count,

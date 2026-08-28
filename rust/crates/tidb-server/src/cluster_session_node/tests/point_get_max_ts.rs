@@ -243,6 +243,31 @@ fn a_prepared_range_executes_the_general_cached_plan() {
     assert_eq!(node.live.load(Ordering::Acquire), 0);
 }
 
+/// Go's `PrepareExec` takes result columns from the plan schema and does not
+/// execute the prepared query with NULL marker values. In particular, a
+/// range over a large table must not open a snapshot or scan rows during
+/// `COM_STMT_PREPARE` (`pkg/executor/prepared.go`, `PrepareExec.Next`).
+#[test]
+fn preparing_a_range_only_plans_metadata() {
+    let (mut session, node) = open_session();
+    seed(&mut session);
+
+    let opens = opens_of(&node, || {
+        let statement = session
+            .prepare_general("SELECT v FROM t WHERE id BETWEEN ? AND ? ORDER BY id")
+            .expect("prepare");
+        assert_eq!(statement.result_columns().len(), 1);
+    });
+    assert_eq!(
+        opens,
+        Opens {
+            timestamped: 0,
+            max_ts: 0,
+        }
+    );
+    assert_eq!(node.live.load(Ordering::Acquire), 0);
+}
+
 /// The benchmark's aggregate root is not eligible for MaxTS. Go nevertheless
 /// starts its ordinary TSO future after planning and waits for that same future
 /// at the PointGet below StreamAgg.
