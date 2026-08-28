@@ -306,6 +306,8 @@ mod tests_memtest_source;
 mod tests_oomtest_source;
 #[cfg(test)]
 mod tests_passwordtest_source;
+#[cfg(test)]
+mod tests_executor_part19_source;
 pub mod tiflash_recorder;
 pub mod topn;
 pub mod topn_chunk_heap;
