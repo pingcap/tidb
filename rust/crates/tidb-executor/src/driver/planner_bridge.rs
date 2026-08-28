@@ -353,14 +353,14 @@ fn scan_access(plan: &PhysicalPlan, reader: AccessReader) -> Option<AccessDecisi
             path: get.index_id.map_or_else(
                 || AccessPath::Table {
                     ranges: get.ranges.clone(),
-                    keep_order: false,
-                    desc: false,
+                    keep_order: get.keep_order,
+                    desc: get.desc,
                 },
                 |index_id| AccessPath::Index {
                     index_id,
                     ranges: get.ranges.clone(),
-                    keep_order: false,
-                    desc: false,
+                    keep_order: get.keep_order,
+                    desc: get.desc,
                 },
             ),
             reader,
@@ -1506,10 +1506,37 @@ pub(crate) fn aggregation_eliminated(
 #[cfg(test)]
 mod tests {
     use super::{
-        cached_select_plan, outer_aggregation, planner_optimized_select, select_decision,
-        AggregationFamily,
+        cached_select_plan, outer_aggregation, planner_optimized_select, scan_access,
+        select_decision, AccessPath, AccessReader, AggregationFamily,
     };
     use crate::Catalog;
+
+    #[test]
+    fn batch_point_receipt_retains_physical_order() {
+        let plan = tidb_planner::physical::PhysicalPlan::BatchPointGet(
+            tidb_planner::physical::PhysicalBatchPointGet {
+                base: tidb_planner::physical::BasePhysicalPlan::with_id(1, "BatchPointGet", 0),
+                table_id: 42,
+                index_id: Some(7),
+                ranges: Vec::new(),
+                range_rebuild: None,
+                keep_order: true,
+                desc: true,
+            },
+        );
+        let receipt = scan_access(&plan, AccessReader::BatchPoint)
+            .expect("batch point get produces an access receipt");
+        assert!(receipt.keep_order());
+        assert!(matches!(
+            receipt.path,
+            AccessPath::Index {
+                index_id: 7,
+                keep_order: true,
+                desc: true,
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn global_sum_family_comes_from_the_shared_cost_search() {

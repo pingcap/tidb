@@ -340,6 +340,11 @@ both `oltp_read_only` and `oltp_read_write`.
   index BatchGet. The matcher now issues one index batch read and hands the
   deduplicated handles to the existing record batch read, matching Go's two
   batched request boundaries instead of performing N index Gets.
+- [x] 2026-08-28: preserved retained `PhysicalBatchPointGet` ordering metadata
+  in the compatibility access receipt. The focused regression first failed
+  because the bridge overwrote both `KeepOrder` and `Desc` with `false`; it
+  now passes for a retained descending unique-index batch point plan without
+  inventing executor-local ordering policy.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
