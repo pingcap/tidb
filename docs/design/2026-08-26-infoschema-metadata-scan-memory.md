@@ -36,7 +36,7 @@ connection pools and gRPC buffer policy.
 - [x] (2026-08-28) Bounded the query-lifetime column type cache to 128 entries and charged its structural and retained string memory to the statement tracker.
 - [x] (2026-08-28) Made the API v2 adapter decode caller-owned Scan pairs in place and refresh the InfoSchema snapshot keepalive on every iterator advance and reopen.
 - [x] (2026-08-28) Refreshed the client-go dependency and Bazel metadata and reran the TiDB Ready profile, including focused SQL tests and `make lint`.
-- [ ] (2026-08-28) Commit and push the TiDB review fixes and update both Draft PRs with the findings and validation evidence.
+- [x] (2026-08-28) Committed and pushed the TiDB review fixes and updated both Draft PRs with the findings and validation evidence.
 
 ## Surprises & Discoveries
 
