@@ -78,6 +78,15 @@ both `oltp_read_only` and `oltp_read_write`.
   `EXPLAIN FORMAT='brief'` oracles. The nonclustered-primary forced merge
   lowers Go's two Sort enforcers; the TPCC grouped query follows Go's
   HashAgg/IndexHashJoin shape rather than its old Rust-only StreamAgg test.
+- [x] 2026-08-27: removed the retired read-tier observability implementation:
+  unconditional per-query JSON stderr events, environment-controlled hot-path
+  tracing, duplicated physical-plan evidence, transport publication observers,
+  and the `Rc<RefCell>` transport-evidence graph. Request DAGs, ranges, retry,
+  cancellation, and response ownership remain the authoritative production
+  state.
+- [x] 2026-08-27: removed configured TopN/LIMIT completion-evidence APIs and
+  their diagnostic per-row counters. Behavioral tests now assert bounded heap
+  size, stable result order, exact upstream pulls, and once-only close directly.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -151,6 +160,24 @@ both `oltp_read_only` and `oltp_read_write`.
   Evidence: `sort::tests::parallel_sort_workers_share_input_and_heap_merge_their_runs`
   and `parallel_sort_spills_worker_rounds_and_final_batches`.
 
+- Observation: the bounded real-TiKV proof tier accumulated a second copy of
+  query state for observability: every request cloned plan shape/ranges into
+  `RealTiKvQueryPlanEvidence`, and direct coprocessor dispatch maintained an
+  `Rc<RefCell>` observer graph plus region-publication vectors even though the
+  production consumer had been retired. This was Rust-only work and could
+  execute once per physical request.
+  Evidence: removed owners in `tidb-exec/src/real_tikv_read.rs` and
+  `tidb-distsql/src/cop_paging/direct_unary_query_transport.rs`; the request
+  envelope, encoded DAG, request ranges, and scripted client boundaries remain
+  covered by focused tests.
+
+- Observation: configured TopN and LIMIT updated counters solely to expose
+  immutable completion evidence to tests. The counters did not drive ordering,
+  admission, LIMIT termination, or source close. Direct behavioral assertions
+  cover those contracts without production accounting.
+  Evidence: `tidb-exec/src/configured_topn.rs` and the configured TopN/ordered
+  query source tests.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -191,6 +218,14 @@ both `oltp_read_only` and `oltp_read_write`.
   Rationale: Go separates optimizer selection from executor building. Exact
   receipt lowering preserves that boundary; local candidate recovery can make
   EXPLAIN and execution disagree with the plan Go selected.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: tests must observe executor and transport behavior at their public
+  boundaries instead of requiring a production-only evidence mirror.
+  Rationale: Go does not duplicate every plan/request into a test receipt, and
+  the mirror imposed allocation, cloning, callback, and per-row counter costs
+  on ordinary execution. Scripted transports and row sources can count calls
+  without changing production state.
   Date/Author: 2026-08-27, Codex.
 
 ## Outcomes & Retrospective

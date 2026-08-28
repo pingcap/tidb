@@ -82,54 +82,6 @@ impl From<ConfiguredOrderError> for ConfiguredTopNError {
     }
 }
 
-/// Immutable accounting from one completed bounded TopN execution.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ConfiguredTopNEvidence {
-    /// The caller-owned maximum number of retained candidates.
-    capacity: usize,
-    /// The largest number of candidates retained at any time.
-    high_water_candidates: usize,
-    /// Number of validated source rows consumed by the state.
-    rows_consumed: usize,
-    /// Number of rows emitted after the offset window.
-    rows_emitted: usize,
-}
-
-impl ConfiguredTopNEvidence {
-    /// Returns the caller-owned maximum candidate capacity.
-    #[must_use]
-    pub const fn capacity(&self) -> usize {
-        self.capacity
-    }
-
-    /// Returns the greatest number of candidates retained at one time.
-    #[must_use]
-    pub const fn high_water_candidates(&self) -> usize {
-        self.high_water_candidates
-    }
-
-    /// Returns the number of valid rows consumed from the source.
-    #[must_use]
-    pub const fn rows_consumed(&self) -> usize {
-        self.rows_consumed
-    }
-
-    /// Returns the number of rows emitted by the final LIMIT window.
-    #[must_use]
-    pub const fn rows_emitted(&self) -> usize {
-        self.rows_emitted
-    }
-}
-
-/// Rows and immutable accounting returned by a finalized bounded TopN.
-#[derive(Debug, PartialEq)]
-pub struct ConfiguredTopNResult {
-    /// Canonically ordered rows after applying the configured offset/count.
-    pub rows: Vec<Row>,
-    /// Bounded-memory execution accounting.
-    pub evidence: ConfiguredTopNEvidence,
-}
-
 #[derive(Debug)]
 struct Candidate {
     row: Row,
@@ -146,9 +98,7 @@ struct Candidate {
 pub struct ConfiguredTopN {
     spec: ConfiguredOrderLimitSpec,
     full_schema_width: usize,
-    capacity: usize,
     candidates: Vec<Candidate>,
-    high_water_candidates: usize,
     rows_consumed: usize,
 }
 
@@ -168,9 +118,7 @@ impl ConfiguredTopN {
             return Ok(Self {
                 spec,
                 full_schema_width,
-                capacity,
                 candidates: Vec::new(),
-                high_water_candidates: 0,
                 rows_consumed: 0,
             });
         }
@@ -185,9 +133,7 @@ impl ConfiguredTopN {
         Ok(Self {
             spec,
             full_schema_width,
-            capacity,
             candidates: Vec::with_capacity(end_exclusive),
-            high_water_candidates: 0,
             rows_consumed: 0,
         })
     }
@@ -217,7 +163,6 @@ impl ConfiguredTopN {
             self.candidates.push(candidate);
             let index = self.candidates.len() - 1;
             self.sift_up(index);
-            self.high_water_candidates = self.high_water_candidates.max(self.candidates.len());
             return Ok(());
         }
 
@@ -243,27 +188,19 @@ impl ConfiguredTopN {
 
     /// Finalizes the heap in canonical output order and applies the offset.
     #[must_use]
-    pub fn finish(mut self) -> ConfiguredTopNResult {
+    pub fn finish(mut self) -> Vec<Row> {
         let keys = self.spec.order_keys();
         self.candidates.sort_by(|left, right| {
             compare_configured_rows(&left.row, &right.row, keys)
                 .then_with(|| left.source_ordinal.cmp(&right.source_ordinal))
         });
         let limit = self.spec.limit();
-        let rows = self
-            .candidates
+        self.candidates
             .into_iter()
             .skip(limit.offset())
             .take(limit.count())
             .map(|candidate| candidate.row)
-            .collect::<Vec<_>>();
-        let evidence = ConfiguredTopNEvidence {
-            capacity: self.capacity,
-            high_water_candidates: self.high_water_candidates,
-            rows_consumed: self.rows_consumed,
-            rows_emitted: rows.len(),
-        };
-        ConfiguredTopNResult { rows, evidence }
+            .collect()
     }
 
     fn compare_candidates(&self, left: &Candidate, right: &Candidate) -> Ordering {
@@ -322,50 +259,13 @@ pub trait ConfiguredRowSource {
     fn close(&mut self);
 }
 
-/// Immutable accounting from a streaming LIMIT-only execution.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ConfiguredLimitEvidence {
-    /// Number of rows requested from the upstream source.
-    rows_requested: usize,
-    /// Number of rows skipped for the configured offset.
-    rows_skipped: usize,
-    /// Number of rows emitted to the caller.
-    rows_emitted: usize,
-    /// Whether this state closed its source.
-    source_closed: bool,
-}
-
-impl ConfiguredLimitEvidence {
-    /// Returns the number of rows requested from upstream.
-    #[must_use]
-    pub const fn rows_requested(&self) -> usize {
-        self.rows_requested
-    }
-
-    /// Returns the number of rows skipped for the offset.
-    #[must_use]
-    pub const fn rows_skipped(&self) -> usize {
-        self.rows_skipped
-    }
-
-    /// Returns the number of rows emitted to the caller.
-    #[must_use]
-    pub const fn rows_emitted(&self) -> usize {
-        self.rows_emitted
-    }
-
-    /// Returns whether the source has been closed.
-    #[must_use]
-    pub const fn source_closed(&self) -> bool {
-        self.source_closed
-    }
-}
-
 /// Lazy LIMIT-only state that never fetches beyond its requested window.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ConfiguredLimitStream {
     limit: ConfiguredLimitWindow,
-    evidence: ConfiguredLimitEvidence,
+    rows_skipped: usize,
+    rows_emitted: usize,
+    source_closed: bool,
 }
 
 impl ConfiguredLimitStream {
@@ -374,12 +274,9 @@ impl ConfiguredLimitStream {
     pub const fn new(limit: ConfiguredLimitWindow) -> Self {
         Self {
             limit,
-            evidence: ConfiguredLimitEvidence {
-                rows_requested: 0,
-                rows_skipped: 0,
-                rows_emitted: 0,
-                source_closed: false,
-            },
+            rows_skipped: 0,
+            rows_emitted: 0,
+            source_closed: false,
         }
     }
 
@@ -389,7 +286,7 @@ impl ConfiguredLimitStream {
         &mut self,
         source: &mut S,
     ) -> Result<Option<Row>, S::Error> {
-        if self.evidence.source_closed {
+        if self.source_closed {
             return Ok(None);
         }
         if self.limit.is_empty() {
@@ -397,9 +294,9 @@ impl ConfiguredLimitStream {
             return Ok(None);
         }
 
-        while self.evidence.rows_skipped < self.limit.offset() {
-            match self.request(source) {
-                Ok(Some(_)) => self.evidence.rows_skipped += 1,
+        while self.rows_skipped < self.limit.offset() {
+            match source.next_row() {
+                Ok(Some(_)) => self.rows_skipped += 1,
                 Ok(None) => {
                     self.close_upstream(source);
                     return Ok(None);
@@ -411,14 +308,14 @@ impl ConfiguredLimitStream {
             }
         }
 
-        if self.evidence.rows_emitted == self.limit.count() {
+        if self.rows_emitted == self.limit.count() {
             self.close_upstream(source);
             return Ok(None);
         }
-        match self.request(source) {
+        match source.next_row() {
             Ok(Some(row)) => {
-                self.evidence.rows_emitted += 1;
-                if self.evidence.rows_emitted == self.limit.count() {
+                self.rows_emitted += 1;
+                if self.rows_emitted == self.limit.count() {
                     self.close_upstream(source);
                 }
                 Ok(Some(row))
@@ -434,31 +331,20 @@ impl ConfiguredLimitStream {
         }
     }
 
-    /// Returns immutable evidence at the current lazy-stream boundary.
-    #[must_use]
-    pub const fn evidence(&self) -> ConfiguredLimitEvidence {
-        self.evidence
-    }
-
     /// Closes the upstream without requesting another row.
     ///
     /// Connection adapters use this when their result-set lifecycle ends
     /// before the LIMIT window naturally completes. It is deliberately
     /// idempotent so `Close`, `Drop`, and a natural terminal pull share one
-    /// upstream release and one truthful `source_closed` evidence bit.
+    /// upstream release.
     pub fn close<S: ConfiguredRowSource>(&mut self, source: &mut S) {
         self.close_upstream(source);
     }
 
-    fn request<S: ConfiguredRowSource>(&mut self, source: &mut S) -> Result<Option<Row>, S::Error> {
-        self.evidence.rows_requested += 1;
-        source.next_row()
-    }
-
     fn close_upstream<S: ConfiguredRowSource>(&mut self, source: &mut S) {
-        if !self.evidence.source_closed {
+        if !self.source_closed {
             source.close();
-            self.evidence.source_closed = true;
+            self.source_closed = true;
         }
     }
 }

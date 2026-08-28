@@ -868,21 +868,3 @@ mod tests {
         assert!(matches!(malformed, Err(TransactionCause::Region { .. })));
     }
 }
-
-/// Diagnosis-only commit-path tracing (`TIDB_RS_TRACE` containing `txn`).
-/// One relaxed-flag check per call; silent when the variable is unset.
-pub(crate) fn txn_trace(msg: &str) {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static ENABLED: AtomicBool = AtomicBool::new(false);
-    static CHECKED: AtomicBool = AtomicBool::new(false);
-    if !CHECKED.load(Ordering::Relaxed) {
-        ENABLED.store(
-            std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("txn")),
-            Ordering::Relaxed,
-        );
-        CHECKED.store(true, Ordering::Relaxed);
-    }
-    if ENABLED.load(Ordering::Relaxed) {
-        eprintln!("[txn] {msg}");
-    }
-}

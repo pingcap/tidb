@@ -55,22 +55,6 @@ fn connection_receipt_distinguishes_prepared_commands_from_text_fallback() {
 }
 
 #[test]
-fn slow_command_receipt_is_quiet_without_query_trace() {
-    let source = include_str!("../src/mysql_connection.rs");
-    let report = source
-        .find("// `TIKV_QUERY_TRACE`: report the previous command's full server-side")
-        .expect("slow-command receipt comment");
-    let block = &source[report..];
-    let guard = block
-        .find("if query_trace_enabled {")
-        .expect("slow-command receipt is guarded by the trace switch");
-    let log = block
-        .find("[QTRACE-SQL]")
-        .expect("slow-command receipt log");
-    assert!(guard < log, "quiet connections must not format trace logs");
-}
-
-#[test]
 fn prepare_and_execute_use_typed_real_session_and_binary_rows() {
     let connection = include_str!("../src/mysql_connection.rs");
     let prepare_branch = connection
@@ -122,8 +106,41 @@ fn single_and_multi_table_sessions_open_the_existing_real_tikv_plan_path() {
     assert!(executor.contains("execute_point_read_plan_with_cancellation"));
     assert!(single.contains(".execute_lowered_plan_with_cancellation(plan, cancellation)"));
     assert!(multi.contains(".execute_point_read_plan_with_cancellation(plan, cancellation)"));
-    assert!(single.contains("observe_real_tikv_query"));
-    assert!(multi.contains("observe_real_tikv_query"));
+    assert!(single.contains("complete_real_tikv_query"));
+    assert!(multi.contains("complete_real_tikv_query"));
+}
+
+#[test]
+fn production_query_path_has_no_rust_only_stderr_or_env_diagnostics() {
+    let sources = concat!(
+        include_str!("../src/mysql_connection.rs"),
+        include_str!("../src/real_tikv_node/query_observability.rs"),
+        include_str!("../src/real_tikv_multi_node.rs"),
+        include_str!("../../tidb-exec/src/real_tikv_read.rs"),
+        include_str!("../../tidb-distsql/src/cop_paging/direct_unary_query_transport.rs"),
+        include_str!("../../tidb-txnkv/src/rpc/batch/wire.rs"),
+        include_str!("../../tidb-txnkv/src/rpc/transport_runtime.rs"),
+        include_str!("../../tidb-txnkv/src/transaction/coordinator/mod.rs"),
+    );
+    for obsolete in [
+        "TIKV_QUERY_TRACE",
+        "TIKV_RPC_COUNT_LOG",
+        "TIKV_ADMISSION_LOG",
+        "query_activity\"",
+        "query_snapshot\"",
+        "query_transport\"",
+        "DirectUnaryTransportEvidence",
+        "publication_observer",
+        "record_physical_dispatch",
+        "RealTiKvQueryPlanEvidence",
+        "wire_diag",
+        "admit_diag",
+    ] {
+        assert!(
+            !sources.contains(obsolete),
+            "production still contains Rust-only diagnostic {obsolete}"
+        );
+    }
 }
 
 #[test]

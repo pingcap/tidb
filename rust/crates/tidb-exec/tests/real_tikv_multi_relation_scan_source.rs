@@ -219,8 +219,6 @@ fn supplied_plans_share_one_timestamp_and_cancellation_authority() {
     let relations = query.relations().unwrap();
     assert_eq!(relations[0].snapshot_ts(), Some(7_676));
     assert_eq!(relations[1].snapshot_ts(), Some(7_676));
-    assert_eq!(relations[0].plan_evidence().predicate_count(), 1);
-    assert_eq!(relations[1].plan_evidence().handle_range_count(), 1);
     let state = state.lock().unwrap();
     assert_eq!(state.requests.len(), 2);
     assert!(state
@@ -372,10 +370,6 @@ fn both_physical_scans_share_one_timestamp_and_cancellation_authority() {
             .collect::<Vec<_>>(),
         [42, 84]
     );
-    assert_eq!(relations[0].plan_evidence().predicate_count(), 1);
-    assert_eq!(relations[0].plan_evidence().handle_range_count(), 1);
-    assert_eq!(relations[1].plan_evidence().predicate_count(), 0);
-    assert_eq!(relations[1].plan_evidence().handle_range_count(), 2);
     assert_eq!(authority.readers()[0].configured_table().table_id(), 42);
     assert_eq!(authority.readers()[1].configured_table().table_id(), 84);
 

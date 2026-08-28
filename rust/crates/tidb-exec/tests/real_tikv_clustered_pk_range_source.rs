@@ -24,7 +24,7 @@ use tidb_distsql::{
     signed_handle_ranges_to_kv_ranges, QueryDispatch, QueryTransport, RequestKeyRange,
     SignedHandleRange, TimestampSource, TransportRequest,
 };
-use tidb_exec::real_tikv_read::{RealTiKvPlanExecutorKind, RealTiKvReadSession};
+use tidb_exec::real_tikv_read::RealTiKvReadSession;
 use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 use tidb_proto::tipb::{DagRequest, ExecType};
 
@@ -132,24 +132,6 @@ fn expected_ranges(ranges: &[(i64, i64)]) -> Vec<RequestKeyRange> {
     signed_handle_ranges_to_kv_ranges(42, &ranges)
 }
 
-fn evidence_ranges(
-    query: &tidb_exec::real_tikv_read::RealTiKvQuery,
-) -> Vec<(i64, i64, bool, bool)> {
-    query
-        .plan_evidence()
-        .handle_ranges()
-        .iter()
-        .map(|range| {
-            (
-                range.low(),
-                range.high(),
-                range.low_exclude(),
-                range.high_exclude(),
-            )
-        })
-        .collect()
-}
-
 #[test]
 fn planner_ranges_are_the_only_request_ranges_and_residual_selection_survives() {
     let timestamps = CountingTimestampSource::new([101, 102, 103]);
@@ -164,38 +146,16 @@ fn planner_ranges_are_the_only_request_ranges_and_residual_selection_survives() 
 
     let full = session.execute("SELECT id FROM accounts").unwrap();
     assert_eq!(full.snapshot_ts(), Some(101));
-    assert_eq!(full.plan_evidence().handle_range_count(), 1);
-    assert_eq!(evidence_ranges(&full), [(i64::MIN, i64::MAX, false, false)]);
 
     let narrowed = session
         .execute("SELECT id FROM accounts WHERE id >= -5 AND id < 9")
         .unwrap();
     assert_eq!(narrowed.snapshot_ts(), Some(102));
-    assert_eq!(narrowed.plan_evidence().handle_range_count(), 1);
-    assert_eq!(evidence_ranges(&narrowed), [(-5, 8, false, false)]);
-    assert_eq!(
-        narrowed.plan_evidence().executor_kinds(),
-        [RealTiKvPlanExecutorKind::TableScan]
-    );
-    assert_eq!(narrowed.plan_evidence().predicate_count(), 0);
 
     let split_with_residual = session
         .execute("SELECT id FROM accounts WHERE id != 0 AND balance > 10")
         .unwrap();
     assert_eq!(split_with_residual.snapshot_ts(), Some(103));
-    assert_eq!(split_with_residual.plan_evidence().handle_range_count(), 2);
-    assert_eq!(
-        evidence_ranges(&split_with_residual),
-        [(i64::MIN, -1, false, false), (1, i64::MAX, false, false),]
-    );
-    assert_eq!(
-        split_with_residual.plan_evidence().executor_kinds(),
-        [
-            RealTiKvPlanExecutorKind::TableScan,
-            RealTiKvPlanExecutorKind::Selection,
-        ]
-    );
-    assert_eq!(split_with_residual.plan_evidence().predicate_count(), 1);
 
     assert_eq!(timestamps.calls(), 3);
     assert_eq!(state.sends.get(), 3);
@@ -252,13 +212,6 @@ fn contradictory_handle_ranges_return_empty_before_tso_or_transport() {
         .execute("SELECT id FROM accounts WHERE id > 10 AND id < 0")
         .expect("planner contradiction is a successful empty query");
     assert_eq!(query.snapshot_ts(), None);
-    assert_eq!(query.plan_evidence().handle_range_count(), 0);
-    assert!(query.plan_evidence().handle_ranges().is_empty());
-    assert_eq!(
-        query.plan_evidence().executor_kinds(),
-        [RealTiKvPlanExecutorKind::TableScan]
-    );
-    assert_eq!(query.plan_evidence().predicate_count(), 0);
     assert_eq!(timestamps.calls(), 0);
     assert_eq!(state.sends.get(), 0);
     assert!(state.requests.borrow().is_empty());

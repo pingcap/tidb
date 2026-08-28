@@ -191,6 +191,7 @@ fn known_leader_region_error_resends_immediately_in_the_same_query() {
 fn batch_known_leader_region_error_republishes_the_recovered_route() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let batch_begins = Rc::new(Cell::new(0));
     let transport = DirectUnaryQueryTransport::new_injected_batch_first(
         ScriptedClient {
             calls: Rc::clone(&calls),
@@ -202,7 +203,7 @@ fn batch_known_leader_region_error_republishes_the_recovered_route() {
             liveness: RefCell::new(VecDeque::new()),
             batch_errors: RefCell::new(VecDeque::new()),
             batch_ready_immediately: RefCell::new(VecDeque::new()),
-            batch_completion_gate: None,
+            batch_begin_count: Some(Rc::clone(&batch_begins)),
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
@@ -219,7 +220,6 @@ fn batch_known_leader_region_error_republishes_the_recovered_route() {
         tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
     )
     .unwrap();
-    let evidence = transport.evidence_handle();
     let mut runtime = InjectedQueryRuntime::new(transport);
     let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
 
@@ -238,18 +238,7 @@ fn batch_known_leader_region_error_republishes_the_recovered_route() {
         ["tikv-old:20160", "tikv-new:20160"]
     );
 
-    let evidence = evidence.snapshot();
-    assert_eq!(evidence.batch_attempts, 2);
-    assert_eq!(evidence.unary_attempts, 0);
-    assert_eq!(
-        evidence
-            .published_attempts
-            .iter()
-            .map(|published| published.publication.physical_address())
-            .collect::<Vec<_>>(),
-        ["tikv-old:20160", "tikv-new:20160"],
-        "the cache-recovered leader must be sent and published through BatchCommands"
-    );
+    assert_eq!(batch_begins.get(), 2);
 }
 
 #[test]
@@ -257,6 +246,7 @@ fn batch_connection_failure_republishes_the_cache_recovered_route() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let events = Rc::new(RefCell::new(Vec::new()));
     let retry_control = Rc::new(RecordingRetryControl::default());
+    let batch_begins = Rc::new(Cell::new(0));
     let transport = DirectUnaryQueryTransport::new_injected_batch_first(
         ScriptedClient {
             calls: Rc::clone(&calls),
@@ -273,7 +263,7 @@ fn batch_connection_failure_republishes_the_cache_recovered_route() {
             liveness: RefCell::new(VecDeque::from([Ok(StoreLiveness::Unreachable)])),
             batch_errors: RefCell::new(VecDeque::new()),
             batch_ready_immediately: RefCell::new(VecDeque::new()),
-            batch_completion_gate: None,
+            batch_begin_count: Some(Rc::clone(&batch_begins)),
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
@@ -293,7 +283,6 @@ fn batch_connection_failure_republishes_the_cache_recovered_route() {
         tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
     )
     .unwrap();
-    let evidence = transport.evidence_handle();
     let mut runtime = InjectedQueryRuntime::new(transport);
     let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
 
@@ -322,16 +311,5 @@ fn batch_connection_failure_republishes_the_cache_recovered_route() {
     );
     assert_eq!(retry_control.sleeps.borrow().len(), 1);
 
-    let evidence = evidence.snapshot();
-    assert_eq!(evidence.batch_attempts, 2);
-    assert_eq!(evidence.unary_attempts, 0);
-    assert_eq!(
-        evidence
-            .published_attempts
-            .iter()
-            .map(|published| published.publication.physical_address())
-            .collect::<Vec<_>>(),
-        ["tikv-old:20160", "tikv-new:20160"],
-        "a recoverable physical-route failure must republish the cache-selected route through BatchCommands"
-    );
+    assert_eq!(batch_begins.get(), 2);
 }

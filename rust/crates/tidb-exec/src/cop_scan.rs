@@ -605,7 +605,6 @@ where
         }
         let plan = RemoteScanPlan {
             dag,
-            summary: summary.clone(),
             envelope: RequestEnvelope::new(shapes),
             key_ranges,
             key_range_hints: request.range_hints.clone(),
@@ -723,10 +722,6 @@ fn dag_summary(dag: &tidb_proto::tipb::DagRequest) -> String {
 /// Everything needed to open one response on the query worker.
 struct RemoteScanPlan {
     dag: tidb_proto::tipb::DagRequest,
-    /// Read-only identity line for [`open_scan`]'s env-gated trace: which
-    /// executors this request lowers (`IndexScan(table t, index i, ..)` vs
-    /// `TableScan(..)`), and the pushed output offsets.
-    summary: String,
     /// The executor shapes the request builder reads for concurrency, which
     /// must match the DAG's own executor list.
     envelope: RequestEnvelope,
@@ -788,9 +783,6 @@ where
     // tidb_kv_read_timeout, the runaway checker) are session variables no
     // `StmtContext` carries yet. Resource group is statement-scoped in Go and
     // is therefore copied from this request rather than the stock context.
-    let trace_range_counts = std::env::var_os("TIKV_QUERY_TRACE")
-        .is_some()
-        .then(|| (plan.key_ranges.len(), plan.key_range_hints.len()));
     let mut context = DistSqlContext::new();
     context.request.resource_group_name = plan.resource_group_name;
     if let Some(min_size) = plan.paging_min_size {
@@ -819,12 +811,6 @@ where
     let request = builder
         .build_transport_request(Arc::clone(&cancellation))
         .map_err(|error| format!("{error:?}"))?;
-    if let Some((ranges, hints)) = trace_range_counts {
-        eprintln!(
-            "[XTRACE] scan_open {} | ranges={} hints={} keep_order={} allow_unordered={} desc={}",
-            plan.summary, ranges, hints, plan.keep_order, plan.allow_unordered, plan.desc,
-        );
-    }
     let mut runtime = InjectedQueryRuntime::new(&mut transport);
     let result = runtime
         .select_with_runtime_stats(

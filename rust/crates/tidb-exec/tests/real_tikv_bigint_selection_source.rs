@@ -25,7 +25,7 @@ use tidb_distsql::{
     CopPagingState, QueryDispatch, QueryOperation, QueryTransport, RequestKeyRange, RequestType,
     TimestampSource, TransportRequest,
 };
-use tidb_exec::real_tikv_read::{RealTiKvPlanExecutorKind, RealTiKvReadSession};
+use tidb_exec::real_tikv_read::RealTiKvReadSession;
 use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 use tidb_proto::tipb::{Chunk, DagRequest, ExecType, ExprType, ScalarFuncSig, SelectResponse};
 
@@ -217,15 +217,6 @@ fn predicate_only_column_lowers_to_selection_without_leaking_into_result() {
     let query = session
         .execute("SELECT id FROM test.accounts WHERE balance > 100 AND -7 <= balance")
         .expect("supported BIGINT predicates must reach the real transport boundary");
-    assert_eq!(
-        query.plan_evidence().executor_kinds(),
-        [
-            RealTiKvPlanExecutorKind::TableScan,
-            RealTiKvPlanExecutorKind::Selection,
-        ]
-    );
-    assert_eq!(query.plan_evidence().predicate_count(), 2);
-    assert_eq!(query.plan_evidence().output_offsets(), [0]);
     assert_eq!(query.snapshot_ts(), Some(7_777));
     assert_eq!(timestamps.calls(), 1);
     assert_eq!(state.sends.get(), 1);
@@ -305,16 +296,6 @@ fn selection_result_is_not_filtered_again_after_tikv() {
     let query = session
         .execute("SELECT balance FROM accounts WHERE balance > 100")
         .expect("supported BIGINT Selection must be sent");
-    assert_eq!(
-        query.plan_evidence().executor_kinds(),
-        [
-            RealTiKvPlanExecutorKind::TableScan,
-            RealTiKvPlanExecutorKind::Selection,
-        ]
-    );
-    assert_eq!(query.plan_evidence().predicate_count(), 1);
-    assert_eq!(query.plan_evidence().output_offsets(), [0]);
-
     let request = &state.requests.borrow()[0];
     let dag = DagRequest::decode(request.data.as_slice()).expect("request data is a TiDB DAG");
     assert_eq!(dag.executors.len(), 2);

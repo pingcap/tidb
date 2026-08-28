@@ -22,7 +22,6 @@
 //! backoff budgets, cancellation-aware sleep, and ordered replacement of
 //! unconsumed work.
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -44,10 +43,7 @@ use tidb_txnkv::region::{
     StoreLabel as RoutingStoreLabel,
 };
 use tidb_txnkv::{
-    rpc::{
-        AsyncRequestDispatcher, AsyncRequestPublication, CompletionError, CompletionNotifier,
-        PendingRequest,
-    },
+    rpc::{AsyncRequestDispatcher, CompletionError, CompletionNotifier, PendingRequest},
     EndpointType, SharedReadOpener, SharedReadRuntime, TraceInfo, UnaryCallContext,
     UnaryCancellation, DEFAULT_STORE_LIVENESS_TIMEOUT,
 };
@@ -359,134 +355,6 @@ pub struct DirectUnaryQueryTransport<C, L> {
     async_begin: Option<AsyncBegin<C>>,
     replica_read_seed: ReplicaReadSeed,
     config: DirectUnaryRuntimeConfig,
-    evidence: Rc<RefCell<DirectUnaryTransportEvidence>>,
-    publication_observer: Rc<RefCell<Option<PublicationObserver>>>,
-}
-
-type PublicationObserver = Rc<dyn Fn(&PublishedDispatchEvidence)>;
-
-/// One ordered BatchCommands publication observed before request completion.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PublishedDispatchEvidence {
-    /// Logical region whose request was published.
-    pub region_id: u64,
-    /// Exact physical channel and BatchCommands stream receipt identity.
-    pub publication: AsyncRequestPublication,
-}
-
-/// Failure to install a second observer for the same bound query.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PublicationObserverAlreadyInstalled;
-
-impl std::fmt::Display for PublicationObserverAlreadyInstalled {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("a publication observer is already installed for this query")
-    }
-}
-
-impl std::error::Error for PublicationObserverAlreadyInstalled {}
-
-/// Structured observations from the most recently bound production query.
-///
-/// This is evidence, not policy: selection, retry, and terminal ownership stay
-/// in the existing response runtime. The deployable SQL-node proof uses the
-/// ordered publication receipts to distinguish a real BatchCommands request
-/// from an empty, admission-rejected, or unary-only attempt.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct DirectUnaryTransportEvidence {
-    /// Region identities returned by the canonical cache/PD lookup.
-    pub located_region_ids: Vec<u64>,
-    /// Logical region identities attached to actual physical sends.
-    pub dispatched_region_ids: Vec<u64>,
-    /// BatchCommands attempts begun for the query, including local rejection.
-    pub batch_attempts: u64,
-    /// Physical unary attempts begun after BatchCommands was unavailable or failed.
-    pub unary_attempts: u64,
-    /// Ordered real BatchCommands publications with exact physical identity.
-    pub published_attempts: Vec<PublishedDispatchEvidence>,
-}
-
-/// Cloneable read-only view of production transport evidence.
-#[derive(Clone)]
-pub struct DirectUnaryTransportEvidenceHandle {
-    evidence: Rc<RefCell<DirectUnaryTransportEvidence>>,
-    publication_observer: Rc<RefCell<Option<PublicationObserver>>>,
-}
-
-impl std::fmt::Debug for DirectUnaryTransportEvidenceHandle {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("DirectUnaryTransportEvidenceHandle")
-            .field("evidence", &self.evidence.borrow())
-            .finish_non_exhaustive()
-    }
-}
-
-impl DirectUnaryTransportEvidenceHandle {
-    /// Returns a point-in-time copy without transferring runtime ownership.
-    #[must_use]
-    pub fn snapshot(&self) -> DirectUnaryTransportEvidence {
-        self.evidence.borrow().clone()
-    }
-
-    /// Installs the one callback for this bound query.
-    ///
-    /// Query binding clears the previous query's callback before resetting its
-    /// evidence, so a stale observer cannot survive into another statement.
-    pub fn set_publication_observer(
-        &self,
-        observer: impl Fn(&PublishedDispatchEvidence) + 'static,
-    ) -> Result<(), PublicationObserverAlreadyInstalled> {
-        let mut installed = self.publication_observer.borrow_mut();
-        if installed.is_some() {
-            return Err(PublicationObserverAlreadyInstalled);
-        }
-        *installed = Some(Rc::new(observer));
-        Ok(())
-    }
-}
-
-fn record_physical_dispatch(
-    evidence: &Rc<RefCell<DirectUnaryTransportEvidence>>,
-    publication_observer: &Rc<RefCell<Option<PublicationObserver>>>,
-    region_id: u64,
-    batch: bool,
-    publication: Option<AsyncRequestPublication>,
-) {
-    {
-        let mut evidence = evidence.borrow_mut();
-        if !evidence.dispatched_region_ids.contains(&region_id) {
-            evidence.dispatched_region_ids.push(region_id);
-        }
-        if batch {
-            evidence.batch_attempts += 1;
-        } else {
-            evidence.unary_attempts += 1;
-        }
-    }
-    if let Some(publication) = publication {
-        record_physical_publication(evidence, publication_observer, region_id, publication);
-    }
-}
-
-fn record_physical_publication(
-    evidence: &Rc<RefCell<DirectUnaryTransportEvidence>>,
-    publication_observer: &Rc<RefCell<Option<PublicationObserver>>>,
-    region_id: u64,
-    publication: AsyncRequestPublication,
-) {
-    let published = PublishedDispatchEvidence {
-        region_id,
-        publication,
-    };
-    evidence
-        .borrow_mut()
-        .published_attempts
-        .push(published.clone());
-    let observer = publication_observer.borrow().clone();
-    if let Some(observer) = observer {
-        observer(&published);
-    }
 }
 
 type AsyncBegin<C> = fn(
@@ -640,26 +508,7 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
             async_begin: None,
             replica_read_seed: ReplicaReadSeed::new(),
             config,
-            evidence: Rc::new(RefCell::new(DirectUnaryTransportEvidence::default())),
-            publication_observer: Rc::new(RefCell::new(None)),
         })
-    }
-}
-
-impl<C, L> DirectUnaryQueryTransport<C, L> {
-    /// Snapshots observations from the most recently bound query.
-    #[must_use]
-    pub fn evidence(&self) -> DirectUnaryTransportEvidence {
-        self.evidence.borrow().clone()
-    }
-
-    /// Returns a read-only observation handle for the lazy result lifecycle.
-    #[must_use]
-    pub fn evidence_handle(&self) -> DirectUnaryTransportEvidenceHandle {
-        DirectUnaryTransportEvidenceHandle {
-            evidence: Rc::clone(&self.evidence),
-            publication_observer: Rc::clone(&self.publication_observer),
-        }
     }
 }
 
@@ -737,37 +586,12 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         let requested_ranges =
             metadata_region_ranges(metadata).map_err(|error| error.to_string())?;
         let cluster_id = self.shared_runtime.cluster_id();
-        let trace_t0 = crate::cop_paging::direct_unary_query_transport::query_trace_enabled()
-            .then(std::time::Instant::now);
-        crate::cop_paging::direct_unary_query_transport::qtrace(
-            trace_t0,
-            format_args!("send begin ranges={}", requested_ranges.len()),
-        );
         let locations = self
             .shared_runtime
             .locate_ranges(&requested_ranges)
             .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle.to_string())?
             .map_err(|error| DirectUnaryTransportError::Route(error).to_string())?;
         let topology = topology_from_locations(locations);
-        crate::cop_paging::direct_unary_query_transport::qtrace(
-            trace_t0,
-            format_args!(
-                "locate_done tasks={} t={:.1}ms",
-                topology.len(),
-                trace_t0
-                    .map(|t| t.elapsed().as_secs_f64() * 1000.0)
-                    .unwrap_or(0.0)
-            ),
-        );
-        *self.publication_observer.borrow_mut() = None;
-        {
-            let mut evidence = self.evidence.borrow_mut();
-            evidence.located_region_ids = topology.iter().map(|task| task.region_id).collect();
-            evidence.dispatched_region_ids.clear();
-            evidence.batch_attempts = 0;
-            evidence.unary_attempts = 0;
-            evidence.published_attempts.clear();
-        }
         let cache = match self.config.shared_cache.clone() {
             Some(cache) => Some(cache),
             None => CoprCache::from_optional_config(self.config.cache.as_ref())
@@ -810,15 +634,6 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         let call =
             UnaryCallContext::with_deadline(bound_at + timeout, cancellation.unary_cancellation());
 
-        let trace_start = trace_t0;
-        if let Some(t0) = trace_start {
-            eprintln!(
-                "[QTRACE +{:.1}ms] resp_open tasks={} keep_order={}",
-                t0.elapsed().as_secs_f64() * 1000.0,
-                logical_order.len(),
-                metadata.keep_order
-            );
-        }
         Ok(Some(DirectUnaryQueryResponse {
             shared_runtime: self.shared_runtime.clone(),
             locked_response_delegate: Rc::clone(&self.locked_response_delegate),
@@ -844,10 +659,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             unordered_inflight: BTreeSet::new(),
             unordered_ready: VecDeque::new(),
             network_metrics: UnaryNetworkMetrics::default(),
-            evidence: Rc::clone(&self.evidence),
-            publication_observer: Rc::clone(&self.publication_observer),
             snapshot_locks: tidb_txnkv::lock::SnapshotLockSet::default(),
-            trace_start: query_trace_enabled().then(std::time::Instant::now),
         }))
     }
 }
@@ -952,34 +764,6 @@ fn task_region_ver_id(
     ))
 }
 
-/// Session-side wall-clock tracing for stall attribution (`TIKV_QUERY_TRACE`).
-pub(crate) fn query_trace_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("TIKV_QUERY_TRACE").is_some())
-}
-
-fn format_elapsed(elapsed: std::time::Duration) -> String {
-    format!("{:.1}", elapsed.as_secs_f64() * 1000.0)
-}
-
-fn wall_ms() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0)
-}
-
-fn qtrace(start: Option<std::time::Instant>, message: std::fmt::Arguments<'_>) {
-    if let Some(start) = start {
-        eprintln!(
-            "[QTRACE +{}ms w={}] {}",
-            format_elapsed(start.elapsed()),
-            wall_ms(),
-            message
-        );
-    }
-}
-
 /// Lazy response owner returned by [`DirectUnaryQueryTransport`].
 pub struct DirectUnaryQueryResponse<C, L> {
     shared_runtime: SharedReadRuntime<C, L>,
@@ -1020,16 +804,12 @@ pub struct DirectUnaryQueryResponse<C, L> {
     /// Settled tasks whose response channels still need to be drained.
     unordered_ready: VecDeque<u64>,
     network_metrics: UnaryNetworkMetrics,
-    evidence: Rc<RefCell<DirectUnaryTransportEvidence>>,
-    publication_observer: Rc<RefCell<Option<PublicationObserver>>>,
     /// Transactions this response already classified while resolving locks.
     ///
     /// Go `KVSnapshot.resolvedLocks`/`committedLocks`, reached through
     /// `ClientHelper`. One Cop response owns one read, so the sets live for
     /// exactly as long as the read that filled them.
     snapshot_locks: tidb_txnkv::lock::SnapshotLockSet,
-    /// Wall-clock origin for `TIKV_QUERY_TRACE` lines; `None` disables tracing.
-    trace_start: Option<std::time::Instant>,
 }
 
 struct PreparedRegionDispatch {
@@ -1048,19 +828,10 @@ struct PendingBatchAttempt {
     dispatch: PreparedRegionDispatch,
     pending: Box<dyn PendingRequest>,
     started_at: Instant,
-    publication_recorded: bool,
 }
 
 impl<C, L> Drop for DirectUnaryQueryResponse<C, L> {
     fn drop(&mut self) {
-        qtrace(
-            self.trace_start,
-            format_args!(
-                "resp_close pending={} inflight={}",
-                self.pending_batches.len(),
-                self.unordered_inflight.len()
-            ),
-        );
         for attempt in self.pending_batches.values_mut() {
             attempt.pending.cancel();
         }
@@ -1237,21 +1008,10 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 continue;
             }
 
-            let wait_started = std::time::Instant::now();
             let logical_task_id = self
                 .completion_notifier
                 .wait(&self.call)
                 .map_err(Self::completion_error)?;
-            if query_trace_enabled() && wait_started.elapsed().as_millis() >= 1 {
-                qtrace(
-                    self.trace_start,
-                    format_args!(
-                        "wait_completion {}ms -> task {}",
-                        wait_started.elapsed().as_millis(),
-                        logical_task_id
-                    ),
-                );
-            }
             if self.pending_batches.contains_key(&logical_task_id)
                 && self
                     .try_complete_batch_attempt(logical_task_id)
@@ -1332,18 +1092,6 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         attempt_id: u64,
     ) -> Result<(), DirectUnaryTransportError> {
         self.check_retry_active()?;
-        qtrace(
-            self.trace_start,
-            format_args!(
-                "dispatch task={} attempt={} page_size={}",
-                logical_task_id,
-                attempt_id,
-                self.runtime
-                    .prepared_attempt(attempt_id)
-                    .map(|p| p.request().paging_size)
-                    .unwrap_or(0),
-            ),
-        );
         let prepared = self.runtime.prepared_attempt(attempt_id).cloned().ok_or(
             DirectUnaryTransportError::ResponseState("active attempt is not prepared"),
         )?;
@@ -1511,28 +1259,18 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             );
             match begin_result {
                 Ok(mut pending) => {
-                    let publication = pending.publication();
-                    let publication_recorded = publication.is_some();
                     if !self.metadata.keep_order {
                         pending.set_notifier(
                             self.completion_notifier.clone(),
                             prepared_dispatch.logical_task_id,
                         );
                     }
-                    record_physical_dispatch(
-                        &self.evidence,
-                        &self.publication_observer,
-                        prepared_dispatch.selected.attempt.region.id,
-                        true,
-                        publication,
-                    );
                     self.pending_batches.insert(
                         prepared_dispatch.logical_task_id,
                         PendingBatchAttempt {
                             dispatch: prepared_dispatch,
                             pending,
                             started_at: dispatch_started,
-                            publication_recorded,
                         },
                     );
                     return Ok(());
@@ -1553,13 +1291,6 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         );
         let dispatch = UnaryRouteDispatch::from_request(&prepared_dispatch.selected);
         let mut client = try_borrow_client(self.shared_runtime.client())?;
-        record_physical_dispatch(
-            &self.evidence,
-            &self.publication_observer,
-            prepared_dispatch.selected.attempt.region.id,
-            false,
-            None,
-        );
         let send_result = client.send_request_with_route(
             dispatch.physical_address(),
             dispatch.forwarded_host(),
@@ -1581,32 +1312,12 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             }
             return Err(error);
         }
-        let (completion, late_publication, region_id) = {
+        let completion = {
             let attempt = self.pending_batches.get_mut(&logical_task_id).ok_or(
                 DirectUnaryTransportError::ResponseState("missing pending BatchCommands attempt"),
             )?;
-            let completion = attempt.pending.complete(&self.call);
-            let publication = if attempt.publication_recorded {
-                None
-            } else {
-                let publication = attempt.pending.publication();
-                attempt.publication_recorded = publication.is_some();
-                publication
-            };
-            (
-                completion,
-                publication,
-                attempt.dispatch.selected.attempt.region.id,
-            )
+            attempt.pending.complete(&self.call)
         };
-        if let Some(publication) = late_publication {
-            record_physical_publication(
-                &self.evidence,
-                &self.publication_observer,
-                region_id,
-                publication,
-            );
-        }
         if let Err(error) = self.check_retry_active() {
             if let Some(attempt) = self.pending_batches.get_mut(&logical_task_id) {
                 attempt.pending.cancel();
@@ -1640,33 +1351,12 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         logical_task_id: u64,
     ) -> Result<bool, DirectUnaryTransportError> {
         self.check_retry_active()?;
-        let (completion, late_publication, region_id) = {
+        let completion = {
             let attempt = self.pending_batches.get_mut(&logical_task_id).ok_or(
                 DirectUnaryTransportError::ResponseState("missing pending BatchCommands attempt"),
             )?;
-            let completion = attempt.pending.try_complete();
-            let publication = if matches!(completion, Ok(Some(_))) && !attempt.publication_recorded
-            {
-                let publication = attempt.pending.publication();
-                attempt.publication_recorded = publication.is_some();
-                publication
-            } else {
-                None
-            };
-            (
-                completion,
-                publication,
-                attempt.dispatch.selected.attempt.region.id,
-            )
+            attempt.pending.try_complete()
         };
-        if let Some(publication) = late_publication {
-            record_physical_publication(
-                &self.evidence,
-                &self.publication_observer,
-                region_id,
-                publication,
-            );
-        }
         let send_result = match completion {
             Ok(None) => return Ok(false),
             Ok(Some(result)) => result,
@@ -1703,17 +1393,6 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             batch_attempt,
             pre_batch_network_metrics,
         } = dispatch;
-        qtrace(
-            self.trace_start,
-            format_args!(
-                "task_done id={} attempt={} rpc={}ms bytes={} ok={}",
-                logical_task_id,
-                attempt_id,
-                dispatch_duration.as_millis(),
-                request_bytes,
-                send_result.is_ok()
-            ),
-        );
         // Go checks ctx.Err after SendRequest returns. Caller cancellation has
         // precedence over a simultaneous transport error or successful reply.
         if self.cancellation.is_cancelled()
@@ -2243,10 +1922,6 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         if delay.is_zero() {
             return Ok(());
         }
-        qtrace(
-            self.trace_start,
-            format_args!("sleep_retry {}ms", delay.as_millis()),
-        );
         let remaining = self.call.timeout();
         if remaining.is_zero() || delay >= remaining {
             return Err(DirectUnaryTransportError::DeadlineExceeded);

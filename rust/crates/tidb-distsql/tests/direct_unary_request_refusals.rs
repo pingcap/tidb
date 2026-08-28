@@ -31,7 +31,7 @@ fn missing_cluster_loader_failure_and_empty_pd_address_fail_before_client_dispat
             liveness: RefCell::new(VecDeque::new()),
             batch_errors: RefCell::new(VecDeque::new()),
             batch_ready_immediately: RefCell::new(VecDeque::new()),
-            batch_completion_gate: None,
+            batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 0,
