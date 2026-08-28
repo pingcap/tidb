@@ -557,10 +557,8 @@ fn apply_reader_cost_side_effects(plan: &mut PhysicalPlan, enable_paging: bool) 
             }
         }
         PhysicalPlan::IndexMergeReader(reader) => {
-            for group in &mut reader.partial_plans {
-                for child in group {
-                    apply_reader_cost_side_effects(child, enable_paging);
-                }
+            for child in &mut reader.partial_plans_raw {
+                apply_reader_cost_side_effects(child, enable_paging);
             }
             if let Some(child) = reader.table_plan.as_deref_mut() {
                 apply_reader_cost_side_effects(child, enable_paging);

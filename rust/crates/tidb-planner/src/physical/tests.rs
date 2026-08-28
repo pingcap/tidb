@@ -271,8 +271,9 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
     });
     let index_merge = PhysicalPlan::IndexMergeReader(PhysicalIndexMergeReader {
         base: BasePhysicalPlan::with_id(13, "IndexMerge", 0),
-        partial_plans: vec![vec![point], vec![batch]],
+        partial_plans_raw: vec![point, batch],
         table_plan: None,
+        ..PhysicalIndexMergeReader::default()
     });
     let template = PhysicalPlan::Dml(PhysicalDmlRoot {
         base: BasePhysicalPlan::with_id(14, "Update", 0),
@@ -293,11 +294,11 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
     let PhysicalPlan::IndexMergeReader(index_merge) = *dml.select_plan.expect("select plan") else {
         panic!("index merge");
     };
-    let PhysicalPlan::PointGet(point) = &index_merge.partial_plans[0][0] else {
+    let PhysicalPlan::PointGet(point) = &index_merge.partial_plans_raw[0] else {
         panic!("point get");
     };
     assert_eq!(point.ranges[0].low_val, vec![Datum::Int(5)]);
-    let PhysicalPlan::BatchPointGet(batch) = &index_merge.partial_plans[1][0] else {
+    let PhysicalPlan::BatchPointGet(batch) = &index_merge.partial_plans_raw[1] else {
         panic!("batch point get");
     };
     assert_eq!(batch.ranges[0].low_val, vec![Datum::Int(7)]);

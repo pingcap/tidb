@@ -284,6 +284,15 @@ both `oltp_read_only` and `oltp_read_write`.
   error. The focused regression first failed with the explicit unimplemented
   UnionAll constructor and now passes both Union pulls and the 1242-class
   MaxOneRow error.
+- [x] 2026-08-28: restored Go's index-merge task-conversion boundary. A
+  `CopTask` with index-merge partials now becomes a retained
+  `PhysicalIndexMergeReader` instead of failing unconditionally. The node owns
+  raw recursive partial trees plus Go's intersection, MV-index, pushed-limit,
+  by-item, and keep-order fields; flattened partial arrays were removed from
+  the reusable plan representation. Cache rebuild and reader-cost side effects
+  recurse through those raw trees. The focused conversion test was observed
+  failing at the old explicit refusal and passes with intersection/order and
+  the final table plan retained.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer

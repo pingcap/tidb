@@ -304,6 +304,8 @@ pub struct CopTask {
     pub idx_merge_part_plans: Vec<PhysicalPlan>,
     /// Go `IdxMergeIsIntersection`.
     pub idx_merge_is_intersection: bool,
+    /// Go `IdxMergeAccessMVIndex`.
+    pub idx_merge_access_mv_index: bool,
     /// Go `RootTaskConds`: selections carrying virtual columns, which cannot
     /// push to TiKV.
     pub root_task_conds: Vec<Expression>,
@@ -314,7 +316,7 @@ pub struct CopTask {
     /// index-join inner child.
     pub index_join_info: Option<IndexJoinInfo>,
     // boundary: `OriginSchema`, `ExtraHandleCol`, `CommonHandleCols`,
-    // `TblColHists`, `TblCols`, `IdxMergeAccessMVIndex`,
+    // `TblColHists`, `TblCols`,
     // `IdxMergeMatchWithAdvisorySortItems`, `IdxMergePartPlansMatchResults`,
     // `PhysPlanPartInfo`, `IndexLookUpPushDownBy`,
     // `PartialOrderMatchResult` — each blocked on an unported type named in
@@ -410,12 +412,11 @@ impl CopTask {
     /// `PhysicalTableReader` carrying the scan's store type — with the
     /// task's warnings copied onto the fresh root task, Go's deferred tail.
     ///
-    /// The other shapes refuse by name: an index half needs
-    /// `PhysicalIndexReader`/`BuildIndexLookUpTask`, index-merge needs
-    /// `PhysicalIndexMergeReader`, and `RootTaskConds` need
-    /// `handleRootTaskConds` (`cardinality.Selectivity` over a built
-    /// Selection). `ExpandVirtualColumn`/`NeedExtraProj` narrow with
-    /// virtual columns, which the ported scan does not carry;
+    /// Index-only, double-read, and index-merge branches build their matching
+    /// retained readers before the table-only tail below. `RootTaskConds`
+    /// use `handleRootTaskConds` (`cardinality.Selectivity` over a built
+    /// Selection). `ExpandVirtualColumn`/`NeedExtraProj` narrow with virtual
+    /// columns, which the ported scan does not carry;
     /// `IsCommonHandle` narrows with the unported `table.Table` binding and
     /// stays false. Go's `Init` allocates the reader a FRESH plan id from
     /// the context; this conversion path carries no allocator, so the
@@ -510,10 +511,44 @@ impl CopTask {
 
     pub fn convert_to_root_task_impl(mut self) -> Result<Task, PlanError> {
         if !self.idx_merge_part_plans.is_empty() {
-            return Err(PlanError::internal(
-                "convertToRootTaskImpl: the index-merge branch builds \
-                 PhysicalIndexMergeReader, not ported",
-            ));
+            if self.need_extra_proj {
+                return Err(PlanError::internal(
+                    "convertToRootTaskImpl: index-merge NeedExtraProj reads \
+                     OriginSchema, not ported",
+                ));
+            }
+            let partial_plans_raw = std::mem::take(&mut self.idx_merge_part_plans);
+            let first = partial_plans_raw
+                .first()
+                .expect("the index-merge branch requires a partial plan");
+            let mut base = crate::physical::BasePhysicalPlan::with_id(
+                first.id(),
+                "IndexMerge",
+                first.query_block_offset(),
+            );
+            let table_plan = self.table_plan.take();
+            let receipt = table_plan.as_deref().unwrap_or(first);
+            base.base.set_stats(receipt.stats_info().cloned());
+            base.base.set_schema(receipt.schema().cloned());
+            let reader =
+                PhysicalPlan::IndexMergeReader(crate::physical::PhysicalIndexMergeReader {
+                    base,
+                    partial_plans_raw,
+                    table_plan,
+                    is_intersection_type: self.idx_merge_is_intersection,
+                    access_mv_index: self.idx_merge_access_mv_index,
+                    pushed_limit: None,
+                    by_items: Vec::new(),
+                    keep_order: self.keep_order,
+                });
+            let mut root = RootTask::default();
+            root.set_plan(reader);
+            root.index_join_info = self.index_join_info.take();
+            if self.warnings.warning_count() > 0 {
+                root.warnings.copy_of(&self.warnings);
+            }
+            let conds = std::mem::take(&mut self.root_task_conds);
+            return Ok(Task::Root(Self::handle_root_task_conds(conds, root)));
         }
         if self.index_plan.is_some() && self.table_plan.is_some() {
             let conds = std::mem::take(&mut self.root_task_conds);
@@ -2134,6 +2169,37 @@ mod attach_tests {
             matches!(plan.children().first(), Some(PhysicalPlan::TableReader(_))),
             "the selection sits ABOVE the reader"
         );
+    }
+
+    #[test]
+    fn an_index_merge_cop_task_converts_to_the_retained_reader_tree() {
+        let scan = |id: i32, rows: f64| {
+            let mut base = op_with_stats("TableScan", rows);
+            base.base.set_id(id);
+            PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+                base,
+                table_id: 42,
+                ..crate::physical::PhysicalTableScan::default()
+            })
+        };
+        let task = CopTask {
+            table_plan: Some(Box::new(scan(3, 5.0))),
+            index_plan_finished: true,
+            keep_order: true,
+            idx_merge_part_plans: vec![scan(1, 3.0), scan(2, 2.0)],
+            idx_merge_is_intersection: true,
+            ..CopTask::default()
+        }
+        .convert_to_root_task_impl()
+        .expect("index merge converts to a root reader");
+
+        let PhysicalPlan::IndexMergeReader(reader) = task.plan().expect("a retained reader") else {
+            panic!("index merge reader");
+        };
+        assert_eq!(reader.partial_plans_raw.len(), 2);
+        assert!(reader.table_plan.is_some());
+        assert!(reader.is_intersection_type);
+        assert!(reader.keep_order);
     }
 
     #[test]

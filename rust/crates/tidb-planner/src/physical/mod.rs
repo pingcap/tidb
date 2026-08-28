@@ -1346,16 +1346,26 @@ pub struct PhysicalBatchPointGet {
 }
 
 /// Go `physicalop.PhysicalIndexMergeReader`. Each partial access path owns a
-/// pushed-down plan tree; its table side has no parameter-dependent range but
-/// is retained for a complete immutable operator shape.
+/// raw pushed-down plan tree; flattening that tree is an executor-protocol
+/// concern, not a second physical representation.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalIndexMergeReader {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
-    /// Go `PartialPlans`.
-    pub partial_plans: Vec<Vec<PhysicalPlan>>,
+    /// Go `PartialPlansRaw`.
+    pub partial_plans_raw: Vec<PhysicalPlan>,
     /// Go `TablePlan`.
     pub table_plan: Option<Box<PhysicalPlan>>,
+    /// Go `IsIntersectionType`.
+    pub is_intersection_type: bool,
+    /// Go `AccessMVIndex`.
+    pub access_mv_index: bool,
+    /// Go `PushedLimit`.
+    pub pushed_limit: Option<PushedDownLimit>,
+    /// Go `ByItems`.
+    pub by_items: Vec<tidb_expr::aggregation::ByItems>,
+    /// Go `KeepOrder`.
+    pub keep_order: bool,
 }
 
 /// The cached physical root of an INSERT/UPDATE/DELETE whose source is a
@@ -2371,8 +2381,13 @@ impl PhysicalPlan {
             }),
             Self::IndexMergeReader(op) => Self::IndexMergeReader(PhysicalIndexMergeReader {
                 base: base_of(&op.base),
-                partial_plans: op.partial_plans.clone(),
+                partial_plans_raw: op.partial_plans_raw.clone(),
                 table_plan: op.table_plan.clone(),
+                is_intersection_type: op.is_intersection_type,
+                access_mv_index: op.access_mv_index,
+                pushed_limit: op.pushed_limit,
+                by_items: op.by_items.clone(),
+                keep_order: op.keep_order,
             }),
             Self::Dml(op) => Self::Dml(PhysicalDmlRoot {
                 base: base_of(&op.base),

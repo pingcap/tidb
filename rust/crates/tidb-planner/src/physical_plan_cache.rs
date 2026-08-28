@@ -676,10 +676,8 @@ pub fn rebuild_ranges_for_cached_plan(
             )?;
         }
         PhysicalPlan::IndexMergeReader(reader) => {
-            for partial_plans in &mut reader.partial_plans {
-                for partial_plan in partial_plans {
-                    rebuild_ranges_for_cached_plan(partial_plan, context)?;
-                }
+            for partial_plan in &mut reader.partial_plans_raw {
+                rebuild_ranges_for_cached_plan(partial_plan, context)?;
             }
             if let Some(table_plan) = reader.table_plan.as_deref_mut() {
                 rebuild_ranges_for_cached_plan(table_plan, context)?;
