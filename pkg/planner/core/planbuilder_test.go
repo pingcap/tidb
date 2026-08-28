@@ -992,7 +992,7 @@ func TestImportIntoCollAssignmentChecker(t *testing.T) {
 
 			checker := newImportIntoCollAssignmentChecker()
 			checker.idx = i
-			expr.Accept(checker)
+			ast.Walk(expr, checker)
 			if c.error != "" {
 				require.EqualError(t, checker.err, fmt.Sprintf("%s, index %d", c.error, i), c.expr)
 			} else {

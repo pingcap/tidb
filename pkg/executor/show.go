@@ -308,26 +308,26 @@ type visibleChecker struct {
 	ok        bool
 }
 
-func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (v *visibleChecker) Enter(in ast.Node) (skipChildren bool) {
 	if x, ok := in.(*ast.TableName); ok {
 		schema := x.Schema.L
 		if schema == "" {
 			schema = v.defaultDB
 		}
 		if !v.is.TableExists(ast.NewCIStr(schema), x.Name) {
-			return in, true
+			return true
 		}
 		activeRoles := v.ctx.GetSessionVars().ActiveRoles
 		if v.manager != nil && !v.manager.RequestVerification(activeRoles, schema, x.Name.L, "", mysql.SelectPriv) {
 			v.ok = false
 		}
-		return in, true
+		return true
 	}
-	return in, false
+	return false
 }
 
-func (*visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
+func (*visibleChecker) Leave(ast.Node) (proceed bool) {
+	return true
 }
 
 func (e *ShowExec) fetchShowBind() error {
@@ -364,7 +364,7 @@ func (e *ShowExec) fetchShowBind() error {
 			manager:   privilege.GetPrivilegeManager(e.Ctx()),
 			ok:        true,
 		}
-		stmt.Accept(&checker)
+		ast.Walk(stmt, &checker)
 		if !checker.ok {
 			continue
 		}
