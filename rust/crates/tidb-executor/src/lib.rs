@@ -221,6 +221,8 @@ mod tests_index_join_cte_build_cleanup_gaps;
 #[cfg(test)]
 mod tests_parallel_apply_sql_source;
 #[cfg(test)]
+mod tests_table_part2_source;
+#[cfg(test)]
 mod tests_partition_table_sql_source;
 #[cfg(test)]
 mod tests_memtable_cluster_source;
