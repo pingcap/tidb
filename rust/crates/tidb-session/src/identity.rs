@@ -42,6 +42,16 @@ impl Session {
             [database, table] => (database.as_str(), table.as_str()),
             _ => return Ok(()),
         };
+        self.require_named_table_privilege(database, table, privilege)
+    }
+
+    /// Checks one already-resolved table name without rebuilding an AST path.
+    pub(crate) fn require_named_table_privilege(
+        &self,
+        database: &str,
+        table: &str,
+        privilege: privilege::GlobalPriv,
+    ) -> Result<(), DriverError> {
         let granted = match crate::table_privilege::mem_db_verdict_mask(database, privilege.bit()) {
             Some(verdict) => verdict,
             None => self.has_scoped_privilege(database, table, privilege),

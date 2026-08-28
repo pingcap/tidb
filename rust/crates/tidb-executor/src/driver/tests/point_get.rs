@@ -650,7 +650,7 @@ fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
 }
 
 #[test]
-fn prepared_fast_point_get_binds_common_handle_without_cloning_template() {
+fn prepared_point_plan_binds_common_handle_without_cloning_template() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
         "CREATE TABLE prepared_y (id VARCHAR(64) PRIMARY KEY, v VARCHAR(32))",
@@ -664,25 +664,61 @@ fn prepared_fast_point_get_binds_common_handle_without_cloning_template() {
     )
     .unwrap();
     let stmt = tidb_parser::parse("SELECT * FROM prepared_y WHERE id = ?").unwrap();
-    let select = match &stmt {
-        Stmt::Query(query) => match &**query {
-            QueryStmt::Select(select) => select,
-            QueryStmt::SetOpr(_) => panic!("expected a select"),
-        },
-        _ => panic!("expected a query"),
-    };
-    let fast = run_fast_prepared_point_get(
-        select,
-        &[Datum::Bytes(b"user-0001".to_vec())],
-        &mut catalog,
-        "test",
-        &crate::StmtContext::for_query(),
-    )
-    .unwrap()
-    .expect("prepared common-handle point read should use the fast path");
+    let zone: tidb_datatype::SessionTimeZone = Default::default();
+    let plan = std::sync::Arc::new(
+        build_prepared_point_get_plan(&stmt, 1, &catalog, "test", &zone)
+            .expect("prepared common-handle point read should build one plan"),
+    );
+    let execution = plan
+        .bind(&[Datum::Bytes(b"user-0001".to_vec())], &zone)
+        .expect("the current marker value rebuilds its common handle");
+    let decode = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone);
+    let fast = run_prepared_point_get(&execution, &mut catalog, "test", &decode)
+        .unwrap()
+        .expect("the prepared common-handle point plan remains valid");
     assert_eq!(fast.1.len(), 1);
     assert_eq!(datum_text_for_test(&fast.1[0][0]), "user-0001");
     assert_eq!(datum_text_for_test(&fast.1[0][1]), "value-1");
+}
+
+/// Stock sysbench declares its auto-increment handle as `INTEGER`, not the
+/// `BIGINT` used by the older planner-shape fixture. Go's prepared PointGet
+/// cache admits both integer widths, so the exact oltp point query must retain
+/// a reusable plan as well.
+#[test]
+fn prepared_point_cache_admits_the_stock_sysbench_integer_handle() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE sbtest1 (\
+            id INTEGER NOT NULL AUTO_INCREMENT, \
+            k INTEGER DEFAULT 0 NOT NULL, \
+            c CHAR(120) DEFAULT '' NOT NULL, \
+            pad CHAR(60) DEFAULT '' NOT NULL, \
+            PRIMARY KEY (id), INDEX k_1(k))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO sbtest1 (id, k, c, pad) VALUES (1, 7, 'value', 'pad')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let stmt = tidb_parser::parse("SELECT c FROM sbtest1 WHERE id = ?").unwrap();
+
+    let plan = std::sync::Arc::new(
+        build_prepared_point_get_plan(&stmt, 1, &catalog, DEFAULT_DATABASE, &Default::default())
+            .expect("Go caches stock sysbench's INTEGER-handle PointGet"),
+    );
+    let zone: tidb_datatype::SessionTimeZone = Default::default();
+    let execution = plan
+        .bind(&[Datum::Int(1)], &zone)
+        .expect("the execute value rebuilds the cached handle");
+    let decode = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone);
+    let (_, rows) = run_prepared_point_get(&execution, &mut catalog, DEFAULT_DATABASE, &decode)
+        .unwrap()
+        .expect("the PREPARE-time plan remains valid on first execution");
+    assert_eq!(datum_text_for_test(&rows[0][0]), "value");
 }
 
 /// Go's prepared point cache admits a complete non-prefix UNIQUE secondary

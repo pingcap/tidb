@@ -2240,10 +2240,12 @@ impl QuerySession for ClusterServerSession {
                 .statement_resource_group_sql(statement.sql())
                 .map_err(map_error)?,
         };
-        let cached_point_get_plan = statement
-            .point_get_cache_ready()
-            .then(|| statement.point_get_plan().cloned())
-            .flatten();
+        // Go's first PointGet cache miss and later hits execute the SAME
+        // planner-built PointGet plan; only `FoundInPlanCache` differs. Keep
+        // the candidate available on the miss as well, instead of asking the
+        // retired executor-local fast planner to rediscover a narrower shape.
+        let point_get_plan = statement.point_get_plan().cloned();
+        let point_get_cache_hit = statement.point_get_cache_ready();
         // YCSB's prepared point reads are a retained SELECT template whose
         // only changing value is the clustered key.  Resolve that key directly
         // from the template and execute values; cloning/binding the complete
@@ -2360,12 +2362,15 @@ impl QuerySession for ClusterServerSession {
                         .map_err(map_error);
                 }
                 if fast {
-                    if let Some(cached) = cached_point_get_plan
+                    if let Some(cached) = point_get_plan
                         .as_ref()
                         .and_then(|plan| session.bind_cached_prepared_point_get(plan, &params))
                     {
-                        match session.execute_cached_prepared_point_get(cached) {
-                            Ok(output) => return Ok(output),
+                        match session.execute_prepared_point_get(cached, point_get_cache_hit) {
+                            Ok(output) => {
+                                statement.mark_point_get_cache_ready();
+                                return Ok(output);
+                            }
                             // The cached plan's identity moved under it (a DDL
                             // between PREPARE and this EXECUTE). That is a cache
                             // MISS, not a statement failure: fall through and
@@ -2378,20 +2383,9 @@ impl QuerySession for ClusterServerSession {
                             Err(error) => return Err(map_error(error)),
                         }
                     }
-                    if let Some(output) = session
-                        .execute_fast_prepared_point_get(
-                            retained.expect("fast prepared point read has a retained template"),
-                            &params,
-                        )
-                        .map_err(map_error)?
-                    {
-                        statement.mark_point_get_cache_ready();
-                        return Ok(output);
-                    }
-                    // A defensive refusal falls through to the ordinary path. It
-                    // is not expected after the pure shape check, but preserves
-                    // correctness if the catalog changes between classification
-                    // and execution.
+                    // A missing/invalidated candidate falls through to the
+                    // ordinary path. This is a cache miss, never permission to
+                    // run a second, executor-local point planner.
                     let bound = tidb_executor::bind_statement(
                         retained
                             .expect("fast prepared point read has a retained template")

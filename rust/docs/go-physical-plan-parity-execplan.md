@@ -116,6 +116,11 @@ both `oltp_read_only` and `oltp_read_write`.
   counts are retained with the receipt. Cached join shapes keep their legacy
   predicate-routing walk until the recursive physical join lowerer owns that
   contract.
+- [x] 2026-08-27: prepared PointGet now executes the retained planner-built
+  plan on its first miss and every later cache hit. The executor-local prepared
+  point planner and its duplicate predicate/handle/row-decoder implementation
+  were deleted. Execute-time privilege checks, fresh mutable executor state,
+  and first-miss/later-hit `@@last_plan_from_cache` semantics remain.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -258,6 +263,19 @@ both `oltp_read_only` and `oltp_read_write`.
   `pkg/executor/adapter.go::buildExecutor`, and
   `driver::tests::point_get::cached_physical_plan_does_not_rerun_legacy_row_estimation`.
 
+- Observation: Rust had two prepared PointGet implementations after the shared
+  planner was wired. PREPARE built and retained the general planner's
+  `PreparedPointGetPlan`, but the first EXECUTE ignored it and invoked an
+  executor-local planner that rejected every table with any secondary index.
+  Stock sysbench always creates `k_1`, so `SELECT c FROM sbtest1 WHERE id=?`
+  was refused on every execution and never admitted into the point cache.
+  Executing the retained plan on the first miss and marking it ready only
+  after success matches Go's one PointGet plan across miss and hits.
+  Evidence: removed
+  `try_prepared_common_handle_point_get_path`/`run_fast_prepared_point_get*`,
+  the exact stock-sysbench regression, and paired alternating measurements:
+  read-only improved from 0.798x to 0.855x; read-write from 0.882x to 0.897x.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -332,6 +350,14 @@ both `oltp_read_only` and `oltp_read_write`.
   without changing production state.
   Date/Author: 2026-08-27, Codex.
 
+- Decision: the PREPARE-time planner owns PointGet shape and access-path
+  selection. EXECUTE may bind current parameter values and instantiate fresh
+  runtime state, but it must not invoke a second executor-local point planner.
+  Rationale: Go uses the same planner-built PointGet on its first cache miss
+  and later hits. The duplicated Rust planner had narrower, workload-breaking
+  admission rules and made cache readiness depend on those unrelated rules.
+  Date/Author: 2026-08-27, Codex.
+
 ## Outcomes & Retrospective
 
 Work is in progress. After restoring point-plan precedence and removing the
@@ -342,7 +368,13 @@ gap to read work. After removing successful-read receipts and changing cached
 physical rebuild to in-place ownership, one immediate diagnostic sample moved
 the all-query ratio from 0.792 to 0.933 and the point-read ratio from 0.945 to
 1.014; the range control was noisy and these single samples are diagnostic,
-not acceptance evidence. Alternating multi-sample validation remains.
+not acceptance evidence. A fresh three-sample alternating run before removing
+the duplicate first-execute point planner measured read-only Rust/Go medians
+of 360.43/451.39 TPS (0.798x) and read-write 249.66/283.15 TPS (0.882x).
+After the retained planner-built PointGet became the only point implementation,
+the same harness measured 403.71/472.00 TPS (0.855x) and 255.89/285.32 TPS
+(0.897x), all with zero SQL errors. This is a material root fix but not yet the
+1.0 acceptance result; profiling of the remaining read work continues.
 
 ## Context and Orientation
 

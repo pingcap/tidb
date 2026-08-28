@@ -1250,8 +1250,9 @@ impl Session {
                 })
             }
             None => self.run_with_columns_using(sql, capture_result_authority, move |session| {
-                session.execute_cached_prepared_point_get(
+                session.execute_prepared_point_get(
                     cached_point_get.expect("the cached path carries its PointGet execution"),
+                    true,
                 )
             }),
         };

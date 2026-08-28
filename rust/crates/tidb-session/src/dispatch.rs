@@ -434,44 +434,6 @@ impl Session {
         self.execute_parsed_statement(sql, stmt, false, None)
     }
 
-    /// Executes the conservative prepared clustered-handle point-read path.
-    /// A refusal returns `None`, allowing the caller to bind and run the
-    /// complete ordinary prepared statement implementation.
-    pub fn execute_fast_prepared_point_get(
-        &mut self,
-        stmt: &Stmt,
-        params: &[tidb_datatype::Datum],
-    ) -> Result<Option<StmtOutput>, DriverError> {
-        self.activate_statement_resource_group(stmt);
-        if !self.in_transaction() {
-            self.lock_catalog()?.clear_dirty_content();
-        }
-        if let Some((path, privilege)) = fast_table_privilege_target(stmt) {
-            self.require_fast_table_privilege(path, privilege)?;
-        } else {
-            self.require_statement_table_privileges(stmt)?;
-        }
-        self.refuse_pinned_historical_read()?;
-        let Stmt::Query(query) = stmt else {
-            return Ok(None);
-        };
-        let tidb_ast::QueryStmt::Select(select) = &**query else {
-            return Ok(None);
-        };
-        let current_db = self.current_db.clone();
-        let context = self.prepared_point_get_context();
-        let result = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_fast_prepared_point_get_with_decode_context(
-                select,
-                params,
-                catalog,
-                &current_db,
-                &context,
-            )
-        })?;
-        Ok(result.map(|(columns, rows)| StmtOutput::Rows { columns, rows }))
-    }
-
     /// Executes the conservative one-row prepared INSERT path.  A refusal
     /// returns `None`, allowing the complete bound AST path to answer it.
     pub fn execute_fast_prepared_insert(
@@ -588,16 +550,24 @@ impl Session {
         self.execute_parsed_statement(sql, stmt, true, cached_point_get)
     }
 
-    /// Executes the subset Go serves through `ExecStmt.PointGet`: the cached
-    /// plan has already passed the statement-shape, schema, autocommit,
-    /// stale-read, binding, and hint gates. Go skips rebuilding visitInfo for
-    /// this reused executor; this path likewise avoids revisiting the AST.
-    pub fn execute_cached_prepared_point_get(
+    /// Executes the subset Go serves through a prepared `PointGetPlan`. The
+    /// plan has already passed the statement-shape, schema, stale-read,
+    /// binding, and hint gates, and each call creates fresh mutable execution
+    /// state. `cache_hit` distinguishes Go's first generated plan from later
+    /// rebuilds without sending either one through another planner.
+    pub fn execute_prepared_point_get(
         &mut self,
-        cached: tidb_executor::PreparedPointGetExecution,
+        execution: tidb_executor::PreparedPointGetExecution,
+        cache_hit: bool,
     ) -> Result<StmtOutput, DriverError> {
         self.active_resource_group.clone_from(&self.resource_group);
         self.begin_cached_prepared_query_boundary();
+        let plan = execution.plan();
+        self.require_named_table_privilege(
+            plan.names().0,
+            plan.names().1,
+            privilege::GlobalPriv::Select,
+        )?;
         // `dirty_content` only gates scan/access-path planning. This cached
         // executor owns one handle read and the admission gate already refuses
         // an open transaction, so walking every catalog table cannot affect
@@ -607,21 +577,20 @@ impl Session {
         self.statement_kind = StatementKind::Select;
 
         if self.in_transaction() {
-            let plan = cached.plan();
             let names = [(plan.names().0.to_owned(), plan.names().1.to_owned())];
             self.record_mdl_related_table_names(&names);
         }
         let current_db = self.current_db.clone();
         let ctx = self.prepared_point_get_context();
         let result = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_prepared_point_get(&cached, catalog, &current_db, &ctx)
+            tidb_executor::run_prepared_point_get(&execution, catalog, &current_db, &ctx)
         })?;
         let Some((columns, rows)) = result else {
             return Err(DriverError::unsupported(
                 "prepared point-get cache was invalidated during the statement",
             ));
         };
-        self.found_in_plan_cache = true;
+        self.found_in_plan_cache = cache_hit;
         Ok(StmtOutput::Rows { columns, rows })
     }
 
