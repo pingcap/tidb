@@ -17,6 +17,7 @@ package scheduler_test
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -406,6 +407,10 @@ func TestVerifyTaskStateTransform(t *testing.T) {
 
 func TestManagerScheduleLoop(t *testing.T) {
 	// Mock 16 cpu node.
+	oldMaxProcs := runtime.GOMAXPROCS(16)
+	t.Cleanup(func() {
+		runtime.GOMAXPROCS(oldMaxProcs)
+	})
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
