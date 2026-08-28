@@ -376,6 +376,11 @@ both `oltp_read_only` and `oltp_read_write`.
   backfill path constructed its cop-context types, so its self-only tests
   overstated runtime coverage; the existing add-index coprocessor receipt now
   records the whole unwired context/fetch/conversion gap.
+- [x] 2026-08-28: deleted the closed partial `tblctx`/`tblsession`/
+  `write_stmt_bufs` seed cluster. Its mutation buffers and narrowed session
+  traits were used only by one another and self-contained mocks; live DML
+  continues through `driver/dml`, `KvTable`, transaction buffers, and
+  tablecodec.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer

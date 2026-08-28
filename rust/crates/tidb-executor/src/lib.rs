@@ -203,8 +203,6 @@ pub mod storage;
 pub mod table_access;
 pub mod table_dual;
 pub mod table_reader;
-pub mod tblctx;
-pub mod tblsession;
 #[cfg(test)]
 mod tests_index_join;
 pub mod tiflash_recorder;
@@ -215,7 +213,6 @@ pub mod union_scan;
 pub mod vec_group_checker;
 pub mod view;
 mod window;
-pub mod write_stmt_bufs;
 pub mod zero_date;
 
 pub use apply::ApplyExec;
