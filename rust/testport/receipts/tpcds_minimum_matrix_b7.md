@@ -97,8 +97,9 @@ MPP/performance implementation unit.
 - Minimum-fixture result correctness: **met for all 42 statements**.
 - Q6 EXPLAIN regression: **fixed and covered by a Rust unit test**.
 - Exact Go physical-plan parity: **not met** (source 0/42; control 9/42).
-- Rust no-performance-regression requirement: **not met as an absolute
-  Go-vs-Rust target**; source and control medians above are recorded for the
-  next implementation unit.
+- Rust no-performance-regression check: **no broad regression established**
+  (post/fix-to-pre-fix p50 geometric ratios 1.03x source and 1.04x control),
+  but Q25 was a 1.53x outlier and needs a repeated baseline run before it can
+  be closed. Absolute Rust latency remains higher than Go, as shown above.
 - Exact Q64 Go casetest MPP oracle: **not met**; the earlier Q64 receipt remains
   the focused TiKV-only baseline.
