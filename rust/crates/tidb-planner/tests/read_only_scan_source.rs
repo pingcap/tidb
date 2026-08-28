@@ -5,12 +5,12 @@
 
 use tidb_planner::{
     access_path::ResolvedTableScanKind,
-    physical_selection::{ComparisonOp, ComparisonOperand},
     read_only_scan::{
         BoundBigIntComparison, ConfiguredColumn, ConfiguredColumnKind, ConfiguredScalarType,
         ConfiguredTable, ReadLockRequest, ReadLockWait, ReadOnlyScanError, ReadOnlyScanPlan,
         UnsupportedReadOnlyFeature,
     },
+    signed_bigint_ranger::{BigIntComparison, ComparisonOp, ComparisonOperand},
 };
 
 fn table() -> ConfiguredTable {
@@ -159,7 +159,14 @@ fn bound_relation_reuses_sql_lowering_for_all_columns_ranges_and_residuals() {
     assert_eq!(structured.handle_ranges().len(), 1);
     assert_eq!(structured.handle_ranges()[0].start(), -5);
     assert_eq!(structured.handle_ranges()[0].end(), i64::MAX);
-    let conditions = structured.selection().unwrap().conditions();
+    let conditions = structured
+        .selection()
+        .unwrap()
+        .conditions
+        .iter()
+        .map(BigIntComparison::from_expression)
+        .collect::<Option<Vec<_>>>()
+        .unwrap();
     assert_eq!(conditions.len(), 1);
     assert_eq!(conditions[0].op(), ComparisonOp::Gt);
     assert_eq!(conditions[0].lhs(), ComparisonOperand::InputOffset(1));
@@ -622,7 +629,9 @@ fn nullable_columns_drop_the_not_null_flag_and_never_apply_to_the_handle() {
             ConfiguredColumn::stored_char_not_null("label", 11, 16),
         ],
     );
-    table.validate().expect("nullable columns are a valid table");
+    table
+        .validate()
+        .expect("nullable columns are a valid table");
     assert!(!table.columns()[0].is_nullable());
     assert!(table.columns()[1].is_nullable());
     assert!(!table.columns()[2].is_nullable());
@@ -632,7 +641,11 @@ fn nullable_columns_drop_the_not_null_flag_and_never_apply_to_the_handle() {
     let [id, balance, label] = plan.projected_columns() else {
         panic!("three projections");
     };
-    assert_eq!(id.scan_column().flag, 3, "the handle keeps NOT_NULL|PRI_KEY");
+    assert_eq!(
+        id.scan_column().flag,
+        3,
+        "the handle keeps NOT_NULL|PRI_KEY"
+    );
     assert!(!id.is_nullable());
     assert_eq!(balance.scan_column().flag, 0, "nullable drops NOT_NULL");
     assert!(balance.is_nullable());

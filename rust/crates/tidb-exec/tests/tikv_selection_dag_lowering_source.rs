@@ -19,17 +19,33 @@ use tidb_distsql::EncodeType as DistSqlEncodeType;
 use tidb_exec::dag_request::{
     construct_read_only_dag_req, DagRequestBuildError, DagRequestContext, TiKvScanPlan,
 };
+use tidb_expr::expression::Expression;
 use tidb_planner::{
-    physical_selection::{
-        BigIntComparison, ComparisonOp, ComparisonOperand, PhysicalSelectionPlan,
-    },
     physical_table_scan::PhysicalTableScanPlan,
+    read_only_scan::{ConfiguredColumn, ConfiguredTable, ReadOnlyScanPlan},
     tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec},
 };
 use tidb_proto::tipb::{DagRequest, ExecType, ExprType, ScalarFuncSig};
 
 fn context() -> DagRequestContext {
     DagRequestContext::new("UTC", 0, 32, DistSqlEncodeType::Default)
+}
+
+fn configured_table() -> ConfiguredTable {
+    ConfiguredTable::new(
+        "test",
+        "accounts",
+        42,
+        [
+            ConfiguredColumn::clustered_primary_key("id", 1),
+            ConfiguredColumn::stored_not_null("balance", 2),
+            ConfiguredColumn::stored_not_null("version", 3),
+        ],
+    )
+}
+
+fn bounded_plan(sql: &str) -> ReadOnlyScanPlan {
+    ReadOnlyScanPlan::lower(sql, &configured_table()).unwrap()
 }
 
 fn column(id: i64, flags: i32) -> ScanColumnInfo {
@@ -49,41 +65,25 @@ fn scan_plan(columns: Vec<ScanColumnInfo>) -> PhysicalTableScanPlan {
     PhysicalTableScanPlan::init(1, 0, TiKvTableScanSpec::new(42, columns))
 }
 
-fn comparison(
-    op: ComparisonOp,
-    lhs: ComparisonOperand,
-    rhs: ComparisonOperand,
-) -> BigIntComparison {
-    BigIntComparison::new(op, lhs, rhs).unwrap()
-}
-
 #[test]
 fn table_scan_then_selection_preserves_all_six_signatures_and_projection() {
-    let table = scan_plan(vec![column(1, 3), column(2, 1), column(3, 1)]);
+    let plan = bounded_plan(
+        "SELECT id, balance, version FROM accounts \
+         WHERE balance < -2 AND balance <= -1 AND balance > 0 \
+           AND balance >= 1 AND balance = 2 AND balance != 3",
+    );
     let cases = [
-        (ComparisonOp::Lt, ScalarFuncSig::LtInt),
-        (ComparisonOp::Le, ScalarFuncSig::LeInt),
-        (ComparisonOp::Gt, ScalarFuncSig::GtInt),
-        (ComparisonOp::Ge, ScalarFuncSig::GeInt),
-        (ComparisonOp::Eq, ScalarFuncSig::EqInt),
-        (ComparisonOp::Ne, ScalarFuncSig::NeInt),
+        ScalarFuncSig::LtInt,
+        ScalarFuncSig::LeInt,
+        ScalarFuncSig::GtInt,
+        ScalarFuncSig::GeInt,
+        ScalarFuncSig::EqInt,
+        ScalarFuncSig::NeInt,
     ];
-    let conditions = cases
-        .iter()
-        .enumerate()
-        .map(|(index, (operator, _))| {
-            comparison(
-                *operator,
-                ComparisonOperand::InputOffset(1),
-                ComparisonOperand::Int(index as i64 - 2),
-            )
-        })
-        .collect();
-    let selection = PhysicalSelectionPlan::from_bigint_conditions(conditions).unwrap();
     let request = construct_read_only_dag_req(
         &context(),
-        TiKvScanPlan::Table(&table),
-        Some(&selection),
+        TiKvScanPlan::Table(plan.table_scan()),
+        plan.selection(),
         &[0, 2],
     )
     .unwrap();
@@ -102,7 +102,7 @@ fn table_scan_then_selection_preserves_all_six_signatures_and_projection() {
     assert_eq!(selection_executor.parent_idx, None);
     let conditions = &selection_executor.selection.as_ref().unwrap().conditions;
     assert_eq!(conditions.len(), cases.len());
-    for (condition, (_, signature)) in conditions.iter().zip(cases) {
+    for (condition, signature) in conditions.iter().zip(cases) {
         assert_eq!(condition.tp, Some(ExprType::ScalarFunc as i32));
         assert_eq!(condition.sig, Some(signature as i32));
         assert_eq!(condition.children[0].tp, Some(ExprType::ColumnRef as i32));
@@ -124,17 +124,11 @@ fn table_scan_then_selection_preserves_all_six_signatures_and_projection() {
 
 #[test]
 fn literal_left_order_and_duplicate_projection_offsets_are_preserved() {
-    let table = scan_plan(vec![column(1, 3), column(2, 1), column(3, 1)]);
-    let selection = PhysicalSelectionPlan::from_bigint_conditions(vec![comparison(
-        ComparisonOp::Lt,
-        ComparisonOperand::Int(7),
-        ComparisonOperand::InputOffset(2),
-    )])
-    .unwrap();
+    let plan = bounded_plan("SELECT id, balance, version FROM accounts WHERE 7 < version");
     let request = construct_read_only_dag_req(
         &context(),
-        TiKvScanPlan::Table(&table),
-        Some(&selection),
+        TiKvScanPlan::Table(plan.table_scan()),
+        plan.selection(),
         &[2, 0, 2],
     )
     .unwrap();
@@ -163,23 +157,26 @@ fn optional_selection_keeps_scan_only_context_and_requested_offsets() {
 fn invalid_projection_condition_and_flags_fail_closed() {
     let table = scan_plan(vec![column(1, 3), column(2, 1)]);
     assert_eq!(
-        construct_read_only_dag_req(&context(), TiKvScanPlan::Table(&table), None, &[2],),
+        construct_read_only_dag_req(&context(), TiKvScanPlan::Table(&table), None, &[2]),
         Err(DagRequestBuildError::OutputOffsetOutOfRange {
             offset: 2,
             width: 2,
         })
     );
 
-    let outside = PhysicalSelectionPlan::from_bigint_conditions(vec![comparison(
-        ComparisonOp::Eq,
-        ComparisonOperand::InputOffset(2),
-        ComparisonOperand::Int(1),
-    )])
-    .unwrap();
+    let outside_plan = bounded_plan("SELECT id FROM accounts WHERE balance = 1");
+    let mut outside = outside_plan.selection().unwrap().clone();
+    let Expression::ScalarFunction(function) = &mut outside.conditions[0] else {
+        panic!("the bounded comparison must be a scalar function")
+    };
+    let Expression::Column(input_column) = &mut function.args[0] else {
+        panic!("the left operand must be the scan column")
+    };
+    input_column.index = 2;
     assert_eq!(
         construct_read_only_dag_req(
             &context(),
-            TiKvScanPlan::Table(&table),
+            TiKvScanPlan::Table(outside_plan.table_scan()),
             Some(&outside),
             &[0],
         ),
@@ -189,29 +186,26 @@ fn invalid_projection_condition_and_flags_fail_closed() {
         })
     );
 
-    let metadata_only = PhysicalSelectionPlan::init("eq(a, 1)", 0, 0);
+    let empty_plan = bounded_plan("SELECT id FROM accounts WHERE balance = 1");
+    let mut empty = empty_plan.selection().unwrap().clone();
+    empty.conditions.clear();
     assert_eq!(
         construct_read_only_dag_req(
             &context(),
-            TiKvScanPlan::Table(&table),
-            Some(&metadata_only),
+            TiKvScanPlan::Table(empty_plan.table_scan()),
+            Some(&empty),
             &[0],
         ),
         Err(DagRequestBuildError::EmptySelection)
     );
 
     let invalid_flags = scan_plan(vec![column(1, -1)]);
-    let selection = PhysicalSelectionPlan::from_bigint_conditions(vec![comparison(
-        ComparisonOp::Eq,
-        ComparisonOperand::InputOffset(0),
-        ComparisonOperand::Int(1),
-    )])
-    .unwrap();
+    let selection_plan = bounded_plan("SELECT balance FROM accounts WHERE balance = 1");
     assert_eq!(
         construct_read_only_dag_req(
             &context(),
             TiKvScanPlan::Table(&invalid_flags),
-            Some(&selection),
+            selection_plan.selection(),
             &[0],
         ),
         Err(DagRequestBuildError::InvalidColumnFlags {

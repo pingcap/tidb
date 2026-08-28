@@ -32,6 +32,15 @@ both `oltp_read_only` and `oltp_read_write`.
 
 ## Progress
 
+- [x] 2026-08-28: removed the duplicate bounded `PhysicalSelectionPlan`.
+  The scripted TiKV read tier now carries the wired
+  `physical::PhysicalSelection` and its real expression conditions; DAG
+  lowering and staged-row overlay evaluation both consume that same tree.
+  The signed-BIGINT comparison shape remains only as ranger input and as a
+  non-stored adapter at bounded executor boundaries. The migrated difftest now
+  exercises `ExhaustPhysicalPlans4LogicalSelection` instead of directly
+  constructing metadata-only Selection facades.
+
 - [x] Removed the duplicate bounded `PhysicalTableDualPlan`. Empty-range
   datasource tasks now carry the wired `physical::PhysicalTableDual`, so the
   same operator owns plan identity, query-block offset, row count, explain,
@@ -508,6 +517,13 @@ both `oltp_read_only` and `oltp_read_write`.
 - [ ] Run correctness, compatibility, performance, and Ready validation.
 
 ## Surprises & Discoveries
+
+- Observation: the shared builtin pushdown catalog does not own comparison
+  signatures; the typed predicate encoder does. Once the duplicate Selection
+  plan was removed, executable Selection lowering therefore had to dispatch
+  from the real `Expression` tree to those two existing lowering owners. This
+  preserves one stored condition authority without pretending that builtin
+  calls and comparison predicates share an encoder today.
 
 - Observation: the duplicate Sort and TopN metadata facades concealed missing
   fields on the wired operators. The real Sort did not account for owned order
@@ -1944,6 +1960,39 @@ Exact WIP validation commands:
     git diff --check
     OFF=44000 EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
     OFF=45000 PROFILE_ONLY=1 PROFILE_TAG=direct-physical-corrected PROFILE_WORKLOAD=oltp_read_only EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, wired bounded Selection): the bounded scripted
+read tier stored signed-BIGINT comparisons in a second
+`PhysicalSelectionPlan`, independently of the wired
+`physical::PhysicalSelection` used by the general planner and executor. The
+facade, its metadata-only constructors, and its artificial explain/pushdown
+contracts are deleted. `ReadOnlyScanPlan` now builds typed scalar expressions
+on the wired operator; TiKV DAG lowering dispatches those expressions to the
+existing builtin or predicate encoders, and staged-row evaluation recovers a
+bounded comparison only at that executor boundary. The logical-to-physical
+difftest now calls `ExhaustPhysicalPlans4LogicalSelection`.
+
+The regression in `/private/tmp/tidb-df85-selection-baseline` first failed to
+type-check because `ReadOnlyScanPlan::selection()` returned the facade and now
+passes with `&physical::PhysicalSelection`. This slice also repaired the
+`IndexTask`/`ScanReadTask` test equality compile regression exposed by the
+exact `df85dad86b` baseline after `PhysicalTableDualPlan` was removed. Exact
+WIP validation commands:
+
+    cd rust
+    cargo test -q -p tidb-planner bounded_read_uses_the_wired_physical_selection
+    cargo test -q -p tidb-planner --test all read_only_bigint_selection_source
+    cargo test -q -p tidb-planner --test all read_only_clustered_pk_range_source
+    cargo test -q -p tidb-planner --test all physical_bigint_selection_source
+    cargo test -q -p tidb-planner --test all read_only_scan_source
+    cargo test -q -p tidb-planner --test all cardinality_live_index_choice_source::source_datasource_index_task_rejects_unimplemented_go_path_forms
+    cargo test -q -p tidb-planner --test all tikv_table_read_task_runtime_source::unified_scan_task_preserves_existing_index_only_behavior
+    cargo test -q -p tidb-exec --test all tikv_selection_dag_lowering_source
+    cargo test -q -p tidb-exec a_staged_row_uses_the_snapshot_selections_sql_comparison_semantics
+    cargo test -q -p difftest-planner-tests --test all
+    cargo check -q -p tidb-planner -p tidb-exec
+    cd ..
+    git diff --check
 
 Plan revision note (2026-08-27): created after the user confirmed the
 performance-preserving route to full Go parity across plan cache, aggregation,

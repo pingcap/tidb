@@ -473,8 +473,8 @@ fn bound_comparison(
     }
 }
 
-fn comparison_op(operator: BinaryOp) -> Option<crate::physical_selection::ComparisonOp> {
-    use crate::physical_selection::ComparisonOp;
+fn comparison_op(operator: BinaryOp) -> Option<crate::signed_bigint_ranger::ComparisonOp> {
+    use crate::signed_bigint_ranger::ComparisonOp;
     match operator {
         BinaryOp::Eq => Some(ComparisonOp::Eq),
         BinaryOp::Ne => Some(ComparisonOp::Ne),

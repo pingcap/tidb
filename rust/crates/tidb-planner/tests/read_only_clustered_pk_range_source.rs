@@ -15,9 +15,8 @@
 #![allow(missing_docs)]
 
 use tidb_planner::{
-    physical_selection::{ComparisonOp, ComparisonOperand},
     read_only_scan::{ConfiguredColumn, ConfiguredTable, ReadOnlyScanPlan},
-    signed_bigint_ranger::SignedBigIntRange,
+    signed_bigint_ranger::{BigIntComparison, ComparisonOp, ComparisonOperand, SignedBigIntRange},
 };
 
 fn table() -> ConfiguredTable {
@@ -185,13 +184,11 @@ fn stored_predicate_remains_selection_and_projection_offsets_do_not_move() {
         [9, 7, 11]
     );
     let selection = plan.selection().unwrap();
-    assert_eq!(selection.conditions().len(), 1);
-    assert_eq!(selection.conditions()[0].op(), ComparisonOp::Ne);
-    assert_eq!(
-        selection.conditions()[0].lhs(),
-        ComparisonOperand::InputOffset(2)
-    );
-    assert_eq!(selection.conditions()[0].rhs(), ComparisonOperand::Int(0));
+    assert_eq!(selection.conditions.len(), 1);
+    let condition = BigIntComparison::from_expression(&selection.conditions[0]).unwrap();
+    assert_eq!(condition.op(), ComparisonOp::Ne);
+    assert_eq!(condition.lhs(), ComparisonOperand::InputOffset(2));
+    assert_eq!(condition.rhs(), ComparisonOperand::Int(0));
 }
 
 #[test]
@@ -200,7 +197,7 @@ fn stored_only_predicate_keeps_full_range_and_selection() {
         ReadOnlyScanPlan::lower("SELECT id FROM accounts WHERE balance > 100", &table()).unwrap();
 
     assert_eq!(plan.handle_ranges(), [SignedBigIntRange::full()]);
-    assert_eq!(plan.selection().unwrap().conditions().len(), 1);
+    assert_eq!(plan.selection().unwrap().conditions.len(), 1);
     assert!(!plan.is_contradiction());
 }
 

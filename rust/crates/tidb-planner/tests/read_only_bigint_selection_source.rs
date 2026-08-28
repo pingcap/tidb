@@ -15,12 +15,22 @@
 //! Source-derived binding tests for the bounded signed-BIGINT Selection.
 
 use tidb_planner::{
-    physical_selection::{ComparisonOp, ComparisonOperand},
     read_only_scan::{
         ConfiguredColumn, ConfiguredTable, ReadOnlyScanError, ReadOnlyScanPlan,
         UnsupportedReadOnlyPredicate,
     },
+    signed_bigint_ranger::{BigIntComparison, ComparisonOp, ComparisonOperand},
 };
+
+fn comparisons(plan: &ReadOnlyScanPlan) -> Vec<BigIntComparison> {
+    plan.selection()
+        .unwrap()
+        .conditions
+        .iter()
+        .map(BigIntComparison::from_expression)
+        .collect::<Option<Vec<_>>>()
+        .expect("the bounded reader builds ranger comparisons as real expressions")
+}
 
 fn table() -> ConfiguredTable {
     ConfiguredTable::new(
@@ -62,7 +72,7 @@ fn six_comparisons_preserve_and_order_operand_order_and_signed_extremes() {
         [7, 9]
     );
     assert!(plan.is_contradiction());
-    let conditions = plan.selection().unwrap().conditions();
+    let conditions = comparisons(&plan);
     assert_eq!(conditions.len(), 3);
     assert_eq!(conditions[0].op(), ComparisonOp::Le);
     assert_eq!(conditions[0].lhs(), ComparisonOperand::Int(-5));
@@ -70,9 +80,10 @@ fn six_comparisons_preserve_and_order_operand_order_and_signed_extremes() {
     assert_eq!(conditions[1].op(), ComparisonOp::Ge);
     assert_eq!(conditions[2].op(), ComparisonOp::Ne);
     assert_eq!(
-        plan.selection()
-            .unwrap()
-            .condition_input_offsets()
+        conditions
+            .iter()
+            .copied()
+            .map(BigIntComparison::input_offset)
             .collect::<Vec<_>>(),
         [1, 1, 1]
     );
@@ -99,9 +110,10 @@ fn projection_prefix_is_stable_and_predicate_only_columns_are_appended_once() {
         [11, 7, 9]
     );
     assert_eq!(
-        plan.selection()
-            .unwrap()
-            .condition_input_offsets()
+        comparisons(&plan)
+            .iter()
+            .copied()
+            .map(BigIntComparison::input_offset)
             .collect::<Vec<_>>(),
         [2, 2]
     );
@@ -113,6 +125,13 @@ fn no_where_keeps_the_existing_scan_without_a_physical_selection() {
     assert!(plan.selection().is_none());
     assert_eq!(plan.projection_output_offsets(), [0, 1]);
     assert_eq!(plan.table_scan().pushdown().columns.len(), 2);
+}
+
+#[test]
+fn bounded_read_uses_the_wired_physical_selection() {
+    let plan =
+        ReadOnlyScanPlan::lower("SELECT id FROM accounts WHERE balance > 10", &table()).unwrap();
+    let _: &tidb_planner::physical::PhysicalSelection = plan.selection().unwrap();
 }
 
 fn unsupported(sql: &str, reason: UnsupportedReadOnlyPredicate) {

@@ -879,7 +879,7 @@ fn request_envelope(plan: &ReadOnlyScanPlan) -> RequestEnvelope {
     let mut executors = vec![ExecutorShape::new(ExecutorKind::TableScan)];
     if plan
         .selection()
-        .is_some_and(|selection| !selection.conditions().is_empty())
+        .is_some_and(|selection| !selection.conditions.is_empty())
     {
         // Selection is `Other` in the request builder's concurrency-only
         // shape model. The encoded DAG carries its exact physical identity.

@@ -176,8 +176,8 @@ pub enum ReadOnlyScanError {
     /// A `WHERE` clause is present but is outside the bounded signed-`BIGINT`
     /// Selection grammar.
     UnsupportedPredicate(UnsupportedReadOnlyPredicate),
-    /// The resolved predicate violated the physical Selection contract.
-    PhysicalSelection(PhysicalSelectionError),
+    /// The resolved predicate did not contain one input column and one integer.
+    InvalidComparison(crate::signed_bigint_ranger::BigIntComparisonError),
     /// The query names a table other than the configured table.
     UnknownTable(String),
     /// The query names a column outside the configured table.
@@ -214,8 +214,8 @@ impl fmt::Display for ReadOnlyScanError {
                     "unsupported read-only WHERE predicate: {predicate:?}"
                 )
             }
-            Self::PhysicalSelection(error) => {
-                write!(formatter, "invalid physical Selection: {error}")
+            Self::InvalidComparison(error) => {
+                write!(formatter, "invalid signed-BIGINT comparison: {error}")
             }
             Self::UnknownTable(table) => write!(formatter, "unknown table: {table}"),
             Self::UnknownColumn(column) => write!(formatter, "unknown column: {column}"),

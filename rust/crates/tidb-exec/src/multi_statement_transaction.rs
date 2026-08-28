@@ -51,12 +51,14 @@ use tidb_codec::table_key::{decode_record_key, encode_row_key_with_handle, Recor
 use tidb_datatype::{Datum, SessionTimeZone};
 use tidb_executor::deadlock_history::record_deadlock;
 use tidb_pd_client::PdClient;
-use tidb_planner::physical_selection::{ComparisonOp, ComparisonOperand, PhysicalSelectionPlan};
+use tidb_planner::physical::PhysicalSelection;
 use tidb_planner::prepared_dml::ConfiguredPreparedWrite;
 use tidb_planner::read_only_scan::{
     ConfiguredColumnKind, ConfiguredTable, ReadLockWait, ReadOnlyScanPlan, ResolvedProjectionColumn,
 };
-use tidb_planner::signed_bigint_ranger::SignedBigIntRange;
+use tidb_planner::signed_bigint_ranger::{
+    BigIntComparison, ComparisonOp, ComparisonOperand, SignedBigIntRange,
+};
 use tidb_planner::tikv_scan_spec::ScanColumnInfo;
 use tidb_planner::txn_mode::SessionTxnMode;
 use tidb_tablecodec::decode_table_row_to_map;
@@ -1092,10 +1094,15 @@ fn decode_staged_scan_columns(
 /// scan row. A NULL comparison is not true and therefore cannot pass a SQL
 /// `WHERE`, matching `expression.EvalBool` in Go's UnionScan.
 fn selection_matches_staged_row(
-    selection: &PhysicalSelectionPlan,
+    selection: &PhysicalSelection,
     row: &[Datum],
 ) -> Result<bool, ConfiguredWriteError> {
-    for condition in selection.conditions() {
+    for expression in &selection.conditions {
+        let condition = BigIntComparison::from_expression(expression).ok_or_else(|| {
+            ConfiguredWriteError::RowRead(
+                "staged-row overlay cannot evaluate this physical Selection expression".to_owned(),
+            )
+        })?;
         let operand = |operand: ComparisonOperand| match operand {
             ComparisonOperand::Int(value) => Ok(Datum::new_int(value)),
             ComparisonOperand::InputOffset(offset) => {
@@ -1175,13 +1182,10 @@ mod tests {
         TRANSACTION_END_TIMEOUT,
     };
     use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, ERR_WRITE_CONFLICT};
-    use tidb_planner::physical_selection::{
-        BigIntComparison, ComparisonOp, ComparisonOperand, PhysicalSelectionPlan,
-    };
     use tidb_planner::prepared_dml::{
         ConfiguredAssignment, ConfiguredPreparedWrite, PreparedBindValue,
     };
-    use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
+    use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable, ReadOnlyScanPlan};
     use tidb_txnkv::transaction::{
         DeadlockDetail, DeadlockWaitChainItem, OptimisticCommitOutcome, OptimisticMutation,
         OptimisticTransactionReceipt, PessimisticLockFailure, RolledBackTransaction,
@@ -1440,22 +1444,19 @@ mod tests {
 
     #[test]
     fn a_staged_row_uses_the_snapshot_selections_sql_comparison_semantics() {
-        let selection = PhysicalSelectionPlan::from_bigint_conditions(vec![BigIntComparison::new(
-            ComparisonOp::Gt,
-            ComparisonOperand::InputOffset(1),
-            ComparisonOperand::Int(10),
+        let plan = ReadOnlyScanPlan::lower(
+            "SELECT id FROM campaign.accounts WHERE balance > 10",
+            &table(),
         )
-        .unwrap()])
         .unwrap();
+        let selection = plan.selection().unwrap();
 
+        assert!(selection_matches_staged_row(selection, &[Datum::Int(7), Datum::Int(11)]).unwrap());
         assert!(
-            selection_matches_staged_row(&selection, &[Datum::Int(7), Datum::Int(11)]).unwrap()
+            !selection_matches_staged_row(selection, &[Datum::Int(7), Datum::Int(10)]).unwrap()
         );
         assert!(
-            !selection_matches_staged_row(&selection, &[Datum::Int(7), Datum::Int(10)]).unwrap()
-        );
-        assert!(
-            !selection_matches_staged_row(&selection, &[Datum::Int(7), Datum::Null]).unwrap(),
+            !selection_matches_staged_row(selection, &[Datum::Int(7), Datum::Null]).unwrap(),
             "a NULL WHERE comparison is not true"
         );
     }

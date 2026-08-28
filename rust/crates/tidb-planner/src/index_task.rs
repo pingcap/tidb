@@ -163,6 +163,18 @@ pub enum ScanReadTask {
     Invalid(ScanReadTaskRejection),
 }
 
+impl PartialEq for ScanReadTask {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Index(left), Self::Index(right)) => left == right,
+            (Self::TableReader(left), Self::TableReader(right)) => left == right,
+            (Self::TableDual(left), Self::TableDual(right)) => table_duals_equal(left, right),
+            (Self::Invalid(left), Self::Invalid(right)) => left == right,
+            _ => false,
+        }
+    }
+}
+
 impl ScanReadTask {
     /// Converts the established index-only result into the unified scan task
     /// without changing its behavior.
@@ -227,6 +239,23 @@ pub enum IndexTask {
     TableDual(PhysicalTableDual),
     /// A deliberately unsupported path or property.
     Invalid(IndexTaskRejection),
+}
+
+impl PartialEq for IndexTask {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::CopSingleRead(left), Self::CopSingleRead(right)) => left == right,
+            (Self::TableDual(left), Self::TableDual(right)) => table_duals_equal(left, right),
+            (Self::Invalid(left), Self::Invalid(right)) => left == right,
+            _ => false,
+        }
+    }
+}
+
+fn table_duals_equal(left: &PhysicalTableDual, right: &PhysicalTableDual) -> bool {
+    left.plan_type() == right.plan_type()
+        && left.query_block_offset() == right.query_block_offset()
+        && left.row_count() == right.row_count()
 }
 
 impl IndexTask {

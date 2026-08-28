@@ -54,10 +54,13 @@ pub use errors::*;
 pub use prepared::*;
 
 use tidb_ast::{
-    BinaryOp, Expr, JoinNode, JoinType, OrderItem, QueryStmt, SelectField, SelectStatementKind,
-    SelectStmt, Stmt, TableRef, UnaryOp,
+    BinaryOp, CiString, Expr, JoinNode, JoinType, OrderItem, QueryStmt, SelectField,
+    SelectStatementKind, SelectStmt, Stmt, TableRef, UnaryOp,
 };
-use tidb_datatype::{Collation, FieldType, FieldTypeCode};
+use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_expr::{
+    column::Column, constant::Constant, expression::Expression, scalar_function::ScalarFunction,
+};
 
 use crate::{
     access_path::{
@@ -67,14 +70,15 @@ use crate::{
     aggregation_descriptor::AggregateKind,
     configured_order_limit_contract::ConfiguredOrderDirection,
     index_task::{ScanReadTask, ScanReadTaskRejection},
+    logical::LogicalSelection,
     logical_data_source::LogicalDataSource,
     logical_data_source_task::IndexTaskProperty,
-    physical_selection::{
-        BigIntComparison, ComparisonOp, ComparisonOperand, PhysicalSelectionError,
-        PhysicalSelectionPlan,
-    },
+    physical::{BasePhysicalPlan, PhysicalSelection},
     physical_table_scan::PhysicalTableScanPlan,
-    signed_bigint_ranger::{detach_clustered_signed_bigint_ranges, SignedBigIntRange},
+    signed_bigint_ranger::{
+        detach_clustered_signed_bigint_ranges, BigIntComparison, ComparisonOp, ComparisonOperand,
+        SignedBigIntRange,
+    },
     task_type::TaskType,
     tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec},
 };
@@ -1020,14 +1024,51 @@ impl ResolvedProjectionColumn {
 
 /// One validated direct projection, clustered-handle ranges, and optional
 /// residual signed-`BIGINT` Selection.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ReadOnlyScanPlan {
     reader: crate::physical_table_reader::PhysicalTableReaderPlan,
     projected_columns: Vec<ResolvedProjectionColumn>,
     projection_output_offsets: Vec<u32>,
     handle_ranges: Vec<SignedBigIntRange>,
-    selection: Option<PhysicalSelectionPlan>,
+    selection: Option<PhysicalSelection>,
     lock: Option<ReadLockRequest>,
+}
+
+impl PartialEq for ReadOnlyScanPlan {
+    fn eq(&self, other: &Self) -> bool {
+        self.reader == other.reader
+            && self.projected_columns == other.projected_columns
+            && self.projection_output_offsets == other.projection_output_offsets
+            && self.handle_ranges == other.handle_ranges
+            && physical_selections_equal(self.selection.as_ref(), other.selection.as_ref())
+            && self.lock == other.lock
+    }
+}
+
+impl Eq for ReadOnlyScanPlan {}
+
+fn physical_selections_equal(
+    left: Option<&PhysicalSelection>,
+    right: Option<&PhysicalSelection>,
+) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            left.base.base.id() == right.base.base.id()
+                && left.base.base.tp() == right.base.base.tp()
+                && left.base.base.query_block_offset() == right.base.base.query_block_offset()
+                && left.base.tiflash_fine_grained_shuffle_stream_count
+                    == right.base.tiflash_fine_grained_shuffle_stream_count
+                && left.from_data_source == right.from_data_source
+                && left.conditions.len() == right.conditions.len()
+                && left
+                    .conditions
+                    .iter()
+                    .zip(&right.conditions)
+                    .all(|(left, right)| left.equal(right))
+        }
+        _ => false,
+    }
 }
 
 /// The row lock a `SELECT ... FOR UPDATE` demands before it returns its rows.
@@ -1270,7 +1311,7 @@ impl ReadOnlyScanPlan {
                         &mut scan_offsets,
                     )?,
                 )
-                .map_err(ReadOnlyScanError::PhysicalSelection)
+                .map_err(ReadOnlyScanError::InvalidComparison)
             })
             .collect::<Result<Vec<_>, ReadOnlyScanError>>()?;
         let clustered_column_id = table
@@ -1293,10 +1334,16 @@ impl ReadOnlyScanPlan {
         let selection = if residual_comparisons.is_empty() {
             None
         } else {
-            Some(
-                PhysicalSelectionPlan::from_bigint_conditions(residual_comparisons)
-                    .map_err(ReadOnlyScanError::PhysicalSelection)?,
-            )
+            let conditions = residual_comparisons
+                .iter()
+                .copied()
+                .map(|comparison| bigint_comparison_expression(comparison, &scan_columns))
+                .collect::<Result<Vec<_>, _>>()?;
+            Some(PhysicalSelection {
+                base: BasePhysicalPlan::with_id(PHYSICAL_PLAN_ID, LogicalSelection::TYPE, 0),
+                conditions,
+                from_data_source: true,
+            })
         };
         let pushdown = TiKvTableScanSpec::new(table.table_id, scan_columns);
         let descriptor = ResolvedTableDescriptor::new(
@@ -1447,9 +1494,62 @@ impl ReadOnlyScanPlan {
     /// Returns the physical signed-`BIGINT` Selection above the table scan,
     /// when the query has residual non-handle conditions.
     #[must_use]
-    pub const fn selection(&self) -> Option<&PhysicalSelectionPlan> {
+    pub const fn selection(&self) -> Option<&PhysicalSelection> {
         self.selection.as_ref()
     }
+}
+
+fn bigint_comparison_expression(
+    comparison: BigIntComparison,
+    scan_columns: &[ScanColumnInfo],
+) -> Result<Expression, ReadOnlyScanError> {
+    let operand = |operand| match operand {
+        ComparisonOperand::Int(value) => Ok(Expression::Constant(Constant::new(
+            Datum::Int(value),
+            FieldType::new(FieldTypeCode::LongLong)
+                .with_added_flags(FieldTypeFlags::NOT_NULL | FieldTypeFlags::BINARY)
+                .with_flen(value.to_string().len() as i64)
+                .with_decimal(0),
+        ))),
+        ComparisonOperand::InputOffset(offset) => {
+            let scan_column = scan_columns.get(offset as usize).ok_or(
+                ReadOnlyScanError::InvalidConfiguration(
+                    "selection input offset is outside the scan column list",
+                ),
+            )?;
+            let flags = u32::try_from(scan_column.flag).map_err(|_| {
+                ReadOnlyScanError::InvalidConfiguration(
+                    "selection scan column has negative MySQL flags",
+                )
+            })?;
+            let mut column = Column::new(
+                i64::from(offset) + 1,
+                FieldType::new(FieldTypeCode::LongLong)
+                    .with_flags(flags)
+                    .with_flen(i64::from(scan_column.column_len))
+                    .with_decimal(i64::from(scan_column.decimal)),
+            );
+            column.index = i64::from(offset);
+            Ok(Expression::Column(column))
+        }
+    };
+    let name = match comparison.op() {
+        ComparisonOp::Lt => "lt",
+        ComparisonOp::Le => "le",
+        ComparisonOp::Gt => "gt",
+        ComparisonOp::Ge => "ge",
+        ComparisonOp::Eq => "eq",
+        ComparisonOp::Ne => "ne",
+    };
+    let result_type = FieldType::new(FieldTypeCode::LongLong)
+        .with_added_flags(FieldTypeFlags::BINARY | FieldTypeFlags::IS_BOOLEAN)
+        .with_flen(1)
+        .with_decimal(0);
+    Ok(Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new(name),
+        result_type,
+        vec![operand(comparison.lhs())?, operand(comparison.rhs())?],
+    )))
 }
 
 fn bind_comparison_operand(

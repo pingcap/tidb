@@ -148,7 +148,6 @@ pub mod physical;
 pub mod physical_index_scan;
 pub mod physical_plan_cache;
 pub mod physical_property;
-pub mod physical_selection;
 pub mod physical_table_reader;
 pub mod physical_table_scan;
 pub mod plan;

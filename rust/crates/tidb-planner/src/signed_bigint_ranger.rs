@@ -21,7 +21,142 @@
 //! separate infinity and exclusivity cases: strict bounds use the adjacent
 //! integer when it exists and become empty at `i64::MIN` or `i64::MAX`.
 
-use crate::physical_selection::{BigIntComparison, ComparisonOp, ComparisonOperand};
+use std::{error::Error, fmt};
+
+/// Comparison operators accepted by the bounded signed-BIGINT ranger input.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ComparisonOp {
+    /// Strictly less than.
+    Lt,
+    /// Less than or equal to.
+    Le,
+    /// Strictly greater than.
+    Gt,
+    /// Greater than or equal to.
+    Ge,
+    /// Equal to.
+    Eq,
+    /// Not equal to.
+    Ne,
+}
+
+/// One already-resolved operand in a signed-BIGINT scan input.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ComparisonOperand {
+    /// Zero-based offset in the ordered scan input.
+    InputOffset(u32),
+    /// A signed integer literal.
+    Int(i64),
+}
+
+/// One resolved signed-BIGINT column-versus-integer comparison.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BigIntComparison {
+    op: ComparisonOp,
+    lhs: ComparisonOperand,
+    rhs: ComparisonOperand,
+}
+
+impl BigIntComparison {
+    /// Creates a comparison with exactly one scan input and one integer.
+    pub const fn new(
+        op: ComparisonOp,
+        lhs: ComparisonOperand,
+        rhs: ComparisonOperand,
+    ) -> Result<Self, BigIntComparisonError> {
+        if !matches!(
+            (lhs, rhs),
+            (ComparisonOperand::InputOffset(_), ComparisonOperand::Int(_))
+                | (ComparisonOperand::Int(_), ComparisonOperand::InputOffset(_))
+        ) {
+            return Err(BigIntComparisonError::InvalidOperands);
+        }
+        Ok(Self { op, lhs, rhs })
+    }
+
+    /// Returns the comparison operator.
+    #[must_use]
+    pub const fn op(self) -> ComparisonOp {
+        self.op
+    }
+
+    /// Returns the left operand without canonicalizing operand order.
+    #[must_use]
+    pub const fn lhs(self) -> ComparisonOperand {
+        self.lhs
+    }
+
+    /// Returns the right operand without canonicalizing operand order.
+    #[must_use]
+    pub const fn rhs(self) -> ComparisonOperand {
+        self.rhs
+    }
+
+    /// Returns the single resolved scan-input offset.
+    #[must_use]
+    pub const fn input_offset(self) -> u32 {
+        match (self.lhs, self.rhs) {
+            (ComparisonOperand::InputOffset(offset), ComparisonOperand::Int(_))
+            | (ComparisonOperand::Int(_), ComparisonOperand::InputOffset(offset)) => offset,
+            _ => unreachable!(),
+        }
+    }
+
+    /// Recovers the bounded ranger comparison from the real physical
+    /// Selection expression that was built from it.
+    ///
+    /// This adapter is used only at the scripted read tier's bounded executor
+    /// boundaries: TiKV comparison encoding, staged-row overlay evaluation,
+    /// and their source tests. The physical Selection's expression list
+    /// remains the single stored condition authority.
+    #[must_use]
+    pub fn from_expression(expression: &tidb_expr::expression::Expression) -> Option<Self> {
+        use tidb_expr::expression::Expression;
+
+        let Expression::ScalarFunction(function) = expression else {
+            return None;
+        };
+        let op = match function.func_name.lowercase() {
+            "lt" => ComparisonOp::Lt,
+            "le" => ComparisonOp::Le,
+            "gt" => ComparisonOp::Gt,
+            "ge" => ComparisonOp::Ge,
+            "eq" => ComparisonOp::Eq,
+            "ne" => ComparisonOp::Ne,
+            _ => return None,
+        };
+        let [lhs, rhs] = function.args.as_slice() else {
+            return None;
+        };
+        let operand = |expression: &Expression| match expression {
+            Expression::Column(column) => u32::try_from(column.index)
+                .ok()
+                .map(ComparisonOperand::InputOffset),
+            Expression::Constant(constant) => match constant.value {
+                tidb_datatype::Datum::Int(value) => Some(ComparisonOperand::Int(value)),
+                _ => None,
+            },
+            Expression::CorrelatedColumn(_) | Expression::ScalarFunction(_) => None,
+        };
+        Self::new(op, operand(lhs)?, operand(rhs)?).ok()
+    }
+}
+
+/// A malformed bounded comparison input.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BigIntComparisonError {
+    /// Exactly one operand must be an input column and one an integer literal.
+    InvalidOperands,
+}
+
+impl fmt::Display for BigIntComparisonError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .write_str("signed-BIGINT comparison requires one input offset and one integer literal")
+    }
+}
+
+impl Error for BigIntComparisonError {}
 
 /// One nonempty inclusive interval in signed TiKV table-handle order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
