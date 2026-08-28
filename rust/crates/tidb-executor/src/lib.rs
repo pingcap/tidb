@@ -189,7 +189,6 @@ pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBou
 pub mod fts_like_rewrite;
 pub mod plan_hints;
 mod plan_trace;
-pub mod point_get;
 pub mod predicate_pushdown;
 pub mod projection;
 mod pushdown_blacklist;

@@ -13,8 +13,8 @@
 // limitations under the License.
 
 //! Gap tests for the pessimistic halves of Go
-//! `pkg/executor/batch_point_get_test.go`. The boundary is documented on the
-//! operator itself (`batch_point_get.rs`): `LockKeys`
+//! `pkg/executor/batch_point_get_test.go`. The retained operator boundary is
+//! built in `driver/physical_builder.rs`: `LockKeys`
 //! (`pkg/executor/batch_point_get.go:503`), the cache-table snapshot
 //! (`pkg/executor/batch_point_get.go:126 cacheTableSnapshot` /
 //! `:587 newCacheBatchGetter`), and the session's pessimistic-lock context
@@ -39,7 +39,7 @@ fn batch_point_get_lock_exist_key_blocks_conflicting_inserts_until_commit() {}
 /// wraps a transaction memBuffer so `Get`/`BatchGet` read staged bytes
 /// (`1111`/`2222`) as `kv.ValueEntry` pairs with the membuffer's timestamp 0.
 /// The tier's storage seam merges the staged buffer under one read
-/// (`batch_point_get.rs` boundary notes) and has no separate
+/// (`driver/physical_builder.rs`) and has no separate
 /// cache-snapshot object to construct.
 #[test]
 #[ignore = "go-parity-gap: MockNewCacheTableSnapShot/cacheTableSnapshot (pkg/executor/batch_point_get.go:126/:177) have no Rust counterpart; staged-buffer reads are inlined into the storage seam"]

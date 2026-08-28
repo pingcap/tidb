@@ -362,6 +362,11 @@ both `oltp_read_only` and `oltp_read_write`.
   physical-tree tests and both schema tests pass; the full planner suite ran
   792/794, with both remaining failures reproduced unchanged in the retained
   `8366ff70bd` baseline worktree.
+- [x] 2026-08-28: deleted the disconnected public `point_get` seed module.
+  Its five partial metadata helpers had no repository caller outside their
+  own tests; live point execution already obtains partition, checksum, column,
+  row-decoder, and KV behavior from the retained physical builder,
+  `driver/access`, and `KvTable`.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
