@@ -576,9 +576,9 @@ func (d *Checker) GetID() string {
 	return d.realDDL.GetID()
 }
 
-// StorageClassTransitions implements the DDL interface.
-func (d *Checker) StorageClassTransitions() []ddl.StorageClassTransition {
-	return d.realDDL.StorageClassTransitions()
+// StorageClassTransitionStatuses implements the DDL interface.
+func (d *Checker) StorageClassTransitionStatuses() []ddl.StorageClassTransitionStatus {
+	return d.realDDL.StorageClassTransitionStatuses()
 }
 
 // DoDDLJob implements the DDL interface.

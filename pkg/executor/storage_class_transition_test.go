@@ -24,7 +24,7 @@ import (
 
 func TestStorageClassTransitionToDatums(t *testing.T) {
 	start := time.Date(2026, 8, 12, 1, 2, 3, 456000000, time.UTC)
-	transition := ddl.StorageClassTransition{
+	transition := ddl.StorageClassTransitionStatus{
 		TableSchema:   "test",
 		TableName:     "orders",
 		TableID:       100,
@@ -35,7 +35,7 @@ func TestStorageClassTransitionToDatums(t *testing.T) {
 		Progress:      0.5,
 	}
 
-	row := storageClassTransitionToDatums(time.UTC, transition)
+	row := storageClassTransitionStatusToDatums(time.UTC, transition)
 	require.Len(t, row, 12)
 	require.True(t, row[3].IsNull())
 	require.True(t, row[4].IsNull())
@@ -51,7 +51,7 @@ func TestStorageClassTransitionToDatums(t *testing.T) {
 	transition.ProgressValid = true
 	transition.CompletedReplicas = 1
 	transition.LastUpdateTime = start.Add(time.Second)
-	row = storageClassTransitionToDatums(time.UTC, transition)
+	row = storageClassTransitionStatusToDatums(time.UTC, transition)
 	require.Equal(t, "p0", row[3].GetString())
 	require.Equal(t, int64(101), row[4].GetInt64())
 	require.Equal(t, uint64(3), row[6].GetUint64())

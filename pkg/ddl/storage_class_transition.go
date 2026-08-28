@@ -47,10 +47,10 @@ const (
 	storageClassTransitionRequestTimeout = 30 * time.Second
 )
 
-// StorageClassTransition is one SQL-visible explicit storage-class operation.
+// StorageClassTransitionStatus is the SQL-visible status of one explicit storage-class operation.
 // Multiple physical partitions can belong to one operation. In that case the
 // partition fields are empty and the replica counters are aggregated.
-type StorageClassTransition struct {
+type StorageClassTransitionStatus struct {
 	TableSchema       string
 	TableName         string
 	TableID           int64
@@ -89,7 +89,7 @@ type physicalStorageClass struct {
 }
 
 type storageClassTransitionOperation struct {
-	StorageClassTransition
+	StorageClassTransitionStatus
 	target  string
 	targets []storageClassTransitionTarget
 }
@@ -98,15 +98,15 @@ type storageClassTransitionManager struct {
 	ddl *ddl
 	mu  struct {
 		sync.RWMutex
-		active   map[storageClassTransitionKey]StorageClassTransition
-		observed map[storageClassTransitionKey]StorageClassTransition
+		active   map[storageClassTransitionKey]StorageClassTransitionStatus
+		observed map[storageClassTransitionKey]StorageClassTransitionStatus
 	}
 }
 
 func newStorageClassTransitionManager(d *ddl) *storageClassTransitionManager {
 	m := &storageClassTransitionManager{ddl: d}
-	m.mu.active = make(map[storageClassTransitionKey]StorageClassTransition)
-	m.mu.observed = make(map[storageClassTransitionKey]StorageClassTransition)
+	m.mu.active = make(map[storageClassTransitionKey]StorageClassTransitionStatus)
+	m.mu.observed = make(map[storageClassTransitionKey]StorageClassTransitionStatus)
 	return m
 }
 
@@ -205,7 +205,7 @@ func buildStorageClassTransitionOperations(
 		operation := byTarget[target]
 		if operation == nil {
 			operation = &storageClassTransitionOperation{
-				StorageClassTransition: StorageClassTransition{
+				StorageClassTransitionStatus: StorageClassTransitionStatus{
 					TableSchema: schemaName,
 					TableName:   tableName,
 					TableID:     tblInfo.ID,
@@ -440,7 +440,7 @@ func decodeRunningStorageClassTransitions(rows []chunk.Row) ([]*storageClassTran
 		}
 
 		operation := &storageClassTransitionOperation{
-			StorageClassTransition: StorageClassTransition{
+			StorageClassTransitionStatus: StorageClassTransitionStatus{
 				TableSchema: row.GetString(0),
 				TableName:   row.GetString(1),
 				TableID:     row.GetInt64(2),
@@ -487,10 +487,10 @@ func storageClassTransitionTargetsExist(
 	return true
 }
 
-func (m *storageClassTransitionManager) snapshot() []StorageClassTransition {
+func (m *storageClassTransitionManager) snapshot() []StorageClassTransitionStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	result := make([]StorageClassTransition, 0, len(m.mu.active))
+	result := make([]StorageClassTransitionStatus, 0, len(m.mu.active))
 	for _, transition := range m.mu.active {
 		transition.PhysicalTableIDs = slices.Clone(transition.PhysicalTableIDs)
 		transition.Duration = time.Since(transition.StartTime)
@@ -499,7 +499,7 @@ func (m *storageClassTransitionManager) snapshot() []StorageClassTransition {
 		}
 		result = append(result, transition)
 	}
-	slices.SortFunc(result, func(a, b StorageClassTransition) int {
+	slices.SortFunc(result, func(a, b StorageClassTransitionStatus) int {
 		if a.StartTime.Before(b.StartTime) {
 			return -1
 		}
@@ -514,8 +514,8 @@ func (m *storageClassTransitionManager) snapshot() []StorageClassTransition {
 	return result
 }
 
-// StorageClassTransitions returns the owner-maintained active snapshot.
-func (d *ddl) StorageClassTransitions() []StorageClassTransition {
+// StorageClassTransitionStatuses returns the owner-maintained active status snapshot.
+func (d *ddl) StorageClassTransitionStatuses() []StorageClassTransitionStatus {
 	return d.storageClassTransitionManager.snapshot()
 }
 
@@ -550,7 +550,7 @@ func discoverStorageClassTransitions(
 	return active, nil
 }
 
-func sameStorageClassTransition(a, b StorageClassTransition) bool {
+func sameStorageClassTransitionStatus(a, b StorageClassTransitionStatus) bool {
 	return a.TableID == b.TableID && a.startTS == b.startTS &&
 		a.PartitionID == b.PartitionID && a.Direction == b.Direction && a.StartTime.Equal(b.StartTime) &&
 		slices.Equal(a.PhysicalTableIDs, b.PhysicalTableIDs)
@@ -561,11 +561,11 @@ func (m *storageClassTransitionManager) setActive(
 ) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	active := make(map[storageClassTransitionKey]StorageClassTransition, len(activeOperations))
+	active := make(map[storageClassTransitionKey]StorageClassTransitionStatus, len(activeOperations))
 	for key, operation := range activeOperations {
-		transition := operation.StorageClassTransition
+		transition := operation.StorageClassTransitionStatus
 		if previous, ok := m.mu.observed[key]; ok && previous.StatusValid && !transition.StatusValid &&
-			sameStorageClassTransition(previous, transition) {
+			sameStorageClassTransitionStatus(previous, transition) {
 			transition.TotalReplicas = previous.TotalReplicas
 			transition.CompletedReplicas = previous.CompletedReplicas
 			transition.Progress = previous.Progress
@@ -607,7 +607,7 @@ func (m *storageClassTransitionManager) observe(
 	operation.LastUpdateTime = time.Now()
 	operation.StatusValid = true
 	m.mu.Lock()
-	m.mu.observed[operation.key()] = operation.StorageClassTransition
+	m.mu.observed[operation.key()] = operation.StorageClassTransitionStatus
 	m.mu.Unlock()
 	return complete, nil
 }

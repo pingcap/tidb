@@ -28,66 +28,66 @@ import (
 )
 
 func storageClassTransitionRows(sctx sessionctx.Context) [][]types.Datum {
-	transitions := domain.GetDomain(sctx).DDL().StorageClassTransitions()
-	sort.Slice(transitions, func(i, j int) bool {
-		if !transitions[i].StartTime.Equal(transitions[j].StartTime) {
-			return transitions[i].StartTime.Before(transitions[j].StartTime)
+	statuses := domain.GetDomain(sctx).DDL().StorageClassTransitionStatuses()
+	sort.Slice(statuses, func(i, j int) bool {
+		if !statuses[i].StartTime.Equal(statuses[j].StartTime) {
+			return statuses[i].StartTime.Before(statuses[j].StartTime)
 		}
-		if transitions[i].TableID != transitions[j].TableID {
-			return transitions[i].TableID < transitions[j].TableID
+		if statuses[i].TableID != statuses[j].TableID {
+			return statuses[i].TableID < statuses[j].TableID
 		}
-		return transitions[i].PartitionID < transitions[j].PartitionID
+		return statuses[i].PartitionID < statuses[j].PartitionID
 	})
 
 	checker := privilege.GetPrivilegeManager(sctx)
-	rows := make([][]types.Datum, 0, len(transitions))
-	for _, transition := range transitions {
+	rows := make([][]types.Datum, 0, len(statuses))
+	for _, status := range statuses {
 		if checker != nil && !checker.RequestVerification(
 			sctx.GetSessionVars().ActiveRoles,
-			strings.ToLower(transition.TableSchema),
-			strings.ToLower(transition.TableName),
+			strings.ToLower(status.TableSchema),
+			strings.ToLower(status.TableName),
 			"",
 			mysql.AllPrivMask,
 		) {
 			continue
 		}
-		rows = append(rows, storageClassTransitionToDatums(sctx.GetSessionVars().Location(), transition))
+		rows = append(rows, storageClassTransitionStatusToDatums(sctx.GetSessionVars().Location(), status))
 	}
 	return rows
 }
 
-func storageClassTransitionToDatums(location *time.Location, transition ddl.StorageClassTransition) []types.Datum {
+func storageClassTransitionStatusToDatums(location *time.Location, status ddl.StorageClassTransitionStatus) []types.Datum {
 	partitionName := any(nil)
 	partitionID := any(nil)
-	if transition.PartitionID != 0 {
-		partitionName = transition.PartitionName
-		partitionID = transition.PartitionID
+	if status.PartitionID != 0 {
+		partitionName = status.PartitionName
+		partitionID = status.PartitionID
 	}
-	startTime := types.NewTime(types.FromGoTime(transition.StartTime.In(location)), mysql.TypeDatetime, types.MaxFsp)
+	startTime := types.NewTime(types.FromGoTime(status.StartTime.In(location)), mysql.TypeDatetime, types.MaxFsp)
 	totalReplicas := any(nil)
 	completedReplicas := any(nil)
 	progress := any(nil)
 	lastUpdateTime := any(nil)
-	if transition.StatusValid {
-		totalReplicas = transition.TotalReplicas
-		completedReplicas = transition.CompletedReplicas
-		if transition.ProgressValid {
-			progress = transition.Progress
+	if status.StatusValid {
+		totalReplicas = status.TotalReplicas
+		completedReplicas = status.CompletedReplicas
+		if status.ProgressValid {
+			progress = status.Progress
 		}
-		lastUpdateTime = types.NewTime(types.FromGoTime(transition.LastUpdateTime.In(location)), mysql.TypeDatetime, types.MaxFsp)
+		lastUpdateTime = types.NewTime(types.FromGoTime(status.LastUpdateTime.In(location)), mysql.TypeDatetime, types.MaxFsp)
 	}
 	return types.MakeDatums(
-		transition.TableSchema,
-		transition.TableName,
-		transition.TableID,
+		status.TableSchema,
+		status.TableName,
+		status.TableID,
 		partitionName,
 		partitionID,
-		transition.Direction,
+		status.Direction,
 		totalReplicas,
 		completedReplicas,
 		progress,
 		startTime,
-		uint64(transition.Duration/time.Second),
+		uint64(status.Duration/time.Second),
 		lastUpdateTime,
 	)
 }

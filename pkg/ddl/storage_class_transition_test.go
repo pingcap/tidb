@@ -114,8 +114,8 @@ func TestStorageClassTransitionCompletesOnOneFullObservation(t *testing.T) {
 func TestStorageClassTransitionCacheKeepsLastObservation(t *testing.T) {
 	key := storageClassTransitionKey{tableID: 10, direction: storageClassDirectionToIA, startTS: 1234}
 	manager := &storageClassTransitionManager{}
-	manager.mu.active = make(map[storageClassTransitionKey]StorageClassTransition)
-	manager.mu.observed = map[storageClassTransitionKey]StorageClassTransition{
+	manager.mu.active = make(map[storageClassTransitionKey]StorageClassTransitionStatus)
+	manager.mu.observed = map[storageClassTransitionKey]StorageClassTransitionStatus{
 		key: {
 			TableID:           10,
 			Direction:         storageClassDirectionToIA,
@@ -130,7 +130,7 @@ func TestStorageClassTransitionCacheKeepsLastObservation(t *testing.T) {
 		},
 	}
 	operation := &storageClassTransitionOperation{
-		StorageClassTransition: StorageClassTransition{
+		StorageClassTransitionStatus: StorageClassTransitionStatus{
 			TableID:          10,
 			Direction:        storageClassDirectionToIA,
 			StartTime:        model.TSConvert2Time(1234),
