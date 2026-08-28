@@ -853,6 +853,31 @@ func TestColumnarStorageEnabledGateColumnarIndex(t *testing.T) {
 	require.Equal(t, 1, len(tbl.Meta().Indices))
 }
 
+func TestColumnarStorageEnabledGateColumnarIndexJobSide(t *testing.T) {
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "columnar"
+	})
+
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_add_job(a int, b vector(3))")
+	tk.MustExec("alter table t_add_job set tiflash replica 1")
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionAddColumnarIndex {
+			tk2.MustExec("set global tidb_columnar_storage_enabled = 'OFF'")
+		}
+	})
+	tk.MustGetErrCode("alter table t_add_job add vector index idx((vec_cosine_distance(b))) using hnsw", errno.ErrUnsupportedDDLOperation)
+	tk.MustContainErrMsg("alter table t_add_job add vector index idx((vec_cosine_distance(b))) using hnsw",
+		"Unsupported add columnar index: Columnar Storage is not enabled")
+	require.Empty(t, external.GetTableByName(t, tk, "test", "t_add_job").Meta().Indices)
+}
+
 func TestKillCancelsBatchSetDatabaseTiFlashReplica(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
