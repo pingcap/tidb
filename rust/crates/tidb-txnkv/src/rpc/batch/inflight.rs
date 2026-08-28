@@ -24,9 +24,9 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use crate::client::PhysicalChannelIdentity;
-use crate::rpc::{CompletionRequest, DirectUnaryClientError};
+use crate::rpc::DirectUnaryClientError;
 
-use super::{BatchRequestProgress, BatchStreamState, ScheduledEntry};
+use super::{BatchCommandCompletion, BatchRequestProgress, BatchStreamState, ScheduledEntry};
 
 use super::wire::{BatchWireError, BatchWireResponse, OpaqueBatchCommand};
 
@@ -163,21 +163,20 @@ impl std::error::Error for BatchPublishError {}
 #[derive(Debug)]
 pub struct PendingBatchCommand {
     request_id: u64,
-    completion: CompletionRequest<OpaqueBatchCommand, BatchInflightError>,
+    completion: BatchCommandCompletion,
     progress: Arc<BatchRequestProgress>,
 }
 
 impl PendingBatchCommand {
     /// Binds the scheduler ID to its sole completion and observation state.
     #[must_use]
-    pub fn new(
-        request_id: u64,
-        completion: CompletionRequest<OpaqueBatchCommand, BatchInflightError>,
-        progress: Arc<BatchRequestProgress>,
-    ) -> Self {
+    pub fn new<C>(request_id: u64, completion: C, progress: Arc<BatchRequestProgress>) -> Self
+    where
+        C: Into<BatchCommandCompletion>,
+    {
         Self {
             request_id,
-            completion,
+            completion: completion.into(),
             progress,
         }
     }
@@ -194,10 +193,7 @@ impl PendingBatchCommand {
     /// scheduled entry; no second completion pair or terminal authority exists.
     #[must_use]
     pub fn from_scheduled(
-        scheduled: ScheduledEntry<
-            OpaqueBatchCommand,
-            CompletionRequest<OpaqueBatchCommand, BatchInflightError>,
-        >,
+        scheduled: ScheduledEntry<OpaqueBatchCommand, BatchCommandCompletion>,
     ) -> (OpaqueBatchCommand, Self) {
         let (request_id, entry) = scheduled.into_parts();
         let (command, completion, progress) = entry.into_payload_completion();

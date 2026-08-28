@@ -67,7 +67,7 @@ pub use tidb_txnkv::rpc::{
 pub use tidb_txnkv::UnaryCallContext;
 pub use tidb_txnkv::{
     ClientReplicaReadType, DirectUnaryConnectionError, DirectUnaryGrpcCode,
-    DirectUnaryTransportClass,
+    DirectUnaryTransportClass, SynchronousBatchRequestDispatcher,
 };
 
 pub const OBSERVATION_TIME: Duration = Duration::from_secs(1_000);
@@ -382,8 +382,25 @@ impl AsyncRequestDispatcher for ScriptedClient {
     }
 }
 
-impl tidb_txnkv::lock::LockRecoveryClient for ScriptedClient {
+impl SynchronousBatchRequestDispatcher for ScriptedClient {
+    fn send_batch_request_with_route(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        if let Some(count) = &self.batch_begin_count {
+            count.set(count.get() + 1);
+        }
+        if let Some(error) = self.batch_errors.borrow_mut().pop_front() {
+            return Err(error);
+        }
+        self.send_request_recorded(physical_address, forwarded_host, request, call.timeout())
+    }
+}
 
+impl tidb_txnkv::lock::LockRecoveryClient for ScriptedClient {
     fn check_secondary_locks_for_lock(
         &mut self,
         _address: &str,
@@ -404,7 +421,6 @@ impl tidb_txnkv::lock::LockRecoveryClient for ScriptedClient {
             "unexpected lock in scripted read".to_owned(),
         ))
     }
-
 
     fn pessimistic_rollback_for_lock(
         &mut self,
@@ -439,7 +455,9 @@ pub fn metadata(start: &str, end: &str) -> KvRequestMetadata {
     let mut metadata = KvRequestMetadata::default();
     metadata.request_type = RequestType::Dag;
     metadata.data = Some(b"dag-read".to_vec());
-    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![range(start, end)]));
+    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![range(
+        start, end,
+    )]));
     metadata.keep_order = true;
     // Keep the generic dispatch fixture focused on routing/order. Paging
     // tests opt in explicitly; production defaults are covered by

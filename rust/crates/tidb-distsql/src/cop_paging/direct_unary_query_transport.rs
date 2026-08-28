@@ -44,8 +44,8 @@ use tidb_txnkv::region::{
 };
 use tidb_txnkv::{
     rpc::{AsyncRequestDispatcher, CompletionError, CompletionRunLoop, PendingRequest},
-    EndpointType, SharedReadOpener, SharedReadRuntime, TraceInfo, UnaryCallContext,
-    UnaryCancellation, DEFAULT_STORE_LIVENESS_TIMEOUT,
+    EndpointType, SharedReadOpener, SharedReadRuntime, SynchronousBatchRequestDispatcher,
+    TraceInfo, UnaryCallContext, UnaryCancellation, DEFAULT_STORE_LIVENESS_TIMEOUT,
 };
 pub use tidb_txnkv::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest, DirectUnaryResponse,
@@ -352,9 +352,36 @@ pub struct DirectUnaryQueryTransport<C, L> {
     shared_runtime: SharedReadRuntime<C, L>,
     locked_response_delegate: Rc<dyn LockedResponseDelegate<C, L>>,
     event_callback: Option<tidb_txnkv::EventCallback>,
+    synchronous_batch_send: Option<SynchronousBatchSend<C>>,
     async_begin: Option<AsyncBegin<C>>,
     replica_read_seed: ReplicaReadSeed,
     config: DirectUnaryRuntimeConfig,
+}
+
+type SynchronousBatchSend<C> =
+    fn(
+        &std::sync::Mutex<C>,
+        &LeaderRequest,
+        &DirectUnaryRequest,
+        &UnaryCallContext,
+    )
+        -> Result<Result<DirectUnaryResponse, DirectUnaryClientError>, DirectUnaryTransportError>;
+
+fn send_synchronous_batch_request<C>(
+    client: &std::sync::Mutex<C>,
+    selected: &LeaderRequest,
+    request: &DirectUnaryRequest,
+    call: &UnaryCallContext,
+) -> Result<Result<DirectUnaryResponse, DirectUnaryClientError>, DirectUnaryTransportError>
+where
+    C: SynchronousBatchRequestDispatcher,
+{
+    Ok(try_borrow_client(client)?.send_batch_request_with_route(
+        selected.dispatch_address(),
+        selected.forwarded_host(),
+        request,
+        call,
+    ))
 }
 
 type AsyncBegin<C> = fn(
@@ -442,7 +469,9 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
         timestamp_source: S,
     ) -> Result<Self, DirectUnaryTransportError>
     where
-        C: tidb_txnkv::lock::LockRecoveryClient + AsyncRequestDispatcher,
+        C: tidb_txnkv::lock::LockRecoveryClient
+            + AsyncRequestDispatcher
+            + SynchronousBatchRequestDispatcher,
         C::Pending: 'static,
         L: RegionRecoveryLoader,
         S: tidb_txnkv::lock::TimestampSource + 'static,
@@ -481,7 +510,9 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
         timestamp_source: S,
     ) -> Result<Self, DirectUnaryTransportError>
     where
-        C: tidb_txnkv::lock::LockRecoveryClient + AsyncRequestDispatcher,
+        C: tidb_txnkv::lock::LockRecoveryClient
+            + AsyncRequestDispatcher
+            + SynchronousBatchRequestDispatcher,
         C::Pending: 'static,
         L: RegionRecoveryLoader,
         S: tidb_txnkv::lock::TimestampSource + 'static,
@@ -491,6 +522,7 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
             config,
             Rc::new(super::OptimisticLockRecovery::new(timestamp_source)),
         )?;
+        transport.synchronous_batch_send = Some(send_synchronous_batch_request::<C>);
         transport.async_begin = Some(begin_async_request::<C>);
         Ok(transport)
     }
@@ -508,6 +540,7 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
             shared_runtime,
             locked_response_delegate,
             event_callback: None,
+            synchronous_batch_send: None,
             async_begin: None,
             replica_read_seed: ReplicaReadSeed::new(),
             config,
@@ -530,7 +563,10 @@ where
         timestamp_source: S,
     ) -> Result<Self, DirectUnaryTransportError>
     where
-        C: Clone + tidb_txnkv::lock::LockRecoveryClient + AsyncRequestDispatcher,
+        C: Clone
+            + tidb_txnkv::lock::LockRecoveryClient
+            + AsyncRequestDispatcher
+            + SynchronousBatchRequestDispatcher,
         C::Pending: 'static,
         S: tidb_txnkv::lock::TimestampSource + 'static,
     {
@@ -641,6 +677,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             shared_runtime: self.shared_runtime.clone(),
             locked_response_delegate: Rc::clone(&self.locked_response_delegate),
             event_callback: self.event_callback.clone(),
+            synchronous_batch_send: self.synchronous_batch_send,
             async_begin: self.async_begin,
             cancellation,
             call,
@@ -772,6 +809,7 @@ pub struct DirectUnaryQueryResponse<C, L> {
     shared_runtime: SharedReadRuntime<C, L>,
     locked_response_delegate: Rc<dyn LockedResponseDelegate<C, L>>,
     event_callback: Option<tidb_txnkv::EventCallback>,
+    synchronous_batch_send: Option<SynchronousBatchSend<C>>,
     async_begin: Option<AsyncBegin<C>>,
     cancellation: Arc<CancelHandle>,
     call: UnaryCallContext,
@@ -1240,6 +1278,39 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         self.check_retry_active()?;
         let dispatch_started = Instant::now();
         let call = self.call.clone();
+        // client-go's cop iterator calls synchronous `SendRequest`, whose
+        // BatchCommands entry owns a response channel rather than an async
+        // callback. A single logical region has no worker-pool overlap to
+        // preserve, so keep that ordinary source path all the way through the
+        // retained stream. Multi-region reads still use the bounded pending
+        // window until their source worker pool is ported.
+        if self.logical_order.len() == 1 {
+            if let Some(send) = self.synchronous_batch_send.filter(|_| {
+                !self
+                    .sync_only_chains
+                    .contains(&prepared_dispatch.logical_task_id)
+            }) {
+                let mut prepared_dispatch = prepared_dispatch;
+                prepared_dispatch.batch_attempt = true;
+                prepared_dispatch.pre_batch_network_metrics = Some(self.network_metrics.clone());
+                self.network_metrics.on_request(
+                    prepared_dispatch.request_bytes,
+                    prepared_dispatch.selected.stale_read,
+                    prepared_dispatch.traffic_location,
+                );
+                let send_result = send(
+                    self.shared_runtime.client(),
+                    &prepared_dispatch.selected,
+                    &prepared_dispatch.client_request,
+                    &call,
+                )?;
+                return self.settle_dispatch(
+                    prepared_dispatch,
+                    send_result,
+                    dispatch_started.elapsed(),
+                );
+            }
+        }
         if let Some(begin) = self.async_begin.filter(|_| {
             !self
                 .sync_only_chains

@@ -27,14 +27,12 @@ use crate::client::PhysicalChannelIdentity;
 use crate::rpc::channel_pool::{ChannelPool, VersionedChannel};
 use crate::rpc::forwarding;
 use crate::rpc::transport_runtime::WorkerCommand;
-use crate::rpc::{
-    CompletionRequest, DirectUnaryClientError, DirectUnaryConnectionError, UnaryCallContext,
-};
+use crate::rpc::{DirectUnaryClientError, DirectUnaryConnectionError, UnaryCallContext};
 
 use super::{
-    BatchEntry, BatchEntryCompletion, BatchGroup, BatchInflightError, BatchInflightTable,
-    BatchRoute, BatchScheduler, BatchWireRequest, BatchWireResponse, OpaqueBatchCommand,
-    PendingBatchCommand,
+    BatchCommandCompletion, BatchEntry, BatchEntryCompletion, BatchGroup, BatchInflightError,
+    BatchInflightTable, BatchRoute, BatchScheduler, BatchWireRequest, BatchWireResponse,
+    OpaqueBatchCommand, PendingBatchCommand,
 };
 
 const MAX_RECV_MESSAGE_SIZE: usize = (i64::MAX as usize).saturating_sub(1);
@@ -44,9 +42,6 @@ const STREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 // Pinned client-go's default TiKV MaxBatchSize bounds the per-connection
 // BatchCommands admission channel at 128 requests.
 const MAX_STREAM_OPENING_PACKETS: usize = 128;
-
-/// The original once-only completion carried from admission through receive.
-pub type BatchCommandCompletion = CompletionRequest<OpaqueBatchCommand, BatchInflightError>;
 
 /// One command admitted to the retained scheduler and duplex transport.
 pub type BatchCommandEntry = BatchEntry<OpaqueBatchCommand, BatchCommandCompletion>;

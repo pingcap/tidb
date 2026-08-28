@@ -264,6 +264,22 @@ pub trait DirectUnaryClient {
     fn close(&mut self) -> Result<(), DirectUnaryClientError>;
 }
 
+/// Synchronous BatchCommands attempt used by client-go `SendRequest`.
+///
+/// This remains separate from [`DirectUnaryClient`] because the latter is the
+/// raw unary fallback used when BatchCommands cannot represent a command.
+pub trait SynchronousBatchRequestDispatcher {
+    /// Sends one already-routed Coprocessor command through BatchCommands and
+    /// waits on the entry's response channel.
+    fn send_batch_request_with_route(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError>;
+}
+
 /// Trace identity attached by TiDB's `injectTraceClient`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TraceInfo {

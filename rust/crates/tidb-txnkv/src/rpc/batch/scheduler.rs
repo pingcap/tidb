@@ -85,12 +85,15 @@ where
     C: BatchEntryCompletion,
 {
     /// Creates a direct, normal-priority entry with caller-owned completion.
-    pub fn new(payload: T, completion: C) -> Self {
+    pub fn new<I>(payload: T, completion: I) -> Self
+    where
+        I: Into<C>,
+    {
         Self {
             payload,
             forwarded_host: None,
             priority: 0,
-            completion,
+            completion: completion.into(),
             progress: Arc::new(BatchRequestProgress::new(None)),
         }
     }

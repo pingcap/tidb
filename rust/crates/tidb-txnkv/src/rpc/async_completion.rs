@@ -27,6 +27,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 
 use crate::client::{DirectUnaryRequest, DirectUnaryResponse};
 
+use super::unary::CancellationWaiter;
 use super::{DirectUnaryClientError, UnaryCallContext};
 
 /// Immutable evidence that one async request was published on a concrete
@@ -306,6 +307,12 @@ impl RunLoopSignal {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.changed.notify_all();
+    }
+}
+
+impl CancellationWaiter for RunLoopSignal {
+    fn wake_all(&self) {
+        Self::wake_all(self);
     }
 }
 

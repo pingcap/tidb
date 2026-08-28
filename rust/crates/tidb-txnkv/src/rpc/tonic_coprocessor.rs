@@ -21,9 +21,14 @@ use tidb_proto::{
 };
 
 use crate::region::StoreLiveness;
-use crate::{DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse};
+use crate::{
+    DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse, SynchronousBatchRequestDispatcher,
+};
 
-use super::batch::{BatchCommandEntry, BatchCoprocessorPending, BatchPublicationReceipt};
+use super::batch::{
+    BatchCommandEntry, BatchCoprocessorPending, BatchPublicationReceipt,
+    SynchronousBatchCoprocessorPending,
+};
 use super::liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
 use super::unary::{RawTransportClient, RawUnaryRequest, UnaryCallContext};
 use super::{
@@ -314,6 +319,36 @@ impl DirectUnaryClient for TonicCoprocessorClient {
 
     fn close(&mut self) -> Result<(), DirectUnaryClientError> {
         self.shutdown()
+    }
+}
+
+impl SynchronousBatchRequestDispatcher for TonicCoprocessorClient {
+    fn send_batch_request_with_route(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        if call.cancellation().is_cancelled() {
+            return Err(DirectUnaryClientError::CallerCancelled);
+        }
+        let body = replace_top_level_context(&request.encoded_request, &request.context)?;
+        let (entry, mut pending) = SynchronousBatchCoprocessorPending::entry(body, forwarded_host);
+        let deferred =
+            match self.submit_batch_commands_deferred(physical_address, vec![entry], call) {
+                Ok(deferred) => deferred,
+                Err(error) => {
+                    pending.cancel();
+                    return Err(error);
+                }
+            };
+        pending.retain_deferred(deferred);
+        if call.cancellation().is_cancelled() {
+            pending.cancel();
+            return Err(DirectUnaryClientError::CallerCancelled);
+        }
+        pending.complete(physical_address, call)
     }
 }
 

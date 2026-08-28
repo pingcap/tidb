@@ -21,6 +21,7 @@
 mod batch_get;
 mod batch_rollback;
 mod commit;
+mod completion;
 mod coprocessor;
 mod get;
 mod inflight;
@@ -37,7 +38,9 @@ pub(crate) mod wire;
 
 pub(in crate::rpc) use transport::{BatchStreamEvent, BatchTransportState};
 
+pub(in crate::rpc) use completion::{synchronous_batch_completion_pair, SynchronousBatchPull};
 pub use coprocessor::BatchCoprocessorPending;
+pub(in crate::rpc) use coprocessor::SynchronousBatchCoprocessorPending;
 
 pub(in crate::rpc) use batch_get::entry as batch_get_entry;
 pub(in crate::rpc) use batch_rollback::entry as batch_rollback_entry;
@@ -49,6 +52,7 @@ pub(in crate::rpc) use prewrite::entry as prewrite_entry;
 pub(in crate::rpc) use scan::entry as scan_entry;
 pub(in crate::rpc) use txn_heart_beat::entry as txn_heart_beat_entry;
 
+pub use completion::BatchCommandCompletion;
 pub use inflight::{
     BatchInflightError, BatchInflightTable, BatchPublishError, BatchRetirementReport, BatchRoute,
     PendingBatchCommand,
@@ -64,7 +68,7 @@ pub use scheduler::{
     BatchTrigger, ConsumedBatchGroups, ScheduledEntry, BATCH_POLICY_BASIC, BATCH_POLICY_CUSTOM,
     BATCH_POLICY_POSITIVE, BATCH_POLICY_STANDARD, DEFAULT_BATCH_POLICY, HIGH_TASK_PRIORITY,
 };
-pub use transport::{BatchCommandCompletion, BatchCommandEntry, BatchPublicationReceipt};
+pub use transport::{BatchCommandEntry, BatchPublicationReceipt};
 pub use wire::{
     BatchCommandTag, BatchEnvelopeKind, BatchWireError, BatchWireRequest, BatchWireResponse,
     OpaqueBatchCommand,

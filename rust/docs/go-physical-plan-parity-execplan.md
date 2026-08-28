@@ -182,6 +182,11 @@ both `oltp_read_only` and `oltp_read_write`.
   Go's `SetRequiredRows`/`extractTaskHandles` does. The duplicate index-reader
   80% and partial-aggregate 75% completion policies are gone; completed
   decoder batches cross both boundaries unchanged.
+- [x] 2026-08-27: made the retained BatchCommands entry carry either Go's
+  synchronous response-channel completion or its asynchronous callback
+  completion. One-region ordinary cop reads now use the synchronous
+  `SendRequest` shape; the callback run loop remains only for the bounded
+  multi-region overlap path that still lacks Go's cop worker pool.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -518,6 +523,26 @@ both `oltp_read_only` and `oltp_read_write`.
   `handle_batch_caps_decoder_demand_and_fills_the_lookup_task`, the remote and
   handle cursor suites, release build, and the alternating full-split receipt.
 
+- Observation: ordinary Go `pkg/store/copr` workers call synchronous
+  `SendReqCtx`, and client-go's `batchCommandsEntry` delivers those responses
+  through its buffered `res` channel. Rust had hard-wired every BatchCommands
+  entry to `CompletionRequest`, even for a single-region cop read, so the
+  consumer drove an asynchronous callback queue that Go does not enter. The
+  batch scheduler and in-flight table now retain one enum with the same two
+  completion variants, and caller cancellation wakes the synchronous waiter
+  directly. A new profile proves the hot request uses
+  `SynchronousBatchPull::complete` (3,559 waiting samples) while
+  `CompletionRunLoop::execute_with_call` falls to one incidental sample.
+  Performance did not move: the alternating simple-range medians were Rust
+  4,133.96 TPS and Go 4,362.42 TPS (0.948x), essentially the preceding 0.947x.
+  This removes another parity mismatch and rules it out as the remaining
+  performance root cause.
+  Evidence: fail-before/pass-after
+  `one_region_cop_request_uses_go_synchronous_batch_completion`, direct
+  delivery and cancellation-wakeup tests, all 63 `direct_unary_` tests, the
+  release benchmark, and
+  `/private/tmp/tidb-rust-simple-parallel-syncbatch-fb2eceb2a9.sample.txt`.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -598,6 +623,16 @@ both `oltp_read_only` and `oltp_read_write`.
   Rationale: the response is already the sole consumer and can scan its
   bounded pending window after driving ready callbacks. A second notification
   graph duplicates synchronization without adding ordering or correctness.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: represent client-go's `batchCommandsEntry.res` and `.cb` as two
+  variants of one Rust batch completion carried through the existing
+  scheduler, publication, stream, and in-flight table. Use the synchronous
+  variant for a one-region ordinary cop request and retain the asynchronous
+  variant only where Rust still needs a bounded multi-region overlap window.
+  Rationale: switching to raw unary RPC would bypass BatchCommands and be a
+  workaround. A completion variant preserves the source transport and retry
+  ownership while deleting the callback executor from the ordinary path.
   Date/Author: 2026-08-27, Codex.
 
 - Decision: the PREPARE-time planner owns PointGet shape and access-path

@@ -43,6 +43,15 @@ fn batch_success_settles_through_the_existing_response_owner() {
 }
 
 #[test]
+fn one_region_cop_request_uses_go_synchronous_batch_completion() {
+    let dispatch = owner("fn dispatch_attempt(", "fn complete_batch_attempt(");
+    assert!(dispatch.contains("self.logical_order.len() == 1"));
+    assert!(dispatch.contains("self.synchronous_batch_send.filter"));
+    assert!(dispatch.contains("let send_result = send("));
+    assert!(dispatch.contains("return self.settle_dispatch("));
+}
+
+#[test]
 fn only_local_batch_admission_failure_reenters_the_sync_selector_loop() {
     let dispatch = owner("fn dispatch_attempt(", "fn complete_batch_attempt(");
     let compact_dispatch = dispatch.split_whitespace().collect::<String>();

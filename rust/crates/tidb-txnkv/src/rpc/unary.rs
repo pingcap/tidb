@@ -22,6 +22,7 @@
 //! region routing, retry, lock policy, and response interpretation stay above
 //! this transport authority.
 
+use std::fmt;
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -33,7 +34,6 @@ use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 use crate::client::PhysicalChannelIdentity;
 use crate::region::StoreLiveness;
 
-use super::async_completion::RunLoopSignal;
 use super::batch::{BatchCommandEntry, BatchPublicationReceipt};
 use super::channel_pool::ChannelPool;
 use super::forwarding;
@@ -49,11 +49,29 @@ const MAX_RECV_MESSAGE_SIZE: usize = (i64::MAX as usize).saturating_sub(1);
 /// The carrier deliberately contains no tonic status or command identity.
 /// Cancellation is monotonic and can be triggered from any thread while the
 /// synchronous caller is waiting for the worker reply.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct UnaryCancellation {
     state: tokio::sync::watch::Sender<bool>,
     blocking_wait: Arc<(Mutex<()>, Condvar)>,
-    completion_waiters: Arc<Mutex<Vec<Weak<RunLoopSignal>>>>,
+    completion_waiters: Arc<Mutex<Vec<RegisteredCancellationWaiter>>>,
+}
+
+impl fmt::Debug for UnaryCancellation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UnaryCancellation")
+            .field("cancelled", &self.is_cancelled())
+            .finish_non_exhaustive()
+    }
+}
+
+pub(super) trait CancellationWaiter: Send + Sync {
+    fn wake_all(&self);
+}
+
+struct RegisteredCancellationWaiter {
+    identity: usize,
+    waiter: Weak<dyn CancellationWaiter>,
 }
 
 impl Default for UnaryCancellation {
@@ -88,7 +106,7 @@ impl UnaryCancellation {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let mut waiters = Vec::with_capacity(registered.len());
             registered.retain(|waiting| {
-                if let Some(waiting) = waiting.upgrade() {
+                if let Some(waiting) = waiting.waiter.upgrade() {
                     waiters.push(waiting);
                     true
                 } else {
@@ -133,8 +151,11 @@ impl UnaryCancellation {
         self.is_cancelled()
     }
 
-    pub(super) fn register_completion_waiter(&self, run_loop: &Arc<RunLoopSignal>) {
-        let waiting = Arc::downgrade(run_loop);
+    pub(super) fn register_completion_waiter<W>(&self, waiter: &Arc<W>)
+    where
+        W: CancellationWaiter + 'static,
+    {
+        let identity = Arc::as_ptr(waiter).cast::<()>() as usize;
         let mut waiters = self
             .completion_waiters
             .lock()
@@ -142,19 +163,26 @@ impl UnaryCancellation {
         if !self.is_cancelled()
             && !waiters
                 .iter()
-                .any(|registered| Weak::ptr_eq(registered, &waiting))
+                .any(|registered| registered.identity == identity)
         {
-            waiters.push(waiting);
+            let waiter: Arc<dyn CancellationWaiter> = waiter.clone();
+            waiters.push(RegisteredCancellationWaiter {
+                identity,
+                waiter: Arc::downgrade(&waiter),
+            });
         }
     }
 
-    pub(super) fn unregister_completion_waiter(&self, run_loop: &Arc<RunLoopSignal>) {
-        let waiting = Arc::downgrade(run_loop);
+    pub(super) fn unregister_completion_waiter<W>(&self, waiter: &Arc<W>)
+    where
+        W: CancellationWaiter + 'static,
+    {
+        let identity = Arc::as_ptr(waiter).cast::<()>() as usize;
         self.completion_waiters
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .retain(|registered| {
-                registered.strong_count() > 0 && !Weak::ptr_eq(registered, &waiting)
+                registered.waiter.strong_count() > 0 && registered.identity != identity
             });
     }
 
