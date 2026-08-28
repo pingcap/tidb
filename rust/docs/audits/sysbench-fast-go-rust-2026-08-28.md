@@ -228,3 +228,22 @@ A fresh 30-second empty-table bulk-insert sample on the same `e669a75` binary
 measured Go 210447.42 QPS and Rust 182029.39 QPS (ratio 0.8650, gate PASS),
 receipt `/tmp/tc8228803.JvwO2R/sysbench-bulk-e669a75-30`, with a 105-second
 benchmark window. Existing `test.sbtest*` data remained untouched.
+
+## Completed post-fallback three-round windows
+
+The remaining two threshold rounds were also run serially with the same
+long-lived cluster and no BR restore. Each round covered all ten sysbench Lua
+subtypes with 10 threads and one 2-second sample per engine/subtype; the
+benchmark-window guard stayed below 300 seconds:
+
+| Round | Threshold | Window | Receipt | Failing subtypes |
+|---:|---:|---:|---|---|
+| 1 | 0.80 | 145s | `/tmp/tc8228803.JvwO2R/sysbench-fast-fallback-r1` | `oltp_read_write`, `oltp_write_only`, `oltp_update_index`, `bulk_insert` |
+| 2 | 0.90 | 160s | `/tmp/tc8228803.JvwO2R/sysbench-fast-fallback-r2` | `oltp_read_write`, `oltp_write_only`, `oltp_update_index`, `bulk_insert` |
+| 3 | 1.00 | 146s | `/tmp/tc8228803.JvwO2R/sysbench-fast-fallback-r3` | `oltp_read_write`, `oltp_write_only`, `oltp_update_index`, `bulk_insert` |
+
+`select_random_ranges.lua` passed all three post-fallback windows (ratios
+1.0917, 1.0923, and 1.1034). The three-round acceptance target is therefore
+still not met for the write-heavy paths, but every requested sysbench round
+completed within the five-minute budget and retained the existing restored
+dataset.
