@@ -1391,6 +1391,12 @@ fn run_select_traced_with_delivery_choice_inner(
         }
         None => select,
     };
+    // Preserve the statement's original subquery shape for the planner gate
+    // below. Folding/decorrelation may rewrite the AST before physical
+    // planning, but a query that started with a correlated or scalar
+    // subquery still needs the established Apply path unless the shared
+    // planner explicitly owns that shape.
+    let original_select_has_subquery = subquery::select_has_subquery(select);
     // The shared planner enumerates HashAgg/StreamAgg over one logical child.
     // `build_aggregation` only instantiates that selected receipt and lowers
     // its partial/final state layout; it must not plan this SELECT again per
@@ -1764,23 +1770,22 @@ fn run_select_traced_with_delivery_choice_inner(
             } else {
                 let planner_is_authoritative = !select.rollup
                     && !physical_source_names
-                    && !decorrelate_exists::has_top_level_exists(select.where_clause.as_ref());
+                    && !decorrelate_exists::has_top_level_exists(select.where_clause.as_ref())
+                    // The shared planner does not yet lower every scalar or
+                    // correlated subquery shape. Keep the established
+                    // executor path authoritative for those statements;
+                    // otherwise a missing planner receipt turns a valid
+                    // query into an internal 1105 before execution starts.
+                    && !original_select_has_subquery;
                 planned_aggregation_decision = if planner_is_authoritative {
-                    Some(
-                        planner_bridge::select_decision(
-                            planner_select
-                                .as_ref()
-                                .expect("an uncached SELECT has a planner statement"),
-                            catalog,
-                            current_db,
-                            ctx,
-                        )
-                        .ok_or_else(|| {
-                            DriverError::unsupported(
-                                "the shared logical/physical planner did not produce a SELECT plan",
-                            )
-                        })?,
-                    )
+                    // A planner receipt is an optimization hand-off, not a
+                    // validity check. Some legal shapes are still outside
+                    // the shared physical planner's lowering surface; keep
+                    // the established executor path for those instead of
+                    // turning a valid statement into an internal 1105.
+                    planner_select.as_ref().and_then(|planner_select| {
+                        planner_bridge::select_decision(planner_select, catalog, current_db, ctx)
+                    })
                 } else {
                     None
                 };
@@ -1837,8 +1842,18 @@ fn run_select_traced_with_delivery_choice_inner(
             // DataSource, including an ordinary one-table SELECT. Lower that
             // exact receipt at the leaf; the statement-level TryFastPlan
             // already ran before this normal-planner path, in Go's order.
-            let plan_at_leaf = planner_access.is_some_and(|access| !access.is_empty());
+            let plan_at_leaf = planner_access.is_some_and(|access| !access.is_empty())
+                // When the shared planner declines a legal subquery shape,
+                // retain the established row-source/access walk for ordinary
+                // multi-table joins instead of leaving every leaf unplanned.
+                || (aggregation_decision.is_none()
+                    && access::single_kv_table(&select.from, catalog, current_db).is_none());
             let wanted = leaf_demand::LeafDemand::of_select(select);
+            // An inner correlated query can refer to an outer column that is
+            // not otherwise visible in this query block. Keep those leaves
+            // full-width until the Apply path has established the outer
+            // scope; name-level pruning cannot prove that binding safely.
+            let wanted_for_prune = (!original_select_has_subquery).then_some(&wanted);
             let output_wanted = leaf_demand::LeafDemand::of_select_output(select);
             // The estimate owner: every relation of this `FROM` with the row
             // count `derive_stats` derives for it, read off the statement,
@@ -1911,7 +1926,7 @@ fn run_select_traced_with_delivery_choice_inner(
             let demand = leaf_demand::FromDemand {
                 offered: &offered,
                 pushdown: pushdown.as_ref(),
-                columns: Some(&wanted),
+                columns: wanted_for_prune,
                 output_columns: Some(&output_wanted),
                 rows: row_source.as_ref(),
                 planner_join,
