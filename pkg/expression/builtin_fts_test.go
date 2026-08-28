@@ -72,6 +72,77 @@ func TestFTSMysqlMatchAgainstLocalEval(t *testing.T) {
 	require.Equal(t, float64(0), v)
 }
 
+func TestFTSMysqlMatchAgainstStateSurvivesCloneAndSubstitution(t *testing.T) {
+	ctx := mock.NewContext()
+	sf := newFTSMatchAgainstForTest(t, ctx, "+PostgreSQL", 1, ast.FulltextSearchModifierBooleanMode)
+	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
+
+	t.Run("clone", func(t *testing.T) {
+		cloned := sf.Clone().(*ScalarFunction)
+		originalInfo, ok := FTSMysqlMatchAgainstLocalEvalInfo(sf)
+		require.True(t, ok)
+		clonedInfo, ok := FTSMysqlMatchAgainstLocalEvalInfo(cloned)
+		require.True(t, ok)
+		require.Equal(t, originalInfo, clonedInfo)
+		require.NotSame(t, originalInfo, clonedInfo)
+
+		v, isNull, err := cloned.EvalReal(ctx, stringRow("MySQL vs. PostgreSQL"))
+		require.NoError(t, err)
+		require.False(t, isNull)
+		require.Equal(t, float64(1), v)
+	})
+
+	t.Run("column substitute", func(t *testing.T) {
+		multiColumnSF := newFTSMatchAgainstForTest(t, ctx, "+PostgreSQL", 2, ast.FulltextSearchModifierBooleanMode)
+		require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(multiColumnSF, localEvalInfoForTest()))
+		matchedColumns := []*Column{
+			multiColumnSF.GetArgs()[1].(*Column),
+			multiColumnSF.GetArgs()[2].(*Column),
+		}
+		replacements := make([]Expression, 0, len(matchedColumns))
+		for i, matchedColumn := range matchedColumns {
+			matchedColumn.UniqueID = int64(i + 1)
+			replacement := matchedColumn.Clone().(*Column)
+			replacement.UniqueID = int64(i + 3)
+			replacements = append(replacements, replacement)
+		}
+
+		changed, failed, substituted := ColumnSubstituteImpl(
+			ctx,
+			multiColumnSF,
+			NewSchema(matchedColumns...),
+			replacements,
+			false,
+		)
+		require.True(t, changed)
+		require.False(t, failed)
+		substitutedSF := substituted.(*ScalarFunction)
+		_, ok := FTSMysqlMatchAgainstLocalEvalInfo(substitutedSF)
+		require.True(t, ok)
+		for i, replacement := range replacements {
+			require.Equal(t, replacement.(*Column).UniqueID, substitutedSF.GetArgs()[i+1].(*Column).UniqueID)
+		}
+
+		v, isNull, err := substitutedSF.EvalReal(ctx, twoStringRow("MySQL vs.", "PostgreSQL"))
+		require.NoError(t, err)
+		require.False(t, isNull)
+		require.Equal(t, float64(1), v)
+	})
+
+	t.Run("correlated column substitute", func(t *testing.T) {
+		substituted, err := SubstituteCorCol2Constant(ctx, sf)
+		require.NoError(t, err)
+		substitutedSF := substituted.(*ScalarFunction)
+		_, ok := FTSMysqlMatchAgainstLocalEvalInfo(substitutedSF)
+		require.True(t, ok)
+
+		v, isNull, err := substitutedSF.EvalReal(ctx, stringRow("MySQL vs. PostgreSQL"))
+		require.NoError(t, err)
+		require.False(t, isNull)
+		require.Equal(t, float64(1), v)
+	})
+}
+
 // TestFTSMysqlMatchAgainstLocalEvalWordBoundary covers the headline semantic
 // difference from the ILIKE fallback, which matches "cat" inside "concatenate"
 // because it can only test for a substring.
