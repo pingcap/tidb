@@ -2240,10 +2240,10 @@ impl QuerySession for ClusterServerSession {
                 .statement_resource_group_sql(statement.sql())
                 .map_err(map_error)?,
         };
-        let cached_point_get_plan = statement.point_get_plan().cloned();
-        let cached_select = statement
-            .select_plan()
-            .and_then(|plan| self.session.bind_cached_prepared_select(plan, &params));
+        let cached_point_get_plan = statement
+            .point_get_cache_ready()
+            .then(|| statement.point_get_plan().cloned())
+            .flatten();
         // YCSB's prepared point reads are a retained SELECT template whose
         // only changing value is the clustered key.  Resolve that key directly
         // from the template and execute values; cloning/binding the complete
@@ -2255,6 +2255,17 @@ impl QuerySession for ClusterServerSession {
                     .fast_prepared_statement_read_shape(template, &params)
             });
         let fast = fast_shape == Some(StatementReadShape::AutocommitPointGet);
+        // On a Go plan-cache miss, physical optimization first gives
+        // TryFastPlan this shape; the point plan it returns is what later
+        // cache hits rebuild. Do not substitute the generic SELECT tree for
+        // that point plan merely because both descriptors were retained.
+        let cached_select = if fast {
+            None
+        } else {
+            statement
+                .select_plan()
+                .and_then(|plan| self.session.bind_cached_prepared_select(plan, &params))
+        };
         let fast_select = cached_select.is_some();
         let fast_dml = retained
             .filter(|_| !self.session.has_session_bindings())
@@ -2374,6 +2385,7 @@ impl QuerySession for ClusterServerSession {
                         )
                         .map_err(map_error)?
                     {
+                        statement.mark_point_get_cache_ready();
                         return Ok(output);
                     }
                     // A defensive refusal falls through to the ordinary path. It

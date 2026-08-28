@@ -87,6 +87,13 @@ both `oltp_read_only` and `oltp_read_write`.
 - [x] 2026-08-27: removed configured TopN/LIMIT completion-evidence APIs and
   their diagnostic per-row counters. Behavioral tests now assert bounded heap
   size, stable result order, exact upstream pulls, and once-only close directly.
+- [x] 2026-08-27: restored Go's prepared point-plan precedence. The binary
+  protocol had retained both the point plan and the general SELECT descriptor,
+  then always bound and executed the general descriptor first. Prepared
+  sysbench point-select consequently blocked before completing one operation.
+  The first successful execution now admits the point plan as a cache miss and
+  later executions rebuild its handle as cache hits, matching Go's
+  `generateNewPlan`/`TryFastPlan` followed by point-executor reuse.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -178,6 +185,18 @@ both `oltp_read_only` and `oltp_read_write`.
   Evidence: `tidb-exec/src/configured_topn.rs` and the configured TopN/ordered
   query source tests.
 
+- Observation: the cluster binary-protocol path extracted both cached
+  descriptors from `PreparedAst`, but tested `cached_select.is_some()` before
+  the already-classified point shape. Because every point SELECT also owns a
+  general descriptor, the point plan was unreachable; the focused MaxTS test
+  and live prepared sysbench point-select both hung. Gating the general cache
+  with the point shape made the existing test complete in 0.02 seconds. A
+  second existing test then exposed and pinned Go's first-miss/later-hit
+  publication semantics.
+  Evidence: `cluster_session_node::execute_general` and
+  `point_get_max_ts::{a_prepared_point_get_takes_no_timestamp_either,
+  a_prepared_point_get_reuses_the_plan_with_each_executions_handle}`.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -218,6 +237,15 @@ both `oltp_read_only` and `oltp_read_write`.
   Rationale: Go separates optimizer selection from executor building. Exact
   receipt lowering preserves that boundary; local candidate recovery can make
   EXPLAIN and execution disagree with the plan Go selected.
+
+- Decision: a prepared statement whose Go optimizer result is a point plan
+  must not be displaced by Rust's generic cached SELECT descriptor. Admit the
+  precompiled immutable point descriptor only after its first successful
+  execution so `@@last_plan_from_cache` remains false on the miss and true on
+  subsequent rebuilt-handle executions.
+  Rationale: this preserves both the hot point-executor route and Go's
+  externally visible cache state without adding a workload-specific bypass.
+  Date/Author: 2026-08-27, Codex.
   Date/Author: 2026-08-27, Codex.
 
 - Decision: tests must observe executor and transport behavior at their public
