@@ -14,11 +14,10 @@
 
 //! Go `executorBuilder.build`: instantiate a retained physical SELECT tree.
 //!
-//! A prepared-plan cache hit has already run logical optimization, physical
-//! enumeration, task attachment, and `RebuildPlan4CachedPlan`. This module is
-//! deliberately a constructor switch over that resulting tree. It must not
-//! inspect the SQL AST to choose access, aggregation, join, sort, or reader
-//! policy; the AST is used only for client-visible result-column labels.
+//! Fresh plans and plans rebuilt by `RebuildPlan4CachedPlan` enter the same
+//! constructor switch. This module must not inspect the SQL AST to choose
+//! access, aggregation, join, sort, or reader policy; the AST is used only
+//! for client-visible result-column labels.
 
 use crate::access_path::{
     HandleOutputColumn, HandleSourceExec, IndexRangeSourceExec, UniqueIndexPointSourceExec,
@@ -33,7 +32,10 @@ use crate::join::{JoinExec, JoinKind};
 use crate::kv_table::{IndexRange, RowDecodeContext, TableHandle, TableScanExec};
 use crate::limit::LimitExec;
 use crate::projection::ProjectionExec;
-use crate::remote_scan::PushdownStatementContext;
+use crate::remote_scan::{
+    PushdownAggregateFunction, PushdownAggregateKind, PushdownPartialAggregate,
+    PushdownStatementContext,
+};
 use crate::selection::SelectionExec;
 use crate::sort::{SortByItem, SortExec};
 use crate::table_access::TableAccess;
@@ -167,7 +169,7 @@ fn plan_schema(plan: &PhysicalPlan) -> Result<Schema, DriverError> {
         .base
         .schema()
         .cloned()
-        .ok_or_else(|| DriverError::unsupported("a cached physical operator has no schema"))
+        .ok_or_else(|| DriverError::unsupported("a physical operator has no schema"))
 }
 
 fn unary_schema(plan: &PhysicalPlan, child: &dyn Executor) -> Schema {
@@ -190,7 +192,7 @@ fn meta(plan: &PhysicalPlan, schema: Schema) -> ExecutorMeta {
 fn only_child(plan: &PhysicalPlan) -> Result<&PhysicalPlan, DriverError> {
     let [child] = plan.children() else {
         return Err(DriverError::unsupported(
-            "a cached unary physical operator has the wrong child count",
+            "a unary physical operator has the wrong child count",
         ));
     };
     Ok(child)
@@ -200,9 +202,9 @@ fn resolve_expression(
     mut expression: Expression,
     schema: &Schema,
 ) -> Result<Expression, DriverError> {
-    super::planner_bridge::materialize_cached_expression(&mut expression);
+    super::planner_bridge::materialize_physical_expression(&mut expression);
     tidb_expr::simple_expr::resolve_indices_in_place(&mut expression, schema).map_err(|_| {
-        DriverError::unsupported("a cached physical expression does not resolve in its child")
+        DriverError::unsupported("a physical expression does not resolve in its child")
     })?;
     Ok(expression)
 }
@@ -238,7 +240,7 @@ fn table_scan_schema(
         .base
         .base
         .schema()
-        .ok_or_else(|| DriverError::unsupported("a cached table scan has no schema"))?;
+        .ok_or_else(|| DriverError::unsupported("a physical table scan has no schema"))?;
     let mut full = Vec::with_capacity(table.visible_column_count());
     for (index, column) in table.visible_columns().iter().enumerate() {
         let mut planned = scan
@@ -260,7 +262,7 @@ fn table_scan_schema(
         if wanted.id == tidb_model::column::EXTRA_HANDLE_ID {
             if extra_handle_slot.is_some() || output_offset + 1 != output.columns.len() {
                 return Err(DriverError::unsupported(
-                    "a cached table-scan _tidb_rowid column is not its final output",
+                    "a physical table-scan _tidb_rowid column is not its final output",
                 ));
             }
             extra_handle_slot = Some(keep.len());
@@ -274,7 +276,7 @@ fn table_scan_schema(
                 })
                 .ok_or_else(|| {
                     DriverError::unsupported(
-                        "a cached table-scan output column is absent from its table",
+                        "a physical table-scan output column is absent from its table",
                     )
                 })?,
         );
@@ -290,7 +292,7 @@ fn build_table_scan(
 ) -> Result<Box<dyn Executor>, DriverError> {
     let table = catalog
         .kv_table_by_id(scan.table_id)
-        .ok_or_else(|| DriverError::unsupported("cached table ID is absent from the catalog"))?;
+        .ok_or_else(|| DriverError::unsupported("physical table ID is absent from the catalog"))?;
     let (schema, keep, extra_handle_slot) = table_scan_schema(scan, table)?;
     let mut source = TableScanExec::new_with_context(
         meta(plan, schema),
@@ -303,27 +305,27 @@ fn build_table_scan(
     {
         if !source.accept_column_prune(&keep) {
             return Err(DriverError::unsupported(
-                "the cached table scan cannot apply its physical projection",
+                "the physical table scan cannot apply its projection",
             ));
         }
     }
     if let Some(slot) = extra_handle_slot {
         if !source.accept_extra_handle(slot) {
             return Err(DriverError::unsupported(
-                "the cached table scan cannot emit its physical _tidb_rowid column",
+                "the physical table scan cannot emit its _tidb_rowid column",
             ));
         }
     }
     if scan.keep_order && !source.accept_keep_order(scan.desc) {
         return Err(DriverError::unsupported(
-            "the cached table scan cannot preserve its physical order",
+            "the physical table scan cannot preserve its order",
         ));
     }
     if !scan.ranges.is_empty() {
         let ranges = executor_ranges(&scan.ranges);
         if !source.accept_handle_ranges(&ranges) {
             return Err(DriverError::unsupported(
-                "the cached table scan cannot apply its rebuilt ranges",
+                "the physical table scan cannot apply its ranges",
             ));
         }
     }
@@ -349,9 +351,7 @@ fn aggregate_function(
             ctx.div_precision_increment(),
         )
         .map_err(|_| {
-            DriverError::unsupported(format!(
-                "cached physical aggregate `{upper}` is not executable"
-            ))
+            DriverError::unsupported(format!("physical aggregate `{upper}` is not executable"))
         })?
         .0
     };
@@ -384,14 +384,46 @@ fn build_aggregation(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
-    let child = build(only_child(plan)?, catalog, ctx)?;
+    let mut child = build(only_child(plan)?, catalog, ctx)?;
     let child_schema = child.schema().clone();
     let group_by = resolve_expressions(group_by, &child_schema)?;
     let functions = descriptors
         .iter()
         .map(|descriptor| aggregate_function(descriptor, &child_schema, ctx))
         .collect::<Result<Vec<_>, _>>()?;
-    let executor_meta = meta(plan, plan_schema(plan)?);
+    let output_schema = plan_schema(plan)?;
+    if descriptors
+        .iter()
+        .all(|descriptor| descriptor.mode == AggFunctionMode::Partial1)
+    {
+        if let Some(partial) = pushed_partial_aggregation(
+            &functions,
+            &group_by,
+            stream,
+            &child_schema,
+            &output_schema,
+        )? {
+            if child
+                .table_access()
+                .is_some_and(|access| access.accept_partial_aggregate(&partial, ctx))
+            {
+                let expressions = child
+                    .schema()
+                    .columns
+                    .iter()
+                    .cloned()
+                    .map(Expression::Column)
+                    .collect();
+                return Ok(Box::new(ProjectionExec::new(
+                    meta(plan, output_schema),
+                    expressions,
+                    child,
+                    ctx.clone(),
+                )));
+            }
+        }
+    }
+    let executor_meta = meta(plan, output_schema);
     if stream {
         if group_by.is_empty() {
             Ok(Box::new(StreamAggExec::new(
@@ -423,13 +455,105 @@ fn build_aggregation(
     }
 }
 
+fn pushed_partial_aggregation(
+    functions: &[AggFunc],
+    group_by: &[Expression],
+    streamed: bool,
+    child_schema: &Schema,
+    output_schema: &Schema,
+) -> Result<Option<PushdownPartialAggregate>, DriverError> {
+    let mut pushed_functions = Vec::new();
+    let mut output = 0;
+    for function in functions {
+        if function.distinct || !function.extra_args.is_empty() || !function.order_by.is_empty() {
+            return Ok(None);
+        }
+        let mut input = function.arg.clone();
+        if matches!(function.kind, AggKind::Count)
+            && input.as_ref().is_none_or(|argument| {
+                matches!(argument, Expression::Constant(constant)
+                    if matches!(constant.value, tidb_datatype::Datum::Int(1)
+                        | tidb_datatype::Datum::UInt(1)))
+            })
+        {
+            input = None;
+        }
+        if input.as_ref().is_some_and(|argument| {
+            tidb_expr::pushdown_catalog::from_expression(argument).is_none()
+        }) {
+            return Ok(None);
+        }
+        let kinds: &[PushdownAggregateKind] = match function.kind {
+            AggKind::Count => &[PushdownAggregateKind::Count],
+            AggKind::Sum => &[PushdownAggregateKind::Sum],
+            AggKind::Min => &[PushdownAggregateKind::Min],
+            AggKind::Max => &[PushdownAggregateKind::Max],
+            AggKind::Avg => &[PushdownAggregateKind::Count, PushdownAggregateKind::Sum],
+            _ => return Ok(None),
+        };
+        for kind in kinds {
+            let Some(column) = output_schema.columns.get(output) else {
+                return Err(DriverError::unsupported(
+                    "a physical partial aggregate output schema is incomplete",
+                ));
+            };
+            pushed_functions.push(PushdownAggregateFunction {
+                kind: *kind,
+                input: input.clone(),
+                output_type: column
+                    .ret_type
+                    .clone()
+                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong)),
+            });
+            output += 1;
+        }
+    }
+    let mut group_offsets = Vec::with_capacity(group_by.len());
+    let mut group_types = Vec::with_capacity(group_by.len());
+    for expression in group_by {
+        let Expression::Column(column) = expression else {
+            return Ok(None);
+        };
+        let offset = usize::try_from(column.index)
+            .ok()
+            .filter(|offset| *offset < child_schema.len());
+        let Some(offset) = offset else {
+            return Ok(None);
+        };
+        group_offsets.push(offset);
+        group_types.push(
+            child_schema.columns[offset]
+                .ret_type
+                .clone()
+                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong)),
+        );
+    }
+    if output + group_offsets.len() != output_schema.len() {
+        return Ok(None);
+    }
+    let partial = if group_offsets.is_empty() {
+        PushdownPartialAggregate::Global {
+            functions: pushed_functions,
+            streamed,
+        }
+    } else {
+        PushdownPartialAggregate::Grouped {
+            group_offsets,
+            group_types,
+            functions: pushed_functions,
+            streamed,
+        }
+    };
+    Ok(Some(partial))
+}
+
 fn build_reader(
     embedded: Option<&PhysicalPlan>,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     build(
-        embedded.ok_or_else(|| DriverError::unsupported("a cached reader has no pushed plan"))?,
+        embedded.ok_or_else(|| DriverError::unsupported("a physical reader has no pushed plan"))?,
         catalog,
         ctx,
     )
@@ -448,26 +572,6 @@ fn collect_reader_conditions(plan: &PhysicalPlan, conditions: &mut Vec<Expressio
     }
     for child in plan.children() {
         collect_reader_conditions(child, conditions);
-    }
-}
-
-fn direct_reader_shape(plan: &PhysicalPlan, leaf: fn(&PhysicalPlan) -> bool) -> bool {
-    if leaf(plan) {
-        return true;
-    }
-    match plan {
-        PhysicalPlan::Selection(_) | PhysicalPlan::NominalSort(_) => {
-            matches!(plan.children(), [child] if direct_reader_shape(child, leaf))
-        }
-        PhysicalPlan::Projection(projection)
-            if projection
-                .exprs
-                .iter()
-                .all(|expression| matches!(expression, Expression::Column(_))) =>
-        {
-            matches!(plan.children(), [child] if direct_reader_shape(child, leaf))
-        }
-        _ => false,
     }
 }
 
@@ -507,7 +611,7 @@ fn reader_output_offsets(
                 })
                 .ok_or_else(|| {
                     DriverError::unsupported(
-                        "a cached index reader output is absent from its table",
+                        "a physical index reader output is absent from its table",
                     )
                 })
         })
@@ -526,21 +630,10 @@ fn build_index_reader(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
-    if !direct_reader_shape(index_plan, |plan| {
-        matches!(plan, PhysicalPlan::IndexScan(_))
-    }) || table_plan.is_some_and(|table_plan| {
-        !direct_reader_shape(table_plan, |plan| {
-            matches!(plan, PhysicalPlan::TableScan(_))
-        })
-    }) {
-        return Err(DriverError::unsupported(
-            "a cached index reader contains an unimplemented coprocessor operator",
-        ));
-    }
     let scan = embedded_index_scan(index_plan)
-        .ok_or_else(|| DriverError::unsupported("a cached index reader has no index scan"))?;
+        .ok_or_else(|| DriverError::unsupported("a physical index reader has no index scan"))?;
     let table = catalog.kv_table_by_id(scan.table_id).ok_or_else(|| {
-        DriverError::unsupported("cached index table ID is absent from the catalog")
+        DriverError::unsupported("physical index table ID is absent from the catalog")
     })?;
     if !table
         .indexes()
@@ -548,7 +641,7 @@ fn build_index_reader(
         .any(|index| index.id == scan.index_id)
     {
         return Err(DriverError::unsupported(
-            "cached index ID is absent from its table",
+            "physical index ID is absent from its table",
         ));
     }
     let schema = plan_schema(plan)?;
@@ -577,7 +670,7 @@ fn build_index_reader(
     }
     if (scan.keep_order || keep_order) && !source.accept_keep_order(scan.desc) {
         return Err(DriverError::unsupported(
-            "the cached index reader cannot preserve its physical order",
+            "the physical index reader cannot preserve its order",
         ));
     }
     if let Some(rows) = scan.base.base.stats_info().map(|stats| stats.row_count()) {
@@ -586,14 +679,14 @@ fn build_index_reader(
     if let Some(limit) = pushed_limit {
         if !source.accept_embedded_lookup_limit(limit.offset, limit.count) {
             return Err(DriverError::unsupported(
-                "the cached index lookup cannot apply its pushed limit",
+                "the physical index lookup cannot apply its pushed limit",
             ));
         }
     }
     if let Some(expect_cnt) = expect_cnt.filter(|_| !covering) {
         if !source.accept_lookup_batch_size(expect_cnt) {
             return Err(DriverError::unsupported(
-                "the cached index lookup cannot apply its paging size",
+                "the physical index lookup cannot apply its paging size",
             ));
         }
     }
@@ -624,7 +717,7 @@ fn join_kind(join_type: LogicalJoinType) -> Result<JoinKind, DriverError> {
         LogicalJoinType::AntiSemi => Ok(JoinKind::AntiSemi),
         LogicalJoinType::LeftOuterSemi => Ok(JoinKind::LeftOuterSemi),
         LogicalJoinType::AntiLeftOuterSemi => Err(DriverError::unsupported(
-            "cached anti-left-outer-semi join execution is not implemented",
+            "physical anti-left-outer-semi join execution is not implemented",
         )),
     }
 }
@@ -679,7 +772,7 @@ fn build_join(
 ) -> Result<JoinExec<crate::StmtContext>, DriverError> {
     let [left_plan, right_plan] = plan.children() else {
         return Err(DriverError::unsupported(
-            "a cached physical join has the wrong child count",
+            "a physical join has the wrong child count",
         ));
     };
     let left = filtered_join_child(plan, build(left_plan, catalog, ctx)?, left_conditions, ctx)?;
@@ -691,7 +784,7 @@ fn build_join(
     )?;
     let condition_schema =
         tidb_expr::schema::merge_schema(Some(left.schema()), Some(right.schema()))
-            .ok_or_else(|| DriverError::unsupported("a cached join has no condition schema"))?;
+            .ok_or_else(|| DriverError::unsupported("a physical join has no condition schema"))?;
     let mut conditions = left_join_keys
         .iter()
         .zip(right_join_keys)
@@ -724,14 +817,14 @@ fn join_key_offsets(
                 .iter()
                 .position(|column| column.unique_id == left.unique_id)
                 .ok_or_else(|| {
-                    DriverError::unsupported("a cached merge key is absent on the left")
+                    DriverError::unsupported("a physical merge key is absent on the left")
                 })?;
             let right = right_schema
                 .columns
                 .iter()
                 .position(|column| column.unique_id == right.unique_id)
                 .ok_or_else(|| {
-                    DriverError::unsupported("a cached merge key is absent on the right")
+                    DriverError::unsupported("a physical merge key is absent on the right")
                 })?;
             Ok(crate::merge_join_plan::MergeJoinKey { left, right })
         })
@@ -859,7 +952,7 @@ fn unique_index_point_values(
     let index = table
         .plan_indexes()
         .find(|index| index.id == index_id)
-        .ok_or_else(|| DriverError::unsupported("cached point-get index ID is absent"))?;
+        .ok_or_else(|| DriverError::unsupported("physical point-get index ID is absent"))?;
     if !index.unique || index.has_prefix() {
         return Err(DriverError::unsupported(
             "a retained index point-get requires a non-prefix unique index",
@@ -915,10 +1008,10 @@ fn build_point_get(
 ) -> Result<Box<dyn Executor>, DriverError> {
     let table = catalog
         .kv_table_by_id(point.table_id)
-        .ok_or_else(|| DriverError::unsupported("cached point-get table ID is absent"))?;
+        .ok_or_else(|| DriverError::unsupported("physical point-get table ID is absent"))?;
     if table.partition().is_some() {
         return Err(DriverError::unsupported(
-            "a cached partitioned PointGet lacks its retained physical table ID",
+            "a partitioned PointGet lacks its retained physical table ID",
         ));
     }
     let schema = plan_schema(plan)?;
@@ -929,7 +1022,7 @@ fn build_point_get(
             unique_index_point_values(table, index_id, &point.ranges, ctx, false, false, false)?;
         if index_values.len() != 1 {
             return Err(DriverError::unsupported(
-                "a cached unique-index PointGet does not retain exactly one key",
+                "a physical unique-index PointGet does not retain exactly one key",
             ));
         }
         return Ok(Box::new(UniqueIndexPointSourceExec::new(
@@ -945,7 +1038,7 @@ fn build_point_get(
     let handles = point_handles(table, &point.ranges, ctx)?;
     if handles.len() != 1 {
         return Err(DriverError::unsupported(
-            "a cached PointGet does not retain exactly one key",
+            "a physical PointGet does not retain exactly one key",
         ));
     }
     Ok(Box::new(HandleSourceExec::new_point_mapped_with_context(
@@ -965,10 +1058,10 @@ fn build_batch_point_get(
 ) -> Result<Box<dyn Executor>, DriverError> {
     let table = catalog
         .kv_table_by_id(batch.table_id)
-        .ok_or_else(|| DriverError::unsupported("cached batch-point table ID is absent"))?;
+        .ok_or_else(|| DriverError::unsupported("physical batch-point table ID is absent"))?;
     if table.partition().is_some() {
         return Err(DriverError::unsupported(
-            "a cached partitioned BatchPointGet lacks retained physical table IDs",
+            "a partitioned BatchPointGet lacks retained physical table IDs",
         ));
     }
     let schema = plan_schema(plan)?;
@@ -1098,30 +1191,30 @@ fn build_index_merge_reader(
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let first = reader.partial_plans_raw.first().ok_or_else(|| {
-        DriverError::unsupported("a cached index-merge reader has no partial plan")
+        DriverError::unsupported("a physical index-merge reader has no partial plan")
     })?;
     let table_id = retained_table_id(first)?;
     for partial in &reader.partial_plans_raw[1..] {
         if retained_table_id(partial)? != table_id {
             return Err(DriverError::unsupported(
-                "cached index-merge partial plans read different tables",
+                "physical index-merge partial plans read different tables",
             ));
         }
     }
     let table_plan = reader.table_plan.as_deref().ok_or_else(|| {
-        DriverError::unsupported("a cached index-merge reader has no final table plan")
+        DriverError::unsupported("a physical index-merge reader has no final table plan")
     })?;
     if retained_table_id(table_plan)? != table_id {
         return Err(DriverError::unsupported(
-            "a cached index-merge final table plan reads a different table",
+            "a physical index-merge final table plan reads a different table",
         ));
     }
     let table = catalog.kv_table_by_id(table_id).ok_or_else(|| {
-        DriverError::unsupported("cached index-merge table ID is absent from the catalog")
+        DriverError::unsupported("physical index-merge table ID is absent from the catalog")
     })?;
     if table.record_physical_ids().len() != 1 {
         return Err(DriverError::unsupported(
-            "cached index merge needs retained physical partition identity",
+            "physical index merge needs retained partition identity",
         ));
     }
 
@@ -1199,24 +1292,13 @@ pub(super) fn build(
         PhysicalPlan::TableReader(reader) => {
             build_reader(reader.table_plan.as_deref(), catalog, ctx)
         }
-        PhysicalPlan::IndexReader(reader) => build_index_reader(
-            plan,
-            reader
-                .index_plan
-                .as_deref()
-                .ok_or_else(|| DriverError::unsupported("a cached index reader has no plan"))?,
-            None,
-            true,
-            false,
-            None,
-            None,
-            catalog,
-            ctx,
-        ),
+        PhysicalPlan::IndexReader(reader) => {
+            build_reader(reader.index_plan.as_deref(), catalog, ctx)
+        }
         PhysicalPlan::IndexLookUpReader(reader) => build_index_reader(
             plan,
             reader.index_plan.as_deref().ok_or_else(|| {
-                DriverError::unsupported("a cached index lookup has no index plan")
+                DriverError::unsupported("a physical index lookup has no index plan")
             })?,
             reader.table_plan.as_deref(),
             false,
@@ -1242,8 +1324,17 @@ pub(super) fn build(
             )))
         }
         PhysicalPlan::Selection(selection) => {
-            let child = build(only_child(plan)?, catalog, ctx)?;
+            let mut child = build(only_child(plan)?, catalog, ctx)?;
             let filters = resolve_expressions(&selection.conditions, child.schema())?;
+            let pushed = crate::predicate_pushdown::PushedScanFilter::from_physical_conditions(
+                filters.clone(),
+            );
+            if child
+                .table_access()
+                .is_some_and(|access| access.accept_scan_filter(&pushed, ctx))
+            {
+                return Ok(child);
+            }
             let schema = unary_schema(plan, child.as_ref());
             Ok(Box::new(SelectionExec::new(
                 meta(plan, schema),
@@ -1281,7 +1372,7 @@ pub(super) fn build(
                         })
                         .ok_or_else(|| {
                             DriverError::unsupported(
-                                "a cached physical sort column is absent from its child",
+                                "a physical sort column is absent from its child",
                             )
                         })
                 })
@@ -1354,7 +1445,7 @@ pub(super) fn build(
             )?;
             let build_child_idx = if join.use_outer_to_build {
                 1usize.checked_sub(join.inner_child_idx).ok_or_else(|| {
-                    DriverError::unsupported("a cached hash join has an invalid inner child")
+                    DriverError::unsupported("a physical hash join has an invalid inner child")
                 })?
             } else {
                 join.inner_child_idx
@@ -1365,7 +1456,7 @@ pub(super) fn build(
         PhysicalPlan::MergeJoin(join) => {
             let [left, right] = plan.children() else {
                 return Err(DriverError::unsupported(
-                    "a cached merge join has the wrong child count",
+                    "a physical merge join has the wrong child count",
                 ));
             };
             let keys = join_key_offsets(
@@ -1392,7 +1483,14 @@ pub(super) fn build(
             Ok(Box::new(executor))
         }
         PhysicalPlan::TableDual(dual) => Ok(Box::new(TableDualExec::new(
-            meta(plan, plan_schema(plan)?),
+            meta(
+                plan,
+                plan.base()
+                    .base
+                    .schema()
+                    .cloned()
+                    .unwrap_or_else(|| Schema::new(Vec::new())),
+            ),
             dual.row_count,
         ))),
         PhysicalPlan::UnionAll(_) => {
@@ -1414,7 +1512,7 @@ pub(super) fn build(
         }
         PhysicalPlan::NominalSort(_) => build(only_child(plan)?, catalog, ctx),
         _ => Err(DriverError::unsupported(format!(
-            "cached physical executor construction for {} is not implemented",
+            "physical executor construction for {} is not implemented",
             plan.base().base.tp()
         ))),
     }
@@ -1462,9 +1560,9 @@ fn result_columns(select: &tidb_ast::SelectStmt, schema: &Schema) -> Vec<(String
         .collect()
 }
 
-/// Builds and drains the rebuilt physical tree without entering the AST
-/// optimizer/lowering pipeline.
-pub(super) fn run_cached_select(
+/// Builds and drains one fresh or cache-rebuilt physical tree through the
+/// same executor path as Go's `ExecStmt.buildExecutor`.
+pub(super) fn execute_select(
     select: &tidb_ast::SelectStmt,
     physical: &PhysicalPlan,
     catalog: &Catalog,

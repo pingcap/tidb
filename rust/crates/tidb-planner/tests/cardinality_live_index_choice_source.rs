@@ -13,10 +13,10 @@ use tidb_planner::{
         ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix,
     },
     cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate},
-    index_task::{IndexTask, IndexTaskRejection},
+    index_task::{CopIndexTask, IndexTask, IndexTaskRejection},
     logical_data_source::LogicalDataSource,
     logical_data_source_task::IndexTaskProperty,
-    physical_index_scan::PhysicalIndexScanPlan,
+    physical::PhysicalIndexScan,
     physical_property::IndexOrderingRequirement,
     task_type::TaskType,
     tikv_scan_spec::TiKvTableScanSpec,
@@ -81,8 +81,15 @@ fn source_proven_point_statistics_flow_through_an_admitted_index_task() {
         .expect("admitted index path must become a cop task");
     assert_eq!(topn_path.count_after_access(), Some(3.0));
     assert_eq!(topn_scan.estimated_rows(), 3.0);
-    assert_eq!(topn_scan.plan().estimated_rows(), Some(3.0));
-    assert_eq!(topn_scan.plan().operator(), "IndexScan");
+    assert_eq!(
+        topn_scan
+            .base
+            .base
+            .stats_info()
+            .map(|stats| stats.row_count()),
+        Some(3.0)
+    );
+    assert_eq!(topn_scan.base.base.tp(), "IndexScan");
     assert!((topn_scan.cost() - 610.500_012).abs() < f64::EPSILON);
     assert!(matches!(topn, IndexTask::CopSingleRead(_)));
 
@@ -246,10 +253,12 @@ fn source_datasource_index_task_rejects_unimplemented_go_path_forms() {
         IndexOrderingRequirement::MergeSort,
     ] {
         assert_eq!(
-            source([point_path(candidate(1))]).build_index_task(
-                IndexTaskProperty::new(TaskType::CopSingleRead).with_ordering(ordering),
-            ),
-            IndexTask::Invalid(IndexTaskRejection::RequiredOrdering)
+            source([point_path(candidate(1))])
+                .build_index_task(
+                    IndexTaskProperty::new(TaskType::CopSingleRead).with_ordering(ordering),
+                )
+                .rejection(),
+            Some(IndexTaskRejection::RequiredOrdering)
         );
     }
     assert_eq!(
@@ -302,34 +311,33 @@ fn source_index_scan_cost_uses_go_row_size_boundaries() {
     // pkg/planner/core/plan_cost_ver2.go:1102-1111
     let mut below_one = candidate(0);
     below_one.row_size = 0.5;
-    let below_one = PhysicalIndexScanPlan::init(74, 0, &below_one, 3.0);
+    let below_one = PhysicalIndexScan::init(74, 0, &below_one, 3.0);
     assert_eq!(below_one.cost(), 0.0);
 
     let mut one = candidate(0);
     one.row_size = 1.0;
-    let one = PhysicalIndexScanPlan::init(75, 0, &one, 3.0);
+    let one = PhysicalIndexScan::init(75, 0, &one, 3.0);
     assert_eq!(one.cost(), 0.0);
 
     let mut two = candidate(0);
     two.row_size = 2.0;
-    let two = PhysicalIndexScanPlan::init(76, 0, &two, 3.0);
+    let two = PhysicalIndexScan::init(76, 0, &two, 3.0);
     assert!((two.cost() - 3.0 * 40.7).abs() < f64::EPSILON);
 
     let mut forty_eight = candidate(-12);
     forty_eight.row_size = 48.0;
     forty_eight.point_statistics.topn_count = Some(1);
     forty_eight.index_scan_cost_factor = 1.25;
-    let forty_eight = PhysicalIndexScanPlan::init(77, 0, &forty_eight, 1.0);
+    let forty_eight = PhysicalIndexScan::init(77, 0, &forty_eight, 1.0);
     assert!(
         (forty_eight.cost() - (48.0_f64.log2() * 40.7 * 1.25 - 0.000_012)).abs() < f64::EPSILON
     );
 
-    let current = PhysicalIndexScanPlan::init(78, 0, &candidate(12), 3.0);
-    let equal_cost = PhysicalIndexScanPlan::init(79, 0, &candidate(12), 3.0);
-    assert_eq!(
-        PhysicalIndexScanPlan::choose_lower_cost(current, equal_cost)
-            .plan()
-            .id(),
-        78
+    let current = PhysicalIndexScan::init(78, 0, &candidate(12), 3.0);
+    let equal_cost = PhysicalIndexScan::init(79, 0, &candidate(12), 3.0);
+    let chosen = IndexTask::choose_lower_cost(
+        IndexTask::CopSingleRead(CopIndexTask::new(current)),
+        IndexTask::CopSingleRead(CopIndexTask::new(equal_cost)),
     );
+    assert_eq!(chosen.index_plan().expect("valid task").base.base.id(), 78);
 }

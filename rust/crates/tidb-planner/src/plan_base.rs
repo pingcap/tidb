@@ -274,7 +274,19 @@ impl BasePlan {
 /// plan tree.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlanError {
+    kind: PlanErrorKind,
     message: String,
+}
+
+/// The planner error classes whose MySQL identity survives the plan boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PlanErrorKind {
+    /// Go `plannererrors.ErrInternal` and message-only planner failures.
+    Internal,
+    /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB`.
+    UnknownDatabase(String),
+    /// Go `infoschema.ErrTableNotExists`.
+    UnknownTable(String),
 }
 
 impl PlanError {
@@ -282,8 +294,35 @@ impl PlanError {
     #[must_use]
     pub fn internal(message: impl Into<String>) -> Self {
         Self {
+            kind: PlanErrorKind::Internal,
             message: message.into(),
         }
+    }
+
+    /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB`.
+    #[must_use]
+    pub fn unknown_database(database: impl Into<String>) -> Self {
+        let database = database.into();
+        Self {
+            message: format!("Unknown database '{database}'"),
+            kind: PlanErrorKind::UnknownDatabase(database),
+        }
+    }
+
+    /// Go `infoschema.ErrTableNotExists`.
+    #[must_use]
+    pub fn unknown_table(table: impl Into<String>) -> Self {
+        let table = table.into();
+        Self {
+            message: format!("Table '{table}' doesn't exist"),
+            kind: PlanErrorKind::UnknownTable(table),
+        }
+    }
+
+    /// The stable error class used by the statement layer.
+    #[must_use]
+    pub const fn kind(&self) -> &PlanErrorKind {
+        &self.kind
     }
 
     /// The diagnostic text.

@@ -821,15 +821,20 @@ fn run_select_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
-    run_select_traced(
-        select,
-        catalog,
-        current_db,
-        ctx,
-        None,
-        &tidb_planner::physical_property::PhysicalProperty::default(),
-        false,
-    )
+    let physical = planner_bridge::physical_select_plan(select, catalog, current_db, ctx).map_err(
+        |error| match error.kind() {
+            tidb_planner::plan_base::PlanErrorKind::UnknownDatabase(database) => {
+                DriverError::Schema(SchemaErrorKind::UnknownDatabase(database.clone()))
+            }
+            tidb_planner::plan_base::PlanErrorKind::UnknownTable(table) => {
+                DriverError::Schema(SchemaErrorKind::UnknownTable(table.clone()))
+            }
+            tidb_planner::plan_base::PlanErrorKind::Internal => {
+                DriverError::unsupported(error.to_string())
+            }
+        },
+    )?;
+    physical_builder::execute_select(select, &physical, catalog, ctx)
 }
 
 /// [`run_select_stmt`], recording the plan it builds into `trace`.

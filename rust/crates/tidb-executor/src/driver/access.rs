@@ -1145,7 +1145,7 @@ pub fn run_prepared_select(
     let Some((select, physical)) = cached.execution(execution.generation) else {
         return Ok(None);
     };
-    super::physical_builder::run_cached_select(select, physical, catalog, ctx).map(Some)
+    super::physical_builder::execute_select(select, physical, catalog, ctx).map(Some)
 }
 
 /// One `column = ?`, `column = const`, or `column IS NULL` conjunct of a

@@ -43,6 +43,8 @@ fn scan(id: i32, columns: &[i64]) -> PhysicalPlan {
         ranges: crate::ranger::types::Ranges::new(),
         range_rebuild: None,
         table_scan_penalty: Default::default(),
+        tikv_pushdown: None,
+        resolved_descriptor: None,
     })
 }
 
@@ -140,6 +142,8 @@ fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template()
         desc: false,
         ranges: vec![point_range(0)],
         range_rebuild: None,
+        covering_ranges: Vec::new(),
+        tikv_pushdown: None,
     });
     let PhysicalPlan::IndexScan(scan) = &mut index_scan else {
         unreachable!();

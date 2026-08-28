@@ -32,6 +32,38 @@ both `oltp_read_only` and `oltp_read_write`.
 
 ## Progress
 
+- [x] 2026-08-28: removed cache-only `run_cached_select`. Ordinary SELECTs
+  now retain the physical tree returned by the shared planner and,
+  like cache-rebuilt SELECTs, enter one `physical_builder::execute_select`
+  path corresponding to Go's `ExecStmt.buildExecutor` ->
+  `executorBuilder.build`. Fresh and cache-safe planning share one physical
+  enumeration helper. The Rust-only `supports` cache whitelist and
+  `direct_reader_shape` gate are gone; builder failures now come from the
+  actual retained operator instead of a separate preflight policy. A
+  fail-before source regression proved
+  that ordinary execution did not call the common entrypoint, then passed
+  after the fold. A runtime regression proves identical rows and metadata for
+  fresh and rebound range plans. Broad execution exposed two real builder
+  gaps and fixed them at their roots: zero-column scans now preserve chunk
+  virtual rows for pushed `COUNT(*)`, schema-less TableDual children use their
+  correct empty schema, and a cop Selection is installed on the scan before a
+  retained Partial1 aggregate changes the source schema. Planner errors now
+  keep Go's unknown-database/unknown-table identity through physical planning
+  instead of collapsing to 1105. The aggregated executor suite is back to its
+  archived baseline (225 passed, 507 ignored, one unchanged common-handle
+  `ADMIN CHECK` failure).
+
+- [x] 2026-08-28: removed the remaining bounded table-scan, index-scan, and
+  table-reader plan facades. Datasource task selection, read-only lowering,
+  TiKV DAG construction, CopScan, and staged-row overlay now consume
+  `physical::PhysicalTableScan`, `PhysicalIndexScan`, and
+  `PhysicalTableReader` directly. Source row counts and index-choice costs
+  live in `BasePhysicalPlan`; the reader owns an actual
+  `PhysicalPlan::TableScan` child; and recursive cache cloning preserves the
+  resolved table/index execution metadata. Fail-before regressions showed the
+  old datasource APIs returning the disconnected `*Plan` types; both table
+  and index regressions now pass against the wired physical tree.
+
 - [x] 2026-08-28: removed the duplicate bounded `PhysicalSelectionPlan`.
   The scripted TiKV read tier now carries the wired
   `physical::PhysicalSelection` and its real expression conditions; DAG
@@ -94,7 +126,9 @@ both `oltp_read_only` and `oltp_read_write`.
   child; deleted the whole-select double-planning path, `AggregationChoice`,
   cost-only delivery wrappers, and speculative statistics checkpoints.
 - [x] 2026-08-27: deleted cached `SUM && estimated_rows > 1` selection and
-  retained the physical aggregation chosen at prepare time.
+  retained the physical aggregation chosen at prepare time. On 2026-08-28 the
+  remaining table-scan row-estimate veto was also removed, so a retained
+  Partial1 physical node alone authorizes the pushdown attempt.
 - [x] 2026-08-27: moved HashAgg work to the persistent executor pool and
   deleted `PIPELINE_MIN_INPUT_ROWS` plus its estimate plumbing.
 - [x] 2026-08-27: resource-group identity is statement-scoped and reaches

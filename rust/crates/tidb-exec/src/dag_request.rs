@@ -30,9 +30,7 @@ use tidb_expr::{
     pushdown_catalog::ColumnDescriptor,
 };
 use tidb_planner::{
-    physical::PhysicalSelection,
-    physical_index_scan::PhysicalIndexScanPlan,
-    physical_table_scan::PhysicalTableScanPlan,
+    physical::{PhysicalIndexScan, PhysicalSelection, PhysicalTableScan},
     signed_bigint_ranger::{BigIntComparison, ComparisonOp, ComparisonOperand},
     tikv_scan_spec::{
         check_cover_index, ScanColumnInfo, TiKvIndexScanSpec, TiKvTableScanSpec,
@@ -88,9 +86,9 @@ impl DagRequestContext {
 #[derive(Clone, Copy, Debug)]
 pub enum TiKvScanPlan<'a> {
     /// Ordinary table scan.
-    Table(&'a PhysicalTableScanPlan),
+    Table(&'a PhysicalTableScan),
     /// Ordinary index scan.
-    Index(&'a PhysicalIndexScanPlan),
+    Index(&'a PhysicalIndexScan),
 }
 
 /// Why a physical scan cannot enter the bounded TiKV DAG request.
@@ -101,6 +99,8 @@ pub enum DagRequestBuildError {
         /// Number of plans supplied by the caller.
         actual: usize,
     },
+    /// The table scan has not received schema-resolved ToPB metadata.
+    MissingTablePushdown,
     /// The live index task has not received schema-resolved ToPB metadata.
     MissingIndexPushdown,
     /// A scan feature belongs to a deliberately external planner/store owner.
@@ -140,6 +140,9 @@ impl fmt::Display for DagRequestBuildError {
         match self {
             Self::PlanCount { actual } => {
                 write!(f, "TiKV scan DAG requires exactly one plan, got {actual}")
+            }
+            Self::MissingTablePushdown => {
+                f.write_str("physical table scan lacks pre-resolved TiKV pushdown metadata")
             }
             Self::MissingIndexPushdown => {
                 f.write_str("physical index scan lacks pre-resolved TiKV pushdown metadata")
@@ -505,10 +508,12 @@ fn construct_dag_req_assembled(
     };
 
     let (scan_executor, scan_columns) = match plan {
-        TiKvScanPlan::Table(plan) => (
-            table_scan_to_pb(plan.pushdown())?,
-            plan.pushdown().columns.as_slice(),
-        ),
+        TiKvScanPlan::Table(plan) => {
+            let spec = plan
+                .pushdown()
+                .ok_or(DagRequestBuildError::MissingTablePushdown)?;
+            (table_scan_to_pb(spec)?, spec.columns.as_slice())
+        }
         TiKvScanPlan::Index(plan) => (
             index_scan_to_pb(plan)?,
             plan.pushdown()
@@ -815,7 +820,7 @@ fn table_scan_to_pb(spec: &TiKvTableScanSpec) -> Result<Executor, DagRequestBuil
     })
 }
 
-fn index_scan_to_pb(plan: &PhysicalIndexScanPlan) -> Result<Executor, DagRequestBuildError> {
+fn index_scan_to_pb(plan: &PhysicalIndexScan) -> Result<Executor, DagRequestBuildError> {
     let spec = plan
         .pushdown()
         .ok_or(DagRequestBuildError::MissingIndexPushdown)?;
@@ -840,7 +845,7 @@ fn index_scan_to_pb(plan: &PhysicalIndexScanPlan) -> Result<Executor, DagRequest
     })
 }
 
-fn index_payload_to_pb(spec: &TiKvIndexScanSpec, plan: &PhysicalIndexScanPlan) -> IndexScan {
+fn index_payload_to_pb(spec: &TiKvIndexScanSpec, plan: &PhysicalIndexScan) -> IndexScan {
     IndexScan {
         table_id: Some(spec.table_id),
         index_id: Some(spec.index_id),

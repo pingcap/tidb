@@ -46,7 +46,7 @@ fn direct_projection_preserves_alias_source_identity_and_scan_order() {
         Some(ResolvedTableScanKind::Full)
     );
     assert_eq!(
-        plan.table_scan().explain_id().as_deref(),
+        plan.table_scan().resolved_explain_id().as_deref(),
         Some("TableFullScan_1")
     );
     let [balance, id] = plan.projected_columns() else {
@@ -67,7 +67,10 @@ fn direct_projection_preserves_alias_source_identity_and_scan_order() {
     assert!(id.scan_column().pk_handle);
 
     assert_eq!(
-        plan.table_scan().pushdown().columns,
+        plan.table_scan()
+            .pushdown()
+            .expect("read-only scan has TiKV fields")
+            .columns,
         [balance.scan_column().clone(), id.scan_column().clone()]
     );
     for column in plan.projected_columns() {

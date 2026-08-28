@@ -31,7 +31,7 @@ use tidb_executor::predicate_pushdown::{
 };
 use tidb_expr::pushdown_catalog::{build_call, PbScalar};
 use tidb_planner::{
-    physical_table_scan::PhysicalTableScanPlan,
+    physical::PhysicalTableScan,
     tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec},
 };
 use tidb_proto::tipb::{DagRequest, ExecType, Expr, ExprType, ScalarFuncSig};
@@ -112,7 +112,7 @@ fn column_compare(
 #[test]
 fn a_wide_path_pushed_predicate_is_carried_by_the_encoded_dag() {
     let columns = vec![column_info(1, 3), column_info(2, 1)];
-    let table = PhysicalTableScanPlan::init(1, 0, TiKvTableScanSpec::new(42, columns.clone()));
+    let table = PhysicalTableScan::init(1, 0, TiKvTableScanSpec::new(42, columns.clone()));
     // `SELECT a, b FROM t WHERE a > 5 AND 10 > b`.
     let predicates = vec![
         pushed(0, ScanComparisonOp::Gt, Datum::Int(5), true),
@@ -412,7 +412,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
         field_type: conditions[2].children[0].field_type.clone(),
         has_distinct: Some(false),
     };
-    let scan = PhysicalTableScanPlan::init(0, 0, TiKvTableScanSpec::new(46, columns));
+    let scan = PhysicalTableScan::init(0, 0, TiKvTableScanSpec::new(46, columns));
     let request = construct_aggregate_read_only_dag_req_with_conditions(
         &DagRequestContext::new("UTC", 0, 0, DistSqlEncodeType::Default),
         TiKvScanPlan::Table(&scan),
@@ -498,7 +498,7 @@ fn tpch_q1_grouped_partial_aggregation_keeps_functions_and_group_keys_on_the_wir
         aggregate(ExprType::Sum, column_ref(2, &value_type), &value_type),
     ];
     let group_by = vec![column_ref(0, &group_type), column_ref(1, &group_type)];
-    let scan = PhysicalTableScanPlan::init(0, 0, TiKvTableScanSpec::new(47, columns));
+    let scan = PhysicalTableScan::init(0, 0, TiKvTableScanSpec::new(47, columns));
     let request = construct_grouped_aggregate_read_only_dag_req_with_conditions(
         &DagRequestContext::new("UTC", 0, 0, DistSqlEncodeType::Default),
         TiKvScanPlan::Table(&scan),
@@ -747,7 +747,7 @@ fn a_string_comparison_lowers_to_the_string_signature_go_resolves() {
     assert_eq!(flipped.children[1].tp, Some(ExprType::ColumnRef as i32));
 
     // And it all survives the encoding that actually goes on the wire.
-    let scan = PhysicalTableScanPlan::init(0, 0, TiKvTableScanSpec::new(7, text.clone()));
+    let scan = PhysicalTableScan::init(0, 0, TiKvTableScanSpec::new(7, text.clone()));
     let conditions = wide_scan_selection_conditions(
         &[string_compare(ScanComparisonOp::Eq, literal, true)],
         &text,
@@ -1146,7 +1146,7 @@ fn the_composed_integer_predicates_lower_to_gos_own_signatures() {
 #[test]
 fn a_pushed_cap_becomes_a_limit_executor_above_the_selection() {
     let columns = vec![column_info(1, 3), column_info(2, 0)];
-    let scan = PhysicalTableScanPlan::init(0, 0, TiKvTableScanSpec::new(114, columns.clone()));
+    let scan = PhysicalTableScan::init(0, 0, TiKvTableScanSpec::new(114, columns.clone()));
     let conditions = wide_scan_selection_conditions(
         &[pushed(0, ScanComparisonOp::Gt, Datum::Int(195), true)],
         &columns,

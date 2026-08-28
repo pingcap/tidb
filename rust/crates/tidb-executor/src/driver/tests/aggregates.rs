@@ -4209,7 +4209,7 @@ fn grouped_aggregation_enumerates_families_over_one_planned_child() {
     assert_eq!(rows.len(), 2);
     assert_eq!(
         crate::driver::select_plan_visit_count::get(),
-        1,
-        "HashAgg and StreamAgg must be costed over one constructed child"
+        0,
+        "ordinary aggregation must execute the enumerated physical tree without re-entering the legacy AST builder"
     );
 }

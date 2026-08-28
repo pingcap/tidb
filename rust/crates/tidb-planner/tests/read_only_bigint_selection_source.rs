@@ -65,6 +65,7 @@ fn six_comparisons_preserve_and_order_operand_order_and_signed_extremes() {
     assert_eq!(
         plan.table_scan()
             .pushdown()
+            .expect("read-only scan has TiKV fields")
             .columns
             .iter()
             .map(|column| column.column_id)
@@ -103,6 +104,7 @@ fn projection_prefix_is_stable_and_predicate_only_columns_are_appended_once() {
     assert_eq!(
         plan.table_scan()
             .pushdown()
+            .expect("read-only scan has TiKV fields")
             .columns
             .iter()
             .map(|column| column.column_id)
@@ -124,7 +126,14 @@ fn no_where_keeps_the_existing_scan_without_a_physical_selection() {
     let plan = ReadOnlyScanPlan::lower("SELECT balance, id FROM accounts", &table()).unwrap();
     assert!(plan.selection().is_none());
     assert_eq!(plan.projection_output_offsets(), [0, 1]);
-    assert_eq!(plan.table_scan().pushdown().columns.len(), 2);
+    assert_eq!(
+        plan.table_scan()
+            .pushdown()
+            .expect("read-only scan has TiKV fields")
+            .columns
+            .len(),
+        2
+    );
 }
 
 #[test]

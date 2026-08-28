@@ -612,6 +612,7 @@ impl CopTask {
             table_plan: Some(Box::new(*table_plan)),
             store_type,
             is_common_handle: false,
+            read_req_type: crate::physical_table_reader::ReadReqType::Cop,
         });
         let mut root = RootTask::default();
         root.set_plan(reader);
@@ -805,6 +806,8 @@ mod tests {
             ranges: crate::ranger::types::Ranges::new(),
             range_rebuild: None,
             table_scan_penalty: Default::default(),
+            tikv_pushdown: None,
+            resolved_descriptor: None,
         })
     }
 
@@ -829,6 +832,8 @@ mod tests {
             ranges: crate::ranger::types::Ranges::new(),
             range_rebuild: None,
             table_scan_penalty: Default::default(),
+            tikv_pushdown: None,
+            resolved_descriptor: None,
         });
         let mut cop = CopTask {
             table_plan: Some(Box::new(scan)),
@@ -2149,6 +2154,8 @@ mod attach_tests {
                 ranges: crate::ranger::types::Ranges::new(),
                 range_rebuild: None,
                 table_scan_penalty: Default::default(),
+                tikv_pushdown: None,
+                resolved_descriptor: None,
             })
         };
         let selection = PhysicalPlan::Selection(PhysicalSelection {

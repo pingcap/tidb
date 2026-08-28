@@ -32,10 +32,8 @@ use crate::{
         ScanReadTaskRejection, TableTaskRejection,
     },
     logical_data_source::LogicalDataSource,
-    physical::{BasePhysicalPlan, PhysicalTableDual},
-    physical_index_scan::PhysicalIndexScanPlan,
+    physical::{BasePhysicalPlan, PhysicalIndexScan, PhysicalTableDual, PhysicalTableScan},
     physical_property::IndexOrderingRequirement,
-    physical_table_scan::PhysicalTableScanPlan,
     task_type::TaskType,
 };
 
@@ -237,7 +235,7 @@ fn build_supported_table_task(
         return invalid_table(TableTaskRejection::UnsupportedScanFeature(feature));
     }
 
-    let Some(scan) = PhysicalTableScanPlan::from_validated_pushdown(
+    let Some(scan) = PhysicalTableScan::from_validated_pushdown(
         source.physical_plan_id(),
         source.query_block_offset(),
         path.validated_pushdown().clone(),
@@ -318,7 +316,7 @@ fn build_supported_index_task(
         return IndexTask::Invalid(IndexTaskRejection::InvalidCountAfterAccess);
     }
 
-    let mut scan = PhysicalIndexScanPlan::init(
+    let mut scan = PhysicalIndexScan::init(
         source.physical_plan_id(),
         source.query_block_offset(),
         path.candidate(),

@@ -473,7 +473,11 @@ where
         plan: &ReadOnlyScanPlan,
     ) -> Result<StagedRowOverlay, TransactionStatementError> {
         let selection = plan.selection();
-        let scan_columns = &plan.table_scan().pushdown().columns;
+        let scan_columns = &plan
+            .table_scan()
+            .pushdown()
+            .expect("ReadOnlyScanPlan always owns executable TiKV scan fields")
+            .columns;
         let mut overlay = Vec::new();
         for staged in self.buffer.staged_entries() {
             let Ok((table_id, RecordHandle::Int(handle))) = decode_record_key(staged.key()) else {

@@ -28,13 +28,12 @@ use tidb_planner::{
     },
     logical_data_source::LogicalDataSource,
     logical_data_source_task::IndexTaskProperty,
-    physical_index_scan::PhysicalIndexScanPlan,
-    physical_table_scan::PhysicalTableScanPlan,
+    physical::{PhysicalIndexScan, PhysicalTableScan},
+    task_type::TaskType,
     tikv_scan_spec::{
         check_cover_index, IndexPushdownMetadataError, ResolvedIndexDescriptor, ScanColumnInfo,
         TiKvIndexScanSpec, TiKvTableScanSpec, UnsupportedScanFeature,
     },
-    task_type::TaskType,
 };
 use tidb_proto::tipb::{DagRequest, EncodeType, Endian, EngineType, ExecType};
 
@@ -71,7 +70,7 @@ fn default_context() -> DagRequestContext {
 fn timezone_and_empty_table_scan_match_go_wire() {
     // pkg/executor/test/executor/executor_test.go:84-113 TestTimezonePushDown
     // pkg/executor/table_readers_required_rows_test.go:149-158 buildMockDAGRequest
-    let table = PhysicalTableScanPlan::init(1, 0, TiKvTableScanSpec::new(12345, vec![]));
+    let table = PhysicalTableScan::init(1, 0, TiKvTableScanSpec::new(12345, vec![]));
     let context = DagRequestContext::new("Asia/Shanghai", 28_800, 32, DistSqlEncodeType::Default);
     let request = construct_dag_req(&context, &[TiKvScanPlan::Table(&table)]).unwrap();
 
@@ -131,7 +130,7 @@ fn table_scan_preserves_pre_resolved_column_and_common_handle_metadata() {
     spec.keep_order = true;
     spec.primary_column_ids = vec![7, 9];
     spec.primary_prefix_column_ids = vec![7];
-    let table = PhysicalTableScanPlan::init(2, 0, spec);
+    let table = PhysicalTableScan::init(2, 0, spec);
     let request = construct_dag_req(&default_context(), &[TiKvScanPlan::Table(&table)]).unwrap();
     assert_eq!(request.output_offsets, [0, 1]);
     let scan = request.executors[0].tbl_scan.as_ref().unwrap();
@@ -236,7 +235,7 @@ fn live_index_task_reaches_index_scan_dag_payload() {
 
 #[test]
 fn request_optional_fields_follow_construct_dag_req_presence_rules() {
-    let table = PhysicalTableScanPlan::init(1, 0, TiKvTableScanSpec::new(1, vec![]));
+    let table = PhysicalTableScan::init(1, 0, TiKvTableScanSpec::new(1, vec![]));
     let mut context = default_context();
     context.collect_execution_summaries = true;
     context.div_precision_increment = 7;
@@ -275,7 +274,7 @@ fn index_pushdown_rejects_split_identity_and_shape_authority() {
         index_column_count: 2,
     };
 
-    let error = PhysicalIndexScanPlan::init(1, 0, &candidate, 1.0)
+    let error = PhysicalIndexScan::init(1, 0, &candidate, 1.0)
         .try_with_pushdown(
             ResolvedIndexDescriptor {
                 index_id: 12,
@@ -292,7 +291,7 @@ fn index_pushdown_rejects_split_identity_and_shape_authority() {
         }
     );
 
-    let error = PhysicalIndexScanPlan::init(1, 0, &candidate, 1.0)
+    let error = PhysicalIndexScan::init(1, 0, &candidate, 1.0)
         .try_with_pushdown(descriptor, TiKvIndexScanSpec::new(1, 12, vec![], true, 2))
         .unwrap_err();
     assert_eq!(
@@ -303,7 +302,7 @@ fn index_pushdown_rejects_split_identity_and_shape_authority() {
         }
     );
 
-    let error = PhysicalIndexScanPlan::init(1, 0, &candidate, 1.0)
+    let error = PhysicalIndexScan::init(1, 0, &candidate, 1.0)
         .try_with_pushdown(descriptor, TiKvIndexScanSpec::new(1, 11, vec![], false, 2))
         .unwrap_err();
     assert_eq!(
@@ -333,7 +332,7 @@ fn unsupported_or_incomplete_scans_fail_closed() {
         construct_dag_req(&default_context(), &[]),
         Err(DagRequestBuildError::PlanCount { actual: 0 })
     );
-    let table = PhysicalTableScanPlan::init(1, 0, TiKvTableScanSpec::new(1, vec![]));
+    let table = PhysicalTableScan::init(1, 0, TiKvTableScanSpec::new(1, vec![]));
     assert_eq!(
         construct_dag_req(
             &default_context(),
@@ -343,13 +342,13 @@ fn unsupported_or_incomplete_scans_fail_closed() {
     );
 
     let candidate = candidate(1, vec![value_range(1)]);
-    let missing = PhysicalIndexScanPlan::init(1, 0, &candidate, 1.0);
+    let missing = PhysicalIndexScan::init(1, 0, &candidate, 1.0);
     assert_eq!(
         construct_dag_req(&default_context(), &[TiKvScanPlan::Index(&missing)]),
         Err(DagRequestBuildError::MissingIndexPushdown)
     );
 
-    let array_index = PhysicalIndexScanPlan::init(1, 0, &candidate, 1.0)
+    let array_index = PhysicalIndexScan::init(1, 0, &candidate, 1.0)
         .try_with_pushdown(
             ResolvedIndexDescriptor {
                 index_id: 1,
@@ -385,7 +384,7 @@ fn unsupported_or_incomplete_scans_fail_closed() {
         UnsupportedScanFeature::FullTextSearch,
         UnsupportedScanFeature::VectorSearch,
     ] {
-        let rejected = PhysicalTableScanPlan::init(
+        let rejected = PhysicalTableScan::init(
             1,
             0,
             TiKvTableScanSpec::new(1, vec![]).with_unsupported(feature),

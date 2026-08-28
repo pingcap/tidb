@@ -177,6 +177,7 @@ fn stored_predicate_remains_selection_and_projection_offsets_do_not_move() {
     assert_eq!(
         plan.table_scan()
             .pushdown()
+            .expect("read-only scan has TiKV fields")
             .columns
             .iter()
             .map(|column| column.column_id)

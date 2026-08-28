@@ -319,9 +319,9 @@ impl DataSource {
     /// only, because a column kept solely for `AllConds` must not force a
     /// full-length index read.
     ///
-    /// Returns whether the schema became empty, which is the condition under
-    /// which Go forces one handle column back in — a decision that needs the
-    /// catalogue and so belongs to the caller.
+    /// Returns whether pruning initially emptied the schema. As in Go, one
+    /// handle column is forced back into the retained schema before return so
+    /// TiKV can report the row count for queries such as `SELECT 1 FROM t`.
     pub fn prune_columns_local(
         &mut self,
         parent_used_cols: &[Column],
@@ -354,6 +354,51 @@ impl DataSource {
             }
         }
 
+        let emptied = schema.columns.is_empty();
+        if emptied {
+            // Go `preferKeyColumnFromTable`: an ordinary table first reuses
+            // its live handle, then the immutable PK handle on a later prune
+            // pass, and finally the implicit row id. `table_columns` is this
+            // port's immutable copy of the original DataSource schema.
+            let forced = self
+                .handle_cols
+                .first()
+                .or_else(|| {
+                    self.pk_is_handle.then(|| {
+                        self.table_columns.iter().find(|column| {
+                            column.ret_type.as_ref().is_some_and(|field_type| {
+                                field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
+                            })
+                        })
+                    })?
+                })
+                .or_else(|| {
+                    self.table_columns
+                        .iter()
+                        .find(|column| column.id == EXTRA_HANDLE_ID)
+                })
+                .or_else(|| self.table_columns.first())
+                .cloned();
+            if let Some(forced) = forced {
+                let name = forced
+                    .orig_name
+                    .rsplit('.')
+                    .next()
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or("_tidb_rowid")
+                    .to_owned();
+                let is_primary_key = forced.ret_type.as_ref().is_some_and(|field_type| {
+                    field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
+                });
+                self.columns.push(DataSourceColumn {
+                    id: forced.id,
+                    name,
+                    is_primary_key,
+                });
+                schema.columns.push(forced);
+            }
+        }
+
         // Go: once the int handle no longer appears in the schema, the handle
         // is unusable and must be forgotten, so that a later pass can pick a
         // fresh one instead of silently reading `_tidb_rowid`.
@@ -366,7 +411,7 @@ impl DataSource {
             self.handle_cols.clear();
             self.handle_is_int = false;
         }
-        schema.columns.is_empty()
+        emptied
     }
 
     /// Go `DataSource.PreparePossibleProperties(_, _)`

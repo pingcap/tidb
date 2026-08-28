@@ -536,7 +536,7 @@ fn access_filter(conditions: &[Expression], logical: &LogicalPlan) -> Option<Acc
     }
     let mut conditions = conditions.to_vec();
     for condition in &mut conditions {
-        materialize_cached_expression(condition);
+        materialize_physical_expression(condition);
     }
     Some(AccessFilter {
         conditions,
@@ -544,11 +544,11 @@ fn access_filter(conditions: &[Expression], logical: &LogicalPlan) -> Option<Acc
     })
 }
 
-/// The retained physical tree keeps parameter/deferred markers for its next
-/// in-place rebuild. The per-execution lowering receipt is private, so detach
-/// those markers from its cloned expressions after their current values have
-/// been materialized.
-pub(super) fn materialize_cached_expression(expression: &mut Expression) {
+/// Detaches parameter/deferred markers from an executor-owned expression
+/// after its current value has been materialized. A cache-retained physical
+/// tree keeps the markers for its next in-place rebuild; ordinary physical
+/// plans pass through the same normalization without changing their value.
+pub(super) fn materialize_physical_expression(expression: &mut Expression) {
     match expression {
         Expression::Column(_) | Expression::CorrelatedColumn(_) => {}
         Expression::Constant(constant) => {
@@ -557,7 +557,7 @@ pub(super) fn materialize_cached_expression(expression: &mut Expression) {
         }
         Expression::ScalarFunction(function) => {
             for argument in &mut function.args {
-                materialize_cached_expression(argument);
+                materialize_physical_expression(argument);
             }
         }
     }
@@ -1127,14 +1127,15 @@ fn join_children(plan: &PhysicalPlan, logical: &LogicalPlan) -> JoinChildren {
     }
 }
 
-fn planner_logical_select(
+fn planner_physical_select(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_database: &str,
     ctx: &crate::StmtContext,
-) -> Option<(LogicalPlan, PhysicalPlan)> {
+    use_plan_cache: bool,
+) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner::plan_base::PlanError> {
     let (logical, plan_ids, column_ids) =
-        planner_optimized_select(select, catalog, current_database, ctx, false)?;
+        planner_optimized_select(select, catalog, current_database, ctx, use_plan_cache)?;
     let physical = {
         let coster = Ver2Coster::from_env(ctx.optimizer_cost_env());
         let mut dispatch = DispatchContext::new(&plan_ids, &coster, 1.0)
@@ -1149,10 +1150,40 @@ fn planner_logical_select(
                     .max(1.0) as usize,
             )
             .with_column_ids(&column_ids);
-        let task = find_best_task(&logical, &PhysicalProperty::default(), &mut dispatch).ok()?;
-        task.plan()?.clone()
+        let task = find_best_task(&logical, &PhysicalProperty::default(), &mut dispatch)?;
+        task.plan().cloned().ok_or_else(|| {
+            tidb_planner::plan_base::PlanError::internal("physical planning produced no plan")
+        })?
     };
-    Some((logical, physical))
+    Ok((logical, physical))
+}
+
+fn planner_logical_select(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Option<(LogicalPlan, PhysicalPlan)> {
+    planner_physical_select(select, catalog, current_database, ctx, false).ok()
+}
+
+/// Builds the ordinary physical SELECT tree consumed by the common executor
+/// builder. Go passes both fresh and cache-rebuilt plans to
+/// `executorBuilder.build`; keeping the full tree here prevents ordinary
+/// execution from rediscovering its operators from the SQL AST.
+pub(crate) fn physical_select_plan(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
+    if select.rollup {
+        return Err(tidb_planner::plan_base::PlanError::internal(
+            "ROLLUP physical planning is not implemented",
+        ));
+    }
+    planner_physical_select(select, catalog, current_database, ctx, false)
+        .map(|(_, physical)| physical)
 }
 
 fn decision_from_plans(
@@ -1259,7 +1290,7 @@ fn planner_optimized_select(
     current_database: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
-) -> Option<(LogicalPlan, PlanIdAllocator, ColumnIdAllocator)> {
+) -> Result<(LogicalPlan, PlanIdAllocator, ColumnIdAllocator), tidb_planner::plan_base::PlanError> {
     let source = catalog.planner_catalog(current_database);
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
@@ -1269,7 +1300,7 @@ fn planner_optimized_select(
     // `buildSelect`. This bridge enters at the narrower Rust `build_select`
     // seam, so carry the wrapper's mandatory flag explicitly.
     builder.add_opt_flag(flags::PRUNE_COLUMNS);
-    let (plan, flags) = builder.build_select(select).ok()?;
+    let (plan, flags) = builder.build_select(select)?;
     let function_builder = RealFunctionBuilder::new(ctx);
     let rule_context = RuleContext {
         allocator: &plan_ids,
@@ -1278,7 +1309,9 @@ fn planner_optimized_select(
         allow_derive_topn: true,
         disabled_rules: DisabledLogicalRules::default(),
     };
-    let optimized = logical_optimize(&rule_context, flags, plan).ok()?.plan;
+    let optimized = logical_optimize(&rule_context, flags, plan)
+        .map_err(|(_, error)| error)?
+        .plan;
     let mut source_count = 0;
     optimized.walk_preorder(&mut |plan| {
         source_count += usize::from(matches!(plan, LogicalPlan::DataSource(_)));
@@ -1293,9 +1326,9 @@ fn planner_optimized_select(
         optimized,
         (),
     );
-    optimized.recursive_derive_stats(&[]).ok()?;
+    optimized.recursive_derive_stats(&[])?;
     let logical = prepare_possible_properties(optimized).0;
-    Some((logical, plan_ids, column_ids))
+    Ok((logical, plan_ids, column_ids))
 }
 
 fn outer_aggregation_plan(plan: &LogicalPlan) -> Option<&LogicalPlan> {
@@ -1444,25 +1477,8 @@ pub(crate) fn cached_select_plan(
     if select.rollup {
         return None;
     }
-    let (logical, plan_ids, column_ids) =
-        planner_optimized_select(select, catalog, current_database, ctx, true)?;
-    let physical = {
-        let coster = Ver2Coster::from_env(ctx.optimizer_cost_env());
-        let mut dispatch = DispatchContext::new(&plan_ids, &coster, 1.0)
-            .with_ordering_index_selectivity_ratio(ctx.ordering_index_selectivity_ratio())
-            .with_projection_push_down(ctx.allow_projection_push_down())
-            .with_limit_push_down_threshold(ctx.limit_push_down_threshold())
-            .with_paging(ctx.optimizer_cost_env().session.enable_paging)
-            .with_hash_join_concurrency(
-                ctx.optimizer_cost_env()
-                    .session
-                    .hash_join_concurrency
-                    .max(1.0) as usize,
-            )
-            .with_column_ids(&column_ids);
-        let task = find_best_task(&logical, &PhysicalProperty::default(), &mut dispatch).ok()?;
-        task.plan()?.clone()
-    };
+    let (_, physical) =
+        planner_physical_select(select, catalog, current_database, ctx, true).ok()?;
     Some(CachedSelectPlan {
         select: select.clone(),
         physical,
@@ -1499,7 +1515,8 @@ pub(crate) fn aggregation_eliminated(
     if select.rollup || !is_aggregate_select(select) {
         return None;
     }
-    let (logical, _, _) = planner_optimized_select(select, catalog, current_database, ctx, false)?;
+    let (logical, _, _) =
+        planner_optimized_select(select, catalog, current_database, ctx, false).ok()?;
     Some(outer_aggregation(&logical).is_none())
 }
 

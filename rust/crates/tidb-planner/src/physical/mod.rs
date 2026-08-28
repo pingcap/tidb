@@ -47,7 +47,9 @@ use tidb_expr::schema::Schema;
 use crate::cost_usage::{CostVer2, PlanCostOption};
 use crate::find_best_task::LogicalJoinType;
 use crate::physical_property::{PhysicalProperty, TaskType};
-use crate::physical_table_reader::StoreType;
+use crate::physical_table_reader::{
+    MissingTableDescriptorError, ReadReqType, StoreType, TableScanCountError,
+};
 use crate::plan_base::{BasePlan, PlanError, PlanIdAllocator};
 use crate::stats_info::StatsInfo;
 use crate::task::{RootTask, Task};
@@ -757,6 +759,103 @@ pub struct PhysicalTableScan {
     pub range_rebuild: Option<crate::physical_plan_cache::TableRangeRebuild>,
     /// Go `getTableScanPenalty`'s table/session inputs.
     pub table_scan_penalty: crate::plan_cost_ver2::TableScanPenaltyInput,
+    /// Schema-resolved fields consumed by the TiKV protobuf lowering path.
+    /// Go reads these values from this operator's `Table` and `Columns`.
+    pub tikv_pushdown: Option<crate::tikv_scan_spec::TiKvTableScanSpec>,
+    /// The resolved table metadata behind Go's `Table` pointer. The Rust
+    /// schema boundary retains only the fields needed by this scan.
+    pub resolved_descriptor: Option<crate::access_path::ResolvedTableDescriptor>,
+}
+
+impl PhysicalTableScan {
+    /// Initializes one wired table scan from its resolved TiKV fields.
+    #[must_use]
+    pub fn init(
+        plan_id: i32,
+        query_block_offset: i32,
+        pushdown: crate::tikv_scan_spec::TiKvTableScanSpec,
+    ) -> Self {
+        Self {
+            base: BasePhysicalPlan::with_id(plan_id, "TableScan", query_block_offset),
+            table_id: pushdown.table_id,
+            keep_order: pushdown.keep_order,
+            desc: pushdown.desc,
+            tikv_pushdown: Some(pushdown),
+            ..Self::default()
+        }
+    }
+
+    /// Builds the scan after the access path has validated table identity.
+    #[must_use]
+    pub(crate) fn from_validated_pushdown(
+        plan_id: i32,
+        query_block_offset: i32,
+        pushdown: crate::access_path::ValidatedTablePushdown,
+    ) -> Self {
+        let descriptor = pushdown.descriptor();
+        let mut scan = Self::init(plan_id, query_block_offset, pushdown.spec().clone());
+        scan.resolved_descriptor = Some(descriptor);
+        scan
+    }
+
+    /// Installs Go `CountAfterAccess` as this physical operator's statistics.
+    pub(crate) fn try_with_source_estimated_rows(mut self, rows: f64) -> Option<Self> {
+        if !rows.is_finite() || rows < 0.0 {
+            return None;
+        }
+        self.base.base.set_stats(Some(StatsInfo::new(rows, [])));
+        Some(self)
+    }
+
+    /// Returns the pre-resolved TiKV scan fields, when this plan is executable
+    /// by the bounded TiKV DAG path.
+    #[must_use]
+    pub const fn pushdown(&self) -> Option<&crate::tikv_scan_spec::TiKvTableScanSpec> {
+        self.tikv_pushdown.as_ref()
+    }
+
+    /// Returns the source-authoritative table descriptor.
+    #[must_use]
+    pub const fn descriptor(&self) -> Option<crate::access_path::ResolvedTableDescriptor> {
+        self.resolved_descriptor
+    }
+
+    /// Returns the source-resolved full/range scan kind.
+    #[must_use]
+    pub const fn scan_kind(&self) -> Option<crate::access_path::ResolvedTableScanKind> {
+        match self.resolved_descriptor {
+            Some(descriptor) => Some(descriptor.scan_kind()),
+            None => None,
+        }
+    }
+
+    /// Returns Go's bounded `PhysicalTableScan.ExplainID` result.
+    #[must_use]
+    pub fn resolved_explain_id(&self) -> Option<String> {
+        let descriptor = self.resolved_descriptor?;
+        let plan_type = descriptor.scan_kind().plan_type();
+        Some(match descriptor.explain_id_suffix() {
+            crate::access_path::TableScanExplainIdSuffix::IncludePlanId => {
+                format!("{plan_type}_{}", self.base.base.id())
+            }
+            crate::access_path::TableScanExplainIdSuffix::Omit => plan_type.to_owned(),
+        })
+    }
+
+    /// Returns whether the source table uses a common handle.
+    #[must_use]
+    pub const fn resolved_is_common_handle(&self) -> Option<bool> {
+        match self.resolved_descriptor {
+            Some(descriptor) => Some(descriptor.is_common_handle()),
+            None => None,
+        }
+    }
+
+    /// Returns source `CountAfterAccess` attached by task construction.
+    #[must_use]
+    pub fn estimated_rows(&self) -> Option<f64> {
+        self.base.base.stats_info().map(StatsInfo::row_count)
+    }
 }
 
 /// Go `physicalop.PhysicalTableDual` (`physical_table_dual.go`, whole
@@ -1362,6 +1461,124 @@ pub struct PhysicalTableReader {
     pub store_type: crate::physical_table_reader::StoreType,
     /// Go `IsCommonHandle`, read off the scan's table.
     pub is_common_handle: bool,
+    /// Go `ReadReqType`.
+    pub read_req_type: ReadReqType,
+}
+
+impl PhysicalTableReader {
+    /// Converts one table-side Cop task into Go's root TableReader shape.
+    pub fn from_table_scan(
+        table_scan: PhysicalTableScan,
+    ) -> Result<Self, MissingTableDescriptorError> {
+        let is_common_handle = table_scan
+            .resolved_is_common_handle()
+            .ok_or(MissingTableDescriptorError)?;
+        table_scan
+            .resolved_explain_id()
+            .ok_or(MissingTableDescriptorError)?;
+        let mut base = BasePhysicalPlan::with_id(
+            table_scan.base.base.id(),
+            "TableReader",
+            table_scan.base.base.query_block_offset(),
+        );
+        base.base
+            .set_stats(table_scan.base.base.stats_info().cloned());
+        base.base.set_schema(table_scan.base.base.schema().cloned());
+        let store_type = table_scan.store_type;
+        Ok(Self {
+            base,
+            table_plan: Some(Box::new(PhysicalPlan::TableScan(table_scan))),
+            store_type,
+            is_common_handle,
+            read_req_type: ReadReqType::Cop,
+        })
+    }
+
+    /// Returns every table scan in the pushed-down tree, matching Go's
+    /// `GetTableScans` over the flattened plan.
+    #[must_use]
+    pub fn table_scans(&self) -> Vec<&PhysicalTableScan> {
+        fn collect<'a>(plan: &'a PhysicalPlan, scans: &mut Vec<&'a PhysicalTableScan>) {
+            if let PhysicalPlan::TableScan(scan) = plan {
+                scans.push(scan);
+            }
+            for child in plan.children() {
+                collect(child, scans);
+            }
+        }
+        let mut scans = Vec::new();
+        if let Some(plan) = self.table_plan.as_deref() {
+            collect(plan, &mut scans);
+        }
+        scans
+    }
+
+    /// Returns the sole table scan or Go's cardinality error.
+    pub fn table_scan(&self) -> Result<&PhysicalTableScan, TableScanCountError> {
+        let scans = self.table_scans();
+        if scans.len() == 1 {
+            Ok(scans[0])
+        } else {
+            Err(TableScanCountError::new(scans.len()))
+        }
+    }
+
+    /// Returns the sole table scan in the pushed-down tree, if present.
+    #[must_use]
+    pub fn table_scan_plan(&self) -> Option<&PhysicalTableScan> {
+        self.table_scan().ok()
+    }
+
+    /// Go plan-codec identity.
+    #[must_use]
+    pub fn plan_type(&self) -> &str {
+        self.base.base.tp()
+    }
+
+    /// Query-block offset installed by `Init`.
+    #[must_use]
+    pub const fn query_block_offset(&self) -> i32 {
+        self.base.base.query_block_offset()
+    }
+
+    /// Go `ReadReqType.Name`.
+    #[must_use]
+    pub const fn read_req_name(&self) -> &'static str {
+        self.read_req_type.name()
+    }
+
+    /// Go `IsCommonHandle`.
+    #[must_use]
+    pub const fn is_common_handle(&self) -> bool {
+        self.is_common_handle
+    }
+
+    /// The pushed-down root's explain identity.
+    #[must_use]
+    pub fn table_plan_explain(&self) -> Option<String> {
+        match self.table_plan.as_deref()? {
+            PhysicalPlan::TableScan(scan) => scan.resolved_explain_id(),
+            plan => Some(plan.explain_id(false)),
+        }
+    }
+
+    /// Go `ExplainInfo` for an ordinary cop reader.
+    #[must_use]
+    pub fn explain_info(&self) -> String {
+        format!("data:{}", self.table_plan_explain().unwrap_or_default())
+    }
+
+    /// Go `ExplainNormalizedInfo`.
+    #[must_use]
+    pub const fn explain_normalized_info(&self) -> &'static str {
+        ""
+    }
+
+    /// Go `OperatorInfo`.
+    #[must_use]
+    pub fn operator_info(&self) -> String {
+        format!("data:{}", self.table_plan_explain().unwrap_or_default())
+    }
 }
 
 /// Go `physicalop.PhysicalIndexScan`'s planning slice: which index the scan
@@ -1392,6 +1609,99 @@ pub struct PhysicalIndexScan {
     /// Access conditions and index metadata retained for execute-time plan
     /// cache range rebuild.
     pub range_rebuild: Option<crate::physical_plan_cache::IndexRangeRebuild>,
+    /// Normalized source ranges used by the bounded `checkCoverIndex` bridge.
+    /// They represent the same Go `Ranges` as [`Self::ranges`] until that
+    /// cardinality adapter consumes the full ranger type.
+    pub covering_ranges: Vec<crate::cardinality::index_range_policy::IndexRangeShape>,
+    /// Schema-validated fields consumed by TiKV protobuf lowering.
+    pub tikv_pushdown: Option<crate::tikv_scan_spec::ValidatedIndexPushdown>,
+}
+
+impl PhysicalIndexScan {
+    /// Initializes one wired index scan from the source candidate and
+    /// `CountAfterAccess` used by task comparison.
+    #[must_use]
+    pub fn init(
+        plan_id: i32,
+        query_block_offset: i32,
+        candidate: &crate::cardinality::live_index_optimizer::LiveIndexCandidate,
+        count_after_access: f64,
+    ) -> Self {
+        let choice = crate::cardinality::live_index_optimizer::live_index_choice(
+            candidate,
+            count_after_access,
+        );
+        let mut base = BasePhysicalPlan::with_id(plan_id, "IndexScan", query_block_offset);
+        base.base.set_stats(Some(StatsInfo::new(choice.rows, [])));
+        base.plan_cost_init = true;
+        base.plan_cost = choice.cost;
+        Self {
+            base,
+            index_id: choice.index_id,
+            covering_ranges: candidate.ranges.clone(),
+            ..Self::default()
+        }
+    }
+
+    /// Validates and attaches schema-resolved TiKV fields.
+    pub fn try_with_pushdown(
+        mut self,
+        descriptor: crate::tikv_scan_spec::ResolvedIndexDescriptor,
+        pushdown: crate::tikv_scan_spec::TiKvIndexScanSpec,
+    ) -> Result<Self, crate::tikv_scan_spec::IndexPushdownMetadataError> {
+        self.tikv_pushdown = Some(crate::tikv_scan_spec::ValidatedIndexPushdown::new(
+            self.index_id,
+            descriptor,
+            pushdown,
+        )?);
+        Ok(self)
+    }
+
+    /// Attaches access-path metadata that was already validated.
+    #[must_use]
+    pub(crate) fn with_validated_pushdown(
+        mut self,
+        pushdown: crate::tikv_scan_spec::ValidatedIndexPushdown,
+    ) -> Self {
+        self.tikv_pushdown = Some(pushdown);
+        self
+    }
+
+    /// Returns the row count installed in the physical operator's statistics.
+    #[must_use]
+    pub fn estimated_rows(&self) -> f64 {
+        self.base
+            .base
+            .stats_info()
+            .map_or(0.0, StatsInfo::row_count)
+    }
+
+    /// Go `Index.ID`.
+    #[must_use]
+    pub const fn index_id(&self) -> i64 {
+        self.index_id
+    }
+
+    /// Returns the task-comparison cost stored on the physical base.
+    #[must_use]
+    pub const fn cost(&self) -> f64 {
+        self.base.plan_cost
+    }
+
+    /// Returns normalized range endpoints used by `checkCoverIndex`.
+    #[must_use]
+    pub fn ranges(&self) -> &[crate::cardinality::index_range_policy::IndexRangeShape] {
+        &self.covering_ranges
+    }
+
+    /// Returns the schema-validated TiKV fields, if supplied.
+    #[must_use]
+    pub const fn pushdown(&self) -> Option<&crate::tikv_scan_spec::TiKvIndexScanSpec> {
+        match self.tikv_pushdown.as_ref() {
+            Some(pushdown) => Some(pushdown.spec()),
+            None => None,
+        }
+    }
 }
 
 /// Go `physicalop.PhysicalIndexReader` (`physical_index_reader.go:34`): the
@@ -2409,6 +2719,8 @@ impl PhysicalPlan {
                 ranges: op.ranges.clone(),
                 range_rebuild: op.range_rebuild.clone(),
                 table_scan_penalty: op.table_scan_penalty,
+                tikv_pushdown: op.tikv_pushdown.clone(),
+                resolved_descriptor: op.resolved_descriptor,
             }),
             Self::TableDual(op) => Self::TableDual(PhysicalTableDual {
                 base: base_of(&op.base),
@@ -2473,6 +2785,7 @@ impl PhysicalPlan {
                 table_plan: op.table_plan.clone(),
                 store_type: op.store_type,
                 is_common_handle: op.is_common_handle,
+                read_req_type: op.read_req_type,
             }),
             Self::IndexScan(op) => Self::IndexScan(PhysicalIndexScan {
                 base: base_of(&op.base),
@@ -2485,6 +2798,8 @@ impl PhysicalPlan {
                 desc: op.desc,
                 ranges: op.ranges.clone(),
                 range_rebuild: op.range_rebuild.clone(),
+                covering_ranges: op.covering_ranges.clone(),
+                tikv_pushdown: op.tikv_pushdown.clone(),
             }),
             Self::IndexReader(op) => Self::IndexReader(PhysicalIndexReader {
                 base: base_of(&op.base),

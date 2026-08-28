@@ -32,7 +32,7 @@
 //! non-partitioned table with signed `BIGINT` columns and exactly one clustered
 //! primary key. It
 //! validates the complete parsed query envelope before entering the existing
-//! `LogicalDataSource -> TableAccessPath -> PhysicalTableReaderPlan` path.
+//! `LogicalDataSource -> TableAccessPath -> PhysicalTableReader` path.
 //! Ordinary signed-`BIGINT` comparisons joined by `AND` are bound once. Exact
 //! clustered-primary-key comparisons become logical table-handle ranges;
 //! stored-column comparisons remain in the physical TiKV Selection. Every
@@ -73,8 +73,7 @@ use crate::{
     logical::LogicalSelection,
     logical_data_source::LogicalDataSource,
     logical_data_source_task::IndexTaskProperty,
-    physical::{BasePhysicalPlan, PhysicalSelection},
-    physical_table_scan::PhysicalTableScanPlan,
+    physical::{BasePhysicalPlan, PhysicalSelection, PhysicalTableReader, PhysicalTableScan},
     signed_bigint_ranger::{
         detach_clustered_signed_bigint_ranges, BigIntComparison, ComparisonOp, ComparisonOperand,
         SignedBigIntRange,
@@ -1026,7 +1025,7 @@ impl ResolvedProjectionColumn {
 /// residual signed-`BIGINT` Selection.
 #[derive(Clone, Debug)]
 pub struct ReadOnlyScanPlan {
-    reader: crate::physical_table_reader::PhysicalTableReaderPlan,
+    reader: PhysicalTableReader,
     projected_columns: Vec<ResolvedProjectionColumn>,
     projection_output_offsets: Vec<u32>,
     handle_ranges: Vec<SignedBigIntRange>,
@@ -1036,7 +1035,7 @@ pub struct ReadOnlyScanPlan {
 
 impl PartialEq for ReadOnlyScanPlan {
     fn eq(&self, other: &Self) -> bool {
-        self.reader == other.reader
+        physical_table_readers_equal(&self.reader, &other.reader)
             && self.projected_columns == other.projected_columns
             && self.projection_output_offsets == other.projection_output_offsets
             && self.handle_ranges == other.handle_ranges
@@ -1046,6 +1045,29 @@ impl PartialEq for ReadOnlyScanPlan {
 }
 
 impl Eq for ReadOnlyScanPlan {}
+
+fn physical_table_readers_equal(left: &PhysicalTableReader, right: &PhysicalTableReader) -> bool {
+    left.base.base.id() == right.base.base.id()
+        && left.base.base.query_block_offset() == right.base.base.query_block_offset()
+        && left.store_type == right.store_type
+        && left.is_common_handle == right.is_common_handle
+        && left.read_req_type == right.read_req_type
+        && match (left.table_scan_plan(), right.table_scan_plan()) {
+            (Some(left), Some(right)) => {
+                left.base.base.id() == right.base.base.id()
+                    && left.base.base.query_block_offset() == right.base.base.query_block_offset()
+                    && left.base.base.stats_info() == right.base.base.stats_info()
+                    && left.table_id == right.table_id
+                    && left.store_type == right.store_type
+                    && left.keep_order == right.keep_order
+                    && left.desc == right.desc
+                    && left.pushdown() == right.pushdown()
+                    && left.descriptor() == right.descriptor()
+            }
+            (None, None) => left.table_plan.is_none() && right.table_plan.is_none(),
+            _ => false,
+        }
+}
 
 fn physical_selections_equal(
     left: Option<&PhysicalSelection>,
@@ -1404,7 +1426,7 @@ impl ReadOnlyScanPlan {
 
     /// Returns the exact physical table scan accepted by DAG lowering.
     #[must_use]
-    pub fn table_scan(&self) -> &PhysicalTableScanPlan {
+    pub fn table_scan(&self) -> &PhysicalTableScan {
         self.reader
             .table_scan_plan()
             .expect("ReadOnlyScanPlan always owns a planner-built table reader")
@@ -1413,7 +1435,10 @@ impl ReadOnlyScanPlan {
     /// Returns the physical table identity used for TiKV routing.
     #[must_use]
     pub fn table_id(&self) -> i64 {
-        self.table_scan().pushdown().table_id
+        self.table_scan()
+            .pushdown()
+            .expect("ReadOnlyScanPlan always owns executable TiKV scan fields")
+            .table_id
     }
 
     /// Returns resolved source/output metadata in projection order.

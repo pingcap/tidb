@@ -15,10 +15,8 @@
 //! Typed task shapes for the dependency-closed index-only planner branch.
 
 use crate::{
-    physical::PhysicalTableDual,
-    physical_index_scan::PhysicalIndexScanPlan,
-    physical_table_reader::{MissingTableDescriptorError, PhysicalTableReaderPlan},
-    physical_table_scan::PhysicalTableScanPlan,
+    physical::{PhysicalIndexScan, PhysicalTableDual, PhysicalTableReader, PhysicalTableScan},
+    physical_table_reader::MissingTableDescriptorError,
     tikv_scan_spec::UnsupportedScanFeature,
 };
 
@@ -98,21 +96,21 @@ pub enum ScanReadTaskRejection {
 }
 
 /// A single-read Cop task holding one physical index scan.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct CopIndexTask {
-    index_plan: PhysicalIndexScanPlan,
+    index_plan: PhysicalIndexScan,
 }
 
 impl CopIndexTask {
     /// Creates a single-read Cop task from its physical index scan.
     #[must_use]
-    pub const fn new(index_plan: PhysicalIndexScanPlan) -> Self {
+    pub const fn new(index_plan: PhysicalIndexScan) -> Self {
         Self { index_plan }
     }
 
     /// Returns the physical index-scan plan sent to the Cop task.
     #[must_use]
-    pub const fn index_plan(&self) -> &PhysicalIndexScanPlan {
+    pub const fn index_plan(&self) -> &PhysicalIndexScan {
         &self.index_plan
     }
 
@@ -125,28 +123,28 @@ impl CopIndexTask {
 
 /// A single-read Cop task holding one physical table scan before root
 /// conversion.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct CopTableTask {
-    table_plan: PhysicalTableScanPlan,
+    table_plan: PhysicalTableScan,
 }
 
 impl CopTableTask {
     /// Creates Go's table-side Cop task from its physical table scan.
     #[must_use]
-    pub const fn new(table_plan: PhysicalTableScanPlan) -> Self {
+    pub const fn new(table_plan: PhysicalTableScan) -> Self {
         Self { table_plan }
     }
 
     /// Returns the physical table scan attached to the Cop task.
     #[must_use]
-    pub const fn table_plan(&self) -> &PhysicalTableScanPlan {
+    pub const fn table_plan(&self) -> &PhysicalTableScan {
         &self.table_plan
     }
 
     /// Performs the bounded table-only branch of
     /// `CopTask.convertToRootTaskImpl`.
-    pub fn convert_to_root(self) -> Result<PhysicalTableReaderPlan, MissingTableDescriptorError> {
-        PhysicalTableReaderPlan::from_table_scan(self.table_plan)
+    pub fn convert_to_root(self) -> Result<PhysicalTableReader, MissingTableDescriptorError> {
+        PhysicalTableReader::from_table_scan(self.table_plan)
     }
 }
 
@@ -156,23 +154,11 @@ pub enum ScanReadTask {
     /// The existing source-admitted index-only Cop task.
     Index(CopIndexTask),
     /// One TiKV table Cop task converted to a root TableReader.
-    TableReader(PhysicalTableReaderPlan),
+    TableReader(PhysicalTableReader),
     /// An empty ranger result returned before any task construction.
     TableDual(PhysicalTableDual),
     /// A deliberately unsupported path/property combination.
     Invalid(ScanReadTaskRejection),
-}
-
-impl PartialEq for ScanReadTask {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Index(left), Self::Index(right)) => left == right,
-            (Self::TableReader(left), Self::TableReader(right)) => left == right,
-            (Self::TableDual(left), Self::TableDual(right)) => table_duals_equal(left, right),
-            (Self::Invalid(left), Self::Invalid(right)) => left == right,
-            _ => false,
-        }
-    }
 }
 
 impl ScanReadTask {
@@ -189,7 +175,7 @@ impl ScanReadTask {
 
     /// Returns the represented physical index scan.
     #[must_use]
-    pub const fn index_plan(&self) -> Option<&PhysicalIndexScanPlan> {
+    pub const fn index_plan(&self) -> Option<&PhysicalIndexScan> {
         match self {
             Self::Index(task) => Some(task.index_plan()),
             Self::TableReader(_) | Self::TableDual(_) | Self::Invalid(_) => None,
@@ -198,7 +184,7 @@ impl ScanReadTask {
 
     /// Returns the root table reader built from one table Cop task.
     #[must_use]
-    pub const fn table_reader(&self) -> Option<&PhysicalTableReaderPlan> {
+    pub const fn table_reader(&self) -> Option<&PhysicalTableReader> {
         match self {
             Self::TableReader(reader) => Some(reader),
             Self::Index(_) | Self::TableDual(_) | Self::Invalid(_) => None,
@@ -241,27 +227,10 @@ pub enum IndexTask {
     Invalid(IndexTaskRejection),
 }
 
-impl PartialEq for IndexTask {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::CopSingleRead(left), Self::CopSingleRead(right)) => left == right,
-            (Self::TableDual(left), Self::TableDual(right)) => table_duals_equal(left, right),
-            (Self::Invalid(left), Self::Invalid(right)) => left == right,
-            _ => false,
-        }
-    }
-}
-
-fn table_duals_equal(left: &PhysicalTableDual, right: &PhysicalTableDual) -> bool {
-    left.plan_type() == right.plan_type()
-        && left.query_block_offset() == right.query_block_offset()
-        && left.row_count() == right.row_count()
-}
-
 impl IndexTask {
     /// Returns the physical index scan when this is a valid index task.
     #[must_use]
-    pub fn index_plan(&self) -> Option<&PhysicalIndexScanPlan> {
+    pub fn index_plan(&self) -> Option<&PhysicalIndexScan> {
         match self {
             Self::CopSingleRead(task) => Some(task.index_plan()),
             Self::TableDual(_) | Self::Invalid(_) => None,

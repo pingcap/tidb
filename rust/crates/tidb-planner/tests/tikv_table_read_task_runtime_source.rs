@@ -17,11 +17,10 @@ use tidb_planner::{
     index_task::{IndexTaskRejection, ScanReadTask, ScanReadTaskRejection, TableTaskRejection},
     logical_data_source::LogicalDataSource,
     logical_data_source_task::IndexTaskProperty,
+    physical::{PhysicalTableReader, PhysicalTableScan},
     physical_property::IndexOrderingRequirement,
-    physical_table_reader::PhysicalTableReaderPlan,
-    physical_table_scan::PhysicalTableScanPlan,
-    tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec, UnsupportedScanFeature},
     task_type::TaskType,
+    tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec, UnsupportedScanFeature},
 };
 
 fn source(paths: impl IntoIterator<Item = DataSourceAccessPath>) -> LogicalDataSource {
@@ -97,20 +96,26 @@ fn source_range_kind_and_suffix_policy_drive_reader_explain_id() {
         .expect("reader owns its range scan");
 
     assert_eq!(scan.scan_kind(), Some(ResolvedTableScanKind::Range));
-    assert_eq!(scan.explain_id().as_deref(), Some("TableRangeScan"));
-    assert_eq!(reader.table_plan_explain(), Some("TableRangeScan"));
+    assert_eq!(
+        scan.resolved_explain_id().as_deref(),
+        Some("TableRangeScan")
+    );
+    assert_eq!(
+        reader.table_plan_explain().as_deref(),
+        Some("TableRangeScan")
+    );
     assert_eq!(reader.explain_info(), "data:TableRangeScan");
     assert!(!reader.is_common_handle());
 }
 
 #[test]
 fn raw_dag_table_scan_cannot_become_a_table_reader() {
-    let raw = PhysicalTableScanPlan::init(3, 0, TiKvTableScanSpec::new(7, vec![]));
+    let raw = PhysicalTableScan::init(3, 0, TiKvTableScanSpec::new(7, vec![]));
     assert_eq!(raw.descriptor(), None);
-    assert_eq!(raw.explain_id(), None);
-    assert_eq!(raw.is_common_handle(), None);
+    assert_eq!(raw.resolved_explain_id(), None);
+    assert_eq!(raw.resolved_is_common_handle(), None);
     assert_eq!(
-        PhysicalTableReaderPlan::from_table_scan(raw)
+        PhysicalTableReader::from_table_scan(raw)
             .expect_err("raw DAG scans must fail closed at reader conversion")
             .to_string(),
         "table reader requires a source-resolved table descriptor"
@@ -190,34 +195,50 @@ fn source_admitted_table_path_becomes_one_root_table_reader() {
     assert_eq!(reader.plan_type(), "TableReader");
     assert_eq!(reader.read_req_name(), "cop");
     assert_eq!(reader.query_block_offset(), -4);
-    assert_eq!(reader.table_plans_len(), 1);
-    assert_eq!(reader.table_scan_count(), 1);
-    assert!(reader.table_plan_is_first_flattened());
-    assert_eq!(reader.table_plan_explain(), Some("TableFullScan_91"));
+    assert!(matches!(
+        reader.table_plan.as_deref(),
+        Some(tidb_planner::physical::PhysicalPlan::TableScan(_))
+    ));
+    assert_eq!(
+        reader.table_plan_explain().as_deref(),
+        Some("TableFullScan_91")
+    );
     assert_eq!(reader.explain_info(), "data:TableFullScan_91");
     assert!(reader.is_common_handle());
-    assert_eq!(scan.plan().operator(), "TableScan");
+    assert_eq!(scan.base.base.tp(), "TableScan");
     assert_eq!(scan.descriptor(), Some(descriptor));
     assert_eq!(scan.scan_kind(), Some(ResolvedTableScanKind::Full));
-    assert_eq!(scan.explain_id().as_deref(), Some("TableFullScan_91"));
-    assert_eq!(scan.is_common_handle(), Some(true));
-    assert_eq!(scan.plan().id(), 91);
-    assert_eq!(scan.plan().query_block_offset(), -4);
+    assert_eq!(
+        scan.resolved_explain_id().as_deref(),
+        Some("TableFullScan_91")
+    );
+    assert_eq!(scan.resolved_is_common_handle(), Some(true));
+    assert_eq!(scan.base.base.id(), 91);
+    assert_eq!(scan.base.base.query_block_offset(), -4);
     assert_eq!(scan.estimated_rows(), Some(12.0));
-    assert_eq!(scan.pushdown(), &spec);
+    assert_eq!(scan.pushdown(), Some(&spec));
     assert!(task.index_plan().is_none());
 
-    let cloned = reader.clone_plan();
-    assert_eq!(cloned.table_scan_plan(), reader.table_scan_plan());
+    let cloned = reader.clone();
+    assert_eq!(
+        cloned
+            .table_scan_plan()
+            .expect("clone retains its scan")
+            .pushdown(),
+        reader
+            .table_scan_plan()
+            .expect("reader retains its scan")
+            .pushdown()
+    );
     assert_eq!(
         cloned
             .table_scan_plan()
             .expect("clone retains the owned scan")
-            .plan()
+            .base
+            .base
             .id(),
         91
     );
-    assert!(cloned.table_plan_is_first_flattened());
 }
 
 #[test]
@@ -266,8 +287,10 @@ fn unified_scan_task_preserves_existing_index_only_behavior() {
     assert!(matches!(task, ScanReadTask::Index(_)));
 
     assert_eq!(
-        source([]).build_scan_read_task(IndexTaskProperty::new(TaskType::CopSingleRead)),
-        ScanReadTask::Invalid(ScanReadTaskRejection::Index(
+        source([])
+            .build_scan_read_task(IndexTaskProperty::new(TaskType::CopSingleRead))
+            .rejection(),
+        Some(ScanReadTaskRejection::Index(
             IndexTaskRejection::NoAccessPaths
         ))
     );

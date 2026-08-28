@@ -829,14 +829,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
         };
         if !self.source.database_exists(&db_name) {
-            return Err(PlanError::internal(format!("Unknown database '{db_name}'")));
+            return Err(PlanError::unknown_database(db_name));
         }
         let table = self
             .source
             .find_table(&db_name, &table_name)
-            .ok_or_else(|| {
-                PlanError::internal(format!("Table '{db_name}.{table_name}' doesn't exist"))
-            })?;
+            .ok_or_else(|| PlanError::unknown_table(format!("{db_name}.{table_name}")))?;
 
         // `b.optFlag |= rule.FlagPartitionProcessor` — Go sets it from the
         // partition pruning mode; a table that reports a partition definition

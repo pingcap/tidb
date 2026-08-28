@@ -1192,6 +1192,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         ))
                     },
                     table_scan_penalty: ds.table_scan_penalty,
+                    tikv_pushdown: None,
+                    resolved_descriptor: None,
                 });
                 let table_plan = if table_filters.is_empty() {
                     scan
@@ -1447,6 +1449,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                 index_lengths.clone(),
                             )
                         }),
+                    covering_ranges: Vec::new(),
+                    tikv_pushdown: None,
                 });
                 let fully_covered_columns = source_index
                     .columns
@@ -1518,6 +1522,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         ranges: crate::ranger::types::Ranges::new(),
                         range_rebuild: None,
                         table_scan_penalty: ds.table_scan_penalty,
+                        tikv_pushdown: None,
+                        resolved_descriptor: None,
                     });
                     let table_plan = if table_filters.is_empty() {
                         table_scan

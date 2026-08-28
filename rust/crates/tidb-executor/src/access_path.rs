@@ -3376,7 +3376,6 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
 
     fn accept_embedded_lookup_limit(&mut self, offset: u64, count: u64) -> bool {
         if self.covering
-            || self.table.has_dirty_content()
             // With a zero SQL offset, a pushed index-side Selection can be
             // evaluated by the lookup source while it continues collecting
             // handles until `count` qualifying rows are produced. A non-zero

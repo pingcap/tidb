@@ -3269,9 +3269,6 @@ pub struct TableScanExec {
     /// output schema.
     partial_input_types: Option<Vec<FieldType>>,
     partial_context: Option<crate::StmtContext>,
-    /// Access-path cardinality selected by the optimizer. Go chooses the
-    /// partial/final split only above the one-row floor for these workloads.
-    estimated_rows: Option<f64>,
     /// Go's `desc` on the `TableScan`: walk the record ranges BACKWARDS.
     /// Set by [`crate::table_access::TableAccess::accept_keep_order`], and
     /// honored on the remote and the local cursor alike -- acceptance is a
@@ -3424,7 +3421,6 @@ impl TableScanExec {
             partial_aggregate: None,
             partial_input_types: None,
             partial_context: None,
-            estimated_rows: None,
             descending: false,
             filter: None,
             pushed: Vec::new(),
@@ -4104,6 +4100,14 @@ impl Executor for TableScanExec {
                     req.append_datum(column, value);
                 }
             }
+            // Go's chunk keeps a virtual row count when column pruning
+            // removes every stored column (the common cop `COUNT(*)` input).
+            // Appending no datums otherwise leaves Rust's zero-column chunk
+            // at zero rows even though the scan consumed a record, so the
+            // partial aggregate sees an empty table.
+            if req.num_cols() == 0 {
+                req.set_num_virtual_rows(req.num_rows() + 1);
+            }
             self.emitted += 1;
         }
         Ok(())
@@ -4188,10 +4192,6 @@ fn append_partial_remote_chunk(
 }
 
 impl crate::table_access::TableAccess for TableScanExec {
-    fn accept_scan_estimate(&mut self, rows: f64) {
-        self.estimated_rows = Some(rows);
-    }
-
     /// Go `checkColCanUseIndex`: a record-key walk ranks by the clustered
     /// handle, or by the single integer handle column, and by nothing else --
     /// so the MaxMinEliminate bounded reverse read is only offered for those
@@ -4251,11 +4251,10 @@ impl crate::table_access::TableAccess for TableScanExec {
         if !crate::pushdown_blacklist::aggregate_admits(aggregate, ctx) {
             return false;
         }
-        if self.estimated_rows.is_none_or(|rows| rows <= 1.0)
-            || aggregate
-                .input_offsets()
-                .into_iter()
-                .any(|offset| offset >= self.keep.len())
+        if aggregate
+            .input_offsets()
+            .into_iter()
+            .any(|offset| offset >= self.keep.len())
             || self.limit.is_some()
             || self.partial_aggregate.is_some()
         {

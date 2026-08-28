@@ -75,8 +75,7 @@ use tidb_executor::remote_scan::{
 };
 use tidb_executor::storage::StorageError;
 use tidb_planner::cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
-use tidb_planner::physical_index_scan::PhysicalIndexScanPlan;
-use tidb_planner::physical_table_scan::PhysicalTableScanPlan;
+use tidb_planner::physical::{PhysicalIndexScan, PhysicalTableScan};
 use tidb_planner::tikv_scan_spec::{
     ResolvedIndexDescriptor, ScanColumnInfo, TiKvIndexScanSpec, TiKvTableScanSpec,
 };
@@ -390,7 +389,7 @@ where
                 );
                 spec.desc = index.desc;
                 spec.primary_column_ids = request.primary_column_ids.clone();
-                PhysicalIndexScanPlan::init(0, 0, &candidate, 0.0)
+                PhysicalIndexScan::init(0, 0, &candidate, 0.0)
                     .try_with_pushdown(
                         ResolvedIndexDescriptor {
                             index_id: index.index_id,
@@ -412,7 +411,7 @@ where
             spec.keep_order = request.keep_order;
             spec.primary_column_ids = request.primary_column_ids.clone();
             spec.primary_prefix_column_ids = request.primary_prefix_column_ids.clone();
-            Some(PhysicalTableScanPlan::init(0, 0, spec))
+            Some(PhysicalTableScan::init(0, 0, spec))
         } else {
             None
         };

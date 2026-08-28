@@ -21,7 +21,7 @@ use tidb_exec::dag_request::{
 };
 use tidb_expr::expression::Expression;
 use tidb_planner::{
-    physical_table_scan::PhysicalTableScanPlan,
+    physical::PhysicalTableScan,
     read_only_scan::{ConfiguredColumn, ConfiguredTable, ReadOnlyScanPlan},
     tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec},
 };
@@ -61,8 +61,8 @@ fn column(id: i64, flags: i32) -> ScanColumnInfo {
     }
 }
 
-fn scan_plan(columns: Vec<ScanColumnInfo>) -> PhysicalTableScanPlan {
-    PhysicalTableScanPlan::init(1, 0, TiKvTableScanSpec::new(42, columns))
+fn scan_plan(columns: Vec<ScanColumnInfo>) -> PhysicalTableScan {
+    PhysicalTableScan::init(1, 0, TiKvTableScanSpec::new(42, columns))
 }
 
 #[test]

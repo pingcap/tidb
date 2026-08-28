@@ -83,7 +83,7 @@ impl LogicalDataSource {
     ///
     /// Index-only inputs retain [`Self::build_index_task`] semantics. Exactly
     /// one admitted TiKV table path can additionally become a root
-    /// `PhysicalTableReaderPlan`; alternatives that need cross-path costing or
+    /// `PhysicalTableReader`; alternatives that need cross-path costing or
     /// an unsupported executor tree fail closed.
     #[must_use]
     pub fn build_scan_read_task(&self, property: IndexTaskProperty) -> ScanReadTask {
