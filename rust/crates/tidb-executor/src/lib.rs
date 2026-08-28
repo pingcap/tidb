@@ -77,6 +77,18 @@ pub mod ddl_copr;
 pub mod ddl_exec;
 pub mod ddl_label;
 pub mod ddl_running_jobs;
+#[cfg(test)]
+mod tests_ddl_job_submitter_worker_gaps;
+#[cfg(test)]
+mod tests_ddl_masking_policy_ddl_gaps;
+#[cfg(test)]
+mod tests_ddl_metabuild_session_context_gap;
+#[cfg(test)]
+mod tests_ddl_modify_column_reorg_gaps;
+#[cfg(test)]
+mod tests_ddl_modify_column_types;
+#[cfg(test)]
+mod tests_ddl_multi_schema_change_cancel_gaps;
 pub mod ddl_sequence;
 pub mod deadlock_history;
 pub mod driver;
