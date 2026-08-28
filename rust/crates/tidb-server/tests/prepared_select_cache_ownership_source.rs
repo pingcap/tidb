@@ -45,3 +45,25 @@ fn cached_select_hit_does_not_build_a_second_statement_context() {
 
     assert!(cache_probe < planner_context && planner_context < cache_fill);
 }
+
+#[test]
+fn cached_select_hit_rebinds_the_retained_ast_in_place() {
+    let access = include_str!("../../tidb-executor/src/driver/access.rs");
+    let planner = include_str!("../../tidb-executor/src/driver/planner_bridge.rs");
+    let bind_inner = access
+        .split_once("fn bind_inner(")
+        .expect("prepared SELECT cache binder")
+        .1
+        .split_once("fn stats_version_hash(")
+        .expect("cache binder boundary")
+        .0;
+    let cache_hit_path = bind_inner
+        .split_once("            None => {")
+        .expect("cache miss arm")
+        .0;
+
+    assert!(!cache_hit_path.contains("bind_prepared_statement"));
+    assert!(bind_inner.contains("bind_prepared_statement"));
+    assert!(planner.contains("bind_prepared_select_in_place(&mut self.select, values)"));
+    assert!(!access.contains("select: tidb_ast::SelectStmt,\n    decision:"));
+}

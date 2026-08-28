@@ -1432,21 +1432,37 @@ pub(crate) fn select_decision(
 /// recursively rebuilds every parameter-dependent range in place and derives
 /// the executor receipt from that rebuilt tree. No access,
 /// aggregation, join, sort, or reader policy is re-run in the executor.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct CachedSelectPlan {
     select: tidb_ast::SelectStmt,
     logical: LogicalPlan,
     physical: PhysicalPlan,
+    decision: Option<AggregationDecision>,
+    generation: u64,
 }
 
 impl CachedSelectPlan {
-    pub(crate) fn bind(&mut self, values: &[tidb_datatype::Datum]) -> Option<AggregationDecision> {
+    pub(crate) fn bind(&mut self, values: &[tidb_datatype::Datum]) -> Option<u64> {
+        super::bind_prepared_select_in_place(&mut self.select, values).ok()?;
         self.physical
             .rebuild_plan_for_cache_in_place(
                 &tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values),
             )
             .ok()?;
-        decision_from_plans(&self.select, &self.logical, &self.physical)
+        self.decision = Some(decision_from_plans(
+            &self.select,
+            &self.logical,
+            &self.physical,
+        )?);
+        self.generation = self.generation.wrapping_add(1);
+        Some(self.generation)
+    }
+
+    pub(crate) fn execution(
+        &self,
+        generation: u64,
+    ) -> Option<(&tidb_ast::SelectStmt, &AggregationDecision)> {
+        (self.generation == generation).then_some((&self.select, self.decision.as_ref()?))
     }
 }
 
@@ -1485,6 +1501,8 @@ pub(crate) fn cached_select_plan(
         select: select.clone(),
         logical,
         physical,
+        decision: None,
+        generation: 0,
     })
 }
 
@@ -1588,7 +1606,10 @@ mod tests {
 
         let mut cached = cached_select_plan(select, &catalog, "test", &ctx)
             .expect("the prepared-plan cache accepts stock sysbench SUM");
-        let decision = cached.bind(&[]).expect("the cached physical tree rebuilds");
+        let generation = cached.bind(&[]).expect("the cached physical tree rebuilds");
+        let (_, decision) = cached
+            .execution(generation)
+            .expect("the rebuilt generation is executable");
         assert_eq!(decision.family, Some(AggregationFamily::Stream));
         assert_eq!(decision.cop_family, Some(AggregationFamily::Stream));
     }

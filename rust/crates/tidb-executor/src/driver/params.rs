@@ -78,6 +78,21 @@ pub fn bind_prepared_statement(stmt: &Stmt, values: &[Datum]) -> Result<Stmt, Dr
     Ok(bound_stmt)
 }
 
+/// Rebinds the parameter-marker values on the SELECT owned by a cached
+/// physical plan. The marker nodes and their stable orders remain in place;
+/// only the execute-local datums change, as in Go's cached `PreparedAst`.
+pub(crate) fn bind_prepared_select_in_place(
+    select: &mut tidb_ast::SelectStmt,
+    values: &[Datum],
+) -> Result<(), DriverError> {
+    let mut bound = 0usize;
+    install_marker_values(select, values, &mut bound)?;
+    if bound != values.len() {
+        return Err(DriverError::WrongParamCount);
+    }
+    Ok(())
+}
+
 /// Installs execute-time values without replacing marker nodes. Go's
 /// `ParamMarkerExpr` embeds a `ValueExpr`, so the ordinary planner sees both
 /// the current datum and the stable marker order. Cached physical expressions
@@ -87,8 +102,16 @@ fn install_statement_marker_values(
     values: &[Datum],
     bound: &mut usize,
 ) -> Result<(), DriverError> {
+    install_marker_values(stmt, values, bound)
+}
+
+fn install_marker_values<T: tidb_ast::Visitable>(
+    node: &mut T,
+    values: &[Datum],
+    bound: &mut usize,
+) -> Result<(), DriverError> {
     let mut failure = None;
-    walk_statement_markers(stmt, &mut |expr| {
+    walk_markers(node, &mut |expr| {
         let tidb_ast::Expr::ParamMarker {
             order,
             in_execute,
@@ -135,6 +158,10 @@ pub fn parsed_parameter_count(stmt: &Stmt) -> usize {
 
 /// Walks a statement's expressions, applying `visit` to every marker.
 fn walk_statement_markers(stmt: &mut Stmt, visit: &mut dyn FnMut(&mut tidb_ast::Expr)) {
+    walk_markers(stmt, visit);
+}
+
+fn walk_markers<T: tidb_ast::Visitable>(node: &mut T, visit: &mut dyn FnMut(&mut tidb_ast::Expr)) {
     struct MarkerVisitor<'a> {
         visit: &'a mut dyn FnMut(&mut tidb_ast::Expr),
     }
@@ -155,7 +182,7 @@ fn walk_statement_markers(stmt: &mut Stmt, visit: &mut dyn FnMut(&mut tidb_ast::
         }
     }
 
-    tidb_ast::Visitable::accept(stmt, &mut MarkerVisitor { visit });
+    tidb_ast::Visitable::accept(node, &mut MarkerVisitor { visit });
 }
 
 /// Replaces each marker with its value, in the parser's own left-to-right

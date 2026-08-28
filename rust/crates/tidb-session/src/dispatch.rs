@@ -470,7 +470,7 @@ impl Session {
         &mut self,
         cached: &tidb_executor::PreparedSelectExecution,
     ) -> Result<StmtOutput, DriverError> {
-        self.activate_select_resource_group(cached.select());
+        self.activate_select_resource_group(cached.plan().select_template());
         let cache_hit = cached.cache_hit();
         self.begin_cached_prepared_query_boundary();
         self.refuse_pinned_historical_read()?;

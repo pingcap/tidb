@@ -361,7 +361,7 @@ struct CachedSelectPlanEntry {
     environment: PreparedPlanCacheEnvironment,
     parameter_types: Vec<PreparedParameterType>,
     limit_values: Vec<u64>,
-    plan: super::planner_bridge::CachedSelectPlan,
+    plan: Arc<std::sync::Mutex<super::planner_bridge::CachedSelectPlan>>,
 }
 
 /// Session facts in Go's prepared-plan cache key that can change physical
@@ -462,15 +462,16 @@ enum PreparedParameterType {
     MaxValue,
 }
 
-/// One cache hit: a privately bound AST plus the decision extracted from the
-/// cache-owned, recursively rebuilt physical tree.
+/// One execution lease on a cache-owned, recursively rebuilt physical tree.
+/// The generation prevents another bind from silently changing the retained
+/// parameter values between admission and executor construction.
 #[derive(Debug)]
 pub struct PreparedSelectExecution {
     plan: Arc<PreparedSelectPlan>,
     schema_version: u64,
     cache_hit: bool,
-    select: tidb_ast::SelectStmt,
-    decision: super::planner_bridge::AggregationDecision,
+    cached_plan: Arc<std::sync::Mutex<super::planner_bridge::CachedSelectPlan>>,
+    generation: u64,
 }
 
 impl PreparedSelectPlan {
@@ -478,6 +479,20 @@ impl PreparedSelectPlan {
     #[must_use]
     pub fn table_names(&self) -> &[(String, String)] {
         &self.table_names
+    }
+
+    /// The immutable PREPARE-time SELECT. Statement hints do not depend on
+    /// execute-time parameter values, so resource-group selection can read
+    /// this tree without cloning the cache-owned bound AST.
+    #[must_use]
+    pub fn select_template(&self) -> &tidb_ast::SelectStmt {
+        let tidb_ast::Stmt::Query(query) = &self.statement else {
+            unreachable!("a prepared SELECT plan owns a query statement")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            unreachable!("a prepared SELECT plan owns a SELECT query")
+        };
+        select
     }
 
     /// On the first execution for a schema and parameter-type key, runs the
@@ -521,13 +536,6 @@ impl PreparedSelectPlan {
         if !self.current_database.eq_ignore_ascii_case(current_database) {
             return None;
         }
-        let statement = crate::bind_prepared_statement(&self.statement, values).ok()?;
-        let tidb_ast::Stmt::Query(query) = statement else {
-            return None;
-        };
-        let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
-            return None;
-        };
         let parameter_types = values
             .iter()
             .map(PreparedParameterType::of)
@@ -551,19 +559,30 @@ impl PreparedSelectPlan {
                 && entry.parameter_types == parameter_types
                 && entry.limit_values == limit_values
         });
-        let (decision, cache_hit) = match cached {
-            Some(index) => match cached_plans[index].plan.bind(values) {
-                Some(decision) => (decision, true),
-                None => {
-                    // Go rejects a cache entry whose in-place range rebuild
-                    // fails and generates a fresh plan. Do not leave a
-                    // partially rebuilt tree available to the next execute.
-                    cached_plans.remove(index);
-                    return None;
+        let (cached_plan, generation, cache_hit) = match cached {
+            Some(index) => {
+                let plan = Arc::clone(&cached_plans[index].plan);
+                let generation = plan.lock().ok()?.bind(values);
+                match generation {
+                    Some(generation) => (plan, generation, true),
+                    None => {
+                        // Go rejects a cache entry whose in-place range rebuild
+                        // fails and generates a fresh plan. Do not leave a
+                        // partially rebuilt tree available to the next execute.
+                        cached_plans.remove(index);
+                        return None;
+                    }
                 }
-            },
+            }
             None => {
                 let ctx = ctx?;
+                let statement = crate::bind_prepared_statement(&self.statement, values).ok()?;
+                let tidb_ast::Stmt::Query(query) = statement else {
+                    return None;
+                };
+                let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+                    return None;
+                };
                 cached_plans.retain(|entry| {
                     entry.schema_version == schema_version
                         && entry.stats_version_hash == stats_version_hash
@@ -575,24 +594,25 @@ impl PreparedSelectPlan {
                     current_database,
                     ctx,
                 )?;
-                let decision = plan.bind(values)?;
+                let generation = plan.bind(values)?;
+                let plan = Arc::new(std::sync::Mutex::new(plan));
                 cached_plans.push(CachedSelectPlanEntry {
                     schema_version,
                     stats_version_hash,
                     environment: environment.clone(),
                     parameter_types,
                     limit_values,
-                    plan,
+                    plan: Arc::clone(&plan),
                 });
-                (decision, false)
+                (plan, generation, false)
             }
         };
         Some(PreparedSelectExecution {
             plan: Arc::clone(self),
             schema_version,
             cache_hit,
-            select: *select,
-            decision,
+            cached_plan,
+            generation,
         })
     }
 
@@ -660,21 +680,21 @@ impl PreparedSelectExecution {
         self.cache_hit
     }
 
-    /// The privately bound SELECT whose expressions and statement hints this
-    /// cache execution rebuilds.
-    #[must_use]
-    pub fn select(&self) -> &tidb_ast::SelectStmt {
-        &self.select
-    }
-
     #[cfg(test)]
-    pub(crate) const fn aggregation_families(
+    pub(crate) fn aggregation_families(
         &self,
     ) -> (
         Option<super::planner_bridge::AggregationFamily>,
         Option<super::planner_bridge::AggregationFamily>,
     ) {
-        (self.decision.family, self.decision.cop_family)
+        let cached = self
+            .cached_plan
+            .lock()
+            .expect("cached SELECT tree is available");
+        let (_, decision) = cached
+            .execution(self.generation)
+            .expect("cached SELECT generation is current");
+        (decision.family, decision.cop_family)
     }
 }
 
@@ -1114,14 +1134,15 @@ pub fn run_prepared_select(
     {
         return Ok(None);
     }
-    super::run_select_with_cached_decision(
-        &execution.select,
-        catalog,
-        current_database,
-        ctx,
-        &execution.decision,
-    )
-    .map(Some)
+    let cached = match execution.cached_plan.lock() {
+        Ok(cached) => cached,
+        Err(_) => return Ok(None),
+    };
+    let Some((select, decision)) = cached.execution(execution.generation) else {
+        return Ok(None);
+    };
+    super::run_select_with_cached_decision(select, catalog, current_database, ctx, decision)
+        .map(Some)
 }
 
 /// One `column = ?`, `column = const`, or `column IS NULL` conjunct of a

@@ -246,6 +246,11 @@ both `oltp_read_only` and `oltp_read_write`.
   a planner `StmtContext`. Only a real miss takes the catalog-backed sequence
   and decode-key snapshots needed by physical enumeration; a hit builds the
   one runtime statement context Go resets for execution.
+- [x] 2026-08-28: moved execute-time marker values onto the SELECT retained
+  beside the cached physical tree. Hits mutate only marker datums and ranges;
+  the separately owned bound `SelectStmt` and lowering receipt were removed
+  from `PreparedSelectExecution`, and a generation lease keeps retry/concurrent
+  admission from mixing parameter sets.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -385,6 +390,16 @@ both `oltp_read_only` and `oltp_read_write`.
   paired simple-range Rust median rose from 3,308.85 to 3,374.98 TPS while the
   paired Go median was 3,459.09 (0.976x), and the new profile contains only the
   runtime context beneath `execute_cached_prepared_select`.
+
+- Observation: the cache-hit binder still cloned `PreparedAst`, walked every
+  marker, and owned the resulting `SelectStmt` separately from the cached
+  planner tree. Go mutates the marker values on its session-local cached tree
+  and builds the executor while that tree remains authoritative. Rust now
+  does the same under the per-entry mutex; consecutive range, ORDER, DISTINCT,
+  SUM, grouped-aggregate, join, and remote-scan parameter changes pass. The
+  simple-range median remained 3,318.80 Rust versus 3,404.35 Go TPS (0.975x),
+  confirming that this ownership cleanup is not the remaining RPC-dominated
+  throughput root.
 
 - Observation: Rust also retained one successful publication receipt per
   snapshot point/batch/scan read. Go's `KVSnapshot` retains lock-resolution,
