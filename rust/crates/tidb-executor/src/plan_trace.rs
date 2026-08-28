@@ -5450,6 +5450,17 @@ fn collect_physical_and<'a>(expression: &'a Expression, out: &mut Vec<&'a Expres
     out.push(expression);
 }
 
+fn collect_physical_or<'a>(expression: &'a Expression, out: &mut Vec<&'a Expression>) {
+    if let Expression::ScalarFunction(function) = expression {
+        if function.func_name.lowercase() == "or" && function.args.len() == 2 {
+            collect_physical_or(&function.args[0], out);
+            collect_physical_or(&function.args[1], out);
+            return;
+        }
+    }
+    out.push(expression);
+}
+
 fn align_physical_join_equality(expression: &Expression, left_width: usize) -> Option<Expression> {
     let Expression::ScalarFunction(function) = expression else {
         return None;
@@ -5507,6 +5518,21 @@ pub(crate) fn physical_expression_text_with_columns(
                 .or_else(|| Some(format!("Column#{}", column.index)))
         }
         Expression::ScalarFunction(function) => {
+            if function.func_name.lowercase() == "or" && function.args.len() == 2 {
+                let mut parts = Vec::new();
+                collect_physical_or(expression, &mut parts);
+                let mut rendered = physical_expression_text_with_columns(
+                    parts.pop().expect("OR has an operand"),
+                    column_names,
+                )?;
+                for part in parts.into_iter().rev() {
+                    rendered = format!(
+                        "or({}, {rendered})",
+                        physical_expression_text_with_columns(part, column_names)?
+                    );
+                }
+                return Some(rendered);
+            }
             let arguments = function
                 .args
                 .iter()
@@ -6431,6 +6457,15 @@ impl Qualifier<'_> {
             Expression::CorrelatedColumn(column) => self.built_column(&column.column),
             Expression::Constant(constant) => explain_constant(constant),
             Expression::ScalarFunction(function) => {
+                if function.func_name.lowercase() == "or" && function.args.len() == 2 {
+                    let mut parts = Vec::new();
+                    collect_physical_or(expression, &mut parts);
+                    let mut rendered = self.built_expr(parts.pop().expect("OR has an operand"))?;
+                    for part in parts.into_iter().rev() {
+                        rendered = format!("or({}, {rendered})", self.built_expr(part)?);
+                    }
+                    return Some(rendered);
+                }
                 let args = function
                     .args
                     .iter()
@@ -6473,6 +6508,26 @@ impl Qualifier<'_> {
             .or_else(|| (!column.orig_name.is_empty()).then(|| column.orig_name.clone()))
     }
 
+    fn logic_or(&self, expr: &tidb_ast::Expr) -> String {
+        fn collect<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
+            match strip_paren(expr) {
+                tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, left, right) => {
+                    collect(left, out);
+                    collect(right, out);
+                }
+                expr => out.push(expr),
+            }
+        }
+
+        let mut parts = Vec::new();
+        collect(expr, &mut parts);
+        let mut rendered = self.expr(parts.pop().expect("OR has an operand"));
+        for part in parts.into_iter().rev() {
+            rendered = format!("or({}, {rendered})", self.expr(part));
+        }
+        rendered
+    }
+
     pub(crate) fn expr(&self, expr: &tidb_ast::Expr) -> String {
         match expr {
             tidb_ast::Expr::Paren(inner) => self.expr(inner),
@@ -6481,6 +6536,7 @@ impl Qualifier<'_> {
             tidb_ast::Expr::Decimal(text) => text.clone(),
             tidb_ast::Expr::Float(value) => value.to_string(),
             tidb_ast::Expr::String(value) => format!("\"{value}\""),
+            tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, _, _) => self.logic_or(expr),
             tidb_ast::Expr::Binary(op, lhs, rhs) => match binary_func_name(*op) {
                 Some(name) => format!("{name}({}, {})", self.expr(lhs), self.expr(rhs)),
                 // A shape Go prints differently is restored from the AST
@@ -6865,6 +6921,36 @@ mod tests {
         assert_eq!(
             trace.stack.last().expect("TopN").info,
             "Column:desc, offset:0, count:100"
+        );
+    }
+
+    #[test]
+    fn qualifier_renders_or_chains_right_associatively() {
+        let stmt = tidb_parser::parse("select * from t where a = 1 or b = 2 or c = 3")
+            .expect("OR chain SQL parses");
+        let tidb_ast::Stmt::Query(query) = stmt else {
+            panic!("expected query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            panic!("expected select")
+        };
+        let scope = PlanTrace::single_table_scope(
+            "t",
+            Some("test".to_owned()),
+            vec![
+                ("a".to_owned(), FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
+                ("b".to_owned(), FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
+                ("c".to_owned(), FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
+            ],
+        );
+        let qualify = Qualifier {
+            db: "test",
+            scope: &scope,
+            catalog: None,
+        };
+        assert_eq!(
+            qualify.expr(select.where_clause.as_ref().expect("WHERE")),
+            "or(eq(test.t.a, 1), or(eq(test.t.b, 2), eq(test.t.c, 3)))"
         );
     }
 
