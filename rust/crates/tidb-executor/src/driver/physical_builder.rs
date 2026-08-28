@@ -23,7 +23,6 @@
 use crate::access_path::{
     HandleOutputColumn, HandleSourceExec, IndexRangeSourceExec, UniqueIndexPointSourceExec,
 };
-use crate::batch_point_get::sort_handles_for_keep_order;
 use crate::executor::{Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggExec, StreamAggExec};
 use crate::index_merge_reader::{
@@ -31,7 +30,7 @@ use crate::index_merge_reader::{
     PartialHandleSource, PushedDownLimit as ExecutorPushedDownLimit,
 };
 use crate::join::{JoinExec, JoinKind};
-use crate::kv_table::{IndexRange, RowDecodeContext, TableScanExec};
+use crate::kv_table::{IndexRange, RowDecodeContext, TableHandle, TableScanExec};
 use crate::limit::LimitExec;
 use crate::projection::ProjectionExec;
 use crate::remote_scan::PushdownStatementContext;
@@ -53,6 +52,33 @@ use tidb_planner::physical::{
 };
 
 use super::{Catalog, DriverError, SelectMeta, INIT_CAP, MAX_CHUNK_SIZE};
+
+/// Go `BatchPointGetExec.initialize`'s `slices.SortFunc(e.handles, less)`.
+/// Unsigned integer handles compare their stored bits, while signed and
+/// common handles use their natural order.
+fn sort_handles_for_keep_order(
+    handles: &mut [TableHandle],
+    desc: bool,
+    unsigned_pk_is_handle: bool,
+) {
+    handles.sort_by(|left, right| {
+        let ordering = if unsigned_pk_is_handle {
+            match (left, right) {
+                (TableHandle::Int(left), TableHandle::Int(right)) => {
+                    (*left as u64).cmp(&(*right as u64))
+                }
+                _ => left.cmp(right),
+            }
+        } else {
+            left.cmp(right)
+        };
+        if desc {
+            ordering.reverse()
+        } else {
+            ordering
+        }
+    });
+}
 
 /// Go `MaxOneRowExec`: emit one row (NULL when the child is empty) and reject
 /// a second row. The retained physical operator caps its child request at two;
@@ -1457,6 +1483,37 @@ mod tests {
         BasePhysicalPlan, PhysicalBatchPointGet, PhysicalIndexMergeReader, PhysicalMaxOneRow,
         PhysicalPointGet, PhysicalSelection, PhysicalTableDual, PhysicalUnionAll,
     };
+
+    fn int_handles(values: &[i64]) -> Vec<TableHandle> {
+        values.iter().copied().map(TableHandle::Int).collect()
+    }
+
+    fn int_values(handles: &[TableHandle]) -> Vec<i64> {
+        handles
+            .iter()
+            .map(|handle| handle.int_value().expect("int handle"))
+            .collect()
+    }
+
+    #[test]
+    fn retained_batch_point_handle_order_matches_go() {
+        let mut signed = int_handles(&[5, -3, 1]);
+        sort_handles_for_keep_order(&mut signed, false, false);
+        assert_eq!(int_values(&signed), vec![-3, 1, 5]);
+        sort_handles_for_keep_order(&mut signed, true, false);
+        assert_eq!(int_values(&signed), vec![5, 1, -3]);
+
+        let mut unsigned = int_handles(&[-1, 1, i64::MIN]);
+        sort_handles_for_keep_order(&mut unsigned, false, true);
+        assert_eq!(int_values(&unsigned), vec![1, i64::MIN, -1]);
+
+        let mut common = vec![
+            TableHandle::Common(vec![2, 0]),
+            TableHandle::Common(vec![1, 9]),
+        ];
+        sort_handles_for_keep_order(&mut common, false, false);
+        assert_eq!(common[0], TableHandle::Common(vec![1, 9]));
+    }
 
     fn empty_schema() -> Schema {
         Schema::new(Vec::new())

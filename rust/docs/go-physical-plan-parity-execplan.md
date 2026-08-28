@@ -330,8 +330,9 @@ both `oltp_read_only` and `oltp_read_write`.
   dead wrapper had no production caller, omitted Go's unique-index, locking,
   and snapshot branches, and retained a Rust-only physical-partition
   permutation. Its unused per-handle partition source state and narrowing
-  tests are gone; only Go's signed/unsigned/common-handle keep-order
-  comparator remains, used directly by the physical builder.
+  tests are gone. Go's signed/unsigned/common-handle keep-order comparator now
+  lives directly in its only owner, the retained physical builder, so the
+  empty `batch_point_get` executor module is gone too.
 - [x] 2026-08-28: changed the retained prepared unique-secondary PointGet
   from an index range cursor to Go's direct index-key `Get` followed by the
   record-key `Get`. The request-shape regression first observed one Get plus

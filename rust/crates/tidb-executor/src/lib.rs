@@ -66,7 +66,6 @@ pub mod apply;
 pub mod apply_cache;
 mod approx_count_distinct;
 pub(crate) mod bad_null;
-pub mod batch_point_get;
 pub mod cluster_storage;
 pub mod column_default;
 pub(crate) mod column_prune;
