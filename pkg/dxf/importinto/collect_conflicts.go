@@ -17,14 +17,11 @@ package importinto
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"hash/crc32"
-	"path"
 	"sync"
 	"sync/atomic"
 
 	"github.com/docker/go-units"
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	dxfhandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
@@ -32,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictrows"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -195,8 +193,7 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 	for i := range concurrency {
 		collectorCh := collectorChs[i]
 		encoder := encoders[i]
-		uid := uuid.New().String()
-		filenamePrefix := getConflictRowFilenamePrefix(e.task.ID, e.currSubtaskID, uid)
+		filenamePrefix := conflictrows.NewFileNamePrefix(e.task.ID, e.currSubtaskID)
 		localSet := conflictedkv.NewBoundedKeySet(e.logger, &e.sizeOfRowKeysFromIndex, e.sizeLimitOfRowKeysFromIndex)
 		collector := conflictedkv.NewCollector(
 			e.tableImporter.Table,
@@ -348,6 +345,7 @@ func (e *collectConflictsStepExecutor) ResetSummary() {
 	e.summary.Reset()
 }
 
+<<<<<<< HEAD
 // getConflictRowFilenamePrefix returns the file name prefix to store the conflict
 // rows for the given task and subtask.
 func getConflictRowFilenamePrefix(taskID, subtaskID int64, uuid string) string {
@@ -355,4 +353,12 @@ func getConflictRowFilenamePrefix(taskID, subtaskID int64, uuid string) string {
 	// don't put it under '<task-id>/' directory to avoid it being deleted by the
 	// cleanup process.
 	return path.Join("conflicted-rows", fmt.Sprintf("%d", taskID), fmt.Sprintf("%d-%s", subtaskID, uuid))
+=======
+// Accepted implements Collector.Accepted interface.
+func (*collectConflictsStepExecutor) Accepted(_ int64) {}
+
+// Processed implements Collector.Processed interface.
+func (e *collectConflictsStepExecutor) Processed(processedConflictKVs, _ int64) {
+	e.summary.Processed.Add(processedConflictKVs)
+>>>>>>> 57e57c75e72 (importinto: add conflict-row cleanup package (#70623))
 }
