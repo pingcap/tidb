@@ -46,13 +46,13 @@
 //!   behind.
 //! * `inputCh`/`giveBackCh` chunk recycling is dropped (named divergence):
 //!   the fetcher allocates a fresh request chunk per dispatch.
-//! * `partialOutputChs[f]` (`chan AggPartialResultMapper`, capacity
-//!   `partialConcurrency`) becomes one `sync_channel(N)` per final worker --
-//!   every partial worker sends exactly one sub-map there.
-//! * `finalOutputCh` (`chan *AfFinalResult`) becomes an unbounded
-//!   `mpsc::channel` of [`FinalMsg`]. Go streams result chunks across `Next`
-//!   calls; here the whole aggregation completes inside one `execute()` call
-//!   and the main thread then emits groups from the final-worker maps.
+//! * Go waits for every partial worker before any final worker consumes its
+//!   mapper. Rust transfers those owned mapper vectors through the partial
+//!   task receipts, then submits one merge task per final bucket. This keeps
+//!   the same N-to-M partitioning without constructing N*M shuffle messages.
+//! * Go streams `finalOutputCh` chunks across `Next` calls. Rust final tasks
+//!   return one owned map per worker; the whole aggregation completes inside
+//!   one `execute()` call and `Next` then emits groups from those maps.
 //! * `finishCh` becomes [`PipelineAbort`] plus channel disconnects. Every
 //!   worker DRAINS its inputs even after an error (Go's
 //!   `finalizeWorkerProcess`), so no sender or receiver can block forever --
@@ -96,7 +96,7 @@ use super::*;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
-use std::sync::mpsc::{channel, sync_channel};
+use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
 use tidb_vardef::tidb_vars::{
     TIDB_ENABLE_PARALLEL_HASHAGG_SPILL, TIDB_TRACK_AGGREGATE_MEMORY_USAGE,
@@ -113,6 +113,13 @@ pub trait HashAggContext: Columns {
     /// worker threads. Go shares its session context with every worker
     /// freely; a Rust context may do the same only when it is `Sync`.
     const PARALLEL_WORKERS_MAY_EVAL: bool;
+
+    /// Resolved worker counts carried by Go's typed `SessionVars` fields.
+    /// Contexts without a SQL session leave this absent and use the generic
+    /// variable/default fallback below.
+    fn hashagg_concurrency(&self) -> Option<(usize, usize)> {
+        None
+    }
 
     /// Bridges into the `Self: Sync`-gated pipeline. Returns `None` when the
     /// context cannot share evaluation across threads; the executor then
@@ -140,6 +147,10 @@ impl HashAggContext for crate::StmtContext {
     /// `sessionctx.Context` with every worker goroutine), so worker threads
     /// may evaluate expressions through `&StmtContext`.
     const PARALLEL_WORKERS_MAY_EVAL: bool = true;
+
+    fn hashagg_concurrency(&self) -> Option<(usize, usize)> {
+        Some(crate::StmtContext::hashagg_concurrency(self))
+    }
 
     fn run_parallel_pipeline_bridge(exec: &mut HashAggExec<Self>) -> Option<Result<(), ExecError>> {
         Some(exec.execute_parallel_pipeline())
@@ -183,13 +194,6 @@ impl PipelineStats {
             .expect("pipeline stats lock")
             .push(std::thread::current().id());
     }
-}
-
-enum FinalMsg {
-    /// One final worker's merged map.
-    Maps(PipelineMap),
-    /// A worker surfaced an error (Go's `AfFinalResult{err}`).
-    Err(ExecError),
 }
 
 /// Shared liveness flag: any worker error raises this so the fetcher stops
@@ -944,6 +948,9 @@ impl<C: HashAggContext> HashAggExec<C> {
         if let Some((partial, final_)) = self.pipeline_concurrency_override {
             return (partial, final_);
         }
+        if let Some(concurrency) = self.ctx.hashagg_concurrency() {
+            return concurrency;
+        }
         let fallback = executor_concurrency(&self.ctx);
         let resolve = |name: &str| resolved_concurrency(&self.ctx, name).unwrap_or(fallback);
         (
@@ -1017,7 +1024,6 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
     let partial_concurrency = stats.partial_concurrency;
     let final_concurrency = stats.final_concurrency;
     let abort = PipelineAbort::default();
-    let (final_tx, final_rx) = channel::<FinalMsg>();
 
     let mut lane_txs = Vec::with_capacity(partial_concurrency);
     let mut lane_rxs = Vec::with_capacity(partial_concurrency);
@@ -1026,26 +1032,17 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
         lane_txs.push(tx);
         lane_rxs.push(rx);
     }
-    let mut shuffle_txs = Vec::with_capacity(final_concurrency);
-    let mut shuffle_rxs = Vec::with_capacity(final_concurrency);
-    for _ in 0..final_concurrency {
-        let (tx, rx) = sync_channel::<PipelineMap>(partial_concurrency.max(1));
-        shuffle_txs.push(tx);
-        shuffle_rxs.push(rx);
-    }
 
     let mut partial_handles = Vec::with_capacity(partial_concurrency);
     for _ in 0..partial_concurrency {
         let lane_rx = lane_rxs.pop().expect("one receiver per partial worker");
-        let shuffle_txs = shuffle_txs.clone();
-        let final_tx = final_tx.clone();
         let abort = abort.clone();
         let stats_ref = Arc::clone(stats);
         let tracker = Arc::clone(tracker);
         let plan = Arc::clone(plan);
         partial_handles.push(crate::worker_pool::spawn(move || {
             stats_ref.record_partial_worker();
-            let mut maps: Vec<PipelineMap> = (0..shuffle_txs.len())
+            let mut maps: Vec<PipelineMap> = (0..final_concurrency)
                 .map(|_| PipelineMap::default())
                 .collect();
             let mut error: Option<ExecError> = None;
@@ -1059,7 +1056,7 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
                             agg_funcs: &plan.agg_funcs,
                         },
                         &mut maps,
-                        shuffle_txs.len(),
+                        final_concurrency,
                         &tracker,
                         &chunk,
                     );
@@ -1072,38 +1069,7 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
                 // this releases the exact growth charged while filling it.
                 tracker.consume(-chunk_charge);
             }
-            match error {
-                None => {
-                    for (bucket, map) in maps.into_iter().enumerate() {
-                        if shuffle_txs[bucket].send(map).is_err() {
-                            break;
-                        }
-                    }
-                }
-                Some(error) => {
-                    let _ = final_tx.send(FinalMsg::Err(error));
-                }
-            }
-        }));
-    }
-
-    let mut final_handles = Vec::with_capacity(final_concurrency);
-    for _ in 0..final_concurrency {
-        let shuffle_rx = shuffle_rxs.pop().expect("one receiver per final worker");
-        let final_tx = final_tx.clone();
-        final_handles.push(crate::worker_pool::spawn(move || {
-            let mut acc: Option<PipelineMap> = None;
-            let mut error_sent = false;
-            while let Ok(map) = shuffle_rx.recv() {
-                let merged = acc.get_or_insert_with(PipelineMap::default);
-                if let Err(error) = merge_map(merged, map) {
-                    if !error_sent {
-                        let _ = final_tx.send(FinalMsg::Err(error));
-                        error_sent = true;
-                    }
-                }
-            }
-            let _ = final_tx.send(FinalMsg::Maps(acc.unwrap_or_default()));
+            error.map_or(Ok(maps), Err)
         }));
     }
 
@@ -1140,28 +1106,48 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
     }
 
     drop(lane_txs);
-    for handle in partial_handles {
-        let _ = handle.recv();
-    }
-    drop(shuffle_txs);
-    for handle in final_handles {
-        let _ = handle.recv();
-    }
-    drop(final_tx);
-
-    let mut maps = Vec::with_capacity(final_concurrency);
+    let mut partial_maps = Vec::with_capacity(partial_concurrency);
     let mut first_error = fetch_error;
-    while let Ok(message) = final_rx.recv() {
-        match message {
-            FinalMsg::Maps(map) => maps.push(map),
-            FinalMsg::Err(error) => {
+    for handle in partial_handles {
+        match handle.recv() {
+            Ok(Ok(maps)) => partial_maps.push(maps),
+            Ok(Err(error)) => {
                 first_error.get_or_insert(error);
+            }
+            Err(_) => {
+                first_error.get_or_insert_with(|| {
+                    ExecError::unsupported("parallel HashAgg partial worker terminated")
+                });
             }
         }
     }
     if let Some(error) = first_error {
         return Err(error);
     }
+
+    let mut bucket_inputs: Vec<Vec<PipelineMap>> = (0..final_concurrency)
+        .map(|_| Vec::with_capacity(partial_maps.len()))
+        .collect();
+    for maps in partial_maps {
+        for (bucket, map) in maps.into_iter().enumerate() {
+            bucket_inputs[bucket].push(map);
+        }
+    }
+    let maps = crate::worker_pool::map(
+        bucket_inputs.into_iter().map(|inputs| {
+            move || {
+                let mut inputs = inputs.into_iter();
+                let mut acc = inputs.next().unwrap_or_default();
+                for map in inputs {
+                    merge_map(&mut acc, map)?;
+                }
+                Ok::<_, ExecError>(acc)
+            }
+        }),
+        final_concurrency,
+    )
+    .into_iter()
+    .collect::<Result<Vec<_>, _>>()?;
     Ok(PipelineEpoch {
         maps,
         child_drained,
@@ -1172,9 +1158,9 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
     /// Go `prepare4ParallelExec` fused with `parallelExec`'s consumption:
     /// the main thread fetches child chunks and round-robin-dispatches them
     /// to the partial-worker lanes; partial workers fold rows into their own
-    /// maps and shuffle per-bucket sub-maps to the final workers; the final
-    /// workers merge their buckets and hand ONE merged map each back; the
-    /// main thread then finishes values in first-seen order.
+    /// final-bucket maps and return those maps after the partial-worker barrier;
+    /// one final task merges each bucket and hands one map back; the main
+    /// thread then finishes values in first-seen order.
     pub(super) fn execute_parallel_pipeline(&mut self) -> Result<(), ExecError> {
         let stats = Arc::clone(
             self.pipeline_stats
@@ -2227,5 +2213,24 @@ mod tests {
         let (_partial, _final_, dispatched, threads) = info;
         assert!(dispatched > 0, "every chunk was dispatched to workers");
         assert!(threads > 1, "multiple partial-worker threads ran");
+    }
+
+    /// FAIL-BEFORE/PASS-AFTER: Go's executor builder reads the resolved
+    /// HashAgg worker counts from the statement session. Rust previously
+    /// dropped these typed values and searched the expression builtin's
+    /// deliberately narrow sysvar view, so even a 1/1 statement entered the
+    /// default 5/5 pipeline.
+    #[test]
+    fn production_stmt_context_hashagg_concurrency_controls_admission() {
+        let exec = HashAggExec::new(
+            out_meta(&[long()]),
+            vec![col(0)],
+            vec![AggFunc::new(AggKind::Count, Some(col(1)))],
+            MultiChunkSource::new(&[(1, 1)], 1),
+            crate::StmtContext::for_query().with_hashagg_concurrency(1, 1),
+            StatementMemory::default(),
+        );
+
+        assert_eq!(exec.pipeline_eligibility(), None);
     }
 }

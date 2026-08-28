@@ -455,6 +455,12 @@ pub struct StmtContext {
     /// Go `SessionVars.ExecutorConcurrency`, shared by executor families that
     /// do not have a more specific concurrency variable, including Sort.
     executor_concurrency: usize,
+    /// Go `SessionVars.HashAggPartialConcurrency()` and
+    /// `HashAggFinalConcurrency()`, resolved from their deprecated per-
+    /// operator variables or `tidb_executor_concurrency` at the statement
+    /// boundary.
+    hashagg_partial_concurrency: usize,
+    hashagg_final_concurrency: usize,
     /// Go `SessionVars.TiDBOptJoinReorderThroughProj`
     /// (`@@tidb_opt_join_reorder_through_proj`, default `OFF`): whether
     /// `extractJoinGroup` may look THROUGH a `Projection` sitting on a join
@@ -716,6 +722,8 @@ impl StmtContext {
             optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl::default(),
             optimizer_cost_env: tidb_planner::find_best_task::coster::CostEnv::default(),
             executor_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
+            hashagg_partial_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
+            hashagg_final_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
             // Go `vardef.DefTiDBOptJoinReorderThroughProj`.
             join_reorder_through_proj: false,
             // Go `vardef.DefTiDBOptJoinReorderThroughSel`.
@@ -1200,6 +1208,24 @@ impl StmtContext {
     #[must_use]
     pub const fn executor_concurrency(&self) -> usize {
         self.executor_concurrency
+    }
+
+    /// Attaches Go's two resolved HashAgg worker counts.
+    #[must_use]
+    pub const fn with_hashagg_concurrency(mut self, partial: usize, final_: usize) -> Self {
+        self.hashagg_partial_concurrency = partial;
+        self.hashagg_final_concurrency = final_;
+        self
+    }
+
+    /// Go `SessionVars.HashAggPartialConcurrency()` and
+    /// `HashAggFinalConcurrency()` for this statement.
+    #[must_use]
+    pub const fn hashagg_concurrency(&self) -> (usize, usize) {
+        (
+            self.hashagg_partial_concurrency,
+            self.hashagg_final_concurrency,
+        )
     }
 
     /// Go `SessionVars.TiDBOptJoinReorderThreshold`. Non-positive -- and `0`

@@ -70,6 +70,8 @@ pub(crate) struct StatementVarSnapshot {
     max_allowed_packet: u64,
     group_concat_max_len: u64,
     apply_cache_capacity: i64,
+    hashagg_partial_concurrency: usize,
+    hashagg_final_concurrency: usize,
     block_encryption_mode: tidb_executor::BlockEncryptionMode,
     arbitrator_wait_averse: Option<bool>,
     arbitrator_reserved: i64,
@@ -544,6 +546,22 @@ impl Session {
                 Ok("OFF" | "off" | "0")
             )
         };
+        let executor_concurrency = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_EXECUTOR_CONCURRENCY)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize);
+        let resolved_concurrency = |name: &str| {
+            self.vars
+                .get_system(name)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .filter(|value| *value > 0)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(executor_concurrency)
+        };
         let snapshot = std::rc::Rc::new(StatementVarSnapshot {
             generation,
             version: self.vars.get_system("version").ok(),
@@ -660,6 +678,8 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or(tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE),
+            hashagg_partial_concurrency: resolved_concurrency("tidb_hashagg_partial_concurrency"),
+            hashagg_final_concurrency: resolved_concurrency("tidb_hashagg_final_concurrency"),
             block_encryption_mode: self
                 .vars
                 .get_system("block_encryption_mode")
@@ -740,6 +760,8 @@ impl Session {
         let max_allowed_packet = snapshot.max_allowed_packet;
         let group_concat_max_len = snapshot.group_concat_max_len;
         let apply_cache_capacity = snapshot.apply_cache_capacity;
+        let hashagg_partial_concurrency = snapshot.hashagg_partial_concurrency;
+        let hashagg_final_concurrency = snapshot.hashagg_final_concurrency;
         let block_encryption_mode = snapshot.block_encryption_mode;
         let arbitrator_wait_averse = snapshot.arbitrator_wait_averse;
         let arbitrator_reserved = snapshot.arbitrator_reserved;
@@ -795,6 +817,7 @@ impl Session {
                 .with_limit_push_down_threshold(limit_push_down_threshold)
                 .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
                 .with_optimizer_cost_env(optimizer_cost_env.clone())
+                .with_hashagg_concurrency(hashagg_partial_concurrency, hashagg_final_concurrency)
                 .with_join_reorder_through_proj(join_reorder_through_proj)
                 .with_join_reorder_through_sel(join_reorder_through_sel)
                 .with_outer_join_reorder(outer_join_reorder)
@@ -912,6 +935,7 @@ impl Session {
         .with_limit_push_down_threshold(limit_push_down_threshold)
         .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
         .with_optimizer_cost_env(optimizer_cost_env)
+        .with_hashagg_concurrency(hashagg_partial_concurrency, hashagg_final_concurrency)
         .with_join_reorder_through_proj(join_reorder_through_proj)
         .with_join_reorder_through_sel(join_reorder_through_sel)
         .with_outer_join_reorder(outer_join_reorder)

@@ -126,6 +126,14 @@ both `oltp_read_only` and `oltp_read_write`.
   `ParamMarker.GetUserVar` does. Stock prepared SUM therefore keeps the same
   99-row estimate and root/cop StreamAgg tree as literal SQL instead of
   selecting a full-range root HashAgg.
+- [x] 2026-08-27: HashAgg execution now receives Go's resolved statement-local
+  partial/final worker counts. The generic expression-sysvar view deliberately
+  excludes these session variables and previously made production execution
+  silently use the 5/5 defaults even while SQL reported 1/1.
+- [x] 2026-08-27: removed Rust's N*M HashAgg shuffle channels and final-result
+  message protocol. Partial tasks return their owned, already-partitioned maps;
+  after all partial receipts arrive, one persistent-pool merge task runs per
+  final bucket, preserving Go's partial-worker barrier and N-to-M partitioning.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -296,6 +304,32 @@ both `oltp_read_only` and `oltp_read_write`.
   `execute_bound_markers_use_the_same_handle_selectivity_as_literals`, and
   both passing after the general ranger correction.
 
+- Observation: SQL correctly exposed
+  `tidb_hashagg_partial_concurrency=1` and
+  `tidb_hashagg_final_concurrency=1`, but Rust still entered
+  `execute_parallel_pipeline`. `StmtContext::Columns::sysvar` is intentionally
+  limited to expression builtins and global password variables, so HashAgg's
+  executor-side lookup never observed session concurrency and fell back to
+  5/5. Carrying Go's resolved typed values in the statement context makes 1/1
+  select the serial executor and resolves `-1` through
+  `tidb_executor_concurrency` at the statement boundary.
+  Evidence: fail-before `Some((5, 5))` versus expected `None` in
+  `production_stmt_context_hashagg_concurrency_controls_admission`, its passing
+  result after typed plumbing, and the lifecycle assertion `(13, 7)`.
+
+- Observation: Go's final HashAgg workers wait for all partial workers before
+  consuming intermediate mappers. Rust's N*M bounded shuffle channels and a
+  second final-result channel therefore added synchronization and messages but
+  no overlap. Rust can preserve the same ownership and phase boundary by
+  returning each partial worker's vector of final-bucket maps and transposing
+  those vectors before final merge tasks. The focused DISTINCT median moved
+  from approximately 2,129 to 2,197 TPS while Go measured approximately 2,828
+  TPS in the same two alternating samples; this is a measurable cleanup, not
+  closure of the remaining gap.
+  Evidence: `pkg/executor/aggregate/aggregate.go` partial-worker waiter,
+  `hash_agg::parallel::tests` (11 passing tests), and the paired range-split
+  benchmark with zero errors.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -378,6 +412,22 @@ both `oltp_read_only` and `oltp_read_write`.
   admission rules and made cache readiness depend on those unrelated rules.
   Date/Author: 2026-08-27, Codex.
 
+- Decision: resolve HashAgg concurrency once from typed session state and
+  carry it in `StmtContext`; do not broaden the generic expression builtin
+  sysvar surface to make an executor policy lookup happen to work.
+  Rationale: Go's executor builder reads typed `SessionVars` fields, and the
+  builtin variable view has a separate, deliberately narrow compatibility
+  contract. Statement snapshots also keep both query and DML execution stable
+  if session variables change afterward.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: keep the persistent worker pool but transfer HashAgg maps through
+  task receipts instead of reconstructing Go's channel graph literally.
+  Rationale: Go's waiter establishes a full partial-to-final barrier, so owned
+  Rust receipts are the native equivalent and remove redundant synchronization
+  without a row-count policy, a workload rule, or a concurrency cutoff.
+  Date/Author: 2026-08-27, Codex.
+
 ## Outcomes & Retrospective
 
 Work is in progress. After restoring point-plan precedence and removing the
@@ -400,7 +450,14 @@ were 3,054.54/4,572.17 TPS (0.668x); afterward they were 4,467.34/4,359.14 TPS
 (1.025x), with zero errors. The same post-fix run measured simple range at
 4,149.08/4,342.42 (0.955x), ordered range at 3,210.28/3,533.63 (0.909x), and
 distinct ordered range at 2,129.20/2,758.29 (0.772x). DISTINCT/ORDER lowering
-is now the largest remaining read-only target.
+is now the largest remaining read-only target. Typed session HashAgg
+concurrency then exposed the previous hidden 5/5 fallback: a real 1/1 run
+measured Rust/Go medians of 2,771.86/3,052.33 TPS (0.908x), confirming fixed
+parallel-lifecycle cost as the dominant DISTINCT regression. Removing the
+redundant N*M shuffle/result channel topology while retaining the configured
+5/5 worker shape measured 2,196.59/2,828.20 TPS (0.777x), approximately 3.2%
+above the preceding Rust median. The gap remains open and the next target is
+the sort/coprocessor execution boundary rather than a Rust-only serial cutoff.
 
 ## Context and Orientation
 

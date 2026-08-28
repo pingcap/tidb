@@ -153,6 +153,8 @@ fn optimizer_cost_variables_reach_the_statement_snapshot() {
     let mut session = Session::new();
     for (name, value) in [
         ("tidb_executor_concurrency", "13"),
+        ("tidb_hashagg_partial_concurrency", "-1"),
+        ("tidb_hashagg_final_concurrency", "7"),
         ("tidb_hash_join_concurrency", "-1"),
         ("tidb_projection_concurrency", "-1"),
         ("tidb_index_lookup_join_concurrency", "7"),
@@ -172,6 +174,7 @@ fn optimizer_cost_variables_reach_the_statement_snapshot() {
     assert_eq!(env.session.index_lookup_join_concurrency, 7.0);
     assert_eq!(env.session.distsql_scan_concurrency, 19.0);
     assert_eq!(env.session.index_join_batch_size, 123.0);
+    assert_eq!(ctx.hashagg_concurrency(), (13, 7));
     assert_eq!(env.cost_factors.hash_join, 2.5);
     assert_eq!(env.cost_factors.merge_join, 0.5);
     assert_eq!(env.cost_factors.sort, 3.25);
