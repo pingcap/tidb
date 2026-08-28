@@ -137,6 +137,16 @@ mod tests_importer_precheck_sampler_gaps;
 mod tests_importer_table_import_gaps;
 #[cfg(test)]
 mod tests_importer_verify_postprocess_gaps;
+#[cfg(test)]
+mod tests_insert_auto_random_id_source;
+#[cfg(test)]
+mod tests_insert_null_non_strict_source;
+#[cfg(test)]
+mod tests_insert_on_duplicate_key_source;
+#[cfg(test)]
+mod tests_insert_write_gaps;
+#[cfg(test)]
+mod tests_inspection_result_gaps;
 mod index_hints;
 pub mod index_lookup_hash_join;
 pub mod index_lookup_join;
@@ -217,6 +227,8 @@ mod tests_memtable_cluster_source;
 #[cfg(test)]
 mod tests_merge_join_in_disk_source;
 #[cfg(test)]
+mod tests_join_probe_source_gaps;
+#[cfg(test)]
 mod tests_pkg_nested_loop_apply_source;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
 pub mod fts_like_rewrite;
@@ -244,6 +256,10 @@ pub mod table_dual;
 pub mod table_reader;
 pub mod tblctx;
 pub mod tblsession;
+#[cfg(test)]
+mod tests_duplicate_entry_message_source;
+#[cfg(test)]
+mod tests_global_temp_table_source;
 #[cfg(test)]
 mod tests_index_join;
 pub mod tiflash_recorder;
