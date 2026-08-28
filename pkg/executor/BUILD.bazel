@@ -535,6 +535,7 @@ go_test(
         "//pkg/util/memory",
         "//pkg/util/mock",
         "//pkg/util/paging",
+        "//pkg/util/plancodec",
         "//pkg/util/ranger",
         "//pkg/util/regionsplit",
         "//pkg/util/sem",

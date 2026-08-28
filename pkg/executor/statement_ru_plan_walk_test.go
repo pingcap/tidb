@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tipb/go-tipb"
@@ -197,6 +198,36 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
 		require.Zero(t, calibrationCount.Load())
 	}
+
+	t.Run("Analyze uses the sum of logical request estimates", func(t *testing.T) {
+		ctx := mock.NewContext()
+		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+		plan := plannercore.Analyze{}.Init(ctx, 0)
+		stmt := &ExecStmt{
+			Ctx:   ctx,
+			GoCtx: context.Background(),
+			Plan:  plan,
+		}
+		ctx.GetSessionVars().StmtCtx.SetPlan(plan)
+		installStatementRUOwner(stmt)
+		require.NotNil(t, stmt.statementRUOwner)
+		ctx.GetSessionVars().StmtCtx.SetFlatPlan(plannercore.FlattenPhysicalPlan(plan, false))
+		stmt.recordStatementRURootEOF()
+		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordAnalyzeScanBytes(plan.ID(), 1000)
+		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordAnalyzeScanBytes(plan.ID(), 9)
+		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordCopStats(
+			plan.ID(),
+			kv.TiKV,
+			&util.ScanDetail{ProcessedKeys: 10, ProcessedKeysSize: 109, TotalKeys: 19},
+			util.TimeDetail{},
+			nil,
+			nil,
+		)
+
+		requirePublication(t, statementRUSimpleSelectFixture{stmt: stmt, owner: stmt.statementRUOwner}, statementRURawUnits{
+			ScanBytes: 1009,
+		})
+	})
 
 	t.Run("Reader scan evidence is collected during calculation", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
