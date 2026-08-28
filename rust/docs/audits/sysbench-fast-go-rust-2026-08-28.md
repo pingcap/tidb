@@ -52,6 +52,25 @@ all 10,000 operations without `SCAN_ERROR`, but remains a performance failure:
 The remaining gap is scan/range execution (Rust scan latency is roughly 10 ms
 versus Go's 1.2 ms), not a parser or client accounting error.
 
+The same five-minute-oriented sweep was repeated for the other gate thresholds
+without another BR restore. Round 2 (threshold 0.90) took 154 seconds and
+round 3 (threshold 1.00) took 154 seconds; both failed. Their full receipts
+are `/tmp/tc8228803.JvwO2R/sysbench-fast-round2-postfix` and
+`/tmp/tc8228803.JvwO2R/sysbench-fast-round3-postfix`.
+
+| Round | Threshold | Failing subtypes |
+|---:|---:|---|
+| 1 | 0.80 | read_write, update_index, random_points, random_ranges, bulk_insert |
+| 2 | 0.90 | read_only, update_index, random_ranges, bulk_insert |
+| 3 | 1.00 | read_only, point_select, update_index, bulk_insert |
+
+Because the requested workflow intentionally reuses the restored data, these
+2-second write-heavy sweeps are directional rather than clean-room formal
+acceptance runs. A later 30-second read-only sample after the write/restore
+sequence measured Go 330.72 QPS and Rust 200.02 QPS (0.6048), receipt
+`/tmp/tc8228803.JvwO2R/sysbench-ro30-postfix`; this confirms the testbed was
+under materially different load than the earlier stable 30-second sample.
+
 The first TPCC and BenchmarkSQL probes also remain failing: TPCC reports the
 Rust executor's unsupported `IndexJoin` lowering, while BenchmarkSQL does not
 complete a Rust transaction window and emits no final tpmC. Receipts:
