@@ -297,6 +297,11 @@ both `oltp_read_only` and `oltp_read_write`.
   `SessionVars.MaxAllowedPacket`. Wait timeout and client/result charset reads
   no longer clone backing strings; packet and builtin consumers no longer
   look up and parse max packet size independently.
+- [x] 2026-08-28: retained Go's typed
+  `SessionVars.EnablePreparedPlanCache` across default construction, inherited
+  GLOBAL state, SET, and statement-scoped restore. Deleted the session-local
+  string lookup, and made PointGet, DML, and SELECT reuse consult the same
+  field. The previously missing PointGet disable gate is now enforced.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -792,6 +797,23 @@ both `oltp_read_only` and `oltp_read_write`.
   transaction and completion unit suites, release build, stock alternating
   benchmark, and
   `/private/tmp/tidb-rust-oltp_read_only-txn-sync-44800c4f14.sample.txt`.
+
+- Observation: Rust's cached DML and SELECT binders checked
+  `tidb_enable_prepared_plan_cache` through an owned string sysvar lookup on
+  every execution, while cached PointGet did not check the switch at all.
+  Go maintains `SessionVars.EnablePreparedPlanCache` in the sysvar
+  `SetSession` hook and every cache path reads that field. The typed Rust field
+  removes the sampled lookup and also fixes the observable OFF-state PointGet
+  contract. Exact one-cluster A/B means against `acde91234d` were
+  512.67/514.26 TPS for stock read-only, with Go at 472.01 TPS; read-write was
+  278.21/243.19/219.70 TPS but retained the same strong run-order variance, so
+  no read-write increase is attributed to this change. All 18 legs reported
+  zero ignored errors.
+  Evidence: fail-before/pass-after
+  `disabling_the_cache_disables_retained_point_execution`, the typed-state and
+  existing disabled-range/cache-hit regressions, server test/release builds,
+  the alternating A/B receipt, and
+  `/private/tmp/tidb-rust-oltp_read_only-typed-prepared-cache.sample.txt`.
 
 ## Decision Log
 
@@ -1601,6 +1623,42 @@ probes remain. Exact validation commands:
     git diff --check
     EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
     PROFILE_ONLY=1 PROFILE_TAG=borrowed-protocol-vars EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, typed prepared-cache switch): Go keeps
+`SessionVars.EnablePreparedPlanCache` as a bool maintained by the
+`tidb_enable_prepared_plan_cache` sysvar's `SetSession` hook. Rust instead
+looked up and cloned the normalized string during every cached DML/SELECT bind,
+and the retained PointGet reuse gate did not consult the setting at all.
+`SessionVars` now owns the typed bool across defaults, inherited GLOBAL state,
+ordinary SET, and statement-scoped restore. The old session string-lookup
+helper is deleted, and PointGet, DML, and SELECT all read the typed authority.
+The PointGet regression was observed failing before the implementation and
+passing afterward. Typed-state, disabled range, normal cache-hit, server test
+compile, and release-build checks pass.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`acde91234d` and the same Go server over one TiKV/PD cluster. Read-only mean
+TPS was 512.67 candidate, 514.26 baseline, and 472.01 Go, a -0.31% candidate
+delta within run noise. Read-write mean TPS was 278.21 candidate, 243.19
+baseline, and 219.70 Go; the candidate again decayed strongly with run order,
+so no read-write increase is attributed to this change. All 18 legs reported
+zero ignored errors. The post-change profile at
+`/private/tmp/tidb-rust-oltp_read_only-typed-prepared-cache.sample.txt`
+contains no `prepared_plan_cache_enabled`,
+`TIDB_ENABLE_PREP_PLAN_CACHE`, or `get_system` sample on the cached execution
+path. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session disabling_the_cache_disables_retained_point_execution --lib
+    cargo test -q -p tidb-session prepared_plan_cache_switch_uses_go_typed_state --lib
+    cargo test -q -p tidb-session disabling_the_cache_disables_retained_range_execution --lib
+    cargo test -q -p tidb-session the_second_execute_of_a_cacheable_statement_reports_a_hit --lib
+    cargo test -q -p tidb-server --lib --no-run
+    cargo build -q --release -p tidb-server --bin tidb-server
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+    PROFILE_ONLY=1 PROFILE_TAG=typed-prepared-cache EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
 
 Plan revision note (2026-08-27): created after the user confirmed the
 performance-preserving route to full Go parity across plan cache, aggregation,

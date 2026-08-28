@@ -757,6 +757,9 @@ pub struct SessionVars {
     /// Go's typed `SessionVars.MaxAllowedPacket`, maintained by the sysvar's
     /// `SetSession` hook and read directly by wire and builtin consumers.
     max_allowed_packet: u64,
+    /// Go's typed `SessionVars.EnablePreparedPlanCache`, maintained by the
+    /// `tidb_enable_prepared_plan_cache` sysvar's `SetSession` hook.
+    enable_prepared_plan_cache: bool,
     /// Bumped by every mutation of `systems`, so a caller can cache what it
     /// PARSES out of the raw text -- chiefly the optimizer's cost environment
     /// -- and re-derive only when a `SET`
@@ -791,6 +794,7 @@ impl Default for SessionVars {
             sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
                 .expect("the compiled default SQL mode is valid"),
             max_allowed_packet: 64 << 20,
+            enable_prepared_plan_cache: tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
             generation: 0,
             optimizer_fix_control: OptimizerFixControl::default(),
             session_resolved: ResolvedGlobals::default(),
@@ -840,6 +844,7 @@ impl SessionVars {
         let sql_mode = Self::sql_mode_from_systems(&systems)
             .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
         let max_allowed_packet = Self::max_allowed_packet_from_systems(&systems)?;
+        let enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&systems);
         // Commit all authorities only after the inherited fix-control
         // row has been accepted. A stale/foreign cluster row can therefore
         // refuse the connection without partially reseeding this session.
@@ -849,6 +854,7 @@ impl SessionVars {
         self.autocommit = autocommit;
         self.sql_mode = sql_mode;
         self.max_allowed_packet = max_allowed_packet;
+        self.enable_prepared_plan_cache = enable_prepared_plan_cache;
         self.session_resolved = Self::build_session_image(&self.systems);
         // The wholesale replacement above is a mutation like any other; the
         // parsed-product caches keyed on `generation` must not survive it.
@@ -880,6 +886,15 @@ impl SessionVars {
             .map_err(|error| VarError::ValidationRefused(error.to_string()))
     }
 
+    fn prepared_plan_cache_from_systems(systems: &HashMap<String, String>) -> bool {
+        systems
+            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE)
+            .map_or(
+                tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
+                |value| value == "ON",
+            )
+    }
+
     /// Go `SessionVars.IsAutocommit`, backed by its typed server-status bit.
     #[must_use]
     pub const fn is_autocommit(&self) -> bool {
@@ -897,6 +912,13 @@ impl SessionVars {
     #[must_use]
     pub const fn max_allowed_packet(&self) -> u64 {
         self.max_allowed_packet
+    }
+
+    /// Go `SessionVars.EnablePreparedPlanCache`, updated when its normalized
+    /// ON/OFF sysvar changes rather than looked up by each execution.
+    #[must_use]
+    pub const fn prepared_plan_cache_enabled(&self) -> bool {
+        self.enable_prepared_plan_cache
     }
 
     /// Updates ONE registry-indexed slot of the session image after the
@@ -1033,9 +1055,12 @@ impl SessionVars {
         }
         let mut restores_sql_mode = false;
         let mut restores_max_allowed_packet = false;
+        let mut restores_prepared_plan_cache = false;
         for (key, previous) in snapshot {
             restores_sql_mode |= key == "sql_mode";
             restores_max_allowed_packet |= key == "max_allowed_packet";
+            restores_prepared_plan_cache |=
+                key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE;
             match previous {
                 Some(value) => {
                     self.session_resolved
@@ -1057,6 +1082,9 @@ impl SessionVars {
         if restores_max_allowed_packet {
             self.max_allowed_packet = Self::max_allowed_packet_from_systems(&self.systems)
                 .expect("a saved max_allowed_packet was validated before it was stored");
+        }
+        if restores_prepared_plan_cache {
+            self.enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&self.systems);
         }
         self.refresh_optimizer_fix_control();
     }
@@ -1160,6 +1188,9 @@ impl SessionVars {
                 .value
                 .parse::<u64>()
                 .expect("max_allowed_packet validation stores unsigned decimal bytes");
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE {
+            self.enable_prepared_plan_cache = validated.value == "ON";
         }
         self.generation += 1;
         if let Some(parsed) = parsed_fix_control {
@@ -1410,6 +1441,43 @@ mod tests {
             inherited.system_value("character_set_results"),
             Ok(Cow::Borrowed("latin1"))
         ));
+    }
+
+    #[test]
+    fn prepared_plan_cache_switch_uses_go_typed_state() {
+        let admission = include_str!("prepared_plan_cache.rs");
+        assert!(!admission.contains("get_system"));
+
+        let execution = include_str!("prepared_ast.rs");
+        assert_eq!(
+            execution
+                .matches("self.vars.prepared_plan_cache_enabled()")
+                .count(),
+            3
+        );
+
+        let mut vars = SessionVars::new();
+        assert!(vars.prepared_plan_cache_enabled());
+        let restore = vars.snapshot_system(tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE);
+        vars.set_system(
+            tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE,
+            "OFF".to_owned(),
+        )
+        .unwrap();
+        assert!(!vars.prepared_plan_cache_enabled());
+        vars.restore_system(restore);
+        assert!(vars.prepared_plan_cache_enabled());
+
+        let globals = GlobalSysvars::new();
+        globals
+            .set(
+                tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE,
+                "OFF".to_owned(),
+            )
+            .unwrap();
+        let mut inherited = SessionVars::new();
+        inherited.seed_from_globals(globals).unwrap();
+        assert!(!inherited.prepared_plan_cache_enabled());
     }
 
     #[test]

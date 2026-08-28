@@ -222,7 +222,7 @@ impl Session {
     /// visibility the ordinary planner would build for it (Go serves these
     /// from its prepared plan cache inside transactions as well).
     pub(crate) fn can_reuse_prepared_point_get(&self, plan: &PreparedPointGetPlan) -> bool {
-        if !self.session_bindings.is_empty() {
+        if !self.vars.prepared_plan_cache_enabled() || !self.session_bindings.is_empty() {
             return false;
         }
         if self
@@ -258,7 +258,7 @@ impl Session {
         plan: &Arc<PreparedDmlPlan>,
         values: &[Datum],
     ) -> Option<PreparedDmlExecution> {
-        if !self.prepared_plan_cache_enabled()
+        if !self.vars.prepared_plan_cache_enabled()
             || !self.session_bindings.is_empty()
             || self
                 .vars
@@ -280,7 +280,7 @@ impl Session {
         plan: &Arc<PreparedSelectPlan>,
         values: &[Datum],
     ) -> Option<PreparedSelectExecution> {
-        if !self.prepared_plan_cache_enabled()
+        if !self.vars.prepared_plan_cache_enabled()
             || !self.session_bindings.is_empty()
             || self
                 .vars

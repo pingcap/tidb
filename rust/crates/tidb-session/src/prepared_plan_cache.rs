@@ -23,8 +23,6 @@ use std::any::Any;
 
 use tidb_ast::{Visitable, Visitor};
 
-use crate::Session;
-
 /// Go `getMaxParamLimit`'s default: more than this many values in one IN
 /// list, or `rows * cols` in one `INSERT`, refuses caching to save memory.
 const MAX_NUM_PARAM: usize = 200;
@@ -52,19 +50,6 @@ const UNCACHEABLE_FUNCTIONS: &[&str] = &[
     "aes_encrypt",
     "aes_decrypt",
 ];
-
-impl Session {
-    /// Go `SessionVars.EnablePreparedPlanCache` (`tidb_enable_prepared_plan_cache`,
-    /// default ON).
-    pub(crate) fn prepared_plan_cache_enabled(&self) -> bool {
-        !matches!(
-            self.vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE)
-                .as_deref(),
-            Ok("OFF" | "off" | "0")
-        )
-    }
-}
 
 /// Go `IsASTCacheable`: whether Go's prepared plan cache would admit this
 /// statement, with Go's reason when it would not.

@@ -128,6 +128,30 @@ fn disabling_the_cache_disables_retained_range_execution() {
     }
 }
 
+#[test]
+fn disabling_the_cache_disables_retained_point_execution() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (id int primary key, v int)")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1, 10)").unwrap();
+    session
+        .run("SET tidb_enable_prepared_plan_cache = OFF")
+        .unwrap();
+    session
+        .run("PREPARE s FROM 'SELECT v FROM t WHERE id = ?'")
+        .unwrap();
+    let prepared = session.prepare_ast("SELECT v FROM t WHERE id = ?").unwrap();
+    let point = prepared.point_get_plan().expect("retained point plan");
+    assert!(!session.can_reuse_prepared_point_get(&point));
+    session.run("SET @id = 1").unwrap();
+
+    for _ in 0..2 {
+        assert_eq!(row_text(session.run("EXECUTE s USING @id"))[0], ["10"]);
+        assert_eq!(cache_flag(&mut session), "0");
+    }
+}
+
 /// DDL between two executes is a MISS: the schema version is in Go's cache
 /// key (`NewPlanCacheKey`), which is what keeps a cached plan from reading a
 /// dropped column.
