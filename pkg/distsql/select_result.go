@@ -553,15 +553,11 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 		return nil, errors.New("selectResult is invalid after IntoIter()")
 	}
 
-	var start time.Time
-	if r.collectExecDetailsForRaw {
-		start = time.Now()
-	}
 	resultSubset, err := r.resp.Next(ctx)
 	r.partialCount++
 	if r.collectExecDetailsForRaw && resultSubset != nil {
 		if withStats, ok := resultSubset.(CopRuntimeStats); ok {
-			r.recordCopRuntimeStatsForRaw(withStats.GetCopRuntimeStats(), time.Since(start))
+			r.recordCopRuntimeStatsForRaw(withStats.GetCopRuntimeStats(), resultSubset.RespTime())
 		}
 	}
 	if resultSubset != nil && err == nil {
@@ -797,12 +793,14 @@ func (r *selectResult) Close() error {
 // recordCopRuntimeStatsForRaw records coprocessor statistics without decoding a
 // SelectResponse or relying on per-executor summaries. Callers must honor
 // collectExecDetailsForRaw; plan-level statistics are attributed to rootPlanID.
-func (r *selectResult) recordCopRuntimeStatsForRaw(copStats *copr.CopRuntimeStats, copTime time.Duration) {
+// respTime is the response duration, or zero for unconsumed statistics.
+func (r *selectResult) recordCopRuntimeStatsForRaw(copStats *copr.CopRuntimeStats, respTime time.Duration) {
 	if copStats == nil || r.ctx == nil {
 		return
 	}
 	if r.ctx.ExecDetails != nil {
-		r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, copTime)
+		// The raw path does not measure local fetch time for statement Cop_time.
+		r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
 		r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
 	}
 	if r.ctx.RuntimeStatsColl != nil && r.rootPlanID > 0 {
@@ -812,7 +810,7 @@ func (r *selectResult) recordCopRuntimeStatsForRaw(copStats *copr.CopRuntimeStat
 				r.stats.distSQLConcurrency, r.stats.extraConcurrency = ci.GetConcurrency()
 			}
 		}
-		r.stats.mergeCopRuntimeStats(copStats, copTime)
+		r.stats.mergeCopRuntimeStats(copStats, respTime)
 		r.ctx.RuntimeStatsColl.RecordCopStats(
 			r.rootPlanID,
 			r.storeType,

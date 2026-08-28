@@ -180,7 +180,8 @@ func TestAnalyze(t *testing.T) {
 	}
 
 	response := &analyzeTestResponse{result: &analyzeTestResultSubset{
-		data: []byte("analyze payload!"),
+		data:     []byte("analyze payload!"),
+		respTime: 7 * time.Millisecond,
 		stats: &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{
 			ScanDetail: &tikvutil.ScanDetail{
 				ProcessedKeys:     13,
@@ -211,6 +212,8 @@ func TestAnalyze(t *testing.T) {
 	require.Equal(t, int64(13), details.ScanDetail.ProcessedKeys)
 	require.Equal(t, int64(17), details.ScanDetail.TotalKeys)
 	require.Equal(t, int64(19), details.ScanDetail.ProcessedKeysSize)
+	require.Equal(t, 3*time.Millisecond, details.TimeDetail.ProcessTime)
+	require.Equal(t, 5*time.Millisecond, details.TimeDetail.WaitTime)
 	copStats := dctx.RuntimeStatsColl.GetCopStats(planID)
 	require.NotNil(t, copStats)
 	require.Contains(t, copStats.String(), "total_process_keys: 13")
@@ -218,7 +221,8 @@ func TestAnalyze(t *testing.T) {
 	require.Contains(t, copStats.String(), "total_keys: 17")
 
 	require.NoError(t, selectResponse.Close())
-	require.Contains(t, dctx.RuntimeStatsColl.GetRootStats(planID).String(), "cop_task: {num: 1")
+	require.Contains(t, dctx.RuntimeStatsColl.GetRootStats(planID).String(), "cop_task: {num: 1, max: 7ms")
+	require.Zero(t, details.CopTime)
 	scanBytes, ok := dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
 	require.True(t, ok)
 	require.InDelta(t, float64(19)/13*17, scanBytes, 1e-9)
@@ -272,6 +276,7 @@ func TestAnalyze(t *testing.T) {
 		responseErr := errors.New("response error")
 		response := &analyzeTestResponse{
 			result: &analyzeTestResultSubset{
+				respTime: 11 * time.Millisecond,
 				stats: &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{
 					ScanDetail: &tikvutil.ScanDetail{ProcessedKeys: 2, ProcessedKeysSize: 6, TotalKeys: 4},
 				}},
@@ -286,6 +291,8 @@ func TestAnalyze(t *testing.T) {
 		require.Equal(t, 1, details.RequestCount)
 		require.Equal(t, int64(2), details.ScanDetail.ProcessedKeys)
 		require.NoError(t, result.Close())
+		require.Contains(t, dctx.RuntimeStatsColl.GetRootStats(planID).String(), "cop_task: {num: 1, max: 11ms")
+		require.Zero(t, details.CopTime)
 		scanBytes, found := dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
 		require.True(t, found)
 		require.InDelta(t, 12, scanBytes, 1e-9)
@@ -350,8 +357,9 @@ func (r *analyzeTestResponse) CollectUnconsumedCopRuntimeStats() []*copr.CopRunt
 }
 
 type analyzeTestResultSubset struct {
-	data  []byte
-	stats *copr.CopRuntimeStats
+	data     []byte
+	stats    *copr.CopRuntimeStats
+	respTime time.Duration
 }
 
 func (r *analyzeTestResultSubset) GetData() []byte { return r.data }
@@ -360,7 +368,7 @@ func (*analyzeTestResultSubset) GetStartKey() kv.Key { return nil }
 
 func (r *analyzeTestResultSubset) MemSize() int64 { return int64(cap(r.data)) }
 
-func (*analyzeTestResultSubset) RespTime() time.Duration { return 0 }
+func (r *analyzeTestResultSubset) RespTime() time.Duration { return r.respTime }
 
 func (r *analyzeTestResultSubset) GetCopRuntimeStats() *copr.CopRuntimeStats { return r.stats }
 
