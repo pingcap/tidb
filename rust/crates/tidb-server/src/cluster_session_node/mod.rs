@@ -184,9 +184,7 @@ use tidb_executor::remote_scan::PushdownScanner;
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_session::privilege::PrivilegeRegistry;
 use tidb_session::process::ProcessRegistry;
-use tidb_session::{
-    GlobalSysvars, PreparedAst, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange,
-};
+use tidb_session::{GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange};
 
 use tidb_exec::cluster_table_storage::LockKeysOutcome;
 
@@ -704,7 +702,7 @@ pub struct ClusterServerSession {
     /// rules mean for cluster storage, where the session's catalog image
     /// restores nothing (every table shares one `Arc` buffer). It is the same
     /// `MutationBuffer::staged()`/`restore()` pair
-    /// [`ClusterServerSession::with_statement`] already uses for
+    /// [`ClusterServerSession::with_bound_statement`] already uses for
     /// statement-level rollback, held under a name.
     ///
     /// The two stacks stay in step because both apply the same rules to the
@@ -747,43 +745,10 @@ impl ClusterServerSession {
         &self.skipped
     }
 
-    /// Runs one statement inside the snapshot/buffer lifecycle this mode is
-    /// built around.
-    ///
-    /// The ordering is the correctness core: bind a snapshot, take a buffer
-    /// savepoint, run, always unbind the snapshot, and only then decide what
-    /// happens to the staged writes.
-    ///
-    /// Which snapshot is the whole `start_ts` question. Inside an explicit
-    /// transaction the statement reads through the one transaction `BEGIN`
-    /// opened, so it sees exactly what `BEGIN` saw -- repeatable read, and the
-    /// timestamp the eventual prewrite will carry. Outside one, autocommit
-    /// opens a fresh read transaction per statement, which is Go's implicit
-    /// per-statement transaction. Like Go's oracle future, it starts after the
-    /// plan-shape decision and is waited only by the first cluster read.
-    ///
-    /// An autocommit statement that loses the race is RUN AGAIN rather than
-    /// refused, up to [`AUTOCOMMIT_RETRY_LIMIT`] times: see
-    /// [`Self::may_retry_autocommit_statement`]. The loop is around the whole
-    /// attempt and not around the publication, which is what makes the retry
-    /// re-read -- each attempt builds its own [`transactions::StatementReadTs`]
-    /// and its own deferred snapshot, so the replay reads at a new timestamp
-    /// and publishes at that same new one. Retrying only the publication would
-    /// resubmit the old buffer at the old `start_ts` and be the lost update
-    /// again.
-    fn with_statement<T>(
-        &mut self,
-        shape: StatementReadShape,
-        resource_group: &str,
-        run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
-    ) -> Result<T, SqlQueryError> {
-        self.with_prelocked_statement(shape, Vec::new(), resource_group, run)
-    }
-
-    /// [`Self::with_statement`] for a statement whose point-write keys are
-    /// already known: they are locked WITH their rows before the snapshot is
-    /// bound, so the statement's own read answers from the lock response
-    /// instead of storage (Go's `InitReturnValues`/
+    /// Runs one statement inside this mode's snapshot/buffer lifecycle. When
+    /// point-write keys are already known, they are locked WITH their rows
+    /// before the snapshot is bound, so the statement's own read answers from
+    /// the lock response instead of storage (Go's `InitReturnValues`/
     /// `SetPessimisticLockCache` fold, `pkg/executor/point_get.go:612-624`).
     /// An empty key set is the ordinary lifecycle.
     fn with_prelocked_statement<T>(
@@ -798,8 +763,9 @@ impl ClusterServerSession {
         self.with_bound_statement(shape, &prelock_keys, resource_group, run)
     }
 
-    /// [`Self::with_statement`] for work the CLIENT did not ask to run: the
-    /// PREPARE probe, which executes a query only to learn its result columns.
+    /// Runs work the CLIENT did not ask to execute through the statement
+    /// lifecycle: the PREPARE probe, which executes a query only to learn its
+    /// result columns.
     ///
     /// The one thing it must not do is open the transaction `autocommit = 0`
     /// implies. Go's `PrepareStmt` calls `PrepareTxnCtx` too
@@ -815,7 +781,8 @@ impl ClusterServerSession {
     ///
     /// An already-open transaction is read through as usual -- a PREPARE
     /// inside `BEGIN` costs no timestamp either way -- so this differs from
-    /// [`Self::with_statement`] in exactly one thing: it never OPENS one.
+    /// [`Self::with_prelocked_statement`] in exactly one thing: it never OPENS
+    /// one.
     fn probe_statement<T>(
         &mut self,
         shape: StatementReadShape,
@@ -887,7 +854,7 @@ impl ClusterServerSession {
         outcome
     }
 
-    /// Runs one attempt of [`Self::with_statement`]'s lifecycle.
+    /// Runs one attempt of [`Self::with_bound_statement`]'s lifecycle.
     fn attempt_statement<T>(
         &mut self,
         shape: StatementReadShape,
@@ -1654,13 +1621,6 @@ impl ClusterServerSession {
         self.schema_route_for_change(sql, change)
     }
 
-    fn schema_route_prepared(
-        &mut self,
-        prepared: &PreparedAst,
-    ) -> Result<StatementRoute, SqlQueryError> {
-        self.schema_route_for_change(prepared.sql(), prepared.stored_state_change())
-    }
-
     fn schema_route_for_change(
         &mut self,
         sql: &str,
@@ -2144,15 +2104,14 @@ impl QuerySession for ClusterServerSession {
         // and -- see `probe_statement` -- it opens no transaction either.
         let probe: Vec<tidb_datatype::Datum> =
             std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
-        let zone = self.session.session_time_zone();
-        let mut bound_probe = Some(prepared_ast.bind(&probe, &zone).map_err(map_error)?);
+        let mut bound_probe = Some(prepared_ast.bind(&probe).map_err(map_error)?);
         let result_columns =
             self.probe_statement(StatementReadShape::Unknown, &resource_group, |session| {
                 let bound = match bound_probe.take() {
                     Some(bound) => bound,
-                    None => prepared_ast.bind(&probe, &zone).map_err(map_error)?,
+                    None => prepared_ast.bind(&probe).map_err(map_error)?,
                 };
-                match session.run_bound_prepared(bound) {
+                match session.run_parsed_bound_owned_with_sql(bound, sql) {
                     Ok(StmtOutput::Rows { columns, .. }) => {
                         Ok(crate::pipeline_session::select_columns(&columns))
                     }

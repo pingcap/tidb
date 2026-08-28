@@ -764,7 +764,7 @@ pub mod varsutil;
 mod warnings;
 pub(crate) use classify::{statement_kind_of, StatementKind};
 pub use classify::{StmtKind, StoredStateChange};
-pub use prepared_ast::{BoundPreparedAst, PreparedAst};
+pub use prepared_ast::PreparedAst;
 pub(crate) use txn::Transaction;
 pub(crate) use variables::datum_text;
 pub use warnings::{SqlWarning, WarningLevel};
@@ -1202,25 +1202,6 @@ impl Session {
         self.run_with_columns_internal(&bound, true)
     }
 
-    /// Executes one bound clone of a PREPARE-retained AST and replans it
-    /// against the session's current catalog and settings.
-    pub fn run_bound_prepared(
-        &mut self,
-        bound: BoundPreparedAst,
-    ) -> Result<StmtOutput, DriverError> {
-        self.run_bound_prepared_internal(bound, false)
-            .map(|(output, _)| output)
-    }
-
-    /// [`Self::run_bound_prepared`] with the authority needed to retain a row
-    /// result after the cluster statement lifecycle completes.
-    pub fn run_bound_prepared_with_result_authority(
-        &mut self,
-        bound: BoundPreparedAst,
-    ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
-        self.run_bound_prepared_internal(bound, true)
-    }
-
     /// Runs an owned bound statement while reusing the prepared SQL text.
     /// Binary-protocol callers already have both values, so restoring the AST
     /// merely to obtain text would add work to every execute.
@@ -1233,40 +1214,6 @@ impl Session {
             session.execute_statement_parsed(bound, sql)
         })
         .map(|(output, _)| output)
-    }
-
-    fn run_bound_prepared_internal(
-        &mut self,
-        bound: BoundPreparedAst,
-        capture_result_authority: bool,
-    ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
-        let (execution_sql, statement, cached_point_get, cache_candidate, cache_ready) =
-            bound.into_parts();
-        let sql = execution_sql.as_str();
-        let result = match statement {
-            Some(statement) => {
-                self.run_with_columns_using(sql, capture_result_authority, move |session| {
-                    session.execute_prepared_ast(sql, statement, cached_point_get)
-                })
-            }
-            None => self.run_with_columns_using(sql, capture_result_authority, move |session| {
-                session.execute_prepared_point_get(
-                    cached_point_get.expect("the cached path carries its PointGet execution"),
-                    true,
-                )
-            }),
-        };
-        if capture_result_authority
-            && result
-                .as_ref()
-                .is_ok_and(|(output, _)| matches!(output, StmtOutput::Rows { .. }))
-            && cache_candidate
-                .as_ref()
-                .is_some_and(|execution| self.can_reuse_prepared_point_get(execution.plan()))
-        {
-            cache_ready.store(true, std::sync::atomic::Ordering::Release);
-        }
-        result
     }
 
     /// Runs one SQL statement (Go `session.ExecuteStmt`): parses, dispatches by

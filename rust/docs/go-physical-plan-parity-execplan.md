@@ -205,6 +205,11 @@ both `oltp_read_only` and `oltp_read_write`.
   direct range-seek policy for that shape, and Rust's shared planner already
   owns PointGet/BatchPointGet and ordinary Limit/TableReader construction.
   The retained SQL tests now exercise that single planner authority.
+- [x] 2026-08-28: removed the disconnected session-local prepared PointGet
+  cache state and cached-execution dispatch branch. `PreparedGeneral` now
+  solely owns the protocol plan-cache hit state, while `PreparedAst` retains
+  only Go's immutable parsed AST plus the planner-built PointGet/general
+  SELECT descriptors handed to that protocol cache.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
