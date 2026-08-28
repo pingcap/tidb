@@ -151,6 +151,8 @@ impl SysVarDef {
     }
 }
 
+use std::borrow::Cow;
+
 mod catalog;
 
 pub use catalog::SYS_VARS;
@@ -215,8 +217,16 @@ fn sys_var_index() -> &'static tidb_util::fast_hash::FxHashMap<&'static str, usi
 /// enabled or disabled.
 #[must_use]
 pub fn effective_default(definition: &SysVarDef) -> String {
+    effective_default_value(definition).into_owned()
+}
+
+/// The process-effective default without allocating for the ordinary static
+/// registry case. Go returns a string header from `SysVar.Value`; Rust callers
+/// that only inspect a value should not have to clone its backing bytes.
+#[must_use]
+pub fn effective_default_value(definition: &SysVarDef) -> Cow<'static, str> {
     tidb_util::sem::effective_sysvar_default(definition.name)
-        .unwrap_or_else(|| definition.value.to_owned())
+        .map_or_else(|| Cow::Borrowed(definition.value), Cow::Owned)
 }
 
 /// Go `SysVar.AllowEmpty`: the empty string means "read the value from the

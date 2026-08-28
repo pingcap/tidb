@@ -35,6 +35,7 @@
 //! Prepared statements and transaction control keep the trait's fail-closed
 //! defaults.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
@@ -280,11 +281,7 @@ impl QuerySession for PipelineServerSession {
     /// This session's own `@@max_allowed_packet`, which is what Go bounds the
     /// packet reader by; see the trait's own doc.
     fn max_allowed_packet(&self) -> Option<usize> {
-        self.session
-            .vars()
-            .get_system("max_allowed_packet")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
+        Some(self.session.max_allowed_packet() as usize)
     }
 
     /// The live status word Go reads with `cc.ctx.Status()` before every
@@ -304,11 +301,11 @@ impl QuerySession for PipelineServerSession {
 
     /// Go `clientConn.initResultEncoder`'s read: this session's
     /// `@@character_set_results`.
-    fn result_charset(&self) -> String {
+    fn result_charset(&self) -> Cow<'_, str> {
         self.session.result_charset()
     }
 
-    fn input_charset(&self) -> String {
+    fn input_charset(&self) -> Cow<'_, str> {
         self.session.input_charset()
     }
 

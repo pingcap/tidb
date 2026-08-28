@@ -1194,8 +1194,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         // statements, and the second one has to go out in the new charset.
         // An unregistered name falls back to Go's unset state, which is what
         // `initResultEncoder` does when the read fails.
+        let result_charset = engine.result_charset();
         let result_encoder =
-            ResultEncoder::new(&engine.result_charset()).unwrap_or_else(|_| ResultEncoder::null());
+            ResultEncoder::new(result_charset.as_ref()).unwrap_or_else(|_| ResultEncoder::null());
         let command = match decode_command(&payload) {
             Ok(command) => command,
             Err(error) => {
@@ -1252,7 +1253,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 // `decode_command` has already trimmed exactly one terminal
                 // NUL for issue 1989. Embedded and repeated NUL bytes remain
                 // parser-visible here.
-                let sql = match decode_client_sql(&bytes, &engine.input_charset()) {
+                let input_charset = engine.input_charset();
+                let sql = match decode_client_sql(&bytes, input_charset.as_ref()) {
                     Ok(sql) => sql,
                     Err(()) => {
                         write_error(
@@ -1410,7 +1412,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             }
             Command::StmtPrepare(bytes) => {
                 commands.stmt_prepare_commands += 1;
-                let sql = match decode_client_sql(&bytes, &engine.input_charset()) {
+                let input_charset = engine.input_charset();
+                let sql = match decode_client_sql(&bytes, input_charset.as_ref()) {
                     Ok(sql) => sql,
                     Err(()) => {
                         write_error(
@@ -1598,7 +1601,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     prepared.remember_parameter_types(statement_id, types);
                 }
                 let input_charset = engine.input_charset();
-                let execute = match execute_packet.decode(&bound_params, &input_charset) {
+                let execute = match execute_packet.decode(&bound_params, input_charset.as_ref()) {
                     Ok(execute) => execute,
                     Err(error) => {
                         write_error(

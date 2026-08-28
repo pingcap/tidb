@@ -14,6 +14,7 @@
 
 //! Bounded concurrent listener and worker-local query-session ownership.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -978,7 +979,9 @@ pub trait QuerySession {
     /// ```
     ///
     /// so the limit a client READS and the limit the server ENFORCES are one
-    /// value, and `SET max_allowed_packet` takes effect on the next packet.
+    /// value. Go refuses SQL `SET SESSION max_allowed_packet`; its internal
+    /// session seeding and inherited GLOBAL copy take effect on the next
+    /// packet.
     /// `None` is Go's `cc.getCtx() == nil`: the config seed
     /// (`PacketIO.SetMaxAllowedPacket(config.GetMaxAllowedPacket())`) stands
     /// until a session exists to ask.
@@ -1115,15 +1118,15 @@ pub trait QuerySession {
     /// Go's `NewResultEncoder("")` state -- the variable unset -- which
     /// leaves metadata and data in their column charset; a session with no
     /// variables reports it and is unchanged.
-    fn result_charset(&self) -> String {
-        String::new()
+    fn result_charset(&self) -> Cow<'_, str> {
+        Cow::Borrowed("")
     }
 
     /// Go `clientConn.initInputEncoder`: this session's
     /// `@@character_set_client`, applied to string-family binary parameters
     /// before they reach expression or storage semantics.
-    fn input_charset(&self) -> String {
-        "utf8mb4".to_owned()
+    fn input_charset(&self) -> Cow<'_, str> {
+        Cow::Borrowed("utf8mb4")
     }
 
     /// Selects this session's current schema (Go `clientConn.useDB`).

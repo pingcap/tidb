@@ -292,6 +292,11 @@ both `oltp_read_only` and `oltp_read_write`.
   Ordinary statements no longer advance the session-variable generation and
   discard the prepared-cache environment when no `SET_VAR` overlay existed;
   a real overlay or SET continues to invalidate the generation-keyed image.
+- [x] 2026-08-28: replaced the protocol hot path's owned sysvar reads with a
+  general borrowed `system_value` view and retained Go's typed
+  `SessionVars.MaxAllowedPacket`. Wait timeout and client/result charset reads
+  no longer clone backing strings; packet and builtin consumers no longer
+  look up and parse max packet size independently.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -1559,6 +1564,43 @@ commands:
     cd ..
     git diff --check
     EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, borrowed protocol sysvars): Go's per-command
+wait-timeout and charset reads copy string headers from `SessionVars.systems`,
+and its packet reader reads the typed `SessionVars.MaxAllowedPacket` field.
+Rust instead resolved the registry, cloned owned strings, and reparsed max
+packet size in both the wire and statement-context paths. `SessionVars` now
+offers a general `Cow`-backed value view that borrows session overrides and
+static defaults, while its max-packet field follows Go's `SetSession` hook
+across construction, inherited GLOBAL state, direct startup seeding, and
+statement restoration. The wire trait carries borrowed values, and both
+cluster and pipeline adapters have deleted their duplicate max-packet lookup.
+The source regression was observed failing before the implementation and
+passing afterward. Max-packet, SET NAMES/collation, server-library compile,
+and release-build checks pass.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`29f4c1b2ad` and the same Go server over one TiKV/PD cluster. Read-only mean
+TPS was 519.61 candidate, 508.66 baseline, and 473.71 Go; all three paired
+candidate legs were positive. Read-write mean TPS was 274.72 candidate,
+239.07 baseline, and 219.48 Go, but the candidate samples decayed from 330.58
+to 219.06 with run order, so no read-write increase is attributed to this
+change. All 18 legs reported zero ignored errors. The post-change profile at
+`/private/tmp/tidb-rust-oltp_read_only-borrowed-protocol-vars.sample.txt`
+contains no `get_system` or allocator descendants below wait timeout,
+result/input charset, or max packet reads; only the expected borrowed registry
+probes remain. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session protocol_hot_path_reads_retained_session_state --lib
+    cargo test -q -p tidb-session max_allowed_packet --lib
+    cargo test -q -p tidb-session set_names_reaches_literal_and_folded_expression_collations --lib
+    cargo test -q -p tidb-server --lib --no-run
+    cargo build -q --release -p tidb-server --bin tidb-server
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+    PROFILE_ONLY=1 PROFILE_TAG=borrowed-protocol-vars EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
 
 Plan revision note (2026-08-27): created after the user confirmed the
 performance-preserving route to full Go parity across plan cache, aggregation,

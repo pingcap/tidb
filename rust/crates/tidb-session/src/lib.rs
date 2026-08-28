@@ -1134,11 +1134,18 @@ impl Session {
     pub fn wait_timeout(&self) -> Duration {
         let seconds = self
             .vars
-            .get_system("wait_timeout")
+            .system_value("wait_timeout")
             .expect("wait_timeout is a registered session variable")
             .parse::<u64>()
             .expect("wait_timeout validation stores unsigned decimal seconds");
         Duration::from_secs(seconds)
+    }
+
+    /// Go's typed `SessionVars.MaxAllowedPacket`, used directly by the packet
+    /// reader and expression builtins.
+    #[must_use]
+    pub const fn max_allowed_packet(&self) -> u64 {
+        self.vars.max_allowed_packet()
     }
 
     /// A session sharing `catalog` with its peers.

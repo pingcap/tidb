@@ -19,6 +19,8 @@
 //! statements that REPORT it must be handed the previous statement's entries --
 //! see [`reports_warnings`].
 
+use std::borrow::Cow;
+
 use tidb_ast::{AdminStmt, ShowInspectionKind, Stmt};
 use tidb_datatype::{Datum, FieldType};
 
@@ -321,19 +323,19 @@ impl Session {
     /// column definition's identifiers and every string cell of a result set
     /// go out in. The empty string is Go's unset state.
     #[must_use]
-    pub fn result_charset(&self) -> String {
+    pub fn result_charset(&self) -> Cow<'_, str> {
         self.vars
-            .get_system("character_set_results")
-            .unwrap_or_default()
+            .system_value("character_set_results")
+            .unwrap_or(Cow::Borrowed(""))
     }
 
     /// Go `clientConn.initInputEncoder`'s read of
     /// `@@character_set_client` for binary protocol string parameters.
     #[must_use]
-    pub fn input_charset(&self) -> String {
+    pub fn input_charset(&self) -> Cow<'_, str> {
         self.vars
-            .get_system("character_set_client")
-            .unwrap_or_else(|_| "utf8mb4".to_owned())
+            .system_value("character_set_client")
+            .unwrap_or(Cow::Borrowed("utf8mb4"))
     }
 
     /// The warning count the OK/EOF packet carries, which Go reads through

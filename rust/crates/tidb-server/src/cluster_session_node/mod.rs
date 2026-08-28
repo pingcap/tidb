@@ -166,6 +166,7 @@
 //! [`StatementSnapshot`]: tidb_exec::cluster_table_storage::StatementSnapshot
 //! [`SessionTransaction`]: tidb_exec::cluster_table_storage::SessionTransaction
 
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -1841,11 +1842,7 @@ impl QuerySession for ClusterServerSession {
     /// This session's own `@@max_allowed_packet`; see the trait's own doc for
     /// why Go rebinds the packet reader from it on every packet.
     fn max_allowed_packet(&self) -> Option<usize> {
-        self.session
-            .vars()
-            .get_system("max_allowed_packet")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
+        Some(self.session.max_allowed_packet() as usize)
     }
 
     fn split_statements(
@@ -1877,11 +1874,11 @@ impl QuerySession for ClusterServerSession {
 
     /// Go `clientConn.initResultEncoder`'s read: this session's
     /// `@@character_set_results`.
-    fn result_charset(&self) -> String {
+    fn result_charset(&self) -> Cow<'_, str> {
         self.session.result_charset()
     }
 
-    fn input_charset(&self) -> String {
+    fn input_charset(&self) -> Cow<'_, str> {
         self.session.input_charset()
     }
 

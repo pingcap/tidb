@@ -43,6 +43,7 @@
 //! while this module keeps Go's typed autocommit status in lockstep with the
 //! normalized variable value.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -753,6 +754,9 @@ pub struct SessionVars {
     /// Go's typed `SessionVars.SQLMode`, maintained by the sql_mode sysvar's
     /// `SetSession` hook and read directly by parser and executor consumers.
     sql_mode: tidb_mysql::SqlMode,
+    /// Go's typed `SessionVars.MaxAllowedPacket`, maintained by the sysvar's
+    /// `SetSession` hook and read directly by wire and builtin consumers.
+    max_allowed_packet: u64,
     /// Bumped by every mutation of `systems`, so a caller can cache what it
     /// PARSES out of the raw text -- chiefly the optimizer's cost environment
     /// -- and re-derive only when a `SET`
@@ -786,6 +790,7 @@ impl Default for SessionVars {
             autocommit: true,
             sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
                 .expect("the compiled default SQL mode is valid"),
+            max_allowed_packet: 64 << 20,
             generation: 0,
             optimizer_fix_control: OptimizerFixControl::default(),
             session_resolved: ResolvedGlobals::default(),
@@ -834,6 +839,7 @@ impl SessionVars {
         let autocommit = Self::autocommit_from_systems(&systems);
         let sql_mode = Self::sql_mode_from_systems(&systems)
             .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
+        let max_allowed_packet = Self::max_allowed_packet_from_systems(&systems)?;
         // Commit all authorities only after the inherited fix-control
         // row has been accepted. A stale/foreign cluster row can therefore
         // refuse the connection without partially reseeding this session.
@@ -842,6 +848,7 @@ impl SessionVars {
         self.optimizer_fix_control = optimizer_fix_control;
         self.autocommit = autocommit;
         self.sql_mode = sql_mode;
+        self.max_allowed_packet = max_allowed_packet;
         self.session_resolved = Self::build_session_image(&self.systems);
         // The wholesale replacement above is a mutation like any other; the
         // parsed-product caches keyed on `generation` must not survive it.
@@ -865,6 +872,14 @@ impl SessionVars {
         )
     }
 
+    fn max_allowed_packet_from_systems(systems: &HashMap<String, String>) -> Result<u64, VarError> {
+        systems
+            .get("max_allowed_packet")
+            .map_or("67108864", String::as_str)
+            .parse::<u64>()
+            .map_err(|error| VarError::ValidationRefused(error.to_string()))
+    }
+
     /// Go `SessionVars.IsAutocommit`, backed by its typed server-status bit.
     #[must_use]
     pub const fn is_autocommit(&self) -> bool {
@@ -875,6 +890,13 @@ impl SessionVars {
     #[must_use]
     pub const fn sql_mode(&self) -> tidb_mysql::SqlMode {
         self.sql_mode
+    }
+
+    /// Go `SessionVars.MaxAllowedPacket`, parsed by the sysvar hook when the
+    /// session copy changes rather than by each consumer.
+    #[must_use]
+    pub const fn max_allowed_packet(&self) -> u64 {
+        self.max_allowed_packet
     }
 
     /// Updates ONE registry-indexed slot of the session image after the
@@ -928,16 +950,19 @@ impl SessionVars {
         self.generation
     }
 
-    pub fn get_system(&self, name: &str) -> Result<String, VarError> {
+    /// Reads a system variable without cloning its bytes when the session owns
+    /// the value or the registry supplies a static default. This is Rust's
+    /// equivalent of Go copying a string header out of `SessionVars.systems`.
+    pub fn system_value(&self, name: &str) -> Result<Cow<'_, str>, VarError> {
         let Some(index) = crate::sysvar::sys_var_index_lookup(name) else {
             return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
         };
         let def = &crate::sysvar::SYS_VARS[index];
         if def.name == "version_comment" {
-            return Ok(self.version_info.version_comment());
+            return Ok(Cow::Owned(self.version_info.version_comment()));
         }
         if def.name == "version" {
-            return Ok(self.version_info.server_version.clone());
+            return Ok(Cow::Borrowed(&self.version_info.server_version));
         }
         // An INSTANCE-scoped variable has no session copy either, and its
         // node-wide value is the only one there is: without this arm a
@@ -946,24 +971,27 @@ impl SessionVars {
         // (`port`, `socket`) reads the same node tier, which is where the
         // startup `set_global_vars` push (Go `variable.SetSysVar`) lives.
         if !def.has_session_scope() {
-            return self.globals.get_by_registry_index(index);
+            return self.globals.get_by_registry_index(index).map(Cow::Owned);
         }
         if let Some(value) = self.session_resolved.values.get(index) {
             if let Some(value) = value.as_ref() {
-                return Ok(value.to_string());
+                return Ok(Cow::Borrowed(value.as_ref()));
             }
             if self.session_resolved.values.len() == crate::sysvar::SYS_VARS.len() {
                 // A full-length image is current by construction -- every
                 // `systems` mutation republishes it before returning.
-                return Ok(crate::sysvar::effective_default(def));
+                return Ok(crate::sysvar::effective_default_value(def));
             }
         }
         let lowered = crate::sysvar::lowered_if_needed(name);
-        Ok(self
-            .systems
-            .get(lowered.as_ref())
-            .cloned()
-            .unwrap_or_else(|| crate::sysvar::effective_default(def)))
+        self.systems.get(lowered.as_ref()).map_or_else(
+            || Ok(crate::sysvar::effective_default_value(def)),
+            |value| Ok(Cow::Borrowed(value.as_str())),
+        )
+    }
+
+    pub fn get_system(&self, name: &str) -> Result<String, VarError> {
+        self.system_value(name).map(Cow::into_owned)
     }
 
     /// Installs the immutable build identity supplied by the server startup.
@@ -1004,8 +1032,10 @@ impl SessionVars {
             return;
         }
         let mut restores_sql_mode = false;
+        let mut restores_max_allowed_packet = false;
         for (key, previous) in snapshot {
             restores_sql_mode |= key == "sql_mode";
+            restores_max_allowed_packet |= key == "max_allowed_packet";
             match previous {
                 Some(value) => {
                     self.session_resolved
@@ -1023,6 +1053,10 @@ impl SessionVars {
         if restores_sql_mode {
             self.sql_mode = Self::sql_mode_from_systems(&self.systems)
                 .expect("a saved SQL mode was validated before it was stored");
+        }
+        if restores_max_allowed_packet {
+            self.max_allowed_packet = Self::max_allowed_packet_from_systems(&self.systems)
+                .expect("a saved max_allowed_packet was validated before it was stored");
         }
         self.refresh_optimizer_fix_control();
     }
@@ -1120,6 +1154,12 @@ impl SessionVars {
         }
         if let Some(parsed) = parsed_sql_mode {
             self.sql_mode = parsed;
+        }
+        if key == "max_allowed_packet" {
+            self.max_allowed_packet = validated
+                .value
+                .parse::<u64>()
+                .expect("max_allowed_packet validation stores unsigned decimal bytes");
         }
         self.generation += 1;
         if let Some(parsed) = parsed_fix_control {
@@ -1311,6 +1351,65 @@ mod tests {
         inherited.seed_from_globals(globals).unwrap();
         assert!(inherited.sql_mode().has_no_unsigned_subtraction_mode());
         assert!(!inherited.sql_mode().has_strict_mode());
+    }
+
+    #[test]
+    fn protocol_hot_path_reads_retained_session_state() {
+        let session = include_str!("lib.rs");
+        let wait_timeout = session
+            .split_once("pub fn wait_timeout(&self)")
+            .expect("session wait-timeout accessor")
+            .1
+            .split_once("/// A session sharing")
+            .expect("end of session wait-timeout accessor")
+            .0;
+        assert!(!wait_timeout.contains("get_system"));
+
+        let warnings = include_str!("warnings.rs");
+        let charsets = warnings
+            .split_once("pub fn result_charset(&self)")
+            .expect("session result-charset accessor")
+            .1
+            .split_once("/// The warning count the OK/EOF packet carries")
+            .expect("end of session charset accessors")
+            .0;
+        assert!(!charsets.contains("get_system"));
+        assert!(warnings.contains("pub fn result_charset(&self) -> Cow<'_, str>"));
+        assert!(warnings.contains("pub fn input_charset(&self) -> Cow<'_, str>"));
+
+        let mut vars = SessionVars::new();
+        assert_eq!(vars.max_allowed_packet(), 64 << 20);
+        assert!(matches!(
+            vars.system_value("character_set_results"),
+            Ok(Cow::Borrowed("utf8mb4"))
+        ));
+
+        let max_restore = vars.snapshot_system("max_allowed_packet");
+        vars.set_system("max_allowed_packet", "2048".to_owned())
+            .unwrap();
+        assert_eq!(vars.max_allowed_packet(), 2048);
+        vars.restore_system(max_restore);
+        assert_eq!(vars.max_allowed_packet(), 64 << 20);
+
+        let globals = GlobalSysvars::new();
+        globals
+            .set("max_allowed_packet", "4096".to_owned())
+            .unwrap();
+        globals.set("wait_timeout", "17".to_owned()).unwrap();
+        globals
+            .set("character_set_results", "latin1".to_owned())
+            .unwrap();
+        let mut inherited = SessionVars::new();
+        inherited.seed_from_globals(globals).unwrap();
+        assert_eq!(inherited.max_allowed_packet(), 4096);
+        assert!(matches!(
+            inherited.system_value("wait_timeout"),
+            Ok(Cow::Borrowed("17"))
+        ));
+        assert!(matches!(
+            inherited.system_value("character_set_results"),
+            Ok(Cow::Borrowed("latin1"))
+        ));
     }
 
     #[test]

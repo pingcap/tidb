@@ -649,12 +649,7 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<usize>().ok())
                 .unwrap_or(tidb_vardef::defaults::DEF_MAX_CHUNK_SIZE as usize),
-            max_allowed_packet: self
-                .vars
-                .get_system("max_allowed_packet")
-                .ok()
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(64 << 20),
+            max_allowed_packet: self.vars.max_allowed_packet(),
             group_concat_max_len: self
                 .vars
                 .get_system("group_concat_max_len")
