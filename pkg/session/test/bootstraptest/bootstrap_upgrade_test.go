@@ -1269,7 +1269,7 @@ func TestUpgradeVersion286OperateViewPrivilege(t *testing.T) {
 	se := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(286 - 1))
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(286-1))
 	require.NoError(t, txn.Commit(context.Background()))
 	revertVersionAndVariables(t, se, 286-1)
 	store.SetOption(session.StoreBootstrappedKey, nil)
