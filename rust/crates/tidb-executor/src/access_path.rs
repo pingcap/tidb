@@ -738,6 +738,10 @@ pub struct HandleSourceExec {
     /// `None` until then. Go's `BatchPointGetExec.values` -- fetched once,
     /// served per `Next`.
     preloaded: Option<Vec<Option<Vec<Datum>>>>,
+    /// Go's `PointGetExecutor` performs one direct record-key `Get`; the
+    /// batch executor uses `BatchGet` even when its retained list happens to
+    /// contain one handle.
+    single_point_get: bool,
     /// Where `_tidb_rowid` sits in the source row, when the schema carries
     /// it. Go's extra handle column reports the record HANDLE rather than any
     /// stored value, so nothing in the decoded row fills this slot and the
@@ -766,6 +770,7 @@ impl HandleSourceExec {
             decode_context,
             output_columns: None,
             extra_handle_slot: None,
+            single_point_get: false,
         }
     }
 
@@ -812,6 +817,7 @@ impl HandleSourceExec {
             ),
             extra_handle_slot: None,
             preloaded: None,
+            single_point_get: false,
         }
     }
 
@@ -848,6 +854,7 @@ impl HandleSourceExec {
             }),
             extra_handle_slot: None,
             preloaded: None,
+            single_point_get: false,
         }
     }
 
@@ -872,6 +879,32 @@ impl HandleSourceExec {
             output_columns: Some(output_columns),
             extra_handle_slot: None,
             preloaded: None,
+            single_point_get: false,
+        }
+    }
+
+    /// Builds Go's `PointGetExecutor`: one retained handle, one direct row
+    /// `Get`, and the physical plan's exact output projection.
+    #[must_use]
+    pub(crate) fn new_point_mapped_with_context(
+        meta: ExecutorMeta,
+        table: KvTable,
+        handle: TableHandle,
+        output_columns: Vec<HandleOutputColumn>,
+        decode_context: crate::kv_table::RowDecodeContext,
+    ) -> Self {
+        Self {
+            meta,
+            table,
+            handles: vec![handle],
+            physical_ids: None,
+            cursor: 0,
+            produced: Rc::new(Cell::new(0)),
+            decode_context,
+            output_columns: Some(output_columns),
+            extra_handle_slot: None,
+            preloaded: None,
+            single_point_get: true,
         }
     }
 
@@ -901,16 +934,28 @@ impl Executor for HandleSourceExec {
         // `BatchGet` before the first `Next`. Prefetch here too: a batched
         // storage call per partition replaces N sequential point reads on
         // the statement's critical path.
-        let rows = self
-            .table
-            .stored_records_batched(
-                &self.handles,
-                self.physical_ids.as_deref(),
-                &self.decode_context,
-            )
-            .map_err(|error| {
-                ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-            })?;
+        let rows = if self.single_point_get {
+            let handle = self
+                .handles
+                .first()
+                .ok_or_else(|| ExecError::unsupported("a point get lost its retained handle"))?;
+            vec![self
+                .table
+                .get_row_by_handle_with_context(handle, &self.decode_context)
+                .map_err(|error| {
+                    ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+                })?]
+        } else {
+            self.table
+                .stored_records_batched(
+                    &self.handles,
+                    self.physical_ids.as_deref(),
+                    &self.decode_context,
+                )
+                .map_err(|error| {
+                    ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+                })?
+        };
         self.preloaded = Some(rows);
         Ok(())
     }
@@ -1024,6 +1069,143 @@ impl Executor for HandleSourceExec {
 /// source, it does not replace the filter), and there is no scanned-row count
 /// to report because nothing is scanned.
 impl crate::table_access::TableAccess for HandleSourceExec {}
+
+/// Go's secondary-unique PointGet/BatchPointGet first resolves retained index
+/// keys to record handles, then delegates the record reads to
+/// [`HandleSourceExec`]. The single form uses two direct Gets; the batch form
+/// uses one index BatchGet followed by one record BatchGet.
+pub(crate) struct UniqueIndexPointSourceExec {
+    meta: ExecutorMeta,
+    table: KvTable,
+    index_id: i64,
+    index_values: Vec<Vec<Datum>>,
+    output_columns: Vec<HandleOutputColumn>,
+    decode_context: crate::kv_table::RowDecodeContext,
+    single_point: bool,
+    source: Option<HandleSourceExec>,
+}
+
+impl UniqueIndexPointSourceExec {
+    #[must_use]
+    pub(crate) fn new(
+        meta: ExecutorMeta,
+        table: KvTable,
+        index_id: i64,
+        index_values: Vec<Vec<Datum>>,
+        output_columns: Vec<HandleOutputColumn>,
+        decode_context: crate::kv_table::RowDecodeContext,
+        single_point: bool,
+    ) -> Self {
+        Self {
+            meta,
+            table,
+            index_id,
+            index_values,
+            output_columns,
+            decode_context,
+            single_point,
+            source: None,
+        }
+    }
+}
+
+impl Executor for UniqueIndexPointSourceExec {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.source = None;
+        let mut handles: Vec<TableHandle> = if self.single_point {
+            let [values] = self.index_values.as_slice() else {
+                return Err(ExecError::unsupported(
+                    "a unique-index PointGet does not retain exactly one key",
+                ));
+            };
+            self.table
+                .lookup_unique(self.index_id, values, self.decode_context.zone())
+                .map_err(|error| {
+                    ExecError::unsupported(format!("unique index lookup failed: {error:?}"))
+                })?
+                .into_iter()
+                .collect()
+        } else {
+            self.table
+                .lookup_unique_batched(
+                    self.index_id,
+                    &self.index_values,
+                    self.decode_context.zone(),
+                )
+                .map_err(|error| {
+                    ExecError::unsupported(format!("unique index batch lookup failed: {error:?}"))
+                })?
+                .into_iter()
+                .flatten()
+                .collect()
+        };
+        let Some(first) = handles.first().cloned() else {
+            return Ok(());
+        };
+        let meta = ExecutorMeta::new(
+            self.meta.schema().clone(),
+            self.meta.id(),
+            self.meta.init_cap(),
+            self.meta.max_chunk_size(),
+        );
+        let mut source = if self.single_point {
+            HandleSourceExec::new_point_mapped_with_context(
+                meta,
+                self.table.clone(),
+                first,
+                self.output_columns.clone(),
+                self.decode_context.clone(),
+            )
+        } else {
+            HandleSourceExec::new_mapped_with_context(
+                meta,
+                self.table.clone(),
+                std::mem::take(&mut handles),
+                self.output_columns.clone(),
+                self.decode_context.clone(),
+            )
+        };
+        source.open()?;
+        self.source = Some(source);
+        Ok(())
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        req.reset();
+        match self.source.as_mut() {
+            Some(source) => source.next(req),
+            None => Ok(()),
+        }
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        if let Some(source) = self.source.as_mut() {
+            source.close()?;
+        }
+        self.source = None;
+        Ok(())
+    }
+
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
+}
 
 /// Walks a set of index ranges in index order, reading each row it finds:
 /// Go's `IndexRangeScan` with the table-row lookup above it, collapsed into

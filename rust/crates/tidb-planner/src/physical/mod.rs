@@ -1343,6 +1343,10 @@ pub struct PhysicalBatchPointGet {
     pub ranges: crate::ranger::types::Ranges,
     /// Parameter-dependent range metadata retained for cache rebuilding.
     pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
+    /// Go `KeepOrder`.
+    pub keep_order: bool,
+    /// Go `Desc`.
+    pub desc: bool,
 }
 
 /// Go `physicalop.PhysicalIndexMergeReader`. Each partial access path owns a
@@ -2378,6 +2382,8 @@ impl PhysicalPlan {
                 index_id: op.index_id,
                 ranges: op.ranges.clone(),
                 range_rebuild: op.range_rebuild.clone(),
+                keep_order: op.keep_order,
+                desc: op.desc,
             }),
             Self::IndexMergeReader(op) => Self::IndexMergeReader(PhysicalIndexMergeReader {
                 base: base_of(&op.base),

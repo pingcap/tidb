@@ -576,6 +576,75 @@ impl KvTable {
         Ok(None)
     }
 
+    /// Resolves several distinct unique-index keys through one storage
+    /// `BatchGet`, preserving the requested key order and returning `None`
+    /// for a missing entry. This is Go `BatchPointGetExec.initialize`'s first
+    /// read; its second read batch-gets the returned record handles.
+    pub(crate) fn lookup_unique_batched(
+        &mut self,
+        index_id: i64,
+        values: &[Vec<Datum>],
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<Option<TableHandle>>, KvTableError> {
+        let Some(index) = self
+            .indexes
+            .iter()
+            .find(|index| index.id == index_id)
+            .cloned()
+        else {
+            return Err(KvTableError::Decode("no such index".to_owned()));
+        };
+        if !index.unique || index.has_prefix() {
+            return Err(KvTableError::Decode(
+                "batch point lookup requires a non-prefix unique index".to_owned(),
+            ));
+        }
+        let physical_ids = self.record_physical_ids();
+        let [physical_id] = physical_ids.as_slice() else {
+            return Err(KvTableError::Decode(
+                "batch unique lookup requires one retained physical table".to_owned(),
+            ));
+        };
+        let mut keys = Vec::with_capacity(values.len());
+        for values in values {
+            if values.len() != index.column_offsets.len() || values.contains(&Datum::Null) {
+                keys.push(None);
+                continue;
+            }
+            let encoded = Encoder::new(self.use_new_collation)
+                .encode_key_in_timezone(zone, values)
+                .map_err(|error| KvTableError::Encode(format!("{error:?}")))?;
+            keys.push(Some(Key::from_bytes(encode_index_seek_key(
+                *physical_id,
+                index.id,
+                &encoded,
+            ))));
+        }
+        let request = keys.iter().flatten().cloned().collect::<Vec<_>>();
+        let entries = if request.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            self.store
+                .batch_get(&request)
+                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
+        };
+        keys.into_iter()
+            .map(|key| {
+                let Some(key) = key else {
+                    return Ok(None);
+                };
+                entries
+                    .get(&key)
+                    .map(|entry| {
+                        decode_handle_in_index_value(entry)
+                            .map(|handle| convert_handle(&handle))
+                            .map_err(|error| KvTableError::Decode(format!("{error:?}")))
+                    })
+                    .transpose()
+            })
+            .collect()
+    }
+
     pub(in crate::kv_table) fn stored_physical_id(
         &mut self,
         handle: &TableHandle,

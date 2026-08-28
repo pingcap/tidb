@@ -268,6 +268,8 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
             vec![index_column],
             vec![tidb_datatype::UNSPECIFIED_LENGTH],
         ))),
+        keep_order: false,
+        desc: false,
     });
     let index_merge = PhysicalPlan::IndexMergeReader(PhysicalIndexMergeReader {
         base: BasePhysicalPlan::with_id(13, "IndexMerge", 0),

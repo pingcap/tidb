@@ -20,7 +20,10 @@
 //! inspect the SQL AST to choose access, aggregation, join, sort, or reader
 //! policy; the AST is used only for client-visible result-column labels.
 
-use crate::access_path::{HandleOutputColumn, IndexRangeSourceExec};
+use crate::access_path::{
+    HandleOutputColumn, HandleSourceExec, IndexRangeSourceExec, UniqueIndexPointSourceExec,
+};
+use crate::batch_point_get::sort_handles_for_keep_order;
 use crate::executor::{Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggExec, StreamAggExec};
 use crate::index_merge_reader::{
@@ -45,7 +48,9 @@ use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 use tidb_planner::find_best_task::LogicalJoinType;
-use tidb_planner::physical::{PhysicalIndexScan, PhysicalPlan, PhysicalTableScan};
+use tidb_planner::physical::{
+    PhysicalBatchPointGet, PhysicalIndexScan, PhysicalPlan, PhysicalPointGet, PhysicalTableScan,
+};
 
 use super::{Catalog, DriverError, SelectMeta, INIT_CAP, MAX_CHUNK_SIZE};
 
@@ -755,11 +760,230 @@ fn table_output_columns(
                 .map(HandleOutputColumn::Stored)
                 .ok_or_else(|| {
                     DriverError::unsupported(
-                        "an index-merge table output is absent from its retained table",
+                        "a retained table output is absent from its physical table",
                     )
                 })
         })
         .collect()
+}
+
+fn point_range_values(
+    range: &tidb_planner::ranger::types::Range,
+) -> Result<&[tidb_datatype::Datum], DriverError> {
+    if range.low_exclude || range.high_exclude || range.low_val != range.high_val {
+        return Err(DriverError::unsupported(
+            "a retained point-get range is not one closed key",
+        ));
+    }
+    Ok(&range.low_val)
+}
+
+fn point_handles(
+    table: &crate::KvTable,
+    ranges: &tidb_planner::ranger::types::Ranges,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<crate::kv_table::TableHandle>, DriverError> {
+    ranges
+        .iter()
+        .map(|range| {
+            let values = point_range_values(range)?;
+            if !table.common_handle_offsets().is_empty() {
+                if values.len() != table.common_handle_offsets().len()
+                    || values.iter().any(tidb_datatype::Datum::is_null)
+                {
+                    return Err(DriverError::unsupported(
+                        "a retained point-get range does not name one common handle",
+                    ));
+                }
+                let encoded = tidb_codec::encode_key_in_timezone(&ctx.session_zone(), values)
+                    .map_err(|_| {
+                        DriverError::unsupported(
+                            "a retained point-get common handle cannot be encoded",
+                        )
+                    })?;
+                let handle = tidb_txnkv::CommonHandle::new(encoded).map_err(|_| {
+                    DriverError::unsupported("a retained point-get common handle is invalid")
+                })?;
+                return Ok(crate::kv_table::TableHandle::Common(
+                    handle.encoded().to_vec(),
+                ));
+            }
+            match values {
+                [tidb_datatype::Datum::Int(value)] => Ok(crate::kv_table::TableHandle::Int(*value)),
+                [tidb_datatype::Datum::UInt(value)] => {
+                    Ok(crate::kv_table::TableHandle::Int(*value as i64))
+                }
+                _ => Err(DriverError::unsupported(
+                    "a retained point-get range does not name one integer handle",
+                )),
+            }
+        })
+        .collect()
+}
+
+fn unique_index_point_values(
+    table: &crate::KvTable,
+    index_id: i64,
+    ranges: &tidb_planner::ranger::types::Ranges,
+    ctx: &crate::StmtContext,
+    skip_null: bool,
+    keep_order: bool,
+    desc: bool,
+) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+    let index = table
+        .plan_indexes()
+        .find(|index| index.id == index_id)
+        .ok_or_else(|| DriverError::unsupported("cached point-get index ID is absent"))?;
+    if !index.unique || index.has_prefix() {
+        return Err(DriverError::unsupported(
+            "a retained index point-get requires a non-prefix unique index",
+        ));
+    }
+    let mut encoded_values = Vec::with_capacity(ranges.len());
+    let mut seen = std::collections::HashSet::with_capacity(ranges.len());
+    let mut kept_null = false;
+    for range in ranges {
+        let values = point_range_values(range)?;
+        if values.len() != index.column_offsets.len() {
+            return Err(DriverError::unsupported(
+                "a retained point-get key has the wrong unique-index width",
+            ));
+        }
+        if values.iter().any(tidb_datatype::Datum::is_null) {
+            if !skip_null && !kept_null {
+                kept_null = true;
+                encoded_values.push((None, values.to_vec()));
+            }
+            continue;
+        }
+        let encoded = tidb_codec::Encoder::new(table.use_new_collation())
+            .encode_key_in_timezone(&ctx.session_zone(), values)
+            .map_err(|_| {
+                DriverError::unsupported("a retained unique point-get key cannot be encoded")
+            })?;
+        if seen.insert(encoded.clone()) {
+            encoded_values.push((Some(encoded), values.to_vec()));
+        }
+    }
+    if keep_order {
+        encoded_values.sort_by(|left, right| {
+            let order = left.0.cmp(&right.0);
+            if desc {
+                order.reverse()
+            } else {
+                order
+            }
+        });
+    }
+    Ok(encoded_values
+        .into_iter()
+        .map(|(_, values)| values)
+        .collect())
+}
+
+fn build_point_get(
+    plan: &PhysicalPlan,
+    point: &PhysicalPointGet,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let table = catalog
+        .kv_table_by_id(point.table_id)
+        .ok_or_else(|| DriverError::unsupported("cached point-get table ID is absent"))?;
+    if table.partition().is_some() {
+        return Err(DriverError::unsupported(
+            "a cached partitioned PointGet lacks its retained physical table ID",
+        ));
+    }
+    let schema = plan_schema(plan)?;
+    let output_columns = table_output_columns(&schema, table)?;
+    let executor_meta = ExecutorMeta::new(schema, i64::from(plan.base().base.id()), 1, 1);
+    if let Some(index_id) = point.index_id {
+        let index_values =
+            unique_index_point_values(table, index_id, &point.ranges, ctx, false, false, false)?;
+        if index_values.len() != 1 {
+            return Err(DriverError::unsupported(
+                "a cached unique-index PointGet does not retain exactly one key",
+            ));
+        }
+        return Ok(Box::new(UniqueIndexPointSourceExec::new(
+            executor_meta,
+            table.clone(),
+            index_id,
+            index_values,
+            output_columns,
+            RowDecodeContext::for_query(ctx),
+            true,
+        )));
+    }
+    let handles = point_handles(table, &point.ranges, ctx)?;
+    if handles.len() != 1 {
+        return Err(DriverError::unsupported(
+            "a cached PointGet does not retain exactly one key",
+        ));
+    }
+    Ok(Box::new(HandleSourceExec::new_point_mapped_with_context(
+        executor_meta,
+        table.clone(),
+        handles.into_iter().next().expect("checked one handle"),
+        output_columns,
+        RowDecodeContext::for_query(ctx),
+    )))
+}
+
+fn build_batch_point_get(
+    plan: &PhysicalPlan,
+    batch: &PhysicalBatchPointGet,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let table = catalog
+        .kv_table_by_id(batch.table_id)
+        .ok_or_else(|| DriverError::unsupported("cached batch-point table ID is absent"))?;
+    if table.partition().is_some() {
+        return Err(DriverError::unsupported(
+            "a cached partitioned BatchPointGet lacks retained physical table IDs",
+        ));
+    }
+    let schema = plan_schema(plan)?;
+    let output_columns = table_output_columns(&schema, table)?;
+    if let Some(index_id) = batch.index_id {
+        let index_values = unique_index_point_values(
+            table,
+            index_id,
+            &batch.ranges,
+            ctx,
+            true,
+            batch.keep_order,
+            batch.desc,
+        )?;
+        return Ok(Box::new(UniqueIndexPointSourceExec::new(
+            meta(plan, schema),
+            table.clone(),
+            index_id,
+            index_values,
+            output_columns,
+            RowDecodeContext::for_query(ctx),
+            false,
+        )));
+    }
+    let mut handles = point_handles(table, &batch.ranges, ctx)?;
+    let mut seen = std::collections::HashSet::with_capacity(handles.len());
+    handles.retain(|handle| seen.insert(handle.clone()));
+    if batch.keep_order {
+        let unsigned_pk_is_handle = table
+            .pk_handle_offset()
+            .and_then(|offset| table.columns.get(offset))
+            .is_some_and(|column| column.field_type.is_unsigned());
+        sort_handles_for_keep_order(&mut handles, None, batch.desc, unsigned_pk_is_handle);
+    }
+    Ok(Box::new(HandleSourceExec::new_mapped_with_context(
+        meta(plan, schema),
+        table.clone(),
+        handles,
+        output_columns,
+        RowDecodeContext::for_query(ctx),
+    )))
 }
 
 fn schema_column_slot(schema: &Schema, wanted: &Column) -> Option<usize> {
@@ -979,6 +1203,8 @@ pub(super) fn build(
         PhysicalPlan::IndexMergeReader(reader) => {
             build_index_merge_reader(plan, reader, catalog, ctx)
         }
+        PhysicalPlan::PointGet(point) => build_point_get(plan, point, catalog, ctx),
+        PhysicalPlan::BatchPointGet(batch) => build_batch_point_get(plan, batch, catalog, ctx),
         PhysicalPlan::Projection(projection) => {
             let child = build(only_child(plan)?, catalog, ctx)?;
             let expressions = resolve_expressions(&projection.exprs, child.schema())?;
@@ -1228,8 +1454,8 @@ mod tests {
     use super::*;
     use tidb_datatype::Datum;
     use tidb_planner::physical::{
-        BasePhysicalPlan, PhysicalIndexMergeReader, PhysicalMaxOneRow, PhysicalSelection,
-        PhysicalTableDual, PhysicalUnionAll,
+        BasePhysicalPlan, PhysicalBatchPointGet, PhysicalIndexMergeReader, PhysicalMaxOneRow,
+        PhysicalPointGet, PhysicalSelection, PhysicalTableDual, PhysicalUnionAll,
     };
 
     fn empty_schema() -> Schema {
@@ -1372,6 +1598,222 @@ mod tests {
         assert_eq!(output.num_rows(), 2);
         assert_eq!(output.get_row(0).get_int64(0), 11);
         assert_eq!(output.get_row(1).get_int64(0), 13);
+    }
+
+    #[test]
+    fn cached_physical_point_get_builds_direct_handle_read() {
+        let mut table =
+            crate::KvTable::new(43, vec![long_column("id", 1), long_column("value", 2)]);
+        table.set_pk_handle_offset(0);
+        for value in 1..=3 {
+            table
+                .insert_row(
+                    &[Datum::Int(value), Datum::Int(value * 10)],
+                    &tidb_expr::NoColumns,
+                )
+                .expect("seed clustered row");
+        }
+        let mut catalog = Catalog::default();
+        catalog.register_kv("point", table);
+
+        let mut base = BasePhysicalPlan::with_id(10, "PointGet", 0);
+        base.base.set_schema(Some(two_long_schema()));
+        let plan = PhysicalPlan::PointGet(PhysicalPointGet {
+            base,
+            table_id: 43,
+            index_id: None,
+            ranges: vec![tidb_planner::ranger::types::Range {
+                low_val: vec![Datum::Int(2)],
+                high_val: vec![Datum::Int(2)],
+                collators: vec![tidb_datatype::Collation::Binary],
+                low_exclude: false,
+                high_exclude: false,
+            }],
+            range_rebuild: None,
+        });
+
+        let ctx = crate::StmtContext::for_query();
+        let mut executor = build(&plan, &catalog, &ctx).expect("build cached point get");
+        assert_eq!(executor.init_cap(), 1);
+        assert_eq!(executor.max_chunk_size(), 1);
+        executor.open().expect("open cached point get");
+        let mut output = executor.new_chunk();
+        executor.next(&mut output).expect("read cached point get");
+        assert_eq!(output.num_rows(), 1);
+        assert_eq!(output.get_row(0).get_int64(0), 2);
+        assert_eq!(output.get_row(0).get_int64(1), 20);
+        executor.next(&mut output).expect("point get eof");
+        assert_eq!(output.num_rows(), 0);
+    }
+
+    #[test]
+    fn cached_physical_point_get_resolves_unique_index_before_common_handle() {
+        let mut table =
+            crate::KvTable::new(46, vec![long_column("id", 1), long_column("value", 2)]);
+        table.set_common_handle_offsets(vec![0, 1]);
+        table
+            .create_index_with_context(
+                crate::kv_table::KvIndex {
+                    id: 8,
+                    name: "value_uidx".to_owned(),
+                    comment: String::new(),
+                    unique: true,
+                    column_offsets: vec![1],
+                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                    visible: true,
+                    global: false,
+                    clustered_primary: false,
+                },
+                &crate::StmtContext::for_query(),
+            )
+            .expect("create unique index");
+        for value in 1..=3 {
+            table
+                .insert_row(
+                    &[Datum::Int(value), Datum::Int(value * 10)],
+                    &tidb_expr::NoColumns,
+                )
+                .expect("seed common-handle row");
+        }
+        let mut catalog = Catalog::default();
+        catalog.register_kv("unique_point", table);
+
+        let mut base = BasePhysicalPlan::with_id(13, "PointGet", 0);
+        base.base.set_schema(Some(two_long_schema()));
+        let plan = PhysicalPlan::PointGet(PhysicalPointGet {
+            base,
+            table_id: 46,
+            index_id: Some(8),
+            ranges: vec![tidb_planner::ranger::types::Range {
+                low_val: vec![Datum::Int(20)],
+                high_val: vec![Datum::Int(20)],
+                collators: vec![tidb_datatype::Collation::Binary],
+                low_exclude: false,
+                high_exclude: false,
+            }],
+            range_rebuild: None,
+        });
+
+        let ctx = crate::StmtContext::for_query();
+        let mut executor = build(&plan, &catalog, &ctx).expect("build unique point get");
+        executor.open().expect("open unique point get");
+        let mut output = executor.new_chunk();
+        executor.next(&mut output).expect("read unique point get");
+        assert_eq!(output.num_rows(), 1);
+        assert_eq!(output.get_row(0).get_int64(0), 2);
+        assert_eq!(output.get_row(0).get_int64(1), 20);
+        executor.next(&mut output).expect("unique point get eof");
+        assert_eq!(output.num_rows(), 0);
+    }
+
+    #[test]
+    fn cached_physical_batch_point_get_deduplicates_and_orders_handles() {
+        let mut table =
+            crate::KvTable::new(44, vec![long_column("id", 1), long_column("value", 2)]);
+        table.set_pk_handle_offset(0);
+        for value in 1..=3 {
+            table
+                .insert_row(
+                    &[Datum::Int(value), Datum::Int(value * 10)],
+                    &tidb_expr::NoColumns,
+                )
+                .expect("seed clustered row");
+        }
+        let mut catalog = Catalog::default();
+        catalog.register_kv("batch", table);
+
+        let mut base = BasePhysicalPlan::with_id(11, "BatchPointGet", 0);
+        base.base.set_schema(Some(two_long_schema()));
+        let point_range = |value| tidb_planner::ranger::types::Range {
+            low_val: vec![Datum::Int(value)],
+            high_val: vec![Datum::Int(value)],
+            collators: vec![tidb_datatype::Collation::Binary],
+            low_exclude: false,
+            high_exclude: false,
+        };
+        let plan = PhysicalPlan::BatchPointGet(PhysicalBatchPointGet {
+            base,
+            table_id: 44,
+            index_id: None,
+            ranges: [3, 1, 3, 9].into_iter().map(point_range).collect(),
+            range_rebuild: None,
+            keep_order: true,
+            desc: false,
+        });
+
+        let ctx = crate::StmtContext::for_query();
+        let mut executor = build(&plan, &catalog, &ctx).expect("build cached batch point get");
+        executor.open().expect("open cached batch point get");
+        let mut output = executor.new_chunk();
+        executor
+            .next(&mut output)
+            .expect("read cached batch point get");
+        assert_eq!(output.num_rows(), 2);
+        assert_eq!(output.get_row(0).get_int64(0), 1);
+        assert_eq!(output.get_row(1).get_int64(0), 3);
+    }
+
+    #[test]
+    fn cached_physical_batch_point_get_uses_batched_unique_index_lookup() {
+        let mut table =
+            crate::KvTable::new(45, vec![long_column("id", 1), long_column("value", 2)]);
+        table.set_pk_handle_offset(0);
+        table
+            .create_index_with_context(
+                crate::kv_table::KvIndex {
+                    id: 8,
+                    name: "value_uidx".to_owned(),
+                    comment: String::new(),
+                    unique: true,
+                    column_offsets: vec![1],
+                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                    visible: true,
+                    global: false,
+                    clustered_primary: false,
+                },
+                &crate::StmtContext::for_query(),
+            )
+            .expect("create unique index");
+        for value in 1..=3 {
+            table
+                .insert_row(
+                    &[Datum::Int(value), Datum::Int(value * 10)],
+                    &tidb_expr::NoColumns,
+                )
+                .expect("seed unique-index row");
+        }
+        let mut catalog = Catalog::default();
+        catalog.register_kv("unique_batch", table);
+
+        let mut base = BasePhysicalPlan::with_id(12, "BatchPointGet", 0);
+        base.base.set_schema(Some(two_long_schema()));
+        let point_range = |value| tidb_planner::ranger::types::Range {
+            low_val: vec![Datum::Int(value)],
+            high_val: vec![Datum::Int(value)],
+            collators: vec![tidb_datatype::Collation::Binary],
+            low_exclude: false,
+            high_exclude: false,
+        };
+        let plan = PhysicalPlan::BatchPointGet(PhysicalBatchPointGet {
+            base,
+            table_id: 45,
+            index_id: Some(8),
+            ranges: [30, 10, 30, 90].into_iter().map(point_range).collect(),
+            range_rebuild: None,
+            keep_order: true,
+            desc: false,
+        });
+
+        let ctx = crate::StmtContext::for_query();
+        let mut executor = build(&plan, &catalog, &ctx).expect("build unique batch point get");
+        executor.open().expect("open unique batch point get");
+        let mut output = executor.new_chunk();
+        executor
+            .next(&mut output)
+            .expect("read unique batch point get");
+        assert_eq!(output.num_rows(), 2);
+        assert_eq!(output.get_row(0).get_int64(0), 1);
+        assert_eq!(output.get_row(1).get_int64(0), 3);
     }
 
     fn index_scan(id: i32, table_id: i64, index_id: i64, low: i64, high: i64) -> PhysicalPlan {

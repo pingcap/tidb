@@ -311,6 +311,18 @@ both `oltp_read_only` and `oltp_read_write`.
   the regression first failed because the direct builder searched only the
   table's stored columns, then passed without retaining a hidden payload
   column or wrapping the scan in an executor-local projection.
+- [x] 2026-08-28: connected retained `PhysicalPointGet` and
+  `PhysicalBatchPointGet` nodes to the direct executor builder. Integer and
+  common handles use Go's direct record `Get` / record `BatchGet` split;
+  secondary unique keys use Go's two-read shape (index Get then record Get,
+  or one index BatchGet then one record BatchGet), with key deduplication and
+  retained keep-order/descending policy. The focused handle PointGet, handle
+  BatchPointGet, and unique BatchPointGet regressions were each observed
+  failing first at the explicit unimplemented constructor and now pass. A
+  common-handle/secondary-unique regression also prevents the unique key from
+  being misparsed as a clustered handle. Partitioned point plans remain an
+  explicit gap until the physical nodes retain Go's per-key physical table
+  identities; they are not guessed by the executor.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
