@@ -119,9 +119,10 @@
 //!
 //! Go rewrites a predicate like `a+1=3` into the indexed virtual generated
 //! column that stores `a+1`, so the index can serve the query
-//! (`pkg/planner/core/rule_generate_column_substitute.go`). The predicate
-//! half of that rule is now ported, in
-//! [`crate::generated_column_substitute`].
+//! (`pkg/planner/core/rule_generate_column_substitute.go`). The wired planner
+//! retains `GcSubstituter` in Go's rule order, but does not yet implement the
+//! transformation; there is no executor-local substitute for that planner
+//! rule.
 //!
 //! This section used to record an obstacle, and it was the wrong one, so read
 //! it as a correction rather than a status: the two expressions to compare
@@ -763,9 +764,8 @@ pub fn build_added_generated_column_with_like_default_escape(
 /// back-quoted names, spaces around binary operations, and no schema or table
 /// qualifier -- which is why `SHOW CREATE TABLE` prints `` (`a` + 1) ``.
 ///
-/// This is also the canonical form the substitution rule compares under, on
-/// BOTH sides -- see [`crate::generated_column_substitute`] for why that is
-/// the whole of its namespace problem.
+/// This is also the canonical form a generated-column substitution rule can
+/// compare against once the wired planner implements `GcSubstituter`.
 pub(crate) fn generated_restore_flags() -> tidb_ast::RestoreFlags {
     tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
         | tidb_ast::RestoreFlags::KEYWORD_LOWERCASE

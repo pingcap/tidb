@@ -386,6 +386,10 @@ both `oltp_read_only` and `oltp_read_write`.
   planner nor physical builder constructed those types; the live index join
   remains `index_lookup_join`, so unsupported variants are no longer exposed
   as apparent runtime coverage.
+- [x] 2026-08-28: deleted the unreachable executor-local generated-column
+  substitution rule. The wired planner owns `GcSubstituter` in its Go-order
+  rule list but currently has no implementation, which is now documented as
+  the actual parity gap instead of being obscured by self-only executor tests.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
