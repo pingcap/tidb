@@ -701,6 +701,14 @@ fn visible_of<'a>(table: &KvTable, row: &'a [tidb_datatype::Datum]) -> &'a [tidb
     &row[..row.len().min(table.visible_column_count())]
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HandleOutputColumn {
+    /// One stored table-column offset.
+    Stored(usize),
+    /// Go's synthetic `_tidb_rowid`, read from the record key.
+    ExtraHandle,
+}
+
 /// Reads rows for an already-known handle list, one per pull: the source
 /// behind Go's `PointGet` (one handle) and `Batch_Point_Get` (several).
 ///
@@ -725,7 +733,7 @@ pub struct HandleSourceExec {
     decode_context: crate::kv_table::RowDecodeContext,
     /// Source-row offsets this complete point plan emits, in result order.
     /// `None` keeps the ordinary visible-row schema for residual root work.
-    output_offsets: Option<Vec<usize>>,
+    output_columns: Option<Vec<HandleOutputColumn>>,
     /// Rows prefetched at `open` through ONE batched read, in handle order;
     /// `None` until then. Go's `BatchPointGetExec.values` -- fetched once,
     /// served per `Next`.
@@ -756,7 +764,7 @@ impl HandleSourceExec {
             preloaded: None,
             produced: Rc::new(Cell::new(0)),
             decode_context,
-            output_offsets: None,
+            output_columns: None,
             extra_handle_slot: None,
         }
     }
@@ -796,7 +804,12 @@ impl HandleSourceExec {
             cursor: 0,
             produced: Rc::new(Cell::new(0)),
             decode_context,
-            output_offsets: Some(output_offsets),
+            output_columns: Some(
+                output_offsets
+                    .into_iter()
+                    .map(HandleOutputColumn::Stored)
+                    .collect(),
+            ),
             extra_handle_slot: None,
             preloaded: None,
         }
@@ -827,7 +840,36 @@ impl HandleSourceExec {
             cursor: 0,
             produced: Rc::new(Cell::new(0)),
             decode_context,
-            output_offsets,
+            output_columns: output_offsets.map(|offsets| {
+                offsets
+                    .into_iter()
+                    .map(HandleOutputColumn::Stored)
+                    .collect()
+            }),
+            extra_handle_slot: None,
+            preloaded: None,
+        }
+    }
+
+    /// Builds the final table reader for a retained physical plan whose
+    /// output can mix stored columns and Go's synthetic `_tidb_rowid`.
+    #[must_use]
+    pub(crate) fn new_mapped_with_context(
+        meta: ExecutorMeta,
+        table: KvTable,
+        handles: Vec<TableHandle>,
+        output_columns: Vec<HandleOutputColumn>,
+        decode_context: crate::kv_table::RowDecodeContext,
+    ) -> Self {
+        Self {
+            meta,
+            table,
+            handles,
+            physical_ids: None,
+            cursor: 0,
+            produced: Rc::new(Cell::new(0)),
+            decode_context,
+            output_columns: Some(output_columns),
             extra_handle_slot: None,
             preloaded: None,
         }
@@ -895,27 +937,43 @@ impl Executor for HandleSourceExec {
                 ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
             })?;
             if let Some(row) = row {
-                let borrowed = visible_of(&self.table, &row);
-                let owned;
-                let visible: &[tidb_datatype::Datum] = match self.extra_handle_slot {
-                    Some(slot) => {
-                        owned = crate::kv_table::insert_extra_handle(
-                            borrowed.to_vec(),
-                            slot,
-                            handle.expect("cursor indexes handles"),
-                        );
-                        &owned
-                    }
-                    None => borrowed,
-                };
-                if let Some(offsets) = &self.output_offsets {
-                    for (output, source) in offsets.iter().copied().enumerate() {
-                        let value = visible.get(source).ok_or_else(|| {
-                            ExecError::unsupported("point-get output column is outside the row")
-                        })?;
-                        req.append_datum(output, value);
+                let visible = visible_of(&self.table, &row);
+                if let Some(columns) = &self.output_columns {
+                    for (output, source) in columns.iter().copied().enumerate() {
+                        match source {
+                            HandleOutputColumn::Stored(source) => {
+                                let value = visible.get(source).ok_or_else(|| {
+                                    ExecError::unsupported(
+                                        "point-get output column is outside the row",
+                                    )
+                                })?;
+                                req.append_datum(output, value);
+                            }
+                            HandleOutputColumn::ExtraHandle => match handle {
+                                Some(TableHandle::Int(value)) => {
+                                    req.append_datum(output, &Datum::Int(*value));
+                                }
+                                _ => {
+                                    return Err(ExecError::unsupported(
+                                        "an extra row handle is not an integer handle",
+                                    ));
+                                }
+                            },
+                        }
                     }
                 } else {
+                    let owned;
+                    let visible: &[tidb_datatype::Datum] = match self.extra_handle_slot {
+                        Some(slot) => {
+                            owned = crate::kv_table::insert_extra_handle(
+                                visible.to_vec(),
+                                slot,
+                                handle.expect("cursor indexes handles"),
+                            );
+                            &owned
+                        }
+                        None => visible,
+                    };
                     for (column, value) in visible.iter().enumerate() {
                         req.append_datum(column, value);
                     }

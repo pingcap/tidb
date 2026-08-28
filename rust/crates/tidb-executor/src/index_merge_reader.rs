@@ -127,11 +127,13 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Collation, Datum, FieldType};
+use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
-use crate::access_path::HandleSourceExec;
+use crate::access_path::{HandleOutputColumn, HandleSourceExec};
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::kv_table::{KvTable, RowDecodeContext, TableHandle};
+use crate::selection::SelectionExec;
 
 /// Go `physicalop.PushedDownLimit`: the `LIMIT count OFFSET offset` the
 /// planner pushed into the index merge, counted in HANDLES rather than rows.
@@ -271,6 +273,121 @@ impl MaterializedHandleSource {
 impl PartialHandleSource for MaterializedHandleSource {
     fn next_batch(&mut self) -> Result<Option<PartialHandleBatch>, ExecError> {
         Ok(self.batches.pop_front())
+    }
+}
+
+/// The physical columns a partial index-merge plan emits for its row handle.
+///
+/// Go's partial workers receive `HandleCols` from the retained reader plan.
+/// Rust derives the same slots from the partial plan schema and table metadata
+/// while building the executor, then keeps that physical decision here.
+pub(crate) enum PartialHandleColumns {
+    /// One integer handle column.
+    Int(usize),
+    /// Every common-handle component, in primary-key order.
+    Common(Vec<usize>),
+}
+
+/// A retained physical partial plan reduced to the handle batches consumed by
+/// Go's index-merge process worker.
+pub(crate) struct ExecutorPartialHandleSource {
+    executor: Box<dyn Executor>,
+    table: KvTable,
+    decode_context: RowDecodeContext,
+    field_types: Vec<FieldType>,
+    handle_columns: PartialHandleColumns,
+    sort_key_columns: Vec<usize>,
+    batch_size: usize,
+}
+
+impl ExecutorPartialHandleSource {
+    /// Wraps one fully-built partial physical tree. Column slots have already
+    /// been resolved against the retained plan schema by the physical builder.
+    #[must_use]
+    pub(crate) fn new(
+        executor: Box<dyn Executor>,
+        table: KvTable,
+        decode_context: RowDecodeContext,
+        handle_columns: PartialHandleColumns,
+        sort_key_columns: Vec<usize>,
+    ) -> Self {
+        let field_types = executor.ret_field_types().to_vec();
+        let batch_size = executor.max_chunk_size().max(1);
+        Self {
+            executor,
+            table,
+            decode_context,
+            field_types,
+            handle_columns,
+            sort_key_columns,
+            batch_size,
+        }
+    }
+
+    fn handle_of(&self, row: tidb_chunk::row::Row<'_>) -> Result<TableHandle, ExecError> {
+        match &self.handle_columns {
+            PartialHandleColumns::Int(column) => {
+                match row.get_datum(*column, &self.field_types[*column]) {
+                    Datum::Int(handle) => Ok(TableHandle::Int(handle)),
+                    Datum::UInt(handle) => Ok(TableHandle::Int(handle as i64)),
+                    other => Err(ExecError::unsupported(format!(
+                        "an index-merge partial plan emitted a non-integer handle: {other:?}"
+                    ))),
+                }
+            }
+            PartialHandleColumns::Common(columns) => {
+                let values = columns
+                    .iter()
+                    .map(|column| row.get_datum(*column, &self.field_types[*column]))
+                    .collect::<Vec<_>>();
+                self.table
+                    .common_handle_from_values(&values, self.decode_context.zone())
+                    .map_err(|error| {
+                        ExecError::unsupported(format!(
+                            "an index-merge common handle failed to encode: {error:?}"
+                        ))
+                    })
+            }
+        }
+    }
+}
+
+impl PartialHandleSource for ExecutorPartialHandleSource {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.executor.open()
+    }
+
+    fn next_batch(&mut self) -> Result<Option<PartialHandleBatch>, ExecError> {
+        let mut chunk = self.executor.new_chunk();
+        chunk.set_required_rows(self.batch_size as isize, self.executor.max_chunk_size());
+        self.executor.next(&mut chunk)?;
+        if chunk.num_rows() == 0 {
+            return Ok(None);
+        }
+
+        let mut handles = Vec::with_capacity(chunk.num_rows());
+        let mut sort_keys = if self.sort_key_columns.is_empty() {
+            Vec::new()
+        } else {
+            Vec::with_capacity(chunk.num_rows())
+        };
+        for row_index in 0..chunk.num_rows() {
+            let row = chunk.get_row(row_index);
+            handles.push(HandleRef::new(self.handle_of(row)?));
+            if !self.sort_key_columns.is_empty() {
+                sort_keys.push(
+                    self.sort_key_columns
+                        .iter()
+                        .map(|column| row.get_datum(*column, &self.field_types[*column]))
+                        .collect(),
+                );
+            }
+        }
+        Ok(Some(PartialHandleBatch { handles, sort_keys }))
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        self.executor.close()
     }
 }
 
@@ -440,6 +557,14 @@ pub struct IndexMergeReaderExec {
     /// a `LIMIT` without `ORDER BY` has no promised membership in MySQL or in
     /// TiDB -- so draining path 0 first is a legal outcome, not a divergence.
     pushed_limit: Option<PushedDownLimit>,
+    /// The retained table reader's exact output mapping. Go builds the final
+    /// table reader from `TablePlan`; the mapping is its pruned schema.
+    output_columns: Option<Vec<HandleOutputColumn>>,
+    /// Selections retained in Go's final `TablePlan`, evaluated after each
+    /// handle batch is read and before rows reach the IndexMerge root.
+    table_filters: Vec<Expression>,
+    /// The statement evaluation context shared by those table filters.
+    filter_context: Option<crate::StmtContext>,
     /// Go `sessionVars.IndexLookupSize`: the handle count per table task.
     batch_size: usize,
     /// Go `workerStarted`.
@@ -447,7 +572,7 @@ pub struct IndexMergeReaderExec {
     /// Go `workCh`/`resultCh` contents, in creation order.
     tasks: VecDeque<Vec<HandleRef>>,
     /// Go's current `indexMergeTableScanWorker` reader over one task.
-    current: Option<HandleSourceExec>,
+    current: Option<Box<dyn Executor>>,
 }
 
 impl IndexMergeReaderExec {
@@ -470,6 +595,9 @@ impl IndexMergeReaderExec {
             is_intersection,
             by_items: Vec::new(),
             pushed_limit: None,
+            output_columns: None,
+            table_filters: Vec::new(),
+            filter_context: None,
             batch_size: 20_000,
             started: false,
             tasks: VecDeque::new(),
@@ -481,6 +609,25 @@ impl IndexMergeReaderExec {
     #[must_use]
     pub fn with_pushed_limit(mut self, limit: PushedDownLimit) -> Self {
         self.pushed_limit = Some(limit);
+        self
+    }
+
+    /// Applies the retained final table plan's output projection.
+    #[must_use]
+    pub(crate) fn with_output_columns(mut self, output_columns: Vec<HandleOutputColumn>) -> Self {
+        self.output_columns = Some(output_columns);
+        self
+    }
+
+    /// Applies selections retained inside the final table-side cop plan.
+    #[must_use]
+    pub(crate) fn with_table_filters(
+        mut self,
+        filters: Vec<Expression>,
+        context: crate::StmtContext,
+    ) -> Self {
+        self.table_filters = filters;
+        self.filter_context = Some(context);
         self
     }
 
@@ -677,19 +824,45 @@ impl IndexMergeReaderExec {
 
     /// Go `buildFinalTableReader` (:854) + `executeTask` (:1988): the reader
     /// over one task's handles.
-    fn build_final_table_reader(&self, handles: Vec<HandleRef>) -> HandleSourceExec {
+    fn build_final_table_reader(&self, handles: Vec<HandleRef>) -> Box<dyn Executor> {
         let meta = ExecutorMeta::new(
             self.meta.schema().clone(),
             self.meta.id(),
             self.meta.init_cap(),
             self.meta.max_chunk_size(),
         );
-        HandleSourceExec::new_with_context(
+        let handles = handles.into_iter().map(|h| h.handle).collect();
+        let source = match &self.output_columns {
+            Some(columns) => HandleSourceExec::new_mapped_with_context(
+                meta.clone(),
+                self.table.clone(),
+                handles,
+                columns.clone(),
+                self.decode_context.clone(),
+            ),
+            None => HandleSourceExec::new_with_context(
+                meta.clone(),
+                self.table.clone(),
+                handles,
+                self.decode_context.clone(),
+            ),
+        };
+        if self.table_filters.is_empty() {
+            return Box::new(source);
+        }
+        let context = self
+            .filter_context
+            .as_ref()
+            .expect("table filters require their statement context")
+            .clone();
+        let memory = context.statement_memory();
+        Box::new(SelectionExec::new(
             meta,
-            self.table.clone(),
-            handles.into_iter().map(|h| h.handle).collect(),
-            self.decode_context.clone(),
-        )
+            self.table_filters.clone(),
+            Box::new(source),
+            context,
+            memory,
+        ))
     }
 }
 

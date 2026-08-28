@@ -293,6 +293,18 @@ both `oltp_read_only` and `oltp_read_write`.
   recurse through those raw trees. The focused conversion test was observed
   failing at the old explicit refusal and passes with intersection/order and
   the final table plan retained.
+- [x] 2026-08-28: connected retained `PhysicalIndexMergeReader` trees to the
+  production executor builder. Each raw table/index partial tree is built
+  recursively once, its exact integer/common-handle and by-item slots are
+  resolved from stable schema IDs, and the existing union/intersection worker
+  feeds the retained final table projection and table-side selections. Raw
+  `PhysicalIndexScan` is now a direct covering-scan constructor instead of an
+  unimplemented leaf. A focused secondary-index overlap test was observed
+  failing first at the explicit IndexMerge constructor refusal and now passes
+  with handle deduplication, residual table filtering, and final row lookup.
+  Partitioned IndexMerge remains explicit pending retention of Go's per-handle
+  physical-partition identity; it is not guessed or routed through an
+  executor-local alternative.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer

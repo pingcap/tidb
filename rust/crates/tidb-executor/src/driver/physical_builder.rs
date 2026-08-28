@@ -20,9 +20,13 @@
 //! inspect the SQL AST to choose access, aggregation, join, sort, or reader
 //! policy; the AST is used only for client-visible result-column labels.
 
-use crate::access_path::IndexRangeSourceExec;
+use crate::access_path::{HandleOutputColumn, IndexRangeSourceExec};
 use crate::executor::{Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggExec, StreamAggExec};
+use crate::index_merge_reader::{
+    ExecutorPartialHandleSource, IndexMergeReaderExec, MergeByItem, PartialHandleColumns,
+    PartialHandleSource, PushedDownLimit as ExecutorPushedDownLimit,
+};
 use crate::join::{JoinExec, JoinKind};
 use crate::kv_table::{IndexRange, RowDecodeContext, TableScanExec};
 use crate::limit::LimitExec;
@@ -425,12 +429,12 @@ fn reader_output_offsets(
     scan: &PhysicalIndexScan,
     table: &crate::KvTable,
 ) -> Result<(Vec<usize>, Option<usize>), DriverError> {
-    let extra_handle =
-        schema.columns.iter().position(|column| {
-            column.orig_name.rsplit('.').next().is_some_and(|name| {
+    let extra_handle = schema.columns.iter().position(|column| {
+        column.id == tidb_model::column::EXTRA_HANDLE_ID
+            || column.orig_name.rsplit('.').next().is_some_and(|name| {
                 name.eq_ignore_ascii_case(super::leaf_demand::EXTRA_HANDLE_NAME)
             })
-        });
+    });
     let offsets = schema
         .columns
         .iter()
@@ -687,6 +691,226 @@ fn join_key_offsets(
         .collect()
 }
 
+fn retained_table_id(plan: &PhysicalPlan) -> Result<i64, DriverError> {
+    fn collect(plan: &PhysicalPlan, table_id: &mut Option<i64>) -> Result<(), DriverError> {
+        let current = match plan {
+            PhysicalPlan::TableScan(scan) => Some(scan.table_id),
+            PhysicalPlan::IndexScan(scan) => Some(scan.table_id),
+            _ => None,
+        };
+        if let Some(current) = current {
+            match *table_id {
+                Some(expected) if expected != current => {
+                    return Err(DriverError::unsupported(
+                        "an index-merge partial tree reads more than one table",
+                    ));
+                }
+                None => *table_id = Some(current),
+                _ => {}
+            }
+        }
+        for child in plan.children() {
+            collect(child, table_id)?;
+        }
+        Ok(())
+    }
+
+    let mut table_id = None;
+    collect(plan, &mut table_id)?;
+    table_id
+        .ok_or_else(|| DriverError::unsupported("an index-merge physical tree has no table access"))
+}
+
+fn table_output_columns(
+    schema: &Schema,
+    table: &crate::KvTable,
+) -> Result<Vec<HandleOutputColumn>, DriverError> {
+    schema
+        .columns
+        .iter()
+        .map(|column| {
+            if column.id == tidb_model::column::EXTRA_HANDLE_ID {
+                return Ok(HandleOutputColumn::ExtraHandle);
+            }
+            table
+                .columns
+                .iter()
+                .position(|stored| stored.id == column.id)
+                .map(HandleOutputColumn::Stored)
+                .ok_or_else(|| {
+                    DriverError::unsupported(
+                        "an index-merge table output is absent from its retained table",
+                    )
+                })
+        })
+        .collect()
+}
+
+fn schema_column_slot(schema: &Schema, wanted: &Column) -> Option<usize> {
+    schema
+        .columns
+        .iter()
+        .position(|column| column.unique_id == wanted.unique_id)
+        .or_else(|| {
+            (wanted.id != 0).then(|| {
+                schema
+                    .columns
+                    .iter()
+                    .position(|column| column.id == wanted.id)
+            })?
+        })
+}
+
+fn partial_handle_columns(
+    schema: &Schema,
+    table: &crate::KvTable,
+) -> Result<PartialHandleColumns, DriverError> {
+    let table_column_slot = |offset: usize| {
+        let id = table.columns.get(offset)?.id;
+        schema.columns.iter().position(|column| column.id == id)
+    };
+    if let Some(offset) = table.pk_handle_offset() {
+        return table_column_slot(offset)
+            .map(PartialHandleColumns::Int)
+            .ok_or_else(|| {
+                DriverError::unsupported(
+                    "an index-merge partial tree does not emit its integer handle",
+                )
+            });
+    }
+    if !table.common_handle_offsets().is_empty() {
+        return table
+            .common_handle_offsets()
+            .iter()
+            .map(|offset| {
+                table_column_slot(*offset).ok_or_else(|| {
+                    DriverError::unsupported(
+                        "an index-merge partial tree does not emit every common-handle column",
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(PartialHandleColumns::Common);
+    }
+    schema
+        .columns
+        .iter()
+        .position(|column| column.id == tidb_model::column::EXTRA_HANDLE_ID)
+        .map(PartialHandleColumns::Int)
+        .ok_or_else(|| {
+            DriverError::unsupported(
+                "an index-merge partial tree over a heap table does not emit _tidb_rowid",
+            )
+        })
+}
+
+fn partial_sort_key_columns(
+    schema: &Schema,
+    by_items: &[tidb_expr::aggregation::ByItems],
+) -> Result<Vec<usize>, DriverError> {
+    by_items
+        .iter()
+        .map(|item| {
+            let Expression::Column(column) = &item.expr else {
+                return Err(DriverError::unsupported(
+                    "an index-merge by-item is not a retained physical column",
+                ));
+            };
+            schema_column_slot(schema, column).ok_or_else(|| {
+                DriverError::unsupported(
+                    "an index-merge by-item is absent from a partial plan output",
+                )
+            })
+        })
+        .collect()
+}
+
+fn build_index_merge_reader(
+    plan: &PhysicalPlan,
+    reader: &tidb_planner::physical::PhysicalIndexMergeReader,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let first = reader.partial_plans_raw.first().ok_or_else(|| {
+        DriverError::unsupported("a cached index-merge reader has no partial plan")
+    })?;
+    let table_id = retained_table_id(first)?;
+    for partial in &reader.partial_plans_raw[1..] {
+        if retained_table_id(partial)? != table_id {
+            return Err(DriverError::unsupported(
+                "cached index-merge partial plans read different tables",
+            ));
+        }
+    }
+    let table_plan = reader.table_plan.as_deref().ok_or_else(|| {
+        DriverError::unsupported("a cached index-merge reader has no final table plan")
+    })?;
+    if retained_table_id(table_plan)? != table_id {
+        return Err(DriverError::unsupported(
+            "a cached index-merge final table plan reads a different table",
+        ));
+    }
+    let table = catalog.kv_table_by_id(table_id).ok_or_else(|| {
+        DriverError::unsupported("cached index-merge table ID is absent from the catalog")
+    })?;
+    if table.record_physical_ids().len() != 1 {
+        return Err(DriverError::unsupported(
+            "cached index merge needs retained physical partition identity",
+        ));
+    }
+
+    let mut partials: Vec<Box<dyn PartialHandleSource>> = Vec::new();
+    for partial in &reader.partial_plans_raw {
+        let partial_schema = plan_schema(partial)?;
+        let handle_columns = partial_handle_columns(&partial_schema, table)?;
+        let sort_key_columns = partial_sort_key_columns(&partial_schema, &reader.by_items)?;
+        let executor = build(partial, catalog, ctx)?;
+        if executor.schema().len() != partial_schema.len() {
+            return Err(DriverError::unsupported(
+                "an index-merge partial executor changed its retained output width",
+            ));
+        }
+        partials.push(Box::new(ExecutorPartialHandleSource::new(
+            executor,
+            table.clone(),
+            RowDecodeContext::for_query(ctx),
+            handle_columns,
+            sort_key_columns,
+        )));
+    }
+
+    let schema = plan_schema(plan)?;
+    let output_columns = table_output_columns(&schema, table)?;
+    let mut table_conditions = Vec::new();
+    collect_reader_conditions(table_plan, &mut table_conditions);
+    let table_filters = resolve_expressions(&table_conditions, &schema)?;
+    let by_items = reader
+        .by_items
+        .iter()
+        .map(|item| MergeByItem {
+            collation: tidb_expr::collation_derive::collation_of_node(&item.expr),
+            desc: item.desc,
+        })
+        .collect();
+    let mut executor = IndexMergeReaderExec::new(
+        meta(plan, schema),
+        table.clone(),
+        RowDecodeContext::for_query(ctx),
+        partials,
+        reader.is_intersection_type,
+    )
+    .with_output_columns(output_columns)
+    .with_table_filters(table_filters, ctx.clone())
+    .with_by_items(by_items);
+    if let Some(limit) = reader.pushed_limit {
+        executor = executor.with_pushed_limit(ExecutorPushedDownLimit {
+            offset: limit.offset,
+            count: limit.count,
+        });
+    }
+    Ok(Box::new(executor))
+}
+
 /// Recursively instantiates one retained physical operator tree.
 pub(super) fn build(
     plan: &PhysicalPlan,
@@ -695,6 +919,17 @@ pub(super) fn build(
 ) -> Result<Box<dyn Executor>, DriverError> {
     match plan {
         PhysicalPlan::TableScan(scan) => build_table_scan(plan, scan, catalog, ctx),
+        PhysicalPlan::IndexScan(scan) => build_index_reader(
+            plan,
+            plan,
+            None,
+            true,
+            scan.keep_order,
+            None,
+            None,
+            catalog,
+            ctx,
+        ),
         PhysicalPlan::TableReader(reader) => {
             build_reader(reader.table_plan.as_deref(), catalog, ctx)
         }
@@ -725,6 +960,9 @@ pub(super) fn build(
             catalog,
             ctx,
         ),
+        PhysicalPlan::IndexMergeReader(reader) => {
+            build_index_merge_reader(plan, reader, catalog, ctx)
+        }
         PhysicalPlan::Projection(projection) => {
             let child = build(only_child(plan)?, catalog, ctx)?;
             let expressions = resolve_expressions(&projection.exprs, child.schema())?;
@@ -972,8 +1210,10 @@ pub(super) fn run_cached_select(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tidb_datatype::Datum;
     use tidb_planner::physical::{
-        BasePhysicalPlan, PhysicalMaxOneRow, PhysicalTableDual, PhysicalUnionAll,
+        BasePhysicalPlan, PhysicalIndexMergeReader, PhysicalMaxOneRow, PhysicalSelection,
+        PhysicalTableDual, PhysicalUnionAll,
     };
 
     fn empty_schema() -> Schema {
@@ -1026,5 +1266,163 @@ mod tests {
             error,
             crate::ExecError::SubqueryReturnsMoreThanOneRow
         ));
+    }
+
+    fn long_column(name: &str, id: i64) -> crate::kv_table::KvColumn {
+        crate::kv_table::KvColumn {
+            name: name.to_owned(),
+            id,
+            field_type: FieldType::new(FieldTypeCode::LongLong),
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            default_value: None,
+            origin_default: None,
+            comment: String::new(),
+            generated: None,
+        }
+    }
+
+    fn two_long_schema() -> Schema {
+        Schema::new(
+            [1, 2]
+                .into_iter()
+                .enumerate()
+                .map(|(index, id)| {
+                    let mut column = Column::new(id, FieldType::new(FieldTypeCode::LongLong));
+                    column.id = id;
+                    column.index = index as i64;
+                    column
+                })
+                .collect(),
+        )
+    }
+
+    fn table_scan(id: i32, table_id: i64, low: i64, high: i64) -> PhysicalPlan {
+        let schema = two_long_schema();
+        let mut base = BasePhysicalPlan::with_id(id, "TableScan", 0);
+        base.base.set_schema(Some(schema.clone()));
+        PhysicalPlan::TableScan(PhysicalTableScan {
+            base,
+            table_id,
+            cost_columns: schema.columns,
+            ranges: vec![tidb_planner::ranger::types::Range {
+                low_val: vec![tidb_datatype::Datum::Int(low)],
+                high_val: vec![tidb_datatype::Datum::Int(high)],
+                collators: vec![tidb_datatype::Collation::Binary],
+                low_exclude: false,
+                high_exclude: false,
+            }],
+            ..PhysicalTableScan::default()
+        })
+    }
+
+    fn index_scan(id: i32, table_id: i64, index_id: i64, low: i64, high: i64) -> PhysicalPlan {
+        let schema = two_long_schema();
+        let mut base = BasePhysicalPlan::with_id(id, "IndexScan", 0);
+        base.base.set_schema(Some(schema.clone()));
+        PhysicalPlan::IndexScan(PhysicalIndexScan {
+            base,
+            table_id,
+            cost_columns: schema.columns,
+            index_id,
+            index_name: "value_idx".to_owned(),
+            ranges: vec![tidb_planner::ranger::types::Range {
+                low_val: vec![tidb_datatype::Datum::Int(low)],
+                high_val: vec![tidb_datatype::Datum::Int(high)],
+                collators: vec![tidb_datatype::Collation::Binary],
+                low_exclude: false,
+                high_exclude: false,
+            }],
+            ..PhysicalIndexScan::default()
+        })
+    }
+
+    fn table_selection(id: i32, child: PhysicalPlan, minimum_value: i64) -> PhysicalPlan {
+        let schema = two_long_schema();
+        let mut value = schema.columns[1].clone();
+        value.index = 1;
+        let condition = Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("gt"),
+            FieldType::new(FieldTypeCode::Tiny),
+            vec![
+                Expression::Column(value),
+                Expression::Constant(tidb_expr::constant::Constant::new(
+                    Datum::Int(minimum_value),
+                    FieldType::new(FieldTypeCode::LongLong),
+                )),
+            ],
+        ));
+        let mut base = BasePhysicalPlan::with_id(id, "Selection", 0);
+        base.base.set_schema(Some(schema));
+        base.set_children(vec![child]);
+        PhysicalPlan::Selection(PhysicalSelection {
+            base,
+            conditions: vec![condition],
+            from_data_source: true,
+        })
+    }
+
+    #[test]
+    fn cached_physical_index_merge_builds_from_retained_partial_trees() {
+        let mut table =
+            crate::KvTable::new(42, vec![long_column("id", 1), long_column("value", 2)]);
+        table.set_pk_handle_offset(0);
+        table
+            .create_index_with_context(
+                crate::kv_table::KvIndex {
+                    id: 7,
+                    name: "value_idx".to_owned(),
+                    comment: String::new(),
+                    unique: false,
+                    column_offsets: vec![1],
+                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                    visible: true,
+                    global: false,
+                    clustered_primary: false,
+                },
+                &crate::StmtContext::for_query(),
+            )
+            .expect("create secondary index");
+        for value in 1..=4 {
+            table
+                .insert_row(
+                    &[Datum::Int(value), Datum::Int(value * 10)],
+                    &tidb_expr::NoColumns,
+                )
+                .expect("seed row");
+        }
+        let mut catalog = Catalog::default();
+        catalog.register_kv("im", table);
+
+        let mut base = BasePhysicalPlan::with_id(13, "IndexMerge", 0);
+        base.base.set_schema(Some(two_long_schema()));
+        let plan = PhysicalPlan::IndexMergeReader(PhysicalIndexMergeReader {
+            base,
+            partial_plans_raw: vec![index_scan(10, 42, 7, 10, 30), index_scan(11, 42, 7, 30, 40)],
+            table_plan: Some(Box::new(table_selection(
+                12,
+                table_scan(14, 42, i64::MIN, i64::MAX),
+                20,
+            ))),
+            ..PhysicalIndexMergeReader::default()
+        });
+
+        let ctx = crate::StmtContext::for_query();
+        let mut executor = build(&plan, &catalog, &ctx).expect("build cached index merge");
+        executor.open().expect("open cached index merge");
+        let mut rows = Vec::new();
+        loop {
+            let mut output = executor.new_chunk();
+            executor.next(&mut output).expect("read cached index merge");
+            if output.num_rows() == 0 {
+                break;
+            }
+            for row in 0..output.num_rows() {
+                rows.push((
+                    output.get_row(row).get_int64(0),
+                    output.get_row(row).get_int64(1),
+                ));
+            }
+        }
+        assert_eq!(rows, vec![(3, 30), (4, 40)]);
     }
 }
