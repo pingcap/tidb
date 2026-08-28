@@ -32,6 +32,13 @@ both `oltp_read_only` and `oltp_read_write`.
 
 ## Progress
 
+- [x] Removed disconnected physical metadata facades for ExchangeSender,
+  ExchangeReceiver, Shuffle, TableSample, Window, and UnionScan. None was a
+  variant of the wired `physical::PhysicalPlan`; their direct-construction
+  tests could pass without exercising planner enumeration, attachment, or
+  execution. Existing source receipts now record the missing operators as
+  explicit gaps instead of claiming facade coverage.
+
 - [x] 2026-08-27: user confirmed the performance-preserving implementation
   order: build the shared plan and lightweight scheduler foundations before
   removing Rust-specific performance rules.

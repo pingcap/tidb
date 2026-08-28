@@ -23,11 +23,10 @@
 //! (`pkg/planner/core/casetest/mpp/testdata/integration_suite`) whose inputs
 //! are whole EXPLAIN statements compared row-by-row. The Rust workspace has
 //! neither a session/executor pair nor MPP join costing or exchange
-//! selection: `tidb-planner` carries only the sender/receiver metadata leaves
-//! (`physical_exchange_sender.rs`, `physical_exchange_receiver.rs`,
-//! ExchangeType labels) with no planner that places them, so these stay
-//! documented gaps. Bodies are EMPTY on purpose — asserting them here would
-//! mean inventing the plans the golden book records.
+//! selection: the wired physical tree has no ExchangeSender or
+//! ExchangeReceiver variants, so these stay documented gaps. Bodies are EMPTY
+//! on purpose — asserting them here would mean inventing the plans the golden
+//! book records.
 
 /// GO PORT of `pkg/planner/core/casetest/mpp/mpp_test.go:31 TestMPPJoin`.
 ///

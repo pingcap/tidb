@@ -17,13 +17,13 @@
 //! * `physical_plan_test.go:677 TestPhysicalPlanMemoryTrace` — the Sort half
 //!   RUNS against [`tidb_planner::physical_sort::PhysicalSortPlan`]; the
 //!   `PhysicalProperty` half is an honest `#[ignore]` gap port.
-//! * `plan_test.go:723 TestCloneFineGrainedShuffleStreamCount` — RUNS
-//!   against the Window/Sort metadata clones.
+//! * `plan_test.go:723 TestCloneFineGrainedShuffleStreamCount` — honest
+//!   `#[ignore]` gap port (the wired physical tree has no Window or MPP
+//!   stream-count state).
 //! * `physical_plan_test.go:843 TestExchangeSenderResolveIndices` — honest
 //!   `#[ignore]` gap port (index resolution unported).
 
 use tidb_planner::physical_sort::{PhysicalSortPlan, SortItem};
-use tidb_planner::physical_window::PhysicalWindowPlan;
 
 /// GO PORT (Sort half) of `pkg/planner/core/physical_plan_test.go:677
 /// TestPhysicalPlanMemoryTrace`.
@@ -58,41 +58,14 @@ fn physical_property_memory_usage_grows_with_mpp_partition_cols() {}
 /// GO PORT of `pkg/planner/core/plan_test.go:723
 /// TestCloneFineGrainedShuffleStreamCount`.
 ///
-/// Go clones a zero `PhysicalWindow` via `window.Clone(nil)`, requires the
-/// same concrete type and equal `TiFlashFineGrainedShuffleStreamCount`, then
-/// sets the count to 8 and repeats; the same four steps run for
-/// `PhysicalSort`. Rust's metadata leaves carry the field as
-/// `stream_count`, and `clone_plan` is the source `Clone` counterpart whose
-/// header documents the field preservation.
+/// Go clones both wired physical Window and Sort operators with stream counts
+/// zero and eight. Rust's wired [`tidb_planner::physical::PhysicalPlan`] has a
+/// Sort variant, but it has neither a Window variant nor Go's inherited
+/// `TiFlashFineGrainedShuffleStreamCount` field. Testing a separate scalar
+/// metadata shell would not exercise planner construction or cloning.
 #[test]
-fn clone_fine_grained_shuffle_stream_count_preserved_on_window_and_sort() {
-    // Window, inherited count zero (Go's zero-value operator).
-    let window = PhysicalWindowPlan::init("row_number() over()", 0, 0);
-    let cloned = window.clone_plan();
-    assert_eq!(window.stream_count(), cloned.stream_count());
-
-    // Window with the count stamped to 8.
-    let window = PhysicalWindowPlan::init("row_number() over()", 0, 8);
-    let cloned = window.clone_plan();
-    assert_eq!(8, window.stream_count());
-    assert_eq!(window.stream_count(), cloned.stream_count());
-
-    // Sort, inherited count zero.
-    let sort = PhysicalSortPlan::init(Vec::new(), false, 0, 0);
-    let cloned = sort.clone_plan();
-    assert_eq!(sort.stream_count(), cloned.stream_count());
-
-    // Sort with the count stamped to 8.
-    let sort = PhysicalSortPlan::init(
-        vec![SortItem::new("a", false)],
-        false,
-        0,
-        8,
-    );
-    let cloned = sort.clone_plan();
-    assert_eq!(8, sort.stream_count());
-    assert_eq!(sort.stream_count(), cloned.stream_count());
-}
+#[ignore = "go-parity-gap: wired PhysicalPlan lacks Window and TiFlashFineGrainedShuffleStreamCount"]
+fn clone_fine_grained_shuffle_stream_count_preserved_on_window_and_sort() {}
 
 /// GO PARITY GAP port of `pkg/planner/core/physical_plan_test.go:843
 /// TestExchangeSenderResolveIndices`.
@@ -102,9 +75,9 @@ fn clone_fine_grained_shuffle_stream_count_preserved_on_window_and_sort() {
 /// `ResolveIndicesItselfWithSchema` against schemas of four and two columns
 /// (`pkg/planner/core/operator/physicalop/physical_exchange_sender.go:145`),
 /// requires the two senders' `HashCols[0].Col.Index` to DIFFER (3 vs 1).
-/// This crate's `physical_exchange_sender` leaf preserves the Init identity
-/// and ExplainInfo branches only — it carries no hash-column index
-/// resolution against a schema — so the aliasing observation cannot run.
+/// This crate's wired physical tree has no ExchangeSender variant or
+/// hash-column index resolution against a schema, so the aliasing observation
+/// cannot run.
 #[test]
 #[ignore = "go-parity-gap: PhysicalExchangeSender.ResolveIndicesItselfWithSchema (physical_exchange_sender.go:145) is unported"]
 fn exchange_sender_resolve_indices_splits_shared_partition_col_indices() {}
