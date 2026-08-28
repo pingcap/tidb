@@ -120,13 +120,23 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 		startTS = e.snapshot
 		isoLevel = kv.SI
 	}
+<<<<<<< HEAD
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
+=======
+	// Full-sampling analyze sorts collected samples by handle before computing
+	// correlation, so this request does not need KeepOrder.
+	storeBatchSize := e.ctx.GetSessionVars().AnalyzeStoreBatchSize
+	enableStoreBatch := storeBatchSize > 0
+>>>>>>> b1daa76b65a (*: batching analyze requests (#69686))
 	kvReq, err := reqBuilder.
 		SetAnalyzeRequest(e.analyzePB, isoLevel).
 		SetStartTS(startTS).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
+		SetStoreBatchSize(storeBatchSize).
+		SetAllowBatchTaskDataMerge(enableStoreBatch).
+		SetExecuteBatchTasksSerially(enableStoreBatch).
 		SetMemTracker(e.memTracker).
 		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
 		SetExplicitRequestSourceType(e.ctx.GetSessionVars().ExplicitRequestSourceType).

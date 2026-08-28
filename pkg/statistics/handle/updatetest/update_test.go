@@ -757,12 +757,18 @@ func TestStatsVariables(t *testing.T) {
 	err = util.UpdateSCtxVarsForStats(sctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, sctx.GetSessionVars().AnalyzeVersion)
+	require.Equal(t, 4, sctx.GetSessionVars().AnalyzeStoreBatchSize)
 	require.Equal(t, false, sctx.GetSessionVars().EnableHistoricalStats)
 	require.Equal(t, string(variable.Dynamic), sctx.GetSessionVars().PartitionPruneMode.Load())
 	require.Equal(t, false, sctx.GetSessionVars().EnableAnalyzeSnapshot)
 	require.Equal(t, true, sctx.GetSessionVars().SkipMissingPartitionStats)
 
+<<<<<<< HEAD
 	tk.MustExec(`set global tidb_analyze_version=1`)
+=======
+	tk.MustExec(`set global tidb_analyze_version=2`)
+	tk.MustExec(`set global tidb_analyze_store_batch_size=7`)
+>>>>>>> b1daa76b65a (*: batching analyze requests (#69686))
 	tk.MustExec(`set global tidb_partition_prune_mode='static'`)
 	tk.MustExec(`set global tidb_enable_historical_stats=1`)
 	tk.MustExec(`set global tidb_enable_analyze_snapshot=1`)
@@ -773,7 +779,12 @@ func TestStatsVariables(t *testing.T) {
 	require.Equal(t, string(variable.Static), pruneMode)
 	err = util.UpdateSCtxVarsForStats(sctx)
 	require.NoError(t, err)
+<<<<<<< HEAD
 	require.Equal(t, 1, sctx.GetSessionVars().AnalyzeVersion)
+=======
+	require.Equal(t, 2, sctx.GetSessionVars().AnalyzeVersion)
+	require.Equal(t, 7, sctx.GetSessionVars().AnalyzeStoreBatchSize)
+>>>>>>> b1daa76b65a (*: batching analyze requests (#69686))
 	require.Equal(t, true, sctx.GetSessionVars().EnableHistoricalStats)
 	require.Equal(t, string(variable.Static), sctx.GetSessionVars().PartitionPruneMode.Load())
 	require.Equal(t, true, sctx.GetSessionVars().EnableAnalyzeSnapshot)
