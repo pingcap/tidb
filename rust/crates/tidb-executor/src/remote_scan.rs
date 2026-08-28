@@ -480,10 +480,11 @@ pub trait PushdownRowStream {
         false
     }
 
-    /// The next decoded columnar batch. Callers use this only after
+    /// The next decoded columnar batch using the executor's current Go
+    /// `Chunk.RequiredRows` demand. Callers use this only after
     /// [`Self::supports_chunks`] returns true; row-only backends keep the
     /// existing [`Self::next_row`] contract.
-    fn next_chunk(&mut self) -> Result<Option<Chunk>, StorageError> {
+    fn next_chunk(&mut self, _required_rows: usize) -> Result<Option<Chunk>, StorageError> {
         Ok(None)
     }
 

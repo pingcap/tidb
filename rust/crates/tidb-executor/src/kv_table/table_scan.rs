@@ -850,9 +850,16 @@ impl KvTable {
         predicates: &[ScanPredicate],
         zone: &SessionTimeZone,
         statement: &PushdownStatementContext,
+        required_rows: usize,
     ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool)>, KvTableError> {
-        let Some(staged) =
-            self.stage_rows_by_handles_filtered(handles, scan_keep, predicates, zone, statement)?
+        let Some(staged) = self.stage_rows_by_handles_filtered(
+            handles,
+            scan_keep,
+            predicates,
+            zone,
+            statement,
+            required_rows,
+        )?
         else {
             return Ok(None);
         };
@@ -876,6 +883,7 @@ impl KvTable {
         predicates: &[ScanPredicate],
         zone: &SessionTimeZone,
         statement: &PushdownStatementContext,
+        required_rows: usize,
     ) -> Result<Option<StagedHandlesLookup>, KvTableError> {
         if handles.is_empty() {
             return Ok(None);
@@ -983,6 +991,7 @@ impl KvTable {
             cursor,
             handle_position,
             appended_handle,
+            required_rows: required_rows.max(1),
         }))
     }
 
@@ -1027,12 +1036,13 @@ impl KvTable {
         // A real coprocessor stream transfers decoded chunks. Drain each
         // chunk once so the stream's row counter and channel are touched once
         // per batch; fakes and row-only backends keep the original contract.
-        if let Some(batch) = staged.cursor.next_chunk_with_handle()? {
+        if let Some(batch) = staged.cursor.next_chunk_with_handle(staged.required_rows)? {
             for row in batch {
                 append_row(row)?;
             }
             loop {
-                let Some(batch) = staged.cursor.next_chunk_with_handle()? else {
+                let Some(batch) = staged.cursor.next_chunk_with_handle(staged.required_rows)?
+                else {
                     break;
                 };
                 if batch.is_empty() {
@@ -1115,7 +1125,10 @@ impl KvTable {
         let mut batches = Vec::new();
         let mut rows = Vec::with_capacity(handles.len());
         loop {
-            let Some(batch) = staged.cursor.next_raw_chunk_with_handle()? else {
+            let Some(batch) = staged
+                .cursor
+                .next_raw_chunk_with_handle(staged.required_rows)?
+            else {
                 break;
             };
             if batch.num_rows() == 0 {
@@ -2401,6 +2414,7 @@ pub struct StagedHandlesLookup {
     cursor: RemoteRowCursor,
     handle_position: usize,
     appended_handle: bool,
+    required_rows: usize,
 }
 
 /// A table-lookup response kept in its decoded columnar form.
@@ -2613,7 +2627,7 @@ impl RemoteRowCursor {
             if self.pending_chunk.is_none() {
                 let next = self
                     .stream
-                    .next_chunk()
+                    .next_chunk(target_rows)
                     .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
                 if output.num_rows() == 0 {
                     if let Some(batch) = next.as_ref() {
@@ -2795,8 +2809,11 @@ impl RemoteRowCursor {
     /// the public lookup result's owned datum vectors and handle association.
     /// `None` means the stream is row-only (or a hand-built cursor lacks wire
     /// type metadata), so callers must use [`Self::next_row_with_handle`].
-    fn next_chunk_with_handle(&mut self) -> Result<Option<Vec<Vec<Datum>>>, KvTableError> {
-        let Some(batch) = self.next_raw_chunk_with_handle()? else {
+    fn next_chunk_with_handle(
+        &mut self,
+        required_rows: usize,
+    ) -> Result<Option<Vec<Vec<Datum>>>, KvTableError> {
+        let Some(batch) = self.next_raw_chunk_with_handle(required_rows)? else {
             return Ok(None);
         };
         // Go's tableWorker iterates the decoded chunk and calls GetDatum on
@@ -2815,13 +2832,16 @@ impl RemoteRowCursor {
     /// chunk.Row equivalent of Go's `exec.Next` result handed to
     /// `tableWorker.executeTask`; the caller decides whether to retain the
     /// chunk or use the compatibility row conversion above.
-    fn next_raw_chunk_with_handle(&mut self) -> Result<Option<Chunk>, KvTableError> {
+    fn next_raw_chunk_with_handle(
+        &mut self,
+        required_rows: usize,
+    ) -> Result<Option<Chunk>, KvTableError> {
         if !self.supports_lookup_chunks() {
             return Ok(None);
         }
         let Some(batch) = self
             .stream
-            .next_chunk()
+            .next_chunk(required_rows.max(1))
             .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
         else {
             self.note_wire_rows();
@@ -2985,7 +3005,7 @@ impl RemoteIndexHandleCursor {
             }
             let Some(batch) = self
                 .inner
-                .next_chunk()
+                .next_chunk(1)
                 .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
             else {
                 self.note_rows();
@@ -2999,16 +3019,14 @@ impl RemoteIndexHandleCursor {
 
     /// Returns one Go `SelectResult.readFromChunk`-shaped handle batch.
     ///
-    /// A typed TiKV response chunk is normally much larger than the
-    /// caller's first `RequiredRows` window. Go reuses that whole chunk when
-    /// the output is empty and more than 80% of the requested rows remain;
-    /// truncating it to the requested window creates extra IndexLookUp table
-    /// tasks and changes cancellation cost without changing rows. When a
-    /// small chunk was already appended, Go leaves a following large chunk
-    /// pending for the next `Next` call; keep that boundary here as well.
+    /// `SelectResponseIter` already applies Go `readFromChunk`'s reuse and
+    /// coalescing rule using this exact `required_rows` value. Extract every
+    /// handle from the one completed decoder batch; applying the rule again
+    /// here would create Rust-only synthetic lookup windows.
     pub fn next_handle_batch(
         &mut self,
         required_rows: usize,
+        max_chunk_size: usize,
     ) -> Result<Option<Vec<TableHandle>>, KvTableError> {
         if required_rows == 0 {
             return Ok(Some(Vec::new()));
@@ -3025,13 +3043,17 @@ impl RemoteIndexHandleCursor {
         }
 
         let mut handles = Vec::with_capacity(required_rows);
-        let reuse_threshold = required_rows.saturating_mul(4) / 5;
-        loop {
-            let loaded_new_chunk = self.pending_chunk.is_none();
-            if loaded_new_chunk {
+        while handles.len() < required_rows {
+            if self.pending_chunk.is_none() {
+                // Go `Chunk.SetRequiredRows` caps the index worker's
+                // remaining task demand at MaxChunkSize before
+                // `SelectResult.Next` reaches `readFromChunk`.
+                let decoder_rows = required_rows
+                    .saturating_sub(handles.len())
+                    .min(max_chunk_size.max(1));
                 let Some(chunk) = self
                     .inner
-                    .next_chunk()
+                    .next_chunk(decoder_rows)
                     .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
                 else {
                     self.note_rows();
@@ -3050,19 +3072,8 @@ impl RemoteIndexHandleCursor {
                 self.pending_chunk_row = 0;
                 continue;
             }
-            // `readFromChunk` returns the already appended output when a new
-            // large response arrives. Leave that response pending for the
-            // next task, exactly as Go's decoder does.
-            if loaded_new_chunk && !handles.is_empty() && remaining > reuse_threshold {
-                break;
-            }
-            let take = if handles.is_empty() && remaining > reuse_threshold {
-                remaining
-            } else {
-                remaining.min(required_rows.saturating_sub(handles.len()))
-            };
             let start = self.pending_chunk_row;
-            let end = start + take;
+            let end = start + remaining;
             let chunk = self
                 .pending_chunk
                 .as_ref()
@@ -3071,14 +3082,8 @@ impl RemoteIndexHandleCursor {
                 let handle = self.handle_from_chunk_row(chunk, row_index)?;
                 handles.push(handle);
             }
-            self.pending_chunk_row = end;
-            if self.pending_chunk_row == chunk.num_rows() {
-                self.pending_chunk = None;
-                self.pending_chunk_row = 0;
-            }
-            if handles.len() >= required_rows {
-                break;
-            }
+            self.pending_chunk = None;
+            self.pending_chunk_row = 0;
         }
         Ok((!handles.is_empty()).then_some(handles))
     }
@@ -4154,7 +4159,7 @@ fn append_partial_remote_chunk(
         let (batch, start) = if let Some((batch, start)) = pending.take() {
             (batch, start)
         } else {
-            let batch = remote.next_chunk().map_err(|error| {
+            let batch = remote.next_chunk(cap).map_err(|error| {
                 ExecError::unsupported(format!("partial aggregate response failed: {error:?}"))
             })?;
             let Some(batch) = batch else {
@@ -4165,16 +4170,12 @@ fn append_partial_remote_chunk(
         if start >= batch.num_rows() {
             continue;
         }
-        let remaining = cap.saturating_sub(req.num_rows());
-        if req.num_rows() == 0
-            && start == 0
-            && batch.num_cols() == req.num_cols()
-            && batch.num_rows() >= cap.saturating_mul(3) / 4
-        {
+        if req.num_rows() == 0 && start == 0 && batch.num_cols() == req.num_cols() {
             let rows = batch.num_rows();
             *req = batch;
             return Ok(Some(rows));
         }
+        let remaining = cap.saturating_sub(req.num_rows());
         let take = (batch.num_rows() - start).min(remaining);
         req.append_range_from(&batch, start, start + take);
         if start + take < batch.num_rows() {
@@ -5003,7 +5004,7 @@ mod remote_cursor_tests {
             true
         }
 
-        fn next_chunk(&mut self) -> Result<Option<Chunk>, StorageError> {
+        fn next_chunk(&mut self, _required_rows: usize) -> Result<Option<Chunk>, StorageError> {
             let chunk = self.chunks.pop_front();
             self.returned += chunk.as_ref().map_or(0, |chunk| chunk.num_rows() as u64);
             Ok(chunk)
@@ -5014,6 +5015,78 @@ mod remote_cursor_tests {
         }
 
         fn close(&mut self) {}
+    }
+
+    struct RequiredRowsChunkStream {
+        chunks: std::collections::VecDeque<Chunk>,
+        requested_rows: std::sync::Arc<std::sync::Mutex<Vec<usize>>>,
+        returned: u64,
+    }
+
+    impl PushdownRowStream for RequiredRowsChunkStream {
+        fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
+            panic!("the clean cursor must use the columnar handoff")
+        }
+
+        fn supports_chunks(&self) -> bool {
+            true
+        }
+
+        fn next_chunk(&mut self, required_rows: usize) -> Result<Option<Chunk>, StorageError> {
+            self.requested_rows
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .push(required_rows);
+            let chunk = self.chunks.pop_front();
+            self.returned += chunk.as_ref().map_or(0, |chunk| chunk.num_rows() as u64);
+            Ok(chunk)
+        }
+
+        fn rows_returned(&self) -> u64 {
+            self.returned
+        }
+
+        fn close(&mut self) {}
+    }
+
+    #[test]
+    fn clean_remote_cursor_forwards_required_rows_to_the_go_chunk_decoder() {
+        let field_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
+        let mut batch = Chunk::new_with_capacity(&field_types, 1);
+        batch.append_int64(0, 7);
+        let requested_rows = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut cursor = RemoteRowCursor {
+            stream: Box::new(RequiredRowsChunkStream {
+                chunks: std::collections::VecDeque::from([batch]),
+                requested_rows: std::sync::Arc::clone(&requested_rows),
+                returned: 0,
+            }),
+            staged: Vec::new().into_iter(),
+            pending_staged: None,
+            pending_remote: None,
+            pending_chunk: None,
+            pending_chunk_row: 0,
+            field_types: Vec::new(),
+            width: 1,
+            handle_index: None,
+            table_id: 0,
+            merge_staged: false,
+            descending: false,
+            noted_rows: 0,
+            predicates_applied: true,
+        };
+        let mut output = Chunk::new_with_capacity(&field_types, 4);
+
+        assert_eq!(
+            cursor.append_clean_chunk(&mut output, 4, false).unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            *requested_rows
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()),
+            vec![4]
+        );
     }
 
     #[test]
@@ -5081,10 +5154,10 @@ mod remote_cursor_tests {
 
         let mut cursor = make_cursor();
         assert_eq!(
-            cursor.next_handle_batch(1).unwrap(),
+            cursor.next_handle_batch(1, 1024).unwrap(),
             Some(vec![TableHandle::Int(42)])
         );
-        assert!(cursor.next_handle_batch(1).unwrap().is_none());
+        assert!(cursor.next_handle_batch(1, 1024).unwrap().is_none());
     }
 
     #[test]
@@ -5113,10 +5186,52 @@ mod remote_cursor_tests {
         // Go's readFromChunk keeps a whole typed response chunk when it is
         // larger than the first RequiredRows request (the 80% reuse rule).
         assert_eq!(
-            cursor.next_handle_batch(1).unwrap(),
+            cursor.next_handle_batch(1, 1024).unwrap(),
             Some(vec![TableHandle::Int(7), TableHandle::Int(8)])
         );
-        assert!(cursor.next_handle_batch(1).unwrap().is_none());
+        assert!(cursor.next_handle_batch(1, 1024).unwrap().is_none());
+    }
+
+    #[test]
+    fn handle_batch_caps_decoder_demand_and_fills_the_lookup_task() {
+        let field_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
+        let mut chunks = std::collections::VecDeque::new();
+        for values in [&[7_i64, 8][..], &[9, 10][..], &[11][..]] {
+            let mut chunk = Chunk::new_with_capacity(&field_types, values.len());
+            for value in values {
+                chunk.append_int64(0, *value);
+            }
+            chunks.push_back(chunk);
+        }
+        let requested_rows = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut cursor = RemoteIndexHandleCursor {
+            inner: Box::new(RequiredRowsChunkStream {
+                chunks,
+                requested_rows: std::sync::Arc::clone(&requested_rows),
+                returned: 0,
+            }),
+            handle_indices: vec![0],
+            projected_indices: None,
+            common_handle: false,
+            zone: tidb_datatype::SessionTimeZone::utc(),
+            use_new_collation: false,
+            noted_rows: 0,
+            handle_is_unsigned: Some(false),
+            handle_field_types: Vec::new(),
+            pending_chunk: None,
+            pending_chunk_row: 0,
+        };
+
+        assert_eq!(
+            cursor.next_handle_batch(5, 2).unwrap(),
+            Some((7..=11).map(TableHandle::Int).collect())
+        );
+        assert_eq!(
+            *requested_rows
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()),
+            vec![2, 2, 1]
+        );
     }
 
     #[test]
@@ -5161,13 +5276,13 @@ mod remote_cursor_tests {
                 .unwrap()
         };
         assert_eq!(
-            cursor.next_handle_batch(1).unwrap(),
+            cursor.next_handle_batch(1, 1024).unwrap(),
             Some(vec![
                 TableHandle::Common(expected("alpha", 7)),
                 TableHandle::Common(expected("beta", 8)),
             ])
         );
-        assert!(cursor.next_handle_batch(1).unwrap().is_none());
+        assert!(cursor.next_handle_batch(1, 1024).unwrap().is_none());
     }
 
     #[test]
@@ -5271,6 +5386,7 @@ mod remote_cursor_tests {
                     &[],
                     &tidb_datatype::SessionTimeZone::utc(),
                     &PushdownStatementContext::default(),
+                    1024,
                 )
                 .unwrap()
                 .is_none(),
@@ -5325,6 +5441,7 @@ mod remote_cursor_tests {
             cursor,
             handle_position: 1,
             appended_handle: true,
+            required_rows: 1024,
         };
         let handles = vec![TableHandle::Int(8), TableHandle::Int(7)];
         let Some(FinishedLookup::Chunk(finished)) =
@@ -5464,16 +5581,20 @@ mod remote_cursor_tests {
     }
 
     #[test]
-    fn partial_remote_chunk_handoff_preserves_remainder_without_row_materialization() {
+    fn partial_remote_chunk_handoff_moves_completed_decoder_batches() {
         let source_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
-        let mut small = Chunk::new_with_capacity(&source_types, 1);
-        small.append_int64(0, 7);
-        let mut large = Chunk::new_with_capacity(&source_types, 5);
-        for value in 8..13 {
-            large.append_int64(0, value);
+        let mut first = Chunk::new_with_capacity(&source_types, 4);
+        for value in 7..11 {
+            first.append_int64(0, value);
+        }
+        let mut second = Chunk::new_with_capacity(&source_types, 2);
+        for value in 11..13 {
+            second.append_int64(0, value);
         }
         let mut stream = ChunkStream {
-            chunks: std::collections::VecDeque::from([small, large]),
+            // These are completed `SelectResponseIter` batches. That decoder
+            // has already coalesced small wire chunks against RequiredRows.
+            chunks: std::collections::VecDeque::from([first, second]),
             returned: 0,
         };
         let mut pending = None;

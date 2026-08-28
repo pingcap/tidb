@@ -111,24 +111,6 @@ const NOT_NULL_FLAG: i32 = 1;
 const PRI_KEY_FLAG: i32 = 2;
 /// Go `charset.CollationBin`, the coprocessor collation of a numeric column.
 const BINARY_COLLATION_ID: i32 = 63;
-/// Go `mysql.TypeLonglong`.
-const MYSQL_TYPE_LONGLONG: i32 = 8;
-/// Go `mysql.TypeLong`.
-const MYSQL_TYPE_LONG: i32 = 3;
-/// Go `mysql.TypeInt24`.
-const MYSQL_TYPE_INT24: i32 = 9;
-/// Go `mysql.TypeShort`.
-const MYSQL_TYPE_SHORT: i32 = 2;
-/// Go `mysql.TypeTiny`.
-const MYSQL_TYPE_TINY: i32 = 1;
-
-/// Keep TiKV's small type chunks behind one decoder pull. Index scans use
-/// Go's MaxChunkSize: IndexLookUp's `readFromChunk`/`extractTaskHandles`
-/// relies on those response boundaries to grow table tasks without splitting
-/// a typed chunk.
-const BATCH_ROWS: usize = 32768;
-const INDEX_BATCH_ROWS: usize = 1024;
-
 /// One coprocessor scan capability for a node's sessions.
 ///
 /// The shared scanner opens a query-local transport only after a connection
@@ -561,16 +543,10 @@ where
             allow_unordered: request.allow_unordered_response,
             desc: request.desc,
             field_types: field_types.clone(),
-            is_index_scan: request.index.is_some(),
             paging_min_size: request.paging_min_size,
             time_zone: request.statement.time_zone.clone(),
             resource_group_name: request.statement.resource_group_name.clone(),
             warnings: request.statement.warnings.clone(),
-        };
-        let batch_rows = if plan.is_index_scan {
-            INDEX_BATCH_ROWS
-        } else {
-            BATCH_ROWS
         };
         let iter = open_scan(&self.factory, plan)
             .map_err(|error| PushdownScannerError::Backend(StorageError::Backend(error)))?;
@@ -579,7 +555,6 @@ where
             pending: None,
             pending_row: 0,
             field_types,
-            batch_rows,
             returned: 0,
             predicates_applied,
         }))
@@ -614,9 +589,6 @@ struct RemoteScanPlan {
     /// separately carries the direction for rows inside each region.
     desc: bool,
     field_types: Vec<FieldType>,
-    /// IndexLookUp's Go decoder receives the normal MaxChunkSize (1024)
-    /// boundary; full table scans retain the larger streaming batches above.
-    is_index_scan: bool,
     /// Optional Go IndexLookUp first-window paging floor for index scans.
     paging_min_size: Option<u64>,
     time_zone: tidb_datatype::SessionTimeZone,
@@ -703,19 +675,18 @@ struct CopRowStream {
     pending: Option<Chunk>,
     pending_row: usize,
     field_types: Vec<FieldType>,
-    batch_rows: usize,
     returned: u64,
     predicates_applied: bool,
 }
 
 impl CopRowStream {
-    fn pull_chunk(&mut self) -> Result<Option<Chunk>, StorageError> {
+    fn pull_chunk(&mut self, required_rows: usize) -> Result<Option<Chunk>, StorageError> {
         loop {
             let Some(iter) = self.iter.as_mut() else {
                 return Ok(None);
             };
             let batch = iter
-                .next_chunk_with_required_rows(self.batch_rows)
+                .next_chunk_with_required_rows(required_rows.max(1))
                 .map_err(|error| StorageError::Backend(error.to_string()))?;
             let Some(batch) = batch else {
                 self.iter = None;
@@ -749,7 +720,7 @@ impl PushdownRowStream for CopRowStream {
                 self.pending = None;
                 self.pending_row = 0;
             }
-            match self.pull_chunk()? {
+            match self.pull_chunk(1)? {
                 Some(batch) => self.pending = Some(batch),
                 None => return Ok(None),
             }
@@ -760,7 +731,7 @@ impl PushdownRowStream for CopRowStream {
         true
     }
 
-    fn next_chunk(&mut self) -> Result<Option<Chunk>, StorageError> {
+    fn next_chunk(&mut self, required_rows: usize) -> Result<Option<Chunk>, StorageError> {
         if let Some(batch) = self.pending.take() {
             let start = self.pending_row;
             self.pending_row = 0;
@@ -779,7 +750,7 @@ impl PushdownRowStream for CopRowStream {
             self.returned += remainder.num_rows() as u64;
             return Ok(Some(remainder));
         }
-        match self.pull_chunk()? {
+        match self.pull_chunk(required_rows)? {
             Some(batch) => {
                 self.returned += batch.num_rows() as u64;
                 Ok(Some(batch))

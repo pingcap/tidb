@@ -1610,9 +1610,12 @@ impl IndexRangeSourceExec {
             && (self.limit.is_none() || (self.filter.is_some() && !self.index_filter));
         if chunked_handle_batch {
             if let Some(remote) = self.remote_index.as_mut() {
-                if let Some(handles) = remote.next_handle_batch(want).map_err(|error| {
-                    ExecError::unsupported(format!("index row failed to decode: {error:?}"))
-                })? {
+                if let Some(handles) = remote
+                    .next_handle_batch(want, self.meta.max_chunk_size())
+                    .map_err(|error| {
+                        ExecError::unsupported(format!("index row failed to decode: {error:?}"))
+                    })?
+                {
                     pulled = true;
                     let extracted = handles.len() as u64;
                     self.batch.extend(handles);
@@ -1977,6 +1980,7 @@ impl IndexRangeSourceExec {
                     &self.pushed,
                     self.decode_context.zone(),
                     &self.statement,
+                    self.meta.max_chunk_size(),
                 )
                 .map_err(|error| {
                     ExecError::unsupported(format!("remote table lookup failed: {error:?}"))
@@ -2014,6 +2018,7 @@ impl IndexRangeSourceExec {
         let worker_pushed = self.pushed.clone();
         let worker_zone = self.decode_context.zone().clone();
         let worker_statement = self.statement.clone();
+        let worker_required_rows = self.meta.max_chunk_size();
         let worker = move || {
             let staged = match worker_table.stage_rows_by_handles_filtered(
                 &worker_handles,
@@ -2021,6 +2026,7 @@ impl IndexRangeSourceExec {
                 &worker_pushed,
                 &worker_zone,
                 &worker_statement,
+                worker_required_rows,
             ) {
                 Ok(staged) => staged,
                 Err(error) => return Err(format!("remote table lookup failed: {error:?}")),
@@ -4243,6 +4249,7 @@ impl IndexJoinLookupExec {
             &predicates,
             self.decode_context.zone(),
             &self.statement,
+            self.meta.max_chunk_size(),
         ) else {
             return Ok(None);
         };

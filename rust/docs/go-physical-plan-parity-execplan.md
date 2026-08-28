@@ -175,6 +175,13 @@ both `oltp_read_only` and `oltp_read_write`.
   reuse/coalescing decision, so every completed exact-width response batch now
   moves into the executor output instead of copying small range responses a
   second time.
+- [x] 2026-08-27: routed each executor's current `RequiredRows` through the
+  coprocessor stream into `SelectResponseIter` and deleted Rust's hardcoded
+  32,768-row table / 1,024-row index decoder sizes. Index lookup now caps each
+  decoder pull at `MaxChunkSize` and loops to fill its growing handle task, as
+  Go's `SetRequiredRows`/`extractTaskHandles` does. The duplicate index-reader
+  80% and partial-aggregate 75% completion policies are gone; completed
+  decoder batches cross both boundaries unchanged.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -493,6 +500,24 @@ both `oltp_read_only` and `oltp_read_write`.
   five `clean_remote_cursor_` tests, release build, and the paired benchmark
   receipt.
 
+- Observation: response sizing still differed before the duplicate
+  table-reader threshold was reached. `CopRowStream` asked the decoder for a
+  fixed 32,768 rows for every table scan and 1,024 for every index scan, then
+  the index-handle cursor and partial-aggregate handoff independently applied
+  their own completion thresholds. Go instead passes the destination
+  executor's `Chunk.RequiredRows` into `selectResult.readFromChunk`; its index
+  worker alone caps each pull at `MaxChunkSize` and repeats pulls until its
+  larger lookup task is full. Making `SelectResponseIter` the sole completion
+  owner removes the fixed large allocation and all three Rust-only sizing
+  policies. The fresh full split measured Rust/Go medians of
+  4,090.00/4,319.74 TPS for simple range (0.947x), 4,513.58/4,634.60 for SUM
+  (0.974x), 3,633.73/3,593.61 for ORDER (1.011x), and
+  2,857.62/2,817.56 for DISTINCT (1.014x), with zero errors.
+  Evidence: fail-before/pass-after
+  `clean_remote_cursor_forwards_required_rows_to_the_go_chunk_decoder`,
+  `handle_batch_caps_decoder_demand_and_fills_the_lookup_task`, the remote and
+  handle cursor suites, release build, and the alternating full-split receipt.
+
 ## Decision Log
 
 - Decision: preserve paired sysbench parity throughout the migration rather
@@ -644,12 +669,17 @@ both `oltp_read_only` and `oltp_read_write`.
   Date/Author: 2026-08-27, Codex.
 
 - Decision: keep one response-size reuse policy at the Go-equivalent decoder
-  boundary and move every completed exact-width batch at the table-reader
-  boundary.
+  boundary, pass the executor's live `RequiredRows` demand to that boundary,
+  and move every completed exact-width batch through table, index-handle, and
+  partial-aggregate consumers unchanged. Index lookup caps each decoder pull
+  at `MaxChunkSize` and loops until its independently sized handle task is
+  full.
   Rationale: `SelectResponseIter` has already decided whether to reuse or
-  coalesce its decoder-owned intermediate chunk. A second executor-local
-  threshold is neither Go behavior nor useful ownership policy; it turns an
-  already completed response into per-cell copy work.
+  coalesce its decoder-owned intermediate chunk. Fixed scan-family batch sizes
+  and second executor-local thresholds are not Go behavior; they either
+  over-allocate before decoding or turn an already completed response into
+  per-cell copy work. The index cap/loop belongs to Go's worker task boundary,
+  not to response decoding.
   Date/Author: 2026-08-27, Codex.
 
 ## Outcomes & Retrospective
@@ -709,7 +739,14 @@ graph produced fresh medians of 4,063.71/4,314.51 TPS (0.942x), zero errors.
 Removing the duplicate table-reader chunk threshold then measured
 4,072.57/4,256.84 TPS (0.957x), zero errors. The remaining simple-range gap is
 now about 4.3%; request construction, response decoding, and query-worker
-wake/scheduling remain the active profile targets.
+wake/scheduling remain the active profile targets. Replacing the hardcoded
+32,768/1,024-row decoder sizes with live `RequiredRows`, deleting the duplicate
+index/partial completion rules, and restoring the index worker's
+`MaxChunkSize` cap/loop produced a fresh full split at simple 0.947x, SUM
+0.974x, ORDER 1.011x, and DISTINCT 1.014x. The simple sample stayed within the
+existing noise band, while the change removes a concrete large-allocation and
+policy-ownership mismatch without regressing the adjacent aggregate/sort
+paths.
 
 ## Context and Orientation
 
