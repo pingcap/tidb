@@ -330,6 +330,11 @@ both `oltp_read_only` and `oltp_read_write`.
   permutation. Its unused per-handle partition source state and narrowing
   tests are gone; only Go's signed/unsigned/common-handle keep-order
   comparator remains, used directly by the physical builder.
+- [x] 2026-08-28: changed the retained prepared unique-secondary PointGet
+  from an index range cursor to Go's direct index-key `Get` followed by the
+  record-key `Get`. The request-shape regression first observed one Get plus
+  one scan and now observes exactly two Gets and no scan. The adjacent second,
+  unreachable copy of the common-handle matcher was deleted.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer

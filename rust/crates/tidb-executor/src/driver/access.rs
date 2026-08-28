@@ -1337,17 +1337,9 @@ pub fn run_prepared_point_get(
                 .range_values
                 .as_deref()
                 .expect("index-prefix arm binds key values");
-            let range = crate::kv_table::IndexRange {
-                low: values.to_vec(),
-                high: values.to_vec(),
-                low_exclusive: false,
-                high_exclusive: false,
-            };
-            let mut cursor = table
-                .index_range_cursor(index_id, &range, ctx.zone())
+            let handle = table
+                .lookup_unique(index_id, values, ctx.zone())
                 .map_err(decode_error)?;
-            let handle = cursor.next_handle().map_err(decode_error)?;
-            drop(cursor);
             match handle {
                 Some(handle) => match table
                     .get_prepared_point_row(&handle, &plan.row_decoder, ctx)
@@ -4014,38 +4006,6 @@ pub(crate) fn try_point_get(
                 .map_err(|e| DriverError::Parse(format!("common handle build failed: {e:?}")))?;
             // A clustered common handle IS the record key, so it prints as
             // a handle plan, not an index one.
-            return Ok(Some(PointGetPin {
-                handle: Some(TableHandle::Common(handle.encoded().to_vec())),
-                index: None,
-            }));
-        }
-    }
-
-    // A clustered common primary key is the record handle itself. Go's
-    // `tryPointGetPlan` accepts it when every handle column is pinned exactly
-    // once; unlike a secondary unique index this remains one storage read.
-    let common_offsets = table.common_handle_offsets();
-    if !common_offsets.is_empty() && common_offsets.len() == pairs.len() {
-        let mut values = Vec::with_capacity(common_offsets.len());
-        for offset in common_offsets {
-            let Some((column_name, _)) = columns.get(*offset) else {
-                values.clear();
-                break;
-            };
-            let Some(pair) = pairs
-                .iter()
-                .find(|pair| pair.column.eq_ignore_ascii_case(column_name))
-            else {
-                values.clear();
-                break;
-            };
-            values.push(pair.value.clone());
-        }
-        if values.len() == common_offsets.len() {
-            let encoded = tidb_codec::encode_key_in_timezone(zone, &values)
-                .map_err(|e| DriverError::Parse(format!("common handle encode failed: {e:?}")))?;
-            let handle = tidb_txnkv::CommonHandle::new(encoded)
-                .map_err(|e| DriverError::Parse(format!("common handle build failed: {e:?}")))?;
             return Ok(Some(PointGetPin {
                 handle: Some(TableHandle::Common(handle.encoded().to_vec())),
                 index: None,

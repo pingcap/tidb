@@ -873,16 +873,23 @@ fn prepared_point_cache_answers_a_unique_secondary_index() {
         &crate::StmtContext::for_query(),
     )
     .unwrap();
-    let got = cached_rows(
-        &plan,
-        &mut catalog,
-        &ctx,
-        &zone,
-        &[
-            Datum::Bytes(b"a1".to_vec()),
-            Datum::Bytes(b"b2".to_vec()),
-            Datum::Int(20),
-        ],
+    let (got, operations) = crate::storage::capture_storage_ops(|| {
+        cached_rows(
+            &plan,
+            &mut catalog,
+            &ctx,
+            &zone,
+            &[
+                Datum::Bytes(b"a1".to_vec()),
+                Datum::Bytes(b"b2".to_vec()),
+                Datum::Int(20),
+            ],
+        )
+    });
+    assert_eq!(
+        (operations.gets, operations.scans),
+        (2, 0),
+        "Go resolves the unique index and record with two direct Gets"
     );
     assert_eq!(got.len(), 1);
     assert_eq!(
