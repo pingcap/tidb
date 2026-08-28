@@ -74,6 +74,8 @@ pub mod ddl_label;
 #[cfg(test)]
 mod tests_ddl_b100_source;
 #[cfg(test)]
+mod tests_ddl_b104_source;
+#[cfg(test)]
 mod tests_ddl_job_submitter_worker_gaps;
 #[cfg(test)]
 mod tests_ddl_masking_policy_ddl_gaps;
