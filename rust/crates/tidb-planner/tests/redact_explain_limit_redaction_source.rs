@@ -24,7 +24,7 @@
 //! `errors.RedactLogMarker`), ON replaces each value with `?` (Go
 //! `errors.RedactLogEnable`). One row family of `TestRedactExplain` — the
 //! root and cop `Limit` operators — is pinned HERE for real, against this
-//! crate's [`tidb_planner::physical_limit::PhysicalLimitPlan::explain_info`]
+//! wired [`tidb_planner::physical::PhysicalLimit::explain_info`]
 //! redaction branches, which are the source `PhysicalLimit.ExplainInfo`
 //! implementation (`pkg/planner/core/operator/physicalop/physical_limit.go:
 //! 126-155`: Disable renders `offset:%v, count:%v`, Marker renders
@@ -32,7 +32,16 @@
 //! else (ranges, projections, selections, TiFlash windows) has no Rust
 //! redaction surface yet and stays documentary.
 
-use tidb_planner::physical_limit::{PhysicalLimitPlan, RedactMode};
+use tidb_planner::physical::{BasePhysicalPlan, PhysicalLimit, RedactMode};
+
+fn limit(offset: u64, count: u64) -> PhysicalLimit {
+    PhysicalLimit {
+        base: BasePhysicalPlan::with_id(1, "Limit", 0),
+        offset,
+        count,
+        ..PhysicalLimit::default()
+    }
+}
 
 /// Rust side of `pkg/planner/core/tests/redact/redact_test.go:23
 /// TestRedactExplain` — the Limit rows of the MARKER and ON arms.
@@ -48,20 +57,20 @@ use tidb_planner::physical_limit::{PhysicalLimitPlan, RedactMode};
 /// `cop[tikv]` prefix comes from the explain driver; the value-bearing tail
 /// is `PhysicalLimit.ExplainInfo` (`pkg/planner/core/operator/physicalop/
 /// physical_limit.go:126-155`), which this crate models as
-/// `PhysicalLimitPlan::explain_info`. The golden root limit carries
+/// the wired `PhysicalLimit::explain_info`. The golden root limit carries
 /// `offset=10, count=10` and the cop-side limit `offset=0, count=20` (the
 /// pushed-down child folds the offset into its count), so both goldens are
 /// pinned verbatim in both redaction modes.
 #[test]
 fn redact_explain_limit_rows_track_marker_and_on_modes() {
     // MARKER arm — redact_test.go:53-58 (tidb_redact_log=MARKER set at :42).
-    let root = PhysicalLimitPlan::init(10, 10, 0);
+    let root = limit(10, 10);
     assert_eq!(
         root.explain_info(RedactMode::Marker),
         "offset:‹10›, count:‹10›",
         "root Limit row under MARKER (redact_test.go:55)"
     );
-    let cop = PhysicalLimitPlan::init(0, 20, 0);
+    let cop = limit(0, 20);
     assert_eq!(
         cop.explain_info(RedactMode::Marker),
         "offset:‹0›, count:‹20›",

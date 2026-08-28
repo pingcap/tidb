@@ -32,6 +32,11 @@ both `oltp_read_only` and `oltp_read_write`.
 
 ## Progress
 
+- [x] Removed duplicate Projection, Limit, Sort, and TopN metadata facades.
+  Their tests now construct the wired `physical::PhysicalPlan` operators;
+  Limit redaction and Sort memory accounting moved onto those real operators,
+  and the wired TopN now retains Go's prefix-column/length fields.
+
 - [x] Removed disconnected physical metadata facades for ExchangeSender,
   ExchangeReceiver, Shuffle, TableSample, Window, and UnionScan. None was a
   variant of the wired `physical::PhysicalPlan`; their direct-construction
@@ -495,6 +500,16 @@ both `oltp_read_only` and `oltp_read_write`.
 - [ ] Run correctness, compatibility, performance, and Ready validation.
 
 ## Surprises & Discoveries
+
+- Observation: the duplicate Sort and TopN metadata facades concealed missing
+  fields on the wired operators. The real Sort did not account for owned order
+  items, and the real TopN discarded Go's prefix-index column and length.
+  A regression compiled unsuccessfully at pre-fix commit `0a37c83991` for
+  exactly those missing members; the same assertions pass on the wired types
+  after the migration.
+  Evidence: `physicalop/physical_sort.go::MemoryUsage`,
+  `physicalop/physical_topn.go::PhysicalTopN`, and
+  `rust/crates/tidb-planner/src/physical/mod.rs`.
 
 - Observation: Go caches a complete `base.Plan` and
   `RebuildPlan4CachedPlan` recursively rebuilds mutable ranges without

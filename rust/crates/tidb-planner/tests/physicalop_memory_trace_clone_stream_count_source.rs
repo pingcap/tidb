@@ -15,7 +15,7 @@
 //! `pkg/planner.part14` ports of physical-operator METADATA invariants:
 //!
 //! * `physical_plan_test.go:677 TestPhysicalPlanMemoryTrace` — the Sort half
-//!   RUNS against [`tidb_planner::physical_sort::PhysicalSortPlan`]; the
+//!   RUNS against the wired [`tidb_planner::physical::PhysicalSort`]; the
 //!   `PhysicalProperty` half is an honest `#[ignore]` gap port.
 //! * `plan_test.go:723 TestCloneFineGrainedShuffleStreamCount` — honest
 //!   `#[ignore]` gap port (the wired physical tree has no Window or MPP
@@ -23,7 +23,8 @@
 //! * `physical_plan_test.go:843 TestExchangeSenderResolveIndices` — honest
 //!   `#[ignore]` gap port (index resolution unported).
 
-use tidb_planner::physical_sort::{PhysicalSortPlan, SortItem};
+use tidb_planner::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
+use tidb_planner::physical_property::SortItem;
 
 /// GO PORT (Sort half) of `pkg/planner/core/physical_plan_test.go:677
 /// TestPhysicalPlanMemoryTrace`.
@@ -31,13 +32,21 @@ use tidb_planner::physical_sort::{PhysicalSortPlan, SortItem};
 /// Go builds a zero `physicalop.PhysicalSort`, records `MemoryUsage()`,
 /// appends one `&util.ByItems{}`, and requires the usage to grow. The same
 /// monotonic contract is documented on
-/// [`tidb_planner::physical_sort::PhysicalSortPlan::memory_usage`]; the
+/// [`tidb_planner::physical::PhysicalSort::memory_usage`]; the
 /// PhysicalProperty half of the Go test is a separate gap port below.
 #[test]
 fn physical_sort_memory_usage_grows_with_each_by_item() {
-    let empty = PhysicalSortPlan::init(Vec::new(), false, 0, 0);
+    let empty = PhysicalPlan::Sort(PhysicalSort {
+        base: BasePhysicalPlan::with_id(1, "Sort", 0),
+        by_items: Vec::new(),
+        is_partial_sort: false,
+    });
     let size = empty.memory_usage();
-    let with_item = PhysicalSortPlan::init(vec![SortItem::new("a", false)], false, 0, 0);
+    let with_item = PhysicalPlan::Sort(PhysicalSort {
+        base: BasePhysicalPlan::with_id(1, "Sort", 0),
+        by_items: vec![SortItem::new(1, false)],
+        is_partial_sort: false,
+    });
     assert!(with_item.memory_usage() > size);
 }
 

@@ -475,6 +475,19 @@ pub struct PhysicalSort {
     pub is_partial_sort: bool,
 }
 
+impl PhysicalSort {
+    /// Go `PhysicalSort.MemoryUsage`: the physical base plus the owned order
+    /// items and the partial-sort flag.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        self.base.base.memory_usage()
+            + std::mem::size_of::<Vec<crate::physical_property::SortItem>>() as i64
+            + (self.by_items.capacity() * std::mem::size_of::<crate::physical_property::SortItem>())
+                as i64
+            + std::mem::size_of::<bool>() as i64
+    }
+}
+
 /// Go `ExhaustPhysicalPlans4LogicalSort` for the root task. A physical Sort
 /// requests an unordered root child and does the work itself; a column-only
 /// NominalSort requests the written order from its child and disappears when
@@ -586,6 +599,83 @@ pub struct PhysicalLimit {
     pub prefix_col: Option<i64>,
     /// Go `PrefixLen`, the prefix length in bytes; 0 when unused.
     pub prefix_len: usize,
+}
+
+/// Redaction modes used by Go physical Limit and TopN explain rendering.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RedactMode {
+    /// `errors.RedactLogDisable`: render actual values.
+    Disable,
+    /// `errors.RedactLogMarker`: wrap values in redaction markers.
+    Marker,
+    /// `errors.RedactLogEnable`: replace values with `?`.
+    Enable,
+    /// An unrecognized mode; Go emits no value portion.
+    Other,
+}
+
+impl PhysicalLimit {
+    fn explained_column(&self, unique_id: i64) -> &str {
+        self.base
+            .base
+            .schema()
+            .and_then(|schema| {
+                schema
+                    .columns
+                    .iter()
+                    .find(|column| column.unique_id == unique_id)
+            })
+            .map(|column| column.orig_name.as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("?")
+    }
+
+    /// Go `PhysicalLimit.ExplainInfo`, rendered from this wired operator's
+    /// typed partition and prefix-column identities.
+    #[must_use]
+    pub fn explain_info(&self, redact: RedactMode) -> String {
+        let mut result = String::new();
+        if !self.partition_by.is_empty() {
+            result.push_str("partition by ");
+            for (index, item) in self.partition_by.iter().enumerate() {
+                if index > 0 {
+                    result.push_str(", ");
+                }
+                result.push_str(self.explained_column(item.col));
+            }
+            result.push_str(", ");
+        }
+        match redact {
+            RedactMode::Disable => {
+                result.push_str(&format!("offset:{}, count:{}", self.offset, self.count));
+                if let Some(prefix_col) = self.prefix_col {
+                    result.push_str(&format!(
+                        ", prefix_col:{}, prefix_len:{}",
+                        self.explained_column(prefix_col),
+                        self.prefix_len
+                    ));
+                }
+            }
+            RedactMode::Marker => {
+                result.push_str(&format!("offset:‹{}›, count:‹{}›", self.offset, self.count));
+                if let Some(prefix_col) = self.prefix_col {
+                    result.push_str(&format!(
+                        ", prefix_col:‹{}›, prefix_len:‹{}›",
+                        self.explained_column(prefix_col),
+                        self.prefix_len
+                    ));
+                }
+            }
+            RedactMode::Enable => {
+                result.push_str("offset:?, count:?");
+                if self.prefix_col.is_some() {
+                    result.push_str(", prefix_col:?, prefix_len:?");
+                }
+            }
+            RedactMode::Other => {}
+        }
+        result
+    }
 }
 
 /// Go `ExhaustPhysicalPlans4LogicalLimit` (`physical_limit.go:53`): a limit
@@ -1485,9 +1575,8 @@ pub fn get_phys_limits(
 }
 
 /// Go `physicalop.PhysicalTopN` (`physical_topn.go:37`), the planning
-/// slice: expression-borne `ByItems`, the K-heap partition order, and the
-/// offset/count pair. `PrefixCol`/`PrefixLen` (partial-order prefix-index
-/// optimization) narrow with ranger, as [`PhysicalLimit`]'s did.
+/// slice: expression-borne `ByItems`, the K-heap partition order, the
+/// offset/count pair, and partial-order prefix-index metadata.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalTopN {
     /// The shared physical base.
@@ -1500,6 +1589,11 @@ pub struct PhysicalTopN {
     pub offset: u64,
     /// Go `Count`.
     pub count: u64,
+    /// Go `PrefixCol`, by `UniqueID`; `None` when partial-order prefix-index
+    /// optimization is unused.
+    pub prefix_col: Option<i64>,
+    /// Go `PrefixLen`, in bytes.
+    pub prefix_len: usize,
 }
 
 /// Go `getPhysTopN` (`physical_topn.go:272`), the core loop: one TopN
@@ -1542,6 +1636,8 @@ pub fn get_phys_topn(
             partition_by: topn.partition_by.clone(),
             offset: topn.offset,
             count: topn.count,
+            prefix_col: None,
+            prefix_len: 0,
         }));
     }
     ret
@@ -2129,7 +2225,10 @@ impl PhysicalPlan {
         let mut total = 0;
         let mut stack = vec![self];
         while let Some(node) = stack.pop() {
-            total += node.base().base.memory_usage();
+            total += match node {
+                Self::Sort(sort) => sort.memory_usage(),
+                _ => node.base().base.memory_usage(),
+            };
             for child in node.children() {
                 stack.push(child);
             }
@@ -2409,6 +2508,8 @@ impl PhysicalPlan {
                 partition_by: op.partition_by.clone(),
                 offset: op.offset,
                 count: op.count,
+                prefix_col: op.prefix_col,
+                prefix_len: op.prefix_len,
             }),
             Self::HashAgg(op) => Self::HashAgg(PhysicalHashAgg {
                 base: base_of(&op.base),

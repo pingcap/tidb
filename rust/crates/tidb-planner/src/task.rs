@@ -1649,6 +1649,8 @@ pub fn attach2_task(
                             partition_by: topn.partition_by.clone(),
                             offset: 0,
                             count: new_count,
+                            prefix_col: topn.prefix_col,
+                            prefix_len: topn.prefix_len,
                         });
                         let Task::Cop(pushed_cop) = attach_plan_to_task(pushed, Task::Cop(cop))
                         else {
