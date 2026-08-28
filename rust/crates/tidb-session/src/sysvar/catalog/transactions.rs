@@ -156,6 +156,8 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
     },
+    // Compatibility surface only: the live Rust DML path does not yet run
+    // Go's table mutation consistency checker when this is enabled.
     SysVarDef {
         name: "tidb_enable_mutation_checker",
         scope: 3,
