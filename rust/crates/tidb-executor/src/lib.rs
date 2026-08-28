@@ -244,6 +244,20 @@ mod tests_executor_failpoint_gaps;
 #[cfg(test)]
 mod tests_executor_pkg_helpers_gaps;
 #[cfg(test)]
+mod tests_deadlocks_table_source;
+#[cfg(test)]
+mod tests_executor_failpoint_b123_gaps;
+#[cfg(test)]
+mod tests_executor_pkg_source;
+#[cfg(test)]
+mod tests_explain_analyze_gaps;
+#[cfg(test)]
+mod tests_explain_for_gaps;
+#[cfg(test)]
+mod tests_issue21441_union_all_source;
+#[cfg(test)]
+mod tests_required_rows_source;
+#[cfg(test)]
 mod tests_index_join_cte_build_cleanup_gaps;
 #[cfg(test)]
 mod tests_parallel_apply_sql_source;
