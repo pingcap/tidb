@@ -19,6 +19,26 @@
 use crate::tests_support::row_text;
 use crate::Session;
 
+#[test]
+fn unchanged_session_reuses_the_prepared_plan_cache_environment() {
+    let mut session = Session::new();
+    let first = session.prepared_plan_cache_environment();
+    let second = session.prepared_plan_cache_environment();
+    assert!(std::sync::Arc::ptr_eq(&first, &second));
+
+    session.run("SET time_zone = '+00:00'").unwrap();
+    let changed = session.prepared_plan_cache_environment();
+    assert!(!std::sync::Arc::ptr_eq(&second, &changed));
+    assert!(std::sync::Arc::ptr_eq(
+        &changed,
+        &session.prepared_plan_cache_environment()
+    ));
+
+    session.run("BEGIN").unwrap();
+    let transaction = session.prepared_plan_cache_environment();
+    assert!(!std::sync::Arc::ptr_eq(&changed, &transaction));
+}
+
 fn cache_flag(session: &mut Session) -> String {
     row_text(session.run("SELECT @@last_plan_from_cache"))[0][0].clone()
 }

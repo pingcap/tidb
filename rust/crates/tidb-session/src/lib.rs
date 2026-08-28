@@ -508,6 +508,8 @@ pub struct Session {
         std::cell::RefCell<Option<std::rc::Rc<crate::stmt_ctx::StatementVarSnapshot>>>,
     cost_env_cache:
         std::cell::RefCell<Option<(u64, tidb_planner::find_best_task::coster::CostEnv)>>,
+    prepared_plan_cache_environment_cache:
+        std::cell::RefCell<Option<crate::prepared_ast::PreparedPlanCacheEnvironmentCache>>,
     /// Go `SessionVars.LastTxnInfo` (`pkg/sessionctx/variable/session.go:1467`):
     /// client-go's `TxnInfo` JSON for the last transaction that ACTIVATED --
     /// full (with `commit_ts`) after a commit, start-only otherwise, and
@@ -683,6 +685,7 @@ impl Default for Session {
             scanner_sql_mode_cache: std::cell::Cell::new(None),
             statement_var_cache: std::cell::RefCell::new(None),
             cost_env_cache: std::cell::RefCell::new(None),
+            prepared_plan_cache_environment_cache: std::cell::RefCell::new(None),
             last_txn_info: std::cell::RefCell::new(String::new()),
             published_last_insert_id: Arc::default(),
             retry_auto_ids: Arc::default(),

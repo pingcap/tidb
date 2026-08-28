@@ -67,3 +67,15 @@ fn cached_select_hit_rebinds_the_retained_ast_in_place() {
     assert!(planner.contains("bind_prepared_select_in_place(&mut self.select, values)"));
     assert!(!access.contains("select: tidb_ast::SelectStmt,\n    decision:"));
 }
+
+#[test]
+fn cached_select_key_reuses_the_typed_session_environment() {
+    let source = include_str!("../../tidb-session/src/prepared_ast.rs");
+    let binder = source
+        .split_once("pub fn bind_cached_prepared_select(")
+        .expect("prepared SELECT cache binder")
+        .1;
+
+    assert!(binder.contains("self.prepared_plan_cache_environment()"));
+    assert!(!binder.contains("PreparedPlanCacheEnvironment::new("));
+}

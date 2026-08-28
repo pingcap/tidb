@@ -39,6 +39,14 @@ pub struct PreparedAst {
     select_plan: Option<Arc<PreparedSelectPlan>>,
 }
 
+pub(crate) struct PreparedPlanCacheEnvironmentCache {
+    vars_generation: u64,
+    blacklist_generation: u64,
+    in_transaction: bool,
+    autocommit: bool,
+    environment: Arc<tidb_executor::PreparedPlanCacheEnvironment>,
+}
+
 impl PreparedAst {
     pub(crate) fn from_parsed(
         statement: Stmt,
@@ -97,6 +105,61 @@ impl PreparedAst {
 }
 
 impl Session {
+    pub(crate) fn prepared_plan_cache_environment(
+        &self,
+    ) -> Arc<tidb_executor::PreparedPlanCacheEnvironment> {
+        let vars_generation = self.vars.generation();
+        let blacklist_generation = self.pushdown_blacklists.generation();
+        let in_transaction = self.in_transaction();
+        let autocommit = self.is_autocommit();
+        if let Some(cached) = self.prepared_plan_cache_environment_cache.borrow().as_ref() {
+            if cached.vars_generation == vars_generation
+                && cached.blacklist_generation == blacklist_generation
+                && cached.in_transaction == in_transaction
+                && cached.autocommit == autocommit
+            {
+                return Arc::clone(&cached.environment);
+            }
+        }
+        let environment = Arc::new(
+            tidb_executor::PreparedPlanCacheEnvironment::new(
+                self.vars.get_system("sql_mode").unwrap_or_default(),
+                self.vars.get_system("time_zone").unwrap_or_default(),
+                blacklist_generation,
+            )
+            .with_session_state(
+                self.vars
+                    .get_system("character_set_connection")
+                    .unwrap_or_default(),
+                self.vars
+                    .get_system("collation_connection")
+                    .unwrap_or_default(),
+                self.vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+                    .unwrap_or_default(),
+                self.vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES)
+                    .unwrap_or_default(),
+                self.vars.get_system("sql_select_limit").unwrap_or_default(),
+                in_transaction,
+                autocommit,
+                self.vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_INVALIDATION_ON_FRESH_STATS)
+                    .as_deref()
+                    != Ok("OFF"),
+            ),
+        );
+        *self.prepared_plan_cache_environment_cache.borrow_mut() =
+            Some(PreparedPlanCacheEnvironmentCache {
+                vars_generation,
+                blacklist_generation,
+                in_transaction,
+                autocommit,
+                environment: Arc::clone(&environment),
+            });
+        environment
+    }
+
     /// Parses and retains the statement under this session's current SQL mode.
     pub fn prepare_ast(&self, sql: &str) -> Result<PreparedAst, DriverError> {
         let statement = self.parse_statement(sql)?;
@@ -229,32 +292,7 @@ impl Session {
         {
             return None;
         }
-        let environment = tidb_executor::PreparedPlanCacheEnvironment::new(
-            self.vars.get_system("sql_mode").unwrap_or_default(),
-            self.vars.get_system("time_zone").unwrap_or_default(),
-            self.pushdown_blacklists.generation(),
-        )
-        .with_session_state(
-            self.vars
-                .get_system("character_set_connection")
-                .unwrap_or_default(),
-            self.vars
-                .get_system("collation_connection")
-                .unwrap_or_default(),
-            self.vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
-                .unwrap_or_default(),
-            self.vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES)
-                .unwrap_or_default(),
-            self.vars.get_system("sql_select_limit").unwrap_or_default(),
-            self.in_transaction(),
-            self.is_autocommit(),
-            self.vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_INVALIDATION_ON_FRESH_STATS)
-                .as_deref()
-                != Ok("OFF"),
-        );
+        let environment = self.prepared_plan_cache_environment();
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(execution) =

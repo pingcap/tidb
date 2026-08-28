@@ -251,6 +251,10 @@ both `oltp_read_only` and `oltp_read_write`.
   the separately owned bound `SelectStmt` and lowering receipt were removed
   from `PreparedSelectExecution`, and a generation lease keeps retry/concurrent
   admission from mixing parameter sets.
+- [x] 2026-08-28: memoized the prepared-cache environment against the session
+  variable, pushdown-blacklist, transaction, and autocommit generations. A
+  cache hit now borrows the same typed environment Go reads from `SessionVars`
+  instead of cloning eight system-variable strings before every lookup.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -400,6 +404,21 @@ both `oltp_read_only` and `oltp_read_write`.
   simple-range median remained 3,318.80 Rust versus 3,404.35 Go TPS (0.975x),
   confirming that this ownership cleanup is not the remaining RPC-dominated
   throughput root.
+
+- Observation: after the retained tree and execution lease became single
+  authorities, `bind_cached_prepared_select` still reconstructed the cache
+  environment on every EXECUTE by owning `sql_mode`, time zone, charset,
+  collation, partition-prune mode, read engines, SELECT limit, and stats-cache
+  policy strings. Go keeps these as typed `SessionVars` fields and the cache
+  key reads them without rebuilding an owned object. Reusing one typed Rust
+  environment until any relevant generation changes moved the isolated
+  simple-range median to 3,388.68 Rust versus 3,447.17 Go TPS (0.983x). The
+  stock read-only median moved from 0.968x to 489.14/499.09 TPS (0.980x), and
+  read-write measured 312.01/307.26 TPS (1.015x); the isolated SUM shape was
+  3,449.56/3,543.16 TPS (0.974x), all with zero errors. A post-change SUM
+  profile confirms one pushed partial StreamAgg and one root final StreamAgg;
+  its remaining local overhead is statement-context memory/tracker setup and
+  teardown, not aggregation re-planning.
 
 - Observation: Rust also retained one successful publication receipt per
   snapshot point/batch/scan read. Go's `KVSnapshot` retains lock-resolution,
