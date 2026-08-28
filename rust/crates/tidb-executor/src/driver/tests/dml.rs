@@ -158,7 +158,7 @@ fn delete_accepts_tpcc_three_column_row_in() {
 /// root fast plan.
 #[test]
 fn a_consumed_handle_range_update_keeps_its_table_reader() {
-    use crate::explain::{explain_update_stmt, ExplainFormat};
+    use crate::explain::{ExplainFormat, explain_update_stmt};
 
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
@@ -200,7 +200,7 @@ fn a_consumed_handle_range_update_keeps_its_table_reader() {
 /// the write still removes exactly the rows the `WHERE` admits.
 #[test]
 fn a_delete_on_a_secondary_index_reads_through_it() {
-    use crate::explain::{explain_delete_stmt, ExplainFormat};
+    use crate::explain::{ExplainFormat, explain_delete_stmt};
 
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
@@ -558,12 +558,14 @@ fn update_and_delete_rows() {
         // `insert_select_and_ordered_dml`); an unknown SET column still fails
         // closed. With no duplicate-key conflict, Go applies UPDATE IGNORE as
         // an ordinary update.
-        assert!(run_update_on(
-            "UPDATE w SET zzz = 1",
-            &mut catalog,
-            &crate::StmtContext::for_query()
-        )
-        .is_err());
+        assert!(
+            run_update_on(
+                "UPDATE w SET zzz = 1",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            )
+            .is_err()
+        );
         assert_eq!(
             run_update_on(
                 "UPDATE IGNORE w SET a = 1",
@@ -665,6 +667,56 @@ fn prepared_point_update_maintains_indexes_and_answers_residuals() {
         &mut catalog,
     );
     assert_eq!(affected, 0);
+}
+
+/// The retained point DELETE consumes the same handle/residual program as
+/// point UPDATE and removes every secondary-index entry with the old row.
+#[test]
+fn prepared_point_delete_maintains_indexes_and_answers_residuals() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE pdi (\
+            id BIGINT PRIMARY KEY, \
+            code VARCHAR(8) NOT NULL UNIQUE, \
+            v BIGINT NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO pdi VALUES (1, 'c1', 10), (2, 'c2', 20)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let statement = tidb_parser::parse("DELETE FROM pdi WHERE id = ? AND v = ?").unwrap();
+    let plan = Arc::new(
+        build_prepared_dml_plan(&statement, 2, &catalog, DEFAULT_DATABASE)
+            .unwrap()
+            .expect("prepared point DELETE plan"),
+    );
+    let ctx = crate::StmtContext::for_dml(true, true, false);
+
+    let execution = plan
+        .bind(&[Datum::Int(1), Datum::Int(99)], &catalog, DEFAULT_DATABASE)
+        .expect("bind residual miss");
+    assert_eq!(
+        run_prepared_dml(&execution, &mut catalog, DEFAULT_DATABASE, &ctx).unwrap(),
+        Some(0),
+    );
+    let execution = plan
+        .bind(&[Datum::Int(1), Datum::Int(10)], &catalog, DEFAULT_DATABASE)
+        .expect("bind residual hit");
+    assert_eq!(
+        run_prepared_dml(&execution, &mut catalog, DEFAULT_DATABASE, &ctx).unwrap(),
+        Some(1),
+    );
+
+    run_insert_on("INSERT INTO pdi VALUES (3, 'c1', 30)", &mut catalog, &ctx)
+        .expect("the deleted row's unique index entry was removed");
+    assert_eq!(
+        run_select_on("SELECT id FROM pdi WHERE code = 'c1'", &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(3)]],
+    );
 }
 
 /// The cached prepared INSERT writes a table WITH secondary indexes, and a

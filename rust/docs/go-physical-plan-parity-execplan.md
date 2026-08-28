@@ -232,6 +232,12 @@ both `oltp_read_only` and `oltp_read_write`.
   privilege probe and per-execution AST/catalog matcher were deleted. The
   retained path preserves secondary-index, auto-id, memory-accounting,
   bad-NULL, duplicate-warning, and first-miss/later-hit semantics.
+- [x] 2026-08-28: retained stock sysbench's clustered point DELETE at PREPARE
+  time and made UPDATE/DELETE share one target, handle, residual-predicate,
+  schema-invalidation, and execute-time binding program. The second DELETE
+  execution now reports a plan-cache hit, while the mutation keeps ordinary
+  secondary-index, foreign-key, memory-accounting, and Go SELECT+DELETE
+  privilege behavior.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and

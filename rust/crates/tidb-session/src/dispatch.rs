@@ -25,10 +25,10 @@ use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
 
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
-use crate::{
-    infoschema, privilege, statement_kind_of, Session, StatementKind, StmtOutput, WarningLevel,
-};
 use crate::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
+use crate::{
+    Session, StatementKind, StmtOutput, WarningLevel, infoschema, privilege, statement_kind_of,
+};
 
 /// Every `information_schema` base table a top-level join tree references.
 ///
@@ -511,11 +511,19 @@ impl Session {
         }
         let plan = execution.plan();
         let (database, table) = plan.names();
-        let privilege = match plan.kind() {
-            tidb_executor::PreparedDmlKind::Insert => privilege::GlobalPriv::Insert,
-            tidb_executor::PreparedDmlKind::Update => privilege::GlobalPriv::Update,
-        };
-        self.require_named_table_privilege(database, table, privilege)?;
+        match plan.kind() {
+            tidb_executor::PreparedDmlKind::Insert => {
+                self.require_named_table_privilege(database, table, privilege::GlobalPriv::Insert)?;
+            }
+            tidb_executor::PreparedDmlKind::Update => {
+                self.require_named_table_privilege(database, table, privilege::GlobalPriv::Select)?;
+                self.require_named_table_privilege(database, table, privilege::GlobalPriv::Update)?;
+            }
+            tidb_executor::PreparedDmlKind::Delete => {
+                self.require_named_table_privilege(database, table, privilege::GlobalPriv::Select)?;
+                self.require_named_table_privilege(database, table, privilege::GlobalPriv::Delete)?;
+            }
+        }
         self.refuse_pinned_historical_read()?;
         self.record_mdl_related_table_names(&[(database.to_owned(), table.to_owned())]);
         self.statement_insert_id = 0;
@@ -523,7 +531,9 @@ impl Session {
         let current_db = self.current_db.clone();
         let statement_class = match plan.kind() {
             tidb_executor::PreparedDmlKind::Insert => tidb_executor::StatementClass::Insert,
-            tidb_executor::PreparedDmlKind::Update => tidb_executor::StatementClass::UpdateOrDelete,
+            tidb_executor::PreparedDmlKind::Update | tidb_executor::PreparedDmlKind::Delete => {
+                tidb_executor::StatementClass::UpdateOrDelete
+            }
         };
         let ctx = self
             .fast_statement_context(true, plan.ignore_errors())

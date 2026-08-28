@@ -132,6 +132,34 @@ fn prepared_point_update_reuses_the_planned_dml() {
     );
 }
 
+/// Go's `tryDeletePointPlan` retains the point child and only rebuilds its
+/// handle value. Stock sysbench executes exactly this prepared shape.
+#[test]
+fn prepared_point_delete_reuses_the_planned_dml() {
+    use tidb_protocol::PreparedValue;
+
+    let (mut session, _) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10), (2, 20)")
+        .expect("seed");
+    let statement = session
+        .prepare_general("DELETE FROM t WHERE id = ?")
+        .expect("prepare");
+
+    for (id, expected_cache) in [(1, 0), (2, 1)] {
+        let outcome = session
+            .execute_general(&statement, &[PreparedValue::SignedLongLong(id)])
+            .expect("execute");
+        assert!(matches!(outcome, GeneralExecuteOutcome::Write(_)));
+        drop(outcome);
+        assert_eq!(
+            rows(&mut session, "SELECT @@last_plan_from_cache"),
+            vec![vec![Datum::Int(expected_cache)]],
+        );
+    }
+    assert!(rows(&mut session, "SELECT id FROM t").is_empty());
+}
+
 #[test]
 fn prepared_point_update_preserves_typed_handle_coercion() {
     use tidb_protocol::PreparedValue;

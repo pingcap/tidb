@@ -24,12 +24,12 @@ use crate::kv_table::{AutoIdError, AutoIncrement, AutoRandom, AutoRandomError};
 mod correlated;
 mod defaults;
 
-use correlated::{dml_table_scope, DmlExpression, UpdateExpression};
+use correlated::{DmlExpression, UpdateExpression, dml_table_scope};
 
 pub(crate) use defaults::{
-    column_default, column_metadata, materialize_column_default, prepare_named_defaults,
-    rewrite_with_prepared_defaults, ColumnDefaultMeta, DefaultColumnIdentity, DefaultUse,
-    PreparedNamedDefault, PreparedOnUpdateNow, ResolvedDefaultColumn,
+    ColumnDefaultMeta, DefaultColumnIdentity, DefaultUse, PreparedNamedDefault,
+    PreparedOnUpdateNow, ResolvedDefaultColumn, column_default, column_metadata,
+    materialize_column_default, prepare_named_defaults, rewrite_with_prepared_defaults,
 };
 
 /// Parses and runs a plain `INSERT INTO t [(cols)] VALUES (...), ...` against
@@ -112,7 +112,6 @@ struct PreparedInsertPlan {
     field_types: Vec<FieldType>,
     column_names: Vec<String>,
     auto_increment_offset: Option<usize>,
-    cache_ready: std::sync::atomic::AtomicBool,
 }
 
 /// Builds the reusable one-row VALUES plan used by stock sysbench.
@@ -204,7 +203,6 @@ fn build_prepared_insert_plan(
             .collect(),
         column_names: columns.iter().map(|column| column.name.clone()).collect(),
         auto_increment_offset: table.auto_increment_offset(),
-        cache_ready: std::sync::atomic::AtomicBool::new(false),
     }))
 }
 
@@ -1862,11 +1860,13 @@ pub fn run_update_stmt(
 #[derive(Debug)]
 pub struct PreparedDmlPlan {
     inner: PreparedDmlPlanInner,
+    cache_ready: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Debug)]
 enum PreparedDmlPlanInner {
     Insert(PreparedInsertPlan),
+    PointDelete(PreparedPointDeletePlan),
     PointUpdate(PreparedPointUpdatePlan),
 }
 
@@ -1884,6 +1884,8 @@ pub enum PreparedDmlKind {
     Insert,
     /// UPDATE lifecycle and privilege checks.
     Update,
+    /// DELETE lifecycle and privilege checks.
+    Delete,
 }
 
 impl PreparedDmlPlan {
@@ -1892,7 +1894,8 @@ impl PreparedDmlPlan {
     pub fn names(&self) -> (&str, &str) {
         match &self.inner {
             PreparedDmlPlanInner::Insert(plan) => (&plan.database, &plan.table),
-            PreparedDmlPlanInner::PointUpdate(plan) => (&plan.database, &plan.table),
+            PreparedDmlPlanInner::PointDelete(plan) => (&plan.point.database, &plan.point.table),
+            PreparedDmlPlanInner::PointUpdate(plan) => (&plan.point.database, &plan.point.table),
         }
     }
 
@@ -1901,6 +1904,7 @@ impl PreparedDmlPlan {
     pub const fn kind(&self) -> PreparedDmlKind {
         match &self.inner {
             PreparedDmlPlanInner::Insert(_) => PreparedDmlKind::Insert,
+            PreparedDmlPlanInner::PointDelete(_) => PreparedDmlKind::Delete,
             PreparedDmlPlanInner::PointUpdate(_) => PreparedDmlKind::Update,
         }
     }
@@ -1910,6 +1914,7 @@ impl PreparedDmlPlan {
     pub const fn ignore_errors(&self) -> bool {
         match &self.inner {
             PreparedDmlPlanInner::Insert(plan) => plan.ignore,
+            PreparedDmlPlanInner::PointDelete(plan) => plan.ignore,
             PreparedDmlPlanInner::PointUpdate(_) => false,
         }
     }
@@ -1917,20 +1922,13 @@ impl PreparedDmlPlan {
     /// Whether one successful execution admitted this plan to the cache.
     #[must_use]
     pub fn cache_ready(&self) -> bool {
-        let ready = match &self.inner {
-            PreparedDmlPlanInner::Insert(plan) => &plan.cache_ready,
-            PreparedDmlPlanInner::PointUpdate(plan) => &plan.cache_ready,
-        };
-        ready.load(std::sync::atomic::Ordering::Acquire)
+        self.cache_ready.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Admits the plan after its first successful execution.
     pub fn mark_cache_ready(&self) {
-        let ready = match &self.inner {
-            PreparedDmlPlanInner::Insert(plan) => &plan.cache_ready,
-            PreparedDmlPlanInner::PointUpdate(plan) => &plan.cache_ready,
-        };
-        ready.store(true, std::sync::atomic::Ordering::Release);
+        self.cache_ready
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// Binds one EXECUTE's values after checking schema and table identity.
@@ -1950,8 +1948,11 @@ impl PreparedDmlPlan {
                         Some(TableEntry::Kv(table)) if table.table_id == plan.table_id
                     )
             }
+            PreparedDmlPlanInner::PointDelete(plan) => {
+                plan.point.matches_catalog(catalog, current_database)
+            }
             PreparedDmlPlanInner::PointUpdate(plan) => {
-                plan.matches_catalog(catalog, current_database)
+                plan.point.matches_catalog(catalog, current_database)
             }
         };
         valid.then(|| PreparedDmlExecution {
@@ -1980,11 +1981,21 @@ pub fn build_prepared_dml_plan(
     {
         return Ok(Some(PreparedDmlPlan {
             inner: PreparedDmlPlanInner::Insert(plan),
+            cache_ready: std::sync::atomic::AtomicBool::new(false),
         }));
     }
-    build_prepared_point_update_plan(statement, parameter_count, catalog, current_db).map(|plan| {
-        plan.map(|plan| PreparedDmlPlan {
+    if let Some(plan) =
+        build_prepared_point_update_plan(statement, parameter_count, catalog, current_db)?
+    {
+        return Ok(Some(PreparedDmlPlan {
             inner: PreparedDmlPlanInner::PointUpdate(plan),
+            cache_ready: std::sync::atomic::AtomicBool::new(false),
+        }));
+    }
+    build_prepared_point_delete_plan(statement, parameter_count, catalog, current_db).map(|plan| {
+        plan.map(|plan| PreparedDmlPlan {
+            inner: PreparedDmlPlanInner::PointDelete(plan),
+            cache_ready: std::sync::atomic::AtomicBool::new(false),
         })
     })
 }
@@ -2001,6 +2012,9 @@ pub fn run_prepared_dml(
         PreparedDmlPlanInner::Insert(plan) => {
             run_prepared_insert(plan, &execution.params, catalog, current_db, ctx)
         }
+        PreparedDmlPlanInner::PointDelete(plan) => {
+            run_prepared_point_delete(plan, &execution.params, catalog, current_db, ctx)
+        }
         PreparedDmlPlanInner::PointUpdate(plan) => {
             run_prepared_point_update(plan, &execution.params, catalog, current_db, ctx)
         }
@@ -2015,6 +2029,12 @@ pub fn run_prepared_dml(
 /// mutation state.
 #[derive(Debug)]
 struct PreparedPointUpdatePlan {
+    point: PreparedPointWritePlan,
+    assignments: Vec<PreparedPointAssignment>,
+}
+
+#[derive(Debug)]
+struct PreparedPointWritePlan {
     schema_version: u64,
     current_database: String,
     database: String,
@@ -2023,10 +2043,15 @@ struct PreparedPointUpdatePlan {
     int_handle: bool,
     handle_parameter_orders: Vec<usize>,
     residual_eqs: Vec<(usize, ResidualEq)>,
-    assignments: Vec<PreparedPointAssignment>,
     field_types: Vec<FieldType>,
     column_names: Vec<String>,
-    cache_ready: std::sync::atomic::AtomicBool,
+}
+
+/// The immutable point-delete plan produced for a cacheable prepared DELETE.
+#[derive(Debug)]
+struct PreparedPointDeletePlan {
+    point: PreparedPointWritePlan,
+    ignore: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -2047,7 +2072,7 @@ enum PreparedPointDelta {
     Literal(Datum),
 }
 
-impl PreparedPointUpdatePlan {
+impl PreparedPointWritePlan {
     fn matches_catalog(&self, catalog: &Catalog, current_database: &str) -> bool {
         if self.schema_version != catalog.metadata_version()
             || !self.current_database.eq_ignore_ascii_case(current_database)
@@ -2060,6 +2085,120 @@ impl PreparedPointUpdatePlan {
         }
         true
     }
+}
+
+struct PreparedPointWriteBuild {
+    point: PreparedPointWritePlan,
+    handle_offsets: Vec<usize>,
+    qualifier: Option<String>,
+}
+
+fn build_prepared_point_write(
+    table_ref: &tidb_ast::TableRef,
+    predicate: Option<&tidb_ast::Expr>,
+    parameter_count: usize,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Result<Option<PreparedPointWriteBuild>, DriverError> {
+    let (database, table_name) = single_table_name(table_ref, current_db)?;
+    let Some(TableEntry::Kv(table)) = catalog.get_in(&database, &table_name) else {
+        return Ok(None);
+    };
+    let int_pk_offset = table.pk_handle_offset();
+    let mut handle_offsets = table.common_handle_offsets().to_vec();
+    if let Some(offset) = int_pk_offset {
+        handle_offsets = vec![offset];
+    }
+    if handle_offsets.is_empty() {
+        return Ok(None);
+    }
+    let qualifier = table_ref
+        .alias
+        .as_deref()
+        .or_else(|| table_ref.name.last().map(String::as_str));
+    let columns = table.visible_columns();
+    let mut residual_eqs = Vec::new();
+    let Some(handle_expressions) = point_write_where(
+        predicate,
+        &handle_offsets,
+        qualifier,
+        columns,
+        &mut residual_eqs,
+    ) else {
+        return Ok(None);
+    };
+    let mut handle_parameter_orders = Vec::with_capacity(handle_expressions.len());
+    for expression in handle_expressions {
+        let tidb_ast::Expr::ParamMarker { order, .. } = unparen(expression) else {
+            return Ok(None);
+        };
+        if *order >= parameter_count {
+            return Ok(None);
+        }
+        handle_parameter_orders.push(*order);
+    }
+    Ok(Some(PreparedPointWriteBuild {
+        point: PreparedPointWritePlan {
+            schema_version: catalog.metadata_version(),
+            current_database: current_db.to_owned(),
+            database,
+            table: table_name,
+            table_id: table.table_id,
+            int_handle: int_pk_offset.is_some(),
+            handle_parameter_orders,
+            residual_eqs,
+            field_types: columns
+                .iter()
+                .map(|column| column.field_type.clone())
+                .collect(),
+            column_names: columns.iter().map(|column| column.name.clone()).collect(),
+        },
+        handle_offsets,
+        qualifier: qualifier.map(str::to_owned),
+    }))
+}
+
+/// Builds Go's cacheable clustered point-delete shape from a retained AST.
+fn build_prepared_point_delete_plan(
+    statement: &Stmt,
+    parameter_count: usize,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Result<Option<PreparedPointDeletePlan>, DriverError> {
+    if parsed_parameter_count(statement) != parameter_count {
+        return Ok(None);
+    }
+    let Stmt::Dml(dml) = statement else {
+        return Ok(None);
+    };
+    let tidb_ast::DmlStmt::Delete(delete) = dml.as_ref() else {
+        return Ok(None);
+    };
+    if !delete.order_by.is_empty() || delete.limit.is_some() || !delete.returning.is_empty() {
+        return Ok(None);
+    }
+    let tidb_ast::DeleteKind::Single(table_ref) = &delete.kind else {
+        return Ok(None);
+    };
+    // A partition-qualified target needs the complete table wrapper to prove
+    // that the bound handle belongs to the named partition.
+    if !table_ref.partitions.is_empty() {
+        return Ok(None);
+    }
+    let Some(built) = build_prepared_point_write(
+        table_ref,
+        delete.where_clause.as_ref(),
+        parameter_count,
+        catalog,
+        current_db,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(PreparedPointDeletePlan {
+        point: built.point,
+        ignore: delete.ignore,
+    }))
 }
 
 /// Builds Go's cacheable clustered point-update shape from a retained AST.
@@ -2089,27 +2228,32 @@ fn build_prepared_point_update_plan(
     let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
         return Ok(None);
     };
-    let (database, table_name) = single_table_name(table_ref, current_db)?;
-    let Some(TableEntry::Kv(table)) = catalog.get_in(&database, &table_name) else {
+    let Some(built) = build_prepared_point_write(
+        table_ref,
+        update.where_clause.as_ref(),
+        parameter_count,
+        catalog,
+        current_db,
+    )?
+    else {
         return Ok(None);
     };
-    let int_pk_offset = table.pk_handle_offset();
-    let mut handles = table.common_handle_offsets().to_vec();
-    if let Some(offset) = int_pk_offset {
-        handles = vec![offset];
-    }
-    if handles.is_empty()
-        || table
-            .visible_columns()
-            .iter()
-            .any(|column| column.generated.is_some())
+    let PreparedPointWriteBuild {
+        point,
+        handle_offsets,
+        qualifier,
+    } = built;
+    let Some(TableEntry::Kv(table)) = catalog.get_in(&point.database, &point.table) else {
+        return Ok(None);
+    };
+    if table
+        .visible_columns()
+        .iter()
+        .any(|column| column.generated.is_some())
     {
         return Ok(None);
     }
-    let qualifier = table_ref
-        .alias
-        .as_deref()
-        .or_else(|| table_ref.name.last().map(String::as_str));
+    let qualifier = qualifier.as_deref();
     let columns = table.visible_columns();
     let mut assignment_offsets = Vec::with_capacity(update.assignments.len());
     for assignment in &update.assignments {
@@ -2121,7 +2265,7 @@ fn build_prepared_point_update_plan(
         }) else {
             return Ok(None);
         };
-        if handles.contains(&offset) || assignment_offsets.contains(&offset) {
+        if handle_offsets.contains(&offset) || assignment_offsets.contains(&offset) {
             return Ok(None);
         }
         assignment_offsets.push(offset);
@@ -2146,26 +2290,6 @@ fn build_prepared_point_update_plan(
         return Ok(None);
     }
 
-    let mut residual_eqs = Vec::new();
-    let Some(handle_expressions) = point_update_where(
-        update.where_clause.as_ref(),
-        &handles,
-        qualifier,
-        columns,
-        &mut residual_eqs,
-    ) else {
-        return Ok(None);
-    };
-    let mut handle_parameter_orders = Vec::with_capacity(handle_expressions.len());
-    for expression in handle_expressions {
-        let tidb_ast::Expr::ParamMarker { order, .. } = unparen(expression) else {
-            return Ok(None);
-        };
-        if *order >= parameter_count {
-            return Ok(None);
-        }
-        handle_parameter_orders.push(*order);
-    }
     let assignments = update
         .assignments
         .iter()
@@ -2179,23 +2303,151 @@ fn build_prepared_point_update_plan(
         return Ok(None);
     };
 
-    Ok(Some(PreparedPointUpdatePlan {
-        schema_version: catalog.metadata_version(),
-        current_database: current_db.to_owned(),
-        database,
-        table: table_name,
-        table_id: table.table_id,
-        int_handle: int_pk_offset.is_some(),
-        handle_parameter_orders,
-        residual_eqs,
-        assignments,
-        field_types: columns
-            .iter()
-            .map(|column| column.field_type.clone())
-            .collect(),
-        column_names: columns.iter().map(|column| column.name.clone()).collect(),
-        cache_ready: std::sync::atomic::AtomicBool::new(false),
-    }))
+    Ok(Some(PreparedPointUpdatePlan { point, assignments }))
+}
+
+fn bind_prepared_point_handle(
+    int_handle: bool,
+    handle_parameter_orders: &[usize],
+    params: &[Datum],
+    ctx: &crate::StmtContext,
+) -> Result<Option<TableHandle>, DriverError> {
+    let key_values = handle_parameter_orders
+        .iter()
+        .map(|order| params.get(*order).cloned())
+        .collect::<Option<Vec<_>>>()
+        .ok_or(DriverError::WrongParamCount)?;
+    if int_handle {
+        let value = match key_values.first() {
+            Some(Datum::Int(value)) => *value,
+            Some(Datum::UInt(value)) => *value as i64,
+            // A string/decimal comparison against an integer handle needs
+            // the ordinary expression coercion rules. Decline before any
+            // mutation so the complete write path can answer it.
+            _ => return Ok(None),
+        };
+        return Ok(Some(TableHandle::Int(value)));
+    }
+    let encoded =
+        tidb_codec::encode_key_in_timezone(&ctx.session_zone(), &key_values).map_err(|error| {
+            DriverError::unsupported(format!("cannot encode common handle: {error:?}"))
+        })?;
+    let handle = tidb_txnkv::CommonHandle::new(encoded).map_err(|error| {
+        DriverError::unsupported(format!("cannot encode common handle: {error:?}"))
+    })?;
+    Ok(Some(TableHandle::Common(handle.encoded().to_vec())))
+}
+
+fn prepared_point_residuals_match(
+    residual_eqs: &[(usize, ResidualEq)],
+    field_types: &[FieldType],
+    column_names: &[String],
+    old_row: &[Datum],
+    params: &[Datum],
+    ctx: &crate::StmtContext,
+) -> Result<bool, DriverError> {
+    for (offset, bound) in residual_eqs {
+        let expected = match bound {
+            ResidualEq::Param(order) => params.get(*order).cloned(),
+            ResidualEq::Constant(value) => Some(value.clone()),
+        };
+        let Some(mut expected) = expected else {
+            return Err(DriverError::WrongParamCount);
+        };
+        if expected.is_null() || old_row.get(*offset).is_none_or(Datum::is_null) {
+            return Ok(false);
+        }
+        expected = cast_value_for_update_assignment(
+            expected,
+            &field_types[*offset],
+            &column_names[*offset],
+            0,
+            ctx,
+        )?;
+        match old_row[*offset].compare(&expected, field_types[*offset].collation()) {
+            Ok(std::cmp::Ordering::Equal) => {}
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
+}
+
+/// Executes one rebound prepared point delete. `None` means execute-time
+/// coercion or DDL requires the complete DELETE executor.
+fn run_prepared_point_delete(
+    plan: &PreparedPointDeletePlan,
+    params: &[Datum],
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<u64>, DriverError> {
+    let point = &plan.point;
+    if point.schema_version != catalog.metadata_version()
+        || !point.current_database.eq_ignore_ascii_case(current_db)
+    {
+        return Ok(None);
+    }
+    let Some(handle) = bind_prepared_point_handle(
+        point.int_handle,
+        &point.handle_parameter_orders,
+        params,
+        ctx,
+    )?
+    else {
+        return Ok(None);
+    };
+    let old_row = {
+        let Some(TableEntry::Kv(table)) = catalog.get_mut_in(&point.database, &point.table) else {
+            return Ok(None);
+        };
+        if table.table_id != point.table_id {
+            return Ok(None);
+        }
+        table
+            .get_row_by_handle(&handle, &ctx.session_zone())
+            .map_err(kv_write_error)?
+    };
+    let Some(old_row) = old_row else {
+        return Ok(Some(0));
+    };
+    if !prepared_point_residuals_match(
+        &point.residual_eqs,
+        &point.field_types,
+        &point.column_names,
+        &old_row,
+        params,
+        ctx,
+    )? {
+        return Ok(Some(0));
+    }
+    ctx.statement_memory()
+        .write_accountant(mem_quota::label::DELETE)
+        .account_row(&old_row)
+        .map_err(DriverError::from)?;
+    if ctx.foreign_key_checks() {
+        let changes = [crate::foreign_key::ParentChange::Delete(&old_row)];
+        if let Err(error) = crate::foreign_key::cascade_parent_changes(
+            catalog,
+            &point.database,
+            &point.table,
+            &changes,
+            ctx,
+        ) {
+            if !plan.ignore {
+                return Err(error);
+            }
+            let warning = error.to_mysql_error();
+            ctx.append_warning_parts(warning.code, &warning.message);
+            return Ok(Some(0));
+        }
+    }
+    let Some(TableEntry::Kv(table)) = catalog.get_mut_in(&point.database, &point.table) else {
+        return Ok(None);
+    };
+    table
+        .delete_row_with_old(&handle, &old_row, ctx)
+        .map_err(|error| kv_read_error("row delete failed", error))?;
+    Ok(Some(1))
 }
 
 /// Executes one rebound prepared point update. `None` means DDL invalidated
@@ -2207,42 +2459,26 @@ fn run_prepared_point_update(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Option<u64>, DriverError> {
-    if plan.schema_version != catalog.metadata_version()
-        || !plan.current_database.eq_ignore_ascii_case(current_db)
+    let point = &plan.point;
+    if point.schema_version != catalog.metadata_version()
+        || !point.current_database.eq_ignore_ascii_case(current_db)
     {
         return Ok(None);
     }
-    let Some(TableEntry::Kv(table)) = catalog.get_mut_in(&plan.database, &plan.table) else {
+    let Some(TableEntry::Kv(table)) = catalog.get_mut_in(&point.database, &point.table) else {
         return Ok(None);
     };
-    if table.table_id != plan.table_id {
+    if table.table_id != point.table_id {
         return Ok(None);
     }
-    let key_values = plan
-        .handle_parameter_orders
-        .iter()
-        .map(|order| params.get(*order).cloned())
-        .collect::<Option<Vec<_>>>()
-        .ok_or(DriverError::WrongParamCount)?;
-    let handle = if plan.int_handle {
-        let value = match key_values.first() {
-            Some(Datum::Int(value)) => *value,
-            Some(Datum::UInt(value)) => *value as i64,
-            // A string/decimal comparison against an integer handle needs
-            // the ordinary expression coercion rules. Decline before any
-            // mutation so the complete UPDATE path can answer it.
-            _ => return Ok(None),
-        };
-        TableHandle::Int(value)
-    } else {
-        let encoded = tidb_codec::encode_key_in_timezone(&ctx.session_zone(), &key_values)
-            .map_err(|error| {
-                DriverError::unsupported(format!("cannot encode common handle: {error:?}"))
-            })?;
-        let handle = tidb_txnkv::CommonHandle::new(encoded).map_err(|error| {
-            DriverError::unsupported(format!("cannot encode common handle: {error:?}"))
-        })?;
-        TableHandle::Common(handle.encoded().to_vec())
+    let Some(handle) = bind_prepared_point_handle(
+        point.int_handle,
+        &point.handle_parameter_orders,
+        params,
+        ctx,
+    )?
+    else {
+        return Ok(None);
     };
     let Some(old_row) = table
         .get_row_by_handle(&handle, &ctx.session_zone())
@@ -2250,28 +2486,15 @@ fn run_prepared_point_update(
     else {
         return Ok(Some(0));
     };
-    for (offset, bound) in &plan.residual_eqs {
-        let expected = match bound {
-            ResidualEq::Param(order) => params.get(*order).cloned(),
-            ResidualEq::Constant(value) => Some(value.clone()),
-        };
-        let Some(mut expected) = expected else {
-            return Err(DriverError::WrongParamCount);
-        };
-        if expected.is_null() || old_row.get(*offset).is_none_or(Datum::is_null) {
-            return Ok(Some(0));
-        }
-        expected = cast_value_for_update_assignment(
-            expected,
-            &plan.field_types[*offset],
-            &plan.column_names[*offset],
-            0,
-            ctx,
-        )?;
-        match old_row[*offset].compare(&expected, plan.field_types[*offset].collation()) {
-            Ok(std::cmp::Ordering::Equal) => {}
-            _ => return Ok(Some(0)),
-        }
+    if !prepared_point_residuals_match(
+        &point.residual_eqs,
+        &point.field_types,
+        &point.column_names,
+        &old_row,
+        params,
+        ctx,
+    )? {
+        return Ok(Some(0));
     }
     let mut row = old_row.clone();
     for assignment in &plan.assignments {
@@ -2280,8 +2503,8 @@ fn run_prepared_point_update(
         };
         row[assignment.offset] = cast_value_for_update_assignment(
             value,
-            &plan.field_types[assignment.offset],
-            &plan.column_names[assignment.offset],
+            &point.field_types[assignment.offset],
+            &point.column_names[assignment.offset],
             0,
             ctx,
         )?;
@@ -2289,8 +2512,8 @@ fn run_prepared_point_update(
     let level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
     for ((value, field_type), name) in row
         .iter_mut()
-        .zip(plan.field_types.iter())
-        .zip(plan.column_names.iter())
+        .zip(point.field_types.iter())
+        .zip(point.column_names.iter())
     {
         crate::bad_null::handle_bad_null(value, field_type, name, level, ctx)?;
     }
@@ -2414,20 +2637,20 @@ fn assignment_qualifier_matches(path: &[String], qualifier: Option<&str>) -> boo
         || qualifier.is_some_and(|qualifier| path[path.len() - 2].eq_ignore_ascii_case(qualifier))
 }
 
-/// One `column = ?`/`column = constant` conjunct beside a fast prepared
-/// update's handle pin: the OLD row must answer it before anything changes.
+/// One `column = ?`/`column = constant` conjunct beside a retained point
+/// write's handle pin: the OLD row must answer it before anything changes.
 #[derive(Clone, Debug)]
 enum ResidualEq {
     Param(usize),
     Constant(tidb_datatype::Datum),
 }
 
-/// Walks a fast prepared update's WHERE conjunction: EVERY clustered-key
+/// Walks a retained point write's WHERE conjunction: EVERY clustered-key
 /// column is pinned exactly once by one `=` (returned as the key
 /// expressions, in handle order), and every remaining conjunct must be a
 /// plain column equality pushed onto `residual_eqs`. Any other shape declines
 /// the whole fast arm.
-fn point_update_where<'a>(
+fn point_write_where<'a>(
     predicate: Option<&'a tidb_ast::Expr>,
     handles: &[usize],
     qualifier: Option<&str>,
@@ -2769,12 +2992,12 @@ pub(crate) fn run_update_traced(
         // `LIMIT 0`.
         match catalog.get_in(&database, &name) {
             Some(TableEntry::Cte(_) | TableEntry::View(_)) => {
-                return Err(DriverError::TableNotUpdatable(name.clone()))
+                return Err(DriverError::TableNotUpdatable(name.clone()));
             }
             Some(TableEntry::Sequence(_)) => {
                 return Err(DriverError::unsupported(
                     "UPDATE of a sequence is not a statement TiDB accepts",
-                ))
+                ));
             }
             Some(TableEntry::Kv(kv)) if !table_ref.partitions.is_empty() => {
                 let Some(spec) = kv.partition() else {
@@ -2848,12 +3071,12 @@ pub(crate) fn run_update_traced(
         })?;
         match entry {
             TableEntry::Cte(_) | TableEntry::View(_) => {
-                return Err(DriverError::TableNotUpdatable(name.clone()))
+                return Err(DriverError::TableNotUpdatable(name.clone()));
             }
             TableEntry::Sequence(_) => {
                 return Err(DriverError::unsupported(
                     "UPDATE of a sequence is not a statement TiDB accepts",
-                ))
+                ));
             }
             TableEntry::Mem(mem) => SourceRows::Mem(mem.rows.clone()),
             TableEntry::Kv(kv) => {
@@ -3344,10 +3567,10 @@ pub(crate) fn run_delete_traced(
         // the `ORDER BY` columns are checked even when nothing is read.
         match catalog.get_in(&database, &name) {
             Some(TableEntry::Cte(_) | TableEntry::View(_)) => {
-                return Err(DriverError::DeleteViewUnsupported(name.clone()))
+                return Err(DriverError::DeleteViewUnsupported(name.clone()));
             }
             Some(TableEntry::Sequence(_)) => {
-                return Err(DriverError::DeleteSequenceUnsupported(name.clone()))
+                return Err(DriverError::DeleteSequenceUnsupported(name.clone()));
             }
             Some(TableEntry::Kv(kv)) if !table_ref.partitions.is_empty() => {
                 let Some(spec) = kv.partition() else {
@@ -3413,10 +3636,10 @@ pub(crate) fn run_delete_traced(
         })?;
         match entry {
             TableEntry::Cte(_) | TableEntry::View(_) => {
-                return Err(DriverError::DeleteViewUnsupported(name.clone()))
+                return Err(DriverError::DeleteViewUnsupported(name.clone()));
             }
             TableEntry::Sequence(_) => {
-                return Err(DriverError::DeleteSequenceUnsupported(name.clone()))
+                return Err(DriverError::DeleteSequenceUnsupported(name.clone()));
             }
             TableEntry::Mem(mem) => SourceRows::Mem(mem.rows.clone()),
             TableEntry::Kv(kv) => {
