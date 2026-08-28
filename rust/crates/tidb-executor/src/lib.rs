@@ -402,6 +402,12 @@ mod tests_executor_suite_statements_source;
 #[cfg(test)]
 mod tests_fktest_source;
 #[cfg(test)]
+mod tests_fktest_b134_source;
+#[cfg(test)]
+mod tests_indexmergeread_b134_source;
+#[cfg(test)]
+mod tests_infoschema_b134_source;
+#[cfg(test)]
 mod tests_admin_check_admintest_source;
 #[cfg(test)]
 mod tests_hashagg_aggregate_suite_source;
