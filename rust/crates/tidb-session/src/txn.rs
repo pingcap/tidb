@@ -250,7 +250,7 @@ impl Session {
     /// answer rather than a second copy that can disagree.
     #[must_use]
     pub fn is_autocommit(&self) -> bool {
-        self.vars.get_system("autocommit").as_deref() != Ok("OFF")
+        self.vars.is_autocommit()
     }
 
     /// Go's lazy transaction start: with autocommit OFF, a statement that
@@ -784,16 +784,15 @@ impl Session {
     /// Go `serverStatus2Str` over this session's status bits: the `State`
     /// column of `SHOW PROCESSLIST`.
     ///
-    /// This tier's connections are always autocommit and set no other status
-    /// bit, so the text is `in transaction; autocommit` inside an explicit
-    /// transaction and `autocommit` outside one -- exactly the order Go's
-    /// `ascServerStatus` produces for those bits.
+    /// The typed autocommit state and transaction presence are the two status
+    /// bits this tier owns, in the same order as Go's `ascServerStatus`.
     #[must_use]
     pub fn status_text(&self) -> String {
-        if self.txn.is_some() {
-            "in transaction; autocommit".to_owned()
-        } else {
-            "autocommit".to_owned()
+        match (self.txn.is_some(), self.is_autocommit()) {
+            (true, true) => "in transaction; autocommit".to_owned(),
+            (true, false) => "in transaction".to_owned(),
+            (false, true) => "autocommit".to_owned(),
+            (false, false) => String::new(),
         }
     }
 }

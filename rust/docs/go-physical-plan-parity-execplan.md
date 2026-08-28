@@ -283,6 +283,11 @@ both `oltp_read_only` and `oltp_read_write`.
   authority from session variables after `SET_VAR` restoration; the next
   statement boundary releases only the session's reference, matching Go's
   retained `SessionVars.StmtCtx` ownership.
+- [x] 2026-08-28: replaced Rust's string-backed autocommit checks with the
+  typed session status Go keeps as `ServerStatusAutocommit`. Session SET,
+  statement-overlay restore, inherited GLOBAL defaults, prepared-cache keys,
+  transaction admission, wire status, and process-list status now share that
+  one field; the obsolete always-autocommit process-state renderer is gone.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -1353,6 +1358,34 @@ legs reported zero ignored errors. Exact validation commands:
     cargo test -q -p tidb-session prepared_server_result_retains_the_executing_statement_authority --lib
     cargo test -q -p tidb-session result_materialization_retains_the_statement_context_tracker --lib
     cargo test -q -p tidb-session tests_mem_quota:: --lib
+    cargo build -q -p tidb-server --bin tidb-server --release
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, typed autocommit status): Go
+`SessionVars.IsAutocommit` reads `ServerStatusAutocommit`, maintained by the
+autocommit sysvar's typed `SetSession` hook. Rust instead resolved the registry,
+cloned the stored string, and compared it on transaction, prepared-cache, and
+wire-status hot paths; its process-state renderer also advertised autocommit
+unconditionally. `SessionVars` now keeps the same typed fact in lockstep with
+ordinary SET, statement-scoped restoration, and inherited GLOBAL state. The
+source regression was observed failing before the implementation. The typed
+state regression and all 11 transaction-module tests pass afterward, and the
+release server builds.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`e7b3815802` and the same Go server over one TiKV/PD cluster. Read-only median
+TPS was 511.63 candidate, 513.18 baseline, and 477.23 Go. Read-write median TPS
+was 243.67 candidate, 221.81 baseline, and 212.76 Go; those samples remain
+latency-noisy, so no read-write increase is attributed to this change. All 18
+legs reported zero ignored errors. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session session_autocommit_uses_go_typed_status --lib
+    cargo test -q -p tidb-session process_status_uses_the_typed_autocommit_and_transaction_bits --lib
+    cargo test -q -p tidb-session autocommit_off_puts_a_statement_in_a_transaction --lib
+    cargo test -q -p tidb-session tests_core::transactions:: --lib
     cargo build -q -p tidb-server --bin tidb-server --release
     cd ..
     git diff --check

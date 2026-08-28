@@ -38,9 +38,10 @@
 //! `SET GLOBAL` sees the new value as its session default, while sessions
 //! already open do not.
 //!
-//! NOT MODELLED (documented): the per-variable `Validation` and
-//! `SetSession` closures such as autocommit's implicit commit, and the
-//! removed-variable list Go silently accepts.
+//! Per-variable effects that need the complete session remain at the session
+//! layer: for example, `variables.rs` performs autocommit's OFF-to-ON commit,
+//! while this module keeps Go's typed autocommit status in lockstep with the
+//! normalized variable value.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -740,9 +741,15 @@ pub enum VarError {
 /// [`crate::Session`] lends to every statement context -- because `@x := expr`
 /// writes them from inside expression evaluation, mid-row; see
 /// `tidb_executor::StmtContext`'s `user_vars` field.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct SessionVars {
     systems: HashMap<String, String>,
+    /// Go's typed `ServerStatusAutocommit` bit.
+    ///
+    /// The normalized system-variable text remains the SQL read authority;
+    /// transaction, planner-cache, process-list, and wire-status consumers
+    /// read this field exactly as Go reads `SessionVars.status`.
+    autocommit: bool,
     /// Bumped by every mutation of `systems`, so a caller can cache what it
     /// PARSES out of the raw text -- the scanner's `sql_mode` bits, the
     /// optimizer's cost environment -- and re-derive only when a `SET`
@@ -767,6 +774,20 @@ pub struct SessionVars {
     globals: Arc<GlobalSysvars>,
     /// Immutable server identity captured when this connection opened.
     version_info: Arc<VersionInfo>,
+}
+
+impl Default for SessionVars {
+    fn default() -> Self {
+        Self {
+            systems: HashMap::new(),
+            autocommit: true,
+            generation: 0,
+            optimizer_fix_control: OptimizerFixControl::default(),
+            session_resolved: ResolvedGlobals::default(),
+            globals: Arc::default(),
+            version_info: Arc::default(),
+        }
+    }
 }
 
 impl SessionVars {
@@ -805,17 +826,31 @@ impl SessionVars {
         let optimizer_fix_control = OptimizerFixControl::parse(&raw)
             .map_err(|error| VarError::ValidationRefused(error.to_string()))?
             .0;
-        // Commit all three authorities only after the inherited fix-control
+        let autocommit = Self::autocommit_from_systems(&systems);
+        // Commit all authorities only after the inherited fix-control
         // row has been accepted. A stale/foreign cluster row can therefore
         // refuse the connection without partially reseeding this session.
         self.systems = systems;
         self.globals = Arc::new(globals);
         self.optimizer_fix_control = optimizer_fix_control;
+        self.autocommit = autocommit;
         self.session_resolved = Self::build_session_image(&self.systems);
         // The wholesale replacement above is a mutation like any other; the
         // parsed-product caches keyed on `generation` must not survive it.
         self.generation += 1;
         Ok(())
+    }
+
+    fn autocommit_from_systems(systems: &HashMap<String, String>) -> bool {
+        systems.get("autocommit").map_or(true, |value| {
+            value.eq_ignore_ascii_case("ON") || value == "1"
+        })
+    }
+
+    /// Go `SessionVars.IsAutocommit`, backed by its typed server-status bit.
+    #[must_use]
+    pub const fn is_autocommit(&self) -> bool {
+        self.autocommit
     }
 
     /// Updates ONE registry-indexed slot of the session image after the
@@ -955,6 +990,7 @@ impl SessionVars {
             };
         }
         self.generation += 1;
+        self.autocommit = Self::autocommit_from_systems(&self.systems);
         self.refresh_optimizer_fix_control();
     }
 
@@ -1037,6 +1073,9 @@ impl SessionVars {
         self.note_system_change(&key);
         if let Some(other) = alias_of(&key) {
             self.note_system_change(other);
+        }
+        if key == "autocommit" {
+            self.autocommit = validated.value == "ON";
         }
         self.generation += 1;
         if let Some(parsed) = parsed_fix_control {
@@ -1149,6 +1188,37 @@ impl SessionVars {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_autocommit_uses_go_typed_status() {
+        let source = include_str!("txn.rs");
+        let body = source
+            .split_once("pub fn is_autocommit")
+            .expect("session autocommit accessor")
+            .1
+            .split_once("/// Go's lazy transaction start")
+            .expect("end of session autocommit accessor")
+            .0;
+
+        assert!(body.contains("self.vars.is_autocommit()"));
+        assert!(!body.contains("get_system"));
+
+        let mut vars = SessionVars::new();
+        assert!(vars.is_autocommit());
+        vars.set_system("autocommit", "OFF".to_owned()).unwrap();
+        assert!(!vars.is_autocommit());
+        let restore = vars.snapshot_system("autocommit");
+        vars.set_system("autocommit", "ON".to_owned()).unwrap();
+        assert!(vars.is_autocommit());
+        vars.restore_system(restore);
+        assert!(!vars.is_autocommit());
+
+        let globals = GlobalSysvars::new();
+        globals.set("autocommit", "OFF".to_owned()).unwrap();
+        let mut inherited = SessionVars::new();
+        inherited.seed_from_globals(globals).unwrap();
+        assert!(!inherited.is_autocommit());
+    }
 
     #[test]
     fn version_identity_is_shared_until_it_changes() {

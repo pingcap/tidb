@@ -258,6 +258,23 @@ fn autocommit_off_puts_a_statement_in_a_transaction() {
     );
 }
 
+#[test]
+fn process_status_uses_the_typed_autocommit_and_transaction_bits() {
+    let mut session = Session::new();
+    assert_eq!(session.status_text(), "autocommit");
+
+    session.run("SET autocommit = 0").unwrap();
+    assert_eq!(session.status_text(), "");
+
+    session.control_transaction("BEGIN").unwrap();
+    assert_eq!(session.status_text(), "in transaction");
+    session.control_transaction("ROLLBACK").unwrap();
+    assert_eq!(session.status_text(), "");
+
+    session.run("SET autocommit = 1").unwrap();
+    assert_eq!(session.status_text(), "autocommit");
+}
+
 /// A session that has pinned a historical timestamp must not be answered
 /// from the present.
 ///
