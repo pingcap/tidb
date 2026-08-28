@@ -1,8 +1,9 @@
 # Go/Rust Sysbench parity review
 
 Date: 2026-08-28
-Rust target: `hparser-integration` at `2027377a4ace76d06a6cc81ac82c51b68505a3b6`
+Benchmark anchor: `hparser-integration` at `2027377a4ace76d06a6cc81ac82c51b68505a3b6`
 Go semantic baseline: `origin/master` at `25050b53f84fd14c4cfa97a7bb3826876c333c29`
+Published branch after the review rebase: `89527ccee41746510c2de29fc4356437fc93980e`
 
 This receipt is the implementation and review boundary for the next parity
 cycle. It separates measured facts from hypotheses, keeps the Go unit tests as
