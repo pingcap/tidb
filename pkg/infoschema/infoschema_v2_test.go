@@ -183,8 +183,14 @@ func TestV2Basic(t *testing.T) {
 	require.NoError(t, err)
 	var persistentIDs []int64
 	destination := &model.TableInfo{}
+	is.Data.recentMinTS.Store(math.MaxUint64)
+	tableInfo, err := persistentIter.NextInto(context.Background(), destination)
+	require.NoError(t, err)
+	require.NotNil(t, tableInfo)
+	require.Equal(t, is.ts, is.Data.recentMinTS.Load())
+	persistentIDs = append(persistentIDs, tableInfo.ID)
 	for {
-		tableInfo, err := persistentIter.NextInto(context.Background(), destination)
+		tableInfo, err = persistentIter.NextInto(context.Background(), destination)
 		require.NoError(t, err)
 		if tableInfo == nil {
 			break

@@ -16,15 +16,22 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/stretchr/testify/require"
 )
 
@@ -63,6 +70,143 @@ func (i *mockTableInfoIterator) RetainedMemory() int64 {
 		return 0
 	}
 	return i.retainedBytes
+}
+
+func TestInfoSchemaTablePredicatesUseHugeRetriever(t *testing.T) {
+	sctx := mock.NewContext()
+	is := infoschema.MockInfoSchema(nil)
+	builder := NewMockExecutorBuilderForTest(sctx, is, nil)
+
+	for _, test := range []struct {
+		tableName string
+		extractor base.MemTablePredicateExtractor
+	}{
+		{
+			tableName: infoschema.TableTables,
+			extractor: func() *plannercore.InfoSchemaTablesExtractor {
+				extractor := plannercore.NewInfoSchemaTablesExtractor()
+				extractor.ColPredicates = map[string]set.StringSet{
+					plannercore.TableName: set.NewStringSet("shared"),
+				}
+				return extractor
+			}(),
+		},
+		{
+			tableName: infoschema.TableTables,
+			extractor: func() *plannercore.InfoSchemaTablesExtractor {
+				extractor := plannercore.NewInfoSchemaTablesExtractor()
+				extractor.ColPredicates = map[string]set.StringSet{
+					plannercore.TableName: set.NewStringSet("shared", "other"),
+				}
+				return extractor
+			}(),
+		},
+		{
+			tableName: infoschema.TableTiDBIndexes,
+			extractor: func() *plannercore.InfoSchemaIndexesExtractor {
+				extractor := plannercore.NewInfoSchemaIndexesExtractor()
+				extractor.ColPredicates = map[string]set.StringSet{
+					plannercore.TableName: set.NewStringSet("shared"),
+				}
+				return extractor
+			}(),
+		},
+	} {
+		plan := physicalop.PhysicalMemTable{
+			DBName:    metadef.InformationSchemaName,
+			Table:     &model.TableInfo{Name: ast.NewCIStr(test.tableName)},
+			Extractor: test.extractor,
+		}.Init(sctx, nil, 0)
+		plan.SetSchema(expression.NewSchema())
+		reader := builder.Build(plan).(*MemTableReaderExec)
+		require.IsType(t, &hugeMemTableRetriever{}, reader.retriever, test.tableName)
+	}
+}
+
+func TestPointTableInfoSourceResumesAcrossBatches(t *testing.T) {
+	tableCount := 2*hugeMemTableBatchSize + 17
+	tableInfos := make([]*model.TableInfo, 0, tableCount)
+	tableNames := set.NewStringSet()
+	tableIDs := set.NewStringSet()
+	expectedIDs := make([]int64, 0, tableCount)
+	for i := 0; i < tableCount; i++ {
+		id := int64(i + 1)
+		name := fmt.Sprintf("t%06d", i)
+		tableInfos = append(tableInfos, &model.TableInfo{
+			ID:    id,
+			Name:  ast.NewCIStr(name),
+			State: model.StatePublic,
+		})
+		tableNames.Insert(name)
+		tableIDs.Insert(fmt.Sprint(id))
+		expectedIDs = append(expectedIDs, id)
+	}
+	is := infoschema.MockInfoSchema(tableInfos)
+
+	for name, predicates := range map[string]map[string]set.StringSet{
+		"table names": {plannercore.TableName: tableNames},
+		"table IDs":   {plannercore.TidbTableID: tableIDs},
+	} {
+		t.Run(name, func(t *testing.T) {
+			extractor := plannercore.NewInfoSchemaTablesExtractor()
+			extractor.ColPredicates = predicates
+			source := newPointTableInfoSource(extractor.GetBase())
+			require.NotNil(t, source)
+
+			visitedIDs := make([]int64, 0, tableCount)
+			calls := 0
+			for len(visitedIDs) < tableCount {
+				rowsThisCall := 0
+				err := source.iterate(
+					context.Background(),
+					is,
+					[]ast.CIStr{ast.NewCIStr("test")},
+					func(*model.TableInfo) bool { return true },
+					func(_ ast.CIStr, table *model.TableInfo) (bool, bool) {
+						visitedIDs = append(visitedIDs, table.ID)
+						rowsThisCall++
+						return rowsThisCall < hugeMemTableBatchSize, false
+					},
+				)
+				require.NoError(t, err)
+				require.LessOrEqual(t, rowsThisCall, hugeMemTableBatchSize)
+				calls++
+			}
+
+			require.Equal(t, 3, calls)
+			require.Equal(t, expectedIDs, visitedIDs)
+			visitedAfterExhaustion := 0
+			require.NoError(t, source.iterate(
+				context.Background(),
+				is,
+				[]ast.CIStr{ast.NewCIStr("test")},
+				func(*model.TableInfo) bool { return true },
+				func(ast.CIStr, *model.TableInfo) (bool, bool) {
+					visitedAfterExhaustion++
+					return true, false
+				},
+			))
+			require.Zero(t, visitedAfterExhaustion)
+		})
+	}
+
+	t.Run("cancellation interrupts misses", func(t *testing.T) {
+		extractor := plannercore.NewInfoSchemaTablesExtractor()
+		extractor.ColPredicates = map[string]set.StringSet{
+			plannercore.TableName: set.NewStringSet("missing"),
+		}
+		source := newPointTableInfoSource(extractor.GetBase())
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := source.iterate(
+			ctx,
+			is,
+			[]ast.CIStr{ast.NewCIStr("test")},
+			func(*model.TableInfo) bool { return true },
+			func(ast.CIStr, *model.TableInfo) (bool, bool) { return true, false },
+		)
+		require.ErrorIs(t, err, context.Canceled)
+	})
 }
 
 func TestBoundedDatumRows(t *testing.T) {
@@ -160,6 +304,30 @@ func TestBoundedDatumRows(t *testing.T) {
 		batch.finishBatch()
 
 		batch.close()
+		require.Zero(t, tracker.BytesConsumed())
+	})
+
+	t.Run("column type cache is bounded and tracked", func(t *testing.T) {
+		tracker := memory.NewTracker(6, -1)
+		retriever := &hugeMemTableRetriever{memTracker: tracker}
+		for i := 0; i < hugeMemTableColumnTypeCacheMaxEntries; i++ {
+			ft := types.NewFieldType(mysql.TypeVarchar)
+			ft.SetFlen(i + 1)
+			retriever.infoSchemaFieldTypeStrings(ft)
+		}
+		retainedAtLimit := tracker.BytesConsumed()
+		require.Equal(t, hugeMemTableColumnTypeCacheMaxEntries, len(retriever.columnTypeCache))
+		require.Positive(t, retainedAtLimit)
+
+		for i := hugeMemTableColumnTypeCacheMaxEntries; i < 1024; i++ {
+			ft := types.NewFieldType(mysql.TypeVarchar)
+			ft.SetFlen(i + 1)
+			retriever.infoSchemaFieldTypeStrings(ft)
+		}
+		require.Equal(t, hugeMemTableColumnTypeCacheMaxEntries, len(retriever.columnTypeCache))
+		require.Equal(t, retainedAtLimit, tracker.BytesConsumed())
+
+		require.NoError(t, retriever.close())
 		require.Zero(t, tracker.BytesConsumed())
 	})
 }

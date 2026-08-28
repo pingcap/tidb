@@ -1378,34 +1378,127 @@ func reusableTableInfoMemoryUsage(tableInfo *model.TableInfo) int64 {
 	return usage
 }
 
+type pointTableInfoSource struct {
+	tableNames   []ast.CIStr
+	tableIDs     []int64
+	schemaIdx    int
+	tableNameIdx int
+	tableIDIdx   int
+}
+
+func newPointTableInfoSource(extractor *plannercore.InfoSchemaBaseExtractor) *pointTableInfoSource {
+	tableNames, tableIDs := extractor.TableLookupPredicates()
+	if len(tableNames) == 0 && len(tableIDs) == 0 {
+		return nil
+	}
+	return &pointTableInfoSource{
+		tableNames: tableNames,
+		tableIDs:   tableIDs,
+	}
+}
+
+func (s *pointTableInfoSource) iterate(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	schemas []ast.CIStr,
+	matches func(*model.TableInfo) bool,
+	visit func(ast.CIStr, *model.TableInfo) (continueIteration bool, retainForBatch bool),
+) error {
+	if len(s.tableIDs) > 0 {
+		for s.tableIDIdx < len(s.tableIDs) {
+			if err := ctx.Err(); err != nil {
+				return errors.Trace(err)
+			}
+			tableID := s.tableIDs[s.tableIDIdx]
+			s.tableIDIdx++
+			tbl, ok := is.TableByID(ctx, tableID)
+			if !ok {
+				continue
+			}
+			tableInfo := tbl.Meta()
+			if tableInfo.TempTableType == model.TempTableLocal || !matches(tableInfo) {
+				continue
+			}
+			dbInfo, ok := is.SchemaByID(tableInfo.DBID)
+			if !ok || !schemaNameInSortedList(schemas, dbInfo.Name) {
+				continue
+			}
+			continueIteration, _ := visit(dbInfo.Name, tableInfo)
+			if !continueIteration {
+				return nil
+			}
+		}
+		return nil
+	}
+
+	ctx = infoschema.WithRefillOption(ctx, false)
+	for s.schemaIdx < len(schemas) {
+		schema := schemas[s.schemaIdx]
+		for s.tableNameIdx < len(s.tableNames) {
+			if err := ctx.Err(); err != nil {
+				return errors.Trace(err)
+			}
+			tableName := s.tableNames[s.tableNameIdx]
+			s.tableNameIdx++
+			tbl, err := is.TableByName(ctx, schema, tableName)
+			if err != nil {
+				if errors.ErrorEqual(err, infoschema.ErrTableNotExists) {
+					continue
+				}
+				return errors.Trace(err)
+			}
+			tableInfo := tbl.Meta()
+			if tableInfo.TempTableType == model.TempTableLocal || !matches(tableInfo) {
+				continue
+			}
+			continueIteration, _ := visit(schema, tableInfo)
+			if !continueIteration {
+				return nil
+			}
+		}
+		s.tableNameIdx = 0
+		s.schemaIdx++
+	}
+	return nil
+}
+
+func schemaNameInSortedList(schemas []ast.CIStr, target ast.CIStr) bool {
+	_, found := slices.BinarySearchFunc(schemas, target, func(candidate, target ast.CIStr) int {
+		return strings.Compare(candidate.L, target.L)
+	})
+	return found
+}
+
 type hugeMemTableRetriever struct {
 	dummyCloser
-	tablesExtractor    *plannercore.InfoSchemaTablesExtractor
-	columnsExtractor   *plannercore.InfoSchemaColumnsExtractor
-	indexesExtractor   *plannercore.InfoSchemaIndexesExtractor
-	table              *model.TableInfo
-	columns            []*model.ColumnInfo
-	retrieved          bool
-	initialized        bool
-	dbs                []ast.CIStr
-	curTables          []*model.TableInfo
-	curTablesLoaded    bool
-	dbsIdx             int
-	tblIdx             int
-	viewMu             syncutil.RWMutex
-	viewSchemaMap      map[int64]*expression.Schema // table id to view schema
-	viewOutputNamesMap map[int64]types.NameSlice    // table id to view output names
-	batch              int
-	is                 infoschema.InfoSchema
-	rowBuffer          *boundedDatumRows
-	tableInfoBatch     *boundedTableInfoBatch
-	memTracker         *memory.Tracker
-	newTableInfoIter   func(context.Context, ast.CIStr, int64) (infoschema.TableInfoIterator, error)
-	tableInfoIter      infoschema.TableInfoIterator
-	tableInfoIterBytes int64
-	columnTypeCache    map[infoSchemaFieldTypeKey]infoSchemaFieldTypeStrings
-	iterateTableItems  func(*infoschema.TableItem, func(infoschema.TableItem) bool) (infoschema.TableItem, bool, bool)
-	lastTableItem      *infoschema.TableItem
+	tablesExtractor      *plannercore.InfoSchemaTablesExtractor
+	columnsExtractor     *plannercore.InfoSchemaColumnsExtractor
+	indexesExtractor     *plannercore.InfoSchemaIndexesExtractor
+	table                *model.TableInfo
+	columns              []*model.ColumnInfo
+	retrieved            bool
+	initialized          bool
+	dbs                  []ast.CIStr
+	curTables            []*model.TableInfo
+	curTablesLoaded      bool
+	dbsIdx               int
+	tblIdx               int
+	viewMu               syncutil.RWMutex
+	viewSchemaMap        map[int64]*expression.Schema // table id to view schema
+	viewOutputNamesMap   map[int64]types.NameSlice    // table id to view output names
+	batch                int
+	is                   infoschema.InfoSchema
+	rowBuffer            *boundedDatumRows
+	tableInfoBatch       *boundedTableInfoBatch
+	memTracker           *memory.Tracker
+	newTableInfoIter     func(context.Context, ast.CIStr, int64) (infoschema.TableInfoIterator, error)
+	tableInfoIter        infoschema.TableInfoIterator
+	tableInfoIterBytes   int64
+	pointTableSource     *pointTableInfoSource
+	columnTypeCache      map[infoSchemaFieldTypeKey]infoSchemaFieldTypeStrings
+	columnTypeCacheBytes int64
+	iterateTableItems    func(*infoschema.TableItem, func(infoschema.TableItem) bool) (infoschema.TableItem, bool, bool)
+	lastTableItem        *infoschema.TableItem
 }
 
 // retrieve implements the infoschemaRetriever interface
@@ -1426,12 +1519,13 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 		if e.tableInfoBatch == nil {
 			e.tableInfoBatch = newBoundedTableInfoBatch(e.memTracker, hugeMemTableRetainedCapacityLimit)
 		}
+		e.pointTableSource = newPointTableInfoSource(e.baseExtractor())
 		raw := e.is
 		if extended, ok := raw.(*infoschema.SessionExtendedInfoSchema); ok {
 			raw = extended.InfoSchema
 		}
 		if ok, v2 := infoschema.IsV2(raw); ok {
-			if !e.baseExtractor().HasExactTablePredicates() {
+			if e.pointTableSource == nil {
 				if e.columnsExtractor != nil {
 					e.newTableInfoIter = v2.NewColumnsTableInfoIterator
 				} else {
@@ -1482,16 +1576,17 @@ func (e *hugeMemTableRetriever) close() error {
 	e.viewOutputNamesMap = nil
 	e.closeTableInfoIterator()
 	e.newTableInfoIter = nil
+	e.pointTableSource = nil
 	e.iterateTableItems = nil
 	e.lastTableItem = nil
-	e.columnTypeCache = nil
+	e.releaseColumnTypeCache()
 	return nil
 }
 
 func (e *hugeMemTableRetriever) syncTableInfoIteratorMemory() {
 	var retainedBytes int64
-	if reporter, ok := e.tableInfoIter.(interface{ RetainedMemory() int64 }); ok {
-		retainedBytes = reporter.RetainedMemory()
+	if e.tableInfoIter != nil {
+		retainedBytes = e.tableInfoIter.RetainedMemory()
 	}
 	if e.memTracker != nil {
 		e.memTracker.Consume(retainedBytes - e.tableInfoIterBytes)
@@ -1546,6 +1641,9 @@ func (e *hugeMemTableRetriever) iterateTables(
 	ctx context.Context,
 	visit func(ast.CIStr, *model.TableInfo) (continueIteration bool, retainForBatch bool),
 ) error {
+	if e.pointTableSource != nil {
+		return e.pointTableSource.iterate(ctx, e.is, e.dbs, e.tableMatches, visit)
+	}
 	for e.dbsIdx < len(e.dbs) {
 		schema := e.dbs[e.dbsIdx]
 		if e.newTableInfoIter != nil && !infoschema.IsSpecialDB(schema.L) {
@@ -1922,6 +2020,27 @@ type infoSchemaFieldTypeStrings struct {
 	columnType string
 }
 
+const hugeMemTableColumnTypeCacheMaxEntries = 128
+
+// A map created with capacity N can reserve close to 2N bucket slots. Charge
+// that upper bound so the SQL tracker owns the cache's structural retention,
+// in addition to the exact string bytes charged for each cached entry.
+var infoSchemaFieldTypeCacheRetainedBytes = 2 * int64(hugeMemTableColumnTypeCacheMaxEntries) * (int64(unsafe.Sizeof(infoSchemaFieldTypeKey{})) +
+	int64(unsafe.Sizeof(infoSchemaFieldTypeStrings{})) +
+	2*size.SizeOfPointer)
+
+func (e *hugeMemTableRetriever) adjustColumnTypeCacheBytes(delta int64) {
+	e.columnTypeCacheBytes += delta
+	if e.memTracker != nil {
+		e.memTracker.Consume(delta)
+	}
+}
+
+func (e *hugeMemTableRetriever) releaseColumnTypeCache() {
+	e.columnTypeCache = nil
+	e.adjustColumnTypeCacheBytes(-e.columnTypeCacheBytes)
+}
+
 func (e *hugeMemTableRetriever) infoSchemaFieldTypeStrings(ft *types.FieldType) infoSchemaFieldTypeStrings {
 	build := func() infoSchemaFieldTypeStrings {
 		colType := ft.GetType()
@@ -1947,11 +2066,18 @@ func (e *hugeMemTableRetriever) infoSchemaFieldTypeStrings(ft *types.FieldType) 
 	if cached, ok := e.columnTypeCache[key]; ok {
 		return cached
 	}
-	if e.columnTypeCache == nil {
-		e.columnTypeCache = make(map[infoSchemaFieldTypeKey]infoSchemaFieldTypeStrings)
-	}
 	result := build()
+	if len(e.columnTypeCache) >= hugeMemTableColumnTypeCacheMaxEntries {
+		return result
+	}
+	if e.columnTypeCache == nil {
+		e.columnTypeCache = make(map[infoSchemaFieldTypeKey]infoSchemaFieldTypeStrings, hugeMemTableColumnTypeCacheMaxEntries)
+		e.adjustColumnTypeCacheBytes(infoSchemaFieldTypeCacheRetainedBytes)
+	}
 	e.columnTypeCache[key] = result
+	e.adjustColumnTypeCacheBytes(int64(
+		len(key.charset) + len(key.collate) + len(result.dataType) + len(result.columnType),
+	))
 	return result
 }
 

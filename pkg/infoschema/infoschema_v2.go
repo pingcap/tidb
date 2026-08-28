@@ -1164,6 +1164,7 @@ retry:
 // consumed in multiple executor output batches.
 type TableInfoIterator interface {
 	NextInto(context.Context, *model.TableInfo) (*model.TableInfo, error)
+	RetainedMemory() int64
 	Close()
 }
 
@@ -1174,6 +1175,7 @@ type infoschemaV2TableInfoIterator struct {
 	lastTableID int64
 	decodeMode  meta.TableInfoDecodeMode
 	iter        *meta.TableInfoIterator
+	keepAlive   func()
 	exhausted   bool
 }
 
@@ -1219,6 +1221,7 @@ func (is *infoschemaV2) newTableInfoIterator(
 		ts:          is.ts,
 		lastTableID: exclusiveStartTableID,
 		decodeMode:  decodeMode,
+		keepAlive:   is.keepAlive,
 		exhausted:   !ok,
 	}
 	if !ok {
@@ -1233,6 +1236,7 @@ func (is *infoschemaV2) newTableInfoIterator(
 
 func (i *infoschemaV2TableInfoIterator) reopen(ctx context.Context) error {
 	for !i.exhausted {
+		i.keepSnapshotAlive()
 		snapshot := i.store.GetSnapshot(kv.NewVersion(i.ts))
 		// Keep this consistent with SchemaTableInfos so a long metadata scan has
 		// the same bounded TiKV request timeout as the existing list API.
@@ -1267,6 +1271,7 @@ func (i *infoschemaV2TableInfoIterator) reopen(ctx context.Context) error {
 
 func (i *infoschemaV2TableInfoIterator) NextInto(ctx context.Context, destination *model.TableInfo) (*model.TableInfo, error) {
 	for !i.exhausted {
+		i.keepSnapshotAlive()
 		tableInfo, err := i.iter.NextInto(ctx, destination)
 		if err == nil {
 			if tableInfo == nil {
@@ -1303,7 +1308,14 @@ func (i *infoschemaV2TableInfoIterator) Close() {
 		i.iter.Close()
 		i.iter = nil
 	}
+	i.keepAlive = nil
 	i.exhausted = true
+}
+
+func (i *infoschemaV2TableInfoIterator) keepSnapshotAlive() {
+	if i.keepAlive != nil {
+		i.keepAlive()
+	}
 }
 
 func (i *infoschemaV2TableInfoIterator) RetainedMemory() int64 {

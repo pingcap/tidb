@@ -31,6 +31,12 @@ connection pools and gRPC buffer policy.
 - [x] (2026-08-26) Removed test-only resume APIs and the process-wide `FieldType` JSON pool from the production diff.
 - [x] (2026-08-26) Ran the focused TiDB and client-go suites, race checks, vet, Bazel generation, and TiDB Ready lint.
 - [x] (2026-08-26) Prepared the final Draft PR description and recorded the review footprint.
+- [x] (2026-08-28) Reproduced the four review findings with deterministic tests for retriever selection, cache growth, API v2 Scan decoding, and InfoSchema V2 GC keepalive.
+- [x] (2026-08-28) Kept exact table-name and table-ID predicates on the bounded retriever and added resumable point lookups across executor batches.
+- [x] (2026-08-28) Bounded the query-lifetime column type cache to 128 entries and charged its structural and retained string memory to the statement tracker.
+- [x] (2026-08-28) Made the API v2 adapter decode caller-owned Scan pairs in place and refresh the InfoSchema snapshot keepalive on every iterator advance and reopen.
+- [x] (2026-08-28) Refreshed the client-go dependency and Bazel metadata and reran the TiDB Ready profile, including focused SQL tests and `make lint`.
+- [ ] (2026-08-28) Commit and push the TiDB review fixes and update both Draft PRs with the findings and validation evidence.
 
 ## Surprises & Discoveries
 
@@ -54,6 +60,23 @@ connection pools and gRPC buffer policy.
   Evidence: request-local transport reuse therefore requires an isolated
   connection; enabling the global shared pool would also change ordinary
   transaction, Cop, batch, and streaming traffic.
+
+- Observation: an exact `TABLE_NAME` predicate is not necessarily a point
+  result. The same name can exist in every schema, and an `IN` list has no
+  cardinality ceiling.
+  Evidence: the former builder fallback selected `memtableRetriever`, whose
+  `rows` field materializes every match before returning 1,024-row batches.
+
+- Observation: API v2 decoded every reusable Scan response through the normal
+  pair adapter, which cloned each `KvPair` even after the raw decoder had
+  stabilized its buffers.
+  Evidence: the full raw-decoder plus API-v2-adapter regression now preserves
+  pair and key backing-storage identity and reports zero warm allocations.
+
+- Observation: InfoSchema V2's minimum snapshot timestamp is reset after each
+  30-second report interval.
+  Evidence: resetting `recentMinTS` in `TestV2Basic` showed that constructor-only
+  keepalive did not protect a persistent iterator after the first report.
 
 ## Decision Log
 
@@ -90,6 +113,29 @@ connection pools and gRPC buffer policy.
   ordinary JSON decode path unchanged and reduces the public review surface.
   Date/Author: 2026-08-26 / Codex
 
+- Decision: Keep one externally visible `hugeMemTableRetriever` for all access
+  strategies and implement exact predicates as a private, resumable point
+  source inside it.
+  Rationale: projection, batching, retained limits, tracker ownership, and
+  close behavior must not change when the planner discovers a table predicate.
+  A complete three-adapter refactor would increase this review fix without
+  changing that externally observable invariant.
+  Date/Author: 2026-08-28 / Codex
+
+- Decision: Limit `columnTypeCache` to 128 distinct scalar field types and
+  charge a conservative map-capacity upper bound plus retained string bytes.
+  Rationale: common schemas still reuse the expensive type strings, while
+  adversarial type diversity cannot grow query-lifetime retained memory
+  without bound.
+  Date/Author: 2026-08-28 / Codex
+
+- Decision: Perform API v2 in-place decoding only when the response pointer is
+  exactly the response owned by `Request.ReusableScanResponse`.
+  Rationale: the reusable metadata path avoids pair clones, while mocks,
+  fallback responses, and ordinary Scan callers preserve the existing clone
+  semantics and ownership isolation.
+  Date/Author: 2026-08-28 / Codex
+
 ## Outcomes & Retrospective
 
 The preserved 100,000-table fixture has 12 columns and two secondary indexes
@@ -104,14 +150,23 @@ These measurements establish behavior for the fixed local topology and
 routing, concurrent metadata scans, isolated-connection churn, and tail
 latency remain explicit follow-up test surfaces.
 
-The final review footprint is 21 files with 2,836 additions and 158 deletions
-in TiDB, including this ExecPlan, and 10 files with 751 additions and 20
-deletions in client-go. Combined, the stacked change is 31 files with 3,587
-additions and 178 deletions. The largest file is
+The final review footprint is 21 files with 3,212 additions and 173 deletions
+in TiDB, including this ExecPlan, and 12 files with 833 additions and 21
+deletions in client-go. Combined, the stacked change is 33 files with 4,045
+additions and 194 deletions. The largest file is
 `pkg/executor/infoschema_reader.go`, because it contains the shared projected
 row builder plus the three table-specific batched emitters. The client-go
 portion is isolated behind an explicit reusable Scan response pointer; normal
 transactional and coprocessor requests do not select the new connection pool.
+
+The 2026-08-28 review round found four holes in the bounded-memory contract.
+The TiDB follow-up is 10 files with 434 additions and 73 deletions, and the
+client-go adapter follow-up is two files with 82 additions and one deletion.
+The fixes preserve the single retriever at the executor boundary, bound and
+account the column type cache, remove API v2 pair clones on the owned reusable
+response, and renew snapshot GC protection during long scans. Focused TiDB SQL
+and package tests, client-go package tests, race checks, vet, Bazel generation,
+and TiDB Ready lint all pass with the refreshed dependency.
 
 ## Context and Orientation
 
@@ -150,17 +205,18 @@ version ordering and close both ordinary and reusable pools on client shutdown.
 
 Run focused client-go validation from the client-go repository:
 
+    GOWORK=off go test ./internal/apicodec -count=1
     GOWORK=off go test ./internal/client ./tikvrpc -run 'Test(BoundedBufferPool|ReusableScan|CloseAddrVerHandlesReusableScanConnPool|GetConnAfterClose)' -count=1
-    GOWORK=off go test -race ./internal/client ./tikvrpc -run 'Test(BoundedBufferPool|ReusableScan|CloseAddrVerHandlesReusableScanConnPool|GetConnAfterClose)' -count=1
+    GOWORK=off go test -race ./internal/apicodec ./internal/client ./tikvrpc -run 'Test(CodecV2|BoundedBufferPool|ReusableScan|CloseAddrVerHandlesReusableScanConnPool|GetConnAfterClose)' -count=1
     GOWORK=off go test ./internal/client ./tikvrpc -count=1
     GOWORK=off go test ./txnkv/txnsnapshot -run '^$' -count=1
-    GOWORK=off go vet ./internal/client ./tikvrpc ./txnkv/txnsnapshot
+    GOWORK=off go vet ./internal/apicodec ./internal/client ./tikvrpc ./txnkv/txnsnapshot
 
 Run focused TiDB validation from the TiDB repository. The executor package uses
 failpoints, so use its wrapper for targeted tests. Import and dependency changes
 also require `make bazel_prepare` before the final Ready profile.
 
-    GOWORK=off ./tools/check/failpoint-go-test.sh pkg/executor -run 'Test(BoundedDatumRows|HugeMemTableRetrieverKeepsTableInfoIteratorAcrossBatches)$' -count=1
+    GOWORK=off ./tools/check/failpoint-go-test.sh pkg/executor -run 'Test(InfoSchemaTablePredicatesUseHugeRetriever|PointTableInfoSourceResumesAcrossBatches|BoundedDatumRows|HugeMemTableRetrieverKeepsTableInfoIteratorAcrossBatches)$' -count=1
     GOWORK=off go test -tags=intest,deadlock ./pkg/meta ./pkg/infoschema ./pkg/structure -run 'Test(Meta|SimpleColumnsTableInfoDecoder|V2Basic|Hash)$' -count=1
     GOWORK=off go test -tags=intest,deadlock ./pkg/planner/core/operator/logicalop/logicalop_test -run 'Test(Columns|InfoSchemaTableExtract)$' -count=1
     GOWORK=off ./tools/check/failpoint-go-test.sh pkg/executor/test/infoschema -run 'Test(TablesTable|ColumnTable|InfoschemaTablesSpecialOptimizationCovered)$' -count=1
@@ -189,14 +245,16 @@ smallest owning change.
 
 The detailed A/B evidence is stored outside the repository under
 `local_250k_tables/results/infoschema_metakv_grpc_buffer_reuse_ab_20260826`.
-The client-go dependency used by this change is commit
-`9796e6f3c6c06a034b5fe041852341a67e5138ce`, represented in TiDB by pseudo-version
-`v2.0.0-20260826115000-9796e6f3c6c0`.
+The client-go review fix is commit
+`ac83f337255abec7bc95d59d163586f116477ca3`, represented in TiDB by pseudo-version
+`v2.0.0-20260828021632-ac83f337255a`.
 
 ## Interfaces and Dependencies
 
 TiDB adds a `kv.ScanResponseRetainedSize` snapshot option and persistent
-`TableInfoIterator` interfaces used only by the large InfoSchema retriever.
+`TableInfoIterator` interfaces used only by the large InfoSchema retriever. The
+iterator contract includes `RetainedMemory() int64`, so its owner can account
+retained scanner capacity without probing an optional anonymous interface.
 The partial decoder uses `github.com/tidwall/gjson`, with the standard JSON
 decoder as a compatibility fallback. Client-go adds `ReusableScanResponse`, a
 per-snapshot retained-size opt-in, an isolated reusable-scan connection map,
@@ -206,3 +264,7 @@ Revision note (2026-08-26): consolidated the five experimental plans into one
 end-to-end plan, removed diagnostic and allocation-attribution scope, narrowed
 the exported iterator surface, and recorded the final validation and review
 footprint.
+
+Revision note (2026-08-28): recorded the four review regressions, the bounded
+point lookup and cache fixes, API v2 in-place adapter coverage, iterator
+keepalive renewal, and the refreshed client-go dependency.

@@ -111,15 +111,18 @@ func (e *InfoSchemaBaseExtractor) GetBase() *InfoSchemaBaseExtractor {
 	return e
 }
 
-// HasExactTablePredicates reports whether the extracted predicates can use a
-// table-name or table-ID point lookup instead of scanning a schema.
-func (e *InfoSchemaBaseExtractor) HasExactTablePredicates() bool {
-	for _, colName := range []string{e.extractableColumns.table, e.extractableColumns.tableID} {
-		if colName != "" && len(e.getSchemaObjectNames(colName)) > 0 {
-			return true
-		}
+// TableLookupPredicates returns equality and IN-list predicates that can be
+// evaluated with incremental table lookups instead of materializing a schema.
+func (e *InfoSchemaBaseExtractor) TableLookupPredicates() ([]ast.CIStr, []int64) {
+	var tableNames []ast.CIStr
+	if e.extractableColumns.table != "" {
+		tableNames = e.getSchemaObjectNames(e.extractableColumns.table)
 	}
-	return false
+	var tableIDs []int64
+	if e.extractableColumns.tableID != "" {
+		tableIDs = parseIDs(e.getSchemaObjectNames(e.extractableColumns.tableID))
+	}
+	return tableNames, tableIDs
 }
 
 // ListSchemas lists all schemas from predicate. If no schema is specified, it lists

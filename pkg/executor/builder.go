@@ -2697,31 +2697,15 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 				columns:    v.Columns,
 				memTracker: memTracker,
 			}
-			var baseExtractor *plannercore.InfoSchemaBaseExtractor
 			switch v.Table.Name.L {
 			case strings.ToLower(infoschema.TableTables):
 				retriever.tablesExtractor = v.Extractor.(*plannercore.InfoSchemaTablesExtractor)
-				baseExtractor = retriever.tablesExtractor.GetBase()
 			case strings.ToLower(infoschema.TableColumns):
 				retriever.columnsExtractor = v.Extractor.(*plannercore.InfoSchemaColumnsExtractor)
-				baseExtractor = retriever.columnsExtractor.GetBase()
 				retriever.viewSchemaMap = make(map[int64]*expression.Schema)
 				retriever.viewOutputNamesMap = make(map[int64]types.NameSlice)
 			case strings.ToLower(infoschema.TableTiDBIndexes):
 				retriever.indexesExtractor = v.Extractor.(*plannercore.InfoSchemaIndexesExtractor)
-				baseExtractor = retriever.indexesExtractor.GetBase()
-			}
-			if retriever.columnsExtractor == nil && baseExtractor.HasExactTablePredicates() {
-				return &MemTableReaderExec{
-					BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
-					table:        v.Table,
-					retriever: &memtableRetriever{
-						table:      v.Table,
-						columns:    v.Columns,
-						extractor:  v.Extractor,
-						memTracker: memTracker,
-					},
-				}
 			}
 			return &MemTableReaderExec{
 				BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
