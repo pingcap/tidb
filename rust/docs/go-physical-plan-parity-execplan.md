@@ -1294,6 +1294,34 @@ add a new runtime or queue crate without first proving that the existing
 worker-pool/channel facilities cannot provide bounded, cancellation-aware,
 panic-safe task execution.
 
+Progress receipt (2026-08-28, typed statement-memory policy): Go
+`ResetContextOfStmt` reads `SessionVars.MemQuotaQuery`, `InitChunkSize`, and
+`MaxChunkSize` as typed fields and reads `vardef.OOMAction` /
+`EnableTmpStorageOnOOM` through process-wide typed state. Rust instead
+performed five registry lookups and conversions again while retaining each row
+result, after it had already read the same policy for the statement context.
+`StatementVarSnapshot` now owns the three session fields, and the published
+`ResolvedGlobals` image owns the two typed global fields. Both statement
+execution and result retention use those products; no statement path reparses
+the global memory policy. The regression test was observed failing before the
+implementation and passing afterward. The targeted memory-policy group passes
+11/11, and a release `tidb-server` build succeeds.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`171f5b2a30` and the same Go server over one TiKV/PD cluster. Read-only median
+TPS was 512.39 candidate, 512.08 baseline, and 474.96 Go. Read-write median TPS
+was 259.65 candidate, 221.33 baseline, and 219.46 Go; the read-write samples
+remain noisy, so that increase is not attributed to this change. All 18 legs
+reported zero ignored errors. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session result_materialization_reuses_the_typed_statement_policy --lib
+    cargo test -q -p tidb-session tests_mem_quota:: --lib
+    cargo build -q -p tidb-server --bin tidb-server --release
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
 Plan revision note (2026-08-27): created after the user confirmed the
 performance-preserving route to full Go parity across plan cache, aggregation,
 parallel execution, resource groups, sort, and coprocessor packages.

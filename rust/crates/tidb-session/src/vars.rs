@@ -145,9 +145,23 @@ impl tidb_executor::GlobalSysvarAccessor for GlobalSysvars {
 /// slot holding an immutable `Arc<str>` so a read clones only the `Arc`.
 /// Slot `i` mirrors registry entry `i`; the owning tier is static per
 /// variable, so one flat table serves both maps.
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 struct ResolvedGlobals {
     values: std::boxed::Box<[Option<Arc<str>>]>,
+    /// Go's process-wide typed `vardef.OOMAction` atomic.
+    oom_action: tidb_executor::OomAction,
+    /// Go's process-wide typed `vardef.EnableTmpStorageOnOOM` atomic.
+    tmp_storage_on_oom: bool,
+}
+
+impl Default for ResolvedGlobals {
+    fn default() -> Self {
+        Self {
+            values: std::boxed::Box::default(),
+            oom_action: tidb_executor::OomAction::Cancel,
+            tmp_storage_on_oom: true,
+        }
+    }
 }
 
 impl ResolvedGlobals {
@@ -258,13 +272,45 @@ impl GlobalSysvars {
                 }
             }
         }
+        let effective = |name: &str| {
+            let index = crate::sysvar::sys_var_index_lookup(name)
+                .expect("typed global policy names are registered");
+            slots[index]
+                .as_deref()
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    crate::sysvar::effective_default(&crate::sysvar::SYS_VARS[index])
+                })
+        };
+        let oom_action = tidb_executor::OomAction::parse(&effective(
+            tidb_vardef::tidb_vars::TIDB_MEM_OOM_ACTION,
+        ));
+        let tmp_storage = effective(tidb_vardef::tidb_vars::TIDB_ENABLE_TMP_STORAGE_ON_OOM);
+        let tmp_storage_on_oom = !(tmp_storage.eq_ignore_ascii_case("off") || tmp_storage == "0");
         let mut publish = self
             .resolved
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         *publish = Arc::new(ResolvedGlobals {
             values: slots.into(),
+            oom_action,
+            tmp_storage_on_oom,
         });
+    }
+
+    /// The typed process-wide statement-memory policy Go exposes through
+    /// `vardef.OOMAction` and `vardef.EnableTmpStorageOnOOM` atomics.
+    ///
+    /// It is parsed when a GLOBAL mutation publishes the resolved image, not
+    /// when each statement starts.
+    pub(crate) fn statement_memory_policy(&self) -> (tidb_executor::OomAction, bool) {
+        let snapshot = Arc::clone(
+            &*self
+                .resolved
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        (snapshot.oom_action, snapshot.tmp_storage_on_oom)
     }
 
     /// Reads one variable by its registry position, skipping the name probe
@@ -803,6 +849,7 @@ impl SessionVars {
         }
         ResolvedGlobals {
             values: slots.into(),
+            ..ResolvedGlobals::default()
         }
     }
 
@@ -936,6 +983,12 @@ impl SessionVars {
 
     pub(crate) fn global_sysvar_accessor(&self) -> Arc<dyn tidb_executor::GlobalSysvarAccessor> {
         self.globals.clone()
+    }
+
+    /// Reads Go's two process-wide typed statement-memory settings without
+    /// converting their GLOBAL sysvar text on every statement.
+    pub(crate) fn statement_memory_policy(&self) -> (tidb_executor::OomAction, bool) {
+        self.globals.statement_memory_policy()
     }
 
     /// Sets a session system variable, validating the value as Go's

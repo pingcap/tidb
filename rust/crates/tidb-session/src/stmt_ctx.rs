@@ -67,6 +67,8 @@ pub(crate) struct StatementVarSnapshot {
     static_partition_prune: bool,
     new_only_full_group_by_check: bool,
     mem_quota: i64,
+    init_chunk_size: usize,
+    max_chunk_size: usize,
     max_allowed_packet: u64,
     group_concat_max_len: u64,
     apply_cache_capacity: i64,
@@ -195,41 +197,16 @@ impl Session {
     /// `StmtContext` would also snapshot planner, expression, sequence, and
     /// user state that result materialization never reads.
     pub fn result_materialization_authority(&self) -> crate::ResultMaterializationAuthority {
-        let quota = self
-            .vars
-            .get_system("tidb_mem_quota_query")
-            .ok()
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY);
-        let oom_action = tidb_executor::OomAction::parse(
-            &self
-                .vars
-                .get_global("tidb_mem_oom_action")
-                .unwrap_or_default(),
-        );
-        let tmp_storage_on_oom = {
-            let value = self
-                .vars
-                .get_global("tidb_enable_tmp_storage_on_oom")
-                .unwrap_or_default();
-            !(value.eq_ignore_ascii_case("off") || value == "0")
-        };
+        let snapshot = self.statement_var_snapshot();
+        let (oom_action, tmp_storage_on_oom) = self.vars.statement_memory_policy();
         self.session_memory
-            .configure(quota, oom_action, tmp_storage_on_oom);
+            .configure(snapshot.mem_quota, oom_action, tmp_storage_on_oom);
         let memory = self.session_memory.statement();
-        let init_chunk_size = self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_INIT_CHUNK_SIZE)
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(32);
-        let max_chunk_size = self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_MAX_CHUNK_SIZE)
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(1024);
-        crate::ResultMaterializationAuthority::new(memory, init_chunk_size, max_chunk_size)
+        crate::ResultMaterializationAuthority::new(
+            memory,
+            snapshot.init_chunk_size,
+            snapshot.max_chunk_size,
+        )
     }
 
     /// Go `timeutil.ParseTimeZone`: `SYSTEM` is the host zone, a named zone
@@ -665,6 +642,18 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY),
+            init_chunk_size: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_INIT_CHUNK_SIZE)
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_INIT_CHUNK_SIZE as usize),
+            max_chunk_size: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_MAX_CHUNK_SIZE)
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_MAX_CHUNK_SIZE as usize),
             max_allowed_packet: self
                 .vars
                 .get_system("max_allowed_packet")
@@ -771,20 +760,8 @@ impl Session {
         let arbitrator_wait_averse = snapshot.arbitrator_wait_averse;
         let arbitrator_reserved = snapshot.arbitrator_reserved;
         let global_sysvar_accessor = self.vars.global_sysvar_accessor();
-        let tmp_storage_on_oom = {
-            let value = self
-                .vars
-                .get_global("tidb_enable_tmp_storage_on_oom")
-                .unwrap_or_default();
-            !(value.eq_ignore_ascii_case("off") || value == "0")
-        };
+        let (oom_action, tmp_storage_on_oom) = self.vars.statement_memory_policy();
         let optimizer_cost_env = self.optimizer_cost_env(mem_quota, tmp_storage_on_oom);
-        let oom_action = tidb_executor::OomAction::parse(
-            &self
-                .vars
-                .get_global("tidb_mem_oom_action")
-                .unwrap_or_default(),
-        );
         self.session_memory
             .configure(mem_quota, oom_action, tmp_storage_on_oom);
         // The SAME three bits on both branches: a query reads them for
@@ -1074,6 +1051,23 @@ pub(crate) fn scanner_sql_mode_of(mode: &str) -> tidb_parser::SqlMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn result_materialization_reuses_the_typed_statement_policy() {
+        let source = include_str!("stmt_ctx.rs");
+        let body = source
+            .split_once("pub fn result_materialization_authority")
+            .expect("result materialization authority exists")
+            .1
+            .split_once("pub fn session_time_zone")
+            .expect("session time-zone accessor follows it")
+            .0;
+
+        assert!(body.contains("statement_var_snapshot"));
+        assert!(body.contains("statement_memory_policy"));
+        assert!(!body.contains("get_system"));
+        assert!(!body.contains("get_global"));
+    }
 
     #[test]
     fn fast_statement_context_does_not_build_decode_key_metadata() {
