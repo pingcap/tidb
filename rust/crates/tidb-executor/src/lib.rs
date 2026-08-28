@@ -148,6 +148,22 @@ pub mod table_reader;
 pub mod tblctx;
 pub mod tblsession;
 #[cfg(test)]
+mod tests_ddl_affinity_source;
+#[cfg(test)]
+mod tests_ddl_attributes_label_source;
+#[cfg(test)]
+mod tests_ddl_backfill_reorg_source;
+#[cfg(test)]
+mod tests_ddl_bdr_denial_source;
+#[cfg(test)]
+mod tests_ddl_cancel_flashback_source;
+#[cfg(test)]
+mod tests_ddl_column_basic_source;
+#[cfg(test)]
+mod tests_ddl_column_change_source;
+#[cfg(test)]
+mod tests_ddl_column_modify_source;
+#[cfg(test)]
 mod tests_index_join;
 #[cfg(test)]
 mod tests_join_search;
