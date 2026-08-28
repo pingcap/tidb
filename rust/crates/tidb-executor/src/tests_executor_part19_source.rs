@@ -23,9 +23,9 @@ use std::sync::Arc;
 use tidb_datatype::Datum;
 
 use crate::{
-    Catalog, DEFAULT_DATABASE, PreparedPlanCacheEnvironment, StmtContext,
-    build_prepared_select_plan, run_create_table_on, run_fast_prepared_insert,
-    run_fast_prepared_update, run_insert_on, run_prepared_select, run_select_on,
+    build_prepared_dml_plan, build_prepared_select_plan, parsed_parameter_count,
+    run_create_table_on, run_insert_on, run_prepared_dml, run_prepared_select, run_select_on,
+    Catalog, PreparedPlanCacheEnvironment, StmtContext, DEFAULT_DATABASE,
 };
 
 fn ctx() -> StmtContext {
@@ -87,15 +87,23 @@ fn cached_select_rows(
     (cache_hit, rows)
 }
 
-fn parse_update(sql: &str) -> tidb_ast::UpdateStmt {
-    let statement = tidb_parser::parse(sql).expect("UPDATE parses");
-    let tidb_ast::Stmt::Dml(dml) = &statement else {
-        panic!("expected DML statement");
-    };
-    let tidb_ast::DmlStmt::Update(update) = &**dml else {
-        panic!("expected UPDATE statement");
-    };
-    update.as_ref().clone()
+fn run_prepared_dml_sql(
+    sql: &str,
+    values: &[Datum],
+    catalog: &mut Catalog,
+    ctx: &StmtContext,
+) -> Option<u64> {
+    let statement = tidb_parser::parse(sql).expect("prepared DML parses");
+    let parameter_count = parsed_parameter_count(&statement);
+    let plan = Arc::new(
+        build_prepared_dml_plan(&statement, parameter_count, catalog, DEFAULT_DATABASE)
+            .expect("prepared DML plan builds")
+            .expect("prepared DML shape is supported"),
+    );
+    let execution = plan
+        .bind(values, catalog, DEFAULT_DATABASE)
+        .expect("prepared DML values bind");
+    run_prepared_dml(&execution, catalog, DEFAULT_DATABASE, ctx).expect("prepared DML runs")
 }
 
 /// `pkg/executor/test/passwordtest/password_management_test.go:131::TestPasswordManagement`.
@@ -166,15 +174,13 @@ fn point_get_prepared_plan_uses_the_transaction_read_path() {}
 #[test]
 fn point_update_prepared_plan_reuses_the_fast_update_shape() {
     let mut catalog = prepared_catalog();
-    let update = parse_update("UPDATE prepared_part19 SET v = v + ? WHERE id = ?");
-    let changed = run_fast_prepared_update(
-        &update,
+    let statement_ctx = ctx();
+    let changed = run_prepared_dml_sql(
+        "UPDATE prepared_part19 SET v = v + ? WHERE id = ?",
         &[Datum::Int(5), Datum::Int(2)],
         &mut catalog,
-        DEFAULT_DATABASE,
-        &ctx(),
+        &statement_ctx,
     )
-    .expect("fast prepared UPDATE runs")
     .expect("point UPDATE shape is supported");
     assert_eq!(changed, 1);
     assert_eq!(
@@ -432,24 +438,15 @@ fn prepared_insert_writes_bound_values() {
         &mut catalog,
     )
     .expect("prepared insert table creates");
-    let statement = tidb_parser::parse("INSERT INTO prepared_insert_part19 (id, v) VALUES (?, ?)")
-        .expect("prepared INSERT parses");
-    let tidb_ast::Stmt::Dml(dml) = &statement else {
-        panic!("expected INSERT DML");
-    };
-    let tidb_ast::DmlStmt::Insert(insert) = &**dml else {
-        panic!("expected INSERT statement");
-    };
-    let result = run_fast_prepared_insert(
-        insert,
+    let statement_ctx = ctx();
+    let result = run_prepared_dml_sql(
+        "INSERT INTO prepared_insert_part19 (id, v) VALUES (?, ?)",
         &[Datum::Bytes(b"k1".to_vec()), Datum::Int(42)],
         &mut catalog,
-        DEFAULT_DATABASE,
-        &ctx(),
+        &statement_ctx,
     )
-    .expect("prepared INSERT runs")
     .expect("INSERT shape is supported");
-    assert_eq!(result.0, 1);
+    assert_eq!(result, 1);
     assert_eq!(
         run_select_on(
             "SELECT v FROM prepared_insert_part19 WHERE id = 'k1'",
@@ -465,15 +462,13 @@ fn prepared_insert_writes_bound_values() {
 #[test]
 fn prepared_update_rebinds_assignment_and_handle_parameters() {
     let mut catalog = prepared_catalog();
-    let update = parse_update("UPDATE prepared_part19 SET v = v + ? WHERE id = ?");
-    let changed = run_fast_prepared_update(
-        &update,
+    let statement_ctx = ctx();
+    let changed = run_prepared_dml_sql(
+        "UPDATE prepared_part19 SET v = v + ? WHERE id = ?",
         &[Datum::Int(7), Datum::Int(3)],
         &mut catalog,
-        DEFAULT_DATABASE,
-        &ctx(),
+        &statement_ctx,
     )
-    .expect("prepared UPDATE runs")
     .expect("UPDATE shape is supported");
     assert_eq!(changed, 1);
     assert_eq!(
