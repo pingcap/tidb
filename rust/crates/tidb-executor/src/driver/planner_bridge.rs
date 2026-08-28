@@ -891,6 +891,7 @@ fn outer_physical_aggregation(mut plan: &PhysicalPlan) -> Option<&PhysicalPlan> 
     }
 }
 
+#[cfg(test)]
 pub(super) fn physical_aggregation_families(
     plan: &PhysicalPlan,
 ) -> (Option<AggregationFamily>, Option<AggregationFamily>) {

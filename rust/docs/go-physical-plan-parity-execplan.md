@@ -1703,14 +1703,33 @@ fail-before/pass-after regression covers both a covering IndexReader and an
 IndexLookUp double read across the initial plan and cache-hit rebind. Index
 merge, Apply, Union, Window, Lock, and DML SELECT children remain explicit
 constructor gaps; no fallback to the AST planner was added.
+
+The corrected interleaved one-thread sysbench comparison used distinct SHA-1
+artifacts for this candidate (`4a87d7bf...`) and the immediate pre-builder
+baseline (`81465432...`) over one TiKV/PD cluster. Read-only mean TPS was
+531.42 candidate, 519.22 baseline, and 470.65 Go: +2.35% over the Rust
+baseline and 1.129x Go. All three candidate read-only legs exceeded their
+paired baseline legs. Read-write mean TPS was 294.24 candidate, 252.03
+baseline, and 222.83 Go (1.320x Go), but candidate legs decayed from 338.09
+to 250.94 with run order, so the exact read-write increase is not attributed
+to this change. All 18 legs reported zero ignored errors. The corrected
+profile at
+`/private/tmp/tidb-rust-oltp_read_only-direct-physical-corrected.sample.txt`
+contains `physical_builder::run_cached_select` and no
+`run_select_with_cached_decision` or
+`run_select_traced_with_delivery_choice_inner` descendant below prepared
+SELECT execution.
 Exact WIP validation commands:
 
     cd rust
     cargo test -q -p tidb-executor cached_physical_plan_does_not_rerun_legacy_row_estimation --lib
     cargo test -q -p tidb-executor prepared_select_plan_reuses_shape_and_rebinds_parameters --lib
     cargo test -q -p tidb-executor cached_physical_index_readers_build_without_legacy_planner --lib
+    cargo build -q --release -p tidb-server --bin tidb-server
     cd ..
     git diff --check
+    OFF=44000 EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+    OFF=45000 PROFILE_ONLY=1 PROFILE_TAG=direct-physical-corrected PROFILE_WORKLOAD=oltp_read_only EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
 
 Plan revision note (2026-08-27): created after the user confirmed the
 performance-preserving route to full Go parity across plan cache, aggregation,
