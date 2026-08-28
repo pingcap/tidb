@@ -367,6 +367,11 @@ both `oltp_read_only` and `oltp_read_write`.
   own tests; live point execution already obtains partition, checksum, column,
   row-decoder, and KV behavior from the retained physical builder,
   `driver/access`, and `KvTable`.
+- [x] 2026-08-28: deleted the disconnected executor-local `plan_hints`,
+  `hints_set`, `qb_hint`, and `stmt_hints` seed cluster. Its public API was
+  closed over those four files and their unit tests; live hint collection,
+  binding, index-path validation, and physical planning are owned by
+  `tidb-session::binding`, `index_hints`, and the wired planner.
 - [x] 2026-08-28: replaced the statement context's eager eight-entry
   password-validation GLOBAL-variable map with Go's live
   `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer

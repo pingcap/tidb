@@ -119,7 +119,6 @@ pub mod hash_agg;
 #[cfg(test)]
 mod hash_agg_spill_tests;
 mod hash_join;
-pub mod hints_set;
 #[cfg(test)]
 mod tests_import_into_external_id_gaps;
 #[cfg(test)]
@@ -187,12 +186,10 @@ mod tests_compact_table_tiflash_gaps;
 mod tests_index_join_cte_build_cleanup_gaps;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
 pub mod fts_like_rewrite;
-pub mod plan_hints;
 mod plan_trace;
 pub mod predicate_pushdown;
 pub mod projection;
 mod pushdown_blacklist;
-pub mod qb_hint;
 pub mod remote_scan;
 pub mod selection;
 pub mod sequence;
@@ -203,7 +200,6 @@ pub mod sort_partition;
 pub mod sort_util;
 pub mod statement_pushdown;
 mod stmt_context;
-pub mod stmt_hints;
 pub mod storage;
 pub mod table_access;
 pub mod table_dual;
