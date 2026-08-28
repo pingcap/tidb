@@ -218,6 +218,34 @@ mod tests_memtable_cluster_source;
 mod tests_merge_join_in_disk_source;
 #[cfg(test)]
 mod tests_pkg_nested_loop_apply_source;
+#[cfg(test)]
+mod tests_point_get_visibility_locking_gaps;
+#[cfg(test)]
+mod tests_prepared_isolation_and_limits_gaps;
+#[cfg(test)]
+mod tests_prepared_param_types_source;
+#[cfg(test)]
+mod tests_prepared_parameter_pushdown_source;
+#[cfg(test)]
+mod tests_resource_group_tag_gaps;
+#[cfg(test)]
+mod tests_revoke_privilege_gaps;
+#[cfg(test)]
+mod tests_select_into_outfile_gaps;
+#[cfg(test)]
+mod tests_set_session_variable_gaps;
+#[cfg(test)]
+mod tests_show_affinity_gaps;
+#[cfg(test)]
+mod tests_show_ddl_job_comments_gaps;
+#[cfg(test)]
+mod tests_show_placement_gaps;
+#[cfg(test)]
+mod tests_show_stats_meta_gaps;
+#[cfg(test)]
+mod tests_sql_flags_import_insert_gaps;
+#[cfg(test)]
+mod tests_tablesample_regions_gaps;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
 pub mod fts_like_rewrite;
 pub mod plan_hints;
