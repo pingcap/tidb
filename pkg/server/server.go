@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal/advertisedstatus"
+	"github.com/pingcap/tidb/pkg/server/internal/spiffetls"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
@@ -128,6 +129,7 @@ const normalClosedConnsCapacity = 1000
 type Server struct {
 	cfg               *config.Config
 	tlsConfig         unsafe.Pointer // *tls.Config
+	spiffeTLSSource   *spiffetls.Source
 	driver            IDriver
 	listener          net.Listener
 	socket            net.Listener
@@ -324,14 +326,37 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s.capability = defaultCapability
 	setSystemTimeZoneVariable()
 
-	tlsConfig, autoReload, err := util.LoadTLSCertificates(
-		s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
-		s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
+	var (
+		tlsConfig  *tls.Config
+		autoReload bool
+		err        error
+	)
+	if s.cfg.Security.SPIFFEWorkloadAPIAddr != "" {
+		if s.cfg.Security.SSLCA != "" || s.cfg.Security.SSLCert != "" ||
+			s.cfg.Security.SSLKey != "" || s.cfg.Security.AutoTLS {
+			return nil, errors.New("SPIFFE Workload API TLS cannot be combined with ssl-ca, ssl-cert, ssl-key, or auto-tls")
+		}
+		var timeout time.Duration
+		timeout, err = time.ParseDuration(s.cfg.Security.SPIFFEWorkloadAPITimeout)
+		if err == nil {
+			s.spiffeTLSSource, err = spiffetls.New(
+				s.cfg.Security.SPIFFEWorkloadAPIAddr,
+				timeout,
+				s.cfg.Security.MinTLSVersion,
+				tlsutil.RequireSecureTransport.Load(),
+			)
+			if err == nil {
+				tlsConfig = s.spiffeTLSSource.TLSConfig()
+			}
+		}
+	} else {
+		tlsConfig, autoReload, err = util.LoadTLSCertificates(
+			s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
+			s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
+	}
 
-	// LoadTLSCertificates will auto generate certificates if autoTLS is enabled.
-	// It only returns an error if certificates are specified and invalid.
-	// In which case, we should halt server startup as a misconfiguration could
-	// lead to a connection downgrade.
+	// TLS initialization fails closed when explicitly configured material is
+	// invalid or the Workload API cannot provide an initial valid context.
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -357,7 +382,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
 		logutil.BgLogger().Info("mysql protocol server secure connection is enabled",
-			zap.Bool("client verification enabled", len(variable.GetSysVar("ssl_ca").Value) > 0))
+			zap.Bool("client verification enabled", s.spiffeTLSSource != nil || len(variable.GetSysVar("ssl_ca").Value) > 0))
 	}
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
@@ -708,6 +733,10 @@ func (s *Server) closeListener() {
 	}
 	if s.authTokenCancelFunc != nil {
 		s.authTokenCancelFunc()
+	}
+	if s.spiffeTLSSource != nil {
+		err := s.spiffeTLSSource.Close()
+		terror.Log(errors.Trace(err))
 	}
 	s.wg.Wait()
 	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStop).Inc()
@@ -1097,9 +1126,27 @@ func (s *Server) kill(connectionID uint64, query bool, maxExecutionTime bool, ru
 	killQuery(conn, maxExecutionTime, runaway)
 }
 
-// UpdateTLSConfig implements the SessionManager interface.
-func (s *Server) UpdateTLSConfig(cfg *tls.Config) {
-	atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(cfg))
+// ReloadTLS implements the SessionManager interface.
+func (s *Server) ReloadTLS(noRollbackOnError bool) error {
+	if s.spiffeTLSSource != nil {
+		logutil.BgLogger().Info("SPIFFE Workload API TLS rotates automatically; skipping manual TLS reload")
+		return nil
+	}
+	tlsConfig, _, err := util.LoadTLSCertificates(
+		variable.GetSysVar("ssl_ca").Value,
+		variable.GetSysVar("ssl_key").Value,
+		variable.GetSysVar("ssl_cert").Value,
+		config.GetGlobalConfig().Security.AutoTLS,
+		config.GetGlobalConfig().Security.RSAKeySize,
+	)
+	if err != nil {
+		if !noRollbackOnError || tlsutil.RequireSecureTransport.Load() {
+			return err
+		}
+		logutil.BgLogger().Warn("reload TLS fail but keep working without TLS due to 'no rollback on error'")
+	}
+	atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+	return nil
 }
 
 // GetTLSConfig implements the SessionManager interface.

@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -760,14 +761,16 @@ const (
 
 // Security is the security section of the config.
 type Security struct {
-	SkipGrantTable  bool     `toml:"skip-grant-table" json:"skip-grant-table"`
-	SSLCA           string   `toml:"ssl-ca" json:"ssl-ca"`
-	SSLCert         string   `toml:"ssl-cert" json:"ssl-cert"`
-	SSLKey          string   `toml:"ssl-key" json:"ssl-key"`
-	ClusterSSLCA    string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
-	ClusterSSLCert  string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
-	ClusterSSLKey   string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
-	ClusterVerifyCN []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
+	SkipGrantTable           bool     `toml:"skip-grant-table" json:"skip-grant-table"`
+	SSLCA                    string   `toml:"ssl-ca" json:"ssl-ca"`
+	SSLCert                  string   `toml:"ssl-cert" json:"ssl-cert"`
+	SSLKey                   string   `toml:"ssl-key" json:"ssl-key"`
+	SPIFFEWorkloadAPIAddr    string   `toml:"spiffe-workload-api-addr" json:"spiffe-workload-api-addr"`
+	SPIFFEWorkloadAPITimeout string   `toml:"spiffe-workload-api-timeout" json:"spiffe-workload-api-timeout"`
+	ClusterSSLCA             string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert           string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey            string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+	ClusterVerifyCN          []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
 	// Used for auth plugin `tidb_session_token`.
 	SessionTokenSigningCert string `toml:"session-token-signing-cert" json:"session-token-signing-cert"`
 	SessionTokenSigningKey  string `toml:"session-token-signing-key" json:"session-token-signing-key"`
@@ -788,6 +791,13 @@ type Security struct {
 	AuthTokenRefreshInterval string `toml:"auth-token-refresh-interval" json:"auth-token-refresh-interval"`
 	// Disconnect directly when the password is expired
 	DisconnectOnExpiredPassword bool `toml:"disconnect-on-expired-password" json:"disconnect-on-expired-password"`
+}
+
+func (s *Security) validateSPIFFETLSExclusivity() error {
+	if s.SPIFFEWorkloadAPIAddr != "" && (s.SSLCA != "" || s.SSLCert != "" || s.SSLKey != "" || s.AutoTLS) {
+		return errors.New("[security] spiffe-workload-api-addr cannot be used with ssl-ca, ssl-cert, ssl-key, or auto-tls")
+	}
+	return nil
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -1312,6 +1322,8 @@ var defaultConf = Config{
 	EnableGlobalIndex:          false,
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
+		SPIFFEWorkloadAPIAddr:       "",
+		SPIFFEWorkloadAPITimeout:    "30s",
 		EnableSEM:                   false,
 		SEMConfig:                   "",
 		AutoTLS:                     false,
@@ -1565,6 +1577,9 @@ func (c *Config) adjustSecurityConfig() error {
 	}
 	if len(sqlKeyPath) > 0 {
 		c.Security.SSLKey = sqlKeyPath
+	}
+	if err := c.Security.validateSPIFFETLSExclusivity(); err != nil {
+		return err
 	}
 	if sqlCAOverridden || sqlCertOverridden || sqlKeyOverridden {
 		if sqlCertOverridden != sqlKeyOverridden {
@@ -1856,6 +1871,22 @@ func (c *Config) Valid() error {
 	}
 
 	// test security
+	workloadAPITimeout, err := time.ParseDuration(c.Security.SPIFFEWorkloadAPITimeout)
+	if err != nil || workloadAPITimeout <= 0 {
+		return fmt.Errorf("[security] spiffe-workload-api-timeout must be a positive Go duration")
+	}
+	if c.Security.SPIFFEWorkloadAPIAddr != "" {
+		workloadAPIURL, err := url.Parse(c.Security.SPIFFEWorkloadAPIAddr)
+		if err != nil || !strings.HasPrefix(c.Security.SPIFFEWorkloadAPIAddr, "unix:///") ||
+			workloadAPIURL.Scheme != "unix" || workloadAPIURL.Host != "" || workloadAPIURL.Path == "" ||
+			!filepath.IsAbs(workloadAPIURL.Path) || workloadAPIURL.Opaque != "" || workloadAPIURL.User != nil ||
+			workloadAPIURL.RawQuery != "" || workloadAPIURL.ForceQuery || workloadAPIURL.Fragment != "" {
+			return fmt.Errorf("[security] spiffe-workload-api-addr must be an absolute unix:/// URI")
+		}
+	}
+	if err := c.Security.validateSPIFFETLSExclusivity(); err != nil {
+		return err
+	}
 	c.Security.SpilledFileEncryptionMethod = strings.ToLower(c.Security.SpilledFileEncryptionMethod)
 	switch c.Security.SpilledFileEncryptionMethod {
 	case SpilledFileEncryptionMethodPlaintext, SpilledFileEncryptionMethodAES128CTR:

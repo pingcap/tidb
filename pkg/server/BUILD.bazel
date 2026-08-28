@@ -69,6 +69,7 @@ go_library(
         "//pkg/server/internal/handshake",
         "//pkg/server/internal/parse",
         "//pkg/server/internal/resultset",
+        "//pkg/server/internal/spiffetls",
         "//pkg/server/internal/util",
         "//pkg/server/metrics",
         "//pkg/session",
