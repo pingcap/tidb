@@ -288,6 +288,10 @@ both `oltp_read_only` and `oltp_read_write`.
   statement-overlay restore, inherited GLOBAL defaults, prepared-cache keys,
   transaction admission, wire status, and process-list status now share that
   one field; the obsolete always-autocommit process-state renderer is gone.
+- [x] 2026-08-28: made an empty statement-variable restore a true no-op.
+  Ordinary statements no longer advance the session-variable generation and
+  discard the prepared-cache environment when no `SET_VAR` overlay existed;
+  a real overlay or SET continues to invalidate the generation-keyed image.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
   workers are active; RankTopN, benchmark, comparison-loop cancellation, and
@@ -1386,6 +1390,32 @@ legs reported zero ignored errors. Exact validation commands:
     cargo test -q -p tidb-session process_status_uses_the_typed_autocommit_and_transaction_bits --lib
     cargo test -q -p tidb-session autocommit_off_puts_a_statement_in_a_transaction --lib
     cargo test -q -p tidb-session tests_core::transactions:: --lib
+    cargo build -q -p tidb-server --bin tidb-server --release
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, stable prepared-environment generation): Go
+restores `StmtCtx.SetVarHintRestore` by ranging over the map; a nil/empty map
+performs no sysvar writes and invalidates no typed session state. Rust called
+`restore_system` after every statement and advanced `SessionVars.generation`
+unconditionally, so the prepared-plan environment cache rebuilt its session
+image on every execute despite no variable mutation. Empty restore now returns
+without mutation. The generation regression was observed failing 0-versus-1
+before the implementation and passing afterward; the higher-level regression
+also proves an ordinary statement preserves the exact environment `Arc`, while
+a real SET still replaces it. The release server builds.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`b6644bfdba` and the same Go server over one TiKV/PD cluster. Read-only median
+TPS was 514.86 candidate, 512.59 baseline, and 474.77 Go. Read-write median TPS
+was 265.52 candidate, 244.34 baseline, and 215.88 Go; those samples remain
+latency-noisy, so no read-write increase is attributed to this change. All 18
+legs reported zero ignored errors. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session empty_statement_restore_preserves_the_session_generation --lib
+    cargo test -q -p tidb-session unchanged_session_reuses_the_prepared_plan_cache_environment --lib
     cargo build -q -p tidb-server --bin tidb-server --release
     cd ..
     git diff --check

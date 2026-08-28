@@ -976,6 +976,9 @@ impl SessionVars {
 
     /// Puts back what [`Self::snapshot_system`] recorded.
     pub fn restore_system(&mut self, snapshot: Vec<(String, Option<String>)>) {
+        if snapshot.is_empty() {
+            return;
+        }
         for (key, previous) in snapshot {
             match previous {
                 Some(value) => {
@@ -1188,6 +1191,16 @@ impl SessionVars {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_statement_restore_preserves_the_session_generation() {
+        let mut vars = SessionVars::new();
+        let generation = vars.generation();
+
+        vars.restore_system(Vec::new());
+
+        assert_eq!(vars.generation(), generation);
+    }
 
     #[test]
     fn session_autocommit_uses_go_typed_status() {

@@ -26,6 +26,13 @@ fn unchanged_session_reuses_the_prepared_plan_cache_environment() {
     let second = session.prepared_plan_cache_environment().unwrap();
     assert!(std::sync::Arc::ptr_eq(&first, &second));
 
+    session.run("SELECT 1").unwrap();
+    let after_ordinary_statement = session.prepared_plan_cache_environment().unwrap();
+    assert!(std::sync::Arc::ptr_eq(
+        &second,
+        &after_ordinary_statement
+    ));
+
     session.run("SET time_zone = '+00:00'").unwrap();
     let changed = session.prepared_plan_cache_environment().unwrap();
     assert!(!std::sync::Arc::ptr_eq(&second, &changed));
