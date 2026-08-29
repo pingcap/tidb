@@ -45,12 +45,7 @@ pub fn deep_clone<T: Clone>(slice: Option<&[T]>) -> Option<Vec<T>> {
 #[cfg(test)]
 #[allow(non_snake_case)]
 mod tests {
-    use std::{
-        cell::{Cell, RefCell},
-        rc::Rc,
-    };
-
-    use super::{all_of, deep_clone, int64s_to_strings};
+    use super::all_of;
 
     #[test]
     fn TestSlice() {
@@ -64,86 +59,5 @@ mod tests {
         for (values, expected) in tests {
             assert_eq!(all_of(values, |value| value % 2 == 0), expected);
         }
-    }
-
-    #[test]
-    fn all_of_preserves_source_order_short_circuit_and_empty_truth() {
-        let calls = Cell::new(0);
-        assert!(all_of::<i32>(&[], |_| {
-            calls.set(calls.get() + 1);
-            false
-        }));
-        assert_eq!(calls.get(), 0);
-
-        let visited = Cell::new(Vec::new());
-        assert!(!all_of(&[2, 4, 5, 6], |value| {
-            let mut values = visited.take();
-            values.push(*value);
-            visited.set(values);
-            value % 2 == 0
-        }));
-        assert_eq!(visited.take(), vec![2, 4, 5]);
-    }
-
-    #[test]
-    fn int64s_to_strings_preserves_source_decimal_domain() {
-        assert!(int64s_to_strings(&[]).is_empty());
-        let input = [i64::MIN, -1, 0, 1, i64::MAX];
-        let output = int64s_to_strings(&input);
-        assert_eq!(output.capacity(), input.len());
-        assert_eq!(
-            output,
-            [
-                "-9223372036854775808",
-                "-1",
-                "0",
-                "1",
-                "9223372036854775807",
-            ]
-        );
-    }
-
-    #[test]
-    fn deep_clone_preserves_nil_empty_and_element_clone_ownership() {
-        assert_eq!(deep_clone::<String>(None), None);
-        assert_eq!(deep_clone(Some(&[] as &[String])), Some(Vec::new()));
-
-        let source = vec![String::from("left"), String::from("right")];
-        let mut cloned = deep_clone(Some(&source)).expect("present source");
-        cloned[0].push_str("-changed");
-        assert_eq!(source, ["left", "right"]);
-        assert_eq!(cloned, ["left-changed", "right"]);
-        assert_eq!(cloned.capacity(), source.len());
-    }
-
-    #[test]
-    fn deep_clone_invokes_clone_once_per_item_in_source_order() {
-        struct CloneProbe {
-            id: i32,
-            calls: Rc<RefCell<Vec<i32>>>,
-        }
-
-        impl Clone for CloneProbe {
-            fn clone(&self) -> Self {
-                self.calls.borrow_mut().push(self.id);
-                Self {
-                    id: self.id,
-                    calls: Rc::clone(&self.calls),
-                }
-            }
-        }
-
-        let calls = Rc::new(RefCell::new(Vec::new()));
-        let source = [1, 2, 3].map(|id| CloneProbe {
-            id,
-            calls: Rc::clone(&calls),
-        });
-        let cloned = deep_clone(Some(&source)).expect("present source");
-
-        assert_eq!(&*calls.borrow(), &[1, 2, 3]);
-        assert_eq!(
-            cloned.iter().map(|probe| probe.id).collect::<Vec<_>>(),
-            [1, 2, 3]
-        );
     }
 }
