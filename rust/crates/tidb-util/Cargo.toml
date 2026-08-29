@@ -114,5 +114,9 @@ name = "traceevent"
 harness = false
 
 [[bench]]
+name = "tracing"
+harness = false
+
+[[bench]]
 name = "zeropool"
 harness = false

@@ -469,6 +469,11 @@ For each bounded behavior cluster:
       ordinary startup registration, preserve structured fields and context,
       remove Rust-only public/test surfaces, and port both source benchmarks.
       The atomic inventory and WIP gates are in `receipts/util_traceevent.md`.
+- [x] Complete the pinned root `pkg/util/tracing` package in `tidb-util`:
+      preserve shared span-handle semantics, restore its open string phase and
+      pointer-preserving CE deduplication, add the four source benchmarks and
+      empty `OptimizeTracer`, and remove supplementary Rust-only APIs/tests.
+      The atomic inventory and WIP gates are in `receipts/util_tracing.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope

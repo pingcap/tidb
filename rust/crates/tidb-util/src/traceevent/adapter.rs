@@ -37,7 +37,7 @@ pub fn register_with_client_go() {
 fn local_context(context: &client_trace::TraceContext) -> TraceContext {
     let mut local = TraceContext::background();
     if let Some(trace_id) = context.trace_id() {
-        local.trace_id = trace_id.to_vec();
+        local = local.with_trace_id(trace_id);
     }
     if let Some(trace) = context.value::<Trace, Arc<Trace>>() {
         local = local.with_flight_recorder(Arc::clone(trace) as Arc<dyn Sink>);

@@ -237,15 +237,13 @@ pub fn trace_event(ctx: &TraceContext, category: TraceCategory, name: &str, fiel
 /// Go `TraceIDFromContext`: the trace identifier carried by the context.
 #[must_use]
 pub fn trace_id_from_context(ctx: &TraceContext) -> &[u8] {
-    ctx.extract_trace_id()
+    tracing::extract_trace_id(ctx)
 }
 
 /// Go `ContextWithTraceID`: a context carrying the given trace identifier.
 #[must_use]
 pub fn context_with_trace_id(ctx: &TraceContext, trace_id: &[u8]) -> TraceContext {
-    let mut next = ctx.clone();
-    next.trace_id = trace_id.to_vec();
-    next
+    ctx.with_trace_id(trace_id)
 }
 
 /// Go `GenerateTraceID`: a 20-byte identifier
@@ -531,7 +529,7 @@ pub fn convert_events_for_rendering(events: &[Event]) -> Vec<RenderEvent> {
     for event in events {
         let mut rendered = RenderEvent {
             name: event.name.clone(),
-            phase: event.phase,
+            phase: event.phase.clone(),
             ts: unix_micro(event.timestamp),
             pid: 0,
             tid: 0,
