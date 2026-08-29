@@ -2175,3 +2175,20 @@ fn show_stats_meta_honors_prune_mode_and_skips_pseudo_statistics() {
         .collect::<Vec<_>>();
     assert_eq!(targets, vec![("t", "p0"), ("t", "p1")]);
 }
+
+/// Pinned Go `ShowExec.fetchShowStatsHealthy` emits analyzed, non-pseudo
+/// physical statistics and reports an unmodified table as 100 percent healthy.
+#[test]
+fn show_stats_healthy_reads_the_production_statistics_cache() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT)").unwrap();
+    session.run("INSERT INTO t VALUES (1),(2)").unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+    session.run("CREATE TABLE e (a INT)").unwrap();
+    session.run("ANALYZE TABLE e").unwrap();
+
+    assert_eq!(
+        row_text(session.run("SHOW STATS_HEALTHY WHERE Table_name IN ('t', 'e')")),
+        vec![vec!["test", "t", "", "100"]]
+    );
+}

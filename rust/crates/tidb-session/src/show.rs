@@ -1341,6 +1341,81 @@ impl Session {
         filter_show_output(output, like_pattern, where_clause)
     }
 
+    /// Go `ShowExec.fetchShowStatsHealthy`: one health percentage for every
+    /// non-pseudo physical statistics object visible under this prune mode.
+    fn stats_healthy_stmt(
+        &mut self,
+        filter: Option<&tidb_ast::ShowInspectionFilter>,
+    ) -> Result<StmtOutput, DriverError> {
+        let (like_pattern, where_clause) = match filter {
+            None => (None, None),
+            Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
+                let value = datum_text(&self.eval_value(expr)?);
+                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+            }
+            Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
+        };
+        let dynamic_partition_prune = !self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+            .is_ok_and(|mode| mode.eq_ignore_ascii_case("static"));
+        let rows = self.with_catalog_mut(|catalog| {
+            let mut rows = Vec::new();
+            for database in catalog.database_names() {
+                let Some(names) = catalog.table_names(&database) else {
+                    continue;
+                };
+                for name in names {
+                    let Some(tidb_executor::TableEntry::Kv(table)) =
+                        catalog.table_in(&database, &name)
+                    else {
+                        continue;
+                    };
+                    let partitions = table
+                        .partition()
+                        .map(|partition| {
+                            partition
+                                .definitions
+                                .iter()
+                                .map(|definition| (definition.id, definition.name.clone()))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    for target in tidb_executor::show_stats::PartitionTargets::for_table(
+                        table.table_id,
+                        &partitions,
+                        dynamic_partition_prune,
+                    ) {
+                        let Some(statistics) = catalog.table_statistics(target.physical_id) else {
+                            continue;
+                        };
+                        if let Some(row) = tidb_executor::show_stats::healthy_row(
+                            &database,
+                            &name,
+                            &target.label,
+                            &statistics,
+                        ) {
+                            rows.push(row);
+                        }
+                    }
+                }
+            }
+            Ok(rows)
+        })?;
+        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let output = StmtOutput::Rows {
+            columns: vec![
+                ("Db_name".to_owned(), varchar()),
+                ("Table_name".to_owned(), varchar()),
+                ("Partition_name".to_owned(), varchar()),
+                ("Healthy".to_owned(), longlong()),
+            ],
+            rows,
+        };
+        filter_show_output(output, like_pattern, where_clause)
+    }
+
     /// The `SHOW COLUMNS` / `DESCRIBE` result for one table, optionally
     /// narrowed to a single column as Go's `DESCRIBE tbl col` narrows it.
     fn show_columns(
@@ -2073,6 +2148,9 @@ impl Session {
                 // Go `ShowExec.fetchShowStatsMeta` (`executor/show_stats.go:36`).
                 if show.kind == tidb_ast::ShowInspectionKind::StatsMeta {
                     return self.stats_meta_stmt(show.filter.as_ref()).map(Some);
+                }
+                if show.kind == tidb_ast::ShowInspectionKind::StatsHealthy {
+                    return self.stats_healthy_stmt(show.filter.as_ref()).map(Some);
                 }
                 if show.kind != tidb_ast::ShowInspectionKind::ProcessList {
                     return Ok(None);

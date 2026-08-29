@@ -17,6 +17,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Split request dispatch from synchronous waiting and added Go's later `SyncWaitStatsLoadPoint` at its pinned logical-rule position.
 - [x] (2026-08-29) Replaced eager startup and refresh reads with Go's lite load; preserved resident unchanged payload and fully reloaded only changed resident items.
 - [x] (2026-08-29) Corrected wired `SHOW STATS_META` traversal to honor the session partition-prune mode and suppress pseudo cache entries like `GetNonPseudoPhysicalTableStats`.
+- [x] (2026-08-29) Wired `SHOW STATS_HEALTHY` to production catalog statistics and made analyzed-row selection ignore metadata-only cache items like Go's `GetAnalyzeRowCount`.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -43,6 +44,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Observation: the pre-existing Rust `SHOW STATS_META` path hard-coded dynamic pruning and exposed pseudo cache entries, although pinned Go branches on `IsDynamicPartitionPruneEnabled` and calls `GetNonPseudoPhysicalTableStats`.
   Evidence: the regression first returned the empty analyzed table plus the partitioned table's global row under static mode; pinned behavior returns only the two physical partitions.
+
+- Observation: Rust had the `SHOW STATS_HEALTHY` parser and an isolated helper, but no session dispatch, and its reduced `analyze_row_count` selected the first item without checking full-load status.
+  Evidence: the end-to-end regression initially failed as unsupported; pinned `GetAnalyzeRowCount` sorts items and returns only the first fully loaded column or index.
 
 ## Decision Log
 
@@ -118,3 +122,5 @@ Revision note (2026-08-29): moved synchronous waiting out of initial request dis
 Revision note (2026-08-29): made production bootstrap and refresh consume the existing lite table loader, removed the unused snapshot wrapper, and added Go's resident-payload-preserving update behavior.
 
 Revision note (2026-08-29): fixed the existing `SHOW STATS_META` production path before expanding the SHOW family; the new regression was observed failing with pseudo/global rows before the fix and passing afterward.
+
+Revision note (2026-08-29): wired `SHOW STATS_HEALTHY` through the production cache, reused the session prune-mode traversal, and aligned analyzed-row selection with full-load status.

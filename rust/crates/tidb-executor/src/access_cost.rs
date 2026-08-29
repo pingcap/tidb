@@ -94,13 +94,50 @@ impl TableStatistics {
     /// fully loaded analyzed histogram, or `-1` when the table has none.
     #[must_use]
     pub(crate) fn analyze_row_count(&self) -> f64 {
-        if let Some(column) = self.columns.values().next() {
-            return column.total_row_count();
+        for (id, column) in &self.columns {
+            if self
+                .column_load_status
+                .get(id)
+                .is_some_and(|status| status.is_full_load())
+            {
+                return column.total_row_count();
+            }
         }
-        if let Some(index) = self.indexes.values().next() {
-            return index.total_row_count();
+        for (id, index) in &self.indexes {
+            if self
+                .index_load_status
+                .get(id)
+                .is_some_and(|status| status.is_full_load())
+            {
+                return index.total_row_count();
+            }
         }
         -1.0
+    }
+
+    /// Go `statistics.Table.GetStatsHealthy`.
+    #[must_use]
+    pub fn stats_healthy(&self) -> (i64, bool) {
+        if self.pseudo {
+            return (0, false);
+        }
+        if self.last_analyze_version == 0 {
+            return (0, true);
+        }
+        let analyzed = self.analyze_row_count();
+        let count = if analyzed > 0.0 {
+            analyzed
+        } else {
+            self.row_count as f64
+        };
+        let healthy = if (self.modify_count as f64) < count {
+            ((1.0 - self.modify_count as f64 / count) * 100.0) as i64
+        } else if self.modify_count == 0 {
+            100
+        } else {
+            0
+        };
+        (healthy, true)
     }
 
     /// Go `statistics.Table.IsOutdated`: compare modifications with the

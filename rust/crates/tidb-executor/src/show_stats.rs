@@ -35,11 +35,10 @@
 //!
 //! # Reused rather than restated
 //!
-//! * [`tidb_stats::Table`] IS Go `statistics.Table`, including
-//!   `Pseudo`, `IsAnalyzed`, `RealtimeCount`/`ModifyCount` and
-//!   `GetStatsHealthy` -- the last as
-//!   [`tidb_stats::Table::stats_healthy`], whose `(healthy, ok)` pair is
-//!   Go's exactly, so [`healthy_row`] only has to honour the `ok` skip.
+//! * [`tidb_stats::Table`] IS the full Go `statistics.Table` shape used by
+//!   the isolated metadata row helper. The production catalog carries
+//!   [`TableStatistics`]; its `stats_healthy` method owns Go's
+//!   `GetStatsHealthy` calculation for the wired [`healthy_row`].
 //! * [`tidb_stats::Histogram`] and [`tidb_stats::Bucket`] ARE Go
 //!   `statistics.Histogram` / `Bucket`, so [`histogram_row`] and
 //!   [`buckets_to_rows`] read the same fields Go's do.
@@ -89,6 +88,8 @@
 use tidb_datatype::{core_time_from_datetime, Datum, Time, TimeType};
 use tidb_stats::memory_usage::{ColumnMemUsage, IndexMemUsage};
 use tidb_stats::{Histogram, Table, TopN};
+
+use crate::access_cost::TableStatistics;
 
 /// Go `oracle.physicalShiftBits`: a TSO's low 18 bits are its logical
 /// counter, so the physical half is milliseconds since the Unix epoch.
@@ -493,7 +494,7 @@ pub fn topn_to_rows<E>(
 
 /// Go `appendTableForStatsHealthy` (:522): one `SHOW STATS_HEALTHY` row.
 ///
-/// `None` is Go's `if !ok { return }`. [`tidb_stats::Table::stats_healthy`]
+/// `None` is Go's `if !ok { return }`. [`TableStatistics::stats_healthy`]
 /// returns `ok == false` for a PSEUDO table only; an analyzed-but-unmodified
 /// table returns `(100, true)` and an un-analyzed non-pseudo table returns
 /// `(0, true)`. So a missing row means "no statistics object at all", while a
@@ -504,7 +505,7 @@ pub fn healthy_row(
     db_name: &str,
     table_name: &str,
     partition: &PartitionLabel,
-    stats: &Table,
+    stats: &TableStatistics,
 ) -> Option<Vec<Datum>> {
     let (healthy, ok) = stats.stats_healthy();
     if !ok {
@@ -862,12 +863,14 @@ mod tests {
     // WRITTEN test for :522-534: the pseudo skip versus a zero health.
     #[test]
     fn healthy_row_distinguishes_absent_from_zero() {
-        let mut stats = empty_stats_table();
-        stats.hist_coll.pseudo = true;
+        let mut stats = TableStatistics {
+            pseudo: true,
+            ..TableStatistics::default()
+        };
         assert!(healthy_row("d", "t", &PartitionLabel::None, &stats).is_none());
 
         // Non-pseudo and never analyzed: a real row holding 0.
-        stats.hist_coll.pseudo = false;
+        stats.pseudo = false;
         let row = healthy_row("d", "t", &PartitionLabel::None, &stats).unwrap();
         assert_eq!(row.len(), 4);
         assert_eq!(row[3], Datum::Int(0));
