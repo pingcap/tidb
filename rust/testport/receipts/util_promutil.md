@@ -27,7 +27,9 @@ methods and removed unused metric/error re-exports. It also removed the two
 Rust-only tests for the default factory and default registry, plus the
 `MustRegister` branch added to the noop-registry test. The remaining test maps
 only Go `TestNoopRegistry`, including duplicate registration and unconditional
-unregistration success.
+unregistration success. A strict-surface re-audit removed the two remaining
+Rust-only option aliases and the `Send + Sync` supertrait restrictions that Go
+does not impose on implementations of either interface.
 
 ## Validation
 
@@ -36,10 +38,9 @@ package audit, not a repository-wide readiness claim.
 
 - `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/promutil` — passed.
 - `go test ./pkg/util/promutil -run '^TestNoopRegistry$' -count=1` — passed.
-- `cargo test -p tidb-util promutil::tests --lib --locked` — passed (1 test).
-- `cargo check -p tidb-util --locked` — passed.
-- `cargo test -p tidb-util --locked` — passed (640 unit tests, 3 ignored helpers, all integration and doc tests).
-- `cargo fmt --all --check` and `git diff --check` — passed.
+- `cargo test --offline --locked -p tidb-util --lib promutil::tests --no-fail-fast` — passed, 1 test.
+- `cargo check --offline --locked -p tidb-util` — passed.
+- `cargo fmt -p tidb-util -- --check` and `git diff --check` — passed.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 

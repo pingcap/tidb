@@ -19,25 +19,19 @@ use prometheus::{
     core::Collector, Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec,
 };
 
-/// Go `prometheus.CounterOpts` represented by the native Rust option type.
-pub type CounterOpts = prometheus::Opts;
-
-/// Go `prometheus.GaugeOpts` represented by the native Rust option type.
-pub type GaugeOpts = prometheus::Opts;
-
 /// Creates native Prometheus metric families.
-pub trait Factory: Send + Sync {
+pub trait Factory {
     /// Go `NewCounter`.
-    fn new_counter(&self, opts: CounterOpts) -> Counter;
+    fn new_counter(&self, opts: prometheus::Opts) -> Counter;
 
     /// Go `NewCounterVec`.
-    fn new_counter_vec(&self, opts: CounterOpts, label_names: &[&str]) -> CounterVec;
+    fn new_counter_vec(&self, opts: prometheus::Opts, label_names: &[&str]) -> CounterVec;
 
     /// Go `NewGauge`.
-    fn new_gauge(&self, opts: GaugeOpts) -> Gauge;
+    fn new_gauge(&self, opts: prometheus::Opts) -> Gauge;
 
     /// Go `NewGaugeVec`.
-    fn new_gauge_vec(&self, opts: GaugeOpts, label_names: &[&str]) -> GaugeVec;
+    fn new_gauge_vec(&self, opts: prometheus::Opts, label_names: &[&str]) -> GaugeVec;
 
     /// Go `NewHistogram`.
     fn new_histogram(&self, opts: HistogramOpts) -> Histogram;
@@ -50,19 +44,19 @@ pub trait Factory: Send + Sync {
 struct DefaultFactory;
 
 impl Factory for DefaultFactory {
-    fn new_counter(&self, opts: CounterOpts) -> Counter {
+    fn new_counter(&self, opts: prometheus::Opts) -> Counter {
         Counter::with_opts(opts).unwrap_or_else(|error| panic!("{error}"))
     }
 
-    fn new_counter_vec(&self, opts: CounterOpts, label_names: &[&str]) -> CounterVec {
+    fn new_counter_vec(&self, opts: prometheus::Opts, label_names: &[&str]) -> CounterVec {
         CounterVec::new(opts, label_names).unwrap_or_else(|error| panic!("{error}"))
     }
 
-    fn new_gauge(&self, opts: GaugeOpts) -> Gauge {
+    fn new_gauge(&self, opts: prometheus::Opts) -> Gauge {
         Gauge::with_opts(opts).unwrap_or_else(|error| panic!("{error}"))
     }
 
-    fn new_gauge_vec(&self, opts: GaugeOpts, label_names: &[&str]) -> GaugeVec {
+    fn new_gauge_vec(&self, opts: prometheus::Opts, label_names: &[&str]) -> GaugeVec {
         GaugeVec::new(opts, label_names).unwrap_or_else(|error| panic!("{error}"))
     }
 
@@ -82,7 +76,7 @@ pub fn new_default_factory() -> Box<dyn Factory> {
 }
 
 /// Registers or unregisters native Prometheus collectors.
-pub trait Registry: Send + Sync {
+pub trait Registry {
     /// Registers one collector.
     fn register(&self, collector: Box<dyn Collector>) -> prometheus::Result<()>;
 

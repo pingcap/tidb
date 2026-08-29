@@ -36,6 +36,10 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: re-read every pinned Go `pkg/util/promutil` artifact and removed
+  its remaining Rust-only public option aliases and `Send + Sync` interface
+  restrictions. The sole noop-registry test and six direct-return factory
+  methods remain source-shaped.
 - 2026-08-29: re-read the complete testless pinned Go `pkg/util/nocopy`
   package and removed its remaining Rust-only `Default` and compile-time call
   surfaces. The unit marker still provides Go's constructible zero value and
