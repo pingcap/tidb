@@ -36,6 +36,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: completed the pinned Go `pkg/owner` prerequisite (three
+  production files, three test files, `BUILD.bazel`, and `OWNERS`) in a new
+  `tidb-owner` crate over the ordinary `tidb-pd-client` etcd authority. Added
+  the source election's create-revision ordering, leased create, mod-revision
+  CAS, atomic force-owner mutation, revision-resuming delete watch, session
+  refresh, mock global state, distributed lock, exact eleven-test surface,
+  and no polling/single-node production fallback. Complete inventory and WIP
+  gates are recorded in `receipts/owner.md`; `pkg/util/workloadrepo` integration
+  is next.
 - 2026-08-29: audited all five pinned Go `pkg/util/generic` artifacts. Restored
   signed capacity, nullable signed comparators, constructor panic order, and
   wrapping sort semantics; removed `is_empty`, four supplemental tests, their

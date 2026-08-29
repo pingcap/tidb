@@ -3514,6 +3514,13 @@ name = "tidb-naming"
 version = "0.0.0"
 
 [[package]]
+name = "tidb-owner"
+version = "0.0.0"
+dependencies = [
+ "tidb-pd-client",
+]
+
+[[package]]
 name = "tidb-parser"
 version = "0.0.0"
 dependencies = [

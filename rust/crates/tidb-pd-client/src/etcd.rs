@@ -39,8 +39,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use etcd_client::{
-    Client as RawEtcdClient, ConnectOptions, DeleteOptions, Error as RawEtcdError, EventType,
-    GetOptions, PutOptions,
+    Client as RawEtcdClient, Compare, CompareOp, ConnectOptions, DeleteOptions,
+    Error as RawEtcdError, EventType, GetOptions, PutOptions, SortOrder, SortTarget, Txn, TxnOp,
 };
 use tokio::sync::watch;
 
@@ -162,6 +162,30 @@ enum EtcdCommand {
         prefix: Vec<u8>,
         reply: mpsc::Sender<Result<Vec<(Vec<u8>, Vec<u8>)>, EtcdError>>,
     },
+    GetPrefixMetadata {
+        prefix: Vec<u8>,
+        reply: mpsc::Sender<Result<Vec<EtcdKeyValue>, EtcdError>>,
+    },
+    CreateWithLease {
+        key: Vec<u8>,
+        value: Vec<u8>,
+        lease: i64,
+        reply: mpsc::Sender<Result<bool, EtcdError>>,
+    },
+    CompareAndPutWithLease {
+        key: Vec<u8>,
+        expected_mod_revision: i64,
+        value: Vec<u8>,
+        lease: i64,
+        reply: mpsc::Sender<Result<bool, EtcdError>>,
+    },
+    DeleteKeysAndPutWithLease {
+        delete_keys: Vec<Vec<u8>>,
+        key: Vec<u8>,
+        value: Vec<u8>,
+        lease: i64,
+        reply: mpsc::Sender<Result<(), EtcdError>>,
+    },
     /// `KV.DeleteRange` of ONE key -- Go's `DeleteKeyFromEtcd`.
     Delete {
         key: Vec<u8>,
@@ -210,9 +234,25 @@ enum EtcdCommand {
     },
 }
 
+/// One etcd key/value together with the MVCC fields election algorithms use.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EtcdKeyValue {
+    /// Key bytes.
+    pub key: Vec<u8>,
+    /// Value bytes.
+    pub value: Vec<u8>,
+    /// Revision that first created this key.
+    pub create_revision: i64,
+    /// Revision of the most recent mutation.
+    pub mod_revision: i64,
+    /// Attached lease ID, or zero when unleased.
+    pub lease: i64,
+}
+
 struct EtcdClientShared {
     endpoints: Vec<String>,
     timeout: Duration,
+    security: Arc<ClusterSecurity>,
     commands: mpsc::Sender<EtcdCommand>,
     shutdown: watch::Sender<bool>,
     worker: Mutex<Option<JoinHandle<()>>>,
@@ -271,6 +311,7 @@ impl EtcdClient {
         let (commands, receiver) = mpsc::channel();
         let (shutdown, shutdown_rx) = watch::channel(false);
         let worker_endpoints = endpoints.clone();
+        let worker_security = Arc::clone(&security);
         let worker = std::thread::Builder::new()
             .name("etcd-kv".to_owned())
             .spawn(move || {
@@ -287,7 +328,7 @@ impl EtcdClient {
                     &runtime,
                     &worker_endpoints,
                     timeout,
-                    &security,
+                    &worker_security,
                     &receiver,
                     &shutdown_rx,
                 );
@@ -297,6 +338,7 @@ impl EtcdClient {
             shared: Arc::new(EtcdClientShared {
                 endpoints,
                 timeout,
+                security,
                 commands,
                 shutdown,
                 worker: Mutex::new(Some(worker)),
@@ -308,6 +350,23 @@ impl EtcdClient {
     #[must_use]
     pub fn endpoints(&self) -> &[String] {
         &self.shared.endpoints
+    }
+
+    /// Starts a reconnecting single-key watch from `start_revision`.
+    pub fn watch_key(
+        &self,
+        key: impl Into<Vec<u8>>,
+        start_revision: i64,
+        on_event: impl Fn(&EtcdWatchEvent) + Send + 'static,
+    ) -> Result<EtcdWatcher, EtcdError> {
+        EtcdWatcher::spawn_from_revision(
+            self.shared.endpoints.clone(),
+            self.shared.timeout,
+            Arc::clone(&self.shared.security),
+            key,
+            start_revision,
+            on_event,
+        )
     }
 
     /// Puts one key with no lease attached, exactly as
@@ -381,6 +440,85 @@ impl EtcdClient {
             .commands
             .send(EtcdCommand::GetPrefix {
                 prefix: prefix.to_vec(),
+                reply,
+            })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Reads every key under `prefix`, ordered by creation revision, and
+    /// retains the MVCC fields used by etcd's concurrency recipes.
+    pub fn get_prefix_metadata(&self, prefix: &[u8]) -> Result<Vec<EtcdKeyValue>, EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::GetPrefixMetadata {
+                prefix: prefix.to_vec(),
+                reply,
+            })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Creates `key` under `lease` iff it does not exist.
+    pub fn create_with_lease(
+        &self,
+        key: &[u8],
+        value: &[u8],
+        lease: i64,
+    ) -> Result<bool, EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::CreateWithLease {
+                key: key.to_vec(),
+                value: value.to_vec(),
+                lease,
+                reply,
+            })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Replaces `key` under `lease` iff its modification revision still
+    /// equals `expected_mod_revision`.
+    pub fn compare_and_put_with_lease(
+        &self,
+        key: &[u8],
+        expected_mod_revision: i64,
+        value: &[u8],
+        lease: i64,
+    ) -> Result<bool, EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::CompareAndPutWithLease {
+                key: key.to_vec(),
+                expected_mod_revision,
+                value: value.to_vec(),
+                lease,
+                reply,
+            })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Atomically deletes the listed keys and writes one leased key.
+    pub fn delete_keys_and_put_with_lease(
+        &self,
+        delete_keys: Vec<Vec<u8>>,
+        key: &[u8],
+        value: &[u8],
+        lease: i64,
+    ) -> Result<(), EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::DeleteKeysAndPutWithLease {
+                delete_keys,
+                key: key.to_vec(),
+                value: value.to_vec(),
+                lease,
                 reply,
             })
             .map_err(|_| EtcdError::Closed)?;
@@ -526,6 +664,16 @@ fn run_kv_worker(
                 EtcdCommand::GetPrefix { reply, .. } => {
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
+                EtcdCommand::GetPrefixMetadata { reply, .. } => {
+                    let _ = reply.send(Err(EtcdError::Closed));
+                }
+                EtcdCommand::CreateWithLease { reply, .. }
+                | EtcdCommand::CompareAndPutWithLease { reply, .. } => {
+                    let _ = reply.send(Err(EtcdError::Closed));
+                }
+                EtcdCommand::DeleteKeysAndPutWithLease { reply, .. } => {
+                    let _ = reply.send(Err(EtcdError::Closed));
+                }
                 EtcdCommand::Delete { reply, .. } | EtcdCommand::DeletePrefix { reply, .. } => {
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
@@ -653,6 +801,128 @@ fn run_kv_worker(
                                     .map(|kv| kv.into_key_value())
                                     .collect()
                             })
+                    },
+                );
+                let _ = reply.send(result);
+            }
+            EtcdCommand::GetPrefixMetadata { prefix, reply } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, mut client| {
+                        let options = GetOptions::new()
+                            .with_prefix()
+                            .with_sort(SortTarget::Create, SortOrder::Ascend);
+                        runtime
+                            .block_on(client.get(prefix.clone(), Some(options)))
+                            .map(|response| {
+                                response
+                                    .kvs()
+                                    .iter()
+                                    .map(|kv| EtcdKeyValue {
+                                        key: kv.key().to_vec(),
+                                        value: kv.value().to_vec(),
+                                        create_revision: kv.create_revision(),
+                                        mod_revision: kv.mod_revision(),
+                                        lease: kv.lease(),
+                                    })
+                                    .collect()
+                            })
+                    },
+                );
+                let _ = reply.send(result);
+            }
+            EtcdCommand::CreateWithLease {
+                key,
+                value,
+                lease,
+                reply,
+            } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, mut client| {
+                        let put = TxnOp::put(
+                            key.clone(),
+                            value.clone(),
+                            Some(PutOptions::new().with_lease(lease)),
+                        );
+                        let txn = Txn::new()
+                            .when([Compare::create_revision(key.clone(), CompareOp::Equal, 0)])
+                            .and_then([put]);
+                        runtime
+                            .block_on(client.txn(txn))
+                            .map(|response| response.succeeded())
+                    },
+                );
+                let _ = reply.send(result);
+            }
+            EtcdCommand::CompareAndPutWithLease {
+                key,
+                expected_mod_revision,
+                value,
+                lease,
+                reply,
+            } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, mut client| {
+                        let put = TxnOp::put(
+                            key.clone(),
+                            value.clone(),
+                            Some(PutOptions::new().with_lease(lease)),
+                        );
+                        let txn = Txn::new()
+                            .when([Compare::mod_revision(
+                                key.clone(),
+                                CompareOp::Equal,
+                                expected_mod_revision,
+                            )])
+                            .and_then([put]);
+                        runtime
+                            .block_on(client.txn(txn))
+                            .map(|response| response.succeeded())
+                    },
+                );
+                let _ = reply.send(result);
+            }
+            EtcdCommand::DeleteKeysAndPutWithLease {
+                delete_keys,
+                key,
+                value,
+                lease,
+                reply,
+            } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, mut client| {
+                        let mut operations = delete_keys
+                            .iter()
+                            .cloned()
+                            .map(|key| TxnOp::delete(key, None))
+                            .collect::<Vec<_>>();
+                        operations.push(TxnOp::put(
+                            key.clone(),
+                            value.clone(),
+                            Some(PutOptions::new().with_lease(lease)),
+                        ));
+                        runtime
+                            .block_on(client.txn(Txn::new().and_then(operations)))
+                            .map(|_| ())
                     },
                 );
                 let _ = reply.send(result);
@@ -918,6 +1188,21 @@ impl EtcdWatcher {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
+        Self::spawn_from_revision(endpoints, timeout, security, key, 0, on_event)
+    }
+
+    fn spawn_from_revision<I, S>(
+        endpoints: I,
+        timeout: Duration,
+        security: Arc<ClusterSecurity>,
+        key: impl Into<Vec<u8>>,
+        start_revision: i64,
+        on_event: impl Fn(&EtcdWatchEvent) + Send + 'static,
+    ) -> Result<Self, EtcdError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
         let endpoints = normalize_endpoints(endpoints, false)?;
         if endpoints.is_empty() {
             return Err(EtcdError::NoEndpoint);
@@ -940,6 +1225,7 @@ impl EtcdWatcher {
                     timeout,
                     &security,
                     &key,
+                    start_revision,
                     &on_event,
                     &worker_stats,
                     shutdown_rx,
@@ -983,6 +1269,7 @@ async fn watch_forever(
     timeout: Duration,
     security: &ClusterSecurity,
     key: &[u8],
+    mut next_revision: i64,
     on_event: &(impl Fn(&EtcdWatchEvent) + Send + 'static),
     stats: &WatchCounters,
     mut shutdown: watch::Receiver<bool>,
@@ -1000,19 +1287,24 @@ async fn watch_forever(
                 stats.reconnects.fetch_add(1, Ordering::AcqRel);
                 established = false;
             }
-            if watch_one_stream(
+            match watch_one_stream(
                 endpoint,
                 timeout,
                 security,
                 key,
+                &mut next_revision,
                 on_event,
                 stats,
                 &mut shutdown,
             )
             .await
             {
-                established = true;
-                break;
+                WatchEnd::Shutdown | WatchEnd::Canceled => return,
+                WatchEnd::Disconnected => {
+                    established = true;
+                    break;
+                }
+                WatchEnd::NotEstablished => {}
             }
         }
         // Either the stream ended or no endpoint accepted one. Waiting before
@@ -1025,48 +1317,66 @@ async fn watch_forever(
     }
 }
 
-/// Runs one watch stream to its end. Returns whether the stream was created.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WatchEnd {
+    NotEstablished,
+    Disconnected,
+    Canceled,
+    Shutdown,
+}
+
+/// Runs one watch stream to its end.
 async fn watch_one_stream(
     endpoint: &str,
     timeout: Duration,
     security: &ClusterSecurity,
     key: &[u8],
+    next_revision: &mut i64,
     on_event: &(impl Fn(&EtcdWatchEvent) + Send + 'static),
     stats: &WatchCounters,
     shutdown: &mut watch::Receiver<bool>,
-) -> bool {
+) -> WatchEnd {
     let Ok(options) = etcd_connect_options_with_tls(
         endpoint,
         security,
         ConnectOptions::new().with_connect_timeout(timeout),
     ) else {
-        return false;
+        return WatchEnd::NotEstablished;
     };
     let Ok(mut client) = RawEtcdClient::connect([strip_scheme(endpoint)], Some(options)).await
     else {
-        return false;
+        return WatchEnd::NotEstablished;
     };
-    let Ok(mut stream) = client.watch(key.to_vec(), None).await else {
-        return false;
+    let options = (*next_revision > 0)
+        .then(|| etcd_client::WatchOptions::new().with_start_revision(*next_revision));
+    let Ok(mut stream) = client.watch(key.to_vec(), options).await else {
+        return WatchEnd::NotEstablished;
     };
     stats.streams.fetch_add(1, Ordering::AcqRel);
     loop {
         let message = tokio::select! {
             message = stream.message() => message,
-            _ = shutdown.changed() => return true,
+            _ = shutdown.changed() => return WatchEnd::Shutdown,
         };
         let Ok(Some(response)) = message else {
-            return true;
+            return WatchEnd::Disconnected;
         };
         if response.canceled() {
-            return true;
+            return WatchEnd::Canceled;
         }
-        for event in response.events() {
+        let events = response.events();
+        if events.is_empty() && *next_revision == 0 {
+            if let Some(header) = response.header() {
+                *next_revision = header.revision() + 1;
+            }
+        }
+        for event in events {
             let deleted = event.event_type() == EventType::Delete;
             let (value, mod_revision) = event.kv().map_or_else(
                 || (Vec::new(), 0),
                 |kv| (kv.value().to_vec(), kv.mod_revision()),
             );
+            *next_revision = (*next_revision).max(mod_revision + 1);
             stats.events.fetch_add(1, Ordering::AcqRel);
             on_event(&EtcdWatchEvent {
                 deleted,
