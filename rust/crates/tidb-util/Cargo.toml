@@ -82,6 +82,11 @@ name = "set"
 harness = false
 
 [[bench]]
+name = "selection"
+harness = false
+required-features = ["testexport"]
+
+[[bench]]
 name = "sqlescape"
 harness = false
 

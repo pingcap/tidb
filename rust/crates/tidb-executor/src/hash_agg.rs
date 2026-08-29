@@ -1436,9 +1436,8 @@ impl Partial {
                 let mut values = values.clone();
                 let rank = ((values.len() as f64 * (percent as f64 / 100.0)).ceil() as usize)
                     .clamp(1, values.len());
-                let index = select(&mut DatumSelection(&mut values), rank)
-                    .expect("nonempty percentile input must produce a selected index");
-                values[index].clone()
+                let index = select(&mut DatumSelection(&mut values), rank as isize);
+                values[index as usize].clone()
             }
             // An empty group concatenates to NULL, not an empty string.
             Partial::GroupConcat { values, .. } if values.is_empty() => Datum::Null,

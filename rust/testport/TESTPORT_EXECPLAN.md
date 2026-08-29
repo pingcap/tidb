@@ -307,6 +307,10 @@ For each bounded behavior cluster:
 - [x] Complete the pinned `pkg/util/slice` package in its `tidb-util` owner,
       retain its three production functions and one source test, and remove
       four supplementary non-source tests.
+- [x] Complete the pinned `pkg/util/selection` package in its `tidb-util`
+      owner: restore signed index results and empty `-1`, remove Rust-only
+      saturating rank policy, retain its four source tests, restore all 21
+      benchmark cases, and migrate the HashAgg percentile caller.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope

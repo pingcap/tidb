@@ -15,8 +15,8 @@
 //! Complete transcreation of Go `pkg/util/selection`.
 //!
 //! Introselect starts with quickselect and falls back to median-of-medians when
-//! recursion becomes deep. [`Selectable`] is the Rust-native comparison and
-//! swap boundary, and an empty input returns `None`.
+//! recursion becomes deep. [`Selectable`] is the Rust-native equivalent of
+//! Go's `sort.Interface`.
 
 use crate::fastrand;
 
@@ -36,14 +36,12 @@ pub trait Selectable {
 }
 
 /// Performs the introselect algorithm on `data` and returns the index of the
-/// `k`-th smallest value (`k` starts from 1), or `None` if `data` is empty.
-pub fn select<T: Selectable + ?Sized>(data: &mut T, k: usize) -> Option<usize> {
+/// `k`-th smallest value (`k` starts from 1), or `-1` if `data` is empty.
+pub fn select<T: Selectable + ?Sized>(data: &mut T, k: isize) -> isize {
     if data.is_empty() {
-        return None;
+        return -1;
     }
-    // Go computes `k-1` on an int and tolerates the resulting -1 for k=0,
-    // which selects the smallest element; saturating keeps that rank.
-    Some(introselect(data, 0, data.len() - 1, k.saturating_sub(1), 6))
+    introselect(data, 0, data.len() as isize - 1, k - 1, 6)
 }
 
 /// Performs quickselect at the beginning, switching to the linear-time
@@ -52,11 +50,11 @@ pub fn select<T: Selectable + ?Sized>(data: &mut T, k: usize) -> Option<usize> {
 /// Source paper: <http://www.cs.rpi.edu/~musser/gp/introsort.ps>
 fn introselect<T: Selectable + ?Sized>(
     data: &mut T,
-    left: usize,
-    right: usize,
-    k: usize,
+    left: isize,
+    right: isize,
+    k: isize,
     depth: i32,
-) -> usize {
+) -> isize {
     if left == right {
         return left;
     }
@@ -77,12 +75,35 @@ fn introselect<T: Selectable + ?Sized>(
     }
 }
 
+/// Go's test-only comparison implementation used by `BenchmarkSelection`.
+#[cfg(any(test, feature = "testexport"))]
+#[doc(hidden)]
+pub fn quickselect<T: Selectable + ?Sized>(
+    data: &mut T,
+    left: isize,
+    right: isize,
+    k: isize,
+) -> isize {
+    if left == right {
+        return left;
+    }
+    let pivot_index = random_pivot(left, right);
+    let pivot_index = partition(data, left, right, pivot_index);
+    if k == pivot_index {
+        k
+    } else if k < pivot_index {
+        quickselect(data, left, pivot_index - 1, k)
+    } else {
+        quickselect(data, pivot_index + 1, right, k)
+    }
+}
+
 fn median_of_medians<T: Selectable + ?Sized>(
     data: &mut T,
-    left: usize,
-    right: usize,
-    k: usize,
-) -> usize {
+    left: isize,
+    right: isize,
+    k: isize,
+) -> isize {
     if left == right {
         return left;
     }
@@ -97,15 +118,15 @@ fn median_of_medians<T: Selectable + ?Sized>(
     }
 }
 
-fn random_pivot(left: usize, right: usize) -> usize {
-    left + fastrand::uint32_n((right - left + 1) as u32) as usize
+fn random_pivot(left: isize, right: isize) -> isize {
+    left + fastrand::uint64_n((right - left + 1) as u64) as isize
 }
 
 fn median_of_medians_pivot<T: Selectable + ?Sized>(
     data: &mut T,
-    left: usize,
-    right: usize,
-) -> usize {
+    left: isize,
+    right: isize,
+) -> isize {
     if right - left < 5 {
         return partition5(data, left, right);
     }
@@ -113,7 +134,7 @@ fn median_of_medians_pivot<T: Selectable + ?Sized>(
     while i <= right {
         let sub_right = (i + 4).min(right);
         let median5 = partition5(data, i, sub_right);
-        data.swap(median5, left + (i - left) / 5);
+        data.swap(median5 as usize, (left + (i - left) / 5) as usize);
         i += 5;
     }
     let mid = (right - left) / 10 + left + 1;
@@ -122,35 +143,35 @@ fn median_of_medians_pivot<T: Selectable + ?Sized>(
 
 fn partition<T: Selectable + ?Sized>(
     data: &mut T,
-    left: usize,
-    right: usize,
-    pivot_index: usize,
-) -> usize {
-    data.swap(pivot_index, right);
+    left: isize,
+    right: isize,
+    pivot_index: isize,
+) -> isize {
+    data.swap(pivot_index as usize, right as usize);
     let mut store_index = left;
     for i in left..right {
-        if data.less(i, right) {
-            data.swap(store_index, i);
+        if data.less(i as usize, right as usize) {
+            data.swap(store_index as usize, i as usize);
             store_index += 1;
         }
     }
-    data.swap(right, store_index);
+    data.swap(right as usize, store_index as usize);
     store_index
 }
 
 fn partition_intro<T: Selectable + ?Sized>(
     data: &mut T,
-    left: usize,
-    right: usize,
-    pivot_index: usize,
-    k: usize,
-) -> usize {
-    data.swap(pivot_index, right);
+    left: isize,
+    right: isize,
+    pivot_index: isize,
+    k: isize,
+) -> isize {
+    data.swap(pivot_index as usize, right as usize);
     let mut store_index = left;
     // Move all elements smaller than the pivot to the left side.
     for i in left..right {
-        if data.less(i, right) {
-            data.swap(store_index, i);
+        if data.less(i as usize, right as usize) {
+            data.swap(store_index as usize, i as usize);
             store_index += 1;
         }
     }
@@ -158,13 +179,13 @@ fn partition_intro<T: Selectable + ?Sized>(
     // Move all elements equal to the pivot right after.
     for i in store_index..right {
         // data[i] == data[right]
-        if !data.less(i, right) && !data.less(right, i) {
-            data.swap(store_index_eq, i);
+        if !data.less(i as usize, right as usize) && !data.less(right as usize, i as usize) {
+            data.swap(store_index_eq as usize, i as usize);
             store_index_eq += 1;
         }
     }
     // Move the pivot to its final place.
-    data.swap(right, store_index_eq);
+    data.swap(right as usize, store_index_eq as usize);
     if k < store_index {
         return store_index;
     }
@@ -174,12 +195,12 @@ fn partition_intro<T: Selectable + ?Sized>(
     store_index_eq
 }
 
-fn partition5<T: Selectable + ?Sized>(data: &mut T, left: usize, right: usize) -> usize {
+fn partition5<T: Selectable + ?Sized>(data: &mut T, left: isize, right: isize) -> isize {
     let mut i = left + 1;
     while i <= right {
         let mut j = i;
-        while j > left && data.less(j, j - 1) {
-            data.swap(j, j - 1);
+        while j > left && data.less(j as usize, (j - 1) as usize) {
+            data.swap(j as usize, (j - 1) as usize);
             j -= 1;
         }
         i += 1;
@@ -222,42 +243,26 @@ mod tests {
     #[test]
     fn selection() {
         let mut data = TestSlice(vec![1, 2, 3, 4, 5]);
-        let index = select(&mut data, 3).unwrap();
-        assert_eq!(data.0[index], 3);
+        let index = select(&mut data, 3);
+        assert_eq!(data.0[index as usize], 3);
     }
 
     // Go `TestSelectionWithDuplicate`.
     #[test]
     fn selection_with_duplicate() {
         let mut data = TestSlice(vec![1, 2, 3, 3, 5]);
-        let index = select(&mut data, 3).unwrap();
-        assert_eq!(data.0[index], 3);
-        let index = select(&mut data, 5).unwrap();
-        assert_eq!(data.0[index], 5);
-    }
-
-    #[test]
-    fn empty_and_extreme_ranks() {
-        let mut empty = TestSlice(Vec::new());
-        assert_eq!(select(&mut empty, 1), None);
-
-        let mut data = TestSlice(vec![9, 1, 9, 3, 5]);
-        let first = select(&mut data, 1).unwrap();
-        assert_eq!(data.0[first], 1);
-        let last = select(&mut data, 5).unwrap();
-        assert_eq!(data.0[last], 9);
-
-        // Go's `k-1` on rank zero is -1, which still selects the smallest.
-        let zero = select(&mut data, 0).unwrap();
-        assert_eq!(data.0[zero], 1);
+        let index = select(&mut data, 3);
+        assert_eq!(data.0[index as usize], 3);
+        let index = select(&mut data, 5);
+        assert_eq!(data.0[index as usize], 5);
     }
 
     // Go `TestSelectionWithRandomCase`.
     #[test]
     fn selection_with_random_case() {
         let mut data = random_test_case(1_000_000);
-        let index = select(&mut data, 500_000).unwrap();
-        let actual = data.0[index];
+        let index = select(&mut data, 500_000);
+        let actual = data.0[index as usize];
         data.0.sort_unstable();
         let expected = data.0[499_999];
         assert_eq!(expected, actual);
@@ -269,8 +274,8 @@ mod tests {
         let mut data = serial_test_case(1_000_000);
         // sort in reverse order
         data.0.sort_unstable_by(|a, b| b.cmp(a));
-        let index = select(&mut data, 500_000).unwrap();
-        let actual = data.0[index];
+        let index = select(&mut data, 500_000);
+        let actual = data.0[index as usize];
         data.0.sort_unstable();
         let expected = data.0[499_999];
         assert_eq!(expected, actual);
