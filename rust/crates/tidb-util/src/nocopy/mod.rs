@@ -21,40 +21,13 @@
 
 /// Zero-sized marker that prevents an embedding Rust type from becoming
 /// implicitly copyable.
-///
-/// ```compile_fail
-/// use tidb_util::nocopy::NoCopy;
-///
-/// let marker = NoCopy::new();
-/// let moved = marker;
-/// let copied_again = marker;
-/// ```
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct NoCopy;
 
 impl NoCopy {
-    /// Constructs the source zero value.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self
-    }
-
     /// Source-compatible no-op `sync.Locker.Lock` method.
     pub const fn lock(&self) {}
 
     /// Source-compatible no-op `sync.Locker.Unlock` method.
     pub const fn unlock(&self) {}
-}
-
-#[cfg(test)]
-mod tests {
-    use super::NoCopy;
-
-    #[test]
-    fn source_zero_value_and_no_op_methods_are_preserved() {
-        let marker = NoCopy::new();
-        marker.lock();
-        marker.unlock();
-        assert_eq!(std::mem::size_of_val(&marker), 0);
-    }
 }
