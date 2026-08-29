@@ -14,85 +14,64 @@
 
 //! Native Prometheus metric factories and registries from Go
 //! `pkg/util/promutil`.
-//!
-//! Construction delegates to the Rust Prometheus client. Unlike the Go
-//! client, the Rust client validates descriptors at construction, so Factory
-//! methods return its native [`prometheus::Result`] instead of adding panics.
 
-pub use prometheus::{
-    core::Collector, Counter, CounterVec, Error as PrometheusError, Gauge, GaugeVec, Histogram,
-    HistogramOpts, HistogramVec, Opts, Result as PrometheusResult,
+use prometheus::{
+    core::Collector, Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec,
 };
 
 /// Go `prometheus.CounterOpts` represented by the native Rust option type.
-pub type CounterOpts = Opts;
+pub type CounterOpts = prometheus::Opts;
 
 /// Go `prometheus.GaugeOpts` represented by the native Rust option type.
-pub type GaugeOpts = Opts;
+pub type GaugeOpts = prometheus::Opts;
 
 /// Creates native Prometheus metric families.
 pub trait Factory: Send + Sync {
     /// Go `NewCounter`.
-    fn new_counter(&self, opts: CounterOpts) -> PrometheusResult<Counter>;
+    fn new_counter(&self, opts: CounterOpts) -> Counter;
 
     /// Go `NewCounterVec`.
-    fn new_counter_vec(
-        &self,
-        opts: CounterOpts,
-        label_names: &[&str],
-    ) -> PrometheusResult<CounterVec>;
+    fn new_counter_vec(&self, opts: CounterOpts, label_names: &[&str]) -> CounterVec;
 
     /// Go `NewGauge`.
-    fn new_gauge(&self, opts: GaugeOpts) -> PrometheusResult<Gauge>;
+    fn new_gauge(&self, opts: GaugeOpts) -> Gauge;
 
     /// Go `NewGaugeVec`.
-    fn new_gauge_vec(&self, opts: GaugeOpts, label_names: &[&str]) -> PrometheusResult<GaugeVec>;
+    fn new_gauge_vec(&self, opts: GaugeOpts, label_names: &[&str]) -> GaugeVec;
 
     /// Go `NewHistogram`.
-    fn new_histogram(&self, opts: HistogramOpts) -> PrometheusResult<Histogram>;
+    fn new_histogram(&self, opts: HistogramOpts) -> Histogram;
 
     /// Go `NewHistogramVec`.
-    fn new_histogram_vec(
-        &self,
-        opts: HistogramOpts,
-        label_names: &[&str],
-    ) -> PrometheusResult<HistogramVec>;
+    fn new_histogram_vec(&self, opts: HistogramOpts, label_names: &[&str]) -> HistogramVec;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 struct DefaultFactory;
 
 impl Factory for DefaultFactory {
-    fn new_counter(&self, opts: CounterOpts) -> PrometheusResult<Counter> {
-        Counter::with_opts(opts)
+    fn new_counter(&self, opts: CounterOpts) -> Counter {
+        Counter::with_opts(opts).unwrap_or_else(|error| panic!("{error}"))
     }
 
-    fn new_counter_vec(
-        &self,
-        opts: CounterOpts,
-        label_names: &[&str],
-    ) -> PrometheusResult<CounterVec> {
-        CounterVec::new(opts, label_names)
+    fn new_counter_vec(&self, opts: CounterOpts, label_names: &[&str]) -> CounterVec {
+        CounterVec::new(opts, label_names).unwrap_or_else(|error| panic!("{error}"))
     }
 
-    fn new_gauge(&self, opts: GaugeOpts) -> PrometheusResult<Gauge> {
-        Gauge::with_opts(opts)
+    fn new_gauge(&self, opts: GaugeOpts) -> Gauge {
+        Gauge::with_opts(opts).unwrap_or_else(|error| panic!("{error}"))
     }
 
-    fn new_gauge_vec(&self, opts: GaugeOpts, label_names: &[&str]) -> PrometheusResult<GaugeVec> {
-        GaugeVec::new(opts, label_names)
+    fn new_gauge_vec(&self, opts: GaugeOpts, label_names: &[&str]) -> GaugeVec {
+        GaugeVec::new(opts, label_names).unwrap_or_else(|error| panic!("{error}"))
     }
 
-    fn new_histogram(&self, opts: HistogramOpts) -> PrometheusResult<Histogram> {
-        Histogram::with_opts(opts)
+    fn new_histogram(&self, opts: HistogramOpts) -> Histogram {
+        Histogram::with_opts(opts).unwrap_or_else(|error| panic!("{error}"))
     }
 
-    fn new_histogram_vec(
-        &self,
-        opts: HistogramOpts,
-        label_names: &[&str],
-    ) -> PrometheusResult<HistogramVec> {
-        HistogramVec::new(opts, label_names)
+    fn new_histogram_vec(&self, opts: HistogramOpts, label_names: &[&str]) -> HistogramVec {
+        HistogramVec::new(opts, label_names).unwrap_or_else(|error| panic!("{error}"))
     }
 }
 
@@ -105,7 +84,7 @@ pub fn new_default_factory() -> Box<dyn Factory> {
 /// Registers or unregisters native Prometheus collectors.
 pub trait Registry: Send + Sync {
     /// Registers one collector.
-    fn register(&self, collector: Box<dyn Collector>) -> PrometheusResult<()>;
+    fn register(&self, collector: Box<dyn Collector>) -> prometheus::Result<()>;
 
     /// Registers every collector, panicking on the first error.
     fn must_register(&self, collectors: Vec<Box<dyn Collector>>);
@@ -115,7 +94,7 @@ pub trait Registry: Send + Sync {
 }
 
 impl Registry for prometheus::Registry {
-    fn register(&self, collector: Box<dyn Collector>) -> PrometheusResult<()> {
+    fn register(&self, collector: Box<dyn Collector>) -> prometheus::Result<()> {
         prometheus::Registry::register(self, collector)
     }
 
@@ -135,7 +114,7 @@ impl Registry for prometheus::Registry {
 struct NoopRegistry;
 
 impl Registry for NoopRegistry {
-    fn register(&self, _collector: Box<dyn Collector>) -> PrometheusResult<()> {
+    fn register(&self, _collector: Box<dyn Collector>) -> prometheus::Result<()> {
         Ok(())
     }
 
