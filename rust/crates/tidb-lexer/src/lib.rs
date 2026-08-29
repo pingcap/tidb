@@ -1063,15 +1063,13 @@ fn uppercased_into<'b>(text: &str, buffer: &'b mut [u8]) -> Option<&'b str> {
 }
 
 struct KeywordSets {
-    general: tidb_util::fast_hash::FxHashSet<&'static str>,
-    builtin: tidb_util::fast_hash::FxHashSet<&'static str>,
-    window: tidb_util::fast_hash::FxHashSet<&'static str>,
+    general: std::collections::HashSet<&'static str>,
+    builtin: std::collections::HashSet<&'static str>,
+    window: std::collections::HashSet<&'static str>,
 }
 
 /// The three generated keyword tables as hashed name sets. Go resolves a word
-/// with one `tokenMap` probe (`pkg/parser/misc.go`); hashing once here replaces
-/// the per-token binary searches whose probe-by-probe string compares showed up
-/// as the lexer's dominant cost under load.
+/// with one `tokenMap` probe (`pkg/parser/misc.go`).
 fn keyword_sets() -> &'static KeywordSets {
     static SETS: std::sync::OnceLock<KeywordSets> = std::sync::OnceLock::new();
     SETS.get_or_init(|| KeywordSets {

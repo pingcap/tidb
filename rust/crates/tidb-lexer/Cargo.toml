@@ -21,5 +21,4 @@ path = "src/generate_keyword.rs"
 workspace = true
 
 [dependencies]
-tidb-util = { path = "../tidb-util" }
 tidb-mysql = { path = "../tidb-mysql" }

@@ -236,11 +236,9 @@ pub(crate) fn sys_var_index_lookup(name: &str) -> Option<usize> {
 
 /// The registry's names are unique (the sortedness test rejects duplicates),
 /// so a hash table keyed by the entry's own name answers exactly what the old
-/// binary search answered -- just without the per-probe comparisons. The keys
-/// are engine constants, not attacker input, so the fixed-seed hasher from
-/// [`tidb_util::fast_hash`] answers probes without SipHash's mixing rounds.
-fn sys_var_index() -> &'static tidb_util::fast_hash::FxHashMap<&'static str, usize> {
-    static INDEX: std::sync::OnceLock<tidb_util::fast_hash::FxHashMap<&'static str, usize>> =
+/// binary search answered -- just without the per-probe comparisons.
+fn sys_var_index() -> &'static std::collections::HashMap<&'static str, usize> {
+    static INDEX: std::sync::OnceLock<std::collections::HashMap<&'static str, usize>> =
         std::sync::OnceLock::new();
     INDEX.get_or_init(|| {
         SYS_VARS

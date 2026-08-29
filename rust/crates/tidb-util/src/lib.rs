@@ -48,7 +48,6 @@ pub mod disk;
 pub mod disttask;
 pub mod encrypt;
 pub mod errno_summary;
-pub mod fast_hash;
 pub mod fastrand;
 pub mod filter;
 pub mod format;

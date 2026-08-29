@@ -3442,7 +3442,6 @@ name = "tidb-lexer"
 version = "0.0.0"
 dependencies = [
  "tidb-mysql",
- "tidb-util",
 ]
 
 [[package]]
