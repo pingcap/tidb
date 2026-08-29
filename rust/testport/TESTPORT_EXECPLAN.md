@@ -280,6 +280,10 @@ For each bounded behavior cluster:
 - [x] Complete the pinned `pkg/util/regexpr-router` package in its wired
       `tidb-util` owner and remove the unused 766-line `tidb-exec` duplicate
       implementation, duplicate tests, and public module path.
+- [x] Complete the pinned `pkg/util/table-router` package in its wired
+      `tidb-util` owner, route all extractor regexes through the Go-regexp
+      authority, remove Rust-only constructors/error traits, and delete the
+      unused 1,029-line `tidb-exec` duplicate.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope

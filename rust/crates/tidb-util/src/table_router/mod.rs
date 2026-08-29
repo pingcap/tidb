@@ -27,7 +27,7 @@ use std::sync::Arc;
 use tidb_mysql::to_lowercase as go_simple_lowercase;
 
 /// An error returned by table-rule validation or routing.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct TableRouterError(String);
 
 impl TableRouterError {
@@ -59,19 +59,7 @@ pub struct TableExtractor {
     #[serde(rename = "table-regexp")]
     pub table_regexp: String,
     #[serde(skip)]
-    regexp: Option<Regex>,
-}
-
-impl TableExtractor {
-    /// Creates a table-name extractor.
-    #[must_use]
-    pub fn new(target_column: impl Into<String>, table_regexp: impl Into<String>) -> Self {
-        Self {
-            target_column: target_column.into(),
-            table_regexp: table_regexp.into(),
-            regexp: None,
-        }
-    }
+    pub(crate) regexp: Option<Regex>,
 }
 
 /// Extracts capture groups from a schema name into one target column.
@@ -85,19 +73,7 @@ pub struct SchemaExtractor {
     #[serde(rename = "schema-regexp")]
     pub schema_regexp: String,
     #[serde(skip)]
-    regexp: Option<Regex>,
-}
-
-impl SchemaExtractor {
-    /// Creates a schema-name extractor.
-    #[must_use]
-    pub fn new(target_column: impl Into<String>, schema_regexp: impl Into<String>) -> Self {
-        Self {
-            target_column: target_column.into(),
-            schema_regexp: schema_regexp.into(),
-            regexp: None,
-        }
-    }
+    pub(crate) regexp: Option<Regex>,
 }
 
 /// Extracts capture groups from a source name into one target column.
@@ -111,19 +87,7 @@ pub struct SourceExtractor {
     #[serde(rename = "source-regexp")]
     pub source_regexp: String,
     #[serde(skip)]
-    regexp: Option<Regex>,
-}
-
-impl SourceExtractor {
-    /// Creates a source-name extractor.
-    #[must_use]
-    pub fn new(target_column: impl Into<String>, source_regexp: impl Into<String>) -> Self {
-        Self {
-            target_column: target_column.into(),
-            source_regexp: source_regexp.into(),
-            regexp: None,
-        }
-    }
+    pub(crate) regexp: Option<Regex>,
 }
 
 /// A rule mapping one source schema/table pattern to a target.
@@ -166,23 +130,6 @@ pub struct TableRule {
 }
 
 impl TableRule {
-    /// Creates a route rule without extractors.
-    #[must_use]
-    pub fn new(
-        schema_pattern: impl Into<String>,
-        table_pattern: impl Into<String>,
-        target_schema: impl Into<String>,
-        target_table: impl Into<String>,
-    ) -> Self {
-        Self {
-            schema_pattern: schema_pattern.into(),
-            table_pattern: table_pattern.into(),
-            target_schema: target_schema.into(),
-            target_table: target_table.into(),
-            ..Self::default()
-        }
-    }
-
     /// Go `TableRule.Valid`: validates required fields and compiles extractors.
     pub fn valid(&mut self) -> Result<(), TableRouterError> {
         if self.schema_pattern.is_empty() {
@@ -197,12 +144,14 @@ impl TableRule {
         }
 
         if let Some(extractor) = &mut self.table_extractor {
-            extractor.regexp = Some(Regex::new(&extractor.table_regexp).map_err(|_| {
-                TableRouterError::new(format!(
-                    "table extractor table regexp illegal {}",
-                    extractor.table_regexp
-                ))
-            })?);
+            extractor.regexp = Some(
+                crate::go_regexp::compile(&extractor.table_regexp, true).map_err(|_| {
+                    TableRouterError::new(format!(
+                        "table extractor table regexp illegal {}",
+                        extractor.table_regexp
+                    ))
+                })?,
+            );
             if extractor.target_column.is_empty() {
                 return Err(TableRouterError::new(
                     "table extractor target column cannot be empty",
@@ -210,12 +159,14 @@ impl TableRule {
             }
         }
         if let Some(extractor) = &mut self.schema_extractor {
-            extractor.regexp = Some(Regex::new(&extractor.schema_regexp).map_err(|_| {
-                TableRouterError::new(format!(
-                    "schema extractor schema regexp illegal {}",
-                    extractor.schema_regexp
-                ))
-            })?);
+            extractor.regexp = Some(
+                crate::go_regexp::compile(&extractor.schema_regexp, true).map_err(|_| {
+                    TableRouterError::new(format!(
+                        "schema extractor schema regexp illegal {}",
+                        extractor.schema_regexp
+                    ))
+                })?,
+            );
             if extractor.target_column.is_empty() {
                 return Err(TableRouterError::new(
                     "schema extractor target column cannot be empty",
@@ -223,12 +174,14 @@ impl TableRule {
             }
         }
         if let Some(extractor) = &mut self.source_extractor {
-            extractor.regexp = Some(Regex::new(&extractor.source_regexp).map_err(|_| {
-                TableRouterError::new(format!(
-                    "source extractor source regexp illegal {}",
-                    extractor.source_regexp
-                ))
-            })?);
+            extractor.regexp = Some(
+                crate::go_regexp::compile(&extractor.source_regexp, true).map_err(|_| {
+                    TableRouterError::new(format!(
+                        "source extractor source regexp illegal {}",
+                        extractor.source_regexp
+                    ))
+                })?,
+            );
             if extractor.target_column.is_empty() {
                 return Err(TableRouterError::new(
                     "source extractor target column cannot be empty",

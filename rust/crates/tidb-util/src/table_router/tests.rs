@@ -15,7 +15,37 @@
 use super::*;
 
 fn rule(schema: &str, table: &str, target_schema: &str, target_table: &str) -> TableRule {
-    TableRule::new(schema, table, target_schema, target_table)
+    TableRule {
+        schema_pattern: schema.to_owned(),
+        table_pattern: table.to_owned(),
+        target_schema: target_schema.to_owned(),
+        target_table: target_table.to_owned(),
+        ..TableRule::default()
+    }
+}
+
+fn table_extractor(target_column: &str, regexp: &str) -> TableExtractor {
+    TableExtractor {
+        target_column: target_column.to_owned(),
+        table_regexp: regexp.to_owned(),
+        ..TableExtractor::default()
+    }
+}
+
+fn schema_extractor(target_column: &str, regexp: &str) -> SchemaExtractor {
+    SchemaExtractor {
+        target_column: target_column.to_owned(),
+        schema_regexp: regexp.to_owned(),
+        ..SchemaExtractor::default()
+    }
+}
+
+fn source_extractor(target_column: &str, regexp: &str) -> SourceExtractor {
+    SourceExtractor {
+        target_column: target_column.to_owned(),
+        source_regexp: regexp.to_owned(),
+        ..SourceExtractor::default()
+    }
 }
 
 // Go TestRoute.
@@ -119,12 +149,12 @@ fn case_sensitive_patterns_remain_distinct() {
 #[test]
 fn table_extractors_have_priority_and_concatenate_capture_groups() {
     let mut table_rule = rule("schema*", "t*", "test", "t");
-    table_rule.table_extractor = Some(TableExtractor::new("table_name", "table_(.*)"));
-    table_rule.schema_extractor = Some(SchemaExtractor::new("schema_name", "schema_(.*)"));
-    table_rule.source_extractor = Some(SourceExtractor::new("source_name", "source_(.*)_(.*)"));
+    table_rule.table_extractor = Some(table_extractor("table_name", "table_(.*)"));
+    table_rule.schema_extractor = Some(schema_extractor("schema_name", "schema_(.*)"));
+    table_rule.source_extractor = Some(source_extractor("source_name", "source_(.*)_(.*)"));
     let mut schema_rule = rule("schema*", "", "test", "t2");
-    schema_rule.schema_extractor = Some(SchemaExtractor::new("schema_name", "(.*)"));
-    schema_rule.source_extractor = Some(SourceExtractor::new("source_name", "(.*)"));
+    schema_rule.schema_extractor = Some(schema_extractor("schema_name", "(.*)"));
+    schema_rule.source_extractor = Some(source_extractor("source_name", "(.*)"));
     let mut rules = vec![table_rule, schema_rule];
     let router = Table::new(false, &mut rules).unwrap();
 
@@ -167,21 +197,21 @@ fn validation_order_and_config_tags_match_the_source() {
 
     let extractor_cases = [
         (
-            Some(TableExtractor::new("column", "[")),
+            Some(table_extractor("column", "[")),
             None,
             None,
             "table extractor table regexp illegal [",
         ),
         (
             None,
-            Some(SchemaExtractor::new("column", "[")),
+            Some(schema_extractor("column", "[")),
             None,
             "schema extractor schema regexp illegal [",
         ),
         (
             None,
             None,
-            Some(SourceExtractor::new("column", "[")),
+            Some(source_extractor("column", "[")),
             "source extractor source regexp illegal [",
         ),
     ];
@@ -195,21 +225,21 @@ fn validation_order_and_config_tags_match_the_source() {
 
     let empty_column_cases = [
         (
-            Some(TableExtractor::new("", ".*")),
+            Some(table_extractor("", ".*")),
             None,
             None,
             "table extractor target column cannot be empty",
         ),
         (
             None,
-            Some(SchemaExtractor::new("", ".*")),
+            Some(schema_extractor("", ".*")),
             None,
             "schema extractor target column cannot be empty",
         ),
         (
             None,
             None,
-            Some(SourceExtractor::new("", ".*")),
+            Some(source_extractor("", ".*")),
             "source extractor target column cannot be empty",
         ),
     ];
@@ -246,4 +276,20 @@ fn unmatched_and_optional_groups_follow_go_find_string_submatch() {
     assert_eq!(extract_value("source__tail", Some(&regexp)), "tail");
     assert_eq!(extract_value("missing", Some(&regexp)), "");
     assert_eq!(extract_value("source_a_tail", Some(&regexp)), "atail");
+}
+
+#[test]
+fn extractors_keep_go_ascii_perl_classes() {
+    let mut route_rule = rule("tenant*", "table_*", "target", "");
+    route_rule.table_extractor = Some(table_extractor("table_id", r"^table_(\d+)$"));
+    let router = Table::new(true, &mut [route_rule]).unwrap();
+
+    assert_eq!(
+        router.fetch_extend_column("tenant", "table_1", "source"),
+        (vec!["table_id".into()], vec!["1".into()])
+    );
+    assert_eq!(
+        router.fetch_extend_column("tenant", "table_١", "source"),
+        (vec!["table_id".into()], vec![String::new()])
+    );
 }

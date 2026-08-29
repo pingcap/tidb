@@ -16,7 +16,37 @@ use super::*;
 use crate::table_router::{SchemaExtractor, SourceExtractor, Table as OldRouter, TableExtractor};
 
 fn rule(schema: &str, table: &str, target_schema: &str, target_table: &str) -> TableRule {
-    TableRule::new(schema, table, target_schema, target_table)
+    TableRule {
+        schema_pattern: schema.to_owned(),
+        table_pattern: table.to_owned(),
+        target_schema: target_schema.to_owned(),
+        target_table: target_table.to_owned(),
+        ..TableRule::default()
+    }
+}
+
+fn table_extractor(target_column: &str, regexp: &str) -> TableExtractor {
+    TableExtractor {
+        target_column: target_column.to_owned(),
+        table_regexp: regexp.to_owned(),
+        ..TableExtractor::default()
+    }
+}
+
+fn schema_extractor(target_column: &str, regexp: &str) -> SchemaExtractor {
+    SchemaExtractor {
+        target_column: target_column.to_owned(),
+        schema_regexp: regexp.to_owned(),
+        ..SchemaExtractor::default()
+    }
+}
+
+fn source_extractor(target_column: &str, regexp: &str) -> SourceExtractor {
+    SourceExtractor {
+        target_column: target_column.to_owned(),
+        source_regexp: regexp.to_owned(),
+        ..SourceExtractor::default()
+    }
 }
 
 // Go TestCreateRouter.
@@ -142,12 +172,12 @@ fn regexp_route_keeps_go_ascii_perl_classes() {
 #[test]
 fn fetch_extend_column() {
     let mut table_rule = rule("schema*", "t*", "test", "t");
-    table_rule.table_extractor = Some(TableExtractor::new("table_name", "table_(.*)"));
-    table_rule.schema_extractor = Some(SchemaExtractor::new("schema_name", "schema_(.*)"));
-    table_rule.source_extractor = Some(SourceExtractor::new("source_name", "source_(.*)_(.*)"));
+    table_rule.table_extractor = Some(table_extractor("table_name", "table_(.*)"));
+    table_rule.schema_extractor = Some(schema_extractor("schema_name", "schema_(.*)"));
+    table_rule.source_extractor = Some(source_extractor("source_name", "source_(.*)_(.*)"));
     let mut schema_rule = rule("~s?chema.*", "", "test", "t2");
-    schema_rule.schema_extractor = Some(SchemaExtractor::new("schema_name", "(.*)"));
-    schema_rule.source_extractor = Some(SourceExtractor::new("source_name", "(.*)"));
+    schema_rule.schema_extractor = Some(schema_extractor("schema_name", "(.*)"));
+    schema_rule.source_extractor = Some(source_extractor("source_name", "(.*)"));
     let mut rules = vec![table_rule, schema_rule];
     let router = RouteTable::new(false, &mut rules).unwrap();
 
@@ -174,7 +204,7 @@ fn fetch_extend_column() {
 #[test]
 fn extractor_keeps_go_ascii_perl_classes() {
     let mut route_rule = rule("tenant*", "", "target", "");
-    route_rule.schema_extractor = Some(SchemaExtractor::new("tenant_id", r"^tenant(\d+)$"));
+    route_rule.schema_extractor = Some(schema_extractor("tenant_id", r"^tenant(\d+)$"));
     let router = RouteTable::new(true, &mut [route_rule]).unwrap();
 
     assert_eq!(
