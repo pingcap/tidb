@@ -36,6 +36,12 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: audited all seven production variants, test, and build artifacts
+  in pinned Go `pkg/util/intest`. Fixed the default build to ignore
+  `EnableAssert` exactly like `no_assert.go`, removed the extra failpoint
+  spelling, deleted the duplicate three-test external suite and supplemental
+  inline cases, and retained the one exact source test. Complete inventory and
+  WIP gates are recorded in `receipts/util_intest.md`.
 - 2026-08-29: audited every production, test, harness, benchmark, and build
   artifact in pinned Go `pkg/util/stringutil`. Removed Rust-only optional
   escape handling, UTF-8-narrow wrappers, duplicate byte APIs, public wrapper

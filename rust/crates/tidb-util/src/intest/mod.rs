@@ -36,10 +36,10 @@ pub const IN_TEST: bool = cfg!(any(feature = "intest", test));
 static ENVIRONMENT_FAILPOINT_ENABLED: LazyLock<bool> = LazyLock::new(|| {
     std::env::var_os("GO_FAILPOINTS").is_some_and(|value| {
         let value = value.to_string_lossy();
-        value.split(';').map(str::trim).any(|entry| {
-            entry == "/enableInternalCheck=return(true)"
-                || entry == "enableInternalCheck=return(true)"
-        })
+        value
+            .split(';')
+            .map(str::trim)
+            .any(|entry| entry == "/enableInternalCheck=return(true)")
     })
 });
 
@@ -60,7 +60,11 @@ pub static ENABLE_INTERNAL_CHECK: LazyLock<AtomicBool> = LazyLock::new(|| {
 });
 
 fn assertions_enabled() -> bool {
-    ENABLE_ASSERT.load(Ordering::Relaxed) || ENABLE_INTERNAL_CHECK.load(Ordering::Relaxed)
+    if cfg!(any(feature = "intest", feature = "enableassert", test)) {
+        ENABLE_ASSERT.load(Ordering::Relaxed) || ENABLE_INTERNAL_CHECK.load(Ordering::Relaxed)
+    } else {
+        ENABLE_INTERNAL_CHECK.load(Ordering::Relaxed)
+    }
 }
 
 fn assertion_failed_message(extra: &str, user_message: Option<String>) -> String {
@@ -276,21 +280,5 @@ mod tests {
         );
         let no_error: Option<&dyn fmt::Display> = None;
         check(|| assert_no_error(no_error), None);
-
-        // Exercise the `!intest && !enableassert` source file without adding a
-        // second implementation authority: disabled assertions must not even
-        // evaluate a deferred function. The independent internal-check switch
-        // must still reactivate the same assertion body.
-        ENABLE_ASSERT.store(false, Ordering::Relaxed);
-        ENABLE_INTERNAL_CHECK.store(false, Ordering::Relaxed);
-        let called = AtomicBool::new(false);
-        assert_func(Some(|| {
-            called.store(true, Ordering::Relaxed);
-            false
-        }));
-        assert!(!called.load(Ordering::Relaxed));
-        ENABLE_INTERNAL_CHECK.store(true, Ordering::Relaxed);
-        check(|| super::assert(false), Some("assert failed"));
-        ENABLE_ASSERT.store(true, Ordering::Relaxed);
     }
 }
