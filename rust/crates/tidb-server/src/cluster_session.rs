@@ -39,7 +39,9 @@
 use std::sync::{Arc, Mutex};
 use tidb_datatype::FieldTypeFlags;
 use tidb_exec::cluster_catalog::ClusterCatalog;
-use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
+#[cfg(test)]
+use tidb_exec::cluster_stats_load::ClusterStatsItem;
+use tidb_exec::cluster_stats_load::ClusterTableStats;
 use tidb_exec::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_executor::access_cost::TableStatistics;
 use tidb_executor::cluster_storage::ClusterTableStorage;
@@ -955,20 +957,47 @@ const UNSIGNED_FLAG: u32 = 1 << 5;
 /// a dropped one whose stats rows have not been GC'd -- is skipped, because
 /// the estimator keys on the live schema.
 pub(crate) fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStatistics {
+    planner_statistics_from_table(stats.to_statistics_table(table).as_ref(), table)
+}
+
+fn planner_statistics_from_table(stats: &tidb_stats::Table, table: &TableInfo) -> TableStatistics {
+    let existence = stats.existence_map.as_ref().map(|map| {
+        map.read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    });
     let column_stats_existence = stats
-        .columns
-        .iter()
-        .map(|item| {
+        .hist_coll
+        .stable_columns()
+        .into_iter()
+        .map(|column| {
+            let id = column
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .item_id();
             (
-                item.id,
-                item.stats_ver != 0 || item.histogram.ndv > 0 || item.histogram.null_count > 0,
+                id,
+                existence
+                    .as_ref()
+                    .is_some_and(|existence| existence.has_analyzed(id, false)),
             )
         })
         .collect();
     let index_stats_existence = stats
-        .indexes
-        .iter()
-        .map(|item| (item.id, item.stats_ver != 0))
+        .hist_coll
+        .stable_indices()
+        .into_iter()
+        .map(|index| {
+            let id = index
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .item_id();
+            (
+                id,
+                existence
+                    .as_ref()
+                    .is_some_and(|existence| existence.has_analyzed(id, true)),
+            )
+        })
         .collect();
     let mut columns = std::collections::BTreeMap::new();
     let mut column_load_status = std::collections::BTreeMap::new();
@@ -977,20 +1006,26 @@ pub(crate) fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -
             let column = column.read();
             (column.id, column.field_type.flags() & UNSIGNED_FLAG != 0)
         };
-        let Some(item) = stats.column(id).filter(stats_available) else {
+        let Some(item) = stats.hist_coll.get_column(id) else {
             continue;
         };
+        let item = item
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !item.stats_available() {
+            continue;
+        }
         columns.insert(
             id,
             ColumnStats {
                 histogram: item.histogram.clone(),
-                topn: item.topn.clone(),
-                cms: item.cms.clone(),
-                stats_ver: item.stats_ver,
+                topn: item.top_n.clone(),
+                cms: item.cmsketch.clone(),
+                stats_ver: item.stats_version,
                 unsigned,
             },
         );
-        column_load_status.insert(id, item.load_status);
+        column_load_status.insert(id, item.stats_loaded_status);
     }
     let mut indexes = std::collections::BTreeMap::new();
     let mut index_load_status = std::collections::BTreeMap::new();
@@ -999,11 +1034,17 @@ pub(crate) fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -
             let index = index.read();
             (index.id, index.columns.len(), index.unique)
         };
-        let Some(item) = stats.index(id).filter(stats_available) else {
+        let Some(item) = stats.hist_coll.get_index(id) else {
             continue;
         };
-        indexes.insert(id, index_statistics(item, num_columns, unique));
-        index_load_status.insert(id, item.load_status);
+        let item = item
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !item.is_analyzed() && item.histogram.ndv == 0 && item.histogram.null_count == 0 {
+            continue;
+        }
+        indexes.insert(id, index_statistics(&item, num_columns, unique));
+        index_load_status.insert(id, item.stats_loaded_status);
     }
     // `TableStatistics::new` decides `pseudo` -- Go's `GetStatsTable` reaches
     // it both from an uninitialized histogram set and from a zero row count,
@@ -1012,8 +1053,8 @@ pub(crate) fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -
     // `Update_time` and `Last_analyze_time`, so no field of the stored row is
     // lost in this translation.
     TableStatistics::new(
-        i64::try_from(stats.row_count).unwrap_or(i64::MAX),
-        stats.modify_count,
+        stats.hist_coll.realtime_count,
+        stats.hist_coll.modify_count,
         columns,
         indexes,
     )
@@ -1022,25 +1063,14 @@ pub(crate) fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -
     .with_stats_existence(column_stats_existence, index_stats_existence)
 }
 
-/// Go `Column.StatsAvailable()` / `IsColumnAnalyzedOrSynthesized`: whether
-/// this histogram was actually collected.
-///
-/// A `stats_histograms` row can exist with `stats_ver = 0` -- an ADD COLUMN
-/// synthesizes one from the default value -- so the version alone is not the
-/// test; Go also accepts a non-zero NDV or null count, which is that
-/// synthesized case.
-fn stats_available(item: &&ClusterStatsItem) -> bool {
-    item.stats_ver > 0 || item.histogram.ndv > 0 || item.histogram.null_count > 0
-}
-
 /// One index histogram, with the two schema facts the estimator needs that
 /// the stored row does not carry.
-fn index_statistics(item: &ClusterStatsItem, num_columns: usize, unique: bool) -> IndexStats {
+fn index_statistics(item: &tidb_stats::Index, num_columns: usize, unique: bool) -> IndexStats {
     IndexStats {
         histogram: item.histogram.clone(),
-        topn: item.topn.clone(),
-        cms: item.cms.clone(),
-        stats_ver: item.stats_ver,
+        topn: item.top_n.clone(),
+        cms: item.cmsketch.clone(),
+        stats_ver: item.stats_version,
         num_columns,
         unique,
     }

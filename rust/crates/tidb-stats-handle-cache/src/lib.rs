@@ -15,19 +15,376 @@
 //! Go `pkg/statistics/handle/cache` full-table cache core.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use tidb_stats::Table;
+use tidb_stats::{CopyIntent, Table};
 use tidb_stats_handle_cache_internal::StatsCacheInner;
 use tidb_stats_handle_cache_internal_lfu::Lfu;
 use tidb_stats_handle_cache_internal_mapcache::MapCache;
 use tidb_stats_handle_cache_metrics as metrics;
+use tidb_stats_handle_metrics as handle_metrics;
+
+/// Go `LeaseOffset`.
+pub const LEASE_OFFSET: u32 = 5;
+
+/// Go `types.CacheUpdate` reduced to the parent cache's owned fields.
+#[derive(Clone, Debug, Default)]
+pub struct CacheUpdate {
+    /// Full table values to insert or replace.
+    pub updated: Vec<Arc<Table>>,
+    /// Physical table IDs to delete.
+    pub deleted: Vec<i64>,
+    /// Whether this targeted update must leave the lifecycle max version unchanged.
+    pub skip_move_forward: bool,
+}
+
+/// One ordered row read by Go `StatsCacheImpl.Update` from `mysql.stats_meta`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StatsMetaRow {
+    /// Statistics meta version.
+    pub version: u64,
+    /// Physical table ID.
+    pub physical_id: i64,
+    /// Modified rows since analysis.
+    pub modify_count: i64,
+    /// Current row count.
+    pub count: i64,
+    /// Analyze snapshot version.
+    pub snapshot: u64,
+    /// Latest histogram update version, or zero when SQL NULL.
+    pub latest_histogram_version: u64,
+}
+
+/// Storage and schema operations consumed by Go `StatsCacheImpl.Update`.
+pub trait StatsRefreshSource {
+    /// Source error type.
+    type Error;
+
+    /// Go `StatsHandle.Lease`.
+    fn lease(&self) -> Duration;
+
+    /// Reads rows with `version > after_version`, ordered by version. A
+    /// non-empty `physical_ids` slice applies Go's targeted `IN` predicate.
+    fn stats_meta_rows(
+        &self,
+        after_version: u64,
+        physical_ids: &[i64],
+    ) -> Result<Vec<StatsMetaRow>, Self::Error>;
+
+    /// Returns the current table metadata update TSO, or `None` after DDL removal.
+    fn table_info_update_ts(&self, physical_id: i64) -> Option<u64>;
+
+    /// Go `TableStatsFromStorage(tableInfo, physicalID, false, 0)`.
+    fn table_stats_from_storage(&self, physical_id: i64)
+        -> Result<Option<Arc<Table>>, Self::Error>;
+}
+
+/// Failures Go `StatsCacheImpl.Update` returns to its caller.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum UpdateError<E> {
+    /// Reading the ordered `stats_meta` rows failed.
+    Source(E),
+    /// The caller's context was cancelled while rows were being processed.
+    Cancelled,
+}
 
 /// Go `StatsCache`: the full-table cache and its lifecycle maximum version.
 pub struct StatsCache {
     inner: Box<dyn StatsCacheInner>,
     max_table_stats_version: AtomicU64,
+}
+
+/// Go `StatsCacheImpl`: an atomically replaceable full-table cache.
+pub struct StatsCacheImpl {
+    cache: RwLock<Arc<StatsCache>>,
+}
+
+impl StatsCacheImpl {
+    /// Go `NewStatsCacheImpl`.
+    pub fn new() -> Result<Self, String> {
+        Ok(Self::with_cache(Arc::new(StatsCache::new()?)))
+    }
+
+    fn with_cache(cache: Arc<StatsCache>) -> Self {
+        Self {
+            cache: RwLock::new(cache),
+        }
+    }
+
+    fn load(&self) -> Arc<StatsCache> {
+        Arc::clone(
+            &self
+                .cache
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    fn replace_cache(&self, cache: Arc<StatsCache>) {
+        let old = std::mem::replace(
+            &mut *self
+                .cache
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            cache,
+        );
+        old.close();
+        metrics::cost_gauge().set(self.load().cost() as f64);
+    }
+
+    /// Go `Replace`.
+    pub fn replace(&self, replacement: &Self) {
+        self.replace_cache(replacement.load());
+    }
+
+    /// Go `UpdateStatsCache`, preserving quota-mode in-place updates and map-mode COW.
+    pub fn update_stats_cache(&self, update: CacheUpdate) {
+        if tidb_config::config_tree::config::get_global_config()
+            .performance
+            .enable_stats_cache_mem_quota
+        {
+            self.load()
+                .update(&update.updated, &update.deleted, update.skip_move_forward);
+        } else {
+            let cache = self
+                .load()
+                .copy_and_update(&update.updated, &update.deleted);
+            self.replace_cache(Arc::new(cache));
+        }
+    }
+
+    /// Go `GetNextCheckVersionWithOffset`, with the handle-owned lease explicit.
+    #[must_use]
+    pub fn next_check_version_with_offset(&self, lease: Duration) -> u64 {
+        let nanos = i64::try_from(lease.as_nanos()).unwrap_or(i64::MAX);
+        let offset =
+            tidb_stats_handle_util::duration_to_ts(nanos.saturating_mul(i64::from(LEASE_OFFSET)));
+        self.max_table_stats_version().saturating_sub(offset)
+    }
+
+    /// Go `StatsCacheImpl.Update` over the source-owned SQL/schema boundary.
+    pub fn update_from_source<S>(
+        &self,
+        source: &S,
+        mut physical_ids: Vec<i64>,
+        is_cancelled: impl Fn() -> bool,
+    ) -> Result<(), UpdateError<S::Error>>
+    where
+        S: StatsRefreshSource,
+    {
+        let targeted = !physical_ids.is_empty();
+        if targeted {
+            physical_ids.sort_unstable();
+            physical_ids.dedup();
+        }
+        let mut rows = source
+            .stats_meta_rows(
+                self.next_check_version_with_offset(source.lease()),
+                &physical_ids,
+            )
+            .map_err(UpdateError::Source)?;
+        rows.sort_by_key(|row| row.version);
+
+        let mut batch = BatchUpdate::new(10, |updated: &[Arc<Table>], deleted: &[i64]| {
+            self.update_stats_cache(CacheUpdate {
+                updated: updated.to_vec(),
+                deleted: deleted.to_vec(),
+                skip_move_forward: targeted,
+            });
+        });
+        for row in rows {
+            if is_cancelled() {
+                return Err(UpdateError::Cancelled);
+            }
+            let Some(table_info_update_ts) = source.table_info_update_ts(row.physical_id) else {
+                batch.add_deleted(row.physical_id);
+                continue;
+            };
+            let old = self.get(row.physical_id);
+            if old.as_ref().is_some_and(|old| {
+                old.version >= row.version && old.table_info_update_ts == table_info_update_ts
+            }) {
+                continue;
+            }
+
+            let mut table = if let Some(old) = old.as_ref().filter(|old| {
+                row.latest_histogram_version > 0
+                    && old.last_stats_hist_version >= row.latest_histogram_version
+            }) {
+                old.copy_as(CopyIntent::MetaOnly)
+            } else {
+                let loaded = match source.table_stats_from_storage(row.physical_id) {
+                    Ok(loaded) => loaded,
+                    // Go logs this per-table error and continues the refresh.
+                    Err(_) => continue,
+                };
+                let Some(loaded) = loaded else {
+                    batch.add_deleted(row.physical_id);
+                    continue;
+                };
+                loaded.as_ref().clone()
+            };
+            table.version = row.version;
+            table.last_stats_hist_version = row.latest_histogram_version;
+            table.hist_coll.realtime_count = row.count;
+            table.hist_coll.modify_count = row.modify_count;
+            table.table_info_update_ts = table_info_update_ts;
+            if table.last_analyze_version == 0 && row.snapshot != 0 {
+                table.last_analyze_version = row.snapshot;
+            }
+            batch.add_updated(Arc::new(table));
+        }
+        batch.flush();
+        Ok(())
+    }
+
+    /// Go `Close`.
+    pub fn close(&self) {
+        self.load().close();
+    }
+
+    /// Go `Clear`. Construction failure leaves the current cache untouched.
+    pub fn clear(&self) {
+        if let Ok(cache) = StatsCache::new() {
+            self.replace_cache(Arc::new(cache));
+        }
+    }
+
+    /// Go `MemConsumed`.
+    #[must_use]
+    pub fn mem_consumed(&self) -> i64 {
+        self.load().cost()
+    }
+
+    /// Go `Get`.
+    #[must_use]
+    pub fn get(&self, table_id: i64) -> Option<Arc<Table>> {
+        self.load().get(table_id)
+    }
+
+    /// Go `Put`.
+    pub fn put(&self, id: i64, table: Arc<Table>) {
+        self.load().put(id, table);
+    }
+
+    /// Go `TriggerEvict`.
+    pub fn trigger_evict(&self) {
+        self.load().trigger_evict();
+    }
+
+    /// Go `WaitForAsyncUpdates`.
+    pub fn wait_for_async_updates(&self) {
+        self.load().wait_for_async_updates();
+    }
+
+    /// Go `MaxTableStatsVersion`.
+    #[must_use]
+    pub fn max_table_stats_version(&self) -> u64 {
+        self.load().version()
+    }
+
+    /// Go `Values`.
+    #[must_use]
+    pub fn values(&self) -> Vec<Arc<Table>> {
+        self.load().values()
+    }
+
+    /// Go `Len`.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.load().len()
+    }
+
+    /// Go `SetStatsCacheCapacity`.
+    pub fn set_stats_cache_capacity(&self, capacity: i64) {
+        self.load().set_capacity(capacity);
+    }
+
+    /// Go `UpdateStatsHealthyMetrics`.
+    pub fn update_stats_healthy_metrics(&self) {
+        let mut buckets = [0_i64; handle_metrics::STATS_HEALTHY_BUCKET_COUNT];
+        for table in self.values() {
+            buckets[handle_metrics::STATS_HEALTHY_BUCKET_TOTAL] += 1;
+            if table.hist_coll.pseudo {
+                buckets[handle_metrics::STATS_HEALTHY_BUCKET_PSEUDO] += 1;
+                continue;
+            }
+            if !table.meets_auto_analyze_min_count(tidb_stats::DEFAULT_AUTO_ANALYZE_MIN_COUNT)
+                && !table.is_analyzed()
+            {
+                buckets[handle_metrics::STATS_HEALTHY_BUCKET_UNNEEDED_ANALYZE] += 1;
+                continue;
+            }
+            let (healthy, available) = table.stats_healthy();
+            if available {
+                buckets[stats_healthy_bucket_index(healthy)] += 1;
+            }
+        }
+        for (index, gauge) in handle_metrics::stats_healthy_gauges()
+            .into_iter()
+            .enumerate()
+        {
+            gauge.set(buckets[index] as f64);
+        }
+    }
+}
+
+fn stats_healthy_bucket_index(healthy: i64) -> usize {
+    debug_assert!((0..=100).contains(&healthy));
+    handle_metrics::HEALTHY_BUCKET_CONFIGS
+        .iter()
+        .find(|config| config.upper_bound > 0 && healthy < config.upper_bound)
+        .map_or(handle_metrics::STATS_HEALTHY_BUCKET_100_TO_100, |config| {
+            config.index
+        })
+}
+
+struct BatchUpdate<F> {
+    operation: F,
+    updated: Vec<Arc<Table>>,
+    deleted: Vec<i64>,
+    batch_size: usize,
+}
+
+impl<F> BatchUpdate<F>
+where
+    F: FnMut(&[Arc<Table>], &[i64]),
+{
+    fn new(batch_size: usize, operation: F) -> Self {
+        Self {
+            operation,
+            updated: Vec::with_capacity(batch_size),
+            deleted: Vec::with_capacity(batch_size),
+            batch_size,
+        }
+    }
+
+    fn flush_internal(&mut self) {
+        (self.operation)(&self.updated, &self.deleted);
+        self.updated.clear();
+        self.deleted.clear();
+    }
+
+    fn add_updated(&mut self, table: Arc<Table>) {
+        if self.updated.len() == self.batch_size {
+            self.flush_internal();
+        }
+        self.updated.push(table);
+    }
+
+    fn add_deleted(&mut self, id: i64) {
+        if self.deleted.len() == self.batch_size {
+            self.flush_internal();
+        }
+        self.deleted.push(id);
+    }
+
+    fn flush(&mut self) {
+        if !self.updated.is_empty() || !self.deleted.is_empty() {
+            self.flush_internal();
+        }
+    }
 }
 
 impl StatsCache {
@@ -170,7 +527,8 @@ impl StatsCache {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::RwLock;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
 
     use tidb_stats::ColAndIdxExistenceMap;
     use tidb_stats_handle_cache_internal_testutil::new_mock_statistics_table;
@@ -217,5 +575,202 @@ mod tests {
         cache.update(&[table(2, 3)], &[1], false);
         assert_eq!(cache.version(), 3);
         assert!(cache.get(1).is_none());
+    }
+
+    #[test]
+    fn source_batch_update_flushes_each_side_at_its_limit() {
+        let mut flushed = Vec::new();
+        {
+            let mut batch = BatchUpdate::new(3, |updated: &[Arc<Table>], deleted: &[i64]| {
+                flushed.push((
+                    updated
+                        .iter()
+                        .map(|table| table.hist_coll.physical_id)
+                        .collect::<Vec<_>>(),
+                    deleted.to_vec(),
+                ));
+            });
+            batch.add_updated(table(1, 0));
+            batch.add_updated(table(2, 0));
+            batch.add_updated(table(3, 0));
+            batch.add_updated(table(4, 0));
+            batch.add_deleted(5);
+            batch.add_deleted(6);
+            batch.add_deleted(7);
+            batch.add_updated(table(8, 0));
+            batch.add_deleted(9);
+            batch.flush();
+        }
+        assert_eq!(
+            flushed,
+            vec![
+                (vec![1, 2, 3], vec![]),
+                (vec![4, 8], vec![5, 6, 7]),
+                (vec![], vec![9]),
+            ]
+        );
+    }
+
+    #[test]
+    fn source_healthy_metrics_use_exact_buckets() {
+        for gauge in handle_metrics::stats_healthy_gauges() {
+            gauge.set(0.0);
+        }
+        let cache = StatsCache::from_inner(Box::new(MapCache::new()));
+        for (id, pseudo, count, modify, analyzed) in [
+            (0, false, 2_000, 1_000, 0),
+            (1, false, 2_000, 1_100, 1),
+            (2, false, 2_000, 920, 1),
+            (3, false, 2_000, 200, 1),
+            (4, false, 2_000, 0, 1),
+            (5, true, 10_000, 0, 0),
+            (6, false, 800, 500, 1),
+            (7, false, 800, 500, 0),
+        ] {
+            let mut table = (*table(id, 0)).clone();
+            table.hist_coll.pseudo = pseudo;
+            table.hist_coll.realtime_count = count;
+            table.hist_coll.modify_count = modify;
+            table.last_analyze_version = analyzed;
+            cache.inner.put(id, Arc::new(table));
+        }
+        let cache = StatsCacheImpl::with_cache(Arc::new(cache));
+        cache.update_stats_healthy_metrics();
+        assert_eq!(
+            handle_metrics::stats_healthy_gauges().len(),
+            handle_metrics::STATS_HEALTHY_BUCKET_COUNT
+        );
+        assert_eq!(
+            handle_metrics::stats_healthy_gauges()
+                .into_iter()
+                .map(|gauge| gauge.get())
+                .collect::<Vec<_>>(),
+            vec![3.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 8.0, 1.0, 1.0]
+        );
+    }
+
+    struct RefreshSource {
+        rows: Vec<StatsMetaRow>,
+        metadata: HashMap<i64, u64>,
+        loaded: HashMap<i64, Result<Option<Arc<Table>>, &'static str>>,
+        requested: Mutex<Vec<Vec<i64>>>,
+        loaded_ids: Mutex<Vec<i64>>,
+    }
+
+    impl StatsRefreshSource for RefreshSource {
+        type Error = &'static str;
+
+        fn lease(&self) -> Duration {
+            Duration::ZERO
+        }
+
+        fn stats_meta_rows(
+            &self,
+            _after_version: u64,
+            physical_ids: &[i64],
+        ) -> Result<Vec<StatsMetaRow>, Self::Error> {
+            self.requested.lock().unwrap().push(physical_ids.to_vec());
+            Ok(self.rows.clone())
+        }
+
+        fn table_info_update_ts(&self, physical_id: i64) -> Option<u64> {
+            self.metadata.get(&physical_id).copied()
+        }
+
+        fn table_stats_from_storage(
+            &self,
+            physical_id: i64,
+        ) -> Result<Option<Arc<Table>>, Self::Error> {
+            self.loaded_ids.lock().unwrap().push(physical_id);
+            self.loaded.get(&physical_id).cloned().unwrap_or(Ok(None))
+        }
+    }
+
+    #[test]
+    fn source_refresh_reuses_payload_deletes_unknown_and_skips_load_errors() {
+        let cache = StatsCache::from_inner(Box::new(MapCache::new()));
+        let mut old = (*table(1, 10)).clone();
+        old.last_stats_hist_version = 100;
+        old.table_info_update_ts = 1;
+        cache.put(1, Arc::new(old));
+        cache.put(2, table(2, 5));
+        let cache = StatsCacheImpl::with_cache(Arc::new(cache));
+        let source = RefreshSource {
+            // Deliberately out of order: Update orders by version.
+            rows: vec![
+                StatsMetaRow {
+                    version: 12,
+                    physical_id: 4,
+                    count: 40,
+                    snapshot: 77,
+                    latest_histogram_version: 12,
+                    ..StatsMetaRow::default()
+                },
+                StatsMetaRow {
+                    version: 11,
+                    physical_id: 1,
+                    modify_count: 3,
+                    count: 30,
+                    latest_histogram_version: 90,
+                    ..StatsMetaRow::default()
+                },
+                StatsMetaRow {
+                    version: 13,
+                    physical_id: 2,
+                    ..StatsMetaRow::default()
+                },
+                StatsMetaRow {
+                    version: 14,
+                    physical_id: 3,
+                    ..StatsMetaRow::default()
+                },
+            ],
+            metadata: HashMap::from([(1, 1), (3, 1), (4, 2)]),
+            loaded: HashMap::from([(3, Err("ddl changed")), (4, Ok(Some(table(4, 0))))]),
+            requested: Mutex::new(Vec::new()),
+            loaded_ids: Mutex::new(Vec::new()),
+        };
+
+        cache
+            .update_from_source(&source, vec![4, 1, 4], || false)
+            .unwrap();
+
+        assert_eq!(*source.requested.lock().unwrap(), vec![vec![1, 4]]);
+        assert_eq!(*source.loaded_ids.lock().unwrap(), vec![4, 3]);
+        assert!(cache.get(2).is_none());
+        assert!(cache.get(3).is_none());
+        let reused = cache.get(1).unwrap();
+        assert_eq!(reused.version, 11);
+        assert_eq!(reused.hist_coll.realtime_count, 30);
+        assert_eq!(reused.hist_coll.modify_count, 3);
+        assert_eq!(reused.last_stats_hist_version, 90);
+        let loaded = cache.get(4).unwrap();
+        assert_eq!(loaded.version, 12);
+        assert_eq!(loaded.last_analyze_version, 77);
+        assert_eq!(loaded.table_info_update_ts, 2);
+        // A targeted refresh must not move the cache-wide scan watermark.
+        assert_eq!(cache.max_table_stats_version(), 10);
+    }
+
+    #[test]
+    fn source_refresh_cancellation_discards_the_pending_batch() {
+        let cache =
+            StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(Box::new(MapCache::new()))));
+        let source = RefreshSource {
+            rows: vec![StatsMetaRow {
+                version: 1,
+                physical_id: 1,
+                ..StatsMetaRow::default()
+            }],
+            metadata: HashMap::from([(1, 1)]),
+            loaded: HashMap::from([(1, Ok(Some(table(1, 0))))]),
+            requested: Mutex::new(Vec::new()),
+            loaded_ids: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            cache.update_from_source(&source, Vec::new(), || true),
+            Err(UpdateError::Cancelled)
+        );
+        assert_eq!(cache.len(), 0);
     }
 }

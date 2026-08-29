@@ -56,6 +56,7 @@
 //!   so the blob is parsed back as one.
 
 use std::collections::BTreeMap;
+use std::sync::{Arc, RwLock};
 
 use tidb_datatype::{
     BinaryLiteral, BinaryLiteralWidth, ConversionFlags, Datum, EvalType, FieldType, FieldTypeCode,
@@ -63,7 +64,9 @@ use tidb_datatype::{
 use tidb_model::table_info::TableInfo;
 use tidb_stats::cmsketch::{decode_cmsketch_and_topn, CmsSketch, TopN};
 use tidb_stats::histogram::{Bucket, Histogram};
-use tidb_stats::StatsLoadedStatus;
+use tidb_stats::{
+    ColAndIdxExistenceMap, Column, ColumnInfo, HistColl, Index, IndexInfo, StatsLoadedStatus, Table,
+};
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::mysql_system_tables::{
@@ -143,6 +146,117 @@ impl ClusterTableStats {
     #[must_use]
     pub fn index(&self, id: i64) -> Option<&ClusterStatsItem> {
         self.indexes.iter().find(|item| item.id == id)
+    }
+
+    /// Converts the storage row image into Go's canonical `statistics.Table`.
+    /// Planner-specific views must be derived from this full table rather
+    /// than cached independently.
+    #[must_use]
+    pub fn to_statistics_table(&self, table_info: &TableInfo) -> Arc<Table> {
+        let row_count = i64::try_from(self.row_count).unwrap_or(i64::MAX);
+        let stats_version = self
+            .columns
+            .iter()
+            .chain(&self.indexes)
+            .map(|item| item.stats_ver)
+            .max()
+            .unwrap_or_default();
+        let mut hist_coll = HistColl::new(
+            self.table_id,
+            row_count,
+            self.modify_count,
+            self.columns.len(),
+            self.indexes.len(),
+        );
+        hist_coll.stats_version = i32::try_from(stats_version).unwrap_or_else(|_| {
+            if stats_version.is_negative() {
+                i32::MIN
+            } else {
+                i32::MAX
+            }
+        });
+        let mut existence = ColAndIdxExistenceMap::new(self.columns.len(), self.indexes.len());
+
+        for item in &self.columns {
+            let metadata = table_info.cols().iter_deref().find_map(|column| {
+                let column = column.read();
+                (column.id == item.id).then(|| {
+                    let primary_key =
+                        column.field_type.flags() & tidb_datatype::FieldTypeFlags::PRI_KEY != 0;
+                    (
+                        ColumnInfo {
+                            id: column.id,
+                            name: column.name.lowercase().to_owned(),
+                            primary_key,
+                        },
+                        table_info.pk_is_handle && primary_key,
+                    )
+                })
+            });
+            let Some((metadata, is_handle)) = metadata else {
+                continue;
+            };
+            existence.insert_column(
+                item.id,
+                item.stats_ver != 0 || item.histogram.ndv > 0 || item.histogram.null_count > 0,
+            );
+            hist_coll.set_column(
+                item.id,
+                Column {
+                    cmsketch: item.cms.clone(),
+                    top_n: item.topn.clone(),
+                    info: Some(metadata),
+                    histogram: item.histogram.clone(),
+                    stats_loaded_status: item.load_status,
+                    physical_id: self.table_id,
+                    stats_version: item.stats_ver,
+                    is_handle,
+                    ..Column::default()
+                },
+            );
+        }
+        for item in &self.indexes {
+            let metadata = table_info.indices.iter_deref().find_map(|index| {
+                let index = index.read();
+                (index.id == item.id).then(|| IndexInfo {
+                    id: index.id,
+                    name: index.name.lowercase().to_owned(),
+                    columns: index
+                        .columns
+                        .iter_deref()
+                        .map(|column| column.read().name.lowercase().to_owned())
+                        .collect(),
+                    mv_index: index.mv_index,
+                })
+            });
+            let Some(metadata) = metadata else {
+                continue;
+            };
+            existence.insert_index(item.id, item.stats_ver != 0);
+            hist_coll.set_index(
+                item.id,
+                Index {
+                    cmsketch: item.cms.clone(),
+                    top_n: item.topn.clone(),
+                    info: Some(metadata),
+                    histogram: item.histogram.clone(),
+                    stats_loaded_status: item.load_status,
+                    stats_version: item.stats_ver,
+                    physical_id: self.table_id,
+                    ..Index::default()
+                },
+            );
+        }
+
+        Arc::new(Table {
+            existence_map: Some(Arc::new(RwLock::new(existence))),
+            hist_coll,
+            version: self.version,
+            last_analyze_version: self.last_analyze_version,
+            last_stats_hist_version: self.last_analyze_version,
+            table_info_update_ts: table_info.update_ts,
+            is_pk_handle: table_info.pk_is_handle,
+        })
     }
 }
 
@@ -772,7 +886,9 @@ fn decode_bound(
 
 #[cfg(test)]
 mod tests {
+    use tidb_ast::CiString;
     use tidb_datatype::FieldTypeCode;
+    use tidb_model::{GoShared, GoSharedPointerSlice};
 
     use super::*;
 
@@ -782,6 +898,88 @@ mod tests {
     /// this module claims to know the encoding rather than assume it.
     fn field_type(code: FieldTypeCode) -> FieldType {
         FieldType::new(code)
+    }
+
+    #[test]
+    fn storage_image_builds_the_canonical_full_statistics_table() {
+        let mut primary_type = FieldType::new(FieldTypeCode::LongLong);
+        primary_type.set_flags(tidb_datatype::FieldTypeFlags::PRI_KEY);
+        let table_info = TableInfo {
+            id: 7,
+            update_ts: 55,
+            pk_is_handle: true,
+            columns: GoSharedPointerSlice::from_handles(vec![Some(GoShared::new(
+                tidb_model::column::ColumnInfo {
+                    id: 1,
+                    name: CiString::new("A"),
+                    field_type: primary_type,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::column::ColumnInfo::default()
+                },
+            ))]),
+            ..TableInfo::default()
+        };
+        let stats = ClusterTableStats {
+            table_id: 7,
+            version: 42,
+            snapshot: 40,
+            modify_count: 3,
+            row_count: 100,
+            last_analyze_version: 41,
+            columns: vec![
+                ClusterStatsItem {
+                    id: 1,
+                    is_index: false,
+                    stats_ver: 2,
+                    flag: 1,
+                    load_status: StatsLoadedStatus::full_load(),
+                    histogram: Histogram {
+                        id: 1,
+                        ndv: 10,
+                        last_update_version: 41,
+                        ..Histogram::default()
+                    },
+                    topn: Some(TopN::new(0)),
+                    cms: None,
+                },
+                // A dropped column's stale mysql.stats_histograms row is not
+                // retained in Go's statistics.Table.
+                ClusterStatsItem {
+                    id: 99,
+                    is_index: false,
+                    stats_ver: 2,
+                    flag: 0,
+                    load_status: StatsLoadedStatus::all_evicted(),
+                    histogram: Histogram {
+                        id: 99,
+                        ..Histogram::default()
+                    },
+                    topn: None,
+                    cms: None,
+                },
+            ],
+            indexes: Vec::new(),
+        };
+
+        let table = stats.to_statistics_table(&table_info);
+        assert_eq!(table.hist_coll.physical_id, 7);
+        assert_eq!(table.hist_coll.realtime_count, 100);
+        assert_eq!(table.hist_coll.modify_count, 3);
+        assert_eq!(table.hist_coll.stats_version, 2);
+        assert_eq!(table.version, 42);
+        assert_eq!(table.last_analyze_version, 41);
+        assert_eq!(table.last_stats_hist_version, 41);
+        assert_eq!(table.table_info_update_ts, 55);
+        assert!(table.is_pk_handle);
+        let column = table.hist_coll.get_column(1).unwrap();
+        let column = column.read().unwrap();
+        assert_eq!(column.info.as_ref().unwrap().name, "a");
+        assert!(column.is_handle);
+        assert!(column.is_full_load());
+        assert!(table.hist_coll.get_column(99).is_none());
+        let existence = table.existence_map.as_ref().unwrap().read().unwrap();
+        assert!(existence.has_analyzed(1, false));
+        assert!(!existence.has(99, false));
     }
 
     #[test]

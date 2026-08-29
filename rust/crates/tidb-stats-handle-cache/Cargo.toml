@@ -17,6 +17,8 @@ tidb-stats-handle-cache-internal = { path = "../tidb-stats-handle-cache-internal
 tidb-stats-handle-cache-internal-lfu = { path = "../tidb-stats-handle-cache-internal-lfu" }
 tidb-stats-handle-cache-internal-mapcache = { path = "../tidb-stats-handle-cache-internal-mapcache" }
 tidb-stats-handle-cache-metrics = { path = "../tidb-stats-handle-cache-metrics" }
+tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 tidb-vardef = { path = "../tidb-vardef" }
 
 [dev-dependencies]

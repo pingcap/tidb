@@ -3849,6 +3849,8 @@ dependencies = [
  "tidb-stats-handle-cache-internal-mapcache",
  "tidb-stats-handle-cache-internal-testutil",
  "tidb-stats-handle-cache-metrics",
+ "tidb-stats-handle-metrics",
+ "tidb-stats-handle-util",
  "tidb-vardef",
 ]
 
