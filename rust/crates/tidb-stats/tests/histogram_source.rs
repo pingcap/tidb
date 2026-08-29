@@ -25,12 +25,25 @@
 
 use tidb_datatype::{Collation, Datum};
 use tidb_stats::histogram::{
-    deep_slice, merge_histograms, merge_partition_histograms, Bucket, Histogram,
+    deep_slice, merge_histograms, merge_partition_histograms, value_to_string, Bucket, Histogram,
     HistogramMergeError, OutOfRangeContext, PartitionMergeOptions, TopNMergeEntry,
 };
 use tidb_stats::row_estimate::default_row_est;
 
 const EPS: f64 = 1e-9;
+
+/// Pinned Go `histogram_test.go::TestValueToString4InvalidKey`.
+#[test]
+fn value_to_string_preserves_an_invalid_key_suffix() {
+    let mut encoded = tidb_codec::encode_key(&[Datum::new_int(1), Datum::new_real(0.5)])
+        .expect("valid key prefix");
+    encoded.push(tidb_codec::VECTOR_FLOAT32_FLAG);
+
+    let actual = value_to_string(&Datum::new_bytes(encoded), 3, None, None)
+        .expect("invalid codec suffix is rendered as bytes");
+    assert_eq!(actual, "(1, 0.5, \x14)");
+}
+
 fn assert_close(actual: f64, expected: f64, label: &str) {
     assert!(
         (actual - expected).abs() < EPS,

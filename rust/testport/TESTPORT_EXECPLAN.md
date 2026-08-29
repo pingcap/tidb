@@ -941,6 +941,11 @@ For each bounded behavior cluster:
       directly, and the existing validated `SET GLOBAL` publication path
       updates them. Remove the duplicate three-test sample carrier after the
       pinned root test became the single executable owner.
+- [x] Fill pinned `pkg/statistics.Histogram::ValueToString`, including Go's
+      deliberate malformed-index-key behavior: keep the successfully decoded
+      prefix, ignore the codec error, and render the undecoded suffix as one
+      bytes datum. Do not fake `NewPseudoHistogramReuseChunk` with an identity
+      token while Rust still lacks Go's `Tp` plus shared `Bounds` structure.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope

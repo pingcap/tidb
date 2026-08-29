@@ -25,7 +25,10 @@
 
 use std::{cmp::Ordering, fmt};
 
-use tidb_datatype::{Collation, Datum, DatumValueError};
+use tidb_datatype::{
+    datums_to_string, Collation, Datum, DatumStringError, DatumValueError, FieldTypeCode,
+    SessionTimeZone,
+};
 
 pub use crate::scalar_geometry::{
     calc_fraction, calc_fraction_from_datums, convert_bytes_to_scalar, convert_datum_to_scalar,
@@ -140,6 +143,31 @@ impl From<DatumValueError> for HistogramMergeError {
 #[must_use]
 pub fn common_prefix_length(a: &[u8], b: &[u8]) -> usize {
     common_prefix_length_all(&[a, b])
+}
+
+/// Converts a possible encoded index value to Go's diagnostic string.
+///
+/// When decoding stops at malformed input, Go deliberately ignores that
+/// error, preserves the decoded prefix, and renders the undecoded suffix as
+/// one byte datum. `idx_cols == 0` is the ordinary `Datum.ToString` path.
+pub fn value_to_string(
+    value: &Datum,
+    idx_cols: usize,
+    idx_column_types: Option<&[FieldTypeCode]>,
+    timezone: Option<&SessionTimeZone>,
+) -> Result<String, DatumStringError> {
+    if idx_cols == 0 {
+        return value.sql_string();
+    }
+    let (mut decoded_values, remainder) =
+        match tidb_codec::decode_range(value.go_bytes(), idx_cols, idx_column_types, timezone) {
+            Ok(decoded) => decoded,
+            Err(error) => (error.values, error.remainder),
+        };
+    if !remainder.is_empty() {
+        decoded_values.push(Datum::new_bytes(remainder));
+    }
+    datums_to_string(&decoded_values, true, false)
 }
 
 fn datum_bytes(value: &Datum) -> &[u8] {
