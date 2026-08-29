@@ -36,6 +36,12 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: audited all five production, test, harness, benchmark, and build
+  artifacts in pinned Go `pkg/util/fastrand`, plus the linked Go 1.25.10
+  `runtime.cheaprand` boundary. Added Go's missing 32-bit xorshift branch,
+  removed four supplemental Rust tests, and retained the exact one-test and
+  four-benchmark surface. Complete inventory and WIP gates are recorded in
+  `receipts/util_fastrand.md`.
 - 2026-08-29: audited all seven production variants, test, and build artifacts
   in pinned Go `pkg/util/intest`. Fixed the default build to ignore
   `EnableAssert` exactly like `no_assert.go`, removed the extra failpoint

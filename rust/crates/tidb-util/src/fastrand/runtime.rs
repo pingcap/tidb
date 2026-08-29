@@ -19,13 +19,48 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(target_pointer_width = "64")]
 use super::random::Wyrand;
 
 const FALLBACK_INCREMENT: u64 = 0xa076_1d64_78bd_642f;
 static FALLBACK_SEED: AtomicU64 = AtomicU64::new(0xe703_7ed1_a0b4_28db);
 
 thread_local! {
-    static RANDOM: Cell<Wyrand> = Cell::new(Wyrand::new(initial_seed()));
+    static RANDOM: Cell<RuntimeRandom> = Cell::new(RuntimeRandom::new(initial_seed()));
+}
+
+#[cfg(target_pointer_width = "64")]
+type RuntimeRandom = Wyrand;
+
+#[cfg(target_pointer_width = "32")]
+#[derive(Clone, Copy)]
+struct RuntimeRandom(u64);
+
+#[cfg(target_pointer_width = "32")]
+impl RuntimeRandom {
+    const fn new(seed: u64) -> Self {
+        Self(seed)
+    }
+
+    fn next(&mut self) -> u32 {
+        #[cfg(target_endian = "little")]
+        let (mut s1, s0) = (self.0 as u32, (self.0 >> 32) as u32);
+        #[cfg(target_endian = "big")]
+        let (mut s1, s0) = ((self.0 >> 32) as u32, self.0 as u32);
+
+        s1 ^= s1 << 17;
+        s1 = s1 ^ s0 ^ s1 >> 7 ^ s0 >> 16;
+
+        #[cfg(target_endian = "little")]
+        {
+            self.0 = u64::from(s0) | (u64::from(s1) << 32);
+        }
+        #[cfg(target_endian = "big")]
+        {
+            self.0 = (u64::from(s0) << 32) | u64::from(s1);
+        }
+        s0.wrapping_add(s1)
+    }
 }
 
 fn initial_seed() -> u64 {
@@ -49,30 +84,11 @@ fn initial_seed() -> u64 {
 pub fn uint32() -> u32 {
     RANDOM.with(|state| {
         let mut random = state.get();
+        #[cfg(target_pointer_width = "64")]
         let value = random.next() as u32;
+        #[cfg(target_pointer_width = "32")]
+        let value = random.next();
         state.set(random);
         value
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{uint32, Wyrand, RANDOM};
-
-    #[test]
-    fn source_arm64_wyrand_and_thread_local_state_are_exact() {
-        const SOURCE_VALUES_FROM_SEED_ZERO: [u32; 2] = [0x8f59_a58e, 0xff4e_856d];
-
-        RANDOM.with(|state| state.set(Wyrand::new(0)));
-
-        let worker_values = std::thread::spawn(|| {
-            RANDOM.with(|state| state.set(Wyrand::new(0)));
-            [uint32(), uint32()]
-        })
-        .join()
-        .expect("random worker");
-
-        assert_eq!(worker_values, SOURCE_VALUES_FROM_SEED_ZERO);
-        assert_eq!([uint32(), uint32()], SOURCE_VALUES_FROM_SEED_ZERO);
-    }
 }

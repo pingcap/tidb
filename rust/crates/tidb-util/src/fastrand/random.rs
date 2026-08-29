@@ -77,7 +77,7 @@ pub fn uint64_n(n: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{buf, uint32_n, uint64_n, wymix, Wyrand};
+    use super::{buf, uint32_n, uint64_n};
 
     #[test]
     fn test_rand() {
@@ -90,29 +90,5 @@ mod tests {
             observed[uint32_n(256) as usize] = true;
         }
         assert!(observed.iter().filter(|seen| !**seen).count() < 24);
-    }
-
-    #[test]
-    fn source_wyrand_vectors_and_mix_are_exact() {
-        let mut random = Wyrand::new(0);
-        let first = random.next();
-        let second = random.next();
-        assert_eq!(first, wymix(0xa076_1d64_78bd_642f, 0x4775_63b5_d809_4cf4));
-        assert_eq!(second, wymix(0x40ec_3ac8_f17a_c85e, 0xa7ef_4419_51ce_e085));
-    }
-
-    #[test]
-    fn buf_preserves_source_alphabet_and_empty_boundary() {
-        assert!(buf(0).is_empty());
-        for byte in buf(16_384) {
-            assert!((1..=126).contains(&byte));
-            assert_ne!(byte, b'$');
-        }
-    }
-
-    #[test]
-    fn zero_bounds_preserve_unsigned_source_arithmetic() {
-        assert_eq!(uint32_n(0), 0);
-        let _ = uint64_n(0);
     }
 }
