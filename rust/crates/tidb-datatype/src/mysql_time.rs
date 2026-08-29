@@ -311,6 +311,30 @@ impl Time {
         Self::new(core, kind, (metadata >> 1) as i64)
     }
 
+    /// Decodes Go's unchecked in-memory representation without validating
+    /// calendar fields or FSP metadata.
+    #[must_use]
+    pub const fn from_go_raw_like_go(raw: u64) -> Self {
+        let metadata = raw & 0b1111;
+        let core = CoreTime::from_raw(raw & !0b1111);
+        if metadata == 0b1110 {
+            return Self {
+                core,
+                kind: TimeType::Date,
+                fsp: 0,
+            };
+        }
+        Self {
+            core,
+            kind: if metadata & 1 == 1 {
+                TimeType::Timestamp
+            } else {
+                TimeType::DateTime
+            },
+            fsp: (metadata >> 1) as u8,
+        }
+    }
+
     /// Returns the current local wall-clock value with FSP zero.
     pub fn current(kind: TimeType) -> Self {
         Self {

@@ -96,17 +96,16 @@ fn ordered_separator_uses_row_position_even_when_first_value_is_empty() {
 fn base_partial_spill_matches_source_native_shape() {
     let empty = GroupConcatState::new(" ", 0);
     assert_eq!(encode_base_partial(&empty), vec![0]);
-    assert_eq!(decode_base_partial(&[0], " ", 0).unwrap().finish(), None);
+    assert_eq!(decode_base_partial(&[0], " ", 0).finish(), None);
 
     let mut state = GroupConcatState::new(" ", 0);
     state.update(&[Some("123"), Some("456")]);
     let encoded = encode_base_partial(&state);
     assert_eq!(encoded[0], 1);
     assert_eq!(
-        decode_base_partial(&encoded, " ", 0).unwrap().finish(),
+        decode_base_partial(&encoded, " ", 0).finish(),
         Some(b"123 456".as_slice())
     );
-    assert!(decode_base_partial(&[1], " ", 0).is_err());
 
     let mut empty_buffer = GroupConcatState::new(" ", 0);
     empty_buffer.update_bytes(&[Some(b"")]);
@@ -114,7 +113,7 @@ fn base_partial_spill_matches_source_native_shape() {
     assert_eq!(encoded.len(), 1 + std::mem::size_of::<isize>());
     assert_eq!(encoded[0], 1);
     assert_eq!(
-        decode_base_partial(&encoded, " ", 0).unwrap().finish(),
+        decode_base_partial(&encoded, " ", 0).finish(),
         Some(&[][..])
     );
 
@@ -126,7 +125,7 @@ fn base_partial_spill_matches_source_native_shape() {
         state.update_bytes(&[Some(value.as_bytes())]);
         let encoded = encode_base_partial(&state);
         assert_eq!(
-            decode_base_partial(&encoded, " ", 0).unwrap().finish(),
+            decode_base_partial(&encoded, " ", 0).finish(),
             Some(value.as_bytes())
         );
     }

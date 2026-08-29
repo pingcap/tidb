@@ -27,7 +27,7 @@ use std::fmt;
 
 use tidb_datatype::{Collation, Datum, DatumKind};
 use tidb_util::serialization::{
-    serialize_bool, serialize_buffer, serialize_f64, serialize_i64, Cursor, SerializationError,
+    serialize_bool, serialize_buffer, serialize_f64, serialize_i64, Cursor,
 };
 
 /// Go's type-specific FIRST_ROW spill payload selected by aggregate metadata.
@@ -45,15 +45,9 @@ pub enum FirstRowSpillKind {
     String(Collation),
 }
 
-/// A malformed or currently unrepresentable `FIRST_ROW` spill row.
+/// A value that cannot be represented by the selected typed spill helper.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FirstRowWireError {
-    /// The row ended before a complete field could be read.
-    Truncated,
-    /// Bytes remained after one complete partial result.
-    TrailingBytes(usize),
-    /// A source boolean byte was neither zero nor one.
-    InvalidBool(u8),
     /// The Datum does not match the type-specific Go spill helper selected by
     /// the caller. NULL is accepted because Go retains that type's zero
     /// payload independently from `isNull`.
@@ -68,13 +62,6 @@ pub enum FirstRowWireError {
 impl fmt::Display for FirstRowWireError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Truncated => formatter.write_str("truncated FIRST_ROW spill row"),
-            Self::TrailingBytes(count) => {
-                write!(formatter, "FIRST_ROW spill row has {count} trailing bytes")
-            }
-            Self::InvalidBool(value) => {
-                write!(formatter, "invalid FIRST_ROW boolean byte {value}")
-            }
             Self::DatumKindMismatch { expected, actual } => write!(
                 formatter,
                 "FIRST_ROW {expected:?} spill helper cannot encode Datum kind {actual:?}"
@@ -229,15 +216,12 @@ impl FirstRowState {
     }
 
     /// Deserializes one complete source spill row using its external type.
-    pub fn deserialize(bytes: &[u8], kind: FirstRowSpillKind) -> Result<Self, FirstRowWireError> {
+    pub fn deserialize(bytes: &[u8], kind: FirstRowSpillKind) -> Self {
         let mut cursor = Cursor::new(bytes);
-        let is_null = cursor.read_bool().map_err(map_wire_error)?;
-        let got_first_row = cursor.read_bool().map_err(map_wire_error)?;
-        let value = decode_source_payload(&mut cursor, kind)?;
-        if cursor.remaining() != 0 {
-            return Err(FirstRowWireError::TrailingBytes(cursor.remaining()));
-        }
-        Ok(Self::from_parts(is_null, got_first_row, value))
+        let is_null = cursor.read_bool();
+        let got_first_row = cursor.read_bool();
+        let value = decode_source_payload(&mut cursor, kind);
+        Self::from_parts(is_null, got_first_row, value)
     }
 }
 
@@ -294,30 +278,12 @@ fn encode_source_payload(
     Ok(())
 }
 
-fn decode_source_payload(
-    cursor: &mut Cursor<'_>,
-    kind: FirstRowSpillKind,
-) -> Result<Datum, FirstRowWireError> {
+fn decode_source_payload(cursor: &mut Cursor<'_>, kind: FirstRowSpillKind) -> Datum {
     match kind {
-        FirstRowSpillKind::Int => Ok(Datum::Int(cursor.read_i64().map_err(map_wire_error)?)),
-        FirstRowSpillKind::Float64 => Ok(Datum::Real(cursor.read_f64().map_err(map_wire_error)?)),
-        FirstRowSpillKind::String(collation) => Ok(Datum::new_collation_string(
-            cursor.read_buffer().map_err(map_wire_error)?.to_vec(),
-            collation,
-        )),
-    }
-}
-
-fn map_wire_error(error: SerializationError) -> FirstRowWireError {
-    match error {
-        SerializationError::InvalidBool(value) => FirstRowWireError::InvalidBool(value),
-        SerializationError::Truncated | SerializationError::InvalidLength(_) => {
-            FirstRowWireError::Truncated
+        FirstRowSpillKind::Int => Datum::Int(cursor.read_i64()),
+        FirstRowSpillKind::Float64 => Datum::Real(cursor.read_f64()),
+        FirstRowSpillKind::String(collation) => {
+            Datum::new_collation_string(cursor.read_buffer().to_vec(), collation)
         }
-        // FIRST_ROW consumes only booleans, fixed-width numbers, and buffers.
-        // The remaining shared-decoder errors are unreachable for this format.
-        SerializationError::InvalidInterfaceType(_)
-        | SerializationError::InvalidDecimal(_)
-        | SerializationError::InvalidTime(_) => FirstRowWireError::Truncated,
     }
 }

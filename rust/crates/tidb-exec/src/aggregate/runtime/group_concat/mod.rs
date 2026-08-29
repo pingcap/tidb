@@ -22,4 +22,4 @@ mod spill;
 pub use distinct::DistinctGroupConcatState;
 pub use ordered::OrderedGroupConcatState;
 pub use plain::GroupConcatState;
-pub use spill::{decode_base_partial, encode_base_partial, GroupConcatSpillError};
+pub use spill::{decode_base_partial, encode_base_partial};

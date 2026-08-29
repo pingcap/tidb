@@ -14,9 +14,9 @@
 
 //! Source-backed tests for the canonical `FIRST_ROW` partial state.
 
-use tidb_datatype::{Collation, Datum, DatumKind};
+use tidb_datatype::{Collation, Datum};
 use tidb_exec::first_row::{
-    fold_first_row, FirstRowSpillKind, FirstRowSpillSerializer, FirstRowState, FirstRowWireError,
+    fold_first_row, FirstRowSpillKind, FirstRowSpillSerializer, FirstRowState,
 };
 
 #[test]
@@ -104,7 +104,7 @@ fn source_spill_layout_has_no_rust_only_type_or_collation_tags() {
         int_wire
     );
     assert_eq!(
-        FirstRowState::deserialize(&int_wire, FirstRowSpillKind::Int).unwrap(),
+        FirstRowState::deserialize(&int_wire, FirstRowSpillKind::Int),
         int_state
     );
 
@@ -119,7 +119,7 @@ fn source_spill_layout_has_no_rust_only_type_or_collation_tags() {
             .unwrap(),
         null_int_wire
     );
-    let decoded_null = FirstRowState::deserialize(&null_int_wire, FirstRowSpillKind::Int).unwrap();
+    let decoded_null = FirstRowState::deserialize(&null_int_wire, FirstRowSpillKind::Int);
     assert!(decoded_null.is_null());
     assert!(decoded_null.got_first_row());
     assert_eq!(decoded_null.value(), &Datum::Int(0));
@@ -134,7 +134,7 @@ fn source_spill_layout_has_no_rust_only_type_or_collation_tags() {
             .unwrap(),
         float_wire
     );
-    let decoded = FirstRowState::deserialize(&float_wire, FirstRowSpillKind::Float64).unwrap();
+    let decoded = FirstRowState::deserialize(&float_wire, FirstRowSpillKind::Float64);
     assert_eq!(decoded.is_null(), float_state.is_null());
     assert_eq!(decoded.got_first_row(), float_state.got_first_row());
     assert_eq!(
@@ -157,13 +157,13 @@ fn source_spill_layout_has_no_rust_only_type_or_collation_tags() {
         string_wire
     );
     assert_eq!(
-        FirstRowState::deserialize(&string_wire, string_kind).unwrap(),
+        FirstRowState::deserialize(&string_wire, string_kind),
         string_state
     );
 
     // Go's collation is external field metadata, not bytes in the spill row.
     let other_collation = FirstRowSpillKind::String(Collation::Binary);
-    let decoded = FirstRowState::deserialize(&string_wire, other_collation).unwrap();
+    let decoded = FirstRowState::deserialize(&string_wire, other_collation);
     assert_eq!(decoded.value().as_raw_bytes(), Some(payload.as_slice()));
     assert_eq!(decoded.value().collation(), Some(Collation::Binary));
 }
@@ -215,7 +215,7 @@ fn source_spill_exact_int_float64_and_string_fixtures_round_trip() {
     let initial_capacity = serializer.capacity();
     for (kind, state) in cases {
         let bytes = serializer.serialize(&state, kind).unwrap().to_vec();
-        assert_eq!(FirstRowState::deserialize(&bytes, kind).unwrap(), state);
+        assert_eq!(FirstRowState::deserialize(&bytes, kind), state);
     }
     assert!(serializer.capacity() >= initial_capacity);
     assert!(serializer.capacity() >= "平352p凯额6辰c".len() * (1 << 10));
@@ -228,40 +228,4 @@ fn string_memory_delta_is_charged_only_for_the_winning_row() {
     assert_eq!(state.update(&[Datum::new_string("first")]), 5);
     assert_eq!(state.update(&[Datum::new_string("ignored")]), 0);
     assert_eq!(state.result(), Datum::new_string("first"));
-}
-
-#[test]
-fn malformed_spill_rows_fail_closed() {
-    assert_eq!(
-        FirstRowState::deserialize(&[], FirstRowSpillKind::Int),
-        Err(FirstRowWireError::Truncated)
-    );
-    assert_eq!(
-        FirstRowState::deserialize(&[2, 0, 0], FirstRowSpillKind::Int),
-        Err(FirstRowWireError::InvalidBool(2))
-    );
-    assert_eq!(
-        FirstRowSpillSerializer::new()
-            .serialize(
-                &FirstRowState::from_parts(false, true, Datum::UInt(7)),
-                FirstRowSpillKind::Int,
-            )
-            .unwrap_err(),
-        FirstRowWireError::DatumKindMismatch {
-            expected: FirstRowSpillKind::Int,
-            actual: DatumKind::UInt,
-        }
-    );
-
-    let state = FirstRowState::from_parts(false, true, Datum::Int(7));
-    let mut serializer = FirstRowSpillSerializer::new();
-    let mut bytes = serializer
-        .serialize(&state, FirstRowSpillKind::Int)
-        .unwrap()
-        .to_vec();
-    bytes.push(0);
-    assert_eq!(
-        FirstRowState::deserialize(&bytes, FirstRowSpillKind::Int),
-        Err(FirstRowWireError::TrailingBytes(1))
-    );
 }

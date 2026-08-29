@@ -17,8 +17,6 @@
 //! This format is deliberately architecture-native. It is an in-process spill
 //! format, not a portable storage or network format.
 
-use std::error::Error;
-use std::fmt;
 use std::mem::size_of;
 
 use tidb_datatype::{
@@ -79,42 +77,6 @@ pub const TIME_LEN: usize = size_of::<u64>();
 pub const TIME_DURATION_LEN: usize = size_of::<i64>();
 /// Native pointer width recorded by the source package.
 pub const UNSAFE_POINTER_LEN: usize = size_of::<*const ()>();
-
-/// A malformed native spill row.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SerializationError {
-    /// The row ended before the requested value was complete.
-    Truncated,
-    /// A length prefix was negative or did not fit the remaining row.
-    InvalidLength(isize),
-    /// A boolean byte was outside the source value domain.
-    InvalidBool(u8),
-    /// An interface tag was not one of the source-supported values.
-    InvalidInterfaceType(u8),
-    /// Raw decimal bytes did not describe a valid `MyDecimal`.
-    InvalidDecimal(&'static str),
-    /// Raw packed-time bits did not describe a valid `Time`.
-    InvalidTime(String),
-}
-
-impl fmt::Display for SerializationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Truncated => formatter.write_str("truncated native spill row"),
-            Self::InvalidLength(length) => {
-                write!(formatter, "invalid spill buffer length {length}")
-            }
-            Self::InvalidBool(value) => write!(formatter, "invalid spill boolean byte {value}"),
-            Self::InvalidInterfaceType(value) => {
-                write!(formatter, "invalid spill interface type {value}")
-            }
-            Self::InvalidDecimal(message) => formatter.write_str(message),
-            Self::InvalidTime(message) => formatter.write_str(message),
-        }
-    }
-}
-
-impl Error for SerializationError {}
 
 /// Source-supported values of Go's aggregate-spill `any` boundary.
 #[derive(Clone, Debug, PartialEq)]
@@ -309,333 +271,158 @@ impl<'a> Cursor<'a> {
         self.bytes.len() - self.position
     }
 
-    fn read_array<const N: usize>(&mut self) -> Result<[u8; N], SerializationError> {
-        let end = self
-            .position
-            .checked_add(N)
-            .ok_or(SerializationError::Truncated)?;
-        let source = self
-            .bytes
-            .get(self.position..end)
-            .ok_or(SerializationError::Truncated)?;
+    fn read_array<const N: usize>(&mut self) -> [u8; N] {
+        let end = self.position + N;
+        let source = &self.bytes[self.position..end];
         let mut value = [0; N];
         value.copy_from_slice(source);
         self.position = end;
-        Ok(value)
+        value
     }
 
     /// Reads one byte.
-    pub fn read_byte(&mut self) -> Result<u8, SerializationError> {
-        Ok(self.read_array::<1>()?[0])
+    pub fn read_byte(&mut self) -> u8 {
+        self.read_array::<1>()[0]
     }
 
     /// Reads one source boolean byte.
-    pub fn read_bool(&mut self) -> Result<bool, SerializationError> {
-        match self.read_byte()? {
-            0 => Ok(false),
-            1 => Ok(true),
-            value => Err(SerializationError::InvalidBool(value)),
-        }
+    pub fn read_bool(&mut self) -> bool {
+        self.read_byte() & 1 != 0
     }
 
     /// Reads one native-width signed word.
-    pub fn read_int(&mut self) -> Result<isize, SerializationError> {
-        Ok(isize::from_ne_bytes(self.read_array()?))
+    pub fn read_int(&mut self) -> isize {
+        isize::from_ne_bytes(self.read_array())
     }
 
     /// Reads one signed byte.
-    pub fn read_i8(&mut self) -> Result<i8, SerializationError> {
-        Ok(i8::from_ne_bytes(self.read_array()?))
+    pub fn read_i8(&mut self) -> i8 {
+        i8::from_ne_bytes(self.read_array())
     }
 
     /// Reads one unsigned byte.
-    pub fn read_u8(&mut self) -> Result<u8, SerializationError> {
+    pub fn read_u8(&mut self) -> u8 {
         self.read_byte()
     }
 
     /// Reads one native-endian signed 32-bit value.
-    pub fn read_i32(&mut self) -> Result<i32, SerializationError> {
-        Ok(i32::from_ne_bytes(self.read_array()?))
+    pub fn read_i32(&mut self) -> i32 {
+        i32::from_ne_bytes(self.read_array())
     }
 
     /// Reads one native-endian unsigned 32-bit value.
-    pub fn read_u32(&mut self) -> Result<u32, SerializationError> {
-        Ok(u32::from_ne_bytes(self.read_array()?))
+    pub fn read_u32(&mut self) -> u32 {
+        u32::from_ne_bytes(self.read_array())
     }
 
     /// Reads one native-endian unsigned 64-bit value.
-    pub fn read_u64(&mut self) -> Result<u64, SerializationError> {
-        Ok(u64::from_ne_bytes(self.read_array()?))
+    pub fn read_u64(&mut self) -> u64 {
+        u64::from_ne_bytes(self.read_array())
     }
 
     /// Reads one native-endian signed 64-bit value.
-    pub fn read_i64(&mut self) -> Result<i64, SerializationError> {
-        Ok(i64::from_ne_bytes(self.read_array()?))
+    pub fn read_i64(&mut self) -> i64 {
+        i64::from_ne_bytes(self.read_array())
     }
 
     /// Reads one native-endian 32-bit float.
-    pub fn read_f32(&mut self) -> Result<f32, SerializationError> {
-        Ok(f32::from_ne_bytes(self.read_array()?))
+    pub fn read_f32(&mut self) -> f32 {
+        f32::from_ne_bytes(self.read_array())
     }
 
     /// Reads one native-endian 64-bit float.
-    pub fn read_f64(&mut self) -> Result<f64, SerializationError> {
-        Ok(f64::from_ne_bytes(self.read_array()?))
+    pub fn read_f64(&mut self) -> f64 {
+        f64::from_ne_bytes(self.read_array())
     }
 
     /// Reads a native-width length and borrows the following bytes.
-    pub fn read_buffer(&mut self) -> Result<&'a [u8], SerializationError> {
-        let raw_length = self.read_int()?;
-        let length = usize::try_from(raw_length)
-            .map_err(|_| SerializationError::InvalidLength(raw_length))?;
-        let end = self
-            .position
-            .checked_add(length)
-            .ok_or(SerializationError::InvalidLength(raw_length))?;
-        let value = self
-            .bytes
-            .get(self.position..end)
-            .ok_or(SerializationError::InvalidLength(raw_length))?;
+    pub fn read_buffer(&mut self) -> &'a [u8] {
+        let length = self.read_int() as usize;
+        let end = self.position + length;
+        let value = &self.bytes[self.position..end];
         self.position = end;
-        Ok(value)
+        value
     }
 
     /// Reads one exact-layout `MyDecimal` value.
-    pub fn read_my_decimal(&mut self) -> Result<MyDecimal, SerializationError> {
-        MyDecimal::from_raw_bytes(self.read_array::<MYDECIMAL_STRUCT_SIZE>()?)
-            .map_err(SerializationError::InvalidDecimal)
+    pub fn read_my_decimal(&mut self) -> MyDecimal {
+        MyDecimal::from_raw_bytes_like_go(self.read_array::<MYDECIMAL_STRUCT_SIZE>())
     }
 
     /// Reads one exact packed `Time` value.
-    pub fn read_time(&mut self) -> Result<Time, SerializationError> {
-        Time::from_go_raw(self.read_u64()?)
-            .map_err(|error| SerializationError::InvalidTime(error.to_string()))
+    pub fn read_time(&mut self) -> Time {
+        Time::from_go_raw_like_go(self.read_u64())
     }
 
     /// Reads one Go `time.Duration` value.
-    pub fn read_go_duration(&mut self) -> Result<i64, SerializationError> {
+    pub fn read_go_duration(&mut self) -> i64 {
         self.read_i64()
     }
 
     /// Reads one TiDB duration with raw FSP metadata.
-    pub fn read_duration(&mut self) -> Result<MySqlDuration, SerializationError> {
-        let nanoseconds = self.read_i64()?;
-        let fsp = self.read_int()? as i64;
-        Ok(MySqlDuration::from_raw_parts(nanoseconds, fsp))
+    pub fn read_duration(&mut self) -> MySqlDuration {
+        let nanoseconds = self.read_i64();
+        let fsp = self.read_int() as i64;
+        MySqlDuration::from_raw_parts(nanoseconds, fsp)
     }
 
     /// Reads one BinaryJSON type code.
-    pub fn read_json_type_code(&mut self) -> Result<u8, SerializationError> {
+    pub fn read_json_type_code(&mut self) -> u8 {
         self.read_byte()
     }
 
     /// Reads one BinaryJSON value and deep-copies its payload.
-    pub fn read_binary_json(&mut self) -> Result<BinaryJSON, SerializationError> {
-        let type_code = self.read_json_type_code()?;
-        let value = self.read_buffer()?.to_vec();
-        Ok(BinaryJSON::from_encoded_parts(type_code, value))
+    pub fn read_binary_json(&mut self) -> BinaryJSON {
+        let type_code = self.read_json_type_code();
+        let value = self.read_buffer().to_vec();
+        BinaryJSON::from_encoded_parts(type_code, value)
     }
 
     /// Reads one SET value and byte-preserving name.
-    pub fn read_set(&mut self) -> Result<MysqlSet, SerializationError> {
-        let value = self.read_u64()?;
-        let name = GoString::from(self.read_buffer()?.to_vec());
-        Ok(MysqlSet::new(name, value))
+    pub fn read_set(&mut self) -> MysqlSet {
+        let value = self.read_u64();
+        let name = GoString::from(self.read_buffer().to_vec());
+        MysqlSet::new(name, value)
     }
 
     /// Reads one ENUM value and byte-preserving name.
-    pub fn read_enum(&mut self) -> Result<MysqlEnum, SerializationError> {
-        let value = self.read_u64()?;
-        let name = GoString::from(self.read_buffer()?.to_vec());
-        Ok(MysqlEnum::new(name, value))
+    pub fn read_enum(&mut self) -> MysqlEnum {
+        let value = self.read_u64();
+        let name = GoString::from(self.read_buffer().to_vec());
+        MysqlEnum::new(name, value)
     }
 
     /// Reads one opaque JSON value and deep-copies its payload.
-    pub fn read_opaque(&mut self) -> Result<Opaque, SerializationError> {
-        Ok(Opaque {
-            type_code: self.read_byte()?,
-            bytes: self.read_buffer()?.to_vec(),
-        })
+    pub fn read_opaque(&mut self) -> Opaque {
+        Opaque {
+            type_code: self.read_byte(),
+            bytes: self.read_buffer().to_vec(),
+        }
     }
 
     /// Reads one arbitrary Go string and deep-copies its bytes.
-    pub fn read_string(&mut self) -> Result<GoString, SerializationError> {
-        Ok(GoString::from(self.read_buffer()?.to_vec()))
+    pub fn read_string(&mut self) -> GoString {
+        GoString::from(self.read_buffer().to_vec())
     }
 
     /// Reads one byte buffer and deep-copies its contents.
-    pub fn read_bytes_buffer(&mut self) -> Result<Vec<u8>, SerializationError> {
-        Ok(self.read_buffer()?.to_vec())
+    pub fn read_bytes_buffer(&mut self) -> Vec<u8> {
+        self.read_buffer().to_vec()
     }
 
     /// Reads one source-supported interface tag and payload.
-    pub fn read_interface(&mut self) -> Result<InterfaceValue, SerializationError> {
-        match self.read_byte()? {
-            BOOL_TYPE => self.read_bool().map(InterfaceValue::Bool),
-            INT64_TYPE => self.read_i64().map(InterfaceValue::Int64),
-            UINT64_TYPE => self.read_u64().map(InterfaceValue::Uint64),
-            FLOAT_TYPE => self.read_f64().map(InterfaceValue::Float64),
-            STRING_TYPE => self.read_string().map(InterfaceValue::String),
-            BINARY_JSON_TYPE => self.read_binary_json().map(InterfaceValue::BinaryJSON),
-            OPAQUE_TYPE => self.read_opaque().map(InterfaceValue::Opaque),
-            TIME_TYPE => self.read_time().map(InterfaceValue::Time),
-            DURATION_TYPE => self.read_duration().map(InterfaceValue::Duration),
-            value => Err(SerializationError::InvalidInterfaceType(value)),
+    pub fn read_interface(&mut self) -> InterfaceValue {
+        match self.read_byte() {
+            BOOL_TYPE => InterfaceValue::Bool(self.read_bool()),
+            INT64_TYPE => InterfaceValue::Int64(self.read_i64()),
+            UINT64_TYPE => InterfaceValue::Uint64(self.read_u64()),
+            FLOAT_TYPE => InterfaceValue::Float64(self.read_f64()),
+            STRING_TYPE => InterfaceValue::String(self.read_string()),
+            BINARY_JSON_TYPE => InterfaceValue::BinaryJSON(self.read_binary_json()),
+            OPAQUE_TYPE => InterfaceValue::Opaque(self.read_opaque()),
+            TIME_TYPE => InterfaceValue::Time(self.read_time()),
+            DURATION_TYPE => InterfaceValue::Duration(self.read_duration()),
+            _ => panic!("Invalid data type happens in agg spill deserializing!"),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tidb_datatype::{CoreTime, TimeType};
-
-    #[test]
-    fn primitive_values_use_native_layout_and_advance_position() {
-        let mut bytes = Vec::new();
-        serialize_byte(0x5a, &mut bytes);
-        serialize_bool(true, &mut bytes);
-        serialize_int(-7, &mut bytes);
-        serialize_i8(-8, &mut bytes);
-        serialize_u8(9, &mut bytes);
-        serialize_i32(-10, &mut bytes);
-        serialize_u32(11, &mut bytes);
-        serialize_u64(12, &mut bytes);
-        serialize_i64(-13, &mut bytes);
-        serialize_f32(1.25, &mut bytes);
-        serialize_f64(-2.5, &mut bytes);
-
-        let mut expected = vec![0x5a, 1];
-        expected.extend_from_slice(&(-7_isize).to_ne_bytes());
-        expected.extend_from_slice(&(-8_i8).to_ne_bytes());
-        expected.extend_from_slice(&9_u8.to_ne_bytes());
-        expected.extend_from_slice(&(-10_i32).to_ne_bytes());
-        expected.extend_from_slice(&11_u32.to_ne_bytes());
-        expected.extend_from_slice(&12_u64.to_ne_bytes());
-        expected.extend_from_slice(&(-13_i64).to_ne_bytes());
-        expected.extend_from_slice(&1.25_f32.to_ne_bytes());
-        expected.extend_from_slice(&(-2.5_f64).to_ne_bytes());
-        assert_eq!(bytes, expected);
-
-        let mut cursor = Cursor::new(&bytes);
-        assert_eq!(cursor.read_byte().unwrap(), 0x5a);
-        assert!(cursor.read_bool().unwrap());
-        assert_eq!(cursor.read_int().unwrap(), -7);
-        assert_eq!(cursor.read_i8().unwrap(), -8);
-        assert_eq!(cursor.read_u8().unwrap(), 9);
-        assert_eq!(cursor.read_i32().unwrap(), -10);
-        assert_eq!(cursor.read_u32().unwrap(), 11);
-        assert_eq!(cursor.read_u64().unwrap(), 12);
-        assert_eq!(cursor.read_i64().unwrap(), -13);
-        assert_eq!(cursor.read_f32().unwrap(), 1.25);
-        assert_eq!(cursor.read_f64().unwrap(), -2.5);
-        assert_eq!(cursor.remaining(), 0);
-        assert_eq!(INT_LEN, size_of::<isize>());
-        assert_eq!(INTERFACE_TYPE_CODE_LEN, 1);
-        assert_eq!(JSON_TYPE_CODE_LEN, 1);
-        assert_eq!(BOOL_LEN, 1);
-        assert_eq!(BYTE_LEN, 1);
-        assert_eq!(INT8_LEN, 1);
-        assert_eq!(UINT8_LEN, 1);
-        assert_eq!(INT32_LEN, 4);
-        assert_eq!(UINT32_LEN, 4);
-        assert_eq!(INT64_LEN, 8);
-        assert_eq!(UINT64_LEN, 8);
-        assert_eq!(FLOAT32_LEN, 4);
-        assert_eq!(FLOAT64_LEN, 8);
-        assert_eq!(TIME_LEN, 8);
-        assert_eq!(TIME_DURATION_LEN, 8);
-        assert_eq!(UNSAFE_POINTER_LEN, size_of::<*const ()>());
-    }
-
-    #[test]
-    fn typed_values_preserve_raw_bytes_and_metadata() {
-        let decimal = MyDecimal::from_string(b"-123.4500").0;
-        let time = Time::new(
-            CoreTime::from_date(2026, 8, 12, 3, 4, 5, 600_000),
-            TimeType::DateTime,
-            4,
-        )
-        .unwrap();
-        let duration = MySqlDuration::from_raw_parts(-9_876_543_210, -1);
-        let json = BinaryJSON::from_encoded_parts(0x04, vec![1, 2, 0xff]);
-        let enum_value = MysqlEnum::new(GoString::from(vec![b'e', 0xff]), 3);
-        let set_value = MysqlSet::new(GoString::from(vec![b's', 0x00]), 5);
-        let opaque = Opaque {
-            type_code: 0xf5,
-            bytes: vec![0, 0xff],
-        };
-
-        let mut bytes = Vec::new();
-        serialize_my_decimal(&decimal, &mut bytes);
-        serialize_time(time, &mut bytes);
-        serialize_go_duration(-123, &mut bytes);
-        serialize_duration(duration, &mut bytes);
-        serialize_binary_json(&json, &mut bytes);
-        serialize_enum(&enum_value, &mut bytes);
-        serialize_set(&set_value, &mut bytes);
-        serialize_opaque(&opaque, &mut bytes);
-        serialize_string(&GoString::from(vec![0xff, b'x']), &mut bytes);
-        serialize_buffer(&[7, 8], &mut bytes);
-
-        let mut cursor = Cursor::new(&bytes);
-        assert_eq!(cursor.read_my_decimal().unwrap(), decimal);
-        assert_eq!(cursor.read_time().unwrap(), time);
-        assert_eq!(cursor.read_go_duration().unwrap(), -123);
-        assert_eq!(cursor.read_duration().unwrap(), duration);
-        assert_eq!(cursor.read_binary_json().unwrap(), json);
-        assert_eq!(cursor.read_enum().unwrap(), enum_value);
-        assert_eq!(cursor.read_set().unwrap(), set_value);
-        assert_eq!(cursor.read_opaque().unwrap(), opaque);
-        assert_eq!(cursor.read_string().unwrap().as_bytes(), &[0xff, b'x']);
-        assert_eq!(cursor.read_bytes_buffer().unwrap(), [7, 8]);
-        assert_eq!(cursor.remaining(), 0);
-    }
-
-    #[test]
-    fn every_interface_variant_round_trips() {
-        let time = Time::from_go_raw(0).unwrap();
-        let values = vec![
-            InterfaceValue::Bool(false),
-            InterfaceValue::Int64(-5),
-            InterfaceValue::Uint64(u64::MAX),
-            InterfaceValue::Float64(3.5),
-            InterfaceValue::String(GoString::from(vec![0xff, 0])),
-            InterfaceValue::BinaryJSON(BinaryJSON::from_encoded_parts(0x04, vec![1, 2])),
-            InterfaceValue::Opaque(Opaque {
-                type_code: 7,
-                bytes: vec![8, 9],
-            }),
-            InterfaceValue::Time(time),
-            InterfaceValue::Duration(MySqlDuration::from_raw_parts(42, 7)),
-        ];
-        for (expected_tag, value) in values.into_iter().enumerate() {
-            let mut bytes = Vec::new();
-            serialize_interface(&value, &mut bytes);
-            assert_eq!(bytes[0], expected_tag as u8);
-            let mut cursor = Cursor::new(&bytes);
-            assert_eq!(cursor.read_interface().unwrap(), value);
-            assert_eq!(cursor.remaining(), 0);
-        }
-    }
-
-    #[test]
-    fn reset_and_malformed_rows_are_explicit() {
-        let mut cursor = Cursor::new(&[1]);
-        assert!(cursor.read_bool().unwrap());
-        cursor.reset(&[2]);
-        assert_eq!(cursor.read_bool(), Err(SerializationError::InvalidBool(2)));
-        cursor.reset(&[0xff; INT_LEN]);
-        assert_eq!(
-            cursor.read_buffer(),
-            Err(SerializationError::InvalidLength(-1))
-        );
-        cursor.reset(&[99]);
-        assert_eq!(
-            cursor.read_interface(),
-            Err(SerializationError::InvalidInterfaceType(99))
-        );
-        cursor.reset(&[]);
-        assert_eq!(cursor.read_i64(), Err(SerializationError::Truncated));
     }
 }

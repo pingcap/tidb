@@ -1674,6 +1674,28 @@ impl MyDecimal {
         }
         Ok(d)
     }
+
+    /// Rebuilds the exact field values produced by Go's unchecked
+    /// `unsafe.Pointer` deserialization.
+    #[must_use]
+    pub fn from_raw_bytes_like_go(bytes: [u8; MYDECIMAL_STRUCT_SIZE]) -> MyDecimal {
+        let mut word_buf = [0; MAX_WORD_BUF_LEN];
+        for (index, word) in word_buf.iter_mut().enumerate() {
+            let start = 4 + index * 4;
+            *word = i32::from_ne_bytes(
+                bytes[start..start + 4]
+                    .try_into()
+                    .expect("4-byte word"),
+            );
+        }
+        MyDecimal {
+            digits_int: bytes[0] as i8,
+            digits_frac: bytes[1] as i8,
+            result_frac: bytes[2] as i8,
+            negative: bytes[3] & 1 != 0,
+            word_buf,
+        }
+    }
 }
 
 /// Parses one non-empty decimal group with at most nine digits.

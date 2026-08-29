@@ -16,22 +16,13 @@
 
 use super::avg::AvgFloat64State;
 use super::sum::SumFloat64State;
-use tidb_datatype::{Decimal, MyDecimal, MYDECIMAL_STRUCT_SIZE};
+use tidb_datatype::{Decimal, MyDecimal};
 use tidb_util::serialization::{serialize_f64, serialize_i64, serialize_my_decimal, Cursor};
 
 /// Fixed widths of the source primitive fields.
 pub const COUNT_WIRE_SIZE: usize = std::mem::size_of::<i64>();
 /// Fixed width of one floating-point value and signed row-count pair.
 pub const NUMERIC_PAIR_WIRE_SIZE: usize = std::mem::size_of::<f64>() + std::mem::size_of::<i64>();
-
-/// A malformed fixed-width spill row.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct InvalidWireLength {
-    /// Number of bytes supplied by the spill row.
-    pub actual: usize,
-    /// Number of bytes required by the selected wire format.
-    pub expected: usize,
-}
 
 /// One source-shaped reusable `SerializeHelper` buffer.
 #[derive(Clone, Debug)]
@@ -99,63 +90,35 @@ impl SpillSerializer {
 }
 
 /// Decodes one fixed-width signed COUNT partial result.
-pub fn deserialize_count(bytes: &[u8]) -> Result<i64, InvalidWireLength> {
-    if bytes.len() != COUNT_WIRE_SIZE {
-        return Err(InvalidWireLength {
-            actual: bytes.len(),
-            expected: COUNT_WIRE_SIZE,
-        });
-    }
-    Ok(Cursor::new(bytes)
-        .read_i64()
-        .expect("the exact fixed-width row was checked above"))
+pub fn deserialize_count(bytes: &[u8]) -> i64 {
+    Cursor::new(bytes).read_i64()
 }
 
 /// Decodes a floating-point AVG sum-and-count partial result.
-pub fn deserialize_avg_float64(bytes: &[u8]) -> Result<AvgFloat64State, InvalidWireLength> {
-    let (sum, count) = deserialize_numeric_pair(bytes)?;
-    Ok(AvgFloat64State::from_parts(sum, count))
+pub fn deserialize_avg_float64(bytes: &[u8]) -> AvgFloat64State {
+    let (sum, count) = deserialize_numeric_pair(bytes);
+    AvgFloat64State::from_parts(sum, count)
 }
 
 /// Decodes a floating-point SUM value-and-count partial result.
-pub fn deserialize_sum_float64(bytes: &[u8]) -> Result<SumFloat64State, InvalidWireLength> {
-    let (value, count) = deserialize_numeric_pair(bytes)?;
-    Ok(SumFloat64State::from_parts(value, count))
+pub fn deserialize_sum_float64(bytes: &[u8]) -> SumFloat64State {
+    let (value, count) = deserialize_numeric_pair(bytes);
+    SumFloat64State::from_parts(value, count)
 }
 
-fn deserialize_numeric_pair(bytes: &[u8]) -> Result<(f64, i64), InvalidWireLength> {
-    if bytes.len() != NUMERIC_PAIR_WIRE_SIZE {
-        return Err(InvalidWireLength {
-            actual: bytes.len(),
-            expected: NUMERIC_PAIR_WIRE_SIZE,
-        });
-    }
+fn deserialize_numeric_pair(bytes: &[u8]) -> (f64, i64) {
     let mut cursor = Cursor::new(bytes);
-    let value = cursor
-        .read_f64()
-        .expect("the exact fixed-width row was checked above");
-    let count = cursor
-        .read_i64()
-        .expect("the exact fixed-width row was checked above");
-    Ok((value, count))
+    let value = cursor.read_f64();
+    let count = cursor.read_i64();
+    (value, count)
 }
 
 /// Decodes the decimal/count pair emitted by [`SpillSerializer::serialize_decimal_pair`].
-pub fn deserialize_decimal_pair(bytes: &[u8]) -> Result<(Decimal, i64), InvalidWireLength> {
-    const EXPECTED: usize = MYDECIMAL_STRUCT_SIZE + std::mem::size_of::<i64>();
-    if bytes.len() != EXPECTED {
-        return Err(InvalidWireLength {
-            actual: bytes.len(),
-            expected: EXPECTED,
-        });
-    }
+pub fn deserialize_decimal_pair(bytes: &[u8]) -> (Decimal, i64) {
     let mut cursor = Cursor::new(bytes);
-    let value: MyDecimal = cursor.read_my_decimal().map_err(|_| InvalidWireLength {
-        actual: bytes.len(),
-        expected: EXPECTED,
-    })?;
-    let count = cursor.read_i64().expect("the exact row width was checked");
-    Ok((Decimal::from_my_decimal(&value), count))
+    let value: MyDecimal = cursor.read_my_decimal();
+    let count = cursor.read_i64();
+    (Decimal::from_my_decimal(&value), count)
 }
 
 /// Sequential count-row reader matching Go's `deserializeHelper` loop.
@@ -171,13 +134,11 @@ impl<'a> CountDeserializer<'a> {
         Self { rows, next_row: 0 }
     }
     /// Decodes the next row, returning `None` after the input is exhausted.
-    pub fn read_next(&mut self) -> Result<Option<i64>, InvalidWireLength> {
-        let Some(bytes) = self.rows.get(self.next_row).copied() else {
-            return Ok(None);
-        };
-        let value = deserialize_count(bytes)?;
+    pub fn read_next(&mut self) -> Option<i64> {
+        let bytes = self.rows.get(self.next_row).copied()?;
+        let value = deserialize_count(bytes);
         self.next_row += 1;
-        Ok(Some(value))
+        Some(value)
     }
     /// Returns the index of the next unread row.
     #[must_use]
