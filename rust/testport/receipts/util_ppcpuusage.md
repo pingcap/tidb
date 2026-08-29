@@ -24,10 +24,8 @@ aggregation and SQL/JSON output instead of converting it to Rust's unsigned
 
 The audit changed every mutex acquisition to recover the protected state after
 a poisoned owner, removing a Rust-only failure mode that Go's `sync.Mutex`
-does not have. The four broad Rust-only unit tests were removed because this
-Go package has no test artifact. One focused regression protects the signed
-and wrapping behavior after the previous unsigned representation was found to
-diverge from Go.
+does not have. All Rust-only unit tests and the `must_use` diagnostic were
+removed because this Go package has no test artifact or equivalent diagnostic.
 
 ## Validation
 
@@ -35,15 +33,17 @@ Profile: WIP; this is one completed package within the continuing repository
 audit, not a repository-wide readiness claim.
 
 - `go test ./pkg/util/ppcpuusage -count=1` — passed (`[no test files]`).
-- `cargo test --offline --locked -p tidb-util ppcpuusage` — passed.
-- `cargo test --offline --locked -p tidb-stmtsummary` — passed (44 unit tests;
-  doc tests contain no cases).
-- `cargo check --offline --locked -p tidb-util -p tidb-stmtsummary
-  --all-targets` — passed.
-- Strict owner-only clippy passed for `tidb-util --lib` and
-  `tidb-stmtsummary --all-targets`; warnings printed while compiling dependency
-  crates are pre-existing and outside these owner-only lint scopes.
-- `cargo fmt --all --check` and `git diff --check` — passed.
+- `cargo test --offline --locked -p tidb-util ppcpuusage` — passed with no
+  package tests, matching Go.
+- `cargo check --offline --locked -p tidb-stmtsummary --lib` — passed for the
+  production consumer.
+- `rustfmt --edition 2021 crates/tidb-util/src/ppcpuusage.rs` and
+  `git diff --check` — passed.
+
+The broader `cargo check --offline --locked -p tidb-stmtsummary --all-targets`
+currently reaches two unrelated existing test compile errors in
+`crates/tidb-stmtsummary/src/reader.rs`: `Tz::UTC` is used without importing
+`chrono_tz::Tz`. The production library and package owner gates above pass.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 

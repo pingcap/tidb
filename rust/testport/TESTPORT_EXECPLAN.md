@@ -36,6 +36,10 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: re-audited the complete pinned Go `pkg/util/ppcpuusage`
+  package, which has no test artifact. Removed its remaining Rust-only
+  signed-overflow regression and `must_use` diagnostic; the production owner
+  and statement-summary consumers retain Go's signed wrapping durations.
 - 2026-08-29: re-audited the complete pinned Go `pkg/util/texttree` package.
   Removed Rust-only `must_use` diagnostics, its arbitrary-byte supplemental
   regression, and the corresponding temporary-probe narrative; exactly the

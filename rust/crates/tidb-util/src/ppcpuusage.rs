@@ -86,7 +86,6 @@ impl SqlCpuUsages {
     }
 
     /// Returns the TiDB/TiKV CPU times.
-    #[must_use]
     pub fn get_cpu_usages(&self) -> CpuUsages {
         self.inner
             .lock()
@@ -111,23 +110,5 @@ impl SqlCpuUsages {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .cpu_usages
             .reset();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::SqlCpuUsages;
-
-    #[test]
-    fn signed_cpu_durations_wrap_like_go_time_duration() {
-        let usages = SqlCpuUsages::default();
-
-        usages.merge_tidb_cpu_time(0, -1);
-        usages.merge_tidb_cpu_time(0, i64::MIN);
-        assert_eq!(usages.get_cpu_usages().tidb_cpu_time, i64::MAX);
-
-        usages.merge_tikv_cpu_time(i64::MAX);
-        usages.merge_tikv_cpu_time(1);
-        assert_eq!(usages.get_cpu_usages().tikv_cpu_time, i64::MIN);
     }
 }
