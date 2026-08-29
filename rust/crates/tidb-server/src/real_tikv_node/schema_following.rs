@@ -196,7 +196,10 @@ where
         "{{\"event\":\"stats_loaded\",\"loaded\":{},\"pseudo\":{}}}",
         receipt.loaded, receipt.pseudo
     );
-    let shared = Arc::new(SharedStats::new(snapshot));
+    let shared = Arc::new(
+        SharedStats::new(snapshot)
+            .map_err(|error| StatsReloadError::Spawn(std::io::Error::other(error)))?,
+    );
     // The read closure needs its own handle to compare against what is
     // published; the caller keeps the original for queries.
     let published = Arc::clone(&shared);

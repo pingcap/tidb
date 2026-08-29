@@ -452,9 +452,10 @@ fn open_session_on_with_context_and_seams(
         Arc::clone(&node.catalog),
         node.accounts.live.clone(),
         node.sysvars.live.clone(),
-        Arc::new(SharedStats::new(
-            tidb_exec::stats_watch::StatsSnapshot::new(),
-        )),
+        Arc::new(
+            SharedStats::new(tidb_exec::stats_watch::StatsSnapshot::new())
+                .expect("statistics cache"),
+        ),
         Arc::new(crate::cluster_session::LocalTableAutoIds::default()),
     );
     factory

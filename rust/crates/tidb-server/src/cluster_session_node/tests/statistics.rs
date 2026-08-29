@@ -285,9 +285,10 @@ fn open_session_as_with_stats_lock(
         Arc::clone(&node.catalog),
         node.accounts.live.clone(),
         node.sysvars.live.clone(),
-        Arc::new(SharedStats::new(
-            tidb_exec::stats_watch::StatsSnapshot::new(),
-        )),
+        Arc::new(
+            SharedStats::new(tidb_exec::stats_watch::StatsSnapshot::new())
+                .expect("statistics cache"),
+        ),
         Arc::new(crate::cluster_session::LocalTableAutoIds::default()),
     );
     let users =

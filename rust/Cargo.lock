@@ -3415,6 +3415,7 @@ dependencies = [
  "tidb-resolve",
  "tidb-sqlexec",
  "tidb-stats",
+ "tidb-stats-handle-cache",
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",
