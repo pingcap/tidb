@@ -3748,6 +3748,7 @@ dependencies = [
  "tidb-protocol",
  "tidb-session",
  "tidb-stats",
+ "tidb-stats-handle-cache",
  "tidb-stats-handle-initstats",
  "tidb-stats-handle-usage-indexusage",
  "tidb-tablecodec",

@@ -26,10 +26,8 @@
 //! `CHARACTER_OCTET_LENGTH`, `NUMERIC_PRECISION` 19 for bigint) are computed
 //! in ways that reading the table definitions would not reveal.
 //!
-//! NOT MODELLED (documented): the statistics columns are reported as TiDB
-//! reports them for a table it has not analyzed -- `TABLE_ROWS`,
-//! `DATA_LENGTH` and friends are 0 and `CREATE_TIME` is NULL rather than a
-//! fabricated timestamp; the other `information_schema` tables; and the
+//! NOT MODELLED (documented): `CREATE_TIME` is NULL rather than a fabricated
+//! timestamp; the other `information_schema` tables; and the
 //! contents of `mysql`, which is a real schema OBJECT in the
 //! catalog (see `Catalog::default`) holding none of its 61 bootstrap tables,
 //! so `SCHEMATA` lists it as TiDB does while `TABLES` reports it empty and
@@ -978,6 +976,7 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
             }
             _ => continue,
         };
+        let (row_count, average_row_length, data_length, index_length) = table.storage_statistics();
         rows.push(vec![
             text(CATALOG),
             text(&schema),
@@ -986,12 +985,11 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
             text("InnoDB"),
             Datum::Int(10),
             text("Compact"),
-            // Statistics TiDB reports as 0 until the table is analyzed.
+            Datum::UInt(row_count),
+            Datum::UInt(average_row_length),
+            Datum::UInt(data_length),
             Datum::Int(0),
-            Datum::Int(0),
-            Datum::Int(0),
-            Datum::Int(0),
-            Datum::Int(0),
+            Datum::UInt(index_length),
             Datum::Int(0),
             Datum::Int(0),
             // CREATE_TIME is NULL rather than a fabricated timestamp.

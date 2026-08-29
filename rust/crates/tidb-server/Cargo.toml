@@ -47,6 +47,7 @@ tidb-protocol = { path = "../tidb-protocol" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-session = { path = "../tidb-session" }
 tidb-stats = { path = "../tidb-stats" }
+tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-stats-handle-initstats = { path = "../tidb-stats-handle-initstats" }
 tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexusage" }
 tidb-txnkv = { path = "../tidb-txnkv" }

@@ -51,6 +51,9 @@ use tidb_executor::storage::TableStorage;
 use tidb_model::{GoShared, SchemaState, TableInfo};
 use tidb_planner::cardinality::row_count_estimator::{ColumnStats, IndexStats};
 use tidb_session::{Session, SharedCatalog};
+use tidb_stats_handle_cache::{
+    ColumnLength, StatsTableRowSource, TableRowCount, TABLE_ROW_STATS_CACHE,
+};
 
 /// Go `mysql.PriKeyFlag`: what marks the column `PKIsHandle` points at.
 const PRI_KEY_FLAG: u32 = 1 << 1;
@@ -375,6 +378,43 @@ impl KvTableTemplates {
     }
 }
 
+struct SnapshotTableRowSource<'a> {
+    stats: &'a StatsSnapshot,
+}
+
+impl StatsTableRowSource for SnapshotTableRowSource<'_> {
+    type Error = std::convert::Infallible;
+
+    fn table_row_counts(&self, table_ids: &[i64]) -> Result<Vec<TableRowCount>, Self::Error> {
+        Ok(table_ids
+            .iter()
+            .filter_map(|table_id| {
+                self.stats
+                    .get(table_id)
+                    .and_then(TableStatsState::loaded)
+                    .map(|stats| TableRowCount {
+                        table_id: *table_id,
+                        count: stats.row_count,
+                    })
+            })
+            .collect())
+    }
+
+    fn column_lengths(&self, table_ids: &[i64]) -> Result<Vec<ColumnLength>, Self::Error> {
+        Ok(table_ids
+            .iter()
+            .filter_map(|table_id| self.stats.get(table_id).and_then(TableStatsState::loaded))
+            .flat_map(|stats| {
+                stats.columns.iter().map(|column| ColumnLength {
+                    table_id: stats.table_id,
+                    histogram_id: column.id,
+                    total_size: column.histogram.tot_col_size,
+                })
+            })
+            .collect())
+    }
+}
+
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn cluster_session_catalog_with_templates(
@@ -388,6 +428,30 @@ pub fn cluster_session_catalog_with_templates(
     template_storage: &ClusterTableStorage,
     mut kv_templates: Option<&mut KvTableTemplates>,
 ) -> ClusterSessionCatalog {
+    let table_ids = loaded
+        .databases
+        .iter()
+        .flat_map(|database| &database.tables)
+        .flat_map(|table| {
+            let mut ids = table
+                .get_partition_info()
+                .map(|partition| {
+                    partition
+                        .read()
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .map(|definition| definition.id)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            ids.push(table.id);
+            ids
+        })
+        .collect::<Vec<_>>();
+    TABLE_ROW_STATS_CACHE
+        .update_by_id(&SnapshotTableRowSource { stats }, &table_ids)
+        .expect("snapshot-backed statistics reads are infallible");
     let mut catalog = Catalog::default();
     let mut skipped = Vec::new();
     for database in &loaded.databases {
@@ -456,6 +520,8 @@ pub fn cluster_session_catalog_with_templates(
             match built {
                 Ok(mut kv_table) => {
                     kv_table.replace_storage(storage.clone_box());
+                    kv_table
+                        .set_storage_statistics(TABLE_ROW_STATS_CACHE.estimate_data_length(table));
                     // A table the cluster reports as never analyzed
                     // (`TableStatsState::Pseudo`) or one this node has not
                     // loaded yet is left OUT of the map, which is exactly what
@@ -1345,6 +1411,25 @@ mod tests {
             assert_eq!(statistics.columns.get(&2).unwrap().histogram.ndv, 10);
         }
         session.run("USE app").unwrap();
+        let StmtResult::Rows(rows) = session
+            .run(
+                "SELECT TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH \
+                 FROM information_schema.tables \
+                 WHERE TABLE_SCHEMA = 'app' AND TABLE_NAME = 'order_line'",
+            )
+            .unwrap()
+        else {
+            panic!("expected information_schema rows");
+        };
+        assert_eq!(
+            rows,
+            vec![vec![
+                Datum::Int(3_000_065),
+                Datum::Int(24),
+                Datum::Int(72_001_560),
+                Datum::Int(0),
+            ]]
+        );
         let StmtResult::Rows(rows) = session
             .run(
                 "EXPLAIN FORMAT='brief' SELECT ol_d_id, SUM(ol_amount) \

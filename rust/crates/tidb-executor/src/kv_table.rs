@@ -405,6 +405,9 @@ impl CreateIndexOptions {
 pub struct KvTable {
     /// The table id (Go `TableInfo.ID`), the record-key prefix.
     pub table_id: i64,
+    /// `(row count, average row length, data length, index length)` from Go
+    /// `StatsTableRowCache.EstimateDataLength` for this catalog image.
+    storage_statistics: (u64, u64, u64, u64),
     /// The table's name, which a duplicate-key error qualifies its index with
     /// (`Duplicate entry 'a' for key 'm.code'`).
     pub name: String,
@@ -776,6 +779,7 @@ impl KvTable {
             shard_row_id_bits: 0,
             pre_split_regions: 0,
             table_id,
+            storage_statistics: (0, 0, 0, 0),
             name: String::new(),
             columns: std::sync::Arc::new(columns),
             hidden_columns: 0,
@@ -800,6 +804,17 @@ impl KvTable {
             read_partitions: None,
             dirty_content: DirtyMark::default(),
         }
+    }
+
+    /// Publishes Go's four `information_schema.tables` statistics values.
+    pub fn set_storage_statistics(&mut self, statistics: (u64, u64, u64, u64)) {
+        self.storage_statistics = statistics;
+    }
+
+    /// Go `StatsTableRowCache.EstimateDataLength` for this catalog image.
+    #[must_use]
+    pub const fn storage_statistics(&self) -> (u64, u64, u64, u64) {
+        self.storage_statistics
     }
 
     /// Rebinds a freshly loaded table to a collation mode its outer plan
