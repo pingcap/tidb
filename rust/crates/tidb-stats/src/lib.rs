@@ -94,7 +94,6 @@ pub mod scalar_enum;
 pub mod scalar_geometry;
 pub mod sorted_builder;
 pub mod static_partitioned_analysis;
-pub mod stats_cache_inner;
 pub mod stats_cache_version;
 pub mod stats_delta;
 pub mod stats_key_set;
@@ -267,7 +266,6 @@ pub use static_partitioned_analysis::{
     has_newly_added_static_partition_index, static_partition_analyze_type,
     static_partition_table_id, ANALYZE_STATIC_PARTITION, ANALYZE_STATIC_PARTITION_INDEX,
 };
-pub use stats_cache_inner::StatsCacheInner;
 pub use stats_cache_version::max_stats_cache_version;
 pub use stats_delta::{stats_delta_from_rows, StatsDelta, SELECT_DELTA_SQL};
 pub use stats_key_set::StatsKeySet;

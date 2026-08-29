@@ -770,6 +770,12 @@ For each bounded behavior cluster:
       handle, session, schema, transaction, persistence, and integration paths
       exist. The complete inventory is in
       `receipts/statistics_handle_usage_audit.md`.
+- [x] Complete the pinned `pkg/statistics/handle/cache/internal` interface
+      package in `tidb-stats-handle-cache-internal`: bind it to shared actual
+      statistics tables, preserve all eleven methods and shared receivers,
+      and remove the generic value, extra method, and source-absent mock tests.
+      The atomic inventory and WIP gates are in
+      `receipts/statistics_handle_cache_internal.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -848,6 +854,11 @@ For each bounded behavior cluster:
   Those disconnected leaves bypass the package's session-list, stats-handle,
   schema, transaction, persistence, and lifecycle behavior and are removed
   until the complete ordinary execution path can own them. Date/Author:
+  2026-08-29, Codex.
+- Decision: the cache-internal interface is coupled to actual statistics
+  tables in pinned Go despite its own TODO proposing future genericization.
+  Rust therefore must not implement that unlanded TODO by exposing a generic
+  value contract or additional collection conveniences. Date/Author:
   2026-08-29, Codex.
 
 ## Surprises & Discoveries
