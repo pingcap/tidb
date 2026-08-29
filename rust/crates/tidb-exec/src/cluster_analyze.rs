@@ -246,6 +246,7 @@ pub fn analyze_table<S: PagedMetaSnapshot>(
     let stats = ClusterTableStats {
         table_id: table.id,
         version,
+        snapshot: version,
         last_analyze_version: version,
         // Go's `SaveAnalyzeResultToStorage` stores
         // `max(curModifyCnt - results.BaseModifyCnt, 0)`: the modifications

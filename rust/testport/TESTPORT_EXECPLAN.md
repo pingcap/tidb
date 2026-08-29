@@ -952,6 +952,9 @@ For each bounded behavior cluster:
       and cannot be overwritten by a later commit of an older catalog image.
       Physical scan EXPLAIN now reads that retained statistics identity, as
       Go does, instead of unconditionally printing `stats:pseudo`.
+- [x] Port `pkg/statistics/integration_test.go`'s full-sampling NULL contract
+      for both column and index statistics, and carry the analyze snapshot TSO
+      through `ClusterTableStats`, `mysql.stats_meta`, and the reload path.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope

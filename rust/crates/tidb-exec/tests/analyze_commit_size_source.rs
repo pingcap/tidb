@@ -162,6 +162,7 @@ fn a_real_table_s_six_histograms_fit_one_analyze_transaction() {
     let stats = ClusterTableStats {
         table_id: 4242,
         version: 440_000_000_000_000_000,
+        snapshot: 440_000_000_000_000_000,
         last_analyze_version: 440_000_000_000_000_000,
         modify_count: 0,
         row_count: 10_240,
@@ -202,10 +203,10 @@ fn a_real_table_s_six_histograms_fit_one_analyze_transaction() {
     );
 }
 
-/// The `last_stats_histograms_version` column round-trips: the writer stamps
-/// it with the analyze start TS (`save.go:200` writes it next to `version`),
-/// and the loader reads it back as Go's `LastAnalyzeVersion` -- which is what
-/// makes `SHOW STATS_META`'s `Last_analyze_time` a time instead of NULL.
+/// The analyze snapshot and `last_stats_histograms_version` columns round-trip:
+/// Go stores `AnalyzeResults.Snapshot` beside the write version, and stamps
+/// the histogram version with the same analyze start TS. The loader must keep
+/// all three identities distinct even though this fixture gives them one TSO.
 #[test]
 fn the_analyze_version_round_trips_through_the_stored_row() {
     let mut store = bootstrapped();
@@ -213,6 +214,7 @@ fn the_analyze_version_round_trips_through_the_stored_row() {
     let stats = ClusterTableStats {
         table_id: 4242,
         version: 440_000_000_000_000_000,
+        snapshot: 440_000_000_000_000_000,
         last_analyze_version: 440_000_000_000_000_000,
         modify_count: 0,
         row_count: 10,
@@ -228,7 +230,13 @@ fn the_analyze_version_round_trips_through_the_stored_row() {
         loader
             .load_meta(&mut store, 4242)
             .expect("the row reads back"),
-        Some((440_000_000_000_000_000, 0, 10, 440_000_000_000_000_000)),
-        "version, modify_count, count, last_analyze_version"
+        Some((
+            440_000_000_000_000_000,
+            440_000_000_000_000_000,
+            0,
+            10,
+            440_000_000_000_000_000
+        )),
+        "version, snapshot, modify_count, count, last_analyze_version"
     );
 }

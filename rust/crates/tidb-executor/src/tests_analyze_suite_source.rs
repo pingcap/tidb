@@ -123,6 +123,67 @@ fn topn_counts(topn: Option<&tidb_stats::cmsketch::TopN>) -> Vec<u64> {
     counts
 }
 
+/// Go `pkg/statistics/integration_test.go::TestNULLOnFullSampling`: NULLs
+/// belong only to `NullCount`. With two TopN entries, both the column and its
+/// index retain counts 3 and 2 for values 1 and 2, while the histogram
+/// buckets contain only values 3 and 4.
+#[test]
+fn full_sampling_keeps_nulls_out_of_column_and_index_distributions() {
+    let mut catalog = Catalog::default();
+    create(&mut catalog, "create table t(a int, index idx(a))");
+    insert(
+        &mut catalog,
+        "insert into t values(1),(1),(1),(2),(2),(3),(4),(null),(null),(null)",
+    );
+    let mut table = kv_table_of(&catalog, "t");
+    let statistics = analyze_kv_table(
+        &mut table,
+        &AnalyzeOptions {
+            num_topn: 2,
+            ..AnalyzeOptions::default()
+        },
+        None,
+        &ctx(),
+    )
+    .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));
+
+    let column = statistics.columns.values().next().expect("a statistics");
+    assert_eq!(column.histogram.null_count, 3);
+    assert_eq!(topn_counts(column.topn.as_ref()), vec![2, 3]);
+    assert_eq!(
+        column
+            .histogram
+            .buckets
+            .iter()
+            .map(|bucket| (&bucket.lower_bound, &bucket.upper_bound, bucket.count, bucket.repeat))
+            .collect::<Vec<_>>(),
+        vec![
+            (&Datum::Int(3), &Datum::Int(3), 1, 1),
+            (&Datum::Int(4), &Datum::Int(4), 2, 1),
+        ]
+    );
+
+    let index = statistics.indexes.values().next().expect("idx statistics");
+    assert_eq!(index.histogram.null_count, 3);
+    assert_eq!(topn_counts(index.topn.as_ref()), vec![2, 3]);
+    assert_eq!(
+        index
+            .histogram
+            .buckets
+            .iter()
+            .map(|bucket| {
+                (
+                    int_of_encoded(&bucket.lower_bound),
+                    int_of_encoded(&bucket.upper_bound),
+                    bucket.count,
+                    bucket.repeat,
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![(3, 3, 1, 1), (4, 4, 2, 1)]
+    );
+}
+
 /// Go `analyze_test.go:63::TestAnalyzePartition`: a RANGE-partitioned table
 /// (`a` pk, `idx(b)`, v2) is analyzed; EVERY partition's statistics are
 /// non-pseudo with 3 columns and 1 index, and every column/index histogram

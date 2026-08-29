@@ -1260,6 +1260,7 @@ mod tests {
         let loaded_stats = ClusterTableStats {
             table_id: table.id,
             version,
+            snapshot: version,
             last_analyze_version: version,
             modify_count: 0,
             row_count: 3_000_065,

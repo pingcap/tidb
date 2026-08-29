@@ -409,6 +409,7 @@ mod tests {
             TableStatsState::Loaded(Arc::new(ClusterTableStats {
                 table_id,
                 version,
+                snapshot: 0,
                 last_analyze_version: 0,
                 modify_count: 0,
                 row_count: 0,
@@ -458,6 +459,7 @@ mod tests {
         let stats = ClusterTableStats {
             table_id: 9,
             version: 42,
+            snapshot: 42,
             last_analyze_version: 42,
             modify_count: 3,
             row_count: 100,

@@ -179,11 +179,10 @@ fn plan_meta<S: MetaSnapshot>(
         Datum::Int(stats.modify_count),
     );
     set(table, &mut values, "count", Datum::UInt(stats.row_count));
-    // Go stores the analyze snapshot only when `tidb_enable_analyze_snapshot`
-    // is on, which it is not by default (`save.go:188`). Storing one here
-    // would make a later Go `ANALYZE` whose snapshot is older *skip its own
-    // write* (`save.go:181`), so the default's zero is what this writes.
-    set(table, &mut values, "snapshot", Datum::UInt(0));
+    // Go always stores `AnalyzeResults.Snapshot`. The
+    // `tidb_enable_analyze_snapshot` switch changes count reconciliation,
+    // not this metadata field (`save.go:193-250`).
+    set(table, &mut values, "snapshot", Datum::UInt(stats.snapshot));
     // Added after `mysql.stats_meta` was first defined, so a cluster old
     // enough not to have it simply does not get it set.
     set(

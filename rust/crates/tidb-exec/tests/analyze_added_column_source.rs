@@ -146,6 +146,7 @@ fn a_column_added_after_the_rows_analyzes_as_its_origin_default() {
     )
     .expect("a table whose added column has a materialisable default analyzes");
     assert_eq!(report.scanned_rows, 100);
+    assert_eq!(report.stats.snapshot, 440_000_000_000_000_000);
     let added = table
         .columns
         .iter_deref()

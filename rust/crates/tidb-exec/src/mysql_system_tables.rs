@@ -973,6 +973,15 @@ mod clustered_handle_tests {
         version.set_flag(version.get_flag() | u64::from(FieldTypeFlags::UNSIGNED));
         let mut count = stats_column(3, 4, "count", FieldTypeCode::LongLong);
         count.set_flag(count.get_flag() | u64::from(FieldTypeFlags::UNSIGNED));
+        let mut snapshot = stats_column(4, 5, "snapshot", FieldTypeCode::LongLong);
+        snapshot.set_flag(snapshot.get_flag() | u64::from(FieldTypeFlags::UNSIGNED));
+        let mut last_analyze = stats_column(
+            5,
+            6,
+            "last_stats_histograms_version",
+            FieldTypeCode::LongLong,
+        );
+        last_analyze.set_flag(last_analyze.get_flag() | u64::from(FieldTypeFlags::UNSIGNED));
         TableInfo {
             id: 22,
             name: CiString::new("stats_meta"),
@@ -982,6 +991,8 @@ mod clustered_handle_tests {
                 table_id,
                 stats_column(2, 3, "modify_count", FieldTypeCode::LongLong),
                 count,
+                snapshot,
+                last_analyze,
             ]
             .into(),
             ..TableInfo::default()

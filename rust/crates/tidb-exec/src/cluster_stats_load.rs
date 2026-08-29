@@ -108,6 +108,8 @@ pub struct ClusterTableStats {
     pub table_id: i64,
     /// `mysql.stats_meta.version`, the TSO the stats were last written at.
     pub version: u64,
+    /// `mysql.stats_meta.snapshot`, the snapshot TSO whose rows ANALYZE read.
+    pub snapshot: u64,
     /// `mysql.stats_meta.modify_count`: rows changed since that write.
     pub modify_count: i64,
     /// `mysql.stats_meta.count`: the table's estimated row count.
@@ -181,6 +183,7 @@ impl ClusterStatsLoader {
                 &[
                     "table_id",
                     "version",
+                    "snapshot",
                     "modify_count",
                     "count",
                     // Go stamps this with the same start TS as `version` on
@@ -274,7 +277,7 @@ impl ClusterStatsLoader {
         table_id: i64,
         column_types: &BTreeMap<i64, FieldType>,
     ) -> Result<Option<ClusterTableStats>, SystemTableError> {
-        let Some((version, modify_count, row_count, last_analyze_version)) =
+        let Some((version, snapshot_ts, modify_count, row_count, last_analyze_version)) =
             self.load_meta(snapshot, table_id)?
         else {
             return Ok(None);
@@ -285,6 +288,7 @@ impl ClusterStatsLoader {
         let mut stats = ClusterTableStats {
             table_id,
             version,
+            snapshot: snapshot_ts,
             modify_count,
             row_count,
             last_analyze_version,
@@ -343,7 +347,8 @@ impl ClusterStatsLoader {
     }
 
     /// Go `StatsMetaCountAndModifyCount`.
-    /// One table's `(version, modify_count, count, last_analyze_version)`,
+    /// One table's `(version, snapshot, modify_count, count,
+    /// last_analyze_version)`,
     /// or `None` for a table with no row -- the public single-table form of
     /// [`Self::load_all_meta`], and the read behind
     /// [`Self::load_table`]'s presence check.
@@ -351,7 +356,7 @@ impl ClusterStatsLoader {
         &self,
         snapshot: &mut S,
         table_id: i64,
-    ) -> Result<Option<(u64, i64, u64, u64)>, SystemTableError> {
+    ) -> Result<Option<(u64, u64, i64, u64, u64)>, SystemTableError> {
         // `mysql.stats_meta` declares `PRIMARY KEY (table_id) CLUSTERED`, so
         // this prefix is the row's exact key: one point read, not a scan.
         let rows = scan_system_table_prefixed(snapshot, &self.meta, &[Datum::Int(table_id)])?;
@@ -362,6 +367,7 @@ impl ClusterStatsLoader {
             }
             return Ok(Some((
                 row.u64("version")?.unwrap_or_default(),
+                row.u64("snapshot")?.unwrap_or_default(),
                 row.i64("modify_count")?.unwrap_or_default(),
                 row.u64("count")?.unwrap_or_default(),
                 row.u64("last_stats_histograms_version")?
