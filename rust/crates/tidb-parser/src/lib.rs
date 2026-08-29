@@ -74,6 +74,17 @@ pub struct ParseOutput {
     /// Recoverable parser diagnostics, in source order.
     pub warnings: Vec<HintDiagnostic>,
 }
+
+/// One Go `parser.ParseParam` value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ParseParam {
+    /// Go `parser.CharsetConnection`.
+    CharsetConnection(String),
+    /// Go `parser.CollationConnection`.
+    CollationConnection(String),
+    /// Go `parser.CharsetClient`.
+    CharsetClient(String),
+}
 pub use tidb_lexer::SqlMode;
 use tidb_lexer::{
     is_builtin_function_keyword, is_reserved, unescape_char, Lexer, Token, TokenKind,

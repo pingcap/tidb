@@ -33,6 +33,8 @@ members = [
     "crates/tidb-protocol",
     "crates/tidb-distsql",
     "crates/tidb-planner",
+    "crates/tidb-resolve",
+    "crates/tidb-sqlexec",
     "crates/tidb-datatype",
     "crates/tidb-stats",
     "crates/tidb-codec",

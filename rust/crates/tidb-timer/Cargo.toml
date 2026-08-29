@@ -17,8 +17,13 @@ workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 getrandom.workspace = true
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
 tidb-log = { path = "../tidb-log" }
+tidb-model = { path = "../tidb-model" }
 tidb-parser = { path = "../tidb-parser" }
+tidb-resolve = { path = "../tidb-resolve" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-util = { path = "../tidb-util" }
 
 [[test]]

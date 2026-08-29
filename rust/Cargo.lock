@@ -3339,6 +3339,8 @@ dependencies = [
  "tidb-planner",
  "tidb-proto",
  "tidb-protocol",
+ "tidb-resolve",
+ "tidb-sqlexec",
  "tidb-stats",
  "tidb-tablecodec",
  "tidb-txnkv",
@@ -3408,6 +3410,8 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser",
  "tidb-proto",
+ "tidb-resolve",
+ "tidb-sqlexec",
  "tidb-util",
  "tidb-vardef",
 ]
@@ -3602,6 +3606,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-resolve"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-model",
+]
+
+[[package]]
 name = "tidb-schemacmp"
 version = "0.0.0"
 dependencies = [
@@ -3705,6 +3717,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-sqlexec"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-chunk",
+ "tidb-datatype",
+ "tidb-parser",
+ "tidb-resolve",
+ "tidb-util",
+ "tracing",
+]
+
+[[package]]
 name = "tidb-stats"
 version = "0.0.0"
 dependencies = [
@@ -3758,8 +3783,13 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "getrandom 0.3.4",
+ "tidb-ast",
+ "tidb-datatype",
  "tidb-log",
+ "tidb-model",
  "tidb-parser",
+ "tidb-resolve",
+ "tidb-sqlexec",
  "tidb-util",
 ]
 

@@ -613,20 +613,6 @@ pub struct MetricSummaryTableExtractor {
     pub quantiles: Vec<f64>,
 }
 
-/// The seam standing in for `sctx.GetRestrictedSQLExecutor()` +
-/// `ExecRestrictedSQL` (`metrics_reader.go:240`, `:322`).
-///
-/// The generated SQL reads the metric tables through the ordinary SQL path,
-/// which at this tier means whatever the caller wires up.
-pub trait RestrictedSqlExecutor {
-    /// Go `exec.ExecRestrictedSQL(ctx, nil, sql)`; the returned rows are read
-    /// positionally.
-    ///
-    /// The error is rendered into Go's `execute '%s' failed: %v` by the
-    /// caller, so only its `Error()` text is needed here.
-    fn exec_restricted_sql(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, String>;
-}
-
 /// Go `fmt.Sprintf("%f", q)` over the extractor's quantiles, or Go's default.
 ///
 /// `default_quantile` is `"0.99"` at `:231` and, for the by-label retriever,
@@ -739,7 +725,7 @@ impl MetricsSummaryRetriever {
     /// Go `MetricsSummaryRetriever.retrieve` (`metrics_reader.go:196`).
     ///
     /// `time_condition` is `e.timeRange.Condition()` (`:213`).
-    pub fn retrieve<E: RestrictedSqlExecutor>(
+    pub fn retrieve<E: tidb_sqlexec::RestrictedSqlExecutor>(
         &mut self,
         defs: &MetricTableDefs,
         exec: &mut E,
@@ -766,11 +752,11 @@ impl MetricsSummaryRetriever {
                 continue;
             }
             let sql = metrics_summary_sql(name, def, time_condition, &self.extractor.quantiles);
-            let rows =
-                exec.exec_restricted_sql(&sql)
-                    .map_err(|err| MetricsReaderError::ExecuteSql {
-                        message: format!("execute '{sql}' failed: {err}"),
-                    })?;
+            let (rows, _) = exec
+                .exec_restricted_sql(&tidb_sqlexec::BackgroundContext, &[], &sql, &[])
+                .map_err(|err| MetricsReaderError::ExecuteSql {
+                    message: format!("execute '{sql}' failed: {err}"),
+                })?;
             for row in rows {
                 let quantile = if def.quantile > 0.0 {
                     // Go `row.GetFloat64(row.Len()-1)`.
@@ -817,7 +803,7 @@ impl MetricsSummaryByLabelRetriever {
     }
 
     /// Go `MetricsSummaryByLabelRetriever.retrieve` (`metrics_reader.go:273`).
-    pub fn retrieve<E: RestrictedSqlExecutor>(
+    pub fn retrieve<E: tidb_sqlexec::RestrictedSqlExecutor>(
         &mut self,
         defs: &MetricTableDefs,
         exec: &mut E,
@@ -844,11 +830,11 @@ impl MetricsSummaryByLabelRetriever {
             }
             let sql =
                 metrics_summary_by_label_sql(name, def, time_condition, &self.extractor.quantiles);
-            let rows =
-                exec.exec_restricted_sql(&sql)
-                    .map_err(|err| MetricsReaderError::ExecuteSql {
-                        message: format!("execute '{sql}' failed: {err}"),
-                    })?;
+            let (rows, _) = exec
+                .exec_restricted_sql(&tidb_sqlexec::BackgroundContext, &[], &sql, &[])
+                .map_err(|err| MetricsReaderError::ExecuteSql {
+                    message: format!("execute '{sql}' failed: {err}"),
+                })?;
 
             // Go `:328`: when the first label is `instance` it is lifted out
             // of the joined label string into its own column.
@@ -918,6 +904,7 @@ mod tests {
 
     use super::*;
     use chrono::Utc;
+    use std::sync::Mutex;
 
     fn set(values: &[&str]) -> BTreeSet<String> {
         values.iter().map(|v| (*v).to_owned()).collect()
@@ -958,17 +945,41 @@ mod tests {
     }
 
     struct FixedExec {
-        seen: Vec<String>,
+        seen: Mutex<Vec<String>>,
         rows: Vec<Vec<Datum>>,
         err: Option<String>,
     }
 
-    impl RestrictedSqlExecutor for FixedExec {
-        fn exec_restricted_sql(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, String> {
-            self.seen.push(sql.to_owned());
+    impl tidb_sqlexec::RestrictedSqlExecutor for FixedExec {
+        fn parse_with_params(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _sql: &str,
+            _arguments: &[tidb_util::sqlescape::SqlArg<'_>],
+        ) -> tidb_sqlexec::Result<tidb_ast::Stmt> {
+            unreachable!("metrics reader never parses through this interface")
+        }
+
+        fn exec_restricted_stmt(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _statement: &tidb_ast::Stmt,
+            _options: &[tidb_sqlexec::OptionFuncAlias],
+        ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+            unreachable!("metrics reader never executes an AST through this interface")
+        }
+
+        fn exec_restricted_sql(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _options: &[tidb_sqlexec::OptionFuncAlias],
+            sql: &str,
+            _arguments: &[tidb_util::sqlescape::SqlArg<'_>],
+        ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+            self.seen.lock().unwrap().push(sql.to_owned());
             match &self.err {
-                Some(err) => Err(err.clone()),
-                None => Ok(self.rows.clone()),
+                Some(err) => Err(std::io::Error::other(err.clone()).into()),
+                None => Ok((self.rows.clone(), Vec::new())),
             }
         }
     }
@@ -1309,7 +1320,7 @@ mod tests {
     fn summary_retrievers_require_process_priv() {
         let all = defs(&[("q", quantile_def())]);
         let mut exec = FixedExec {
-            seen: Vec::new(),
+            seen: Mutex::new(Vec::new()),
             rows: Vec::new(),
             err: None,
         };
@@ -1328,7 +1339,7 @@ mod tests {
                 .unwrap_err(),
             denied
         );
-        assert!(exec.seen.is_empty());
+        assert!(exec.seen.lock().unwrap().is_empty());
     }
 
     /// Go `:245`-`:259`: name, quantile (last column), sum/avg/min/max,
@@ -1337,7 +1348,7 @@ mod tests {
     fn summary_retrieve_row_shape() {
         let mut retriever = MetricsSummaryRetriever::new(MetricSummaryTableExtractor::default());
         let mut exec = FixedExec {
-            seen: Vec::new(),
+            seen: Mutex::new(Vec::new()),
             rows: vec![vec![
                 Datum::Real(10.0),
                 Datum::Real(2.5),
@@ -1356,9 +1367,11 @@ mod tests {
             )
             .unwrap();
         // Both tables are visited, in sorted name order: `p` then `q`.
-        assert_eq!(exec.seen.len(), 2);
-        assert!(exec.seen[0].contains("`metrics_schema`.`p`"));
-        assert!(exec.seen[1].contains("`metrics_schema`.`q`"));
+        let seen = exec.seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert!(seen[0].contains("`metrics_schema`.`p`"));
+        assert!(seen[1].contains("`metrics_schema`.`q`"));
+        drop(seen);
         assert_eq!(outcome.rows.len(), 2);
         // `p` has no quantile, so column 1 is NULL and the comment is its own.
         assert_eq!(outcome.rows[0][0], Datum::new_string("p"));
@@ -1388,7 +1401,7 @@ mod tests {
         let mut retriever =
             MetricsSummaryByLabelRetriever::new(MetricSummaryTableExtractor::default());
         let mut exec = FixedExec {
-            seen: Vec::new(),
+            seen: Mutex::new(Vec::new()),
             rows: vec![vec![
                 Datum::Real(10.0),
                 Datum::Real(2.5),
@@ -1417,7 +1430,7 @@ mod tests {
     fn summary_retrieve_wraps_executor_errors() {
         let mut retriever = MetricsSummaryRetriever::new(MetricSummaryTableExtractor::default());
         let mut exec = FixedExec {
-            seen: Vec::new(),
+            seen: Mutex::new(Vec::new()),
             rows: Vec::new(),
             err: Some("boom".to_owned()),
         };
@@ -1445,7 +1458,7 @@ mod tests {
     fn summary_retrieve_is_one_shot_and_skippable() {
         let all = defs(&[("p", plain_def())]);
         let mut exec = FixedExec {
-            seen: Vec::new(),
+            seen: Mutex::new(Vec::new()),
             rows: Vec::new(),
             err: None,
         };
@@ -1455,13 +1468,13 @@ mod tests {
             .unwrap()
             .rows
             .is_empty());
-        assert_eq!(exec.seen.len(), 1);
+        assert_eq!(exec.seen.lock().unwrap().len(), 1);
         assert!(once
             .retrieve(&all, &mut exec, "where 1", true)
             .unwrap()
             .rows
             .is_empty());
-        assert_eq!(exec.seen.len(), 1);
+        assert_eq!(exec.seen.lock().unwrap().len(), 1);
 
         let mut skipped = MetricsSummaryByLabelRetriever::new(MetricSummaryTableExtractor {
             skip_request: true,
@@ -1472,6 +1485,6 @@ mod tests {
             .unwrap()
             .rows
             .is_empty());
-        assert_eq!(exec.seen.len(), 1);
+        assert_eq!(exec.seen.lock().unwrap().len(), 1);
     }
 }

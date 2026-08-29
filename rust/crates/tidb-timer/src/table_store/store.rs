@@ -16,10 +16,9 @@
 //! implementation that keeps timers in a TiDB table, driven through an
 //! internal SQL session.
 //!
-//! Everything this file borrows from outside `pkg/timer` is narrowed to a
-//! local trait or value type, each carrying its own `boundary:` note:
-//! [`SqlExecutor`] for `pkg/util/sqlexec.RestrictedSQLExecutor`'s
-//! `ExecuteInternal`, [`Row`]/[`Datum`] for `pkg/util/chunk.Row`,
+//! Everything this file borrows from outside `pkg/timer` uses its ordinary
+//! owner: `tidb-sqlexec` for SQL execution, [`Row`]/[`Datum`] for the values
+//! this package reads from `pkg/util/chunk.Row`,
 //! [`SysSession`]/[`SessionPool`] for `pkg/session/syssession`,
 //! [`SessionContext`] for `pkg/sessionctx.Context`'s session variables, and
 //! [`SqlContext`] for the `client-go` internal-source tag that the upstream
@@ -194,25 +193,75 @@ pub fn wall_clock_go_time(wall: NaiveDateTime, location: &TimeZone) -> GoTime {
     )
 }
 
-/// `boundary:` Go `pkg/util/sqlexec.SQLExecutor` (the `RestrictedSQLExecutor`
-/// family). `store.go` only ever calls `ExecuteInternal` and then drains the
-/// result set, so the trait returns the drained rows directly; `None` is Go's
-/// nil `RecordSet` for statements that produce no result.
-pub trait SqlExecutor: Send + Sync {
-    /// Go `ExecuteInternal`.
-    fn execute_internal(
-        &self,
-        ctx: &SqlContext,
-        sql: &str,
-        args: &[SqlArg],
-    ) -> Result<Option<Vec<Row>>>;
-}
-
 /// Go `executeSQL`, including its `WithInternalSourceType` tagging and its
 /// `sqlexec.DrainRecordSet` of the returned set.
-pub fn execute_sql(exec: &dyn SqlExecutor, sql: &str, args: &[SqlArg]) -> Result<Vec<Row>> {
+pub fn execute_sql(
+    exec: &dyn tidb_sqlexec::SqlExecutor,
+    sql: &str,
+    args: &[SqlArg],
+) -> Result<Vec<Row>> {
     let ctx = SqlContext::internal_timer();
-    Ok(exec.execute_internal(&ctx, sql, args)?.unwrap_or_default())
+    let arguments = args.iter().map(sql_argument).collect::<Vec<_>>();
+    tidb_sqlexec::execute_sql(&ctx, exec, sql, &arguments)
+        .map_err(|error| TimerError::message(error.to_string()))?
+        .into_iter()
+        .map(result_row)
+        .collect()
+}
+
+fn sql_argument(argument: &SqlArg) -> tidb_util::sqlescape::SqlArg<'_> {
+    match argument {
+        SqlArg::Null => tidb_util::sqlescape::SqlArg::Null,
+        SqlArg::Str(value) => tidb_util::sqlescape::SqlArg::String(value.as_bytes()),
+        SqlArg::Bytes(value) => tidb_util::sqlescape::SqlArg::Bytes(Some(value)),
+        SqlArg::Bool(value) => tidb_util::sqlescape::SqlArg::Bool(*value),
+        SqlArg::Int64(value) => tidb_util::sqlescape::SqlArg::Signed(*value),
+        SqlArg::Uint64(value) => tidb_util::sqlescape::SqlArg::Unsigned(*value),
+        SqlArg::Json(value) => tidb_util::sqlescape::SqlArg::RawJson(value.as_bytes()),
+    }
+}
+
+fn result_row(values: Vec<tidb_datatype::Datum>) -> Result<Row> {
+    values
+        .into_iter()
+        .map(result_datum)
+        .collect::<Result<Vec<_>>>()
+        .map(Row::new)
+}
+
+fn result_datum(value: tidb_datatype::Datum) -> Result<Datum> {
+    match value {
+        tidb_datatype::Datum::Null => Ok(Datum::Null),
+        tidb_datatype::Datum::Int(value) => Ok(Datum::Int64(value)),
+        tidb_datatype::Datum::UInt(value) => Ok(Datum::Uint64(value)),
+        tidb_datatype::Datum::String(value) => Ok(Datum::Str(
+            String::from_utf8_lossy(value.bytes()).into_owned(),
+        )),
+        tidb_datatype::Datum::Bytes(value) => Ok(Datum::Bytes(value)),
+        tidb_datatype::Datum::Time(value) => {
+            let core = value.core_time();
+            let date = chrono::NaiveDate::from_ymd_opt(
+                core.year(),
+                u32::from(core.month()),
+                u32::from(core.day()),
+            )
+            .and_then(|date| {
+                date.and_hms_micro_opt(
+                    u32::from(core.hour()),
+                    u32::from(core.minute()),
+                    u32::from(core.second()),
+                    core.microsecond(),
+                )
+            })
+            .ok_or_else(|| TimerError::message(format!("invalid timer result time: {value}")))?;
+            Ok(Datum::Time(date))
+        }
+        tidb_datatype::Datum::Json(value) => Ok(Datum::Json(value.to_string())),
+        value => Err(TimerError::message(format!(
+            "unexpected timer result datum kind: {:?}",
+            value.kind()
+        ))),
+    }
 }
 
 /// `boundary:` Go `pkg/sessionctx.Context`, restricted to the session
@@ -227,7 +276,7 @@ pub trait SessionContext: Send + Sync {
     /// Go `sessVars.GetGlobalSystemVar(ctx, name)`.
     fn get_global_system_var(&self, name: &str) -> Result<String>;
     /// Go `sctx.GetSQLExecutor()`.
-    fn sql_executor(&self) -> Arc<dyn SqlExecutor>;
+    fn sql_executor(&self) -> Arc<dyn tidb_sqlexec::SqlExecutor>;
 }
 
 /// `boundary:` Go `pkg/session/syssession.Session`, narrowed to the three
@@ -271,14 +320,32 @@ impl SysSession {
     }
 }
 
-impl SqlExecutor for SysSession {
+impl tidb_sqlexec::SqlExecutor for SysSession {
+    fn execute(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+    ) -> tidb_sqlexec::Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>> {
+        self.sctx.sql_executor().execute(context, sql)
+    }
+
     fn execute_internal(
         &self,
-        ctx: &SqlContext,
+        context: &dyn tidb_sqlexec::ExecutionContext,
         sql: &str,
-        args: &[SqlArg],
-    ) -> Result<Option<Vec<Row>>> {
-        self.sctx.sql_executor().execute_internal(ctx, sql, args)
+        arguments: &[tidb_util::sqlescape::SqlArg<'_>],
+    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+        self.sctx
+            .sql_executor()
+            .execute_internal(context, sql, arguments)
+    }
+
+    fn execute_stmt(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        statement: &tidb_ast::Stmt,
+    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+        self.sctx.sql_executor().execute_stmt(context, statement)
     }
 }
 
@@ -578,7 +645,10 @@ fn terror_log(err: &TimerError) {
 }
 
 /// Go `runInTxn`.
-pub fn run_in_txn(exec: &dyn SqlExecutor, body: &mut dyn FnMut() -> Result<()>) -> Result<()> {
+pub fn run_in_txn(
+    exec: &dyn tidb_sqlexec::SqlExecutor,
+    body: &mut dyn FnMut() -> Result<()>,
+) -> Result<()> {
     execute_sql(exec, "BEGIN PESSIMISTIC", &[])?;
 
     let result = body().and_then(|()| execute_sql(exec, "COMMIT", &[]).map(|_| ()));

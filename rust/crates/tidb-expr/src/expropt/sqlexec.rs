@@ -14,7 +14,6 @@
 
 //! Go `pkg/expression/expropt/sqlexec.go`.
 
-use std::any::Any;
 use std::sync::Arc;
 
 use super::{get_prop_provider, EvalPropContext, ExprOptError, RequireOptionalEvalProps};
@@ -22,17 +21,9 @@ use crate::exprctx::{
     OptionalEvalPropDesc, OptionalEvalPropKey, OptionalEvalPropKeySet, OptionalEvalPropProvider,
 };
 
-/// boundary: Go `expropt.SQLExecutor`, itself the narrowed subset of
-/// `pkg/util/sqlexec.RestrictedSQLExecutor` that expression code may call.
-///
-/// Go's single method is
-/// `ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias, sql string, args ...any)
-/// ([]chunk.Row, []*resolve.ResultField, error)`. Neither
-/// `sqlexec.OptionFuncAlias` nor `planner/core/resolve.ResultField` is ported,
-/// and the Rust counterpart of `chunk.Row` is lifetime-bound to the chunk that
-/// owns it, so the method is not reproduced. expropt itself only passes the
-/// executor through from provider to caller.
-pub trait SqlExecutor: Any + Send + Sync {}
+/// Go `expropt.SQLExecutor`, the restricted-SQL method set used by expression
+/// evaluation. The shared interface lives at its Go owner.
+pub use tidb_sqlexec::RestrictedSqlExecutor as SqlExecutor;
 
 /// Go `SQLExecutorPropProvider`: `func() (SQLExecutor, error)`.
 pub struct SqlExecutorPropProvider(

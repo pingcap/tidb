@@ -21,6 +21,7 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
+use tidb_sqlexec::SqlExecutor;
 use tidb_timer::go_time::{GoTime, MINUTE, SECOND};
 use tidb_timer::store::{and, not, or, Cond, OptionalVal, TimerCond, TimerUpdate};
 use tidb_timer::table_store::sql::{
@@ -28,8 +29,8 @@ use tidb_timer::table_store::sql::{
     build_update_criteria, build_update_timer_sql, SqlArg,
 };
 use tidb_timer::table_store::store::{
-    execute_sql, run_in_txn, Datum, Row, SessionContext, SessionPool, SqlContext, SqlExecutor,
-    SysSession, TableTimerStoreCore,
+    execute_sql, run_in_txn, Datum, Row, SessionContext, SessionPool, SqlContext, SysSession,
+    TableTimerStoreCore,
 };
 use tidb_timer::timer::{
     EventExtra, ManualRequest, SchedEventStatus, SchedPolicyType, TimerRecord, TimerSpec,
@@ -732,14 +733,44 @@ impl MockSession {
 }
 
 impl SqlExecutor for MockSession {
+    fn execute(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        _sql: &str,
+    ) -> tidb_sqlexec::Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>> {
+        unreachable!("timer table store only calls ExecuteInternal")
+    }
+
     fn execute_internal(
         &self,
-        ctx: &SqlContext,
+        context: &dyn tidb_sqlexec::ExecutionContext,
         sql: &str,
-        args: &[SqlArg],
-    ) -> Result<Option<Vec<Row>>> {
+        arguments: &[tidb_util::sqlescape::SqlArg<'_>],
+    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
         // Go's `matchCtx`.
+        let ctx = context
+            .as_any()
+            .downcast_ref::<SqlContext>()
+            .expect("timer SQL context");
         assert_eq!(ctx.internal_source.as_deref(), Some("Timer"));
+        let args = arguments
+            .iter()
+            .map(|argument| match argument {
+                tidb_util::sqlescape::SqlArg::Null => SqlArg::Null,
+                tidb_util::sqlescape::SqlArg::String(value) => {
+                    SqlArg::Str(String::from_utf8_lossy(value).into_owned())
+                }
+                tidb_util::sqlescape::SqlArg::Bytes(Some(value)) => SqlArg::Bytes(value.to_vec()),
+                tidb_util::sqlescape::SqlArg::Bytes(None) => SqlArg::Bytes(Vec::new()),
+                tidb_util::sqlescape::SqlArg::Bool(value) => SqlArg::Bool(*value),
+                tidb_util::sqlescape::SqlArg::Signed(value) => SqlArg::Int64(*value),
+                tidb_util::sqlescape::SqlArg::Unsigned(value) => SqlArg::Uint64(*value),
+                tidb_util::sqlescape::SqlArg::RawJson(value) => {
+                    SqlArg::Json(String::from_utf8_lossy(value).into_owned())
+                }
+                argument => panic!("unexpected timer SQL argument: {argument:?}"),
+            })
+            .collect::<Vec<_>>();
 
         let outcome = {
             let mut state = self.lock();
@@ -748,7 +779,7 @@ impl SqlExecutor for MockSession {
                     && expectation
                         .args
                         .as_ref()
-                        .is_none_or(|expected| expected.as_slice() == args)
+                        .is_none_or(|expected| expected.as_slice() == args.as_slice())
             });
             match position {
                 Some(position) => state.expectations.remove(position).map(|e| e.outcome),
@@ -757,10 +788,36 @@ impl SqlExecutor for MockSession {
         };
 
         match outcome.expect("expectation was present") {
-            Outcome::Rows(rows) => Ok(rows),
-            Outcome::Err(message) => Err(TimerError::message(message)),
+            Outcome::Rows(None) => Ok(None),
+            Outcome::Rows(Some(rows)) => {
+                let fields = vec![tidb_model::GoShared::new(tidb_resolve::ResultField {
+                    column: Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                        field_type: tidb_datatype::FieldType::new(
+                            tidb_datatype::FieldTypeCode::VarString,
+                        ),
+                        ..tidb_model::ColumnInfo::default()
+                    })),
+                    ..tidb_resolve::ResultField::default()
+                })];
+                let rows = rows
+                    .into_iter()
+                    .map(|row| vec![tidb_datatype::Datum::new_string(row.get_string(0))])
+                    .collect();
+                Ok(Some(Box::new(tidb_sqlexec::SimpleRecordSet::new(
+                    fields, rows, 32,
+                ))))
+            }
+            Outcome::Err(message) => Err(std::io::Error::other(message).into()),
             Outcome::Panic(message) => panic!("{message}"),
         }
+    }
+
+    fn execute_stmt(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        _statement: &tidb_ast::Stmt,
+    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+        unreachable!("timer table store only calls ExecuteInternal")
     }
 }
 

@@ -1312,7 +1312,41 @@ mod tests {
     impl KvStorage for MockStore {}
 
     struct MockSqlExecutor;
-    impl SqlExecutor for MockSqlExecutor {}
+    impl SqlExecutor for MockSqlExecutor {
+        fn parse_with_params(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _sql: &str,
+            _arguments: &[tidb_util::sqlescape::SqlArg<'_>],
+        ) -> tidb_sqlexec::Result<tidb_ast::Stmt> {
+            unreachable!("session-expression test does not execute SQL")
+        }
+
+        fn exec_restricted_stmt(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _statement: &tidb_ast::Stmt,
+            _options: &[tidb_sqlexec::OptionFuncAlias],
+        ) -> tidb_sqlexec::Result<(
+            Vec<Vec<tidb_datatype::Datum>>,
+            Vec<tidb_resolve::ResultFieldRef>,
+        )> {
+            Ok((Vec::new(), Vec::new()))
+        }
+
+        fn exec_restricted_sql(
+            &self,
+            _context: &dyn tidb_sqlexec::ExecutionContext,
+            _options: &[tidb_sqlexec::OptionFuncAlias],
+            _sql: &str,
+            _arguments: &[tidb_util::sqlescape::SqlArg<'_>],
+        ) -> tidb_sqlexec::Result<(
+            Vec<Vec<tidb_datatype::Datum>>,
+            Vec<tidb_resolve::ResultFieldRef>,
+        )> {
+            Ok((Vec::new(), Vec::new()))
+        }
+    }
 
     struct MockInfoSchema(i64);
     impl MetaOnlyInfoSchema for MockInfoSchema {

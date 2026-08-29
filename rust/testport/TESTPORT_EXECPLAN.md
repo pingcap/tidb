@@ -36,6 +36,20 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: completed the pinned Go `pkg/util/sqlexec` main package (two
+  production files, one test harness with no functional tests, and
+  `BUILD.bazel`). Added its shared Rust owner with the complete restricted and
+  ordinary executor, parser, statement, record-set, detach, no-delay-result,
+  option, drain, and simple-record-set contracts. Removed expression's empty
+  executor marker, metrics reader's local SQL-to-rows trait, and timer's
+  pre-drained internal-SQL trait; all now use the ordinary shared interfaces,
+  and timer drains the returned record set through `ExecSQL`. Added the
+  Go-owned parser parameters and the resolve result-field prerequisite at
+  their actual package boundaries. The concrete session implementation,
+  planner resolve-context integration, and separate generated mock package
+  remain later package units rather than being included in this claim.
+  Complete inventory and WIP gates are recorded in
+  `receipts/util_sqlexec.md`.
 - 2026-08-29: re-audited the complete pinned Go `pkg/util/sli` package and
   every production integration point used by its sole external source test.
   Restored Go's signed duration/native-int representation and failpoint,
