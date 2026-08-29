@@ -16,11 +16,11 @@
 
 use std::error::Error;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use crossbeam_channel::{bounded, Receiver, Sender};
 use tidb_log::{Field, Value};
 use tidb_util::logutil::{bg_logger, sample_logger_factory, SampledLogger, LOG_FIELD_CATEGORY};
 
@@ -77,9 +77,9 @@ pub fn get_concurrency() -> isize {
 /// Go `Task`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Task {
-    /// Inclusive lower table-ID bound.
+    /// Lower table-ID range bound.
     pub start_tid: i64,
-    /// Inclusive upper table-ID bound.
+    /// Upper table-ID range bound.
     pub end_tid: i64,
 }
 
@@ -94,7 +94,7 @@ type ProcessTask = dyn Fn(Task) -> TaskResult + Send + Sync + 'static;
 struct WorkerInner {
     progress_logger: SampledLogger,
     task_name: String,
-    receiver: Mutex<Receiver<Task>>,
+    receiver: Receiver<Task>,
     process_task: Arc<ProcessTask>,
     task_count: u64,
     complete_task_count: AtomicU64,
@@ -105,7 +105,7 @@ struct WorkerInner {
 /// Go `RangeWorker`.
 pub struct RangeWorker {
     inner: Arc<WorkerInner>,
-    sender: Mutex<Option<SyncSender<Task>>>,
+    sender: Mutex<Option<Sender<Task>>>,
     concurrency: isize,
     workers: Mutex<Vec<JoinHandle<()>>>,
 }
@@ -120,12 +120,12 @@ impl RangeWorker {
         total_task_count: u64,
         total_percentage_step: f64,
     ) -> Self {
-        let (sender, receiver) = sync_channel(1);
+        let (sender, receiver) = bounded(1);
         Self {
             inner: Arc::new(WorkerInner {
                 progress_logger: SAMPLE_LOGGER.clone(),
                 task_name: task_name.into(),
-                receiver: Mutex::new(receiver),
+                receiver,
                 process_task: Arc::new(process_task),
                 task_count: total_task_count,
                 complete_task_count: AtomicU64::new(0),
@@ -176,11 +176,7 @@ impl RangeWorker {
 
 fn load_stats(inner: Arc<WorkerInner>) {
     loop {
-        let task = inner
-            .receiver
-            .lock()
-            .expect("task receiver lock poisoned")
-            .recv();
+        let task = inner.receiver.recv();
         let Ok(task) = task else { return };
         if let Err(error) = (inner.process_task)(task) {
             bg_logger().error(
