@@ -68,6 +68,7 @@ pub use tidb_naming as naming;
 pub mod nocopy;
 pub mod paging;
 pub mod partialjson;
+/// Password-policy validation.
 pub mod password_validation;
 pub mod plancodec;
 pub mod ppcpuusage;

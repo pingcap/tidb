@@ -28,12 +28,19 @@
 //! `tidb-session::tests_grants::password_policy` already pin the same Go
 //! corpus. Those Go tests therefore carry per-test gap rows below.
 
+use tidb_datatype::GoString;
 use tidb_util::password_validation::{
     validate_password, GlobalVarAccessor, PasswordUser, PwdError,
-    VALIDATE_PASSWORD_CHECK_USER_NAME, VALIDATE_PASSWORD_DICTIONARY, VALIDATE_PASSWORD_ENABLE,
-    VALIDATE_PASSWORD_LENGTH, VALIDATE_PASSWORD_MIXED_CASE_COUNT, VALIDATE_PASSWORD_NUMBER_COUNT,
-    VALIDATE_PASSWORD_POLICY, VALIDATE_PASSWORD_SPECIAL_CHAR_COUNT,
 };
+
+const VALIDATE_PASSWORD_ENABLE: &str = "validate_password.enable";
+const VALIDATE_PASSWORD_POLICY: &str = "validate_password.policy";
+const VALIDATE_PASSWORD_CHECK_USER_NAME: &str = "validate_password.check_user_name";
+const VALIDATE_PASSWORD_LENGTH: &str = "validate_password.length";
+const VALIDATE_PASSWORD_MIXED_CASE_COUNT: &str = "validate_password.mixed_case_count";
+const VALIDATE_PASSWORD_NUMBER_COUNT: &str = "validate_password.number_count";
+const VALIDATE_PASSWORD_SPECIAL_CHAR_COUNT: &str = "validate_password.special_char_count";
+const VALIDATE_PASSWORD_DICTIONARY: &str = "validate_password.dictionary";
 
 /// The `validate_password.*` globals Go's suite sets through
 /// `SET GLOBAL`, keyed exactly as the accessor reads them.
@@ -71,15 +78,12 @@ fn err_text<E: std::fmt::Display>(error: &PwdError<E>) -> String {
 /// user (root), never the ALTERed account -- which is why `SET PASSWORD FOR
 /// 'testuser' = 'testuser'` succeeds while `!Abcdroot1234` is rejected.
 fn check_as_root(vars: &Vars, password: &str) -> Result<(), String> {
-    validate_password(
-        password,
-        Some(PasswordUser {
-            username: "root",
-            auth_username: "",
-        }),
-        vars,
-    )
-    .map_err(|error| err_text(&error))
+    let user = PasswordUser {
+        username: "root".into(),
+        auth_username: "".into(),
+    };
+    validate_password(&GoString::from(password), Some(&user), vars)
+        .map_err(|error| err_text(&error))
 }
 
 /// Go `pkg/executor/test/passwordtest/password_management_test.go:39
@@ -182,13 +186,10 @@ fn validate_password_policy_matrix_over_the_shared_validator() {
         .set(VALIDATE_PASSWORD_MIXED_CASE_COUNT, "0")
         .set(VALIDATE_PASSWORD_NUMBER_COUNT, "0")
         .set(VALIDATE_PASSWORD_SPECIAL_CHAR_COUNT, "0");
-    let empty_user = validate_password(
-        "",
-        Some(PasswordUser {
-            username: "",
-            auth_username: "",
-        }),
-        &zeroed,
-    );
+    let empty_user = PasswordUser {
+        username: "".into(),
+        auth_username: "".into(),
+    };
+    let empty_user = validate_password(&GoString::from(""), Some(&empty_user), &zeroed);
     assert!(empty_user.is_ok(), "empty user name skips the name check");
 }

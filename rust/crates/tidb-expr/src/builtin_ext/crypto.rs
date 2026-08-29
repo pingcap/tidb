@@ -447,26 +447,33 @@ fn validate_password_strength(value: &Datum, ctx: &dyn Columns) -> Result<Datum,
     let Some(password) = sql_string_bytes(value)? else {
         return Ok(Datum::Null);
     };
-    let password = tidb_datatype::GoString::from_bytes(password).to_utf8_lossy_go();
-    if password.chars().count() < 4 {
+    let password = tidb_datatype::GoString::from_bytes(password);
+    if password.to_utf8_lossy_go().chars().count() < 4 {
         return Ok(Datum::Int(0));
     }
 
     let globals = EvalGlobalVars(ctx);
-    if !password_validation::validation_enabled(&globals).map_err(password_eval_error)? {
+    let validation = password_validation::GlobalVarAccessor::get_global_sys_var(
+        &globals,
+        "validate_password.enable",
+    )
+    .map_err(|error| password_eval_error(password_validation::PwdError::Accessor(error)))?;
+    if !(validation.eq_ignore_ascii_case("ON") || validation == "1") {
         return Ok(Datum::Int(0));
     }
     let current_user = ctx.current_user();
     let login_user = ctx.login_user();
     let user = current_user.as_deref().map(|current| PasswordUser {
-        auth_username: identity_username(current),
+        auth_username: identity_username(current).into(),
         username: login_user
             .as_deref()
             .map(identity_username)
-            .unwrap_or_else(|| identity_username(current)),
+            .unwrap_or_else(|| identity_username(current))
+            .into(),
     });
-    let warning = password_validation::validate_user_name_in_password(&password, user, &globals)
-        .map_err(password_eval_error)?;
+    let warning =
+        password_validation::validate_user_name_in_password(&password, user.as_ref(), &globals)
+            .map_err(password_eval_error)?;
     if !warning.is_empty() {
         return Ok(Datum::Int(0));
     }

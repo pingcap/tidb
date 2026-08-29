@@ -416,6 +416,11 @@ For each bounded behavior cluster:
       owner, restore the source's distinct validation errors and complete
       system-schema table, remove supplementary non-source tests, and delete
       the unused 1,448-line `tidb-exec` duplicate.
+- [x] Complete the pinned `pkg/util/password-validation` package across its
+      `tidb-util`, expression, executor, and session owners: retain exactly
+      five source tests, restore arbitrary-byte Go strings, move enablement
+      policy back to its two Go callers, and remove exported sysvar catalogs,
+      error-code helpers, derives, and supplemental tests absent from Go.
 - [x] Complete the pinned `pkg/util/table-rule-selector` package in its wired
       `tidb-util` owner: restore Go string-range indices, nil RuleSets, open
       insert types, and exact errors; remove the unused 1,270-line selector and

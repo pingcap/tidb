@@ -41,16 +41,13 @@ fn statement_context_reads_global_sysvars_through_the_live_accessor() {
         tidb_executor::Columns::sysvar(
             &context,
             Some(tidb_ast::SysVarScope::Global),
-            tidb_util::password_validation::VALIDATE_PASSWORD_ENABLE,
+            "validate_password.enable",
         )
     };
 
     assert_eq!(read(), Some(Datum::Bytes(b"OFF".to_vec())));
     globals
-        .set(
-            tidb_util::password_validation::VALIDATE_PASSWORD_ENABLE,
-            "ON".to_owned(),
-        )
+        .set("validate_password.enable", "ON".to_owned())
         .unwrap();
     assert_eq!(read(), Some(Datum::Bytes(b"ON".to_vec())));
 }

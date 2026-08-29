@@ -250,18 +250,23 @@ pub(crate) fn ssl_type_of(
 impl Session {
     pub(crate) fn validate_password_if_enabled(&self, password: &str) -> Result<(), DriverError> {
         let globals = SessionPasswordGlobals(&self.vars);
-        if !password_validation::validation_enabled(&globals).map_err(password_validation_error)? {
+        let enabled = globals
+            .get_global_sys_var("validate_password.enable")
+            .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
+        if !enabled {
             return Ok(());
         }
         let user = self.current_user.as_deref().map(|current| PasswordUser {
-            auth_username: identity_username(current),
+            auth_username: identity_username(current).into(),
             username: self
                 .login_user
                 .as_deref()
                 .map(identity_username)
-                .unwrap_or_else(|| identity_username(current)),
+                .unwrap_or_else(|| identity_username(current))
+                .into(),
         });
-        password_validation::validate_password(password, user, &globals)
+        let password = tidb_datatype::GoString::from(password);
+        password_validation::validate_password(&password, user.as_ref(), &globals)
             .map_err(password_validation_error)
     }
 
