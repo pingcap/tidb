@@ -76,7 +76,6 @@ pub mod json_stats_version;
 pub mod lock_messages;
 pub mod locked_tables;
 pub mod memory_usage;
-pub mod mock_statistics_shape;
 pub mod non_partitioned_analysis;
 pub mod overlap_geometry;
 pub mod priority_calculator;
@@ -216,7 +215,6 @@ pub use lock_messages::{
 };
 pub use locked_tables::{get_locked_tables, SELECT_LOCKED_TABLES_SQL};
 pub use memory_usage::{ColumnMemUsage, IndexMemUsage};
-pub use mock_statistics_shape::MockStatisticsTableShape;
 pub use non_partitioned_analysis::{
     analyze_type, gen_sql_for_analyze_index, gen_sql_for_analyze_table, has_newly_added_index,
     ANALYZE_INDEX, ANALYZE_TABLE,

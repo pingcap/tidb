@@ -788,6 +788,12 @@ For each bounded behavior cluster:
       The package remains explicitly unclaimed until complete pinned
       Ristretto behavior is available. The inventory is in
       `receipts/statistics_handle_cache_internal_lfu_audit.md`.
+- [x] Complete the pinned `pkg/statistics/handle/cache/internal/testutil`
+      support package in `tidb-stats-handle-cache-internal-testutil`: construct
+      actual statistics tables, optional production payloads, full-load
+      status, native memory accounting, and both append helpers; remove the
+      shape-only carrier and source-absent tests. The atomic inventory and WIP
+      gates are in `receipts/statistics_handle_cache_internal_testutil.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -881,6 +887,10 @@ For each bounded behavior cluster:
   TinyLFU admission, primary-store update behavior, callbacks, metrics, and
   wait/close lifecycle. A subset port would violate both behavior parity and
   the external-package atomicity rule. Date/Author: 2026-08-29, Codex.
+- Decision: cache test support must construct the real statistics graph.
+  Retaining only its five constructor arguments cannot exercise the memory,
+  eviction, status, or append behavior for which the Go package exists.
+  Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 
