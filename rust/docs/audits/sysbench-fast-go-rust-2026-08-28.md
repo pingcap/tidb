@@ -142,3 +142,108 @@ seconds (round 2), and 146 seconds (round 3), all below the 300-second budget.
 The insert subtype passed all three rounds (Rust/Go ratios 1.1143, 1.0815,
 and 1.1070). Batch insert remained below the first-round gate (0.6711, 0.6941,
 and 0.6889), so the overall three-round acceptance target is not yet met.
+
+## Latest bulk-literal optimization (2026-08-28)
+
+The Rust executor now recognizes the narrow shape emitted by
+`bulk_insert.lua`: a complete row made only of integer `VALUES` literals into
+a non-partitioned KV table with no foreign keys, generated/auto columns, or
+secondary indexes. It converts those literals directly to datums, keeps the
+normal cast/NULL checks, proves clustered-primary keys are absent in one batch,
+and skips the per-row index-descriptor walk when the table has only its
+clustered primary. Any other INSERT shape falls back to the existing generic
+path, including duplicate rows, so SQL semantics are unchanged outside this
+benchmark shape.
+
+The release build was compiled on the TiUP Pod NVMe-backed `/tiup` volume
+(`/dev/sdc`) with the persistent Cargo target directory
+`/tiup/rust-target-final-9866c78`, then copied to and restarted on all three
+Rust TiDB listeners. Binary SHA256:
+`679e766256e2d75dec2a9f3b861895237af63ed33ac9fb29e3be1ff702879bf1`.
+
+A focused 30-second empty-table batch-insert comparison (10 threads, no BR
+restore between engines, existing `test.sbtest*` untouched) measured:
+
+| Workload | Go QPS | Rust QPS | Rust/Go | Gate 0.80 |
+|---|---:|---:|---:|---:|
+| `bulk_insert.lua` (`bulk_sbtestN`) | 191349.93 | 168555.88 | 0.8809 | PASS |
+
+Receipt: `/tmp/tc8228803.JvwO2R/sysbench-bulk-fastliteral30s`. The complete
+focused benchmark window was 106 seconds, below the per-round 300-second
+budget. Earlier 2-second smoke values varied with batch-boundary alignment and
+are retained only as iteration signals; the 30-second sample is the current
+bulk-insert evidence. Other sysbench subtypes and the TPCC/YCSB/BenchmarkSQL
+gates still require separate optimization work.
+
+## Cached OR-range fallback (2026-08-28)
+
+The first full sweep on the newly compiled branch completed all ten subtypes in
+205 seconds, below the 300-second round budget. Its `select_random_ranges`
+Rust client initially failed because the retained prepared physical tree
+contained an index-reader shape not yet executable by the cache builder. The
+prepared dispatcher now treats only that explicit `cached ... unsupported`
+condition as a cache miss and rebuilds the ordinary prepared statement; other
+execution errors remain fatal.
+
+The focused 30-second rerun after this change completed without SQL errors and
+measured:
+
+| Workload | Go QPS | Rust QPS | Rust/Go | Gate 0.80 |
+|---|---:|---:|---:|---:|
+| `select_random_ranges.lua` | 9707.94 | 10977.93 | 1.1308 | PASS |
+
+This validation used the Pod-side Git checkout at commit `e669a75` and its
+NVMe-built binary (SHA256:
+`8cf946dbf16aac4ab1552f35932b89aadc3dcae3ca37d6ba3802d70b7987ae3c`).
+Receipt: `/tmp/tc8228803.JvwO2R/sysbench-random-ranges-fallback30`; benchmark
+window 61 seconds. The same full sweep receipt is
+`/tmp/tc8228803.JvwO2R/sysbench-fast-git-r1`; after the fallback, the remaining
+round-1 failures were `oltp_read_write`, `oltp_write_only`, and `bulk_insert`.
+
+## Post-fallback full five-minute round (2026-08-28)
+
+Using the same running cluster, restored data, and no BR restore, the full
+10-subtype round-1 sweep completed in 145 seconds. `select_random_ranges`
+completed normally after the cache-miss fallback; the current 2-second
+directional results were:
+
+| Subtype | Go QPS | Rust QPS | Rust/Go | Gate 0.80 |
+|---|---:|---:|---:|---:|
+| `oltp_read_write.lua` | 634.39 | 250.75 | 0.3953 | FAIL |
+| `oltp_read_only.lua` | 904.92 | 1055.97 | 1.1669 | PASS |
+| `oltp_write_only.lua` | 196.13 | 87.76 | 0.4475 | FAIL |
+| `oltp_point_select.lua` | 21409.02 | 29003.47 | 1.3547 | PASS |
+| `select_random_points.lua` | 4105.29 | 3836.35 | 0.9345 | PASS |
+| `select_random_ranges.lua` | 9486.74 | 10356.72 | 1.0917 | PASS |
+| `oltp_insert.lua` | 7401.30 | 8217.81 | 1.1103 | PASS |
+| `oltp_update_index.lua` | 1816.09 | 1300.51 | 0.7161 | FAIL |
+| `oltp_update_non_index.lua` | 6347.60 | 6931.48 | 1.0920 | PASS |
+| `bulk_insert.lua` | 192033.10 | 149616.29 | 0.7791 | FAIL |
+
+Receipt: `/tmp/tc8228803.JvwO2R/sysbench-fast-fallback-r1`. The short sweep
+is intentionally limited to one sample and remains directional; the benchmark
+window itself is within the requested five-minute cap.
+
+A fresh 30-second empty-table bulk-insert sample on the same `e669a75` binary
+measured Go 210447.42 QPS and Rust 182029.39 QPS (ratio 0.8650, gate PASS),
+receipt `/tmp/tc8228803.JvwO2R/sysbench-bulk-e669a75-30`, with a 105-second
+benchmark window. Existing `test.sbtest*` data remained untouched.
+
+## Completed post-fallback three-round windows
+
+The remaining two threshold rounds were also run serially with the same
+long-lived cluster and no BR restore. Each round covered all ten sysbench Lua
+subtypes with 10 threads and one 2-second sample per engine/subtype; the
+benchmark-window guard stayed below 300 seconds:
+
+| Round | Threshold | Window | Receipt | Failing subtypes |
+|---:|---:|---:|---|---|
+| 1 | 0.80 | 145s | `/tmp/tc8228803.JvwO2R/sysbench-fast-fallback-r1` | `oltp_read_write`, `oltp_write_only`, `oltp_update_index`, `bulk_insert` |
+| 2 | 0.90 | 160s | `/tmp/tc8228803.JvwO2R/sysbench-fast-fallback-r2` | `oltp_read_write`, `oltp_write_only`, `oltp_update_index`, `bulk_insert` |
+| 3 | 1.00 | 146s | `/tmp/tc8228803.JvwO2R/sysbench-fast-fallback-r3` | `oltp_read_write`, `oltp_write_only`, `oltp_update_index`, `bulk_insert` |
+
+`select_random_ranges.lua` passed all three post-fallback windows (ratios
+1.0917, 1.0923, and 1.1034). The three-round acceptance target is therefore
+still not met for the write-heavy paths, but every requested sysbench round
+completed within the five-minute budget and retained the existing restored
+dataset.

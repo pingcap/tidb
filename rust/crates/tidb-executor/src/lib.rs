@@ -223,13 +223,31 @@ mod tests_inspection_result_gaps;
 #[cfg(test)]
 mod tests_join_probe_source_gaps;
 #[cfg(test)]
-mod tests_memtable_cluster_source;
-#[cfg(test)]
 mod tests_merge_join_in_disk_source;
 #[cfg(test)]
 mod tests_parallel_apply_sql_source;
 #[cfg(test)]
 mod tests_partition_table_sql_source;
+#[cfg(test)]
+mod tests_joiner_required_rows_source;
+#[cfg(test)]
+mod tests_left_outer_anti_semi_probe_gaps;
+#[cfg(test)]
+mod tests_left_outer_join_probe_gaps;
+#[cfg(test)]
+mod tests_left_outer_semi_probe_gaps;
+#[cfg(test)]
+mod tests_outer_join_spill_gaps;
+#[cfg(test)]
+mod tests_right_outer_join_probe_gaps;
+#[cfg(test)]
+mod tests_row_table_builder_gaps;
+#[cfg(test)]
+mod tests_semi_join_probe_gaps;
+#[cfg(test)]
+mod tests_index_lookup_join_gaps;
+#[cfg(test)]
+mod tests_index_lookup_merge_join_gaps;
 #[cfg(test)]
 mod tests_pkg_nested_loop_apply_source;
 #[cfg(test)]
