@@ -1969,16 +1969,16 @@ func (m *MemArbitrator) asyncRun(duration time.Duration) bool {
 }
 
 // RestartEntryByContext starts the root pool with the given context
-func (m *MemArbitrator) RestartEntryByContext(p rootPoolWrap, ctx *ArbitrationContext) bool {
+func (m *MemArbitrator) RestartEntryByContext(p rootPoolWrap, ctx *ArbitrationContext) (bool, func()) {
 	entry := p.entry
 	if entry == nil {
-		return false
+		return false, nil
 	}
 	entry.stateMu.Lock()
 	defer entry.stateMu.Unlock()
 
 	if entry.stateMu.stop.Load() || entry.execState() != execStateIdle {
-		return false
+		return false, nil
 	}
 
 	entry.pool.mu.Lock()
@@ -2019,7 +2019,7 @@ func (m *MemArbitrator) RestartEntryByContext(p rootPoolWrap, ctx *ArbitrationCo
 	entry.pool.mu.stopped = false
 	entry.setExecState(execStateRunning)
 
-	return true
+	return true, func() { entry.ctx.Store(nil) }
 }
 
 // DebugFields is used to store debug fields for logging
@@ -2875,7 +2875,7 @@ func (m *MemArbitrator) handleMemRisk(gcExecuted bool) {
 			)
 			m.actions.Warn("Restart runtime memory check", profile.fields[:profile.n]...)
 		}
-	} else if m.AtOOMRisk() && underKillNum == 0 {
+	} else if underKillNum == 0 {
 		forceKill := 0
 		for { // make all tasks success
 			entry := m.frontTaskEntry()
