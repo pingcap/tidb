@@ -116,7 +116,10 @@ pub use fmsketch_codec::{
 pub use histogram::{Bucket, Histogram};
 pub use index::{copy_index, index_is_all_evicted, Index, IndexInfo};
 pub use index_query::query_index_bytes;
-pub use json_metadata::{JsonPredicateColumn, JsonTable, TIDB_GLOBAL_STATS};
+pub use json_metadata::{
+    JsonBucket, JsonCmSketch, JsonCmSketchRow, JsonCmSketchTopN, JsonColumn, JsonFmSketch,
+    JsonHistogram, JsonPredicateColumn, JsonTable, TIDB_GLOBAL_STATS,
+};
 pub use lock_stats::{
     add_locked_partitions, add_locked_tables, get_locked_tables, remove_locked_partitions,
     remove_locked_tables, StatsLockTransaction,

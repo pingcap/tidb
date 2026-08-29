@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 chrono.workspace = true
 chrono-tz.workspace = true
+serde.workspace = true
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-model = { path = "../tidb-model" }
@@ -24,6 +25,7 @@ tidb-vardef = { path = "../tidb-vardef" }
 tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 
 [dev-dependencies]
+serde_json.workspace = true
 sha2 = { workspace = true }
 
 [[test]]

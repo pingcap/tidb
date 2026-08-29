@@ -64,7 +64,6 @@
 use std::collections::BTreeMap;
 
 use base64::Engine as _;
-use serde::Deserialize;
 use tidb_datatype::{
     ConversionFlags, Datum, EvalType, FieldType, FieldTypeCode, SessionTimeZone,
     DEFAULT_STATEMENT_FLAGS,
@@ -74,13 +73,11 @@ use tidb_stats::cmsketch::{
     cmsketch_and_topn_from_proto, CmsSketchProto, CmsSketchProtoRow, CmsSketchProtoTopN,
 };
 use tidb_stats::histogram::Histogram;
+use tidb_stats::{JsonBucket, JsonCmSketch, JsonColumn, JsonHistogram};
+pub use tidb_stats::{JsonTable, TIDB_GLOBAL_STATS};
 
 use crate::access_cost::TableStatistics;
 use crate::kv_table::KvTable;
-
-/// Go `statsutil.TiDBGlobalStats`: the `partitions` key that carries the
-/// LOGICAL table's merged statistics beside the per-partition entries.
-pub const TIDB_GLOBAL_STATS: &str = "global";
 
 /// Why a dump could not be loaded. Go surfaces each of these as the
 /// statement's error, so the text names what the caller can act on.
@@ -110,146 +107,6 @@ impl std::fmt::Display for LoadStatsError {
 }
 
 impl std::error::Error for LoadStatsError {}
-
-/// Go `statsutil.JSONTable`, in the fields this tier consumes.
-///
-/// Every field defaults: an old dump (v4.0-era files in
-/// `tests/integrationtest/s/` really do lack `version`, `stats_ver` and
-/// `correlation`) must load, because Go's zero values are exactly what its
-/// unmarshaller leaves behind. `predicate_columns` and `is_historical_stats`
-/// are accepted and dropped -- they feed `mysql.column_stats_usage` and the
-/// history tables, neither of which exists in this tier.
-#[derive(Debug, Default, Deserialize)]
-pub struct JsonTable {
-    /// `columns`, keyed by LOWERCASE column name (`col.Info.Name.L`).
-    #[serde(default)]
-    pub columns: Option<BTreeMap<String, Option<JsonColumn>>>,
-    /// `indices`, keyed by LOWERCASE index name.
-    #[serde(default)]
-    pub indices: Option<BTreeMap<String, Option<JsonColumn>>>,
-    /// `partitions`: per-partition dumps by partition name, plus
-    /// [`TIDB_GLOBAL_STATS`]. `None` mirrors Go's nil map, which routes the
-    /// load at the table itself even when the table is partitioned --
-    /// `LoadStatsFromJSONNoUpdate` tests `jsonTbl.Partitions == nil`, so a
-    /// PRESENT-BUT-EMPTY object takes the partition branch and loads nothing.
-    #[serde(default)]
-    pub partitions: Option<BTreeMap<String, Option<JsonTable>>>,
-    /// `database_name`: the SCHEMA the dump names, which is where the load
-    /// installs -- not the session's current database.
-    #[serde(default)]
-    pub database_name: String,
-    /// `table_name`, lowercase like every dumped name.
-    #[serde(default)]
-    pub table_name: String,
-    /// `count`: Go `HistColl.RealtimeCount`, what `stats_meta.count` becomes.
-    #[serde(default)]
-    pub count: i64,
-    /// `modify_count`: rows changed since the dump's analyze.
-    #[serde(default)]
-    pub modify_count: i64,
-    /// `version`: the dump's stats-meta version. Only read by the
-    /// `LoadStatsInfo.Update` null-file guard (`table_name == "" && version
-    /// == 0` means the file held JSON `null`).
-    #[serde(default)]
-    pub version: u64,
-}
-
-/// Go `statsutil.JSONColumn` -- one column's or one index's dump; Go reuses
-/// the struct for both, so this does too.
-#[derive(Debug, Default, Deserialize)]
-pub struct JsonColumn {
-    /// The `tipb.Histogram`, JSON-marshalled.
-    #[serde(default)]
-    pub histogram: Option<JsonHistogram>,
-    /// The `tipb.CMSketch`: depth×width counters for stats version 1, and
-    /// the TopN rows ride inside it for version 2.
-    #[serde(default)]
-    pub cm_sketch: Option<JsonCmSketch>,
-    /// `stats_ver`. A POINTER in Go because pre-v4.0 dumps predate the field:
-    /// absent means "infer it", not "version 0" -- see
-    /// [`resolve_stats_version`].
-    #[serde(default)]
-    pub stats_ver: Option<i64>,
-    /// `null_count`.
-    #[serde(default)]
-    pub null_count: i64,
-    /// `tot_col_size`, which feeds the average-row-size costs.
-    #[serde(default)]
-    pub tot_col_size: i64,
-    /// `last_update_version`.
-    #[serde(default)]
-    pub last_update_version: u64,
-    /// `correlation`, the ordering correlation columns carry.
-    #[serde(default)]
-    pub correlation: f64,
-}
-
-/// `tipb.Histogram` as `encoding/json` writes it.
-#[derive(Debug, Default, Deserialize)]
-pub struct JsonHistogram {
-    /// `ndv`.
-    #[serde(default)]
-    pub ndv: i64,
-    /// `buckets`; entries are pointers in Go, so `null` elements survive.
-    #[serde(default)]
-    pub buckets: Option<Vec<Option<JsonBucket>>>,
-}
-
-/// `tipb.Bucket`. `count` is CUMULATIVE through this bucket, exactly the
-/// in-memory convention (`HistogramToProto` copies `Buckets[i].Count`
-/// straight across), so no re-accumulation happens on load.
-#[derive(Debug, Default, Deserialize)]
-pub struct JsonBucket {
-    /// Cumulative row count.
-    #[serde(default)]
-    pub count: i64,
-    /// Base64 of the lower-bound bytes.
-    #[serde(default)]
-    pub lower_bound: Option<String>,
-    /// Base64 of the upper-bound bytes.
-    #[serde(default)]
-    pub upper_bound: Option<String>,
-    /// Repeat count of the upper bound.
-    #[serde(default)]
-    pub repeats: i64,
-    /// Optional per-bucket NDV; a pointer in tipb, `AppendBucketWithNDV` when
-    /// present, plain `AppendBucket` when not (`HistogramFromProto`).
-    #[serde(default)]
-    pub ndv: Option<i64>,
-}
-
-/// `tipb.CMSketch`.
-#[derive(Debug, Default, Deserialize)]
-pub struct JsonCmSketch {
-    /// `rows`: the depth×width counter grid, one entry per hash row.
-    #[serde(default)]
-    pub rows: Option<Vec<Option<JsonCmSketchRow>>>,
-    /// `top_n`.
-    #[serde(default)]
-    pub top_n: Option<Vec<Option<JsonCmSketchTopN>>>,
-    /// `default_value`.
-    #[serde(default)]
-    pub default_value: u64,
-}
-
-/// `tipb.CMSketchRow`.
-#[derive(Debug, Default, Deserialize)]
-pub struct JsonCmSketchRow {
-    /// `counters`.
-    #[serde(default)]
-    pub counters: Option<Vec<u32>>,
-}
-
-/// `tipb.CMSketchTopN`.
-#[derive(Debug, Default, Deserialize)]
-pub struct JsonCmSketchTopN {
-    /// Base64 of the encoded value bytes.
-    #[serde(default)]
-    pub data: Option<String>,
-    /// The value's row count.
-    #[serde(default)]
-    pub count: u64,
-}
 
 /// Parses one dump file's text, Go `json.Unmarshal(data, jsonTbl)` in
 /// `LoadStatsInfo.Update`.
