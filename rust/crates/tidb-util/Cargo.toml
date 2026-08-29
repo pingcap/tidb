@@ -78,6 +78,10 @@ name = "fastrand"
 harness = false
 
 [[bench]]
+name = "set"
+harness = false
+
+[[bench]]
 name = "sqlescape"
 harness = false
 

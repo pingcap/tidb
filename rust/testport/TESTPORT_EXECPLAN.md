@@ -300,6 +300,10 @@ For each bounded behavior cluster:
       replace the executor-local observation simulator with direct Go-shaped
       Prometheus reporting, and remove synthetic failpoint, fixture, and
       inspection APIs that had no production consumer.
+- [x] Complete the pinned `pkg/util/set` package in its `tidb-util` owner:
+      restore all five concrete memory-aware constructors and tracker rules,
+      retain exactly seven source tests and three benchmarks, remove public
+      generic wrapper policy, and wire HashAgg to Go's concrete string set.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope

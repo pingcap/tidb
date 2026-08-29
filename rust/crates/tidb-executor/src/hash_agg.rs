@@ -88,6 +88,7 @@ use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use tidb_codec::{encode_bytes, encode_compact_bytes, encode_varint, NIL_FLAG, VARINT_FLAG};
+use tidb_datatype::GoString;
 use tidb_datatype::{
     BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, EvalType, FieldType, FieldTypeCode,
     TimeType, MAX_DECIMAL_SCALE, UNSPECIFIED_LENGTH,
@@ -99,7 +100,7 @@ use tidb_expr::Columns;
 use tidb_util::disk;
 use tidb_util::memory::{ActionOnExceed, ArcAction, Tracker};
 use tidb_util::selection::{select, Selectable};
-use tidb_util::set::MemorySet;
+use tidb_util::set::StringSetWithMemoryUsage;
 
 struct DatumSelection<'a>(&'a mut [Datum]);
 
@@ -412,7 +413,7 @@ enum Partial {
 /// is why the aggregate cannot re-read the datum and has to be told.
 struct AggState {
     partial: Partial,
-    seen: Option<MemorySet<Vec<u8>>>,
+    seen: Option<StringSetWithMemoryUsage>,
     /// Original inputs retained only by the parallel partial phase for a
     /// DISTINCT aggregate. Go's distinct partial results retain the values
     /// themselves (not merely the folded scalar) so final workers can union
@@ -437,7 +438,7 @@ impl AggState {
             .map_or(tidb_datatype::Collation::DEFAULT, expr_collation);
         AggState {
             partial: Partial::new(&func.kind),
-            seen: func.distinct.then(MemorySet::new),
+            seen: func.distinct.then(|| StringSetWithMemoryUsage::new([]).0),
             distinct_inputs: None,
             collation,
         }
@@ -486,10 +487,11 @@ impl AggState {
                 };
                 let key_bytes = i64::try_from(key.len()).unwrap_or(i64::MAX);
                 let retained_key = self.distinct_inputs.is_some().then(|| key.clone());
-                let (map_delta, inserted) = seen.insert(key);
-                if !inserted {
+                let key = GoString::from_bytes(key);
+                if seen.contains(&key) {
                     return Ok(0);
                 }
+                let map_delta = seen.insert(key);
                 delta += key_bytes + map_delta;
                 if let Some(inputs) = &mut self.distinct_inputs {
                     inputs.push(DistinctInput {
@@ -1379,7 +1381,8 @@ impl Partial {
     /// [`new_group_bytes`].
     ///
     /// DIVERGENCE (named): Go's `memDelta` also carries each accumulator's own
-    /// bookkeeping. The DISTINCT value-set table is charged by [`MemorySet`];
+    /// bookkeeping. The DISTINCT value-set table is charged by
+    /// [`StringSetWithMemoryUsage`];
     /// the `APPROX_COUNT_DISTINCT` sketch's rehash is represented by its
     /// retained hash payload. The payload is the term that grows without
     /// bound.
