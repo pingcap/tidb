@@ -33,8 +33,8 @@ use tidb_exec::cluster_catalog::{
 };
 use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
 use tidb_exec::cluster_stats_write::{
-    plan_loaded_stats_item_write, plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
-    plan_stats_write,
+    plan_historical_stats_meta_write, plan_loaded_stats_item_write,
+    plan_loaded_stats_meta_write, plan_loaded_stats_usage_write, plan_stats_write,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
@@ -732,4 +732,76 @@ fn loaded_stats_usage_replaces_timestamps_in_one_plan() {
         row.datum("last_analyzed_at").unwrap(),
         Some(&Datum::Time(expected))
     );
+}
+
+/// Pinned Go history recording selects the current meta row by both table ID
+/// and exact version before replacing `(table_id, version)` history.
+#[test]
+fn loaded_stats_history_requires_the_exact_current_meta_version() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let table_id = 4242;
+    let version = 440_000_000_000_000_000;
+    let meta = plan_loaded_stats_meta_write(
+        &mut store,
+        &catalog,
+        table_id,
+        55,
+        3,
+        version,
+        now(),
+    )
+    .expect("LOAD STATS final meta plans");
+    apply_mutations(&mut store, &meta.mutations);
+
+    assert!(plan_historical_stats_meta_write(
+        &mut store,
+        &catalog,
+        table_id,
+        version - 1,
+        "load stats",
+        now(),
+    )
+    .is_err());
+    let history = plan_historical_stats_meta_write(
+        &mut store,
+        &catalog,
+        table_id,
+        version,
+        "load stats",
+        now(),
+    )
+    .expect("the exact version plans history");
+    apply_mutations(&mut store, &history.mutations);
+
+    let table = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.name.lowercase() == "mysql")
+        .and_then(|database| {
+            database
+                .tables
+                .iter()
+                .find(|table| table.name.lowercase() == "stats_meta_history")
+        })
+        .expect("stats_meta_history exists");
+    let view = SystemTableView::project(
+        "mysql.stats_meta_history",
+        table,
+        &["table_id", "modify_count", "count", "version", "source"],
+    );
+    let rows = scan_system_table(&mut store, &view).expect("history rows scan");
+    let timezone = tidb_datatype::SessionTimeZone::utc();
+    let row = rows
+        .iter()
+        .map(|(key, value)| {
+            SystemRow::parse_in_timezone(&view, key, value, Some(&timezone))
+                .expect("history row decodes")
+        })
+        .find(|row| row.i64("table_id").unwrap() == Some(table_id))
+        .expect("history row exists");
+    assert_eq!(row.i64("modify_count").unwrap(), Some(3));
+    assert_eq!(row.i64("count").unwrap(), Some(55));
+    assert_eq!(row.u64("version").unwrap(), Some(version));
+    assert_eq!(row.bytes("source").unwrap().as_deref(), Some(b"load stats".as_slice()));
 }

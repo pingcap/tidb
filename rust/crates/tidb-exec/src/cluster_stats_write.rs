@@ -95,6 +95,8 @@ pub enum StatsWriteError {
     Cms(String),
     /// A predicate-column timestamp could not be parsed as Go TIMESTAMP(6).
     PredicateTime(String),
+    /// The exact statistics version needed for a history row is no longer current.
+    HistoricalMeta(String),
 }
 
 impl std::fmt::Display for StatsWriteError {
@@ -111,6 +113,7 @@ impl std::fmt::Display for StatsWriteError {
                     "a predicate-column timestamp did not parse: {detail}"
                 )
             }
+            Self::HistoricalMeta(detail) => formatter.write_str(detail),
         }
     }
 }
@@ -277,6 +280,93 @@ pub fn plan_loaded_stats_usage_write<S: MetaSnapshot>(
     }
     rows.publish_watermark(catalog, &mut plan)?;
     Ok(plan)
+}
+
+/// Plans pinned Go `RecordHistoricalStatsMeta` for one committed statistics
+/// version. The caller owns Go's feature switch and nonfatal error policy;
+/// this function states only the transaction's exact `SELECT ... FOR UPDATE`
+/// and `REPLACE` behavior.
+pub fn plan_historical_stats_meta_write<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    version: u64,
+    source: &str,
+    now: Time,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let meta = locate(catalog, "stats_meta")?;
+    let meta_rows = StatsRows::open(snapshot, meta, &["table_id"], table_id)?;
+    let identity = vec![format!("{:?}", Datum::Int(table_id))];
+    let values = meta_rows.existing_values(&identity).ok_or_else(|| {
+        StatsWriteError::HistoricalMeta("no historical meta stats can be recorded".to_owned())
+    })?;
+    let stored_version = unsigned_value(values.get(&column_id(meta, "version")?));
+    if stored_version != Some(version) {
+        return Err(StatsWriteError::HistoricalMeta(
+            "no historical meta stats can be recorded".to_owned(),
+        ));
+    }
+    let modify_count =
+        signed_value(values.get(&column_id(meta, "modify_count")?)).ok_or_else(|| {
+            StatsWriteError::HistoricalMeta("invalid stats_meta.modify_count".to_owned())
+        })?;
+    let count = signed_value(values.get(&column_id(meta, "count")?))
+        .ok_or_else(|| StatsWriteError::HistoricalMeta("invalid stats_meta.count".to_owned()))?;
+
+    let history = locate(catalog, "stats_meta_history")?;
+    let mut rows = StatsRows::open(snapshot, history, &["table_id", "version"], table_id)?;
+    let mut history_values = defaults_row(history, now)?;
+    set(
+        history,
+        &mut history_values,
+        "table_id",
+        Datum::Int(table_id),
+    );
+    set(
+        history,
+        &mut history_values,
+        "modify_count",
+        Datum::Int(modify_count),
+    );
+    set(history, &mut history_values, "count", Datum::Int(count));
+    set(
+        history,
+        &mut history_values,
+        "version",
+        Datum::UInt(version),
+    );
+    set(
+        history,
+        &mut history_values,
+        "source",
+        Datum::Bytes(source.as_bytes().to_vec()),
+    );
+    set(
+        history,
+        &mut history_values,
+        "create_time",
+        Datum::Time(now),
+    );
+    let mut plan = StatsWritePlan::default();
+    rows.store(snapshot, catalog, &history_values, &mut plan)?;
+    rows.publish_watermark(catalog, &mut plan)?;
+    Ok(plan)
+}
+
+fn signed_value(value: Option<&Datum>) -> Option<i64> {
+    match value {
+        Some(Datum::Int(value)) => Some(*value),
+        Some(Datum::UInt(value)) => i64::try_from(*value).ok(),
+        _ => None,
+    }
+}
+
+fn unsigned_value(value: Option<&Datum>) -> Option<u64> {
+    match value {
+        Some(Datum::UInt(value)) => Some(*value),
+        Some(Datum::Int(value)) => u64::try_from(*value).ok(),
+        _ => None,
+    }
 }
 
 fn predicate_time(
