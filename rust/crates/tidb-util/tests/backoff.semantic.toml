@@ -1,9 +1,0 @@
-go_package = "pkg/util/backoff"
-source_commit = "e2788410d8d696605e8cb002585877a063ccc909"
-evidence_files = [
-  "rust/crates/tidb-util/src/backoff.rs",
-  "rust/crates/tidb-util/src/lib.rs",
-]
-commands = [
-  ["test", "-p", "tidb-util", "--lib", "backoff::tests"],
-]
