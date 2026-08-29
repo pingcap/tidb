@@ -36,6 +36,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: completed the pinned Go
+  `pkg/statistics/handle/internal` support package in
+  `tidb-stats-handle-internal`. Removed Rust's opaque, caller-encoded table
+  snapshot carrier and its three source-absent tests. The replacement compares
+  real `tidb_stats::Table` values with Go's count, textual-histogram,
+  CMSketch, nil-aware TopN, and existence-map semantics. Inventory and WIP
+  gates are in `receipts/statistics_handle_internal.md`.
 - 2026-08-29: audited the complete pinned Go
   `pkg/statistics/handle/metrics` package and found its runtime identity depends
   on real gauge/counter vectors owned by the 60-artifact `pkg/metrics`
@@ -722,6 +729,11 @@ For each bounded behavior cluster:
       constructors and both source sampling policies over the shared logutil
       owner, without adding tests to the source-test-free package. The atomic
       inventory and WIP gates are in `receipts/statistics_handle_logutil.md`.
+- [x] Complete the pinned `pkg/statistics/handle/internal` support package in
+      `tidb-stats-handle-internal`: replace the opaque snapshot workaround
+      with `AssertTableEqual` over actual statistics tables, and remove its
+      three non-Go tests. The atomic inventory and WIP gates are in
+      `receipts/statistics_handle_internal.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -780,6 +792,11 @@ For each bounded behavior cluster:
   package behavior and must bind the future complete `pkg/metrics` owner; the
   disconnected Rust constants/tests are removed until that dependency lands.
   Date/Author: 2026-08-29, Codex.
+- Decision: `pkg/statistics/handle/internal` must compare the real statistics
+  graph. Caller-provided canonical byte encodings bypass the imported
+  `HistogramEqual`, `CMSketch.Equal`, `TopN.Equal`, and existence-map behavior
+  and are therefore not a valid native representation of the Go helper.
+  Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 
@@ -798,6 +815,9 @@ For each bounded behavior cluster:
   test nothing and must not count as parity.
 - The current workspace still contains many `go-parity-gap` markers. Their
   presence is an audit queue, not evidence that every carrier should survive.
+- Go's test-only histogram equality deliberately compares `ToString(0)` and
+  therefore ignores metadata absent from that projection. Rust derived
+  `PartialEq` is stricter and cannot substitute for this helper's behavior.
 - The full planner test target currently encounters unrelated pre-existing
   compile errors in CTE/TopN and memory-trace test sources; scoped planner tests
   for the changed MPP property behavior pass.

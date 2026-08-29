@@ -64,7 +64,7 @@ fn stats_cache_mem_tracker() {
 // reloaded from storage after Handle.Clear + Update must be AssertTableEqual
 // to the in-memory copy (same RealtimeCount = 1000 rows).
 #[test]
-#[ignore = "go-parity-gap: requires testkit session/domain plus StatsHandle store/load round-trip and internal.AssertTableEqual over full Table payloads not present in tidb-stats"]
+#[ignore = "go-parity-gap: requires testkit session/domain plus the StatsHandle store/load round-trip not present in tidb-stats"]
 fn stats_store_and_load() {
     unreachable!("gated by go-parity-gap ignore")
 }

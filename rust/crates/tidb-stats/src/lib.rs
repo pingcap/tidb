@@ -109,7 +109,6 @@ pub mod stats_meta;
 pub mod stats_meta_save_sql;
 pub mod stats_meta_update;
 pub mod stats_read_writer;
-pub mod stats_table_snapshot;
 pub mod stats_version;
 pub mod status;
 pub mod sync_load_concurrency;
@@ -301,9 +300,6 @@ pub use stats_meta_update::{
 pub use stats_read_writer::{
     historical_stats_meta_record_required, slow_stats_saving_requires_meta_update, LEASE_OFFSET,
     SLOW_STATS_SAVE_ERROR_MESSAGE,
-};
-pub use stats_table_snapshot::{
-    stats_table_snapshots_equal, StatsItemSnapshot, StatsTableSnapshot,
 };
 pub use stats_version::{
     is_analyzed, is_column_analyzed_or_synthesized, VERSION_0, VERSION_1, VERSION_2,
