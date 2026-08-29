@@ -39,7 +39,6 @@ pub mod auto_analyze_ratio;
 pub mod auto_analyze_runtime;
 pub mod auto_analyze_window;
 pub mod average_count;
-pub mod batch_update;
 pub mod bootstrap_sql;
 pub mod builder;
 pub mod cmsketch;
@@ -90,7 +89,6 @@ pub mod scalar_enum;
 pub mod scalar_geometry;
 pub mod sorted_builder;
 pub mod static_partitioned_analysis;
-pub mod stats_cache_version;
 pub mod stats_delta;
 pub mod stats_lock_table;
 pub mod stats_meta;
@@ -101,7 +99,6 @@ pub mod stats_version;
 pub mod status;
 pub mod sync_load_concurrency;
 pub mod table;
-pub mod table_id_filter;
 pub mod topn_merge_task;
 pub mod weighted_reservoir;
 pub mod worker_capacity;
@@ -139,7 +136,6 @@ pub use auto_analyze_runtime::{
 };
 pub use auto_analyze_window::{AutoAnalysisTimeWindow, UtcDayMinute};
 pub use average_count::avg_count_per_not_null_value;
-pub use batch_update::BatchUpdate;
 pub use bootstrap_sql::{gen_init_stats_histograms_sql, gen_init_stats_meta_sql, HistSqlOptions};
 pub use builder::{
     build_column, build_column_histogram, build_hist_and_topn, try_build_column_histogram,
@@ -250,7 +246,6 @@ pub use static_partitioned_analysis::{
     has_newly_added_static_partition_index, static_partition_analyze_type,
     static_partition_table_id, ANALYZE_STATIC_PARTITION, ANALYZE_STATIC_PARTITION_INDEX,
 };
-pub use stats_cache_version::max_stats_cache_version;
 pub use stats_delta::{stats_delta_from_rows, StatsDelta, SELECT_DELTA_SQL};
 pub use stats_lock_table::StatsLockTable;
 pub use stats_meta::{stats_meta_counts, stats_meta_query, StatsMetaCounts};
@@ -273,7 +268,6 @@ pub use table::{
     PseudoTableInfo, QueryColumn, QueryIndexInfo, QueryTableInfo, SharedColumn, SharedIndex,
     StatsInfo, Table, TableMemoryUsage, PSEUDO_ROW_COUNT, PSEUDO_VERSION,
 };
-pub use table_id_filter::build_in_table_ids_string;
 pub use tidb_stats_handle_util::*;
 pub use topn_merge_task::TopnStatsMergeTask;
 pub use weighted_reservoir::{WeightedReservoir, WeightedSample};

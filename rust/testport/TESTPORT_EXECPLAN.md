@@ -800,6 +800,12 @@ For each bounded behavior cluster:
       metadata, and completing it requires the absent atomic `pkg/metrics`
       owner. The inventory is in
       `receipts/statistics_handle_cache_metrics_audit.md`.
+- [x] Audit the complete pinned root `pkg/statistics/handle/cache` package.
+      Remove three private-helper carriers and eight supplemental tests: Go's
+      package behavior is the integrated atomic cache, SQL row cache, metrics,
+      LFU/map selection, publication, update, and benchmark surface. The root
+      stays unclaimed while its LFU and metric dependencies are absent. The
+      full inventory is in `receipts/statistics_handle_cache_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -903,6 +909,12 @@ For each bounded behavior cluster:
   collectors have different identity and lifecycle. The package remains
   explicitly unclaimed until that dependency is complete. Date/Author:
   2026-08-29, Codex.
+- Decision: the root statistics cache is one package, not independently
+  claimable batch, version, and SQL-format helpers. Its two source tests and
+  six benchmarks depend on the actual cache implementation and backends.
+  Generic or scalar extracts bypass atomic publication, metrics, SQL/session
+  work, LFU behavior, and cache lifecycle, so they are removed until the whole
+  package can be completed. Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 
