@@ -3249,6 +3249,7 @@ dependencies = [
  "smallvec",
  "tidb-error",
  "tidb-kvcache",
+ "tidb-mysql",
 ]
 
 [[package]]

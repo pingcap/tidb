@@ -18,6 +18,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::{OnceLock, RwLock};
 
+use tidb_mysql::to_lowercase as go_simple_lowercase;
+
 #[cfg(test)]
 pub(crate) static REGISTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -25,6 +27,9 @@ pub(crate) static REGISTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::n
 pub const PAD_SPACE: &str = "PAD SPACE";
 /// Trailing spaces are significant.
 pub const PAD_NONE: &str = "NO PAD";
+
+/// The charset-name set exported by Go as `TiFlashSupportedCharsets`.
+pub const TIFLASH_SUPPORTED_CHARSETS: &[&str] = &["utf8", "utf8mb4", "ascii", "latin1", "binary"];
 
 /// A charset fully supported by TiDB's parser charset package.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -553,12 +558,12 @@ pub fn valid_charset_and_collation(charset: &str, collation: &str) -> bool {
     collation.is_empty()
         || info
             .collations
-            .contains_key(utf8_alias(&collation.to_ascii_lowercase()))
+            .contains_key(utf8_alias(&go_simple_lowercase(collation)))
 }
 
 /// Returns the legacy parser default; GBK and GB18030 are deliberately absent.
 pub fn get_default_collation_legacy(charset: &str) -> Result<String, CharsetError> {
-    let lower = charset.to_ascii_lowercase();
+    let lower = go_simple_lowercase(charset);
     match lower.as_str() {
         "utf8mb3" => get_default_collation("utf8"),
         "utf8" | "utf8mb4" | "ascii" | "latin1" | "binary" => get_default_collation(&lower),
@@ -581,7 +586,7 @@ pub fn get_charset_info(charset: &str) -> Result<CharsetInfo, CharsetError> {
     let canonical = if charset.eq_ignore_ascii_case("utf8mb3") {
         "utf8".to_owned()
     } else {
-        charset.to_ascii_lowercase()
+        go_simple_lowercase(charset)
     };
     let guard = registry().read().expect("charset registry lock poisoned");
     if let Some(info) = guard.supported.get(&canonical) {
@@ -620,7 +625,7 @@ pub fn get_collation_by_name(name: &str) -> Result<CollationInfo, CharsetError> 
         .read()
         .expect("charset registry lock poisoned")
         .collations_by_name
-        .get(utf8_alias(&name.to_ascii_lowercase()))
+        .get(utf8_alias(&go_simple_lowercase(name)))
         .cloned()
         .ok_or_else(|| CharsetError::UnknownCollation(name.to_owned()))
 }
@@ -649,8 +654,23 @@ pub fn add_charset(charset: CharsetInfo) {
 pub fn remove_charset(name: &str) {
     let mut guard = registry().write().expect("charset registry lock poisoned");
     guard.supported.remove(name);
-    // Preserve the source implementation's name comparison exactly.
-    guard.supported_collations.retain(|row| row.name != name);
+    // Preserve both the source's name comparison and its range-over-original-
+    // length mutation behavior exactly.
+    let original_len = guard.supported_collations.len();
+    let mut bounds_panic = None;
+    for index in 0..original_len {
+        if index >= guard.supported_collations.len() {
+            bounds_panic = Some((index, guard.supported_collations.len()));
+            break;
+        }
+        if guard.supported_collations[index].name == name {
+            guard.supported_collations.remove(index);
+        }
+    }
+    drop(guard);
+    if let Some((index, len)) = bounds_panic {
+        panic!("runtime error: index out of range [{index}] with length {len}");
+    }
 }
 
 /// Adds a collation to every applicable registry view.

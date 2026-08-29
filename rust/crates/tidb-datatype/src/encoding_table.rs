@@ -17,6 +17,7 @@
 use std::fmt;
 
 use encoding_rs::{EncoderResult, GBK};
+use tidb_mysql::to_lowercase as go_simple_lowercase;
 
 #[derive(Debug, Clone, Copy)]
 struct EncodingLabel {
@@ -112,12 +113,9 @@ impl std::error::Error for HtmlEncodingError {}
 
 /// Resolves an HTML encoding label using the exact source alias table.
 ///
-/// Matching is case-insensitive and ignores only the ASCII whitespace trimmed
-/// by the Go implementation.
+/// Matching uses Go's simple lowercase mapping after `strings.TrimSpace`.
 pub fn lookup_encoding(label: &str) -> Option<HtmlEncoding> {
-    let normalized = label
-        .trim_matches(['\t', '\n', '\r', '\u{c}', ' '])
-        .to_ascii_lowercase();
+    let normalized = go_simple_lowercase(label.trim());
     let row = ENCODING_LABELS.iter().find(|row| row.label == normalized)?;
     let codec = match row.canonical {
         "utf-8" | "binary" => HtmlCodec::Nop,
@@ -280,7 +278,14 @@ mod tests {
             Some("gbk")
         );
         assert!(lookup_encoding("not-an-encoding").is_none());
-        assert!(lookup_encoding("\u{a0}gbk").is_none());
+        assert_eq!(
+            lookup_encoding("\u{a0}gbk").map(HtmlEncoding::canonical_name),
+            Some("gbk")
+        );
+        assert_eq!(
+            lookup_encoding("İBM866").map(HtmlEncoding::canonical_name),
+            Some("ibm866")
+        );
     }
 
     #[test]

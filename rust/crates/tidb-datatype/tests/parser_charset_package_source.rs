@@ -19,6 +19,7 @@ use tidb_datatype::{
     get_collation_by_name, get_default_collation, get_default_collation_legacy,
     get_supported_charsets, get_supported_collations, remove_charset, valid_charset_and_collation,
     CharsetInfo, CollationInfo, Encoding, TransformOp, PAD_NONE,
+    TIFLASH_SUPPORTED_CHARSETS,
 };
 
 static REGISTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -47,6 +48,14 @@ fn test_valid_charset() {
     ] {
         assert_eq!(valid_charset_and_collation(charset, collation), expected);
     }
+}
+
+#[test]
+fn tiflash_supported_charset_set_matches_source() {
+    assert_eq!(
+        TIFLASH_SUPPORTED_CHARSETS,
+        &["utf8", "utf8mb4", "ascii", "latin1", "binary"]
+    );
 }
 
 #[test]
@@ -136,6 +145,20 @@ fn test_valid_custom_charset() {
     assert!(valid_charset_and_collation("custom", "custom_collation"));
     assert!(!valid_charset_and_collation("utf8", "utf8_invalid_ci"));
     remove_charset("custom");
+}
+
+#[test]
+fn custom_charset_lookup_uses_go_simple_lowercase() {
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    add_charset(CharsetInfo {
+        name: "i".to_owned(),
+        default_collation: "i_bin".to_owned(),
+        collations: Default::default(),
+        description: "Unicode lowercase probe".to_owned(),
+        maxlen: 1,
+    });
+    assert_eq!(get_charset_info("İ").unwrap().name, "i");
+    remove_charset("i");
 }
 
 #[test]

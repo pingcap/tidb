@@ -145,6 +145,16 @@ For each bounded behavior cluster:
   both views only when explicitly enabled. Removed the unit-test-shaped
   benchmark substitute, added the actual charset lookup benchmark target, and
   deleted the stale receipt and duplicate manifest batch claim.
+- 2026-08-28: re-audited the complete pinned `pkg/parser/charset` package after
+  its first package-level landing. Removed three remaining Rust policies:
+  Unicode full-case expansion in encoding case conversion, ASCII-only
+  normalization in charset and HTML encoding lookup, and the defensive
+  GB18030 truncated-prefix length check. Reused the generated Go Unicode 15
+  simple-case authority from `tidb-mysql`, restored `strings.TrimSpace`
+  behavior, exported the source TiFlash charset set, and reproduced the
+  source `RemoveCharset` slice-mutation behavior. The regenerated tables are
+  unchanged and the complete source/Rust/downstream validation is recorded in
+  `receipts/parser_charset.md`.
 - 2026-08-28: audited every production, generated catalog/table, test,
   harness, and build file in pinned Go `pkg/parser/mysql`, including its
   `tidb-error` ownership split. Removed a Rust-only test that failed on host Go

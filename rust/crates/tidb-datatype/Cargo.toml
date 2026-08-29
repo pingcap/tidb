@@ -21,6 +21,7 @@ serde_json = { workspace = true, features = ["raw_value"] }
 smallvec.workspace = true
 tidb-error = { path = "../tidb-error" }
 tidb-kvcache = { path = "../tidb-kvcache" }
+tidb-mysql = { path = "../tidb-mysql" }
 
 [dev-dependencies]
 sha2 = { workspace = true }

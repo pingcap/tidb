@@ -111,7 +111,7 @@ pub use charset::{
     get_collation_by_id, get_collation_by_name, get_default_charset_and_collate,
     get_default_collation, get_default_collation_legacy, get_supported_charsets,
     get_supported_collations, remove_charset, valid_charset_and_collation, Charset, CharsetError,
-    CharsetInfo, Collation, CollationInfo, PAD_NONE, PAD_SPACE,
+    CharsetInfo, Collation, CollationInfo, PAD_NONE, PAD_SPACE, TIFLASH_SUPPORTED_CHARSETS,
 };
 pub use collation::{
     binary_collation_name, binary_collator, collation_id_to_name, collation_name_to_id,
