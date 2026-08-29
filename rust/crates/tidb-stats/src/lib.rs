@@ -144,7 +144,7 @@ pub use status::{StatsLoadedStatus, ALL_EVICTED, ALL_LOADED};
 pub use table::{
     pseudo_hist_coll, pseudo_table, CopyIntent, HistColl, PseudoColumnInfo, PseudoIndexInfo,
     PseudoTableInfo, QueryColumn, QueryIndexInfo, QueryTableInfo, SharedColumn, SharedIndex,
-    StatsInfo, Table, TableMemoryUsage, PSEUDO_ROW_COUNT, PSEUDO_VERSION,
+    StatsInfo, Table, TableMemoryUsage, PSEUDO_ROW_COUNT, PSEUDO_VERSION, RATIO_OF_PSEUDO_ESTIMATE,
 };
 pub use tidb_stats_handle_util::*;
 pub use weighted_reservoir::{WeightedReservoir, WeightedSample};

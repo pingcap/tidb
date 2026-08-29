@@ -118,16 +118,6 @@ fn empty_table_row_counts_golden() {}
 #[ignore = "go-parity-gap: same live-testkit dependency as the rest of this file"]
 fn analyze_output_and_limits_golden() {}
 
-/// GO PORT of `pkg/planner/core/casetest/cbotest/cbo_test.go:582
-/// TestOutdatedAnalyze`.
-///
-/// Per-case records carry a `RatioOfPseudoEstimate` value the test stores
-/// into the global atom before planning; pins when outdated stats fall back
-/// to pseudo estimation for indexed access paths.
-#[test]
-#[ignore = "go-parity-gap: outdated-stats fallback decision lives in unported selectivity/range code driven by live sessions"]
-fn outdated_analyze_switches_to_pseudo_at_ratio() {}
-
 /// GO PORT of `pkg/planner/core/casetest/cbotest/cbo_test.go:627
 /// TestNullCount`.
 ///

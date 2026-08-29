@@ -91,6 +91,21 @@ impl TableStatistics {
         -1.0
     }
 
+    /// Go `statistics.Table.IsOutdated`: compare modifications with the
+    /// analyzed histogram count, falling back to realtime count when no
+    /// histogram is initialized, using the process-wide 0.7 policy value.
+    #[must_use]
+    pub fn is_outdated(&self) -> bool {
+        let analyzed = self.analyze_row_count();
+        let row_count = if analyzed < 0.0 {
+            self.row_count as f64
+        } else {
+            analyzed
+        };
+        row_count > 0.0
+            && self.modify_count as f64 / row_count > tidb_stats::RATIO_OF_PSEUDO_ESTIMATE.load()
+    }
+
     /// One table's statistics with [`Self::pseudo`] decided the way Go decides
     /// it, so no caller has to decide it again.
     ///
@@ -108,9 +123,8 @@ impl TableStatistics {
     ///   column and no index has an analyzed histogram. The row count can
     ///   still be real, which is why the two halves are separate fields.
     ///
-    /// Its third route, `IsOutdated`, is gated on
-    /// `tidb_enable_pseudo_for_outdated_stats`, whose default is `false`
-    /// (`vardef.DefTiDBEnablePseudoForOutdatedStats`), so it never fires here.
+    /// Its third route, `IsOutdated`, is session-dependent and is therefore
+    /// applied by the common planner entry instead of this cached object.
     #[must_use]
     pub fn new(
         row_count: i64,

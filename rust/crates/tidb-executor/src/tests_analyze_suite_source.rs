@@ -155,7 +155,12 @@ fn full_sampling_keeps_nulls_out_of_column_and_index_distributions() {
             .histogram
             .buckets
             .iter()
-            .map(|bucket| (&bucket.lower_bound, &bucket.upper_bound, bucket.count, bucket.repeat))
+            .map(|bucket| (
+                &bucket.lower_bound,
+                &bucket.upper_bound,
+                bucket.count,
+                bucket.repeat
+            ))
             .collect::<Vec<_>>(),
         vec![
             (&Datum::Int(3), &Datum::Int(3), 1, 1),

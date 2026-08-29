@@ -15,6 +15,7 @@
 //! Aggregate `HistColl` and `Table` ownership from `pkg/statistics/table.go`.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{
@@ -24,6 +25,30 @@ use crate::{
 
 pub const PSEUDO_VERSION: u64 = 0;
 pub const PSEUDO_ROW_COUNT: i64 = 10_000;
+
+/// Atomic floating-point value used for Go's process-wide statistics policy.
+pub struct AtomicF64(AtomicU64);
+
+impl AtomicF64 {
+    /// Creates an atomic value.
+    pub const fn new(value: f64) -> Self {
+        Self(AtomicU64::new(value.to_bits()))
+    }
+
+    /// Loads the current value.
+    pub fn load(&self) -> f64 {
+        f64::from_bits(self.0.load(Ordering::Relaxed))
+    }
+
+    /// Stores a new value.
+    pub fn store(&self, value: f64) {
+        self.0.store(value.to_bits(), Ordering::Relaxed);
+    }
+}
+
+/// Go `statistics.RatioOfPseudoEstimate`: modifications above this fraction
+/// of the analyzed row count make statistics outdated.
+pub static RATIO_OF_PSEUDO_ESTIMATE: AtomicF64 = AtomicF64::new(0.7);
 
 pub type SharedColumn = Arc<RwLock<Column>>;
 pub type SharedIndex = Arc<RwLock<Index>>;
@@ -761,14 +786,15 @@ impl Table {
     }
 
     #[must_use]
-    pub fn is_outdated(&self, ratio: f64) -> bool {
+    pub fn is_outdated(&self) -> bool {
         let analyzed = self.hist_coll.analyze_row_count();
         let row_count = if analyzed < 0.0 {
             self.hist_coll.realtime_count as f64
         } else {
             analyzed
         };
-        row_count > 0.0 && self.hist_coll.modify_count as f64 / row_count > ratio
+        row_count > 0.0
+            && self.hist_coll.modify_count as f64 / row_count > RATIO_OF_PSEUDO_ESTIMATE.load()
     }
 
     /// Go `GetStatsInfo`. `need_copy == false` returns an alias to the cache

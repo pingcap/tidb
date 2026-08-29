@@ -18,7 +18,8 @@ use tidb_datatype::Datum;
 use tidb_stats::{
     Bucket, ColAndIdxExistenceMap, Column, ColumnInfo, CopyIntent, HistColl, Histogram, Index,
     IndexInfo, PseudoColumnInfo, PseudoIndexInfo, PseudoTableInfo, QueryColumn, QueryIndexInfo,
-    QueryTableInfo, StatsLoadedStatus, Table, TopN, ALL_EVICTED, PSEUDO_ROW_COUNT, PSEUDO_VERSION,
+    QueryTableInfo, StatsLoadedStatus, Table, TopN, ALL_EVICTED, RATIO_OF_PSEUDO_ESTIMATE,
+    PSEUDO_ROW_COUNT, PSEUDO_VERSION,
 };
 
 fn column(id: i64, count: i64, status: StatsLoadedStatus) -> Column {
@@ -561,8 +562,12 @@ fn source_health_outdated_analysis_and_mv_scaling_match() {
     let table = table();
     assert_eq!(table.hist_coll.analyze_row_count(), 80.0);
     assert_eq!(table.stats_healthy(), (75, true));
-    assert!(!table.is_outdated(0.25));
-    assert!(table.is_outdated(0.249));
+    let original = RATIO_OF_PSEUDO_ESTIMATE.load();
+    RATIO_OF_PSEUDO_ESTIMATE.store(0.25);
+    assert!(!table.is_outdated());
+    RATIO_OF_PSEUDO_ESTIMATE.store(0.249);
+    assert!(table.is_outdated());
+    RATIO_OF_PSEUDO_ESTIMATE.store(original);
     assert!(table.is_initialized());
     assert!(table.is_analyzed());
     assert!(table.is_eligible_for_analysis(100));

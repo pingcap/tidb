@@ -20,6 +20,7 @@
 //! and translates the aggregation property back to stable relation-qualified
 //! column identities understood by the executor's physical source builder.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -135,6 +136,7 @@ struct InitStats<'a> {
     catalog: &'a Catalog,
     select: Option<&'a tidb_ast::SelectStmt>,
     default_string_match_selectivity: f64,
+    enable_pseudo_for_outdated_stats: bool,
     zone: &'a tidb_datatype::SessionTimeZone,
 }
 
@@ -146,7 +148,19 @@ impl OwnedRewrite for InitStats<'_> {
         let LogicalPlan::DataSource(source) = node else {
             return Descend::Children(vec![(); node.children().len()]);
         };
-        let statistics = self.catalog.table_statistics(source.table_id);
+        let stored_statistics = self.catalog.table_statistics(source.table_id);
+        // Go `GetStatsTable` copies the cached table before marking an
+        // outdated distribution pseudo. The switch belongs to this session,
+        // so the shared statistics cache must remain unchanged for peers.
+        let statistics = stored_statistics.as_deref().map(|statistics| {
+            if self.enable_pseudo_for_outdated_stats && statistics.is_outdated() {
+                let mut copied = statistics.clone();
+                copied.pseudo = true;
+                Cow::Owned(copied)
+            } else {
+                Cow::Borrowed(statistics)
+            }
+        });
         let statistics = statistics.as_deref();
         let row_count = crate::access_cost::realtime_row_count(statistics);
         let loaded_columns = statistics
@@ -479,6 +493,7 @@ fn optimize_cte_tree(
             catalog,
             select: None,
             default_string_match_selectivity: ctx.default_string_match_selectivity(),
+            enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
             zone,
         },
         optimized,
@@ -816,6 +831,7 @@ fn optimize_built_logical(
             catalog,
             select: (source_count == 1).then_some(select_hint).flatten(),
             default_string_match_selectivity: ctx.default_string_match_selectivity(),
+            enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
             zone: session_zone,
         },
         optimized,

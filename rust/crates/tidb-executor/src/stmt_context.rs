@@ -551,6 +551,9 @@ pub struct StmtContext {
     /// TopN-assisted string-match estimation; any non-zero value disables it
     /// and becomes the fallback estimate.
     default_string_match_selectivity: f64,
+    /// Go `SessionVars.EnablePseudoForOutdatedStats`: whether this statement
+    /// may replace stale analyzed distributions with pseudo statistics.
+    enable_pseudo_for_outdated_stats: bool,
     /// The validated statement snapshot of `@@block_encryption_mode`.
     block_encryption_mode: tidb_expr::BlockEncryptionMode,
     /// `@@max_allowed_packet`, which the result-sizing string builtins read.
@@ -753,6 +756,7 @@ impl StmtContext {
             no_unsigned_subtraction: false,
             like_default_escape: b'\\',
             default_string_match_selectivity: 0.0,
+            enable_pseudo_for_outdated_stats: false,
             block_encryption_mode: tidb_expr::BlockEncryptionMode::default(),
             // Go `vardef.DefMaxAllowedPacket`, the value a default server runs
             // with and the one the `Columns` trait default already used.
@@ -978,6 +982,13 @@ impl StmtContext {
         self
     }
 
+    /// Sets `@@tidb_enable_pseudo_for_outdated_stats` for this statement.
+    #[must_use]
+    pub fn with_pseudo_for_outdated_stats(mut self, enabled: bool) -> Self {
+        self.enable_pseudo_for_outdated_stats = enabled;
+        self
+    }
+
     /// Attaches the AES mode selected by this session for the statement.
     #[must_use]
     pub fn with_block_encryption_mode(mut self, mode: tidb_expr::BlockEncryptionMode) -> Self {
@@ -1013,6 +1024,12 @@ impl StmtContext {
     #[must_use]
     pub fn default_string_match_selectivity(&self) -> f64 {
         self.default_string_match_selectivity
+    }
+
+    /// Go `SessionVars.GetEnablePseudoForOutdatedStats`.
+    #[must_use]
+    pub fn enable_pseudo_for_outdated_stats(&self) -> bool {
+        self.enable_pseudo_for_outdated_stats
     }
 
     /// The connection charset/collation used while building expressions.

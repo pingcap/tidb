@@ -955,6 +955,9 @@ For each bounded behavior cluster:
 - [x] Port `pkg/statistics/integration_test.go`'s full-sampling NULL contract
       for both column and index statistics, and carry the analyze snapshot TSO
       through `ClusterTableStats`, `mysql.stats_meta`, and the reload path.
+- [x] Port `TestOutdatedStatsCheck`/`TestOutdatedAnalyze`: preserve Go's
+      process-wide 0.7 policy atom, snapshot the session switch per statement,
+      and mark only the planner-local copy pseudo without mutating cached stats.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope

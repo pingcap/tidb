@@ -57,6 +57,7 @@ pub(crate) struct StatementVarSnapshot {
     cte_depth: i64,
     join_reorder_threshold: i32,
     default_string_match_selectivity: f64,
+    enable_pseudo_for_outdated_stats: bool,
     advanced_join_reorder: bool,
     constraint_check_in_place: bool,
     ordering_index_selectivity_ratio: f64,
@@ -582,6 +583,7 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<f64>().ok())
                 .unwrap_or(0.0),
+            enable_pseudo_for_outdated_stats: on("tidb_enable_pseudo_for_outdated_stats"),
             advanced_join_reorder: not_off(
                 tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
             ),
@@ -706,6 +708,7 @@ impl Session {
         let cte_depth = snapshot.cte_depth;
         let join_reorder_threshold = snapshot.join_reorder_threshold;
         let default_string_match_selectivity = snapshot.default_string_match_selectivity;
+        let enable_pseudo_for_outdated_stats = snapshot.enable_pseudo_for_outdated_stats;
         let advanced_join_reorder = snapshot.advanced_join_reorder;
         let constraint_check_in_place = snapshot.constraint_check_in_place;
         let ordering_index_selectivity_ratio = snapshot.ordering_index_selectivity_ratio;
@@ -803,6 +806,7 @@ impl Session {
                 .with_no_unsigned_subtraction(sql_mode.has_no_unsigned_subtraction_mode())
                 .with_like_default_escape(like_default_escape)
                 .with_default_string_match_selectivity(default_string_match_selectivity)
+                .with_pseudo_for_outdated_stats(enable_pseudo_for_outdated_stats)
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_resource_group_name(self.active_resource_group.clone())
                 .with_lazy_clock(snapshot.timestamp, zone);
@@ -854,6 +858,7 @@ impl Session {
         .with_no_unsigned_subtraction(sql_mode.has_no_unsigned_subtraction_mode())
         .with_like_default_escape(like_default_escape)
         .with_default_string_match_selectivity(default_string_match_selectivity)
+        .with_pseudo_for_outdated_stats(enable_pseudo_for_outdated_stats)
         .with_auto_increment_step(increment, offset)
         .with_auto_increment_zero_explicit(sql_mode.has_no_auto_value_on_zero_mode())
         .with_foreign_key_checks(self.foreign_key_checks())

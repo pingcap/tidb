@@ -1995,6 +1995,67 @@ fn a_full_table_scan_under_pseudo_stats_pays_gos_risk_penalty() {
     assert!(info.starts_with("range:(5,+inf]"), "{info}");
 }
 
+/// Go `pkg/statistics/integration_test.go::TestOutdatedStatsCheck`: stale
+/// analyzed statistics become pseudo only for a session that enables
+/// `tidb_enable_pseudo_for_outdated_stats`. The denominator is the histogram's
+/// analyzed row count (20), not the current `stats_meta.count` (35), so 15
+/// modifications cross Go's strict `> 0.7` threshold.
+#[test]
+fn outdated_statistics_follow_the_session_pseudo_switch() {
+    struct RestoreOutdatedRatio(f64);
+    impl Drop for RestoreOutdatedRatio {
+        fn drop(&mut self) {
+            tidb_stats::RATIO_OF_PSEUDO_ESTIMATE.store(self.0);
+        }
+    }
+
+    let _restore = RestoreOutdatedRatio(tidb_stats::RATIO_OF_PSEUDO_ESTIMATE.load());
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT)").unwrap();
+    session
+        .run(
+            "INSERT INTO t VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1),\
+             (1),(1),(1),(1),(1),(1),(1),(1),(1),(1)",
+        )
+        .unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+
+    let shared = session.shared_catalog();
+    {
+        let mut catalog = shared.lock().unwrap();
+        let table_id = match catalog.table_mut_in("test", "t").unwrap() {
+            tidb_executor::TableEntry::Kv(table) => table.table_id,
+            _ => panic!("t is not a KV table"),
+        };
+        let mut statistics = (*catalog.table_statistics(table_id).unwrap()).clone();
+        statistics.row_count = 35;
+        statistics.modify_count = 15;
+        catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    }
+
+    let scan_info = |session: &mut Session| {
+        row_text(session.run("EXPLAIN SELECT * FROM t WHERE a = 1"))
+            .into_iter()
+            .find(|row| row[0].contains("Scan"))
+            .expect("scan row")[4]
+            .clone()
+    };
+    tidb_stats::RATIO_OF_PSEUDO_ESTIMATE.store(10.0);
+    assert!(!scan_info(&mut session).contains("stats:pseudo"));
+    session
+        .run("SET SESSION tidb_enable_pseudo_for_outdated_stats = ON")
+        .unwrap();
+    assert!(!scan_info(&mut session).contains("stats:pseudo"));
+
+    tidb_stats::RATIO_OF_PSEUDO_ESTIMATE.store(0.7);
+    assert!(scan_info(&mut session).contains("stats:pseudo"));
+
+    session
+        .run("SET SESSION tidb_enable_pseudo_for_outdated_stats = OFF")
+        .unwrap();
+    assert!(!scan_info(&mut session).contains("stats:pseudo"));
+}
+
 /// The columns a covering test reads are the ones the statement STILL needs
 /// after Go's `rule_column_pruning` -- and Go's pruner walks a correlated
 /// subquery like any other expression, so a column named only inside one is
