@@ -163,12 +163,6 @@ impl StatsWorkerPool {
             let _ = worker.sender.try_send(WorkerMessage::Close);
         }
     }
-
-    /// Whether the pool has been closed.
-    #[must_use]
-    pub fn is_closed(&self) -> bool {
-        self.inner.closed.load(Ordering::SeqCst)
-    }
 }
 
 /// Go `Pool`.
@@ -263,7 +257,6 @@ mod tests {
         pool.go(move || sender.send(1).unwrap());
         assert_eq!(receiver.recv_timeout(Duration::from_secs(1)).unwrap(), 1);
         pool.close();
-        assert!(pool.is_closed());
 
         let (sender, receiver) = mpsc::channel();
         pool.go(move || sender.send(2).unwrap());
@@ -287,10 +280,11 @@ mod tests {
         let pool = StatsPool::new(Arc::clone(&session_pool));
 
         assert!(std::ptr::eq(pool.spool(), session_pool.as_ref()));
-        assert!(!pool.gpool().is_closed());
         pool.close();
 
-        assert!(pool.gpool().is_closed());
+        let (sender, receiver) = mpsc::channel();
+        pool.gpool().go(move || sender.send(()).unwrap());
+        assert!(receiver.recv_timeout(Duration::from_millis(20)).is_err());
         assert_eq!(concrete.close_count.load(Ordering::SeqCst), 0);
     }
 }
