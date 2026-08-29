@@ -21,7 +21,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tidb_datatype::Datum;
 use tidb_distsql::{WarningCollector, WarningLevel};
 use tidb_expr::{Columns, CurrentTso, ErrorLevel, MysqlRng};
-pub use tidb_util::context::MAX_WARNING_COUNT;
+
+const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 
 use crate::error_context::{ErrGroup, Level, LevelMap};
 use crate::mem_quota::{OomAction, StatementMemory};

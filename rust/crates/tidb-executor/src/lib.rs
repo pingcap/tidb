@@ -254,7 +254,7 @@ pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
 pub use stmt_context::{
     GlobalSysvarAccessor, RetryAutoIds, RowIdShardGenerator, SequenceSnapshot, StatementClass,
-    StmtContext, MAX_WARNING_COUNT,
+    StmtContext,
 };
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;

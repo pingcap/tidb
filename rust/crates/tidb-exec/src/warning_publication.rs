@@ -23,9 +23,10 @@ use std::sync::Mutex;
 
 use tidb_datatype::ConversionWarningAppender;
 use tidb_error::terror::TerrorError;
-pub use tidb_util::context::MAX_WARNING_COUNT;
 
 use super::statement_status::{StatementWarning, WarningLevel};
+
+const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 
 /// Source `WarnAppender` over the shared warning entry type.
 pub trait WarningAppender {

@@ -25,12 +25,11 @@
 mod plancache;
 mod warn;
 
-pub use plancache::{
-    PlanCacheTracker, PlanCacheType, RangeFallbackHandler, PLAN_CACHE_TRACKER_SAVED_FIELDS,
-};
+pub use plancache::{PlanCacheTracker, PlanCacheType, RangeFallbackHandler};
 pub use warn::{
-    FuncWarnAppender, IgnoreWarn, SqlWarn, StaticWarnHandler, WarnAppender, WarnErr, WarnHandler,
-    WarnHandlerExt, MAX_WARNING_COUNT, WARN_LEVEL_ERROR, WARN_LEVEL_NOTE, WARN_LEVEL_WARNING,
+    new_func_warn_appender_for_test, SqlWarn, StaticWarnHandler, WarnAppender, WarnErr,
+    WarnHandler, WarnHandlerExt, IGNORE_WARN, WARN_LEVEL_ERROR, WARN_LEVEL_NOTE,
+    WARN_LEVEL_WARNING,
 };
 
 use std::any::Any;

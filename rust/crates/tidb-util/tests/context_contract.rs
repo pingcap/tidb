@@ -14,17 +14,14 @@
 
 //! Public semantic contract for Go `pkg/util/context`.
 
-use std::any::Any;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use tidb_error::mysql::FormatArg;
 use tidb_error::terror::ERR_RESULT_UNDETERMINED;
 use tidb_util::context::{
-    gen_context_id, FuncWarnAppender, IgnoreWarn, PlanCacheTracker, PlanCacheType,
-    RangeFallbackHandler, SqlWarn, StaticWarnHandler, ValueStoreContext, WarnAppender, WarnErr,
-    WarnHandler, WarnHandlerExt, MAX_WARNING_COUNT, WARN_LEVEL_ERROR, WARN_LEVEL_NOTE,
-    WARN_LEVEL_WARNING,
+    gen_context_id, new_func_warn_appender_for_test, PlanCacheTracker, PlanCacheType,
+    RangeFallbackHandler, SqlWarn, StaticWarnHandler, WarnAppender, WarnErr, WarnHandler,
+    WarnHandlerExt, IGNORE_WARN, WARN_LEVEL_ERROR, WARN_LEVEL_NOTE, WARN_LEVEL_WARNING,
 };
 
 fn warning(level: &str, message: &str) -> SqlWarn {
@@ -44,72 +41,6 @@ fn warning_json_accepts_the_sources_empty_level() {
         assert!(warning.level.is_empty());
         assert_eq!(warning.err.to_string(), message);
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum ContextKey {
-    Query,
-    Initing,
-}
-
-#[derive(Default)]
-struct Store {
-    values: HashMap<ContextKey, Box<dyn Any>>,
-    domain: Option<Box<dyn Any>>,
-}
-
-impl ValueStoreContext for Store {
-    type Key = ContextKey;
-
-    fn set_value(&mut self, key: &Self::Key, value: Box<dyn Any>) {
-        self.values.insert(*key, value);
-    }
-
-    fn value(&self, key: &Self::Key) -> Option<&dyn Any> {
-        self.values.get(key).map(Box::as_ref)
-    }
-
-    fn clear_value(&mut self, key: &Self::Key) {
-        self.values.remove(key);
-    }
-
-    fn get_domain(&self) -> Option<&dyn Any> {
-        self.domain.as_deref()
-    }
-}
-
-#[test]
-fn value_store_uses_a_typed_key_domain_and_exposes_its_domain() {
-    let mut store = Store {
-        domain: Some(Box::new(String::from("domain"))),
-        ..Store::default()
-    };
-    store.set_value(&ContextKey::Query, Box::new(String::from("select 1")));
-    store.set_value(&ContextKey::Initing, Box::new(true));
-
-    assert_eq!(
-        store
-            .value(&ContextKey::Query)
-            .and_then(|value| value.downcast_ref::<String>()),
-        Some(&String::from("select 1"))
-    );
-    assert_eq!(
-        store
-            .value(&ContextKey::Initing)
-            .and_then(|value| value.downcast_ref::<bool>()),
-        Some(&true)
-    );
-    assert_eq!(
-        store
-            .get_domain()
-            .and_then(|domain| domain.downcast_ref::<String>())
-            .map(String::as_str),
-        Some("domain")
-    );
-
-    store.clear_value(&ContextKey::Query);
-    assert!(store.value(&ContextKey::Query).is_none());
-    assert!(store.value(&ContextKey::Initing).is_some());
 }
 
 #[test]
@@ -165,7 +96,7 @@ fn warning_json_and_handlers_preserve_the_public_contract() {
 
     let calls = Arc::new(Mutex::new(Vec::new()));
     let captured = calls.clone();
-    let appender = FuncWarnAppender::new(move |level: &str, err: WarnErr| {
+    let appender = new_func_warn_appender_for_test(move |level: &str, err: WarnErr| {
         captured
             .lock()
             .unwrap()
@@ -174,7 +105,7 @@ fn warning_json_and_handlers_preserve_the_public_contract() {
     appender.append_warning(WarnErr::from("function warning"));
     appender.append_note(WarnErr::from("function note"));
     assert_eq!(calls.lock().unwrap().len(), 2);
-    assert_eq!(IgnoreWarn.warning_count(), 0);
+    assert_eq!(IGNORE_WARN.warning_count(), 0);
 }
 
 #[test]
@@ -182,11 +113,11 @@ fn warning_retention_matches_single_and_batch_append_rules() {
     let handler = StaticWarnHandler::new(0);
     handler.set_warnings(vec![
         warning(WARN_LEVEL_WARNING, "old");
-        MAX_WARNING_COUNT - 1
+        u16::MAX as usize - 1
     ]);
     handler.append_warning(WarnErr::from("last"));
     handler.append_warning(WarnErr::from("dropped"));
-    assert_eq!(handler.warning_count(), MAX_WARNING_COUNT);
+    assert_eq!(handler.warning_count(), u16::MAX as usize);
     assert_eq!(
         handler.get_warnings().last().unwrap().err.to_string(),
         "last"
@@ -194,14 +125,14 @@ fn warning_retention_matches_single_and_batch_append_rules() {
 
     handler.set_warnings(vec![
         warning(WARN_LEVEL_ERROR, "old");
-        MAX_WARNING_COUNT - 1
+        u16::MAX as usize - 1
     ]);
     handler.append_warnings(vec![
         warning(WARN_LEVEL_ERROR, "batch 1"),
         warning(WARN_LEVEL_ERROR, "batch 2"),
     ]);
-    assert_eq!(handler.warning_count(), MAX_WARNING_COUNT + 1);
-    assert_eq!(handler.num_error_warnings(), (0, MAX_WARNING_COUNT + 1));
+    assert_eq!(handler.warning_count(), u16::MAX as usize + 1);
+    assert_eq!(handler.num_error_warnings(), (0, u16::MAX as usize + 1));
 }
 
 #[test]

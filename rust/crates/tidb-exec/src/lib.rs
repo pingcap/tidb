@@ -263,5 +263,5 @@ pub use statement_status::{
 pub use status_result::{finish_and_snapshot, StatusResultSnapshot};
 pub use warning_publication::{
     warnings_from_json, warnings_to_json, IgnoreWarnings, StaticWarningHandler, WarningAppender,
-    WarningHandler, WarningPublication, WarningSummary, MAX_WARNING_COUNT,
+    WarningHandler, WarningPublication, WarningSummary,
 };

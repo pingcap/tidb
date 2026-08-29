@@ -32,10 +32,6 @@ pub enum PlanCacheType {
     SessionNonPrepared,
 }
 
-/// The number of fields captured by [`PlanCacheTracker::save`], for
-/// documentation parity with Go's five-value return.
-pub const PLAN_CACHE_TRACKER_SAVED_FIELDS: usize = 5;
-
 #[derive(Default)]
 struct TrackerState {
     use_cache: bool,

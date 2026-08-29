@@ -26,9 +26,6 @@ pub const WARN_LEVEL_ERROR: &str = "Error";
 pub const WARN_LEVEL_WARNING: &str = "Warning";
 /// Level "Note" for `SHOW WARNINGS`.
 pub const WARN_LEVEL_NOTE: &str = "Note";
-/// Maximum number of warnings retained by one statement warning handler.
-pub const MAX_WARNING_COUNT: usize = u16::MAX as usize;
-
 /// The warning payload: Go's open `error` value, which the JSON form already
 /// splits into a typed terror or a bare message. `errors.Cause` unwrapping has
 /// no counterpart because Rust carries no `errors.Trace` wrapper layers.
@@ -190,7 +187,7 @@ impl StaticWarnHandler {
 
     fn append_with_level(&self, level: &str, err: WarnErr) {
         let mut warnings = self.warnings.lock().unwrap();
-        if warnings.len() < MAX_WARNING_COUNT {
+        if warnings.len() < u16::MAX as usize {
             warnings.push(SqlWarn {
                 level: level.to_string(),
                 err,
@@ -230,7 +227,7 @@ impl WarnHandler for StaticWarnHandler {
 impl WarnHandlerExt for StaticWarnHandler {
     fn append_warnings(&self, warns: Vec<SqlWarn>) {
         let mut warnings = self.warnings.lock().unwrap();
-        if warnings.len() < MAX_WARNING_COUNT {
+        if warnings.len() < u16::MAX as usize {
             warnings.extend(warns);
         }
     }
@@ -257,8 +254,14 @@ impl WarnHandlerExt for StaticWarnHandler {
     }
 }
 
+/// The handler type behind [`IGNORE_WARN`].
+#[derive(Clone, Copy)]
+pub struct IgnoreWarn {
+    _private: (),
+}
+
 /// A [`WarnHandler`] which does nothing (Go `IgnoreWarn`).
-pub struct IgnoreWarn;
+pub static IGNORE_WARN: IgnoreWarn = IgnoreWarn { _private: () };
 
 impl WarnAppender for IgnoreWarn {
     fn append_warning(&self, _err: WarnErr) {}
@@ -279,15 +282,14 @@ impl WarnHandler for IgnoreWarn {
 
 /// A function-backed appender (Go `NewFuncWarnAppenderForTest`); the source
 /// flags it as a test convenience, not a production path.
-pub struct FuncWarnAppender<F: Fn(&str, WarnErr)> {
+struct FuncWarnAppender<F: Fn(&str, WarnErr)> {
     f: F,
 }
 
-impl<F: Fn(&str, WarnErr)> FuncWarnAppender<F> {
-    /// Creates the appender around `f(level, err)`.
-    pub fn new(f: F) -> Self {
-        FuncWarnAppender { f }
-    }
+/// Creates a function-backed warning appender for tests (Go
+/// `NewFuncWarnAppenderForTest`).
+pub fn new_func_warn_appender_for_test<F: Fn(&str, WarnErr)>(f: F) -> impl WarnAppender {
+    FuncWarnAppender { f }
 }
 
 impl<F: Fn(&str, WarnErr)> WarnAppender for FuncWarnAppender<F> {
@@ -352,13 +354,13 @@ mod tests {
     // Go `TestIgnoreWarn`.
     #[test]
     fn ignore_warn() {
-        assert_eq!(IgnoreWarn.warning_count(), 0);
-        IgnoreWarn.append_warning(WarnErr::from("warn0"));
-        assert_eq!(IgnoreWarn.warning_count(), 0);
-        assert!(IgnoreWarn.copy_warnings().is_empty());
-        IgnoreWarn.append_warning(WarnErr::from("warn1"));
-        assert!(IgnoreWarn.truncate_warnings(0).is_empty());
-        assert_eq!(IgnoreWarn.warning_count(), 0);
+        assert_eq!(IGNORE_WARN.warning_count(), 0);
+        IGNORE_WARN.append_warning(WarnErr::from("warn0"));
+        assert_eq!(IGNORE_WARN.warning_count(), 0);
+        assert!(IGNORE_WARN.copy_warnings().is_empty());
+        IGNORE_WARN.append_warning(WarnErr::from("warn1"));
+        assert!(IGNORE_WARN.truncate_warnings(0).is_empty());
+        assert_eq!(IGNORE_WARN.warning_count(), 0);
     }
 
     // Go `TestStaticWarnHandler`. The Go test additionally asserts that every

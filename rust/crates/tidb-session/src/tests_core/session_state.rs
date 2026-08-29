@@ -794,14 +794,14 @@ fn prepared_statement_parameters() {
 #[test]
 fn the_session_warning_buffer_stops_at_the_source_retention_limit() {
     let mut session = Session::new();
-    for index in 0..tidb_executor::MAX_WARNING_COUNT + 16 {
+    for index in 0..u16::MAX as usize + 16 {
         session.append_warning(WarningLevel::Warning, 1292, format!("value {index}"));
     }
-    assert_eq!(session.warnings().len(), tidb_executor::MAX_WARNING_COUNT);
+    assert_eq!(session.warnings().len(), u16::MAX as usize);
     // The FIRST entries survive: Go appends until the limit and then drops.
     assert_eq!(session.warnings()[0].message, "value 0");
     assert_eq!(
-        session.warnings()[tidb_executor::MAX_WARNING_COUNT - 1].message,
+        session.warnings()[u16::MAX as usize - 1].message,
         "value 65534"
     );
 }

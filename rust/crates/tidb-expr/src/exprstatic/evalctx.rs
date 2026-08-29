@@ -1314,7 +1314,7 @@ mod tests {
         assert_eq!(ctx.warning_count(), 0);
 
         // `with_warn_handler` installs the given handler.
-        let ignore: Arc<dyn WarnHandler + Send + Sync> = Arc::new(tidb_util::context::IgnoreWarn);
+        let ignore: Arc<dyn WarnHandler + Send + Sync> = Arc::new(tidb_util::context::IGNORE_WARN);
         let ctx = EvalContext::new([with_warn_handler(Arc::clone(&ignore))]);
         assert!(Arc::ptr_eq(ctx.get_warn_handler(), &ignore));
 

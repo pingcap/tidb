@@ -132,10 +132,10 @@ impl Session {
     /// live in one place rather than at each caller.
     ///
     /// That rule is Go's retention limit: `StaticWarnHandler` stops appending
-    /// once the buffer holds [`tidb_executor::MAX_WARNING_COUNT`] entries,
+    /// once the buffer holds `math.MaxUint16` entries,
     /// since the count it publishes is a `uint16`.
     pub(crate) fn append_warning(&mut self, level: WarningLevel, code: u16, message: String) {
-        if self.warnings.len() >= tidb_executor::MAX_WARNING_COUNT {
+        if self.warnings.len() >= u16::MAX as usize {
             return;
         }
         self.warnings.push(SqlWarning {
