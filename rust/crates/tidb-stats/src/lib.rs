@@ -32,7 +32,6 @@ pub mod analyze_results;
 pub mod analyze_table_id;
 pub mod analyze_version_policy;
 pub mod async_load;
-pub mod auto_analyze_policy;
 pub mod average_count;
 pub mod builder;
 pub mod cmsketch;
@@ -78,7 +77,6 @@ pub use analyze_results::{AnalyzeError, AnalyzeHistogramLifecycle, AnalyzeResult
 pub use analyze_table_id::{AnalyzeTableId, NON_PARTITION_TABLE_ID};
 pub use analyze_version_policy::analyze_version_matches;
 pub use async_load::{NeededStatsMap, StatsLoadItem, TableItemId, SHARD_COUNT};
-pub use auto_analyze_policy::need_analyze_table;
 pub use average_count::avg_count_per_not_null_value;
 pub use builder::{
     build_column, build_column_histogram, build_hist_and_topn, try_build_column_histogram,

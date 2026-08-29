@@ -906,6 +906,12 @@ For each bounded behavior cluster:
       parameters, DDL registration, worker concurrency, ANALYZE execution,
       panic recovery, and stats effects. Inventory is in
       `receipts/statistics_handle_autoanalyze_refresher_audit.md`.
+- [x] Audit the complete pinned root `pkg/statistics/handle/autoanalyze`
+      package. Remove the unconsumed five-scalar `NeedAnalyzeTable` extraction
+      and its six source-absent tests. Go owns the composed stats-handle,
+      priority-queue/refresher, legacy randomized scheduler, analyze-job SQL
+      lifecycle, locks, time windows, server cleanup, and cache effects.
+      Inventory is in `receipts/statistics_handle_autoanalyze_root_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
