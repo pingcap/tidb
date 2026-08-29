@@ -172,6 +172,8 @@ impl Allocator for StdAllocator {
 
 #[cfg(test)]
 mod tests {
+    #![allow(non_snake_case)]
+
     use super::{Allocator, SimpleAllocator, StdAllocator};
 
     const ARENA_CAP: usize = 1000;
@@ -179,9 +181,8 @@ mod tests {
     const ALLOC_CAP_MEDIUM: usize = 20;
     const ALLOC_CAP_OUT: usize = 1024;
 
-    // Go `TestSimpleArenaAllocator`.
     #[test]
-    fn simple_arena_allocator() {
+    fn TestSimpleArenaAllocator() {
         let mut arena = SimpleAllocator::new(ARENA_CAP);
         let slice = arena.alloc(ALLOC_CAP_SMALL);
         assert_eq!(arena.off, ALLOC_CAP_SMALL);
@@ -213,9 +214,8 @@ mod tests {
         assert_eq!(arena.arena.len(), ARENA_CAP);
     }
 
-    // Go `TestStdAllocator`.
     #[test]
-    fn std_allocator() {
+    fn TestStdAllocator() {
         let mut allocator = StdAllocator;
         let slice = allocator.alloc(ALLOC_CAP_MEDIUM);
         assert_eq!(slice.len(), 0);
@@ -224,20 +224,5 @@ mod tests {
         let slice = allocator.alloc_with_len(ALLOC_CAP_SMALL, ALLOC_CAP_MEDIUM);
         assert_eq!(slice.len(), ALLOC_CAP_SMALL);
         assert_eq!(slice.capacity(), ALLOC_CAP_MEDIUM);
-    }
-
-    #[test]
-    fn reset_reuses_the_go_backing_storage() {
-        let mut allocator = SimpleAllocator::new(4);
-        let first = allocator.alloc_with_len(1, 2);
-        let alias = first.clone();
-        first.set(0, 9);
-        assert_eq!(alias.get(0), Some(9));
-        drop(first);
-        drop(alias);
-
-        allocator.reset();
-        let reused = allocator.alloc_with_len(1, 2);
-        assert_eq!(reused.to_vec(), [9]);
     }
 }

@@ -24,10 +24,9 @@ independent and zeroed. The
 workspace's unsafe-code prohibition remains intact.
 
 The audit replaced the previous owned-`Vec<u8>` approximation, which advanced
-the offset but allocated every returned buffer separately. It removed three
+the offset but allocated every returned buffer separately. It removed
 supplemental tests, a Rust-only `must_use` diagnostic, and the retired semantic
-manifest. The two exact Go tests remain, plus one required regression proving
-the corrected reset reuse.
+manifest. Exactly the two Go test identities remain.
 
 ## Validation
 
@@ -35,11 +34,8 @@ Profile: WIP; this completes one package in the continuing package-by-package
 audit, not a repository-wide readiness claim.
 
 - `go test ./pkg/util/arena` — passed.
-- Pre-fix `cargo test -q -p tidb-util
-  arena::tests::reset_reuses_the_go_backing_storage --lib --locked -- --exact
-  --test-threads=1` — failed with actual `[0]`, expected `[9]`.
 - Post-fix `cargo test -q -p tidb-util arena::tests --lib --locked --
-  --test-threads=1` — passed; three tests ran.
+  --test-threads=1` — passed; two tests ran.
 - Complete `cargo test -q -p tidb-util --locked -- --test-threads=1`,
   `cargo check -p tidb-util --all-targets --locked`, `cargo fmt --all --check`,
   and `git diff --check` — passed; 575 library tests passed, 3 were ignored,

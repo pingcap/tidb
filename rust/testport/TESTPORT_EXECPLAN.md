@@ -36,6 +36,10 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: re-audited the complete pinned Go `pkg/util/arena` package.
+  Removed the remaining Rust-only reset-reuse regression and restored exactly
+  the two Go test identities; shared backing and reset reuse remain production
+  behavior rather than an extra test surface.
 - 2026-08-29: re-audited the complete pinned Go `pkg/util/bitmap` package.
   Removed its remaining Rust-only signed-boundary regression and restored the
   exact three Go test identities while retaining the source-derived signed
