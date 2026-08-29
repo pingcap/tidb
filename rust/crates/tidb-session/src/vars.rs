@@ -214,6 +214,21 @@ impl GlobalSysvars {
             return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
         };
         let def = &crate::sysvar::SYS_VARS[index];
+        if self.publishes_runtime_settings
+            && def.name == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT
+        {
+            if tidb_config::deploymode::is_starter() {
+                return Ok("ON".to_owned());
+            }
+            return Ok(if tidb_util::tls::REQUIRE_SECURE_TRANSPORT
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                "ON"
+            } else {
+                "OFF"
+            }
+            .to_owned());
+        }
         let snapshot = Arc::clone(
             &*self
                 .resolved
@@ -318,6 +333,11 @@ impl GlobalSysvars {
     /// [`Self::get`].
     pub(crate) fn get_by_registry_index(&self, index: usize) -> Result<String, VarError> {
         let def = &crate::sysvar::SYS_VARS[index];
+        if self.publishes_runtime_settings
+            && def.name == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT
+        {
+            return self.get(def.name);
+        }
         let snapshot = Arc::clone(
             &*self
                 .resolved
@@ -381,6 +401,9 @@ impl GlobalSysvars {
             .lock()
             .expect("global sysvar lock poisoned")
             .insert(name.to_ascii_lowercase(), value);
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT) {
+            self.publish_require_secure_transport();
+        }
         self.refresh_resolved();
     }
 
@@ -413,6 +436,9 @@ impl GlobalSysvars {
             }
             values.insert(key.clone(), stored_value.clone());
         }
+        if key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT {
+            self.publish_require_secure_transport();
+        }
         self.refresh_resolved();
         if key == tidb_vardef::tidb_vars::TIDB_REDACT_LOG {
             self.publish_redaction_mode();
@@ -442,6 +468,9 @@ impl GlobalSysvars {
             .lock()
             .expect("global sysvar lock poisoned")
             .remove(&key);
+        if key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT {
+            self.publish_require_secure_transport();
+        }
         self.refresh_resolved();
         if !def.has_global_scope() {
             self.record_instance_mutation(InstanceMutation::Reset(key.clone()));
@@ -495,6 +524,7 @@ impl GlobalSysvars {
         let mut loaded_committer_concurrency = false;
         let mut loaded_redaction_mode = false;
         let mut loaded_memory_arbitration = false;
+        let mut loaded_require_secure_transport = false;
         for (name, value) in rows {
             let key = name.to_ascii_lowercase();
             if let Some(def) = get_sys_var(&key) {
@@ -502,6 +532,8 @@ impl GlobalSysvars {
                     key == tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY;
                 loaded_redaction_mode |= key == tidb_vardef::tidb_vars::TIDB_REDACT_LOG;
                 loaded_memory_arbitration |= Self::is_memory_arbitration_setting(&key);
+                loaded_require_secure_transport |=
+                    key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT;
                 self.store(def)
                     .lock()
                     .expect("global sysvar lock poisoned")
@@ -516,6 +548,9 @@ impl GlobalSysvars {
         }
         if loaded_memory_arbitration {
             self.publish_memory_arbitration_settings();
+        }
+        if loaded_require_secure_transport {
+            self.publish_require_secure_transport();
         }
         self.refresh_resolved();
     }
@@ -557,6 +592,7 @@ impl GlobalSysvars {
         *self.values.lock().expect("global sysvar lock poisoned") =
             std::mem::take(&mut *fresh.values.lock().expect("global sysvar lock poisoned"));
         self.refresh_resolved();
+        self.publish_require_secure_transport();
         self.publish_committer_concurrency();
         self.publish_redaction_mode();
         self.publish_memory_arbitration_settings();
@@ -656,6 +692,23 @@ impl GlobalSysvars {
                     .expect("committer concurrency default fits i32"),
             );
         tidb_tikvutil::COMMITTER_CONCURRENCY.store(value, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn publish_require_secure_transport(&self) {
+        if !self.publishes_runtime_settings {
+            return;
+        }
+        let enabled = if tidb_config::deploymode::is_starter() {
+            false
+        } else {
+            self.values
+                .lock()
+                .expect("global sysvar lock poisoned")
+                .get(tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT)
+                .is_some_and(|value| value == "ON" || value == "1")
+        };
+        tidb_util::tls::REQUIRE_SECURE_TRANSPORT
+            .store(enabled, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn publish_redaction_mode(&self) {

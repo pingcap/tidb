@@ -893,7 +893,7 @@ pub struct SessionContext {
     /// connection.
     pub secure_transport: bool,
     /// The negotiated TLS `(cipher, version)` in their MySQL/OpenSSL
-    /// spellings (`tidb_util::tlsutil`), `None` on a plaintext connection.
+    /// spellings (`tidb_util::tls`), `None` on a plaintext connection.
     /// Go reports the same pair through `Ssl_cipher`/`Ssl_version`
     /// (`server.go:1329`).
     pub tls_status: Option<(String, String)>,

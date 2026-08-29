@@ -1048,8 +1048,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         secure_transport: socket.is_tls(),
         tls_status: socket.negotiated_tls().map(|(cipher, version)| {
             (
-                tidb_util::tlsutil::cipher_suite_name(cipher),
-                tidb_util::tlsutil::version_name(version),
+                tidb_util::tls::cipher_suite_name(cipher).to_owned(),
+                tidb_util::tls::version_name(version),
             )
         }),
         cancellation: cancellation.clone(),

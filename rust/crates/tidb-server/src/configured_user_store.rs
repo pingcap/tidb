@@ -410,9 +410,8 @@ impl ConfiguredUserStore {
     ///
     /// * `require_secure_transport` (`server/conn.go` line 669) is
     ///   process-wide and fires BEFORE the account is known, so a plaintext
-    ///   connection is refused whoever it claims to be. It is read live from
-    ///   the shared GLOBAL sysvar table, so a `SET GLOBAL` takes effect on
-    ///   the next login exactly as Go's atomic does.
+    ///   connection is refused whoever it claims to be. It is read from the
+    ///   process atomic, so a `SET GLOBAL` takes effect on the next login.
     /// * the account's own `REQUIRE` clause (`privileges.go`'s `checkSSL`,
     ///   line 795) is per-account and fires INSIDE `ConnectionVerification`,
     ///   after the account is matched and before the password is compared --
@@ -443,9 +442,7 @@ impl ConfiguredUserStore {
         transport: TransportKind,
     ) -> Result<TransportAdmission, SecureTransportError> {
         let policy = SecureTransportPolicy::new(
-            self.global_vars
-                .get("require_secure_transport")
-                .is_ok_and(|value| value == "ON" || value == "1"),
+            tidb_util::tls::REQUIRE_SECURE_TRANSPORT.load(std::sync::atomic::Ordering::SeqCst),
         );
         policy.admit(transport)?;
         Ok(TransportAdmission {

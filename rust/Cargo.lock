@@ -3668,6 +3668,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tidb-ast",
+ "tidb-config",
  "tidb-datatype",
  "tidb-domain",
  "tidb-error",

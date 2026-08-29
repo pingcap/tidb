@@ -97,9 +97,9 @@ pub mod table_filter;
 pub mod table_router;
 pub mod table_rule_selector;
 pub mod texttree;
-pub mod tlsutil;
 pub use tidb_tikvutil as tikvutil;
 pub mod timeutil;
+/// TLS process state and MySQL-compatible names.
 pub mod tls;
 pub mod topsql_reporter;
 pub mod topsql_state;

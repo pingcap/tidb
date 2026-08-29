@@ -428,6 +428,10 @@ For each bounded behavior cluster:
       restore Go's three polling lock phases, no-follow child metadata,
       platform file identity, signed sizes, real ticker, and exact single test;
       remove injected-ticker, lifecycle-policy, accessor, doc, and test extras.
+- [x] Complete the pinned `pkg/util/tls` package across `tidb-util`, session,
+      server, and status owners: collapse duplicate Rust modules, restore the
+      process atomic and starter/cluster publication hooks, retain exactly one
+      source test, and remove Rust-only tables, helpers, docs, and tests.
 - [x] Complete the pinned `pkg/util/table-rule-selector` package in its wired
       `tidb-util` owner: restore Go string-range indices, nil RuleSets, open
       insert types, and exact errors; remove the unused 1,270-line selector and
