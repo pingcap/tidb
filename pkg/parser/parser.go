@@ -356,8 +356,8 @@ const (
 	extract                    = 58034
 	failedLoginAttempts        = 57723
 	falseKwd                   = 57426
-	fast                       = 57725
-	faultsSym                  = 57724
+	fast                       = 57724
+	faultsSym                  = 57725
 	fetch                      = 57427
 	fields                     = 57726
 	file                       = 57727
@@ -1450,8 +1450,8 @@ var (
 		57720: 442,  // expire (1736x)
 		58033: 443,  // exprPushdownBlacklist (1736x)
 		57722: 444,  // extended (1736x)
-		57725: 445,  // fast (1736x)
-		57724: 446,  // faultsSym (1736x)
+		57724: 445,  // fast (1736x)
+		57725: 446,  // faultsSym (1736x)
 		57733: 447,  // found (1736x)
 		57735: 448,  // function (1736x)
 		57738: 449,  // grants (1736x)
