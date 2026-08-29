@@ -413,10 +413,10 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
             ))
         },
         AVG_TIDB_CPU_TIME_STR => {
-            |_, record| Datum::new_int(avg_int(nanos(record.sum_tidb_cpu), record.exec_count))
+            |_, record| Datum::new_int(avg_int(record.sum_tidb_cpu, record.exec_count))
         }
         AVG_TIKV_CPU_TIME_STR => {
-            |_, record| Datum::new_int(avg_int(nanos(record.sum_tikv_cpu), record.exec_count))
+            |_, record| Datum::new_int(avg_int(record.sum_tikv_cpu, record.exec_count))
         }
         MAX_RESULT_ROWS_STR => |_, record| Datum::new_int(record.max_result_rows),
         MIN_RESULT_ROWS_STR => |_, record| Datum::new_int(record.min_result_rows),
@@ -658,10 +658,10 @@ mod tests {
                     assert_eq!(column, Datum::new_real(avg_rocksdb_sum), "{column_name}");
                 }
                 AVG_TIDB_CPU_TIME_STR => {
-                    assert_eq!(column, Datum::new_int(nanos(record.sum_tidb_cpu)));
+                    assert_eq!(column, Datum::new_int(record.sum_tidb_cpu));
                 }
                 AVG_TIKV_CPU_TIME_STR => {
-                    assert_eq!(column, Datum::new_int(nanos(record.sum_tikv_cpu)));
+                    assert_eq!(column, Datum::new_int(record.sum_tikv_cpu));
                 }
                 _ => {}
             }

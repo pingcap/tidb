@@ -500,8 +500,8 @@ pub fn add_info(add_to: &mut StmtSummaryByDigestElement, add_with: &StmtSummaryB
     add_to.sum_pd_total += add_with.sum_pd_total;
     add_to.sum_backoff_total += add_with.sum_backoff_total;
     add_to.sum_write_sql_resp_total += add_with.sum_write_sql_resp_total;
-    add_to.sum_tidb_cpu += add_with.sum_tidb_cpu;
-    add_to.sum_tikv_cpu += add_with.sum_tikv_cpu;
+    add_to.sum_tidb_cpu = add_to.sum_tidb_cpu.wrapping_add(add_with.sum_tidb_cpu);
+    add_to.sum_tikv_cpu = add_to.sum_tikv_cpu.wrapping_add(add_with.sum_tikv_cpu);
 
     add_to.sum_errors += add_with.sum_errors;
 

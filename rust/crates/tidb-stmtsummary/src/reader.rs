@@ -1093,10 +1093,10 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
             ))
         },
         AVG_TIDB_CPU_TIME_STR => {
-            |_, _, _, stats| Datum::new_int(avg_int(nanos(stats.sum_tidb_cpu), stats.exec_count))
+            |_, _, _, stats| Datum::new_int(avg_int(stats.sum_tidb_cpu, stats.exec_count))
         }
         AVG_TIKV_CPU_TIME_STR => {
-            |_, _, _, stats| Datum::new_int(avg_int(nanos(stats.sum_tikv_cpu), stats.exec_count))
+            |_, _, _, stats| Datum::new_int(avg_int(stats.sum_tikv_cpu, stats.exec_count))
         }
         RESULT_ROWS_STR => |_, _, _, stats| Datum::new_int(stats.sum_result_rows),
         MAX_RESULT_ROWS_STR => |_, _, _, stats| Datum::new_int(stats.max_result_rows),
@@ -1648,8 +1648,8 @@ pub(crate) mod tests {
             Datum::new_real(stmt_exec_info1.total_ru_v2),
             Datum::new_real(stmt_exec_info1.total_ru_v2),
             Datum::new_string(stmt_exec_info1.resource_group_name.as_bytes()),
-            ns(stmt_exec_info1.cpu_usages.tidb_cpu_time),
-            ns(stmt_exec_info1.cpu_usages.tikv_cpu_time),
+            Datum::new_int(stmt_exec_info1.cpu_usages.tidb_cpu_time),
+            Datum::new_int(stmt_exec_info1.cpu_usages.tikv_cpu_time),
             Datum::new_int(is_tikv),
             Datum::new_int(is_tiflash),
         ];

@@ -15,26 +15,26 @@
 //! Complete transcreation of Go `pkg/util/ppcpuusage` (`cpuusages.go`).
 //!
 //! A [`Mutex`] serializes the per-SQL state, TiDB time is accepted only for
-//! the current SQL ID, and TiKV time is always accumulated. The SQL ID wraps
-//! to zero.
+//! the current SQL ID, and TiKV time is always accumulated. CPU times retain
+//! Go's signed `time.Duration` nanoseconds and wrapping arithmetic; the SQL ID
+//! likewise wraps to zero.
 
 use std::sync::Mutex;
-use std::time::Duration;
 
 /// Records TiDB/TiKV CPU usages.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CpuUsages {
     /// CPU time spent in TiDB.
-    pub tidb_cpu_time: Duration,
+    pub tidb_cpu_time: i64,
     /// CPU time spent in TiKV.
-    pub tikv_cpu_time: Duration,
+    pub tikv_cpu_time: i64,
 }
 
 impl CpuUsages {
     /// Resets all CPU times to 0.
     pub fn reset(&mut self) {
-        self.tikv_cpu_time = Duration::ZERO;
-        self.tidb_cpu_time = Duration::ZERO;
+        self.tikv_cpu_time = 0;
+        self.tidb_cpu_time = 0;
     }
 }
 
@@ -63,13 +63,13 @@ impl SqlCpuUsages {
     ///
     /// The ID is checked here because TiDB CPU time can only be collected by
     /// the profiler now, and is updated from concurrent threads.
-    pub fn merge_tidb_cpu_time(&self, sql_id: u64, d: Duration) {
+    pub fn merge_tidb_cpu_time(&self, sql_id: u64, d: i64) {
         let mut inner = self
             .inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if inner.sql_id == sql_id {
-            inner.cpu_usages.tidb_cpu_time += d;
+            inner.cpu_usages.tidb_cpu_time = inner.cpu_usages.tidb_cpu_time.wrapping_add(d);
         }
     }
 
@@ -77,12 +77,12 @@ impl SqlCpuUsages {
     ///
     /// No SQL-ID check is needed because TiKV CPU time is updated in
     /// executors now.
-    pub fn merge_tikv_cpu_time(&self, d: Duration) {
-        self.inner
+    pub fn merge_tikv_cpu_time(&self, d: i64) {
+        let mut inner = self
+            .inner
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .cpu_usages
-            .tikv_cpu_time += d;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        inner.cpu_usages.tikv_cpu_time = inner.cpu_usages.tikv_cpu_time.wrapping_add(d);
     }
 
     /// Returns the TiDB/TiKV CPU times.
@@ -111,5 +111,23 @@ impl SqlCpuUsages {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .cpu_usages
             .reset();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SqlCpuUsages;
+
+    #[test]
+    fn signed_cpu_durations_wrap_like_go_time_duration() {
+        let usages = SqlCpuUsages::default();
+
+        usages.merge_tidb_cpu_time(0, -1);
+        usages.merge_tidb_cpu_time(0, i64::MIN);
+        assert_eq!(usages.get_cpu_usages().tidb_cpu_time, i64::MAX);
+
+        usages.merge_tikv_cpu_time(i64::MAX);
+        usages.merge_tikv_cpu_time(1);
+        assert_eq!(usages.get_cpu_usages().tikv_cpu_time, i64::MIN);
     }
 }

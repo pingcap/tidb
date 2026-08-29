@@ -303,9 +303,9 @@ pub struct StmtRecord {
     /// Go `SumWriteSQLRespTotal`.
     pub sum_write_sql_resp_total: Duration,
     /// Go `SumTidbCPU`.
-    pub sum_tidb_cpu: Duration,
+    pub sum_tidb_cpu: i64,
     /// Go `SumTikvCPU`.
-    pub sum_tikv_cpu: Duration,
+    pub sum_tikv_cpu: i64,
     /// Go `SumResultRows`.
     pub sum_result_rows: i64,
     /// Go `MaxResultRows`.
@@ -450,8 +450,8 @@ impl Default for StmtRecord {
             sum_pd_total: Duration::ZERO,
             sum_backoff_total: Duration::ZERO,
             sum_write_sql_resp_total: Duration::ZERO,
-            sum_tidb_cpu: Duration::ZERO,
-            sum_tikv_cpu: Duration::ZERO,
+            sum_tidb_cpu: 0,
+            sum_tikv_cpu: 0,
             sum_result_rows: 0,
             max_result_rows: 0,
             min_result_rows: 0,
@@ -771,8 +771,12 @@ impl StmtRecord {
             self.sum_backoff_total += nanos_to_duration(tikv.backoff_duration);
         }
         self.sum_write_sql_resp_total += info.write_sql_resp_duration;
-        self.sum_tidb_cpu += info.cpu_usages.tidb_cpu_time;
-        self.sum_tikv_cpu += info.cpu_usages.tikv_cpu_time;
+        self.sum_tidb_cpu = self
+            .sum_tidb_cpu
+            .wrapping_add(info.cpu_usages.tidb_cpu_time);
+        self.sum_tikv_cpu = self
+            .sum_tikv_cpu
+            .wrapping_add(info.cpu_usages.tikv_cpu_time);
 
         // Networks.
         self.network.add(info.tikv_exec_details.as_ref());
@@ -950,8 +954,8 @@ impl StmtRecord {
         self.sum_pd_total += other.sum_pd_total;
         self.sum_backoff_total += other.sum_backoff_total;
         self.sum_write_sql_resp_total += other.sum_write_sql_resp_total;
-        self.sum_tidb_cpu += other.sum_tidb_cpu;
-        self.sum_tikv_cpu += other.sum_tikv_cpu;
+        self.sum_tidb_cpu = self.sum_tidb_cpu.wrapping_add(other.sum_tidb_cpu);
+        self.sum_tikv_cpu = self.sum_tikv_cpu.wrapping_add(other.sum_tikv_cpu);
         self.sum_errors += other.sum_errors;
         self.ru.merge(&other.ru);
     }
@@ -1277,8 +1281,8 @@ impl StmtRecord {
             "sum_write_sql_resp_total",
             &nanos(self.sum_write_sql_resp_total),
         )?;
-        map.serialize_entry("sum_tidb_cpu", &nanos(self.sum_tidb_cpu))?;
-        map.serialize_entry("sum_tikv_cpu", &nanos(self.sum_tikv_cpu))?;
+        map.serialize_entry("sum_tidb_cpu", &self.sum_tidb_cpu)?;
+        map.serialize_entry("sum_tikv_cpu", &self.sum_tikv_cpu)?;
         map.serialize_entry("sum_result_rows", &self.sum_result_rows)?;
         map.serialize_entry("max_result_rows", &self.max_result_rows)?;
         map.serialize_entry("min_result_rows", &self.min_result_rows)?;
@@ -1508,8 +1512,8 @@ pub fn generate_stmt_exec_info_4_test(digest: &str) -> StmtExecInfo {
         }),
         total_ru_v2: 12345.0,
         cpu_usages: CpuUsages {
-            tidb_cpu_time: Duration::from_nanos(20),
-            tikv_cpu_time: Duration::from_nanos(10000),
+            tidb_cpu_time: 20,
+            tikv_cpu_time: 10000,
         },
         plan_cache_unqualified: String::new(),
         lazy_info: Arc::new(MockLazyInfo),

@@ -604,9 +604,9 @@ pub struct StmtSummaryStats {
     /// Go `sumWriteSQLRespTotal`.
     pub sum_write_sql_resp_total: Duration,
     /// Go `sumTidbCPU`.
-    pub sum_tidb_cpu: Duration,
+    pub sum_tidb_cpu: i64,
     /// Go `sumTikvCPU`.
-    pub sum_tikv_cpu: Duration,
+    pub sum_tikv_cpu: i64,
     /// Go `sumResultRows`.
     pub sum_result_rows: i64,
     /// Go `maxResultRows`.
@@ -737,8 +737,8 @@ impl Default for StmtSummaryStats {
             sum_pd_total: Duration::ZERO,
             sum_backoff_total: Duration::ZERO,
             sum_write_sql_resp_total: Duration::ZERO,
-            sum_tidb_cpu: Duration::ZERO,
-            sum_tikv_cpu: Duration::ZERO,
+            sum_tidb_cpu: 0,
+            sum_tikv_cpu: 0,
             sum_result_rows: 0,
             max_result_rows: 0,
             min_result_rows: 0,
@@ -1026,8 +1026,8 @@ impl StmtSummaryStats {
             self.sum_backoff_total += nanos_to_duration(tikv.backoff_duration);
         }
         self.sum_write_sql_resp_total += sei.write_sql_resp_duration;
-        self.sum_tidb_cpu += sei.cpu_usages.tidb_cpu_time;
-        self.sum_tikv_cpu += sei.cpu_usages.tikv_cpu_time;
+        self.sum_tidb_cpu = self.sum_tidb_cpu.wrapping_add(sei.cpu_usages.tidb_cpu_time);
+        self.sum_tikv_cpu = self.sum_tikv_cpu.wrapping_add(sei.cpu_usages.tikv_cpu_time);
 
         // network traffic
         self.network.add(sei.tikv_exec_details.as_ref());
@@ -2031,8 +2031,8 @@ pub(crate) mod tests {
             }),
             total_ru_v2: 23456.0,
             cpu_usages: CpuUsages {
-                tidb_cpu_time: Duration::from_nanos(20),
-                tikv_cpu_time: Duration::from_nanos(100),
+                tidb_cpu_time: 20,
+                tikv_cpu_time: 100,
             },
             plan_cache_unqualified: String::new(),
             lazy_info: mock_lazy_info("original_sql1", "binding_sql1", "binding_digest1"),
