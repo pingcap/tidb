@@ -36,6 +36,12 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: audited every production, test, benchmark, and build artifact in
+  pinned Go `pkg/util/globalconn`. Restored the global-kill test's injected
+  connection-ID widths and source-shaped lock-free-pool layout, removed a
+  Rust-only allocator convenience, alignment policy, and five supplemental
+  tests, and retained the exact nine-test and two-benchmark surface. Complete
+  inventory and WIP gates are recorded in `receipts/util_globalconn.md`.
 - 2026-08-29: audited all five production, test, harness, benchmark, and build
   artifacts in pinned Go `pkg/util/fastrand`, plus the linked Go 1.25.10
   `runtime.cheaprand` boundary. Added Go's missing 32-bit xorshift branch,

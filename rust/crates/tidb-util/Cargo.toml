@@ -80,6 +80,10 @@ name = "fastrand"
 harness = false
 
 [[bench]]
+name = "globalconn"
+harness = false
+
+[[bench]]
 name = "intset"
 harness = false
 

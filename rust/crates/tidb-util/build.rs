@@ -93,4 +93,16 @@ fn main() {
         "TIDB_ENTERPRISE_EXTENSION_GIT_HASH",
         &build_value("TIDB_ENTERPRISE_EXTENSION_GIT_HASH", String::new),
     );
+    emit_build_value(
+        "TIDB_GLOBAL_KILL_TEST",
+        &build_value("TIDB_GLOBAL_KILL_TEST", || "0".to_owned()),
+    );
+    emit_build_value(
+        "TIDB_GLOBAL_KILL_SERVER_ID_BITS32",
+        &build_value("TIDB_GLOBAL_KILL_SERVER_ID_BITS32", || "11".to_owned()),
+    );
+    emit_build_value(
+        "TIDB_GLOBAL_KILL_LOCAL_CONN_ID_BITS32",
+        &build_value("TIDB_GLOBAL_KILL_LOCAL_CONN_ID_BITS32", || "20".to_owned()),
+    );
 }

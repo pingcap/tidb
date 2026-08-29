@@ -23,9 +23,8 @@
 //!
 //! Go's `logutil.BgLogger()` side-effect log lines map to `tracing`
 //! macros; `sync2.AtomicInt32` (the is-64-bits flag) is an [`AtomicBool`].
-//! Go's ldflag-injected test widths (`ldflagServerIDBits32` etc., compiled in
-//! only for the global-kill integration-test build) are build machinery, not
-//! runtime behavior, so the widths are constants here.
+//! Go's ldflag-injected global-kill-test widths map to the corresponding
+//! `TIDB_GLOBAL_KILL_*` compile-time build values.
 
 mod pool;
 
@@ -34,12 +33,35 @@ pub use pool::{AutoIncPool, IdPool, LockFreeCircularPool, ID_POOL_INVALID_VALUE}
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 
+const fn parse_decimal_u32(value: &str) -> u32 {
+    let bytes = value.as_bytes();
+    assert!(!bytes.is_empty());
+    let mut result = 0_u32;
+    let mut index = 0;
+    while index < bytes.len() {
+        assert!(bytes[index] >= b'0' && bytes[index] <= b'9');
+        result = result * 10 + (bytes[index] - b'0') as u32;
+        index += 1;
+    }
+    result
+}
+
+const GLOBAL_KILL_TEST: bool = matches!(env!("TIDB_GLOBAL_KILL_TEST").as_bytes(), [b'1']);
+
 /// Number of serverID bits in a 32-bit GCID.
-pub const SERVER_ID_BITS32: u32 = 11;
+pub const SERVER_ID_BITS32: u32 = if GLOBAL_KILL_TEST {
+    parse_decimal_u32(env!("TIDB_GLOBAL_KILL_SERVER_ID_BITS32"))
+} else {
+    11
+};
 /// Maximum serverID for a 32-bit GCID.
 pub const MAX_SERVER_ID32: u64 = (1 << SERVER_ID_BITS32) - 1;
 /// Number of local-connID bits in a 32-bit GCID.
-pub const LOCAL_CONN_ID_BITS32: u32 = 20;
+pub const LOCAL_CONN_ID_BITS32: u32 = if GLOBAL_KILL_TEST {
+    parse_decimal_u32(env!("TIDB_GLOBAL_KILL_LOCAL_CONN_ID_BITS32"))
+} else {
+    20
+};
 /// Maximum local connID for a 32-bit GCID.
 pub const MAX_LOCAL_CONN_ID32: u64 = (1 << LOCAL_CONN_ID_BITS32) - 1;
 
@@ -177,12 +199,6 @@ pub trait Allocator {
 /// `SimpleAllocator`).
 pub struct SimpleAllocator {
     pool: AutoIncPool,
-}
-
-impl Default for SimpleAllocator {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl SimpleAllocator {
@@ -424,8 +440,6 @@ mod tests {
     #[test]
     fn get_reserved_conn_id() {
         let simple = SimpleAllocator::new();
-        assert_eq!(simple.next_id(), 1);
-        assert_eq!(simple.next_id(), 2);
         assert_eq!(simple.get_reserved_conn_id(0), u64::MAX);
         assert_eq!(simple.get_reserved_conn_id(1), u64::MAX - 1);
 
@@ -733,32 +747,5 @@ mod tests {
             total.load(SeqCst),
             (REQUESTS as i64 - 1) * REQUESTS as i64 / 2
         );
-    }
-
-    // Allocator behavior across the 32->64 upgrade and release/downgrade path,
-    // covered in Go only implicitly via the server; pinned here.
-    #[test]
-    fn global_allocator_upgrade_and_release() {
-        let global = GlobalAllocator::new(|| 7, true);
-
-        let id = global.next_id();
-        let (gcid, truncated) = parse_conn_id(id).unwrap();
-        assert!(!truncated);
-        assert!(!gcid.is_64bits);
-        assert_eq!(gcid.server_id, 7);
-        assert_eq!(gcid.local_conn_id, 1);
-
-        global.release(id);
-        let id2 = global.next_id();
-        let (gcid2, _) = parse_conn_id(id2).unwrap();
-        assert!(!gcid2.is_64bits);
-        assert_eq!(gcid2.local_conn_id, 2);
-
-        // A server ID beyond the 11-bit space forces the 64-bit layout.
-        let wide = GlobalAllocator::new(|| MAX_SERVER_ID32 + 1, true);
-        let id3 = wide.next_id();
-        let (gcid3, _) = parse_conn_id(id3).unwrap();
-        assert!(gcid3.is_64bits);
-        assert_eq!(gcid3.server_id, MAX_SERVER_ID32 + 1);
     }
 }
