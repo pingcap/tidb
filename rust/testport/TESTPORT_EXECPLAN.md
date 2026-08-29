@@ -296,6 +296,10 @@ For each bounded behavior cluster:
       remove the unused executor duplicate whose `Clear` eagerly dropped
       backing values and whose public head/tail accessors existed only for its
       duplicate external tests.
+- [x] Complete the pinned `pkg/util/sli` package in its `tidb-util` owner,
+      replace the executor-local observation simulator with direct Go-shaped
+      Prometheus reporting, and remove synthetic failpoint, fixture, and
+      inspection APIs that had no production consumer.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope

@@ -90,6 +90,7 @@ pub mod servermemorylimit;
 pub mod set;
 pub mod sieve;
 pub mod size;
+pub mod sli;
 pub mod slice;
 pub mod split;
 pub mod sqlescape;
