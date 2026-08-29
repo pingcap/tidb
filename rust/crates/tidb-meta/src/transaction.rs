@@ -38,7 +38,7 @@ use tidb_model::resource_group::{ResourceGroupInfo, ResourceGroupSettings};
 use tidb_model::schema_diff::SchemaDiff;
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
-use tidb_util::partialjson::extract_top_level_members;
+use tidb_util::partialjson::{extract_top_level_members, JsonToken};
 
 use crate::error::{MetaError, Result};
 use crate::{key, structure, value};

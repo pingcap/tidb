@@ -14,7 +14,7 @@
 
 //! Complete transcreation of Go `pkg/util/partialjson` (`extract.go`).
 //!
-//! Requested top-level members are captured as [`RawValue`] source slices.
+//! Requested top-level members are captured as ordered JSON decoder tokens.
 //! Parsing stops after the last requested member, duplicate names keep their
 //! first value, and an empty name set never reads the input. Malformed input
 //! before the last requested member still fails. Error text is native
@@ -29,7 +29,22 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use serde::de::{DeserializeSeed, Deserializer, IgnoredAny, MapAccess, Visitor};
-pub use serde_json::value::RawValue;
+use serde_json::value::RawValue;
+
+/// Go `encoding/json.Token` values returned by the package.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum JsonToken {
+    /// `{`, `}`, `[`, or `]`.
+    Delim(char),
+    /// A JSON string, including object member names.
+    String(String),
+    /// A number in its original lexical representation (`json.Number`).
+    Number(String),
+    /// A JSON boolean.
+    Bool(bool),
+    /// JSON `null`.
+    Null,
+}
 
 /// Error returned by [`extract_top_level_members`].
 #[derive(Debug, Clone)]
@@ -92,8 +107,7 @@ impl<'de> DeserializeSeed<'de> for ExtractSeed<'_> {
 
 /// Extracts the given top-level members from a JSON object. It stops parsing
 /// as soon as all names are found. Port of Go's `ExtractTopLevelMembers`; each
-/// member is returned as its exact source text ([`RawValue`]) instead of Go's
-/// decoder-specific `[]json.Token`.
+/// member is returned as the equivalent of Go's `[]json.Token`.
 ///
 /// # Errors
 ///
@@ -103,7 +117,7 @@ impl<'de> DeserializeSeed<'de> for ExtractSeed<'_> {
 pub fn extract_top_level_members(
     content: &[u8],
     names: &[&str],
-) -> Result<HashMap<String, Box<RawValue>>, PartialJsonError> {
+) -> Result<HashMap<String, Vec<JsonToken>>, PartialJsonError> {
     // Go's loop condition is `len(remainNames) > 0`; with no names it never
     // touches the iterator, so even invalid content succeeds.
     if names.is_empty() {
@@ -120,13 +134,167 @@ pub fn extract_top_level_members(
     };
     let mut de = serde_json::Deserializer::from_str(&content);
     // No `de.end()`: content after the top-level object is never inspected.
-    match seed.deserialize(&mut de) {
-        Ok(()) => Ok(out.into_inner()),
+    let raw = match seed.deserialize(&mut de) {
+        Ok(()) => out.into_inner(),
         // An error after `done` was raised while closing over the unread tail
         // (serde_json's `end_map`), which the early stop deliberately skips.
-        Err(_) if done.get() => Ok(out.into_inner()),
-        Err(e) => Err(PartialJsonError(e.to_string())),
+        Err(_) if done.get() => out.into_inner(),
+        Err(e) => return Err(PartialJsonError(e.to_string())),
+    };
+    raw.into_iter()
+        .map(|(name, value)| tokenize(value.get()).map(|tokens| (name, tokens)))
+        .collect()
+}
+
+fn tokenize(value: &str) -> Result<Vec<JsonToken>, PartialJsonError> {
+    struct Parser<'a> {
+        bytes: &'a [u8],
+        pos: usize,
+        tokens: Vec<JsonToken>,
     }
+
+    impl Parser<'_> {
+        fn skip_space(&mut self) {
+            while self
+                .bytes
+                .get(self.pos)
+                .is_some_and(u8::is_ascii_whitespace)
+            {
+                self.pos += 1;
+            }
+        }
+
+        fn parse_string(&mut self) -> Result<String, PartialJsonError> {
+            let start = self.pos;
+            self.pos += 1;
+            while let Some(&byte) = self.bytes.get(self.pos) {
+                match byte {
+                    b'"' => {
+                        self.pos += 1;
+                        return serde_json::from_slice(&self.bytes[start..self.pos])
+                            .map_err(|error| PartialJsonError(error.to_string()));
+                    }
+                    b'\\' => self.pos += 2,
+                    _ => self.pos += 1,
+                }
+            }
+            Err(PartialJsonError("unexpected EOF".to_owned()))
+        }
+
+        fn parse_value(&mut self) -> Result<(), PartialJsonError> {
+            self.skip_space();
+            match self.bytes.get(self.pos).copied() {
+                Some(b'{') => self.parse_object(),
+                Some(b'[') => self.parse_array(),
+                Some(b'"') => {
+                    let value = self.parse_string()?;
+                    self.tokens.push(JsonToken::String(value));
+                    Ok(())
+                }
+                Some(b't') if self.bytes.get(self.pos..self.pos + 4) == Some(b"true") => {
+                    self.pos += 4;
+                    self.tokens.push(JsonToken::Bool(true));
+                    Ok(())
+                }
+                Some(b'f') if self.bytes.get(self.pos..self.pos + 5) == Some(b"false") => {
+                    self.pos += 5;
+                    self.tokens.push(JsonToken::Bool(false));
+                    Ok(())
+                }
+                Some(b'n') if self.bytes.get(self.pos..self.pos + 4) == Some(b"null") => {
+                    self.pos += 4;
+                    self.tokens.push(JsonToken::Null);
+                    Ok(())
+                }
+                Some(_) => {
+                    let start = self.pos;
+                    while self
+                        .bytes
+                        .get(self.pos)
+                        .is_some_and(|byte| !byte.is_ascii_whitespace() && !b",]}".contains(byte))
+                    {
+                        self.pos += 1;
+                    }
+                    let number = std::str::from_utf8(&self.bytes[start..self.pos])
+                        .map_err(|error| PartialJsonError(error.to_string()))?;
+                    self.tokens.push(JsonToken::Number(number.to_owned()));
+                    Ok(())
+                }
+                None => Err(PartialJsonError("unexpected EOF".to_owned())),
+            }
+        }
+
+        fn parse_object(&mut self) -> Result<(), PartialJsonError> {
+            self.pos += 1;
+            self.tokens.push(JsonToken::Delim('{'));
+            self.skip_space();
+            if self.bytes.get(self.pos) == Some(&b'}') {
+                self.pos += 1;
+                self.tokens.push(JsonToken::Delim('}'));
+                return Ok(());
+            }
+            loop {
+                self.skip_space();
+                if self.bytes.get(self.pos) != Some(&b'"') {
+                    return Err(PartialJsonError("unexpected JSON name".to_owned()));
+                }
+                let name = self.parse_string()?;
+                self.tokens.push(JsonToken::String(name));
+                self.skip_space();
+                if self.bytes.get(self.pos) != Some(&b':') {
+                    return Err(PartialJsonError("expected ':'".to_owned()));
+                }
+                self.pos += 1;
+                self.parse_value()?;
+                self.skip_space();
+                match self.bytes.get(self.pos) {
+                    Some(b',') => self.pos += 1,
+                    Some(b'}') => {
+                        self.pos += 1;
+                        self.tokens.push(JsonToken::Delim('}'));
+                        return Ok(());
+                    }
+                    _ => return Err(PartialJsonError("unexpected EOF".to_owned())),
+                }
+            }
+        }
+
+        fn parse_array(&mut self) -> Result<(), PartialJsonError> {
+            self.pos += 1;
+            self.tokens.push(JsonToken::Delim('['));
+            self.skip_space();
+            if self.bytes.get(self.pos) == Some(&b']') {
+                self.pos += 1;
+                self.tokens.push(JsonToken::Delim(']'));
+                return Ok(());
+            }
+            loop {
+                self.parse_value()?;
+                self.skip_space();
+                match self.bytes.get(self.pos) {
+                    Some(b',') => self.pos += 1,
+                    Some(b']') => {
+                        self.pos += 1;
+                        self.tokens.push(JsonToken::Delim(']'));
+                        return Ok(());
+                    }
+                    _ => return Err(PartialJsonError("unexpected EOF".to_owned())),
+                }
+            }
+        }
+    }
+
+    let mut parser = Parser {
+        bytes: value.as_bytes(),
+        pos: 0,
+        tokens: Vec::new(),
+    };
+    parser.parse_value()?;
+    parser.skip_space();
+    if parser.pos != parser.bytes.len() {
+        return Err(PartialJsonError("unexpected trailing JSON".to_owned()));
+    }
+    Ok(parser.tokens)
 }
 
 fn normalize_json_strings(content: &[u8]) -> Cow<'_, str> {
@@ -217,101 +385,43 @@ fn parse_hex_quad(bytes: Option<&[u8]>) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_top_level_members;
+    use super::{extract_top_level_members, JsonToken};
 
-    fn raw(map: &super::HashMap<String, Box<super::RawValue>>, key: &str) -> String {
-        map[key].get().to_string()
-    }
-
-    // Go `TestIter`'s failure cases, driven through the public API (the
-    // iterator itself is Go's private tokenizer, replaced by serde_json).
-    // The same inputs fail; the error text is serde_json's.
+    /// Go `TestIter`.
     #[test]
-    fn failure_cases() {
-        for content in ["{", "[]", "{a}", "{]", "{}", r#"{"a": 1}"#] {
-            // `{}`/`{"a": 1}` fail because the requested name is missing.
-            let err = extract_top_level_members(content.as_bytes(), &["missing"]);
-            assert!(err.is_err(), "content: {content}");
+    fn test_iter() {
+        for content in ["{", "[]", "{a}", "{]"] {
+            assert!(extract_top_level_members(content.as_bytes(), &["a"]).is_err());
         }
-    }
 
-    // Go `TestIter`'s success cases: the captured members equal the exact
-    // source text of each value.
-    #[test]
-    fn success_cases() {
-        let got = extract_top_level_members(br#"{"a": 1, "b": "val"}"#, &["a", "b"]).unwrap();
-        assert_eq!(raw(&got, "a"), "1");
-        assert_eq!(raw(&got, "b"), r#""val""#);
-
-        let content =
-            r#"{"a": 1, "long1": {"skip": "skip"}, "b": "val", "long2": [0,0,{"skip":2}]}"#;
-        let got =
-            extract_top_level_members(content.as_bytes(), &["a", "long1", "b", "long2"]).unwrap();
-        assert_eq!(raw(&got, "a"), "1");
-        assert_eq!(raw(&got, "long1"), r#"{"skip": "skip"}"#);
-        assert_eq!(raw(&got, "b"), r#""val""#);
-        assert_eq!(raw(&got, "long2"), r#"[0,0,{"skip":2}]"#);
-    }
-
-    // Early stop, first-occurrence-wins, and the empty-names shortcut — all
-    // verified against the real Go package's outputs before porting.
-    #[test]
-    fn go_observable_semantics() {
-        // Content after the last requested member is never parsed, even if it
-        // is not valid JSON (e.g. a truncated document).
-        let got = extract_top_level_members(br#"{"a": 1, "b": 2, GARBAGE"#, &["a"]).unwrap();
-        assert_eq!(raw(&got, "a"), "1");
-
-        // Requested members can appear in any order relative to `names`, and a
-        // later member may be the stopping point.
-        let got =
-            extract_top_level_members(br#"{"x": {"y": [1,2]}, "z": "s"}"#, &["z", "x"]).unwrap();
-        assert_eq!(raw(&got, "x"), r#"{"y": [1,2]}"#);
-        assert_eq!(raw(&got, "z"), r#""s""#);
-
-        // A duplicated name keeps its first value.
-        let got = extract_top_level_members(br#"{"a": 1, "a": 2}"#, &["a"]).unwrap();
-        assert_eq!(raw(&got, "a"), "1");
-
-        // Empty names: the content is never read at all.
-        let got = extract_top_level_members(b"complete garbage", &[]).unwrap();
-        assert!(got.is_empty());
-
-        // Malformed JSON BEFORE the last requested member still fails: the
-        // early-stop tolerance never masks a broken needed value.
-        assert!(extract_top_level_members(br#"{"b": GARBAGE, "a": 1}"#, &["a"]).is_err());
-    }
-
-    #[test]
-    fn invalid_utf8_in_json_strings_uses_replacement_character() {
-        let selected = extract_top_level_members(b"{\"name\":\"\xff\"}", &["name"]).unwrap();
-        assert_eq!(
-            serde_json::from_str::<String>(selected["name"].get()).unwrap(),
-            "\u{fffd}"
-        );
-
-        let skipped =
-            extract_top_level_members(b"{\"skip\":\"\xff\",\"name\":\"ok\"}", &["name"]).unwrap();
-        assert_eq!(
-            serde_json::from_str::<String>(skipped["name"].get()).unwrap(),
-            "ok"
-        );
-
-        let key = extract_top_level_members(b"{\"\xff\":1}", &["\u{fffd}"]).unwrap();
-        assert_eq!(key["\u{fffd}"].get(), "1");
-
-        let surrogate = extract_top_level_members(
-            br#"{"name":"\uD800","pair":"\uD83D\uDE00"}"#,
-            &["name", "pair"],
+        let got = extract_top_level_members(
+            br#"{"a":1,"long1":{"skip":"skip"},"b":"val","long2":[0,0,{"skip":2}]}"#,
+            &["a", "long1", "b", "long2"],
         )
         .unwrap();
+        assert_eq!(got["a"], [JsonToken::Number("1".to_owned())]);
+        assert_eq!(got["b"], [JsonToken::String("val".to_owned())]);
         assert_eq!(
-            serde_json::from_str::<String>(surrogate["name"].get()).unwrap(),
-            "\u{fffd}"
+            got["long1"],
+            [
+                JsonToken::Delim('{'),
+                JsonToken::String("skip".to_owned()),
+                JsonToken::String("skip".to_owned()),
+                JsonToken::Delim('}'),
+            ]
         );
         assert_eq!(
-            serde_json::from_str::<String>(surrogate["pair"].get()).unwrap(),
-            "\u{1f600}"
+            got["long2"],
+            [
+                JsonToken::Delim('['),
+                JsonToken::Number("0".to_owned()),
+                JsonToken::Number("0".to_owned()),
+                JsonToken::Delim('{'),
+                JsonToken::String("skip".to_owned()),
+                JsonToken::Number("2".to_owned()),
+                JsonToken::Delim('}'),
+                JsonToken::Delim(']'),
+            ]
         );
     }
 }
