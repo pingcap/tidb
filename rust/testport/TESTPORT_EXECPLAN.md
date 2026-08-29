@@ -36,6 +36,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: completed the pinned Go `pkg/util/deadlockhistory` package
+  (one production file, one source test, one test harness, and `BUILD.bazel`).
+  Removed the Rust-only package row renderer, key decoder, server policy, and
+  recording entry point; executor code now owns retryable admission and live
+  recording while the ordinary information-schema reader owns key decoding
+  and statement-summary digest-text lookup, matching Go's boundaries. Reduced
+  the package tests to the four source identities and deleted an unregistered
+  duplicate DEADLOCKS test file. Complete inventory and WIP gates are recorded
+  in `receipts/util_deadlockhistory.md`.
 - 2026-08-29: completed the pinned Go `pkg/util/keydecoder` package (one
   production file, one source test, one test harness, and `BUILD.bazel`). Read
   the complete package first, then removed four supplemental Rust test

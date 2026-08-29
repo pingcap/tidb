@@ -16,7 +16,6 @@
 
 use std::collections::VecDeque;
 use std::fmt::Write as _;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
 use tidb_datatype::{Collation, Datum, StringDatum, Time, TimeType, MAX_FSP};
@@ -41,18 +40,6 @@ pub const COL_KEY: &str = "KEY";
 pub const COL_KEY_INFO: &str = "KEY_INFO";
 /// `INFORMATION_SCHEMA.DEADLOCKS.TRX_HOLDING_LOCK`.
 pub const COL_TRX_HOLDING_LOCK: &str = "TRX_HOLDING_LOCK";
-
-const DEADLOCK_COLUMNS: [&str; 9] = [
-    COL_DEADLOCK_ID,
-    COL_OCCUR_TIME,
-    COL_RETRYABLE,
-    COL_TRY_LOCK_TRX_ID,
-    COL_CURRENT_SQL_DIGEST,
-    COL_CURRENT_SQL_DIGEST_TEXT,
-    COL_KEY,
-    COL_KEY_INFO,
-    COL_TRX_HOLDING_LOCK,
-];
 
 /// One edge in a deadlock's wait cycle.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -82,43 +69,43 @@ pub struct DeadlockRecord {
     pub is_retryable: bool,
 }
 
-impl DeadlockRecord {
-    /// Builds a record from TiKV's complete deadlock payload.
-    #[must_use]
-    pub fn from_deadlock(detail: &DeadlockDetail) -> Self {
-        let wait_chain = detail
-            .wait_chain
-            .iter()
-            .map(|raw| {
-                let digest = match decode_resource_group_tag(&raw.resource_group_tag) {
-                    Ok(Some(digest)) => hex(&digest, false),
-                    Ok(None) => String::new(),
-                    Err(error) => {
-                        tracing::warn!(%error, "failed to decode deadlock resource-group tag");
-                        String::new()
-                    }
-                };
-                WaitChainItem {
-                    sql_digest: digest,
-                    key: raw.key.clone(),
-                    all_sql_digests: Vec::new(),
-                    try_lock_txn: raw.txn,
-                    txn_holding_lock: raw.wait_for_txn,
+/// Builds a record from TiKV's complete deadlock error payload.
+#[must_use]
+pub fn err_deadlock_to_deadlock_record(detail: &DeadlockDetail) -> DeadlockRecord {
+    let wait_chain = detail
+        .wait_chain
+        .iter()
+        .map(|raw| {
+            let digest = match decode_resource_group_tag(&raw.resource_group_tag) {
+                Ok(Some(digest)) => hex(&digest, false),
+                Ok(None) => String::new(),
+                Err(error) => {
+                    tracing::warn!(%error, "failed to decode deadlock resource-group tag");
+                    String::new()
                 }
-            })
-            .collect();
-        let mut occur_time = Time::current(TimeType::Timestamp);
-        occur_time
-            .set_fsp(MAX_FSP)
-            .expect("MAX_FSP is always a valid timestamp precision");
-        Self {
-            occur_time,
-            wait_chain,
-            id: 0,
-            is_retryable: detail.is_retryable,
-        }
+            };
+            WaitChainItem {
+                sql_digest: digest,
+                key: raw.key.clone(),
+                all_sql_digests: Vec::new(),
+                try_lock_txn: raw.txn,
+                txn_holding_lock: raw.wait_for_txn,
+            }
+        })
+        .collect();
+    let mut occur_time = Time::current(TimeType::Timestamp);
+    occur_time
+        .set_fsp(MAX_FSP)
+        .expect("MAX_FSP is always a valid timestamp precision");
+    DeadlockRecord {
+        occur_time,
+        wait_chain,
+        id: 0,
+        is_retryable: detail.is_retryable,
     }
+}
 
+impl DeadlockRecord {
     /// Returns one package-owned DEADLOCKS column for one wait-cycle edge.
     #[must_use]
     pub fn to_datum(&self, wait_chain_idx: usize, column_name: &str) -> Datum {
@@ -218,33 +205,6 @@ impl DeadlockHistory {
         self.lock().deadlocks.clear();
     }
 
-    /// Returns rows in `INFORMATION_SCHEMA.DEADLOCKS` column order.
-    #[must_use]
-    pub fn rows<C: crate::keydecoder::KeyInfoCatalog + ?Sized>(
-        &self,
-        catalog: &C,
-    ) -> Vec<Vec<Datum>> {
-        self.get_all()
-            .into_iter()
-            .flat_map(|record| {
-                (0..record.wait_chain.len())
-                    .map(move |idx| {
-                        DEADLOCK_COLUMNS
-                            .iter()
-                            .map(|column| {
-                                if *column == COL_KEY_INFO {
-                                    key_info_datum(&record.wait_chain[idx].key, catalog)
-                                } else {
-                                    record.to_datum(idx, column)
-                                }
-                            })
-                            .collect()
-                    })
-                    .collect::<Vec<Vec<Datum>>>()
-            })
-            .collect()
-    }
-
     fn lock(&self) -> MutexGuard<'_, HistoryState> {
         self.state
             .lock()
@@ -252,49 +212,9 @@ impl DeadlockHistory {
     }
 }
 
-fn key_info_datum<C: crate::keydecoder::KeyInfoCatalog + ?Sized>(key: &[u8], catalog: &C) -> Datum {
-    if key.is_empty() {
-        return Datum::Null;
-    }
-    let decoded = match crate::keydecoder::decode_key(key, catalog) {
-        Ok(decoded) => decoded,
-        Err(error) => {
-            tracing::warn!(%error, "failed to decode deadlock key information");
-            return Datum::Null;
-        }
-    };
-    match serde_json::to_vec(&decoded) {
-        Ok(json) => Datum::String(StringDatum::new(json, Collation::DEFAULT)),
-        Err(error) => {
-            tracing::warn!(%error, "failed to encode deadlock key information as JSON");
-            Datum::Null
-        }
-    }
-}
-
-static GLOBAL_DEADLOCK_HISTORY: LazyLock<DeadlockHistory> =
+/// Process-wide deadlock history used by the executor and information schema.
+pub static GLOBAL_DEADLOCK_HISTORY: LazyLock<DeadlockHistory> =
     LazyLock::new(|| DeadlockHistory::new(0));
-static COLLECT_RETRYABLE: AtomicBool = AtomicBool::new(false);
-
-/// Returns the process-wide deadlock history.
-#[must_use]
-pub fn global_deadlock_history() -> &'static DeadlockHistory {
-    &GLOBAL_DEADLOCK_HISTORY
-}
-
-/// Applies the server's deadlock-history policy.
-pub fn configure_global_deadlock_history(capacity: usize, collect_retryable: bool) {
-    COLLECT_RETRYABLE.store(collect_retryable, Ordering::Release);
-    GLOBAL_DEADLOCK_HISTORY.resize(capacity);
-}
-
-/// Records one live TiKV deadlock when the configured policy admits it.
-pub fn record_deadlock(detail: &DeadlockDetail) {
-    if detail.is_retryable && !COLLECT_RETRYABLE.load(Ordering::Acquire) {
-        return;
-    }
-    GLOBAL_DEADLOCK_HISTORY.push(DeadlockRecord::from_deadlock(detail));
-}
 
 fn hex(bytes: &[u8], upper: bool) -> String {
     let mut output = String::with_capacity(bytes.len().saturating_mul(2));
@@ -310,28 +230,13 @@ fn hex(bytes: &[u8], upper: bool) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
-    use std::thread;
+    use std::sync::Arc;
 
     use tidb_datatype::{Collation, CoreTime, Datum, StringDatum, Time, TimeType};
     use tidb_txnkv::transaction::{DeadlockDetail, DeadlockWaitChainItem};
     use tidb_txnkv::ResourceGroupTagBuilder;
 
-    use super::{
-        configure_global_deadlock_history, global_deadlock_history, record_deadlock,
-        DeadlockHistory, DeadlockRecord, WaitChainItem,
-    };
-
-    static GLOBAL_HISTORY_TEST: Mutex<()> = Mutex::new(());
-
-    struct ResetGlobalHistory;
-
-    impl Drop for ResetGlobalHistory {
-        fn drop(&mut self) {
-            global_deadlock_history().clear();
-            configure_global_deadlock_history(0, false);
-        }
-    }
+    use super::{err_deadlock_to_deadlock_record, DeadlockHistory, DeadlockRecord, WaitChainItem};
 
     fn record(time: Time) -> DeadlockRecord {
         DeadlockRecord {
@@ -342,9 +247,17 @@ mod tests {
         }
     }
 
-    fn timestamp(year: u16, month: u8, day: u8, microsecond: u32) -> Time {
+    fn timestamp(
+        year: u16,
+        month: u8,
+        day: u8,
+        hour: u8,
+        minute: u8,
+        second: u8,
+        microsecond: u32,
+    ) -> Time {
         Time::new(
-            CoreTime::from_date(year, month, day, 15, 28, 30, microsecond),
+            CoreTime::from_date(year, month, day, hour, minute, second, microsecond),
             TimeType::Timestamp,
             6,
         )
@@ -352,93 +265,47 @@ mod tests {
     }
 
     #[test]
-    fn collection_overwrite_clear_and_resize_match_source_order() {
-        let history = DeadlockHistory::new(3);
-        let time = timestamp(2021, 5, 14, 123_456);
-        for _ in 0..9 {
-            history.push(record(time));
-        }
-        assert_eq!(
-            history
-                .get_all()
-                .iter()
-                .map(|record| record.id)
-                .collect::<Vec<_>>(),
-            [7, 8, 9]
-        );
-
-        history.resize(4);
-        history.push(record(time));
-        assert_eq!(
-            history
-                .get_all()
-                .iter()
-                .map(|record| record.id)
-                .collect::<Vec<_>>(),
-            [7, 8, 9, 10]
-        );
-
-        history.resize(2);
-        assert_eq!(
-            history
-                .get_all()
-                .iter()
-                .map(|record| record.id)
-                .collect::<Vec<_>>(),
-            [9, 10]
-        );
-        history.clear();
-        assert!(history.get_all().is_empty());
-        history.push(record(time));
-        assert_eq!(history.get_all()[0].id, 11);
-
-        history.resize(0);
-        history.push(record(time));
-        history.resize(1);
-        history.push(record(time));
-        assert_eq!(history.get_all()[0].id, 12);
-    }
-
-    #[test]
-    fn snapshots_share_the_pushed_record() {
+    fn test_deadlock_history_collection() {
         let history = DeadlockHistory::new(1);
-        history.push(record(timestamp(2021, 5, 14, 123_456)));
+        assert!(history.get_all().is_empty());
+        history.push(record(timestamp(2021, 5, 14, 15, 28, 30, 123_456)));
         let first = history.get_all();
         let second = history.get_all();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].id, 1);
         assert!(Arc::ptr_eq(&first[0], &second[0]));
+        history.push(record(timestamp(2021, 5, 14, 15, 28, 30, 123_456)));
+        assert_eq!(history.get_all()[0].id, 2);
+        history.clear();
+        assert!(history.get_all().is_empty());
+
+        let history = DeadlockHistory::new(3);
+        for expected_id in 1..=3 {
+            history.push(record(timestamp(2021, 5, 14, 15, 28, 30, 123_456)));
+            assert_eq!(history.get_all().last().unwrap().id, expected_id);
+        }
+        for newest_id in 4..=9 {
+            history.push(record(timestamp(2021, 5, 14, 15, 28, 30, 123_456)));
+            assert_eq!(
+                history
+                    .get_all()
+                    .iter()
+                    .map(|record| record.id)
+                    .collect::<Vec<_>>(),
+                [newest_id - 2, newest_id - 1, newest_id]
+            );
+        }
+        history.clear();
+        assert!(history.get_all().is_empty());
     }
 
     #[test]
-    fn concurrent_pushes_keep_one_ordered_bounded_id_sequence() {
-        let history = Arc::new(DeadlockHistory::new(64));
-        let mut workers = Vec::new();
-        for _ in 0..4 {
-            let history = Arc::clone(&history);
-            workers.push(thread::spawn(move || {
-                for _ in 0..25 {
-                    history.push(record(timestamp(2021, 5, 14, 123_456)));
-                }
-            }));
-        }
-        for worker in workers {
-            worker.join().unwrap();
-        }
-
-        assert_eq!(
-            history
-                .get_all()
-                .iter()
-                .map(|record| record.id)
-                .collect::<Vec<_>>(),
-            (37..=100).collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn datum_rows_preserve_missing_values_and_column_order() {
+    fn test_get_datum() {
         let history = DeadlockHistory::new(10);
+        let time1 = timestamp(2021, 5, 14, 15, 28, 30, 123_456);
+        let time2 = timestamp(2022, 6, 15, 16, 29, 31, 123_457);
         history.push(DeadlockRecord {
-            occur_time: timestamp(2021, 5, 14, 123_456),
+            occur_time: time1,
             wait_chain: vec![
                 WaitChainItem {
                     sql_digest: "sql1".to_owned(),
@@ -459,24 +326,57 @@ mod tests {
             is_retryable: false,
         });
         history.push(DeadlockRecord {
-            occur_time: timestamp(2022, 6, 15, 123_457),
-            wait_chain: vec![WaitChainItem {
-                sql_digest: String::new(),
-                key: Vec::new(),
-                all_sql_digests: Vec::new(),
-                try_lock_txn: 201,
-                txn_holding_lock: 202,
-            }],
+            occur_time: time2,
+            wait_chain: vec![
+                WaitChainItem {
+                    sql_digest: String::new(),
+                    key: Vec::new(),
+                    all_sql_digests: Vec::new(),
+                    try_lock_txn: 201,
+                    txn_holding_lock: 202,
+                },
+                WaitChainItem {
+                    sql_digest: String::new(),
+                    key: Vec::new(),
+                    all_sql_digests: vec!["sql1".to_owned()],
+                    try_lock_txn: 202,
+                    txn_holding_lock: 201,
+                },
+            ],
             id: 0,
             is_retryable: true,
         });
-        history.push(record(timestamp(2023, 1, 1, 0)));
+        history.push(record(timestamp(2023, 1, 1, 0, 0, 0, 0)));
 
-        let rows = history.rows(&crate::Catalog::default());
-        assert_eq!(rows.len(), 3);
+        let columns = [
+            super::COL_DEADLOCK_ID,
+            super::COL_OCCUR_TIME,
+            super::COL_RETRYABLE,
+            super::COL_TRY_LOCK_TRX_ID,
+            super::COL_CURRENT_SQL_DIGEST,
+            super::COL_CURRENT_SQL_DIGEST_TEXT,
+            super::COL_KEY,
+            super::COL_KEY_INFO,
+            super::COL_TRX_HOLDING_LOCK,
+        ];
+        let rows = history
+            .get_all()
+            .into_iter()
+            .flat_map(|record| {
+                (0..record.wait_chain.len())
+                    .map(|idx| {
+                        columns
+                            .iter()
+                            .map(|column| record.to_datum(idx, column))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(rows.len(), 4);
         assert_eq!(rows[0].len(), 9);
         assert_eq!(rows[0][0], Datum::UInt(1));
-        assert_eq!(rows[0][1], Datum::Time(timestamp(2021, 5, 14, 123_456)));
+        assert_eq!(rows[0][1], Datum::Time(time1));
         assert_eq!(rows[0][2], Datum::Int(0));
         assert_eq!(rows[0][3], Datum::UInt(101));
         assert_eq!(
@@ -494,8 +394,14 @@ mod tests {
         assert_eq!(rows[1][6], Datum::Null);
         assert_eq!(rows[2][0], Datum::UInt(2));
         assert_eq!(rows[2][2], Datum::Int(1));
+        assert_eq!(rows[2][3], Datum::UInt(201));
+        assert_eq!(rows[2][8], Datum::UInt(202));
+        assert_eq!(rows[3][0], Datum::UInt(2));
+        assert_eq!(rows[3][2], Datum::Int(1));
+        assert_eq!(rows[3][3], Datum::UInt(202));
+        assert_eq!(rows[3][8], Datum::UInt(201));
 
-        let empty = record(timestamp(2023, 1, 1, 0));
+        let empty = record(timestamp(2023, 1, 1, 0, 0, 0, 0));
         assert_eq!(
             empty.to_datum(usize::MAX, super::COL_DEADLOCK_ID),
             Datum::UInt(0)
@@ -504,9 +410,11 @@ mod tests {
     }
 
     #[test]
-    fn conversion_keeps_wait_chain_keys_transactions_and_sql_digests() {
-        let mut tag = ResourceGroupTagBuilder::new(None);
-        tag.set_sql_digest(&[0xaa, 0xbb, 0xcc, 0xdd]);
+    fn test_err_deadlock_to_deadlock_record() {
+        let mut tag1 = ResourceGroupTagBuilder::new(None);
+        tag1.set_sql_digest(&[0xaa, 0xbb, 0xcc, 0xdd]);
+        let mut tag2 = ResourceGroupTagBuilder::new(None);
+        tag2.set_sql_digest(&[0xdd, 0xcc, 0xbb, 0xaa]);
         let detail = DeadlockDetail {
             lock_ts: 101,
             lock_key: b"k1".to_vec(),
@@ -518,18 +426,18 @@ mod tests {
                     txn: 100,
                     wait_for_txn: 101,
                     key: b"k2".to_vec(),
-                    resource_group_tag: tag.encode_tag_with_key(&[]),
+                    resource_group_tag: tag1.encode_tag_with_key(&[]),
                 },
                 DeadlockWaitChainItem {
                     txn: 101,
                     wait_for_txn: 100,
                     key: b"k1".to_vec(),
-                    resource_group_tag: vec![0xff],
+                    resource_group_tag: tag2.encode_tag_with_key(&[]),
                 },
             ],
         };
 
-        let record = DeadlockRecord::from_deadlock(&detail);
+        let record = err_deadlock_to_deadlock_record(&detail);
         assert_eq!(record.occur_time.kind(), TimeType::Timestamp);
         assert_eq!(record.occur_time.fsp(), 6);
         assert!(record.is_retryable);
@@ -544,7 +452,7 @@ mod tests {
                     txn_holding_lock: 101,
                 },
                 WaitChainItem {
-                    sql_digest: String::new(),
+                    sql_digest: "ddccbbaa".to_owned(),
                     key: b"k1".to_vec(),
                     all_sql_digests: Vec::new(),
                     try_lock_txn: 101,
@@ -555,33 +463,46 @@ mod tests {
     }
 
     #[test]
-    fn retryable_collection_obeys_the_process_policy() {
-        let _serial = GLOBAL_HISTORY_TEST.lock().unwrap();
-        let _reset = ResetGlobalHistory;
-        let detail = DeadlockDetail {
-            lock_ts: 1,
-            lock_key: Vec::new(),
-            deadlock_key_hash: 0,
-            deadlock_key: Vec::new(),
-            is_retryable: true,
-            wait_chain: Vec::new(),
-        };
+    fn test_resize() {
+        let history = DeadlockHistory::new(2);
+        let time = timestamp(2021, 5, 14, 15, 28, 30, 123_456);
+        history.push(record(time));
+        history.push(record(time));
+        history.push(record(time));
+        assert_eq!(
+            history
+                .get_all()
+                .iter()
+                .map(|record| record.id)
+                .collect::<Vec<_>>(),
+            [2, 3]
+        );
 
-        configure_global_deadlock_history(3, false);
-        global_deadlock_history().clear();
-        record_deadlock(&detail);
-        assert!(global_deadlock_history().get_all().is_empty());
+        history.resize(3);
+        history.push(record(time));
+        assert_eq!(
+            history
+                .get_all()
+                .iter()
+                .map(|record| record.id)
+                .collect::<Vec<_>>(),
+            [2, 3, 4]
+        );
 
-        let mut terminal = detail.clone();
-        terminal.is_retryable = false;
-        record_deadlock(&terminal);
-        assert_eq!(global_deadlock_history().get_all()[0].id, 1);
+        history.resize(2);
+        assert_eq!(
+            history
+                .get_all()
+                .iter()
+                .map(|record| record.id)
+                .collect::<Vec<_>>(),
+            [3, 4]
+        );
 
-        configure_global_deadlock_history(3, true);
-        record_deadlock(&detail);
-        let records = global_deadlock_history().get_all();
-        assert_eq!(records.len(), 2);
-        assert_eq!(records[1].id, 2);
-        assert!(records[1].is_retryable);
+        history.resize(0);
+        assert!(history.get_all().is_empty());
+        history.resize(2);
+        history.push(record(time));
+        assert_eq!(history.get_all()[0].id, 5);
     }
 }

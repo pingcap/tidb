@@ -306,10 +306,53 @@ impl Session {
             || self.login_user.is_none()
     }
 
-    /// Package-owned rows of `INFORMATION_SCHEMA.DEADLOCKS`.
+    /// Executor-owned rows of `INFORMATION_SCHEMA.DEADLOCKS`.
     pub(crate) fn deadlock_history_table_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
+        use tidb_datatype::{Collation, StringDatum};
+        use tidb_executor::deadlock_history::{
+            COL_CURRENT_SQL_DIGEST, COL_DEADLOCK_ID, COL_KEY, COL_OCCUR_TIME, COL_RETRYABLE,
+            COL_TRX_HOLDING_LOCK, COL_TRY_LOCK_TRX_ID, GLOBAL_DEADLOCK_HISTORY,
+        };
+        use tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP;
+
+        let records = GLOBAL_DEADLOCK_HISTORY.get_all();
         self.with_catalog_mut(|catalog| {
-            Ok(tidb_executor::deadlock_history::global_deadlock_history().rows(catalog))
+            Ok(records
+                .into_iter()
+                .flat_map(|record| {
+                    (0..record.wait_chain.len())
+                        .map(|idx| {
+                            let item = &record.wait_chain[idx];
+                            let digest_text = STMT_SUMMARY_BY_DIGEST_MAP
+                                .normalized_sql_for_digest(&item.sql_digest)
+                                .map(Datum::new_string)
+                                .unwrap_or(Datum::Null);
+                            let key_info = if item.key.is_empty() {
+                                Datum::Null
+                            } else {
+                                tidb_executor::keydecoder::decode_key(&item.key, catalog)
+                                    .ok()
+                                    .and_then(|decoded| serde_json::to_vec(&decoded).ok())
+                                    .map(|json| {
+                                        Datum::String(StringDatum::new(json, Collation::DEFAULT))
+                                    })
+                                    .unwrap_or(Datum::Null)
+                            };
+                            vec![
+                                record.to_datum(idx, COL_DEADLOCK_ID),
+                                record.to_datum(idx, COL_OCCUR_TIME),
+                                record.to_datum(idx, COL_RETRYABLE),
+                                record.to_datum(idx, COL_TRY_LOCK_TRX_ID),
+                                record.to_datum(idx, COL_CURRENT_SQL_DIGEST),
+                                digest_text,
+                                record.to_datum(idx, COL_KEY),
+                                key_info,
+                                record.to_datum(idx, COL_TRX_HOLDING_LOCK),
+                            ]
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect())
         })
     }
 }

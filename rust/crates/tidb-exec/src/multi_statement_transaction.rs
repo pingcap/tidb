@@ -49,7 +49,6 @@ use std::time::Duration;
 
 use tidb_codec::table_key::{decode_record_key, encode_row_key_with_handle, RecordHandle};
 use tidb_datatype::{Datum, SessionTimeZone};
-use tidb_executor::deadlock_history::record_deadlock;
 use tidb_pd_client::PdClient;
 use tidb_planner::physical::PhysicalSelection;
 use tidb_planner::prepared_dml::ConfiguredPreparedWrite;
@@ -158,7 +157,7 @@ impl TransactionStatementError {
 
 fn record_lock_failure(failure: &PessimisticLockFailure) {
     if let PessimisticLockFailure::Deadlock(detail) = failure {
-        record_deadlock(detail);
+        crate::deadlock_recording::record_deadlock(detail);
     }
 }
 
@@ -1185,6 +1184,7 @@ mod tests {
         MultiStatementTransaction, TransactionStatementError, UnaryCallContext,
         TRANSACTION_END_TIMEOUT,
     };
+    use crate::configure_deadlock_history;
     use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, ERR_WRITE_CONFLICT};
     use tidb_planner::prepared_dml::{
         ConfiguredAssignment, ConfiguredPreparedWrite, PreparedBindValue,
@@ -1197,9 +1197,7 @@ mod tests {
     };
 
     use tidb_datatype::Datum;
-    use tidb_executor::deadlock_history::{
-        configure_global_deadlock_history, global_deadlock_history,
-    };
+    use tidb_executor::deadlock_history::GLOBAL_DEADLOCK_HISTORY;
 
     static DEADLOCK_HISTORY_TEST: Mutex<()> = Mutex::new(());
 
@@ -1207,8 +1205,8 @@ mod tests {
 
     impl Drop for ResetDeadlockHistory {
         fn drop(&mut self) {
-            global_deadlock_history().clear();
-            configure_global_deadlock_history(0, false);
+            GLOBAL_DEADLOCK_HISTORY.clear();
+            configure_deadlock_history(0, false);
         }
     }
 
@@ -1314,8 +1312,8 @@ mod tests {
     fn a_live_deadlock_failure_is_recorded_before_it_reaches_sql() {
         let _serial = DEADLOCK_HISTORY_TEST.lock().unwrap();
         let _reset = ResetDeadlockHistory;
-        configure_global_deadlock_history(2, false);
-        global_deadlock_history().clear();
+        configure_deadlock_history(2, false);
+        GLOBAL_DEADLOCK_HISTORY.clear();
         let failure = PessimisticLockFailure::Deadlock(DeadlockDetail {
             lock_ts: 7,
             lock_key: b"blocked".to_vec(),
@@ -1333,7 +1331,7 @@ mod tests {
         record_lock_failure(&failure);
         let error = TransactionStatementError::from_lock_failure(&failure);
         assert_eq!(error.sql_error().code, 1213);
-        let records = global_deadlock_history().get_all();
+        let records = GLOBAL_DEADLOCK_HISTORY.get_all();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].id, 1);
         assert_eq!(records[0].wait_chain[0].try_lock_txn, 7);
@@ -1354,13 +1352,13 @@ mod tests {
             wait_chain: Vec::new(),
         });
 
-        configure_global_deadlock_history(2, false);
+        configure_deadlock_history(2, false);
         record_lock_failure(&failure);
-        assert!(global_deadlock_history().get_all().is_empty());
+        assert!(GLOBAL_DEADLOCK_HISTORY.get_all().is_empty());
 
-        configure_global_deadlock_history(2, true);
+        configure_deadlock_history(2, true);
         record_lock_failure(&failure);
-        let records = global_deadlock_history().get_all();
+        let records = GLOBAL_DEADLOCK_HISTORY.get_all();
         assert_eq!(records.len(), 1);
         assert!(records[0].is_retryable);
     }

@@ -313,7 +313,7 @@ fn start_system_time_monitor() {
 fn open_spill_storage(
     config: &NodeConfig,
 ) -> Result<Arc<tidb_util::disk::SpillStorage>, RunConfiguredNodeError> {
-    tidb_executor::deadlock_history::configure_global_deadlock_history(
+    tidb_exec::configure_deadlock_history(
         config.deadlock_history_capacity,
         config.deadlock_history_collect_retryable,
     );

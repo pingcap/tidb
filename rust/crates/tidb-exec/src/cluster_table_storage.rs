@@ -286,7 +286,7 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
             }
             Err(failure) => {
                 if let PessimisticLockFailure::Deadlock(detail) = &failure {
-                    tidb_executor::deadlock_history::record_deadlock(detail);
+                    crate::deadlock_recording::record_deadlock(detail);
                 }
                 // Release only what this statement added; earlier statements'
                 // locks survive their successor's failure. The release runs on
