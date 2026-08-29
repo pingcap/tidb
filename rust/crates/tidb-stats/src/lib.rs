@@ -47,10 +47,6 @@ pub mod constants;
 pub mod correlation;
 pub mod count_metrics;
 pub mod datum_map_cache;
-pub mod ddl_physical_ids;
-pub mod ddl_queue_gate;
-pub mod ddl_stats_delta;
-pub mod ddl_subscriber;
 pub mod dynamic_partition_helpers;
 pub mod estimate;
 pub mod existence_map;
@@ -157,12 +153,6 @@ pub use constants::{DEFAULT_HISTOGRAM_BUCKETS, DEFAULT_TOP_N_VALUE};
 pub use correlation::calc_correlation;
 pub use count_metrics::HistogramCountSummary;
 pub use datum_map_cache::DatumMapCache;
-pub use ddl_physical_ids::physical_ids_for_stats_ddl;
-pub use ddl_queue_gate::{ddl_queue_disposition, DdlQueueDisposition};
-pub use ddl_stats_delta::{
-    ddl_stats_delta_update, DdlStatsDeltaUpdate, EXISTING_STATS_META_DELTA_QUERY,
-    LOCKED_STATS_DELTA_QUERY, MISSING_STATS_META_DELTA_QUERY,
-};
 pub use dynamic_partition_helpers::{flatten_partition_names, get_partition_sql};
 pub use estimate::{estimate_global_singleton_by_sketches, estimate_ndv_by_gee};
 pub use existence_map::ColAndIdxExistenceMap;

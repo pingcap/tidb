@@ -160,13 +160,6 @@ fn incremental_modify_count_update() {
     unreachable!("gated by go-parity-gap ignore")
 }
 
-// handletest/handle_test.go::TestFlushPendingStatsDeltaBeforeAnalyze
-#[test]
-#[ignore = "go-parity-gap: pending stats-delta flush ordering before session ANALYZE; delta flush runtime is an external boundary (ddl_stats_delta leaf only)"]
-fn flush_pending_stats_delta_before_analyze() {
-    unreachable!("gated by go-parity-gap ignore")
-}
-
 // handletest/handle_test.go::TestRecordHistoricalStatsToStorage
 #[test]
 #[ignore = "go-parity-gap: writes historical stats snapshots to mysql.stats_history via the handle; historical-stats storage path unported (historical_stats.rs holds labels only)"]

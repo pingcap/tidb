@@ -850,6 +850,12 @@ For each bounded behavior cluster:
       and handle helpers, while the Rust function exercised none of them.
       Inventory is in
       `receipts/statistics_handle_ddl_testutil_audit.md`.
+- [x] Audit the complete pinned root `pkg/statistics/handle/ddl` package.
+      Remove the port-based subscriber, its extracted physical-ID and SQL
+      leaves, a source-absent compatibility alias, their tests, and one empty
+      gap test. Go owns an integrated notifier/session/storage/cache/handle
+      package whose dependencies and 24 integration tests are not complete in
+      Rust. Inventory is in `receipts/statistics_handle_ddl_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -1000,6 +1006,13 @@ For each bounded behavior cluster:
   blocking, timer selection, notifier events, and nil-on-timeout are the
   helper's behavior, alongside three sibling handle/transaction helpers. The
   generic leaf is removed until the complete support package can land.
+  Date/Author: 2026-08-29, Codex.
+- Decision: root `pkg/statistics/handle/ddl` cannot be represented by a
+  pre-decoded event enum plus caller-supplied session, store, and cache traits.
+  The Go package's behavior is its integration with the ordinary statistics
+  handle, notifier, transactional storage, infoschema, historical metadata,
+  locks, and end-to-end DDL ordering. The disconnected subscriber and helper
+  leaves are removed until that dependency-closed owner can land atomically.
   Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
