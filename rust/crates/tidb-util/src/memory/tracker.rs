@@ -368,9 +368,7 @@ impl Tracker {
             heap_inuse: AtomicI64::new(0),
         });
         let context = ArbitrationContext::new(
-            Some(CancelChannel::from_kill_event(
-                killer.subscribe_kill_event(),
-            )),
+            Some(CancelChannel::from_kill_event(killer.get_kill_event_chan())),
             Some(helper.clone()),
             priority,
             wait_averse,

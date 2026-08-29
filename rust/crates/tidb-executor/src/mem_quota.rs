@@ -660,10 +660,24 @@ impl StatementMemory {
     }
 
     /// Waits for a SQL `SLEEP` duration or this statement's canonical kill
-    /// event, whichever happens first.
+    /// signal, polling every 10ms like Go's `doSleep`.
     #[must_use]
     pub fn sleep_for(&self, duration: std::time::Duration) -> bool {
-        self.killer.wait_kill_event_timeout(duration)
+        let started = std::time::Instant::now();
+        let interval = std::time::Duration::from_millis(10);
+        loop {
+            let elapsed = started.elapsed();
+            if elapsed >= duration {
+                return false;
+            }
+            std::thread::sleep(interval.min(duration - elapsed));
+            if started.elapsed() >= duration {
+                return false;
+            }
+            if self.killer.handle_signal().is_some() {
+                return true;
+            }
+        }
     }
 
     /// Clears a handled standalone-query kill, as Go's `doSleep` does after

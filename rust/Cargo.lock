@@ -3802,6 +3802,7 @@ dependencies = [
  "crc32fast",
  "crossbeam-channel",
  "des",
+ "fail",
  "fastrand",
  "flate2",
  "fs4",
