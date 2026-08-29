@@ -45,7 +45,8 @@ impl Write for ObservingWriter {
 
 #[test]
 fn format_package_semantics() {
-    let mut indented = IndentFormatter::new(Vec::new(), "\t");
+    let mut output = Vec::new();
+    let mut indented = IndentFormatter::new(&mut output, "\t");
     let written = indented
         .format(&[
             F::text("abc"),
@@ -57,11 +58,12 @@ fn format_package_semantics() {
             F::text("z\n"),
         ])
         .unwrap();
-    let output = indented.into_inner();
+    drop(indented);
     assert_eq!(written, output.len());
     assert_eq!(output, b"abc3%e\n\tx\n\ty\nz\n");
 
-    let mut flat = FlatFormatter::new(Vec::new());
+    let mut output = Vec::new();
+    let mut flat = FlatFormatter::new(&mut output);
     flat.format(&[
         F::text("abc"),
         F::value(format_args!("{}", 3)),
@@ -74,7 +76,8 @@ fn format_package_semantics() {
         F::text("\n"),
     ])
     .unwrap();
-    assert_eq!(flat.into_inner(), b"abc3%e x y z\n ");
+    drop(flat);
+    assert_eq!(output, b"abc3%e x y z\n ");
 
     assert_eq!(
         output_format("slash\\quote'\0nul\nline\rcarriage"),
@@ -92,35 +95,35 @@ fn output_format_preserves_go_string_byte_domain() {
 
 #[test]
 fn formatter_performs_one_source_write_and_returns_its_count() {
-    let writer = ObservingWriter {
+    let mut writer = ObservingWriter {
         bytes: Vec::new(),
         limit: 3,
         calls: 0,
         fail: false,
     };
-    let mut formatter = IndentFormatter::new(writer, "  ");
+    let mut formatter = IndentFormatter::new(&mut writer, "  ");
 
     assert_eq!(formatter.format(&[F::text("abcdef")]).unwrap(), 3);
-    let writer = formatter.into_inner();
+    drop(formatter);
     assert_eq!(writer.calls, 1);
     assert_eq!(writer.bytes, b"abc");
 }
 
 #[test]
 fn empty_format_still_observes_the_source_writer() {
-    let writer = ObservingWriter {
+    let mut writer = ObservingWriter {
         bytes: Vec::new(),
         limit: usize::MAX,
         calls: 0,
         fail: true,
     };
-    let mut formatter = IndentFormatter::new(writer, "  ");
+    let mut formatter = IndentFormatter::new(&mut writer, "  ");
 
     assert_eq!(
         formatter.format(&[]).unwrap_err().kind(),
         io::ErrorKind::Other
     );
-    let writer = formatter.into_inner();
+    drop(formatter);
     assert_eq!(writer.calls, 1);
     assert!(writer.bytes.is_empty());
 }

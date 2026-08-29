@@ -25,7 +25,6 @@ const STATE_BEGIN_LINE: u8 = 1;
 /// Commands are structural rather than encoded into a fully rendered string,
 /// so formatted values can contain `%i`, `%u`, percent signs, or newlines
 /// without being reinterpreted by the indentation state machine.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormatFragment<'a> {
     /// Literal template text. Newlines participate in indentation state.
     Text(&'a str),
@@ -95,11 +94,6 @@ impl<W: Write> IndentFormatter<W> {
             indent_level: 0,
             state: STATE_BEGIN_LINE,
         }
-    }
-
-    /// Consumes the formatter and returns its underlying writer.
-    pub fn into_inner(self) -> W {
-        self.writer
     }
 
     fn format_inner(&mut self, flat: bool, fragments: &[FormatFragment<'_>]) -> io::Result<usize> {
@@ -188,11 +182,6 @@ impl<W: Write> FlatFormatter<W> {
     /// Creates a formatter that flattens indented newlines to spaces.
     pub fn new(writer: W) -> Self {
         Self(IndentFormatter::new(writer, ""))
-    }
-
-    /// Consumes the formatter and returns its underlying writer.
-    pub fn into_inner(self) -> W {
-        self.0.into_inner()
     }
 }
 
