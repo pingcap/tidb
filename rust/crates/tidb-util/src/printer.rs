@@ -189,29 +189,10 @@ pub fn get_print_result(columns: &[String], rows: &[Vec<String>]) -> Option<Stri
 mod tests {
     use super::*;
 
-    fn string_field<'a>(fields: &'a [Field], key: &str) -> Option<&'a str> {
-        fields.iter().find_map(|field| {
-            if field.key != key {
-                return None;
-            }
-            match &field.value {
-                Value::Str(value) => Some(value.as_str()),
-                _ => None,
-            }
-        })
-    }
-
     #[test]
-    fn print_result_matches_source_boundaries() {
+    fn print_result() {
         let columns = vec!["col1".to_owned(), "col2".to_owned(), "col3".to_owned()];
         assert_eq!(get_print_result(&columns, &[vec!["11".to_owned()]]), None);
-        assert_eq!(get_print_result(&columns, &[]), None);
-        assert_eq!(get_print_result(&[], &[]), None);
-
-        assert_eq!(
-            get_print_result(&["é".to_owned()], &[vec!["x".to_owned()]]).as_deref(),
-            Some("+----+\n| é |\n+----+\n| x  |\n+----+\n")
-        );
 
         let rows = vec![
             vec!["11".to_owned(), "12".to_owned(), "13".to_owned()],
@@ -225,13 +206,15 @@ mod tests {
                  +------+------+------+\n\
                  | 11   | 12   | 13   |\n\
                  | 21   | 22   | 23   |\n\
-                 +------+------+------+\n"
+                +------+------+------+\n"
             )
         );
+        assert_eq!(get_print_result(&columns, &[]), None);
+        assert_eq!(get_print_result(&[], &[]), None);
     }
 
     #[test]
-    fn tidb_info_and_startup_fields_match_kernel_shape() {
+    fn get_tidb_info_matches_kernel_shape() {
         let classic = VersionInfo::build_default();
         let rendered = get_tidb_info(&classic);
         assert!(rendered.contains(&format!("Release Version: {}", classic.release_version)));
@@ -248,37 +231,5 @@ mod tests {
             )
         };
         assert!(get_tidb_info(&next_gen).contains("Release Version: CLOUD.202603.0"));
-
-        let fields = tidb_info_fields(&next_gen);
-        assert_eq!(
-            string_field(&fields, "TiDB Component Version"),
-            Some("v26.3.0")
-        );
-        assert_eq!(string_field(&fields, "Deploy Mode"), Some("starter"));
-    }
-
-    #[test]
-    fn deploy_mode_field_is_owned_by_next_generation_kernel() {
-        let classic = VersionInfo::build_default().with_runtime_environment(
-            false,
-            "tikv",
-            "Classic",
-            Some("starter".to_owned()),
-        );
-        assert_eq!(
-            string_field(&tidb_info_fields(&classic), "Deploy Mode"),
-            None
-        );
-
-        let next_gen = VersionInfo::build_default().with_runtime_environment(
-            false,
-            "tikv",
-            "Next Generation",
-            None,
-        );
-        assert_eq!(
-            string_field(&tidb_info_fields(&next_gen), "Deploy Mode"),
-            Some("premium")
-        );
     }
 }

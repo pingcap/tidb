@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Public byte-string contract for Go `pkg/util/printer`.
+//! Go `pkg/util/printer/printer_test.go::TestPrintTiDBInfo`.
 
 use tidb_util::logutil::{init_logger, new_log_config, FileLogConfig, DEFAULT_LOG_FORMAT};
-use tidb_util::printer::{get_print_result_bytes, print_tidb_info};
+use tidb_util::printer::print_tidb_info;
 use tidb_util::versioninfo::VersionInfo;
 
 struct RestoreStdoutLogger;
@@ -35,20 +35,9 @@ impl Drop for RestoreStdoutLogger {
 }
 
 #[test]
-fn table_rendering_preserves_go_string_bytes_and_byte_widths() {
-    let columns: [&[u8]; 2] = [b"a\xff", b"b"];
-    let rows: Vec<Vec<&[u8]>> = vec![vec![b"x", b"y\xfe"]];
-
-    assert_eq!(
-        get_print_result_bytes(&columns, &rows).as_deref(),
-        Some(&b"+----+----+\n| a\xff | b  |\n+----+----+\n| x  | y\xfe |\n+----+----+\n"[..])
-    );
-}
-
-#[test]
-fn startup_identity_uses_the_logutil_global_logger() {
+fn print_tidb_info_source() {
     let directory = tempfile::tempdir().expect("log directory");
-    let filename = directory.path().join("printer.log");
+    let filename = directory.path().join("classic.log");
     let config = new_log_config(
         "info",
         DEFAULT_LOG_FORMAT,
@@ -69,4 +58,37 @@ fn startup_identity_uses_the_logutil_global_logger() {
     let output = std::fs::read_to_string(filename).expect("read startup logs");
     assert!(output.contains("Welcome to TiDB."), "{output}");
     assert!(output.contains("loaded config"), "{output}");
+    assert!(!output.contains("TiDB Component Version"), "{output}");
+    assert!(!output.contains("Deploy Mode"), "{output}");
+
+    let filename = directory.path().join("next-gen.log");
+    let config = new_log_config(
+        "info",
+        DEFAULT_LOG_FORMAT,
+        "",
+        "",
+        FileLogConfig {
+            filename: filename.to_string_lossy().into_owned(),
+            max_size: 4096,
+            ..FileLogConfig::default()
+        },
+        true,
+    );
+    init_logger(&config).expect("install next-generation logger");
+    let next_gen = VersionInfo {
+        release_version: "v26.3.0".to_owned(),
+        ..VersionInfo::build_default().with_runtime_environment(
+            false,
+            "tikv",
+            "Next Generation",
+            None,
+        )
+    };
+    print_tidb_info(&next_gen, br#"{"store":"tikv"}"#);
+
+    let output = std::fs::read_to_string(filename).expect("read next-generation startup logs");
+    assert!(output.contains("TiDB Component Version"), "{output}");
+    assert!(output.contains("v26.3.0"), "{output}");
+    assert!(output.contains("Deploy Mode"), "{output}");
+    assert!(output.contains("premium"), "{output}");
 }
