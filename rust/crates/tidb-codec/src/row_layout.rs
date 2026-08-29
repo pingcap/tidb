@@ -199,21 +199,13 @@ impl<'a> RowLayout<'a> {
         let offset_bytes = checked_len(header.not_null_count() as usize, offset_width, "offsets")?;
         let offsets_raw = take(&mut cursor, offset_bytes, "offsets")?;
         let mut offsets = Vec::with_capacity(header.not_null_count() as usize);
-        let mut previous = 0_u32;
-        for (index, bytes) in offsets_raw.chunks_exact(offset_width).enumerate() {
+        for bytes in offsets_raw.chunks_exact(offset_width) {
             let offset = if offset_width == 2 {
                 u16::from_le_bytes(bytes.try_into().expect("two-byte offset")) as u32
             } else {
                 u32::from_le_bytes(bytes.try_into().expect("four-byte offset"))
             };
-            if offset < previous {
-                return Err(RowCodecError::InvalidOffset {
-                    index,
-                    value: offset,
-                });
-            }
             offsets.push(offset);
-            previous = offset;
         }
 
         let data_len = offsets.last().copied().unwrap_or(0) as usize;
@@ -322,7 +314,7 @@ impl<'a> RowLayout<'a> {
 /// Returns whether a row begins with the new-format version byte.
 #[must_use]
 pub fn is_new_format(row_data: &[u8]) -> bool {
-    row_data.first() == Some(&ROW_CODEC_VERSION)
+    row_data[0] == ROW_CODEC_VERSION
 }
 
 /// Returns whether a key has the complete legacy table-record row prefix.
@@ -357,13 +349,6 @@ pub enum RowCodecError {
         /// Version bits observed in the checksum header.
         version: u8,
     },
-    /// An offset decreased relative to the preceding end offset.
-    InvalidOffset {
-        /// Offset index in the not-null value table.
-        index: usize,
-        /// Invalid offset value.
-        value: u32,
-    },
     /// A value accessor named a non-existent not-null value.
     ValueIndexOutOfRange {
         /// Requested value index.
@@ -389,9 +374,6 @@ impl fmt::Display for RowCodecError {
             }
             Self::InvalidChecksumVersion { version } => {
                 write!(formatter, "invalid row checksum version {version}")
-            }
-            Self::InvalidOffset { index, value } => {
-                write!(formatter, "row offset {value} decreases at index {index}")
             }
             Self::ValueIndexOutOfRange { index, count } => {
                 write!(

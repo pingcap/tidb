@@ -189,6 +189,7 @@ fn kv_analyze_plan(
         columns.push(AnalyzedColumn {
             id: column.id,
             name: column.name.to_ascii_lowercase(),
+            field_type: column.field_type.clone(),
             collation,
             // A row written before an `ADD COLUMN` carries no entry for it and
             // reads back as the column's `OriginDefaultValue`. This tier's row
@@ -220,8 +221,11 @@ fn kv_analyze_plan(
         }
         indexes.push(AnalyzedIndex {
             id: index.id,
-            single_column_unique: index.unique && column_positions.len() == 1,
+            single_column_unique: index.unique
+                && column_positions.len() == 1
+                && !index.has_prefix(),
             column_positions,
+            prefix_lengths: index.prefix_lengths.clone(),
         });
     }
 

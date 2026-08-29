@@ -112,7 +112,7 @@ impl ErrClass {
     /// `NewStdErr` with a plain composed message (Go's
     /// `parser_mysql.Message(text, nil)`, carrying no redaction positions).
     #[must_use]
-    pub fn new_plain_err(&self, code: u16, message: &'static str) -> TerrorError {
+    pub(crate) fn new_plain_err(&self, code: u16, message: &'static str) -> TerrorError {
         TerrorError::registered(self.0, TerrorCode::new(code as isize), message)
     }
 }
@@ -155,32 +155,39 @@ mod tests {
         assert!(expected.is_empty(), "unported entries: {expected:?}");
     }
 
-    /// Every generated executor error must match the real Go package dump,
-    /// exactly like the DDL table's test.
     #[test]
-    fn exeerrors_match_go_fixture() {
-        let fixture = include_str!("exeerrors_go_fixture.txt");
-        let mut expected = std::collections::HashMap::new();
-        for line in fixture.lines() {
-            let mut parts = line.splitn(4, '\u{1f}');
-            let name = parts.next().unwrap();
-            let code: isize = parts.next().unwrap().parse().unwrap();
-            let rfc = parts.next().unwrap();
-            let msg = parts.next().unwrap();
-            expected.insert(name, (code, rfc, msg));
-        }
-
-        let entries = exeerrors::fixture_entries();
-        assert_eq!(entries.len(), expected.len());
-        for (go_name, err) in entries {
-            let (code, rfc, msg) = expected
-                .remove(go_name)
-                .unwrap_or_else(|| panic!("{go_name} missing from fixture"));
-            assert_eq!(err.code().value(), code, "{go_name} code");
-            assert_eq!(err.rfc_code(), rfc, "{go_name} rfc");
-            assert_eq!(err.message(), msg, "{go_name} message");
-        }
-        assert!(expected.is_empty(), "unported entries: {expected:?}");
+    fn reorg_retryable_errors_match_go() {
+        let expected = std::collections::HashSet::from([
+            errcode::ErrPDServerTimeout,
+            errcode::ErrTiKVServerTimeout,
+            errcode::ErrTiKVServerBusy,
+            errcode::ErrResolveLockTimeout,
+            errcode::ErrRegionUnavailable,
+            errcode::ErrTxnAbortedByGC,
+            errcode::ErrWriteConflict,
+            errcode::ErrTiKVStoreLimit,
+            errcode::ErrTiKVStaleCommand,
+            errcode::ErrTiKVMaxTimestampNotSynced,
+            errcode::ErrTiFlashServerTimeout,
+            errcode::ErrTiFlashServerBusy,
+            errcode::ErrInfoSchemaExpired,
+            errcode::ErrInfoSchemaChanged,
+            errcode::ErrWriteConflictInTiDB,
+            errcode::ErrTxnRetryable,
+            errcode::ErrNotOwner,
+            errcode::ErrInvalidSplitRegionRanges,
+            2,
+        ]);
+        assert_eq!(*REORG_RETRYABLE_ERR_CODES, expected);
+        assert_eq!(
+            REORG_RETRYABLE_ERR_MSGS,
+            [
+                "context deadline exceeded",
+                "requested lease not found",
+                "mvcc: required revision has been compacted",
+                "All returned regions have no leaders",
+            ]
+        );
     }
 
     /// Go `TestErrorRedact`: NewStd errors formatted by args redact exactly

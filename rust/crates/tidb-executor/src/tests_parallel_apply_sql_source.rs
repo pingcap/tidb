@@ -21,11 +21,8 @@
 //! lines), failpoint-injected worker panics, SQL-killer cancellation, and
 //! cancel-in-flight latency. This tier has ONE apply implementation -- the
 //! sequential `crate::apply` operator driven through the statement driver --
-//! and no `explain analyze` text, failpoint, or kill surface. The DATA
-//! assertions (which Go proves identical across both modes) are ported here
-//! as running tests with Go's exact fixtures and expectations; every
-//! execution-mode assertion is recorded as an `#[ignore]` gap test in this
-//! module or the sibling gap modules. Nothing was weakened into a pass.
+//! and no `explain analyze` text, failpoint, or kill surface. The data
+//! assertions run with Go's fixtures and expected results.
 
 use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
 use tidb_datatype::{Collation, Datum, StringDatum};

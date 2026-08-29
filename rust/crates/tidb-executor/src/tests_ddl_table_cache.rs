@@ -19,19 +19,15 @@
 //!
 //! Go drives these through a full cluster (`testkit.CreateMockStoreAndDomain`)
 //! and asserts the persisted `TableInfo.TableCacheStatusType` via
-//! `checkTableCacheStatus` (`db_cache_test.go:27`). The metadata slice of that
-//! contract — the status the DDL writes — is what this tier keeps, so the
-//! assertions here read the same state off the catalog's `KvTable`. The two
-//! halves of the Go file that need machinery ABOVE this tier
-//! (`mysql.table_cache_meta` lease rows and the session's
-//! `ReadFromTableCache` flag) stay documented `#[ignore]` gaps.
+//! `checkTableCacheStatus` (`db_cache_test.go:27`). These tests exercise the
+//! equivalent metadata and size-admission behavior owned by this crate.
 
 use tidb_datatype::Datum;
 use tidb_expr::NoColumns;
 
-use crate::driver::{DEFAULT_DATABASE, TableEntry};
+use crate::driver::{TableEntry, DEFAULT_DATABASE};
 use crate::{
-    Catalog, KvTable, StmtContext, run_alter_table_in, run_create_table_on, run_drop_table_in,
+    run_alter_table_in, run_create_table_on, run_drop_table_in, Catalog, KvTable, StmtContext,
 };
 
 fn ctx() -> StmtContext {
@@ -237,54 +233,4 @@ fn cache_table_size_limit_admits_only_tables_within_the_limit() {
         kv(&catalog, "cache_t2").is_cached(),
         "Go expects the half-full table to cache"
     );
-}
-
-/// `db_cache_test.go:151::TestCacheTableSizeLimit`, cached-table halves.
-///
-/// Go continues after caching: 124 more fills push `cache_t2` over the limit,
-/// a query loop waits for `StmtCtx.ReadFromTableCache` to flip true (the
-/// cache lease catching up), and then the same INSERT is refused with
-/// ErrOptOnCacheTable. Both the lease flag and the write-time size guard are
-/// session/lease machinery this tier does not model.
-#[test]
-#[ignore = "go-parity-gap: needs the cache lease's ReadFromTableCache session flag and the write-time 8242 size guard (Go db_cache_test.go:176-209); this tier only models the DDL-time admission check"]
-fn cache_table_size_limit_blocks_reads_and_writes_through_the_lease() {
-    // Derivation: Go loops `select count(*) from (select * from cache_t2
-    // limit 1) t1` up to 200 times sleeping 50ms until lastReadFromCache
-    // (tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache) is true,
-    // then expects `insert into cache_t2 select * from tmp` to fail with
-    // errno.ErrOptOnCacheTable (8242).
-}
-
-/// `db_cache_test.go:116::TestAlterTableNoCacheRemovesTableCacheMeta`
-/// (issue #66042).
-///
-/// Go reads the table id from information_schema.tables, SELECTs (which takes
-/// a READ lease row), asserts the row exists in mysql.table_cache_meta with
-/// `tid`/`lock_type`/`lease`/`oldReadLease`, then asserts NOCACHE deletes it
-/// and the status returns to TableCacheStatusDisable. The status flip is
-/// already pinned by [`alter_table_cache_pins_enable_disable_and_the_refusals_around_them`];
-/// the table_cache_meta row lifecycle (a system-table persistence + lease
-/// domain this tier has no model of) is the gap.
-#[test]
-#[ignore = "go-parity-gap: mysql.table_cache_meta persistence and its READ/NONE lease rows are not modeled in this tier (Go db_cache_test.go:116-149)"]
-fn alter_table_nocache_removes_the_table_cache_meta_record() {
-    // Derivation: Go queries `select tid, lock_type, lease, oldReadLease from
-    // mysql.table_cache_meta where tid = <id>` before NOCACHE (1 row,
-    // lock_type NONE or READ after the SELECT) and after (0 rows), finishing
-    // with checkTableCacheStatus(.., TableCacheStatusDisable).
-}
-
-/// `db_cache_test.go:212::TestIssue34069` — SEM must not refuse
-/// `ALTER TABLE ... CACHE`.
-///
-/// Go runs `alter table t_34069 cache` under SEM v1 and v2
-/// (`sem.SwitchToSEMForTest`) and requires no error. This crate never consults
-/// the SEM flag (`tidb_util::sem`) on the cache path — there is no refusing
-/// implementation here to pin the allowance against.
-#[test]
-#[ignore = "go-parity-gap: this tier's ALTER TABLE CACHE path never consults the SEM flag (tidb_util::sem), so Go's v1/v2 allowance has no refusing counterpart to test"]
-fn issue_34069_alter_table_cache_is_allowed_under_sem() {
-    // Derivation: pkg/ddl/db_cache_test.go:212-227 — for both sem.V1 and
-    // sem.V2: create t_34069 (t int), `alter table t_34069 cache` must succeed.
 }

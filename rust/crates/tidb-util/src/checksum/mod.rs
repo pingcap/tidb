@@ -23,12 +23,9 @@ use crate::zeropool::Pool;
 use std::io::{self, Write};
 use std::sync::LazyLock;
 
-/// Size of one physical checksum block.
-pub const CHECKSUM_BLOCK_SIZE: usize = 1024;
-/// Size of the little-endian CRC-32 field.
-pub const CHECKSUM_SIZE: usize = 4;
-/// Logical payload capacity in one checksum block.
-pub const CHECKSUM_PAYLOAD_SIZE: usize = CHECKSUM_BLOCK_SIZE - CHECKSUM_SIZE;
+const CHECKSUM_BLOCK_SIZE: usize = 1024;
+const CHECKSUM_SIZE: usize = 4;
+const CHECKSUM_PAYLOAD_SIZE: usize = CHECKSUM_BLOCK_SIZE - CHECKSUM_SIZE;
 
 static CHECKSUM_READER_BUFFER_POOL: LazyLock<Pool<Vec<u8>>> =
     LazyLock::new(|| Pool::new(|| vec![0; CHECKSUM_BLOCK_SIZE]));
@@ -246,12 +243,6 @@ where
     fn read_at(&self, destination: &mut [u8], offset: i64) -> ReadAtResult {
         if destination.is_empty() {
             return ReadAtResult::ok(0);
-        }
-        if offset < 0 {
-            return ReadAtResult::io(
-                0,
-                io::Error::new(io::ErrorKind::InvalidInput, "negative read offset"),
-            );
         }
         let mut offset_in_payload = offset % CHECKSUM_PAYLOAD_SIZE as i64;
         let mut cursor =

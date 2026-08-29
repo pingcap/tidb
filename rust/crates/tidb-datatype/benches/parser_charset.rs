@@ -12,24 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of `pkg/util/slice` unit tests from Go (`slice_test.go`).
+//! Benchmark translation for `BenchmarkGetCharsetDesc`.
 
-use crate::slice::all_of;
+use std::hint::black_box;
 
-/// Go: pkg/util/slice/slice_test.go TestSlice
-///
-/// Pins `AllOf` over the same table-driven cases as the Go test: an empty
-/// slice is vacuously true, a slice with any odd element is false.
-#[test]
-fn slice_all_of_matches_go_table_cases() {
-    let tests: [(&[i32], bool); 4] = [
-        (&[], true),
-        (&[1, 2, 3], false),
-        (&[1, 3], false),
-        (&[2, 2, 4], true),
-    ];
+fn main() {
+    if cfg!(test) {
+        return;
+    }
 
-    for (values, expected) in tests {
-        assert_eq!(all_of(values, |value| value % 2 == 0), expected);
+    let charsets = ["utf8", "utf8mb4", "ascii", "latin1", "binary"];
+    let charset = charsets[black_box(0)];
+    for _ in 0..1_000_000 {
+        let _ = black_box(tidb_datatype::get_charset_info(black_box(charset)));
     }
 }

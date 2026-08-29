@@ -92,10 +92,10 @@ pub use row_layout::{
     ROW_FLAG_LARGE, ROW_HEADER_LEN,
 };
 pub use rowcodec::{
-    append_datum_for_checksum, calculate_raw_checksum, decode_row_to_datums, decode_row_to_map,
-    decode_row_to_old_bytes, encode_row, encode_row_from_old, encode_row_with_checksum,
-    field_type_from_column, field_type_to_flag, remove_keyspace_prefix, ColumnInfo, DatumColumn,
-    DecodeRowOptions, DecodedRow, Handle, RowChecksumPolicy, RowData, RowPackageError,
+    calculate_raw_checksum, decode_row_to_datums, decode_row_to_map, decode_row_to_old_bytes,
+    encode_row, encode_row_with_checksum, field_type_from_column, remove_keyspace_prefix,
+    ColumnInfo, DatumColumn, DecodeRowOptions, DecodedRow, Handle, RowChecksumPolicy, RowData,
+    RowPackageError,
 };
 pub use temporal::{decode_packed_time, encode_packed_time};
 pub use value::{

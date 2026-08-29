@@ -12,16 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Batch b055 port of `pkg/parser` part-5 unit tests (Go tests sorted by
-//! file path + line number on `origin/master`, items 241–300).
-//!
-//! The range is entirely `pkg/parser/parser_test.go` (60 tests). Those
-//! tests drive `parser.Parse` / `ParseOneStmt` plus AST Restore / field
-//! inspection. The yacc parser and AST live in `tidb-parser` / `tidb-ast`,
-//! which depend on this crate, so this crate cannot depend back on them.
-//!
-//! Surfaces this crate *does* own, and that those Go tests exercise as
-//! lexical preconditions, are pinned below rather than approximated:
+//! Executable lexical preconditions derived from pinned Go
+//! `pkg/parser/parser_test.go` cases:
 //!
 //! - keyword-table membership (`tokenMap` / `windowFuncTokenMap`)
 //! - charset-introducer recognition (`underscoreCS`)
@@ -34,8 +26,8 @@
 //! - `/*T![ttl] ... */` feature-ID allowlist
 //! - integer overflow classification (`toInt` → `toDecimal` past u64)
 //!
-//! Every remaining Go assertion is a parse/restore/AST-shape check and is
-//! recorded as an explicit `go-parity-gap` ignore.
+//! Parse/restore/AST-shape checks live with their owning crates and are
+//! deliberately not represented here.
 
 use super::*;
 
@@ -106,11 +98,6 @@ fn sql_result_select_modifiers_are_keywords() {
     }
 }
 
-/// Go: `pkg/parser/parser_test.go`, `TestSQLResult` statement bodies.
-#[test]
-#[ignore = "go-parity-gap: SELECT modifier parse/restore requires the yacc parser and AST, not owned by tidb-lexer"]
-fn sql_result() {}
-
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestSQLNoCache
 // ---------------------------------------------------------------------------
@@ -126,11 +113,6 @@ fn sql_no_cache_keywords_are_lexical_tokens() {
         assert_eq!(first_kind(word), TokenKind::Keyword, "word={word}");
     }
 }
-
-/// Go: `pkg/parser/parser_test.go`, `TestSQLNoCache` statement bodies.
-#[test]
-#[ignore = "go-parity-gap: SelectStmtOpts.SQLCache is set by the yacc parser, not owned by tidb-lexer"]
-fn sql_no_cache() {}
 
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestEscape
@@ -168,47 +150,17 @@ fn escape_quoted_string_unescaping() {
     assert_eq!(decoded_string(r#""\xFF""#), b"xFF".to_vec());
 }
 
-/// Go: `pkg/parser/parser_test.go`, `TestEscape` parse/restore bodies.
-#[test]
-#[ignore = "go-parity-gap: charset-prefixed string restore (_UTF8MB4'...') requires the yacc parser and AST"]
-fn escape() {}
-
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestExplain / TestPrepare / TestDeallocate /
 // TestExecute / TestTrace / TestBinding / TestView
 // ---------------------------------------------------------------------------
 
-/// Go: `pkg/parser/parser_test.go`, `TestExplain`.
-#[test]
-#[ignore = "go-parity-gap: EXPLAIN/DESC parse and Restore live in tidb-parser/tidb-ast, not tidb-lexer"]
-fn explain() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestPrepare`.
-#[test]
-#[ignore = "go-parity-gap: PREPARE statement parse/restore requires the yacc parser, not owned by tidb-lexer"]
-fn prepare() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestDeallocate`.
-#[test]
-#[ignore = "go-parity-gap: DEALLOCATE PREPARE parse/restore requires the yacc parser, not owned by tidb-lexer"]
-fn deallocate() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestExecute`.
-#[test]
-#[ignore = "go-parity-gap: EXECUTE statement parse/restore requires the yacc parser, not owned by tidb-lexer"]
-fn execute() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestTrace`.
-#[test]
-#[ignore = "go-parity-gap: TRACE statement parse/restore requires the yacc parser, not owned by tidb-lexer"]
-fn trace() {}
-
 /// Go: `pkg/parser/parser_test.go`, `TestBinding`.
 ///
 /// Hint comments after CREATE/DROP are a lexer-owned position rule
 /// (`hintedTokens` includes CREATE). Pin that the CREATE BINDING
-/// vectors keep the `/*+ ... */` token; the statement grammar itself
-/// is a parser gap.
+/// vectors keep the `/*+ ... */` token. Statement grammar is asserted in the
+/// parser crate.
 #[test]
 fn binding_create_keeps_optimizer_hint() {
     let sql = "CREATE GLOBAL BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1";
@@ -219,24 +171,9 @@ fn binding_create_keeps_optimizer_hint() {
     );
 }
 
-/// Go: `pkg/parser/parser_test.go`, `TestBinding` statement bodies.
-#[test]
-#[ignore = "go-parity-gap: CREATE/DROP/SET BINDING parse/restore requires the yacc parser, not owned by tidb-lexer"]
-fn binding() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestView`.
-#[test]
-#[ignore = "go-parity-gap: CREATE VIEW parse/restore and CreateViewStmt.Select.Text require the yacc parser and AST"]
-fn view() {}
-
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestTimestampDiffUnit / TestFuncCallExprOffset
 // ---------------------------------------------------------------------------
-
-/// Go: `pkg/parser/parser_test.go`, `TestTimestampDiffUnit`.
-#[test]
-#[ignore = "go-parity-gap: TIMESTAMPDIFF unit AST typing and illegal-unit rejection require the yacc parser"]
-fn timestamp_diff_unit() {}
 
 /// Go: `pkg/parser/parser_test.go`, `TestFuncCallExprOffset`.
 ///
@@ -261,24 +198,9 @@ fn func_call_expr_offset_identifier_spans() {
     assert_eq!(names[2].offset, 14, "b() starts at the 'b' token");
 }
 
-/// Go: `pkg/parser/parser_test.go`, `TestFuncCallExprOffset` AST field.
-#[test]
-#[ignore = "go-parity-gap: FuncCallExpr.OriginTextPosition is an AST field populated by the yacc parser"]
-fn func_call_expr_offset() {}
-
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestSessionManage / TestParseShowOpenTables
 // ---------------------------------------------------------------------------
-
-/// Go: `pkg/parser/parser_test.go`, `TestSessionManage`.
-#[test]
-#[ignore = "go-parity-gap: KILL/SHOW PROCESSLIST/SHUTDOWN/RESTART parse/restore require the yacc parser"]
-fn session_manage() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestParseShowOpenTables`.
-#[test]
-#[ignore = "go-parity-gap: SHOW OPEN TABLES parse/restore requires the yacc parser, not owned by tidb-lexer"]
-fn parse_show_open_tables() {}
 
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestSQLModeANSIQuotes
@@ -335,40 +257,10 @@ fn sql_mode_ansi_quotes_double_quoted_identifiers() {
     assert!(saw_alias, "\"tt\" must lex as identifier tt");
 }
 
-/// Go: `pkg/parser/parser_test.go`, `TestSQLModeANSIQuotes` parse acceptance.
-#[test]
-#[ignore = "go-parity-gap: ANSI_QUOTES CREATE TABLE / SELECT alias parse acceptance requires the yacc parser"]
-fn sql_mode_ansi_quotes() {}
-
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestDDLStatements / TestAnalyze /
 // TestTableSample / TestGeneratedColumn / TestSetTransaction / TestSideEffect
 // ---------------------------------------------------------------------------
-
-/// Go: `pkg/parser/parser_test.go`, `TestDDLStatements`.
-#[test]
-#[ignore = "go-parity-gap: CREATE TABLE charset/collate/flag assignment and grammar errors require the yacc parser"]
-fn ddl_statements() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestAnalyze`.
-#[test]
-#[ignore = "go-parity-gap: ANALYZE TABLE parse/restore requires the yacc parser, not owned by tidb-lexer"]
-fn analyze() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestTableSample`.
-#[test]
-#[ignore = "go-parity-gap: TABLESAMPLE parse/restore requires the yacc parser, not owned by tidb-lexer"]
-fn table_sample() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestGeneratedColumn`.
-#[test]
-#[ignore = "go-parity-gap: generated-column option AST text and ddl:1221 errors require the yacc parser"]
-fn generated_column() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestSetTransaction`.
-#[test]
-#[ignore = "go-parity-gap: SET TRANSACTION rewrite to tx_isolation is a parser/AST action, not owned by tidb-lexer"]
-fn set_transaction() {}
 
 /// Go: `pkg/parser/parser_test.go`, `TestSideEffect`.
 ///
@@ -387,30 +279,10 @@ fn side_effect_lexer_is_stateless_across_inputs() {
     assert_eq!(show[1].text, "tables");
 }
 
-/// Go: `pkg/parser/parser_test.go`, `TestSideEffect` parser reuse.
-#[test]
-#[ignore = "go-parity-gap: parser reuse after a failed ParseOneStmt is yyParser state, not owned by tidb-lexer"]
-fn side_effect() {}
-
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestTablePartition /
 // TestTablePartitionNameList / TestNotExistsSubquery
 // ---------------------------------------------------------------------------
-
-/// Go: `pkg/parser/parser_test.go`, `TestTablePartition`.
-#[test]
-#[ignore = "go-parity-gap: partition DDL parse/restore and Partition.Definitions comments require the yacc parser and AST"]
-fn table_partition() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestTablePartitionNameList`.
-#[test]
-#[ignore = "go-parity-gap: TableName.PartitionNames is populated by the yacc parser, not owned by tidb-lexer"]
-fn table_partition_name_list() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestNotExistsSubquery`.
-#[test]
-#[ignore = "go-parity-gap: ExistsSubqueryExpr.Not is an AST field set by the yacc parser"]
-fn not_exists_subquery() {}
 
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestWindowFunctionIdentifier /
@@ -454,30 +326,10 @@ fn window_function_identifier_keyword_gating() {
     }
 }
 
-/// Go: `pkg/parser/parser_test.go`, `TestWindowFunctionIdentifier` parse.
-#[test]
-#[ignore = "go-parity-gap: SELECT alias acceptance of window keywords requires the yacc parser"]
-fn window_function_identifier() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestWindowFunctions`.
-#[test]
-#[ignore = "go-parity-gap: window-function parse/restore requires the yacc parser with EnableWindowFunc, not owned by tidb-lexer"]
-fn window_functions() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestVisitFrameBound`.
-#[test]
-#[ignore = "go-parity-gap: FrameBound visitor inspection requires parsed window AST nodes"]
-fn visit_frame_bound() {}
-
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestFieldText / TestQuotedSystemVariables /
 // TestQuotedVariableColumnName
 // ---------------------------------------------------------------------------
-
-/// Go: `pkg/parser/parser_test.go`, `TestFieldText`.
-#[test]
-#[ignore = "go-parity-gap: SelectField.Text / TraceStmt.Text are AST origin-text fields, not owned by tidb-lexer"]
-fn field_text() {}
 
 /// Go: `pkg/parser/parser_test.go`, `TestQuotedSystemVariables`.
 ///
@@ -509,11 +361,6 @@ fn quoted_system_variables_tokenize_as_user_vars() {
     );
 }
 
-/// Go: `pkg/parser/parser_test.go`, `TestQuotedSystemVariables` AST fields.
-#[test]
-#[ignore = "go-parity-gap: VariableExpr Name/IsGlobal/IsInstance/ExplicitScope are AST fields set by the parser"]
-fn quoted_system_variables() {}
-
 /// Go: `pkg/parser/parser_test.go`, `TestQuotedVariableColumnName`.
 ///
 /// Go asserts `field.Text()` equals the original spellings. The
@@ -543,19 +390,9 @@ fn quoted_variable_column_name_spans() {
     assert_eq!(vars, expected);
 }
 
-/// Go: `pkg/parser/parser_test.go`, `TestQuotedVariableColumnName` field.Text.
-#[test]
-#[ignore = "go-parity-gap: SelectField.Text for variable columns is an AST origin-text field"]
-fn quoted_variable_column_name() {}
-
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestCharset / TestUnderscoreCharset
 // ---------------------------------------------------------------------------
-
-/// Go: `pkg/parser/parser_test.go`, `TestCharset`.
-#[test]
-#[ignore = "go-parity-gap: ALTER DATABASE/SCHEMA CHAR SET parse requires the yacc parser, not owned by tidb-lexer"]
-fn charset() {}
 
 /// Go: `pkg/parser/parser_test.go`, `TestUnderscoreCharset`.
 ///
@@ -620,25 +457,15 @@ fn underscore_charset_introducer_classification() {
     assert_eq!(crate::canonical_legacy_charset("gbk1"), None);
 }
 
-/// Go: `pkg/parser/parser_test.go`, `TestUnderscoreCharset` parse errors.
-#[test]
-#[ignore = "go-parity-gap: unsupported-introducer [ddl:1115] and near-quote syntax errors are parser actions"]
-fn underscore_charset() {}
-
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestFulltextSearch / TestStartTransaction
 // ---------------------------------------------------------------------------
 
-/// Go: `pkg/parser/parser_test.go`, `TestFulltextSearch`.
-#[test]
-#[ignore = "go-parity-gap: MATCH AGAINST parse/Format requires the yacc parser and AST"]
-fn fulltext_search() {}
-
 /// Go: `pkg/parser/parser_test.go`, `TestStartTransaction`.
 ///
 /// `AS OF` is a two-word scanner merge (`AS` + `OF` → one keyword).
-/// Pin that merge on the READ ONLY AS OF TIMESTAMP vectors; the
-/// START TRANSACTION grammar itself is a parser gap.
+/// Pin that merge on the READ ONLY AS OF TIMESTAMP vectors. The statement
+/// grammar is asserted in the parser crate.
 #[test]
 fn start_transaction_as_of_two_word_merge() {
     let sql = "START TRANSACTION READ ONLY AS OF TIMESTAMP '2015-09-21 00:07:01'";
@@ -650,11 +477,6 @@ fn start_transaction_as_of_two_word_merge() {
         "AS OF must merge into one keyword, got {toks:?}"
     );
 }
-
-/// Go: `pkg/parser/parser_test.go`, `TestStartTransaction` parse/restore.
-#[test]
-#[ignore = "go-parity-gap: START TRANSACTION parse/restore requires the yacc parser, not owned by tidb-lexer"]
-fn start_transaction() {}
 
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestSignedInt64OutOfRange
@@ -683,33 +505,18 @@ fn signed_int64_out_of_range_literal_class() {
     );
 }
 
-/// Go: `pkg/parser/parser_test.go`, `TestSignedInt64OutOfRange` parse errors.
-#[test]
-#[ignore = "go-parity-gap: int64 range rejection in RECOVER/ADMIN/CREATE USER is a parser action on the scanned integer"]
-fn signed_int64_out_of_range() {}
-
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestBRIE / TestStatisticsOps /
 // TestHighNotPrecedenceMode / TestCTE / TestCTEMerge / TestAsOfClause
 // ---------------------------------------------------------------------------
-
-/// Go: `pkg/parser/parser_test.go`, `TestBRIE`.
-#[test]
-#[ignore = "go-parity-gap: BACKUP/RESTORE/BRIE parse/restore requires the yacc parser, not owned by tidb-lexer"]
-fn brie() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestStatisticsOps`.
-#[test]
-#[ignore = "go-parity-gap: CREATE/DROP STATISTICS parse and CreateStatisticsStmt fields require the yacc parser"]
-fn statistics_ops() {}
 
 /// Go: `pkg/parser/parser_test.go`, `TestHighNotPrecedenceMode`.
 ///
 /// Go compares AST shape of `NOT 1 BETWEEN` vs `!1 BETWEEN` with and
 /// without `ModeHighNotPrecedence`. The scanner still emits `NOT` as
 /// a keyword and `!` as an operator in both modes — the flag is a
-/// grammar-level rewrite (`NOT` binds like unary `!`). Pin the token
-/// stream; the AST rewrite is a parser gap.
+/// grammar-level rewrite (`NOT` binds like unary `!`). This test pins only
+/// the token stream owned here.
 #[test]
 fn high_not_precedence_mode_token_stream() {
     let not_sql = "SELECT NOT 1 BETWEEN -5 AND 5";
@@ -748,94 +555,20 @@ fn high_not_precedence_mode_token_stream() {
     );
 }
 
-/// Go: `pkg/parser/parser_test.go`, `TestHighNotPrecedenceMode` AST rewrite.
-#[test]
-#[ignore = "go-parity-gap: HIGH_NOT_PRECEDENCE rewrites NOT-vs-BETWEEN AST shape in the yacc parser"]
-fn high_not_precedence_mode() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestCTE`.
-#[test]
-#[ignore = "go-parity-gap: WITH/CTE parse/restore requires the yacc parser, not owned by tidb-lexer"]
-fn cte() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestCTEMerge`.
-#[test]
-#[ignore = "go-parity-gap: CTE merge parse/restore requires the yacc parser, not owned by tidb-lexer"]
-fn cte_merge() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestAsOfClause`.
-///
-/// `AS OF` merge is the same scanner rule pinned under
-/// `start_transaction_as_of_two_word_merge`; the clause grammar and
-/// SET TRANSACTION rewrite are parser-owned.
-#[test]
-#[ignore = "go-parity-gap: AS OF TIMESTAMP clause parse/restore and SET TRANSACTION rewrite require the yacc parser"]
-fn as_of_clause() {}
-
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestPartitionKeyAlgorithm / TestHelp /
 // TestWithoutCharsetFlags / TestRestoreBinOpWithBrackets / TestCTEBindings
 // ---------------------------------------------------------------------------
-
-/// Go: `pkg/parser/parser_test.go`, `TestPartitionKeyAlgorithm`.
-#[test]
-#[ignore = "go-parity-gap: PARTITION BY LINEAR KEY ALGORITHM parse requires the yacc parser"]
-fn partition_key_algorithm() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestHelp`.
-#[test]
-#[ignore = "go-parity-gap: HELP statement parse/restore requires the yacc parser, not owned by tidb-lexer"]
-fn help() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestWithoutCharsetFlags`.
-#[test]
-#[ignore = "go-parity-gap: RestoreStringWithoutCharset / RestoreStringWithoutDefaultCharset are AST Restore flags"]
-fn without_charset_flags() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestRestoreBinOpWithBrackets`.
-#[test]
-#[ignore = "go-parity-gap: RestoreBracketAroundBinaryOperation is an AST Restore flag, not owned by tidb-lexer"]
-fn restore_bin_op_with_brackets() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestCTEBindings`.
-#[test]
-#[ignore = "go-parity-gap: CTE binding Restore with DefaultDB requires the yacc parser and AST"]
-fn cte_bindings() {}
 
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestPlanReplayer / TestTrafficStmt /
 // TestGBKEncoding / TestGB18030Encoding
 // ---------------------------------------------------------------------------
 
-/// Go: `pkg/parser/parser_test.go`, `TestPlanReplayer`.
-#[test]
-#[ignore = "go-parity-gap: PLAN REPLAYER parse and PlanReplayerStmt fields require the yacc parser and AST"]
-fn plan_replayer() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestTrafficStmt`.
-#[test]
-#[ignore = "go-parity-gap: TRAFFIC CAPTURE/REPLAY parse/restore requires the yacc parser, not owned by tidb-lexer"]
-fn traffic_stmt() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestGBKEncoding`.
-#[test]
-#[ignore = "go-parity-gap: CharsetClient(gbk) transcoding and GBK parser options are unported in tidb-lexer"]
-fn gbk_encoding() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestGB18030Encoding`.
-#[test]
-#[ignore = "go-parity-gap: CharsetClient(gb18030) transcoding is unported in tidb-lexer"]
-fn gb18030_encoding() {}
-
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestInsertStatementMemoryAllocation /
 // TestCharsetIntroducer / TestNonTransactionalDML
 // ---------------------------------------------------------------------------
-
-/// Go: `pkg/parser/parser_test.go`, `TestInsertStatementMemoryAllocation`.
-#[test]
-#[ignore = "go-parity-gap: ParseOneStmt allocation bound is a parser memory-layout check, not a lexer contract"]
-fn insert_statement_memory_allocation() {}
 
 /// Go: `pkg/parser/parser_test.go`, `TestCharsetIntroducer`.
 ///
@@ -859,32 +592,16 @@ fn charset_introducer_gbk_is_recognized_name() {
     assert_eq!(crate::canonical_legacy_charset("gbk"), None);
 }
 
-/// Go: `pkg/parser/parser_test.go`, `TestCharsetIntroducer` parse error.
-#[test]
-#[ignore = "go-parity-gap: [ddl:1115] Unsupported character introducer is a parser error on a recognized non-legacy charset"]
-fn charset_introducer() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestNonTransactionalDML`.
-#[test]
-#[ignore = "go-parity-gap: BATCH ON/LIMIT non-transactional DML parse/restore requires the yacc parser"]
-fn non_transactional_dml() {}
-
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — TestIntervalPartition / TestTTLTableOption /
 // TestIssue45898 / TestMultiStmt / TestCompatTypes / TestVector /
 // TestExplainExplore
 // ---------------------------------------------------------------------------
 
-/// Go: `pkg/parser/parser_test.go`, `TestIntervalPartition`.
-#[test]
-#[ignore = "go-parity-gap: INTERVAL partition DDL parse/restore requires the yacc parser, not owned by tidb-lexer"]
-fn interval_partition() {}
-
 /// Go: `pkg/parser/parser_test.go`, `TestTTLTableOption`.
 ///
 /// `/*T![ttl] ... */` is executable because `ttl` is in the feature-ID
-/// allowlist (`pkg/parser/tidb`). Pin that membership; the CREATE/ALTER
-/// TABLE option grammar is a parser gap.
+/// allowlist (`pkg/parser/tidb`). This test pins that membership.
 #[test]
 fn ttl_table_option_feature_id_allowlist() {
     assert!(can_parse_feature(&[FEATURE_ID_TTL]));
@@ -903,16 +620,6 @@ fn ttl_table_option_feature_id_allowlist() {
         "T![ttl] is an executable comment, not a hint"
     );
 }
-
-/// Go: `pkg/parser/parser_test.go`, `TestTTLTableOption` statement bodies.
-#[test]
-#[ignore = "go-parity-gap: TTL table-option parse/restore and TTL_ENABLE validation require the yacc parser"]
-fn ttl_table_option() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestIssue45898`.
-#[test]
-#[ignore = "go-parity-gap: parser reuse after a truncated `a.` input is yyParser state, not owned by tidb-lexer"]
-fn issue45898() {}
 
 /// Go: `pkg/parser/parser_test.go`, `TestMultiStmt`.
 ///
@@ -943,23 +650,3 @@ fn multi_stmt_string_does_not_split_on_embedded_semicolon() {
     );
     assert_eq!(decoded_string("'foo;bar'"), b"foo;bar".to_vec());
 }
-
-/// Go: `pkg/parser/parser_test.go`, `TestMultiStmt` statement split.
-#[test]
-#[ignore = "go-parity-gap: multi-statement Parse and SelectField.Text require the yacc parser"]
-fn multi_stmt() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestCompatTypes`.
-#[test]
-#[ignore = "go-parity-gap: vendor type aliases (BOOL→TINYINT(1), etc.) are parser/AST Restore rewrites"]
-fn compat_types() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestVector`.
-#[test]
-#[ignore = "go-parity-gap: VECTOR / VECTOR<FLOAT> type parse/restore requires the yacc parser"]
-fn vector() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestExplainExplore`.
-#[test]
-#[ignore = "go-parity-gap: EXPLAIN EXPLORE parse and ExplainStmt.Explore/ReplayerFile fields require the yacc parser"]
-fn explain_explore() {}

@@ -55,29 +55,22 @@ impl CacheKey for MockCacheKey {
     }
 }
 
-/// Go `memory.MemTotal()` (gopsutil's total physical RAM).
-fn mem_total() -> u64 {
-    let content = std::fs::read_to_string("/proc/meminfo").expect("read /proc/meminfo");
-    let kib: u64 = content
-        .lines()
-        .find_map(|line| line.strip_prefix("MemTotal:"))
-        .and_then(|value| value.split_whitespace().next())
-        .and_then(|value| value.parse().ok())
-        .expect("MemTotal line in /proc/meminfo");
-    kib * 1024
-}
+/// Deterministic stand-ins for Go's successful `memory.MemTotal()` and
+/// `memory.InstanceMemUsed()` calls. The production Rust API receives the
+/// process-memory probe from its owner; these tests exercise the resulting
+/// eviction policy without making the Go package's platform-neutral tests
+/// depend on Linux `/proc`.
+const TEST_MEM_TOTAL: u64 = 1_000_000;
 
-/// Go `memory.InstanceMemUsed()`; a real read keeps the guard arithmetic on
-/// the same operating-system boundary as the source.
 fn instance_mem_used() -> Result<u64, MemoryProbeError> {
-    Ok(mem_total() / 2)
+    Ok(TEST_MEM_TOTAL / 2)
 }
 
 /// Go `TestPut`: capacity eviction fires `onEvict` with the oldest pairs and
 /// leaves the newest `capacity` entries in MRU order.
 #[test]
 fn test_put() {
-    let max_mem = mem_total();
+    let max_mem = TEST_MEM_TOTAL;
 
     let mut lru_max_mem = SimpleLruCache::with_memory_guard(3, 0.0, max_mem, instance_mem_used);
     let mut lru_zero_quota = SimpleLruCache::with_memory_guard(3, 0.0, 0, instance_mem_used);
@@ -152,7 +145,7 @@ fn test_zero_quota() {
 /// every insert is evicted immediately.
 #[test]
 fn test_oom_guard() {
-    let max_mem = mem_total();
+    let max_mem = TEST_MEM_TOTAL;
 
     let mut lru = SimpleLruCache::with_memory_guard(3, 1.0, max_mem, instance_mem_used);
     assert_eq!(3, lru.capacity());
@@ -172,7 +165,7 @@ fn test_oom_guard() {
 /// Go `TestGet`: misses return nothing, hits are promoted to the front.
 #[test]
 fn test_get() {
-    let max_mem = mem_total();
+    let max_mem = TEST_MEM_TOTAL;
 
     let mut lru = SimpleLruCache::with_memory_guard(3, 0.0, max_mem, instance_mem_used);
 
@@ -205,7 +198,7 @@ fn test_get() {
 /// Go `TestDelete`.
 #[test]
 fn test_delete() {
-    let max_mem = mem_total();
+    let max_mem = TEST_MEM_TOTAL;
 
     let mut lru = SimpleLruCache::with_memory_guard(3, 0.0, max_mem, instance_mem_used);
 
@@ -228,7 +221,7 @@ fn test_delete() {
 /// Go `TestDeleteAll`.
 #[test]
 fn test_delete_all() {
-    let max_mem = mem_total();
+    let max_mem = TEST_MEM_TOTAL;
 
     let mut lru = SimpleLruCache::with_memory_guard(3, 0.0, max_mem, instance_mem_used);
 
@@ -251,7 +244,7 @@ fn test_delete_all() {
 /// Go `TestValues`: values come back most-recently-used first.
 #[test]
 fn test_values() {
-    let max_mem = mem_total();
+    let max_mem = TEST_MEM_TOTAL;
 
     let mut lru = SimpleLruCache::with_memory_guard(5, 0.0, max_mem, instance_mem_used);
 

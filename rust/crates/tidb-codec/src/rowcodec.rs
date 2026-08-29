@@ -19,6 +19,7 @@
 //! policy, and old-datum conversion so consumers never need an "almost
 //! rowcodec" adapter.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -103,6 +104,17 @@ pub struct DatumColumn {
     pub datum: Datum,
 }
 
+impl DatumColumn {
+    /// Encodes this column datum for TiCDC-compatible checksum calculation.
+    pub fn encode(
+        &self,
+        timezone: Option<&SessionTimeZone>,
+        buffer: &mut Vec<u8>,
+    ) -> Result<(), RowPackageError> {
+        append_datum_for_checksum(timezone, buffer, &self.datum, self.field_type.code())
+    }
+}
+
 /// Caller-ordered row data used by TiCDC-compatible column-level checksums.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RowData {
@@ -178,21 +190,36 @@ pub struct DecodeRowOptions<'a> {
 /// Errors returned by the complete rowcodec boundary.
 #[derive(Debug)]
 pub enum RowPackageError {
-    /// Column and datum counts disagree.
-    ColumnValueCount {
-        /// Number of supplied column IDs.
-        columns: usize,
-        /// Number of supplied datums.
-        values: usize,
-    },
     /// A datum kind does not match the operation.
     UnsupportedDatum(&'static str),
+    /// Go `encodeValueDatum` received a kind outside its switch.
+    UnsupportedEncodeType(u8),
+    /// Go `multierr.Append` accumulated several encoding errors.
+    EncodeErrors(Vec<RowPackageError>),
     /// A field type is not handled by rowcodec.
     UnknownFieldType(FieldTypeCode),
+    /// Go `errInvalidChecksumTyp`.
+    InvalidChecksumType,
+    /// Go's recovered type assertion from `appendDatumForChecksum`.
+    ChecksumDatumType {
+        /// `Datum.String()` at the failure site.
+        datum: String,
+        /// `types.TypeStr(typ)`.
+        field_type: &'static str,
+        /// Asserted Go payload type.
+        expected: &'static str,
+    },
+    /// Go's recovered panic from a checksum datum accessor.
+    ChecksumDatumValue {
+        /// `Datum.String()` at the failure site.
+        datum: String,
+        /// `types.TypeStr(typ)`.
+        field_type: &'static str,
+        /// Recovered accessor error.
+        cause: String,
+    },
     /// A persisted scalar is malformed.
     InvalidValue(&'static str),
-    /// A requested output offset is invalid or duplicated.
-    InvalidOutputOffset(usize),
     /// A lower-level row framing error.
     Decode(crate::RowDecodeError),
     /// A lower-level row construction error.
@@ -206,15 +233,36 @@ pub enum RowPackageError {
 impl fmt::Display for RowPackageError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ColumnValueCount { columns, values } => {
-                write!(formatter, "{columns} column IDs but {values} datums")
-            }
             Self::UnsupportedDatum(kind) => write!(formatter, "unsupported row datum {kind}"),
-            Self::UnknownFieldType(code) => write!(formatter, "unknown row field type {code:?}"),
-            Self::InvalidValue(kind) => write!(formatter, "invalid persisted {kind} value"),
-            Self::InvalidOutputOffset(offset) => {
-                write!(formatter, "invalid output offset {offset}")
+            Self::UnsupportedEncodeType(kind) => write!(formatter, "unsupport encode type {kind}"),
+            Self::EncodeErrors(errors) => {
+                for (index, error) in errors.iter().enumerate() {
+                    if index != 0 {
+                        formatter.write_str("; ")?;
+                    }
+                    error.fmt(formatter)?;
+                }
+                Ok(())
             }
+            Self::UnknownFieldType(code) => write!(formatter, "unknown row field type {code:?}"),
+            Self::InvalidChecksumType => formatter.write_str("invalid type for checksum"),
+            Self::ChecksumDatumType {
+                datum,
+                field_type,
+                expected,
+            } => write!(
+                formatter,
+                "encode datum({datum}) as {field_type} for checksum: interface conversion: interface {{}} is nil, not {expected}"
+            ),
+            Self::ChecksumDatumValue {
+                datum,
+                field_type,
+                cause,
+            } => write!(
+                formatter,
+                "encode datum({datum}) as {field_type} for checksum: {cause}"
+            ),
+            Self::InvalidValue(kind) => write!(formatter, "invalid persisted {kind} value"),
             Self::Decode(error) => error.fmt(formatter),
             Self::Encode(error) => error.fmt(formatter),
             Self::Codec(error) => error.fmt(formatter),
@@ -259,34 +307,6 @@ pub fn encode_row(
     )
 }
 
-/// Converts tablecodec's old alternating `column ID, datum` row into the new
-/// row format. An already-new row is copied unchanged.
-pub fn encode_row_from_old(
-    timezone: Option<&SessionTimeZone>,
-    old_row: &[u8],
-    buffer: &mut Vec<u8>,
-) -> Result<(), RowPackageError> {
-    if crate::is_new_format(old_row) {
-        buffer.extend_from_slice(old_row);
-        return Ok(());
-    }
-    let mut input = old_row;
-    let mut column_ids = Vec::new();
-    let mut values = Vec::new();
-    while input.len() > 1 {
-        let (remainder, column_id) = crate::decode_one(input)?;
-        input = remainder;
-        let id = column_id
-            .as_int()
-            .ok_or(RowPackageError::UnsupportedDatum("old row column ID"))?;
-        let (remainder, value) = crate::decode_one(input)?;
-        input = remainder;
-        column_ids.push(id);
-        values.push(value);
-    }
-    encode_row(timezone, &column_ids, &values, buffer)
-}
-
 /// Encodes a typed new-format row and applies the requested checksum policy.
 pub fn encode_row_with_checksum(
     timezone: Option<&SessionTimeZone>,
@@ -295,15 +315,18 @@ pub fn encode_row_with_checksum(
     checksum: &RowChecksumPolicy,
     buffer: &mut Vec<u8>,
 ) -> Result<(), RowPackageError> {
-    if column_ids.len() != values.len() {
-        return Err(RowPackageError::ColumnValueCount {
-            columns: column_ids.len(),
-            values: values.len(),
-        });
+    let mut payloads = Vec::with_capacity(column_ids.len());
+    let mut errors = Vec::new();
+    for (index, &id) in column_ids.iter().enumerate() {
+        match encode_value_datum(timezone, &values[index]) {
+            Ok(value) => payloads.push((id, value)),
+            Err(error) => errors.push(error),
+        }
     }
-    let mut payloads = Vec::with_capacity(values.len());
-    for (&id, datum) in column_ids.iter().zip(values) {
-        payloads.push((id, encode_value_datum(timezone, datum)?));
+    match errors.len() {
+        0 => {}
+        1 => return Err(errors.pop().expect("one encoding error")),
+        _ => return Err(RowPackageError::EncodeErrors(errors)),
     }
     let entries = payloads
         .iter()
@@ -370,9 +393,9 @@ fn encode_value_datum(
         }
         Datum::Json(value) => output.extend_from_slice(&value.encoded()),
         Datum::VectorFloat32(value) => value.serialize_to(&mut output),
-        Datum::MinNotNull | Datum::MaxValue | Datum::Raw(_) => {
-            return Err(RowPackageError::UnsupportedDatum("kind"))
-        }
+        Datum::MinNotNull => return Err(RowPackageError::UnsupportedEncodeType(15)),
+        Datum::MaxValue => return Err(RowPackageError::UnsupportedEncodeType(16)),
+        Datum::Raw(_) => return Err(RowPackageError::UnsupportedEncodeType(17)),
     }
     Ok(Some(output))
 }
@@ -384,10 +407,7 @@ pub fn decode_row_to_map(
     columns: &[ColumnInfo],
     timezone: Option<&SessionTimeZone>,
 ) -> Result<BTreeMap<i64, Datum>, RowPackageError> {
-    let (decoder, remainder) = RowDecoder::parse(row_data)?;
-    if !remainder.is_empty() {
-        return Err(RowPackageError::InvalidValue("row trailer"));
-    }
+    let (decoder, _) = RowDecoder::parse(row_data)?;
     let mut output = BTreeMap::new();
     for column in columns {
         match decoder.column(column.id)? {
@@ -414,10 +434,7 @@ pub fn decode_row_to_datums(
     columns: &[ColumnInfo],
     options: &DecodeRowOptions<'_>,
 ) -> Result<DecodedRow, RowPackageError> {
-    let (decoder, remainder) = RowDecoder::parse(row_data)?;
-    if !remainder.is_empty() {
-        return Err(RowPackageError::InvalidValue("row trailer"));
-    }
+    let (decoder, _) = RowDecoder::parse(row_data)?;
     let layout = decoder.layout();
     let mut values = Vec::with_capacity(columns.len());
     for (index, column) in columns.iter().enumerate() {
@@ -482,16 +499,7 @@ pub fn calculate_raw_checksum(
     key: &[u8],
     handle: &Handle,
 ) -> Result<u32, RowPackageError> {
-    if column_ids.len() != values.len() {
-        return Err(RowPackageError::ColumnValueCount {
-            columns: column_ids.len(),
-            values: values.len(),
-        });
-    }
-    let (decoder, remainder) = RowDecoder::parse(row_data)?;
-    if !remainder.is_empty() {
-        return Err(RowPackageError::InvalidValue("row trailer"));
-    }
+    let (decoder, _) = RowDecoder::parse(row_data)?;
     let layout = decoder.layout();
     let checksum = layout
         .checksum()
@@ -505,7 +513,8 @@ pub fn calculate_raw_checksum(
         .get(..body_end)
         .ok_or(RowPackageError::InvalidValue("row body"))?
         .to_vec();
-    for (&column_id, value) in column_ids.iter().zip(values) {
+    for (index, &column_id) in column_ids.iter().enumerate() {
+        let value = &values[index];
         let RawRowValue::NotNull { index, .. } = decoder.column(column_id)? else {
             continue;
         };
@@ -540,20 +549,10 @@ pub fn decode_row_to_old_bytes(
     handle: Option<&Handle>,
     default_bytes: Option<&[Option<Vec<u8>>]>,
 ) -> Result<Vec<Vec<u8>>, RowPackageError> {
-    let (decoder, remainder) = RowDecoder::parse(row_data)?;
-    if !remainder.is_empty() {
-        return Err(RowPackageError::InvalidValue("row trailer"));
-    }
+    let (decoder, _) = RowDecoder::parse(row_data)?;
     let mut values = vec![Vec::new(); output_offsets.len()];
-    let mut written = vec![false; values.len()];
     for (index, column) in columns.iter().enumerate() {
-        let offset = *output_offsets
-            .get(&column.id)
-            .ok_or(RowPackageError::InvalidOutputOffset(usize::MAX))?;
-        if offset >= values.len() || written[offset] {
-            return Err(RowPackageError::InvalidOutputOffset(offset));
-        }
-        written[offset] = true;
+        let offset = output_offsets.get(&column.id).copied().unwrap_or_default();
         values[offset] = match decoder.column(column.id)? {
             RawRowValue::NotNull { bytes, .. } => encode_old_raw(column, bytes)?,
             RawRowValue::Null => vec![NIL_FLAG],
@@ -570,19 +569,11 @@ pub fn decode_row_to_old_bytes(
             }
         };
     }
-    if written.iter().any(|written| !written) {
-        return Err(RowPackageError::InvalidOutputOffset(
-            written
-                .iter()
-                .position(|written| !written)
-                .expect("at least one unwritten offset"),
-        ));
-    }
     Ok(values)
 }
 
 fn encode_old_raw(column: &ColumnInfo, bytes: &[u8]) -> Result<Vec<u8>, RowPackageError> {
-    let flag = field_type_to_flag(&column.field_type)?;
+    let flag = field_type_to_flag(&column.field_type);
     let mut output = Vec::with_capacity(bytes.len() + 10);
     match flag {
         crate::BYTES_FLAG => {
@@ -693,13 +684,11 @@ fn decode_column_datum(
         }
         FieldTypeCode::Year => Datum::Int(decode_raw_int(bytes)?),
         FieldTypeCode::Float => {
-            let (remainder, value) = decode_float(bytes)?;
-            require_empty(remainder, "float")?;
+            let (_, value) = decode_float(bytes)?;
             Datum::Float32(f64::from(value as f32))
         }
         FieldTypeCode::Double => {
-            let (remainder, value) = decode_float(bytes)?;
-            require_empty(remainder, "double")?;
+            let (_, value) = decode_float(bytes)?;
             Datum::Real(value)
         }
         FieldTypeCode::VarString
@@ -712,8 +701,7 @@ fn decode_column_datum(
             Datum::new_collation_string(bytes.to_vec(), field_type.collation())
         }
         FieldTypeCode::NewDecimal => {
-            let (remainder, mut value, _, encoded_scale) = decode_decimal(bytes)?;
-            require_empty(remainder, "decimal")?;
+            let (_, mut value, _, encoded_scale) = decode_decimal(bytes)?;
             if field_type.decimal() >= 0 && i64::from(encoded_scale) > field_type.decimal() {
                 value = value.round_to_scale(field_type.decimal() as i32);
             }
@@ -775,25 +763,19 @@ fn decode_column_datum(
             Datum::Json(BinaryJSON::from_encoded_parts(type_code, value.to_vec()))
         }
         FieldTypeCode::VectorFloat32 => {
-            let (value, remainder) = deserialize_vector_float32(bytes)
+            let (value, _) = deserialize_vector_float32(bytes)
                 .map_err(|error| RowPackageError::Datatype(error.to_string()))?;
-            require_empty(remainder, "vector")?;
             Datum::VectorFloat32(value)
         }
         _ => return Err(RowPackageError::UnknownFieldType(code)),
     })
 }
 
-fn require_empty(remainder: &[u8], kind: &'static str) -> Result<(), RowPackageError> {
-    if remainder.is_empty() {
-        Ok(())
-    } else {
-        Err(RowPackageError::InvalidValue(kind))
-    }
+fn binary_literal_to_uint(value: &BinaryLiteral) -> u64 {
+    binary_literal_bytes_to_uint(value.as_bytes())
 }
 
-fn binary_literal_to_uint(value: &BinaryLiteral) -> u64 {
-    let bytes = value.as_bytes();
+fn binary_literal_bytes_to_uint(bytes: &[u8]) -> u64 {
     if bytes.len() > 8 && bytes[..bytes.len() - 8].iter().any(|byte| *byte != 0) {
         return u64::MAX;
     }
@@ -807,8 +789,78 @@ fn binary_literal_to_uint(value: &BinaryLiteral) -> u64 {
         })
 }
 
-/// Encodes one datum for TiCDC-compatible column-level row checksums.
-pub fn append_datum_for_checksum(
+fn datum_go_i64_bits(datum: &Datum) -> i64 {
+    match datum {
+        Datum::Int(value) => *value,
+        Datum::UInt(value) => *value as i64,
+        Datum::Real(value) | Datum::Float32(value) => value.to_bits() as i64,
+        Datum::Duration(value) => value.nanoseconds(),
+        Datum::Enum(value, _) => value.value() as i64,
+        Datum::Set(value, _) => value.value() as i64,
+        Datum::Json(value) => i64::from(value.type_code()),
+        _ => 0,
+    }
+}
+
+fn datum_go_bytes(datum: &Datum) -> Cow<'_, [u8]> {
+    match datum {
+        Datum::Json(value) => Cow::Borrowed(value.value()),
+        Datum::VectorFloat32(value) => Cow::Owned(value.serialize()),
+        _ => Cow::Borrowed(datum.go_bytes()),
+    }
+}
+
+fn checksum_datum_type_error(
+    datum: &Datum,
+    field_type: FieldTypeCode,
+    expected: &'static str,
+) -> RowPackageError {
+    let field_type = match field_type {
+        FieldTypeCode::Timestamp => "timestamp",
+        FieldTypeCode::Datetime => "datetime",
+        FieldTypeCode::Date => "date",
+        FieldTypeCode::NewDate => "newdate",
+        FieldTypeCode::NewDecimal => "decimal",
+        _ => "unknown",
+    };
+    RowPackageError::ChecksumDatumType {
+        datum: datum_debug_string(datum),
+        field_type,
+        expected,
+    }
+}
+
+fn datum_debug_string(datum: &Datum) -> String {
+    let kind = match datum {
+        Datum::Null => "KindNull",
+        Datum::Int(_) => "KindInt64",
+        Datum::UInt(_) => "KindUint64",
+        Datum::Real(_) => "KindFloat64",
+        Datum::Float32(_) => "KindFloat32",
+        Datum::String(_) => "KindString",
+        Datum::Bytes(_) => "KindBytes",
+        Datum::BinaryLiteral(_) => "KindBinaryLiteral",
+        Datum::Decimal(_) => "KindMysqlDecimal",
+        Datum::Duration(_) => "KindMysqlDuration",
+        Datum::Enum(_, _) => "KindMysqlEnum",
+        Datum::Bit(_) => "KindMysqlBit",
+        Datum::Set(_, _) => "KindMysqlSet",
+        Datum::Time(_) => "KindMysqlTime",
+        Datum::MinNotNull => "KindMinNotNull",
+        Datum::MaxValue => "KindMaxValue",
+        Datum::Raw(_) => "KindRaw",
+        Datum::Json(_) => "KindMysqlJSON",
+        Datum::VectorFloat32(_) => "KindVectorFloat32",
+    };
+    let value = if datum.is_null() {
+        "<nil>".to_owned()
+    } else {
+        datum.sql_string().unwrap_or_else(|_| datum.label())
+    };
+    format!("{kind} {value}")
+}
+
+fn append_datum_for_checksum(
     timezone: Option<&SessionTimeZone>,
     buffer: &mut Vec<u8>,
     datum: &Datum,
@@ -824,10 +876,7 @@ pub fn append_datum_for_checksum(
         | FieldTypeCode::LongLong
         | FieldTypeCode::Int24
         | FieldTypeCode::Year => {
-            let value = datum
-                .as_uint()
-                .or_else(|| datum.as_int().map(|value| value as u64))
-                .ok_or(RowPackageError::UnsupportedDatum("integer checksum"))?;
+            let value = datum_go_i64_bits(datum) as u64;
             buffer.extend_from_slice(&value.to_le_bytes());
         }
         FieldTypeCode::Varchar
@@ -836,18 +885,13 @@ pub fn append_datum_for_checksum(
         | FieldTypeCode::TinyBlob
         | FieldTypeCode::MediumBlob
         | FieldTypeCode::LongBlob
-        | FieldTypeCode::Blob => append_length_value(
-            buffer,
-            datum
-                .as_raw_bytes()
-                .ok_or(RowPackageError::UnsupportedDatum("bytes checksum"))?,
-        ),
+        | FieldTypeCode::Blob => append_length_value(buffer, &datum_go_bytes(datum)),
         FieldTypeCode::Timestamp
         | FieldTypeCode::Datetime
         | FieldTypeCode::Date
         | FieldTypeCode::NewDate => {
             let Datum::Time(mut value) = datum.clone() else {
-                return Err(RowPackageError::UnsupportedDatum("time checksum"));
+                return Err(checksum_datum_type_error(datum, field_type, "types.Time"));
             };
             if field_type == FieldTypeCode::Timestamp {
                 if let Some(timezone) = timezone {
@@ -859,58 +903,61 @@ pub fn append_datum_for_checksum(
             append_length_value(buffer, value.to_string().as_bytes());
         }
         FieldTypeCode::Duration => {
-            let Datum::Duration(value) = datum else {
-                return Err(RowPackageError::UnsupportedDatum("duration checksum"));
+            let rendered = if let Datum::Duration(value) = datum {
+                value.to_string()
+            } else {
+                MySqlDuration::from_raw_parts(datum_go_i64_bits(datum), 0).to_string()
             };
-            append_length_value(buffer, value.to_string().as_bytes());
+            append_length_value(buffer, rendered.as_bytes());
         }
         FieldTypeCode::Float | FieldTypeCode::Double => {
-            let mut value = datum
-                .as_real()
-                .ok_or(RowPackageError::UnsupportedDatum("float checksum"))?;
+            let mut value = f64::from_bits(datum_go_i64_bits(datum) as u64);
             if !value.is_finite() {
                 value = 0.0;
             }
             buffer.extend_from_slice(&value.to_bits().to_le_bytes());
         }
         FieldTypeCode::NewDecimal => {
-            let value = datum
-                .as_decimal()
-                .ok_or(RowPackageError::UnsupportedDatum("decimal checksum"))?;
+            let Some(value) = datum.as_decimal() else {
+                return Err(checksum_datum_type_error(
+                    datum,
+                    field_type,
+                    "*types.MyDecimal",
+                ));
+            };
             append_length_value(buffer, value.to_string().as_bytes());
         }
         FieldTypeCode::Enum => {
-            let Datum::Enum(value, _) = datum else {
-                return Err(RowPackageError::UnsupportedDatum("enum checksum"));
-            };
-            buffer.extend_from_slice(&value.value().to_le_bytes());
+            buffer.extend_from_slice(&(datum_go_i64_bits(datum) as u64).to_le_bytes());
         }
         FieldTypeCode::Set => {
-            let Datum::Set(value, _) = datum else {
-                return Err(RowPackageError::UnsupportedDatum("set checksum"));
-            };
-            buffer.extend_from_slice(&value.value().to_le_bytes());
+            buffer.extend_from_slice(&(datum_go_i64_bits(datum) as u64).to_le_bytes());
         }
         FieldTypeCode::Bit => {
-            let (Datum::Bit(value) | Datum::BinaryLiteral(value)) = datum else {
-                return Err(RowPackageError::UnsupportedDatum("bit checksum"));
-            };
-            buffer.extend_from_slice(&binary_literal_to_uint(value).to_le_bytes());
+            buffer.extend_from_slice(
+                &binary_literal_bytes_to_uint(&datum_go_bytes(datum)).to_le_bytes(),
+            );
         }
         FieldTypeCode::Json => {
-            let Datum::Json(value) = datum else {
-                return Err(RowPackageError::UnsupportedDatum("JSON checksum"));
-            };
+            let value = BinaryJSON::from_encoded_parts(
+                datum_go_i64_bits(datum) as u8,
+                datum_go_bytes(datum).into_owned(),
+            );
             append_length_value(buffer, value.to_string().as_bytes());
         }
         FieldTypeCode::VectorFloat32 => {
-            let Datum::VectorFloat32(value) = datum else {
-                return Err(RowPackageError::UnsupportedDatum("vector checksum"));
-            };
+            let bytes = datum_go_bytes(datum);
+            let (value, _) = deserialize_vector_float32(&bytes).map_err(|error| {
+                RowPackageError::ChecksumDatumValue {
+                    datum: datum_debug_string(datum),
+                    field_type: "vector",
+                    cause: error.to_string(),
+                }
+            })?;
             value.serialize_to(buffer);
         }
         FieldTypeCode::Null | FieldTypeCode::Geometry => {}
-        other => return Err(RowPackageError::UnknownFieldType(other)),
+        _ => return Err(RowPackageError::InvalidChecksumType),
     }
     Ok(())
 }
@@ -920,10 +967,8 @@ fn append_length_value(buffer: &mut Vec<u8>, value: &[u8]) {
     buffer.extend_from_slice(value);
 }
 
-/// Converts SQL field metadata to the old datum flag selected by Go
-/// `fieldType2Flag`.
-pub fn field_type_to_flag(field_type: &FieldType) -> Result<u8, RowPackageError> {
-    Ok(match field_type.code() {
+fn field_type_to_flag(field_type: &FieldType) -> u8 {
+    match field_type.code() {
         FieldTypeCode::Tiny
         | FieldTypeCode::Short
         | FieldTypeCode::Int24
@@ -950,8 +995,8 @@ pub fn field_type_to_flag(field_type: &FieldType) -> Result<u8, RowPackageError>
         FieldTypeCode::Json => JSON_FLAG,
         FieldTypeCode::VectorFloat32 => VECTOR_FLOAT32_FLAG,
         FieldTypeCode::Null => NIL_FLAG,
-        other => return Err(RowPackageError::UnknownFieldType(other)),
-    })
+        other => panic!("unknown field type {}", other.mysql_type()),
+    }
 }
 
 /// Removes an API-v2 keyspace prefix under the same runtime conditions as the

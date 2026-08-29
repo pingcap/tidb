@@ -1196,6 +1196,11 @@ impl DriverError {
             *b"42000",
             format!("Variable '{name}' can't be set to the value of '{value}'"),
         ),
+        DriverError::Var(crate::VarErrorKind::SqlError(error)) => {
+            let mut state = [0; 5];
+            state.copy_from_slice(error.state.as_bytes());
+            MysqlError::new(error.code, state, error.message.clone())
+        }
         // Go: "Unknown system variable '%-.64s'".
         DriverError::Var(crate::VarErrorKind::UnknownSystemVariable(
             name,

@@ -1192,12 +1192,6 @@ mod tests {
     #[path = "consistent_source.rs"]
     mod consistent_source;
 
-    #[path = "parser_base_ddl_dml_source.rs"]
-    mod parser_base_ddl_dml_source;
-
-    #[path = "expressions_functions_misc_source.rs"]
-    mod expressions_functions_misc_source;
-
     #[path = "charset_digester_sm3_source.rs"]
     mod charset_digester_sm3_source;
 

@@ -326,6 +326,8 @@ pub struct AnalyzedColumn {
     /// The column's lowercase name, for a row source that addresses columns
     /// by name.
     pub name: String,
+    /// The declared type, used by Go's prefix-index truncation rule.
+    pub field_type: FieldType,
     /// What a row with no entry for this column at all reads as.
     ///
     /// Not NULL: a row written before an `ALTER TABLE ... ADD COLUMN` carries
@@ -395,6 +397,8 @@ pub struct AnalyzedIndex {
     pub id: i64,
     /// Offsets into [`AnalyzePlan::columns`], in index-key order.
     pub column_positions: Vec<usize>,
+    /// Go `IndexColumn.Length`, in key-part order.
+    pub prefix_lengths: Vec<i64>,
     /// Go `IndexInfo.Unique` on a one-column index: what switches the TopN
     /// off for the index AND for the column it covers, because a value that
     /// occurs at most once has no "top" to list.
@@ -464,34 +468,34 @@ impl AnalyzePlan {
         &self.indexes
     }
 
-    /// Go's collector counts one slot per column, then one per *multi*-column
-    /// group; a single-column index's facts are its column's own and are
-    /// copied rather than recounted (`row_sampler.go:215`).
+    /// Go's collector counts one slot per column and per column group. An
+    /// ordinary single-column index reuses its column's facts; a prefix index
+    /// is special and needs the separately cut key's facts.
     fn slot_count(&self) -> usize {
-        self.columns.len() + self.multi_column_indexes().count()
-    }
-
-    fn multi_column_indexes(&self) -> impl Iterator<Item = &AnalyzedIndex> {
-        self.indexes
-            .iter()
-            .filter(|index| index.column_positions.len() > 1)
+        self.columns.len()
+            + self
+                .indexes
+                .iter()
+                .filter(|index| index.needs_own_slot())
+                .count()
     }
 
     fn index_slot(&self, index_position: usize) -> usize {
         let index = &self.indexes[index_position];
-        if index.column_positions.len() == 1 {
+        if !index.needs_own_slot() {
             return index.column_positions[0];
         }
         self.columns.len()
             + self.indexes[..index_position]
                 .iter()
-                .filter(|earlier| earlier.column_positions.len() > 1)
+                .filter(|earlier| earlier.needs_own_slot())
                 .count()
     }
 
     /// One row's stored values and its contribution to every slot.
     fn row_of(&self, columns: &[Datum]) -> Result<ScannedRowValues, AnalyzeError> {
-        let mut stored = Vec::with_capacity(columns.len());
+        let mut sampled = Vec::with_capacity(columns.len());
+        let mut keyed_columns = Vec::with_capacity(columns.len());
         let mut slots = Vec::with_capacity(self.slot_count());
         let mut sizes = Vec::with_capacity(columns.len());
         for (position, value) in columns.iter().enumerate() {
@@ -512,14 +516,18 @@ impl AnalyzePlan {
                 size,
                 is_null: value.is_null(),
             });
-            stored.push(keyed);
+            keyed_columns.push(keyed);
+            sampled.push(value.clone());
         }
-        for index in self.multi_column_indexes() {
-            let group: Vec<Datum> = index
-                .column_positions
-                .iter()
-                .map(|position| stored[*position].clone())
-                .collect();
+        for index in self.indexes.iter().filter(|index| index.needs_own_slot()) {
+            // Ordinary column groups use the collector's collation-keyed
+            // values. A prefix index is a special index in Go: its NDV is
+            // collected from the cut index key instead of that column group.
+            let group = if index.has_prefix() {
+                self.index_values(index, &sampled)
+            } else {
+                self.index_values(index, &keyed_columns)
+            };
             let encoded_value =
                 encode_value(&group).map_err(|error| AnalyzeError::Encode(error.to_string()))?;
             let size = index
@@ -531,12 +539,27 @@ impl AnalyzePlan {
             slots.push(SlotContribution {
                 encoded_value,
                 size,
-                // Go hashes a group's datums whatever they are and keeps no
-                // null count for one, so a group slot is never NULL.
-                is_null: false,
+                is_null: group.len() == 1 && group[0].is_null(),
             });
         }
-        Ok(ScannedRowValues { stored, slots })
+        Ok(ScannedRowValues { sampled, slots })
+    }
+
+    fn index_values(&self, index: &AnalyzedIndex, sampled: &[Datum]) -> Vec<Datum> {
+        index
+            .column_positions
+            .iter()
+            .enumerate()
+            .map(|(key_position, column_position)| {
+                let mut value = sampled[*column_position].clone();
+                crate::index_prefix_cut::cut_index_value(
+                    &mut value,
+                    index.prefix_length(key_position),
+                    &self.columns[*column_position].field_type,
+                );
+                value
+            })
+            .collect()
     }
 
     /// One index sample: the index key the histogram is built over.
@@ -546,20 +569,41 @@ impl AnalyzePlan {
     fn index_sample(
         &self,
         index: &AnalyzedIndex,
-        stored: &[Datum],
+        sampled: &[Datum],
     ) -> Result<Option<Vec<u8>>, AnalyzeError> {
-        if index.column_positions.len() == 1 && stored[index.column_positions[0]].is_null() {
+        if index.column_positions.len() == 1 && sampled[index.column_positions[0]].is_null() {
             return Ok(None);
         }
-        let mut key = Vec::new();
         for position in &index.column_positions {
-            let value = &stored[*position];
+            let value = &sampled[*position];
             if value_length(value) > MAX_SAMPLE_VALUE_LENGTH {
                 return Ok(None);
             }
-            key.extend_from_slice(&encode_key_of(value)?);
+        }
+        let mut key = Vec::new();
+        for value in self.index_values(index, sampled) {
+            key.extend_from_slice(&encode_key_of(&value)?);
         }
         Ok(Some(key))
+    }
+}
+
+impl AnalyzedIndex {
+    fn prefix_length(&self, position: usize) -> i64 {
+        self.prefix_lengths
+            .get(position)
+            .copied()
+            .unwrap_or(crate::index_prefix_cut::UNSPECIFIED_LENGTH)
+    }
+
+    fn has_prefix(&self) -> bool {
+        self.prefix_lengths
+            .iter()
+            .any(|length| *length != crate::index_prefix_cut::UNSPECIFIED_LENGTH)
+    }
+
+    fn needs_own_slot(&self) -> bool {
+        self.column_positions.len() > 1 || self.has_prefix()
     }
 }
 
@@ -572,10 +616,10 @@ struct SlotContribution {
 
 /// One scanned row, in the two forms the collector needs.
 struct ScannedRowValues {
-    /// The values as the histogram stores them: a string column's collation
-    /// key, every other column's own value. This is what a bucket bound and a
-    /// TopN entry are built from, and what a loader reads back.
-    stored: Vec<Datum>,
+    /// Raw decoded row values. Go retains this form in `SampleRow.Columns`:
+    /// column workers derive collation keys from it, while index workers cut
+    /// prefix lengths before encoding the index key.
+    sampled: Vec<Datum>,
     slots: Vec<SlotContribution>,
 }
 
@@ -666,7 +710,7 @@ impl<'a> AnalyzeRun<'a> {
         // scan rather than region collectors, so the scan position is an
         // exact monotone handle-order key even for an implicit `_tidb_rowid`.
         // It travels as an internal final Datum and is never a stats slot.
-        row.stored.push(Datum::Int(self.next_handle_order));
+        row.sampled.push(Datum::Int(self.next_handle_order));
         self.next_handle_order = self.next_handle_order.wrapping_add(1);
         let slots: Vec<SlotValue<'_>> = row
             .slots
@@ -679,7 +723,7 @@ impl<'a> AnalyzeRun<'a> {
             .collect();
         self.collector
             .collect(&ScannedRow {
-                columns: &row.stored,
+                columns: &row.sampled,
                 slots: &slots,
             })
             .map_err(AnalyzeError::MemoryQuota)
@@ -711,19 +755,20 @@ impl<'a> AnalyzeRun<'a> {
                 total_size: slot.total_size,
             };
             for row in &sampled {
-                let value = &row.columns[position];
-                if value.is_null() {
+                let sampled_value = &row.columns[position];
+                if sampled_value.is_null() {
                     continue;
                 }
                 // Go's length gate: a value this long is not one that occurs
                 // many times, and storing it would put half a `LONGTEXT` in
                 // `mysql.stats_buckets`.
-                if value_length(value) > MAX_SAMPLE_VALUE_LENGTH {
+                if value_length(sampled_value) > MAX_SAMPLE_VALUE_LENGTH {
                     continue;
                 }
+                let value = column.stored_value(sampled_value);
                 collected.samples.push(SampleItem {
-                    encoded: encode_key_of(value)?,
-                    value: value.clone(),
+                    encoded: encode_key_of(&value)?,
+                    value,
                     ordinal: row.ordinal,
                 });
             }
@@ -812,6 +857,7 @@ mod tests {
             vec![AnalyzedColumn {
                 id: 1,
                 name: "a".to_owned(),
+                field_type: FieldType::new(FieldTypeCode::LongLong),
                 absent_value: Datum::Null,
                 collation: None,
             }],

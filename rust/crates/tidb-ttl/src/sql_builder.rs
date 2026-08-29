@@ -123,8 +123,13 @@ fn write_value_expr<W: RestoreWriter>(
         Datum::Null => ctx.write_keyword("NULL"),
         Datum::Int(value) => ctx.write_plain(&value.to_string()),
         Datum::UInt(value) => ctx.write_plain(&value.to_string()),
-        Datum::Float32(value) | Datum::Real(value) => {
-            ctx.write_plain(&tidb_util::sqlescape::format_go_float64(*value));
+        Datum::Float32(_) | Datum::Real(_) => {
+            let restored = datum
+                .restore_value_expr()
+                .map_err(|restore_error| error(restore_error.to_string()))?;
+            let restored = std::str::from_utf8(&restored)
+                .map_err(|_| error("value expression restore produced invalid UTF-8"))?;
+            ctx.write_plain(restored);
         }
         Datum::String(_) => {
             // Go writes the `_charset` introducer unless the restore flags

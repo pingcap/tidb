@@ -30,13 +30,6 @@ use tidb_proto::backup;
 
 mod compact_text;
 
-/// `errors.RedactLogEnable`: redaction on, values replaced.
-pub const REDACT_LOG_ENABLE: &str = "ON";
-/// `errors.RedactLogDisable`: redaction off.
-pub const REDACT_LOG_DISABLE: &str = "OFF";
-/// `errors.RedactLogMarker`: redaction by wrapping values in `‹...›`.
-pub const REDACT_LOG_MARKER: &str = "MARKER";
-
 /// Go `redact.String`: redacts `input` according to `mode`.
 ///
 /// `MARKER` wraps the value in `‹...›`, doubling any interior marker rune;
@@ -89,7 +82,7 @@ impl std::fmt::Display for RedactStringer<'_> {
 
 /// A truncated marker escape: a `‹` in marker context with no following
 /// rune, mirroring the error Go returns from `bufio.Reader.ReadRune`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct DeRedactError;
 
 impl std::fmt::Display for DeRedactError {
@@ -267,20 +260,9 @@ pub fn de_redact_file(remove: bool, input: &str, output: &str) -> std::io::Resul
 /// Go `redact.InitRedact`: sets the process-wide flag to `ON`/`OFF`.
 pub fn init_redact(redact_log: bool) {
     let mode = if redact_log {
-        REDACT_LOG_ENABLE
+        tidb_error::mysql::RedactionMode::Enabled
     } else {
-        REDACT_LOG_DISABLE
-    };
-    set_redact_mode(mode);
-}
-
-/// Publishes the validated `tidb_redact_log` value to the one process-wide
-/// redaction authority shared by errors and utility helpers.
-pub fn set_redact_mode(mode: &str) {
-    let mode = match mode {
-        REDACT_LOG_ENABLE => tidb_error::mysql::RedactionMode::Enabled,
-        REDACT_LOG_MARKER => tidb_error::mysql::RedactionMode::Marker,
-        _ => tidb_error::mysql::RedactionMode::Disabled,
+        tidb_error::mysql::RedactionMode::Disabled
     };
     tidb_error::mysql::set_redaction_mode(mode);
 }
@@ -321,11 +303,11 @@ pub fn key(key: &[u8]) -> String {
 ///
 /// `MARKER` wraps `v` in `‹...›`; `ON` writes `?`; anything else writes `v`.
 pub fn write_redact(build: &mut String, v: &str, redact: &str) {
-    if redact == REDACT_LOG_MARKER {
+    if redact == "MARKER" {
         build.push('‹');
         build.push_str(v);
         build.push('›');
-    } else if redact == REDACT_LOG_ENABLE {
+    } else if redact == "ON" {
         build.push('?');
     } else {
         build.push_str(v);
@@ -379,6 +361,65 @@ impl std::fmt::Display for TaskInfoRedacted<'_> {
 mod tests {
     use super::*;
 
+    fn redaction_mode_guard() -> std::sync::MutexGuard<'static, ()> {
+        static GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        GUARD.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
+    #[test]
+    fn test_redact() {
+        for (mode, input, output) in [
+            ("OFF", "fxcv", "fxcv"),
+            ("OFF", "f‹xcv", "f‹xcv"),
+            ("ON", "f‹xcv", ""),
+            ("MARKER", "f‹xcv", "‹f‹‹xcv›"),
+            ("MARKER", "f›xcv", "‹f››xcv›"),
+        ] {
+            assert_eq!(string(mode, input), output);
+            assert_eq!(stringer(mode, &input).to_string(), output);
+        }
+    }
+
+    #[test]
+    fn test_de_redact() {
+        for (remove, input, output) in [
+            (true, "‹fxcv›ggg", "?ggg"),
+            (false, "‹fxcv›ggg", "fxcvggg"),
+            (true, "fxcv", "fxcv"),
+            (false, "fxcv", "fxcv"),
+            (true, "‹fxcv›ggg‹fxcv›eee", "?ggg?eee"),
+            (false, "‹fxcv›ggg‹fxcv›eee", "fxcvgggfxcveee"),
+            (true, "‹›", "?"),
+            (false, "‹›", ""),
+            (true, "gg‹ee", "gg‹ee"),
+            (false, "gg‹ee", "gg‹ee"),
+            (true, "gg›ee", "gg›ee"),
+            (false, "gg›ee", "gg›ee"),
+            (true, "gg‹ee‹ee", "gg‹ee‹ee"),
+            (false, "gg‹ee‹gg", "gg‹ee‹gg"),
+            (true, "gg›ee›gg", "gg›ee›gg"),
+            (false, "gg›ee›ee", "gg›ee›ee"),
+        ] {
+            assert_eq!(de_redact(remove, input, "").unwrap(), output);
+        }
+    }
+
+    #[test]
+    fn test_redact_init_and_value_and_key() {
+        let _guard = redaction_mode_guard();
+        let secret = "secret";
+
+        init_redact(false);
+        assert_eq!(value(secret), secret);
+        assert_eq!(key(secret.as_bytes()), "736563726574");
+
+        init_redact(true);
+        assert_eq!(value(secret), "?");
+        assert_eq!(key(secret.as_bytes()), "?");
+
+        init_redact(false);
+    }
+
     #[test]
     fn de_redact_keeps_go_scanner_and_invalid_utf8_behavior() {
         let accepted = format!("{}\nTAIL", "x".repeat(65_535));
@@ -426,6 +467,7 @@ mod tests {
     // treats as enabled).
     #[test]
     fn redact_init_visible_via_tidb_error_mode() {
+        let _guard = redaction_mode_guard();
         let secret = "secret";
         init_redact(false);
         tidb_error::mysql::set_redaction_mode(tidb_error::mysql::RedactionMode::Marker);
@@ -440,13 +482,13 @@ mod tests {
     #[test]
     fn write_redact_modes() {
         let mut b = String::new();
-        write_redact(&mut b, "v", REDACT_LOG_MARKER);
+        write_redact(&mut b, "v", "MARKER");
         assert_eq!(b, "‹v›");
         let mut b = String::new();
-        write_redact(&mut b, "v", REDACT_LOG_ENABLE);
+        write_redact(&mut b, "v", "ON");
         assert_eq!(b, "?");
         let mut b = String::new();
-        write_redact(&mut b, "v", REDACT_LOG_DISABLE);
+        write_redact(&mut b, "v", "OFF");
         assert_eq!(b, "v");
     }
 

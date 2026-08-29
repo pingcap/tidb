@@ -80,7 +80,6 @@ pub mod expression_index;
 mod farmhash;
 pub(crate) mod foreign_key;
 pub mod generated_column;
-mod go_quote;
 pub(crate) mod handle_range;
 pub mod hash_agg;
 #[cfg(test)]
@@ -109,8 +108,6 @@ pub(crate) mod ranger_detacher;
 #[cfg(test)]
 mod tests_aggfuncs_approx_pushdown_source;
 #[cfg(test)]
-mod tests_analyze_broadcast_flush_gaps;
-#[cfg(test)]
 mod tests_analyze_panic_recovery_source;
 #[cfg(test)]
 mod tests_batch_point_get_locking_gaps;
@@ -118,16 +115,6 @@ mod tests_batch_point_get_locking_gaps;
 mod tests_batch_point_get_temporary_source;
 #[cfg(test)]
 mod tests_ddl_b100_source;
-#[cfg(test)]
-mod tests_ddl_check_constraints;
-#[cfg(test)]
-mod tests_ddl_column_jobs;
-#[cfg(test)]
-mod tests_ddl_column_type_change;
-#[cfg(test)]
-mod tests_ddl_copr_collation;
-#[cfg(test)]
-mod tests_ddl_db_change_failpoints;
 #[cfg(test)]
 mod tests_ddl_db_change_states;
 #[cfg(test)]

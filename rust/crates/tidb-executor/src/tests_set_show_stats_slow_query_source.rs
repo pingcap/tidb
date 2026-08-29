@@ -12,14 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of the authoritative `origin/master` `pkg/executor.part11` slice:
-//! items 601–660 in the deterministic top-level `Test*` enumeration.
-//!
-//! The range splitter is a direct Rust-side behavior port. The other tests
-//! exercise session-variable mutation, privilege checks, SHOW/ANALYZE catalog
-//! readers, PD/infosync hooks, import-job formatting, or slow-log retrieval;
-//! those Go production surfaces are not present in `tidb-executor`, so each is
-//! retained as an explicit parity-gap test rather than an approximation.
+//! Source-backed coverage of Go's partition range splitter behavior.
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{FieldType, FieldTypeCode};

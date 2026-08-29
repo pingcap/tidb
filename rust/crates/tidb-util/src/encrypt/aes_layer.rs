@@ -19,8 +19,7 @@ use crate::layered_io::{CloseWrite, ReadAt, ReadAtResult};
 use std::io::{self, Write};
 use std::sync::Arc;
 
-/// Source default encrypt block size in bytes.
-pub const DEFAULT_ENCRYPT_BLOCK_SIZE: i64 = 1024;
+const DEFAULT_ENCRYPT_BLOCK_SIZE: i64 = 1024;
 
 /// AES-CTR key, nonce, and random-access block geometry.
 #[derive(Clone)]
@@ -312,12 +311,6 @@ where
     fn read_at(&self, destination: &mut [u8], offset: i64) -> ReadAtResult {
         if destination.is_empty() {
             return ReadAtResult::ok(0);
-        }
-        if offset < 0 {
-            return ReadAtResult::io(
-                0,
-                io::Error::new(io::ErrorKind::InvalidInput, "negative read offset"),
-            );
         }
         let block_size = self.cipher.encrypt_block_size;
         let offset_in_block = offset % block_size;

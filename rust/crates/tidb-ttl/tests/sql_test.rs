@@ -700,4 +700,20 @@ fn test_format_sql_datum() {
         format_sql_datum(&Datum::new_int(1), &FieldType::new(FieldTypeCode::Int24)).unwrap(),
         "1"
     );
+    assert_eq!(
+        format_sql_datum(
+            &Datum::new_float32_from_f64(1.1),
+            &FieldType::new(FieldTypeCode::Float)
+        )
+        .unwrap(),
+        "1.1e+00"
+    );
+    assert_eq!(
+        format_sql_datum(
+            &Datum::new_real(1.1),
+            &FieldType::new(FieldTypeCode::Double)
+        )
+        .unwrap(),
+        "1.1e+00"
+    );
 }

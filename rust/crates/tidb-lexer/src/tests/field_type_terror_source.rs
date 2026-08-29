@@ -5,15 +5,8 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-//! Batch b056 port of `pkg/parser` part-6 unit tests (Go tests sorted by file
-//! path + line number, items 301–323 on `origin/master`).
-//!
-//! The range spans `pkg/parser/parser_test.go` (9 tests), `pkg/parser/
-//! reserved_words_test.go` (1), `pkg/parser/terror/terror_test.go` (6),
-//! `pkg/parser/types/etc_test.go` (1), `pkg/parser/types/field_type_test.go`
-//! (5) and `pkg/parser/util/escape_test.go` (1).
-//!
-//! Only two surfaces are genuinely owned by this crate end-to-end:
+//! Executable scanner-owned behavior derived from pinned Go `pkg/parser`
+//! tests. The two surfaces represented here are:
 //!
 //! - `pkg/parser/util.UnescapeChar`, ported as [`crate::unescape_char`]
 //!   (`escape.rs`) — fully re-derived and pinned below.
@@ -23,9 +16,8 @@
 //!   affinity/split-partition parser tests exercise through `T![...]` comment
 //!   syntax.
 //!
-//! Every other Go test exercises the yacc parser, the AST, `terror`, or the
-//! field-type package — none owned by tidb-lexer — so they carry explicit
-//! `go-parity-gap` ignores rather than approximations.
+//! Parser, AST, error, and field-type tests live with their owning crates and
+//! are deliberately not represented here.
 
 use super::*;
 
@@ -499,15 +491,6 @@ fn simple_unreserved_keywords_are_not_reserved() {
     }
 }
 
-/// Go: `pkg/parser/parser_test.go`, `TestSimple` — the remaining statement-
-/// level bodies (prepared-statement placeholders, `--` comments vs unary
-/// minus, `/*! */` versioned comments, CONVERT(expr,type), leading comments,
-/// column KEY option, NVARCHAR, quoted identifiers, etc.) all require the
-/// yacc parser + AST, which are not owned by this crate.
-#[test]
-#[ignore = "go-parity-gap: statement-level parse assertions need the yacc parser and AST, not owned by tidb-lexer"]
-fn simple_statement_level_cases() {}
-
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — MariaDB-compat / UUID / partial-index /
 // secondary-engine-attribute / affinity / split-partition tests
@@ -547,128 +530,3 @@ fn split_partition_feature_id_allowlist() {
     assert!(can_parse_feature(&[FEATURE_ID_SPLIT_REGION]));
     assert!(!can_parse_feature(&["nonsense"]));
 }
-
-/// Go: `pkg/parser/parser_test.go`, `TestCompatMariaDB`.
-#[test]
-#[ignore = "go-parity-gap: MariaDB-compat table options require the yacc parser + AST restore, not owned by tidb-lexer"]
-fn compat_maria_db() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestUUIDTypeMariaDBEnabled`.
-#[test]
-#[ignore = "go-parity-gap: UUID-as-CHAR(36) rewrite requires the yacc parser + AST restore, not owned by tidb-lexer"]
-fn uuid_type_maria_db_enabled() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestUUIDKeywordCompatibility`.
-#[test]
-#[ignore = "go-parity-gap: uuid-as-identifier grammar requires the yacc parser, not owned by tidb-lexer"]
-fn uuid_keyword_compatibility() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestUUIDTypeMariaDBDisabled`.
-#[test]
-#[ignore = "go-parity-gap: UUID-type rejection requires the yacc parser error path, not owned by tidb-lexer"]
-fn uuid_type_maria_db_disabled() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestSecondaryEngineAttribute`.
-#[test]
-#[ignore = "go-parity-gap: partition-level SECONDARY_ENGINE_ATTRIBUTE grammar requires the yacc parser, not owned by tidb-lexer"]
-fn secondary_engine_attribute() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestPartialIndex`.
-#[test]
-#[ignore = "go-parity-gap: partial-index WHERE-clause grammar requires the yacc parser + AST restore, not owned by tidb-lexer"]
-fn partial_index() {}
-
-/// Go: `pkg/parser/parser_test.go`, `TestExplainExplore`-style full-parse
-/// coverage also applies to `TestTableAffinityOption` / `TestSplitPartition`
-/// statement bodies beyond the feature-ID allowlist pinned above.
-#[test]
-#[ignore = "go-parity-gap: AFFINITY/SPLIT statement parsing requires the yacc parser, not owned by tidb-lexer"]
-fn table_affinity_option_statements() {}
-
-/// See `table_affinity_option_statements`; same gap for SPLIT statements.
-#[test]
-#[ignore = "go-parity-gap: SPLIT PRIMARY KEY/INDEX statement parsing requires the yacc parser, not owned by tidb-lexer"]
-fn split_partition_statements() {}
-
-// ---------------------------------------------------------------------------
-// pkg/parser/reserved_words_test.go — TestCompareReservedWordsWithMySQL
-// ---------------------------------------------------------------------------
-
-/// Go: `pkg/parser/reserved_words_test.go`, `TestCompareReservedWordsWithMySQL`.
-/// Extracts keyword sections from `parser.y` and compares them against a live
-/// MySQL 8 server via `do (select 1 as <kw>)`.
-#[test]
-#[ignore = "go-parity-gap: requires a live MySQL server connection and parser.y extraction; neither is available to tidb-lexer"]
-fn compare_reserved_words_with_my_sql() {}
-
-// ---------------------------------------------------------------------------
-// pkg/parser/terror/terror_test.go
-// ---------------------------------------------------------------------------
-
-// The whole terror package (error classes, codes, SQL-error conversion,
-// stack traces, JSON round-trips) is owned by tidb-error, not tidb-lexer;
-// none of its surfaces exist here, so each Go test is recorded as a gap.
-
-/// Go: `pkg/parser/terror/terror_test.go`, `TestErrCode`.
-#[test]
-#[ignore = "go-parity-gap: terror error-code constants live in tidb-error, not owned by tidb-lexer"]
-fn err_code() {}
-
-/// Go: `pkg/parser/terror/terror_test.go`, `TestTError`.
-#[test]
-#[ignore = "go-parity-gap: terror class/error construction and SQLError conversion live in tidb-error, not owned by tidb-lexer"]
-fn t_error() {}
-
-/// Go: `pkg/parser/terror/terror_test.go`, `TestJson`.
-#[test]
-#[ignore = "go-parity-gap: terror JSON round-trip lives in tidb-error, not owned by tidb-lexer"]
-fn json_round_trip() {}
-
-/// Go: `pkg/parser/terror/terror_test.go`, `TestErrorEqual`.
-#[test]
-#[ignore = "go-parity-gap: terror ErrorEqual/ErrorNotEqual live in tidb-error, not owned by tidb-lexer"]
-fn error_equal() {}
-
-/// Go: `pkg/parser/terror/terror_test.go`, `TestLog`.
-#[test]
-#[ignore = "go-parity-gap: terror Log lives in tidb-error, not owned by tidb-lexer"]
-fn log_error() {}
-
-/// Go: `pkg/parser/terror/terror_test.go`, `TestTraceAndLocation`.
-#[test]
-#[ignore = "go-parity-gap: Go runtime stack-trace formatting has no tidb-lexer counterpart"]
-fn trace_and_location() {}
-
-// ---------------------------------------------------------------------------
-// pkg/parser/types/etc_test.go + types/field_type_test.go
-// ---------------------------------------------------------------------------
-
-/// Go: `pkg/parser/types/etc_test.go`, `TestStrToType`.
-#[test]
-#[ignore = "go-parity-gap: StrToType/type2Str live in the types/mysql packages (tidb-datatype), not owned by tidb-lexer"]
-fn str_to_type() {}
-
-/// Go: `pkg/parser/types/field_type_test.go`, `TestFieldType`.
-#[test]
-#[ignore = "go-parity-gap: FieldType construction/formatting lives in the types package (tidb-datatype), not owned by tidb-lexer"]
-fn field_type() {}
-
-/// Go: `pkg/parser/types/field_type_test.go`, `TestHasCharsetFromStmt`.
-#[test]
-#[ignore = "go-parity-gap: HasCharsetFromStmt inspects parser AST nodes, not owned by tidb-lexer"]
-fn has_charset_from_stmt() {}
-
-/// Go: `pkg/parser/types/field_type_test.go`, `TestEnumSetFlen`.
-#[test]
-#[ignore = "go-parity-gap: enum/set flen computation lives in the types package, not owned by tidb-lexer"]
-fn enum_set_flen() {}
-
-/// Go: `pkg/parser/types/field_type_test.go`, `TestFieldTypeEqual`.
-#[test]
-#[ignore = "go-parity-gap: FieldType equality lives in the types package, not owned by tidb-lexer"]
-fn field_type_equal() {}
-
-/// Go: `pkg/parser/types/field_type_test.go`, `TestCompactStr`.
-#[test]
-#[ignore = "go-parity-gap: CompactStr lives in the types package, not owned by tidb-lexer"]
-fn compact_str() {}

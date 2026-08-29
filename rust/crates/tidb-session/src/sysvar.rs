@@ -334,9 +334,8 @@ pub enum ValidationError {
     WrongType,
     /// Go `ErrWrongValueForVar` (1231).
     WrongValue,
-    /// Go `ErrWrongValueForVar` (1231) where the rejected text is not the
-    /// whole assigned value: `SET sql_mode = 'ANSI,BOGUS'` names `BOGUS`.
-    WrongValueOf(String),
+    /// A catalogued MySQL error returned directly by a `Validation` closure.
+    SqlError(tidb_error::mysql::SqlError),
     /// A `Validation` closure that refuses the value with a bare
     /// `errors.Errorf`, whose wording IS the error (Go gives it no code, so it
     /// reports as 1105).
@@ -555,9 +554,7 @@ impl SysVarDef {
                 value: formatted,
                 truncated: validated.truncated,
             }),
-            // Go's `newInvalidModeErr` names the offending *token*, not the
-            // whole assigned string.
-            Err(invalid) => Err(ValidationError::WrongValueOf(invalid.value)),
+            Err(invalid) => Err(ValidationError::SqlError(invalid.sql_error)),
         }
     }
 

@@ -588,6 +588,8 @@ fn exhaust_physical_plans(
                 task_tp: TaskType::Root,
                 expected_cnt: outer_expected_cnt,
                 can_add_enforcer: false,
+                mpp_partition_cols: Vec::new(),
+                mpp_partition_tp: Default::default(),
                 sort_items_for_partition: Vec::new(),
                 cte_producer_status: prop.cte_producer_status,
                 no_cop_push_down: true,

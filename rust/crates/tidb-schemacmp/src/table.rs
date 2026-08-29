@@ -120,6 +120,16 @@ impl Equality for IndexColumnSlice {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    fn go_format(&self) -> String {
+        let columns = self
+            .0
+            .iter()
+            .map(|column| format!("{{{} {}}}", column.col_name, column.length))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("[{columns}]")
+    }
 }
 
 /// Go `encodeIndexInfoToLattice`.

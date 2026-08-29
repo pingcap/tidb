@@ -49,6 +49,10 @@ harness = false
 name = "datum"
 harness = false
 
+[[bench]]
+name = "parser_charset"
+harness = false
+
 [[bin]]
 name = "fuzz-json-extract"
 path = "fuzz/json_extract.rs"

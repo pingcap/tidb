@@ -43,6 +43,16 @@ impl Equality for EqBytes {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    fn go_format(&self) -> String {
+        let values = self
+            .0
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("[{values}]")
+    }
 }
 
 /// Go `uintMap`: a sample type used for testing `Map`.
@@ -705,4 +715,33 @@ fn test_compatibilities() {
             assert!(cmp >= 0);
         }
     }
+
+    let error = singleton(Value::Float64(1_000_000.0))
+        .compare(singleton(Value::Float64(2_000_000.0)).as_ref())
+        .unwrap_err();
+    assert_eq!(error.to_string(), "distinct singletons (1e+06 vs 2e+06)");
+
+    let error = equality_singleton(eq_bytes("abcdef"))
+        .compare(equality_singleton(eq_bytes("ABCDEF")).as_ref())
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "distinct singletons ([97 98 99 100 101 102] vs [65 66 67 68 69 70])"
+    );
+
+    let error = string_list(&["\u{200b}"])
+        .compare(string_list(&["x"]).as_ref())
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        r#"at string list index 0: distinct values ("\u200b" vs "x")"#
+    );
+
+    let left = StringList(vec![GoString::from(vec![0xff])]);
+    let right = StringList(vec![GoString::from("x")]);
+    let error = left.compare(&right).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        r#"at string list index 0: distinct values ("\xff" vs "x")"#
+    );
 }

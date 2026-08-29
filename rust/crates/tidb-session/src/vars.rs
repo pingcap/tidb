@@ -68,9 +68,7 @@ pub(crate) fn validation_var_error(name: &str, value: &str, error: ValidationErr
         ValidationError::WrongValue => {
             VarError::WrongValueForVar(name.to_ascii_lowercase(), value.to_owned())
         }
-        ValidationError::WrongValueOf(part) => {
-            VarError::WrongValueForVar(name.to_ascii_lowercase(), part)
-        }
+        ValidationError::SqlError(error) => VarError::SqlError(error),
         ValidationError::Refused(message) => VarError::ValidationRefused(message),
     }
 }
@@ -674,7 +672,12 @@ impl GlobalSysvars {
                         .expect("tidb_redact_log is registered"),
                 )
             });
-        tidb_util::redact::set_redact_mode(&value);
+        let mode = match value.as_str() {
+            "ON" => tidb_error::mysql::RedactionMode::Enabled,
+            "MARKER" => tidb_error::mysql::RedactionMode::Marker,
+            _ => tidb_error::mysql::RedactionMode::Disabled,
+        };
+        tidb_error::mysql::set_redaction_mode(mode);
     }
 
     fn is_memory_arbitration_setting(name: &str) -> bool {
@@ -716,6 +719,8 @@ pub enum VarError {
     WrongTypeForVar(String),
     /// Go `ErrWrongValueForVar` (1231).
     WrongValueForVar(String, String),
+    /// A catalogued MySQL error returned unchanged by validation.
+    SqlError(tidb_error::mysql::SqlError),
     /// Go `ErrLocalVariable` (1228): `SET GLOBAL` named a SESSION-only
     /// variable.
     SessionOnlyVariable(String),
@@ -1359,11 +1364,15 @@ mod tests {
         let error = vars
             .set_system("sql_mode", "strict_trans_tabLES,nonsense_option".to_owned())
             .unwrap_err();
-        assert!(matches!(
-            error,
-            VarError::WrongValueForVar(ref name, ref value)
-                if name == "sql_mode" && value == "NONSENSE_OPTION"
-        ));
+        let VarError::SqlError(error) = error else {
+            panic!("expected catalogued SQL error");
+        };
+        assert_eq!(error.code, 1231);
+        assert_eq!(error.state, "42000");
+        assert_eq!(
+            error.message,
+            "Variable 'sql_mode' can't be set to the value of 'NONSENSE_OPTION'"
+        );
         assert!(vars.sql_mode().has_strict_mode());
 
         vars.set_system("sql_mode", "ANSI".to_owned()).unwrap();

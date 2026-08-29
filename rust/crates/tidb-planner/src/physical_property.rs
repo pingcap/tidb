@@ -15,10 +15,8 @@
 //! Dependency-closed physical-property classifications from
 //! `pkg/planner/property/physical_property.go`.
 //!
-//! This leaf ports only the integer classification and boolean matching
-//! contracts. The source's expression columns, protobuf exchange enum,
-//! functional-dependency sets, and physical-property construction remain
-//! owned by future planner layers.
+//! Expression columns are represented by their Go `UniqueID`, which is the
+//! identity used by the property comparisons.
 
 /// MPP exchange partitioning requirement.
 ///
@@ -166,6 +164,29 @@ pub struct SortItem {
     pub desc: bool,
 }
 
+/// Go `MPPPartitionColumn`: one hash-exchange key and its collation id.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct MppPartitionColumn {
+    /// The expression column's `UniqueID`.
+    pub col: i64,
+    /// Go `CollateID`.
+    pub collate_id: i32,
+}
+
+impl MppPartitionColumn {
+    /// Creates one partition column.
+    #[must_use]
+    pub const fn new(col: i64, collate_id: i32) -> Self {
+        Self { col, collate_id }
+    }
+
+    /// Go `MPPPartitionColumn.Equal`.
+    #[must_use]
+    pub const fn equal(self, other: Self) -> bool {
+        (self.collate_id >= 0 || self.collate_id == other.collate_id) && self.col == other.col
+    }
+}
+
 /// Go `IndexJoinRuntimeProp`: the lookup facts carried from an index-join
 /// candidate to the inner data source while `findBestTask` plans that child.
 #[derive(Clone, Debug)]
@@ -226,9 +247,8 @@ impl std::fmt::Display for SortItem {
 ///
 /// `property.PhysicalProperty`. This port carries the fields that decide a
 /// plan's shape -- including Go's root-only aggregation gate -- and the
-/// additional fields already consumed by the wired planner. The source's
-/// MPP partition columns, vector-search, and partial-order fields remain
-/// outside this layer.
+/// additional fields already consumed by the wired planner. Vector-search
+/// and partial-order fields remain outside this layer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PhysicalProperty {
     /// The required sort attributes, outermost first.
@@ -239,6 +259,10 @@ pub struct PhysicalProperty {
     pub expected_cnt: f64,
     /// Whether a sort enforcer may be added to satisfy this property.
     pub can_add_enforcer: bool,
+    /// Hash-partition columns required from an MPP child.
+    pub mpp_partition_cols: Vec<MppPartitionColumn>,
+    /// Required MPP partitioning kind.
+    pub mpp_partition_tp: MppPartitionType,
     /// Go `SortItemsForPartition`: "these sort only need to sort the data of
     /// one partition, instead of global" — the MPP window paths fill it;
     /// everywhere else it stays empty, which is exactly Go's zero value.
@@ -269,6 +293,8 @@ impl Default for PhysicalProperty {
             task_tp: TaskType::Root,
             expected_cnt: f64::MAX,
             can_add_enforcer: false,
+            mpp_partition_cols: Vec::new(),
+            mpp_partition_tp: MppPartitionType::default(),
             sort_items_for_partition: Vec::new(),
             cte_producer_status: CteProducerStatus::default(),
             no_cop_push_down: false,
@@ -294,6 +320,8 @@ impl PhysicalProperty {
             task_tp,
             expected_cnt,
             can_add_enforcer: enforced,
+            mpp_partition_cols: Vec::new(),
+            mpp_partition_tp: MppPartitionType::default(),
             sort_items_for_partition: Vec::new(),
             cte_producer_status: CteProducerStatus::default(),
             no_cop_push_down: false,
@@ -315,11 +343,38 @@ impl PhysicalProperty {
             task_tp: self.task_tp,
             expected_cnt: self.expected_cnt,
             can_add_enforcer: false,
+            mpp_partition_cols: self.mpp_partition_cols.clone(),
+            mpp_partition_tp: self.mpp_partition_tp,
             cte_producer_status: self.cte_producer_status,
             no_cop_push_down: self.no_cop_push_down,
             advisory_sort_items: self.advisory_sort_items.clone(),
             index_join_prop: None,
         }
+    }
+
+    /// Go `NeedMPPExchangeByEquivalence`: whether a child hash key lies
+    /// outside every equivalence closure of the required partition keys.
+    #[must_use]
+    pub fn need_mpp_exchange_by_equivalence(
+        &self,
+        current_partition_columns: &[MppPartitionColumn],
+        fd: &tidb_funcdep::FdSet,
+    ) -> bool {
+        let required: Vec<_> = self
+            .mpp_partition_cols
+            .iter()
+            .map(|column| {
+                let closure = fd.closure_of_equivalence(&tidb_funcdep::ColSet::new(&[column.col]));
+                (*column, closure)
+            })
+            .collect();
+
+        current_partition_columns.iter().any(|key| {
+            !required.iter().any(|(required, closure)| {
+                closure.has(key.col)
+                    && (key.collate_id >= 0 || key.collate_id == required.collate_id)
+            })
+        })
     }
 
     /// `IsSortItemEmpty`: whether the order property is empty.
@@ -397,7 +452,92 @@ impl std::fmt::Display for PhysicalProperty {
 
 #[cfg(test)]
 mod required_property_tests {
-    use super::{CteProducerStatus, PhysicalProperty, SortItem, TaskType};
+    use super::{CteProducerStatus, MppPartitionColumn, PhysicalProperty, SortItem, TaskType};
+    use tidb_funcdep::{ColSet, FdSet};
+
+    fn cols(values: &[i64]) -> ColSet {
+        ColSet::new(values)
+    }
+
+    fn partition_cols(values: &[i64]) -> Vec<MppPartitionColumn> {
+        values
+            .iter()
+            .map(|value| MppPartitionColumn::new(*value, 0))
+            .collect()
+    }
+
+    fn tpch_q3_fd() -> FdSet {
+        let mut fd = FdSet::new();
+        fd.add_equivalence(cols(&[1, 10]), cols(&[1, 10]));
+        fd.add_strict(cols(&[1]), cols(&[2, 3, 4, 5, 6, 8]));
+        fd.add_strict(cols(&[]), cols(&[7]));
+        fd.add_strict(cols(&[9]), cols(&[10, 11, 12, 13, 14, 15, 16, 17]));
+        fd.add_strict(
+            cols(&[10, 21]),
+            cols(&[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]),
+        );
+        fd.add_equivalence(cols(&[9]), cols(&[18]));
+        fd.add_equivalence(cols(&[1]), cols(&[10]));
+        fd
+    }
+
+    fn fd_2_3_equivalent_to_4() -> FdSet {
+        let mut fd = FdSet::new();
+        fd.add_equivalence(cols(&[2]), cols(&[4]));
+        fd.add_equivalence(cols(&[3]), cols(&[4]));
+        fd
+    }
+
+    fn fd_2_equivalent_to_4_5() -> FdSet {
+        let mut fd = FdSet::new();
+        fd.add_equivalence(cols(&[2]), cols(&[4]));
+        fd.add_equivalence(cols(&[2]), cols(&[5]));
+        fd
+    }
+
+    /// Pinned Go `TestNeedEnforceExchangerWithHashByEquivalence`, all six rows.
+    #[test]
+    fn need_mpp_exchange_by_equivalence_six_case_fd_table() {
+        let cases = [
+            (tpch_q3_fd(), &[18, 13, 16][..], &[9][..], false),
+            (tpch_q3_fd(), &[18, 13, 16][..], &[9, 13][..], false),
+            (tpch_q3_fd(), &[18, 13, 16][..], &[9, 17][..], true),
+            (tpch_q3_fd(), &[18, 13, 16][..], &[1, 17][..], true),
+            (
+                fd_2_3_equivalent_to_4(),
+                &[1, 2, 3][..],
+                &[1, 2, 4, 5][..],
+                true,
+            ),
+            (fd_2_equivalent_to_4_5(), &[1, 2][..], &[1, 2, 5][..], false),
+        ];
+
+        for (fd, required, current, expected) in cases {
+            let property = PhysicalProperty {
+                mpp_partition_cols: partition_cols(required),
+                ..PhysicalProperty::default()
+            };
+            assert_eq!(
+                property.need_mpp_exchange_by_equivalence(&partition_cols(current), &fd),
+                expected,
+                "required={required:?} current={current:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mpp_exchange_equivalence_obeys_collation_id_rule() {
+        let property = PhysicalProperty {
+            mpp_partition_cols: vec![MppPartitionColumn::new(1, -45)],
+            ..PhysicalProperty::default()
+        };
+        let fd = FdSet::new();
+        assert!(
+            !property.need_mpp_exchange_by_equivalence(&[MppPartitionColumn::new(1, -45)], &fd,)
+        );
+        assert!(property.need_mpp_exchange_by_equivalence(&[MppPartitionColumn::new(1, -46)], &fd,));
+        assert!(!property.need_mpp_exchange_by_equivalence(&[MppPartitionColumn::new(1, 45)], &fd,));
+    }
 
     /// `AllSameOrder` answers `(true, false)` for the EMPTY property, which is
     /// what lets a parent with no order of its own still demand an ascending
@@ -453,6 +593,8 @@ mod required_property_tests {
     fn essential_clone_preserves_cte_and_no_cop_but_not_enforcer_or_index_join() {
         let prop = PhysicalProperty {
             can_add_enforcer: true,
+            mpp_partition_cols: vec![MppPartitionColumn::new(8, -45)],
+            mpp_partition_tp: super::MppPartitionType::Hash,
             cte_producer_status: CteProducerStatus::AllCteCanMpp,
             no_cop_push_down: true,
             ..PhysicalProperty::default()
@@ -462,5 +604,7 @@ mod required_property_tests {
         assert!(cloned.no_cop_push_down);
         assert!(!cloned.can_add_enforcer);
         assert!(cloned.index_join_prop.is_none());
+        assert_eq!(cloned.mpp_partition_cols, prop.mpp_partition_cols);
+        assert_eq!(cloned.mpp_partition_tp, prop.mpp_partition_tp);
     }
 }

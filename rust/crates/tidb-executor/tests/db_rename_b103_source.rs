@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of `pkg/ddl/db_rename_test.go` items 216--222.  The catalog has the
-//! synchronous rename carrier, but not Go's session table-lock registry,
-//! DDL-job inspection, failpoints, or concurrent allocator rebasing.
+//! Runnable final-state rename behavior derived from pinned Go
+//! `pkg/ddl/db_rename_test.go` tests.
 
 use tidb_executor::TableEntry;
-use tidb_executor::{Catalog, StmtContext, ddl, run_create_table_on, run_insert_on, run_select_on};
+use tidb_executor::{ddl, run_insert_on, run_select_on, Catalog, StmtContext};
 
 fn ctx() -> StmtContext {
     StmtContext::for_query()
@@ -37,15 +36,6 @@ fn create(catalog: &mut Catalog, database: &str, table: &str) {
 fn rename(catalog: &mut Catalog, sql: &str, database: &str) {
     ddl::run_rename_table_in(sql, catalog, database, tidb_parser::SqlMode::default()).unwrap();
 }
-
-// --- TestRenameTableWithLocked (pkg/ddl/db_rename_test.go:38) ---
-
-// go-parity-gap: the Go contract is rename while WRITE/READ table locks are
-// held, including ErrLockOrActiveTransaction and ErrTableNotLockedForWrite.
-// This tier has no session lock registry or LOCK TABLES runner.
-#[test]
-#[ignore = "go-parity-gap: session table-lock registry and lock-aware rename are unported"]
-fn rename_table_with_locked_table() {}
 
 // The common statement-level behavior used by TestRenameTable2 and
 // TestAlterTableRenameTable.
@@ -158,29 +148,4 @@ fn rename_multiple_tables_keeps_their_columns() {
         };
         assert_eq!(table.visible_columns().len(), 2);
     }
-}
-
-// --- TestRenameConcurrentAutoID (pkg/ddl/db_rename_test.go:298) ---
-
-// go-parity-gap: requires three sessions, an ALTER TABLE job held in a schema
-// state, concurrent inserts under old/new names, and AutoIDSchemaID allocator
-// inspection.  Atomic rename cannot reproduce the Go race window.
-#[test]
-#[ignore = "go-parity-gap: concurrent rename and allocator schema-state window are unported"]
-fn rename_concurrent_auto_id_preserves_allocators() {}
-
-// --- TestShowRunningRenameTable (pkg/ddl/db_rename_test.go:494) ---
-
-// go-parity-gap: the test observes ADMIN SHOW DDL JOBS and
-// INFORMATION_SCHEMA.DDL_JOBS from a failpoint while a rename is running.
-// The synchronous catalog has no job queue or DDL-job views.
-#[test]
-#[ignore = "go-parity-gap: running rename job inspection and failpoint are unported"]
-fn show_running_rename_table() {}
-
-// Keep the direct CREATE runner imported in this module's source contract;
-// it is also the production path used by `create` above.
-#[allow(dead_code)]
-fn _create_on_default(catalog: &mut Catalog) {
-    let _ = run_create_table_on("create table b103_rename_probe (a int)", catalog);
 }

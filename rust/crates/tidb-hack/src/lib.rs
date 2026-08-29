@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of `pkg/util/hack`.
+//! Rust owner for the portable behavior of pinned Go `pkg/util/hack`.
 //!
 //! Go's package has two jobs: zero-copy byte/string views and memory accounting
 //! by reading the private Go Swiss-map ABI. Rust cannot soundly turn an
@@ -24,10 +24,11 @@
 //! garbage collector does.
 //!
 //! The Go 1.25 and 1.26 private-map files become one Rust map implementation.
-//! It pins hashbrown and accounts for the table allocation directly from its
-//! public capacity contract and pinned allocation layout. This removes the Go
-//! version/build-tag branch while preserving map operations and exact memory
-//! deltas. Go's `TestMain` only installs common test state and leak exclusions;
+//! Rust cannot inspect Go's runtime map ABI, so the exact-size primitive uses
+//! the owned hashbrown table. The public `MemAwareMap` policy remains Go's:
+//! approximate bytes advance only at the same element-count checkpoints using
+//! the same source group geometry and ratio. Go's `TestMain` only installs
+//! common test state and leak exclusions;
 //! this module starts no background tasks, so Rust needs no process hook.
 //!
 //! Source disposition is complete: `hack.go` maps to this file;
@@ -40,8 +41,6 @@
 #![allow(unsafe_code)]
 
 mod map;
-#[cfg(test)]
-mod tests_hack;
 
 /// Live-allocation counters of the running jemalloc, the seam Go gets for
 /// free from `runtime.ReadMemStats`: TiDB's memory arbitrator samples the

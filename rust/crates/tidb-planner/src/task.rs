@@ -239,8 +239,9 @@ pub struct MppTask {
     plan: Option<Box<PhysicalPlan>>,
     /// Go's private `partTp`.
     part_tp: MppPartitionType,
-    // boundary: `HashCols []*property.MPPPartitionColumn` — the partition
-    // column carries collation alongside the column; unported.
+    // boundary: `HashCols []*property.MPPPartitionColumn` — the property
+    // column type is ported, but the task does not yet retain its current
+    // hash-key list.
     /// Go `RootTaskConds`: TableScan filters TiFlash cannot take, executed
     /// in a TiDB-side Selection when the task converts to root.
     pub root_task_conds: Vec<Expression>,

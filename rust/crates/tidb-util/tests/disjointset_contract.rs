@@ -29,11 +29,9 @@ fn dense_roots_union_direction_and_reset_match_go() {
     );
 
     set.clear();
-    assert!(set.is_empty());
     assert!(catch_unwind(AssertUnwindSafe(|| set.find_root(0))).is_err());
 
     set.grow_new_int_set(3);
-    assert_eq!(set.len(), 3);
     assert_eq!(
         (0..3).map(|index| set.find_root(index)).collect::<Vec<_>>(),
         [0, 1, 2]
@@ -45,7 +43,7 @@ fn sparse_indices_root_values_and_invalid_index_match_go() {
     let mut set = Set::new(0);
     let b = set.find_root("b");
     let a = set.find_root("a");
-    assert_eq!((b, a, set.len()), (0, 1, 2));
+    assert_eq!((b, a), (0, 1));
     assert!(!set.in_same_group("b", "a"));
 
     set.union("b", "a");
@@ -56,9 +54,7 @@ fn sparse_indices_root_values_and_invalid_index_match_go() {
     assert_eq!(set.find_root("a"), 2);
     assert_eq!(set.find_value(a), Some("c"));
 
-    let len = set.len();
     set.union("a", "a");
     assert_eq!(set.find_root("a"), 2);
-    assert_eq!(set.len(), len);
     assert!(catch_unwind(AssertUnwindSafe(|| set.find_value(99))).is_err());
 }

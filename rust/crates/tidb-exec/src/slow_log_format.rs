@@ -67,8 +67,8 @@ use crate::exec_details::{
     IA_REMOTE_READ_SEGMENT_COUNT_STR, IA_REMOTE_READ_SEGMENT_SIZE_STR,
     IA_REMOTE_READ_SEGMENT_WAIT_TIME_STR,
 };
+use crate::slow_log_float::format_go_float64;
 use crate::used_stats::UsedStatsInfoForTable;
-use tidb_util::sqlescape::format_go_float64;
 
 /// Go `SlowLogRowPrefixStr`: slow log row prefix.
 pub const SLOW_LOG_ROW_PREFIX_STR: &str = "# ";

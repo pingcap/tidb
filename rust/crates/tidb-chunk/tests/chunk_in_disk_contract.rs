@@ -21,8 +21,9 @@ use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::{DataInDiskByChunks, DiskError};
 use tidb_datatype::{BinaryJSON, FieldType, FieldTypeCode};
-use tidb_util::checksum::CHECKSUM_PAYLOAD_SIZE;
 use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+
+const CHECKSUM_PAYLOAD_SIZE: usize = 1020;
 
 struct TestStorage {
     authority: Option<Arc<SpillStorage>>,

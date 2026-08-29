@@ -23,8 +23,10 @@ use tidb_chunk::list::RowPtr;
 use tidb_chunk::row_container::RowContainer;
 use tidb_chunk::row_in_disk::DataInDiskByRows;
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_util::checksum::{CHECKSUM_BLOCK_SIZE, CHECKSUM_PAYLOAD_SIZE};
 use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+
+const CHECKSUM_BLOCK_SIZE: usize = 1024;
+const CHECKSUM_PAYLOAD_SIZE: usize = 1020;
 
 struct TestStorage {
     authority: Option<Arc<SpillStorage>>,

@@ -147,18 +147,6 @@ fn indian_grouping_bytes(integer: &[u8], separator: &[u8]) -> Vec<u8> {
     result
 }
 
-/// Unreachable error type retained for the source `(string, bool, error)`
-/// result shape. The Go implementation panics before returning when either
-/// caller-guaranteed input is empty, and the Rust implementation does too.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct EmptyLocaleNumberInput;
-impl std::fmt::Display for EmptyLocaleNumberInput {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("number and precision must be non-empty")
-    }
-}
-impl std::error::Error for EmptyLocaleNumberInput {}
-
 /// Formats a decimal string using MySQL locale rules, returning the exact Go
 /// string bytes and whether the locale was recognized. Numeric conversion
 /// intentionally follows the source: it truncates at the first invalid
@@ -168,7 +156,7 @@ pub fn format_by_locale(
     number: &str,
     precision: &str,
     locale: &str,
-) -> Result<(Vec<u8>, bool), EmptyLocaleNumberInput> {
+) -> Result<(Vec<u8>, bool), std::convert::Infallible> {
     let (style, found) = locale_format_style(locale);
     Ok((format_with_style(number, precision, style), found))
 }

@@ -1,5 +1,5 @@
 go_package = "pkg/util/disjointset"
-source_commit = "59dfa4d3b214ded26f957249efbda21f95149bb5"
+source_commit = "e2788410d8d696605e8cb002585877a063ccc909"
 evidence_files = [
   "rust/crates/tidb-util/src/disjointset/mod.rs",
   "rust/crates/tidb-util/src/disjointset/int_set.rs",
@@ -13,5 +13,5 @@ commands = [
   ["test", "-p", "tidb-util", "--lib", "disjointset::"],
   ["test", "-p", "tidb-util", "--test", "disjointset_contract"],
   ["test", "-p", "tidb-chunk", "--lib", "chunk_identity_tests::column_swap_helper_"],
-  ["test", "-p", "tidb-chunk", "--test", "chunk_util_contract", "column_swap_identity_and_cache_contract", "--", "--exact"],
+  ["test", "-p", "tidb-chunk", "--test", "all", "chunk_util_contract::column_swap_identity_and_cache_contract", "--", "--exact"],
 ]

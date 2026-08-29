@@ -21,7 +21,9 @@
 //! reorganize-rollback and failpoint-interleaved tests need the online-DDL
 //! job queue and are ported as documented gaps.
 
-use crate::{run_alter_table_in, run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
+use crate::{
+    run_alter_table_in, run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext,
+};
 use tidb_datatype::Datum;
 
 fn ctx() -> StmtContext {
@@ -109,7 +111,10 @@ fn drop_and_truncate_partition_drops_and_replaces_partition_bodies() {
         .expect("Go: truncate job succeeds");
     let after = partition_defs(&catalog, "t");
     assert_eq!(
-        after.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>(),
+        after
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>(),
         vec!["p2", "p3", "p4"],
         "names survive the truncate"
     );
@@ -118,7 +123,11 @@ fn drop_and_truncate_partition_drops_and_replaces_partition_bodies() {
         if before_def.0 == "p2" {
             assert_eq!(before_def.1, after_def.1, "untouched p2 keeps its id");
         } else {
-            assert_ne!(before_def.1, after_def.1, "truncated {} gets a fresh id", before_def.0);
+            assert_ne!(
+                before_def.1, after_def.1,
+                "truncated {} gets a fresh id",
+                before_def.0
+            );
         }
     }
     assert_eq!(

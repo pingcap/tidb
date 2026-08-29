@@ -312,7 +312,7 @@ impl KvTable {
             // insert arms pass allocIDs=true (`lazyAdjustAutoIncrementDatum`,
             // `insert_common.go:897`; `adjustAutoIncrementDatum`, `:993`), so
             // the store crossing reserves a fresh window: an ascending run of
-    		// explicit ids pays the counter's home once per window, not per row.
+            // explicit ids pays the counter's home once per window, not per row.
             self.auto_id
                 .rebase_allocating(current)
                 .map_err(AutoIdError::Store)?;

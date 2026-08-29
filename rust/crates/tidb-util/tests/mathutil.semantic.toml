@@ -1,5 +1,5 @@
 go_package = "pkg/util/mathutil"
-source_commit = "0eb881e406a4df7f7e44f94f6c12be1616aeffd7"
+source_commit = "e2788410d8d696605e8cb002585877a063ccc909"
 evidence_files = [
   "rust/crates/tidb-executor/src/driver/tests/column_defaults.rs",
   "rust/crates/tidb-executor/src/stmt_context.rs",

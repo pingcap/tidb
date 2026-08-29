@@ -16,20 +16,14 @@ const MYSQL_COMPATIBILITY_VERSION: &str = "8.0.11";
 /// Fixed separator embedded in TiDB's MySQL-compatible server version.
 pub const VersionSeparator: &str = "-TiDB-";
 const TIDBX_RELEASE_VERSION_PREFIX: &str = "CLOUD.";
-/// Classic development-build placeholder.
-pub const LEGACY_TIDB_RELEASE_VERSION_PLACEHOLDER: &str = "v8.4.0-this-is-a-placeholder";
-/// Next-generation development-build placeholder.
-pub const TIDBX_PLACEHOLDER_RELEASE_VERSION: &str = "v26.3.0-this-is-a-placeholder";
+const LEGACY_TIDB_RELEASE_VERSION_PLACEHOLDER: &str = "v8.4.0-this-is-a-placeholder";
+const TIDBX_PLACEHOLDER_RELEASE_VERSION: &str = "v26.3.0-this-is-a-placeholder";
 /// Build-time default release version. Cargo/build environments may inject the
 /// same value that the Go linker writes into `TiDBReleaseVersion`.
 pub const TIDB_RELEASE_VERSION: &str = match option_env!("TIDB_RELEASE_VERSION") {
     Some(version) => version,
     None => LEGACY_TIDB_RELEASE_VERSION_PLACEHOLDER,
 };
-/// Classic development-build server-version placeholder.
-/// Runtime consumers must use [`runtime_versions`], whose default incorporates
-/// an injected [`TIDB_RELEASE_VERSION`].
-pub const LEGACY_SERVER_VERSION_PLACEHOLDER: &str = "8.0.11-TiDB-v8.4.0-this-is-a-placeholder";
 /// Earliest accepted next-generation release year.
 pub const TiDBXVerMinYear: u64 = 2025;
 /// Latest accepted next-generation release year.
@@ -86,14 +80,6 @@ pub fn set_runtime_versions(release_version: impl Into<String>, server_version: 
     };
 }
 
-/// Restores the build-injected defaults. This is primarily useful for
-/// embedding/tests that repeatedly construct a server in one process.
-pub fn reset_runtime_versions() {
-    *runtime_version_state()
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = RuntimeVersions::build_default();
-}
-
 /// Rewrites only the classic development placeholder into its next-gen form.
 #[must_use]
 pub fn normalize_tidb_release_version_for_next_gen(version: &str) -> &str {
@@ -105,7 +91,7 @@ pub fn normalize_tidb_release_version_for_next_gen(version: &str) -> &str {
 }
 
 /// Exact validation failure returned by next-generation version conversion.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct InvalidReleaseVersion(String);
 impl fmt::Display for InvalidReleaseVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -610,12 +596,10 @@ pub fn format_sql_mode_str(input: &str) -> String {
 }
 
 /// Invalid SQL-mode token plus the valid prefix accumulated before it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct InvalidSqlMode {
     /// Valid prefix bits.
     pub partial: SqlMode,
-    /// Exact invalid token.
-    pub value: String,
     /// Authoritative MySQL error identity and catalog-rendered message.
     pub sql_error: SqlError,
 }
@@ -648,7 +632,6 @@ pub fn get_sql_mode(input: &str) -> Result<SqlMode, InvalidSqlMode> {
                 );
                 return Err(InvalidSqlMode {
                     partial: result,
-                    value: value.to_owned(),
                     sql_error,
                 });
             }

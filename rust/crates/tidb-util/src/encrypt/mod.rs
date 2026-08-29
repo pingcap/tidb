@@ -30,5 +30,5 @@ pub use aes::{
     aes_encrypt_with_ecb, aes_encrypt_with_ofb, derive_key_mysql, pkcs7_pad, pkcs7_unpad,
     EncryptError,
 };
-pub use aes_layer::{CtrCipher, Reader, Writer, DEFAULT_ENCRYPT_BLOCK_SIZE};
+pub use aes_layer::{CtrCipher, Reader, Writer};
 pub use crypt::{sql_decode, sql_encode};

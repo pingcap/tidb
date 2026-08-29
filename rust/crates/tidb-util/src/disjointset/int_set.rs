@@ -15,7 +15,7 @@
 //! Dense integer disjoint set.
 
 /// Disjoint set for continuous, non-negative integer elements.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct SimpleIntSet {
     parent: Vec<usize>,
 }
@@ -57,18 +57,6 @@ impl SimpleIntSet {
         self.parent.clear();
         self.parent.reserve(size);
         self.parent.extend(0..size);
-    }
-
-    /// Returns the number of elements in this dense set.
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.parent.len()
-    }
-
-    /// Returns whether this dense set contains no elements.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.parent.is_empty()
     }
 }
 
@@ -115,7 +103,7 @@ mod tests {
         let mut set = SimpleIntSet::new(3);
         set.union(0, 2);
         set.clear();
-        assert!(set.is_empty());
+        assert!(set.parent.is_empty());
         set.grow_new_int_set(5);
         assert_eq!(set.parent, [0, 1, 2, 3, 4]);
     }

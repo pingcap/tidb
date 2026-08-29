@@ -23,6 +23,8 @@ pub enum VarErrorKind {
     WrongTypeForVar(String),
     /// Go `ErrWrongValueForVar` (1231).
     WrongValueForVar(String, String),
+    /// A catalogued MySQL error returned unchanged by variable validation.
+    SqlError(tidb_error::mysql::SqlError),
     /// Go `ErrLocalVariable` (1228): `SET GLOBAL` named a SESSION-only
     /// variable.
     SessionOnlyVariable(String),

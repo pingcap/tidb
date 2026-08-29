@@ -13,13 +13,8 @@
 // limitations under the License.
 
 //! Port of Go `pkg/executor/analyze_utils_test.go::TestGetAnalyzePanicErr`
-//! (the one test in that file whose surface this tier owns: the
-//! panic-to-error recovery boundary). The other three tests of that Go file
-//! pin the FLUSH STATS_DELTA CLUSTER broadcast helpers
-//! (`isUnsupportedBroadcastQueryErr`, `collectStatsDeltaFlushObjectsForAnalyze`,
-//! `canBroadcastToTiDBRPCForTest`, `pkg/executor/analyze.go:165-261`), which
-//! have no counterpart in this tier; they are recorded as `#[ignore]` gap
-//! tests in the sibling `tests_analyze_broadcast_flush_gaps` module.
+//! for the panic-to-error recovery boundary owned by this crate. Broadcast
+//! compatibility-error classification is owned and tested by `tidb-exec`.
 //!
 //! The helper under test is `getAnalyzePanicErr`
 //! (`pkg/executor/analyze_utils.go:94`), ported as

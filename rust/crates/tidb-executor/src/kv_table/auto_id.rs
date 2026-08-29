@@ -285,7 +285,10 @@ impl AutoIdStore for LocalAutoIdStore {
             // `advance` clamps exactly where Go's
             // `min(math.MaxInt64-step, newBase) + step` lands: the domain's end.
             let end = advance(base, step, unsigned);
-            match self.last.compare_exchange_weak(last, end, Ordering::SeqCst, Ordering::SeqCst) {
+            match self
+                .last
+                .compare_exchange_weak(last, end, Ordering::SeqCst, Ordering::SeqCst)
+            {
                 Ok(_) => return Ok((base, end)),
                 Err(observed) => last = observed,
             }
@@ -1107,7 +1110,6 @@ mod tests {
         fn next_global(&self) -> Result<u64, AutoIdStoreError> {
             Err(AutoIdStoreError("injected".to_owned()))
         }
-
 
         fn rebase(&self, _required: u64, _unsigned: bool) -> Result<(), AutoIdStoreError> {
             Err(AutoIdStoreError("injected".to_owned()))

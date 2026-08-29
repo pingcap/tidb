@@ -16,15 +16,8 @@
 //! (the parallel/stream/spill aggregate slice) plus that package's
 //! `main_test.go` bootstrap.
 //!
-//! SCOPE NOTE. Go drives the mock-TiKV SQL suite with
-//! `tidb_streamagg_concurrency`/`tidb_executor_concurrency` settings, Shuffle
-//! plan-shape checks, and failpoints that panic the worker pipelines; the
-//! comparison targets are PARALLEL-vs-SERIAL agreement (and, for
-//! `TestAggInDisk`, spill-to-disk observability). This tier pins the SAME
-//! aggregate semantics through absolute values over fixed data (Go's random
-//! draws replaced by fixed rows, the established pattern of
-//! `tests_partition_table_sql_source`), and records the parallel/Shuffle/
-//! failpoint arms as `#[ignore]` gap tests.
+//! These tests exercise aggregate semantics through fixed input rows and
+//! absolute expected values.
 
 use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
 use tidb_datatype::Datum;

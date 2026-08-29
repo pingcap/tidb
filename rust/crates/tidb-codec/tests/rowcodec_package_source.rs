@@ -17,10 +17,10 @@
 use std::collections::BTreeMap;
 
 use tidb_codec::{
-    append_datum_for_checksum, calculate_raw_checksum, decode_one, decode_row_to_datums,
-    decode_row_to_map, decode_row_to_old_bytes, encode_row, encode_row_from_old,
-    encode_row_with_checksum, encode_value, is_new_format, is_row_key, remove_keyspace_prefix,
-    ColumnInfo, DatumColumn, DecodeRowOptions, Handle, RowChecksumPolicy, RowData, RowLayout,
+    calculate_raw_checksum, decode_one, decode_row_to_datums, decode_row_to_map,
+    decode_row_to_old_bytes, encode_row, encode_row_with_checksum, encode_value, is_new_format,
+    is_row_key, remove_keyspace_prefix, ColumnInfo, DatumColumn, DecodeRowOptions, Handle,
+    RowChecksumPolicy, RowData, RowLayout, RowPackageError,
 };
 use tidb_datatype::{
     BinaryJSON, BinaryLiteral, BinaryLiteralWidth, Collation, CoreTime, Datum, Decimal, FieldType,
@@ -29,6 +29,49 @@ use tidb_datatype::{
 
 fn field(code: FieldTypeCode) -> FieldType {
     FieldType::new(code)
+}
+
+fn append_datum_for_checksum(
+    timezone: Option<&tidb_datatype::SessionTimeZone>,
+    output: &mut Vec<u8>,
+    datum: &Datum,
+    field_type: FieldTypeCode,
+) -> Result<(), RowPackageError> {
+    DatumColumn {
+        id: 0,
+        field_type: field(field_type),
+        datum: datum.clone(),
+    }
+    .encode(timezone, output)
+}
+
+fn encode_row_from_old(
+    timezone: Option<&tidb_datatype::SessionTimeZone>,
+    old_row: &[u8],
+    output: &mut Vec<u8>,
+) -> Result<(), RowPackageError> {
+    if !old_row.is_empty() && is_new_format(old_row) {
+        output.clear();
+        output.extend_from_slice(old_row);
+        return Ok(());
+    }
+    let mut input = old_row;
+    let mut column_ids = Vec::new();
+    let mut values = Vec::new();
+    while input.len() > 1 {
+        let (remainder, column_id) = decode_one(input)?;
+        input = remainder;
+        column_ids.push(
+            column_id
+                .as_int()
+                .ok_or(RowPackageError::UnsupportedDatum("old row column ID"))?,
+        );
+        let (remainder, value) = decode_one(input)?;
+        input = remainder;
+        values.push(value);
+    }
+    output.clear();
+    encode_row(timezone, &column_ids, &values, output)
 }
 
 fn column(id: i64, code: FieldTypeCode) -> ColumnInfo {
@@ -89,6 +132,42 @@ fn test_encode_large_small_reuse_bug() {
     let decoded = decode_row_to_map(&buffer, &[column(1, FieldTypeCode::LongLong)], None).unwrap();
     assert_eq!(decoded.get(&1), Some(&Datum::Int(2)));
     assert!(!RowLayout::parse(&buffer).unwrap().0.header().is_large());
+}
+
+/// Source: `encoder.go::Encoder.Encode` / `appendColVals` / `encodeRowCols`.
+#[test]
+fn encoder_uses_go_column_count_and_multi_error_semantics() {
+    let mut buffer = vec![0xaa];
+    let error = encode_row(
+        None,
+        &[1, 2],
+        &[Datum::MinNotNull, Datum::MaxValue],
+        &mut buffer,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "unsupport encode type 15; unsupport encode type 16"
+    );
+    assert_eq!(buffer, [0xaa]);
+
+    encode_row(
+        None,
+        &[1],
+        &[Datum::Int(2), Datum::Int(3)],
+        &mut buffer,
+    )
+    .unwrap();
+    let decoded = decode_row_to_map(&buffer[1..], &[column(1, FieldTypeCode::LongLong)], None)
+        .unwrap();
+    assert_eq!(decoded.get(&1), Some(&Datum::Int(2)));
+}
+
+/// Source: `encoder.go::Encoder.appendColVals` indexes one datum per column ID.
+#[test]
+#[should_panic]
+fn encoder_panics_when_a_column_id_has_no_datum_like_go() {
+    let _ = encode_row(None, &[1, 2], &[Datum::Int(1)], &mut Vec::new());
 }
 
 /// Source: `rowcodec_test.go::TestDecodeRowWithHandle`.
@@ -581,20 +660,83 @@ fn test_column_encode() {
         );
     }
 
-    for field_type in [
-        FieldTypeCode::Timestamp,
-        FieldTypeCode::Datetime,
-        FieldTypeCode::Date,
-        FieldTypeCode::NewDate,
-        FieldTypeCode::NewDecimal,
+    for (field_type, type_name, expected) in [
+        (FieldTypeCode::Timestamp, "timestamp", "types.Time"),
+        (FieldTypeCode::Datetime, "datetime", "types.Time"),
+        (FieldTypeCode::Date, "date", "types.Time"),
+        (FieldTypeCode::NewDate, "newdate", "types.Time"),
+        (FieldTypeCode::NewDecimal, "decimal", "*types.MyDecimal"),
     ] {
-        assert!(
-            append_datum_for_checksum(None, &mut Vec::new(), &Datum::Int(1), field_type).is_err()
+        let error =
+            append_datum_for_checksum(None, &mut Vec::new(), &Datum::Int(1), field_type)
+                .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "encode datum(KindInt64 1) as {type_name} for checksum: interface conversion: interface {{}} is nil, not {expected}"
+            )
         );
     }
     for code in [FieldTypeCode::Unspecified, FieldTypeCode::Unknown(42)] {
-        assert!(append_datum_for_checksum(None, &mut Vec::new(), &Datum::Int(1), code).is_err());
+        let error = append_datum_for_checksum(None, &mut Vec::new(), &Datum::Int(1), code)
+            .unwrap_err();
+        assert_eq!(error.to_string(), "invalid type for checksum");
     }
+
+    // Go's accessors read Datum's raw `i` and `b` storage fields without
+    // checking its logical kind. These cross-kind cases protect that behavior.
+    assert_encoding(
+        FieldTypeCode::Tiny,
+        Datum::new_bytes([0x12, 0x34]),
+        0_u64.to_le_bytes().to_vec(),
+    );
+    assert_encoding(
+        FieldTypeCode::Tiny,
+        Datum::Real(1.5),
+        1.5_f64.to_bits().to_le_bytes().to_vec(),
+    );
+    assert_encoding(
+        FieldTypeCode::Varchar,
+        Datum::Int(1),
+        0_u32.to_le_bytes().to_vec(),
+    );
+    assert_encoding(
+        FieldTypeCode::Double,
+        Datum::Int(1),
+        1_u64.to_le_bytes().to_vec(),
+    );
+    assert_encoding(
+        FieldTypeCode::Enum,
+        Datum::Int(-1),
+        u64::MAX.to_le_bytes().to_vec(),
+    );
+    assert_encoding(
+        FieldTypeCode::Set,
+        Datum::Int(-1),
+        u64::MAX.to_le_bytes().to_vec(),
+    );
+    assert_encoding(
+        FieldTypeCode::Bit,
+        Datum::new_bytes([0x12, 0x34]),
+        0x1234_u64.to_le_bytes().to_vec(),
+    );
+    assert_encoding(
+        FieldTypeCode::Duration,
+        Datum::Int(3_661_000_000_000),
+        length_value(b"01:01:01"),
+    );
+
+    let vector_error = append_datum_for_checksum(
+        None,
+        &mut Vec::new(),
+        &Datum::Int(1),
+        FieldTypeCode::VectorFloat32,
+    )
+    .unwrap_err();
+    assert_eq!(
+        vector_error.to_string(),
+        "encode datum(KindInt64 1) as vector for checksum: bad VectorFloat32 value header (len=0)"
+    );
     for code in [
         FieldTypeCode::Unspecified,
         FieldTypeCode::Tiny,
@@ -785,31 +927,6 @@ fn enum_and_set_rows_preserve_non_utf8_element_bytes() {
     match &decoded[1] {
         Datum::Set(value, _) => assert_eq!(value.name_bytes(), &[0xfe]),
         other => panic!("unexpected set datum: {other:?}"),
-    }
-}
-
-/// Source: `bench_test.go::TestBenchDaily`.
-#[test]
-fn test_bench_daily() {
-    let values = [
-        Datum::Int(1),
-        Datum::new_collation_string(b"abc", Collation::DEFAULT),
-        Datum::Real(1.1),
-    ];
-    let columns = [
-        column(1, FieldTypeCode::Long),
-        column(2, FieldTypeCode::Varchar),
-        column(3, FieldTypeCode::Double),
-    ];
-    for _ in 0..100 {
-        let mut encoded = Vec::new();
-        encode_row(None, &[1, 2, 3], &values, &mut encoded).unwrap();
-        assert_eq!(
-            decode_row_to_datums(&encoded, &columns, &DecodeRowOptions::default())
-                .unwrap()
-                .values,
-            values
-        );
     }
 }
 
@@ -1200,7 +1317,7 @@ fn test_row_checksum_unordered_columns_sort_before_crc() {
 fn test_encode_from_old_row_passes_new_format_through_unchanged() {
     let mut new_format = Vec::new();
     encode_row(None, &[1], &[Datum::Int(1)], &mut new_format).unwrap();
-    let mut output = Vec::new();
+    let mut output = vec![0xff];
     encode_row_from_old(None, &new_format, &mut output).unwrap();
     assert_eq!(output, new_format);
 }

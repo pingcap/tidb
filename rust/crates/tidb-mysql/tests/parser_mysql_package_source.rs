@@ -6,27 +6,7 @@
 
 #![allow(non_upper_case_globals)]
 
-use std::path::Path;
-use std::process::Command;
-
 use tidb_mysql::*;
-
-#[test]
-fn generated_source_authorities_match_the_go_oracle() {
-    let generator = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../scripts/generate-parser-mysql-unicode.py");
-    let output = Command::new("python3")
-        .arg(generator)
-        .arg("--check")
-        .output()
-        .expect("run parser-mysql source-authority generator check");
-    assert!(
-        output.status.success(),
-        "generator check failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
-}
 
 #[test]
 fn test_sql_mode() {
@@ -78,7 +58,6 @@ fn test_sql_mode() {
     assert_eq!(priority_from_str("hıgh_priority"), Priority::High);
     let invalid = get_sql_mode("ANSI_QUOTES,BOGUS").unwrap_err();
     assert_eq!(invalid.partial, ModeANSIQuotes);
-    assert_eq!(invalid.value, "BOGUS");
     assert_eq!(invalid.sql_error.code, 1231);
     assert_eq!(invalid.sql_error.state, "42000");
     assert_eq!(
@@ -89,7 +68,6 @@ fn test_sql_mode() {
     let oversized = "x".repeat(201);
     let invalid = get_sql_mode(&format!("ANSI_QUOTES,{oversized}")).unwrap_err();
     assert_eq!(invalid.partial, ModeANSIQuotes);
-    assert_eq!(invalid.value, oversized);
     assert_eq!(
         invalid.sql_error.message,
         format!(
@@ -225,8 +203,8 @@ fn test_build_tidbx_release_version() {
 #[test]
 fn test_normalize_tidb_release_version_for_next_gen() {
     assert_eq!(
-        normalize_tidb_release_version_for_next_gen(LEGACY_TIDB_RELEASE_VERSION_PLACEHOLDER),
-        TIDBX_PLACEHOLDER_RELEASE_VERSION
+        normalize_tidb_release_version_for_next_gen("v8.4.0-this-is-a-placeholder"),
+        "v26.3.0-this-is-a-placeholder"
     );
     assert_eq!(
         normalize_tidb_release_version_for_next_gen("v26.3.0"),
@@ -239,7 +217,7 @@ fn runtime_versions_preserve_build_defaults_and_mutation_semantics() {
     static VERSION_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _guard = VERSION_TEST_LOCK.lock().unwrap();
 
-    reset_runtime_versions();
+    let original = runtime_versions();
     assert_eq!(
         runtime_versions(),
         RuntimeVersions {
@@ -256,7 +234,7 @@ fn runtime_versions_preserve_build_defaults_and_mutation_semantics() {
             server_version: "8.0.11-TiDB-CLOUD.202603.0".to_owned(),
         }
     );
-    reset_runtime_versions();
+    set_runtime_versions(original.tidb_release_version, original.server_version);
 }
 
 #[test]

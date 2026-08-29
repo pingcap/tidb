@@ -1,5 +1,5 @@
 go_package = "pkg/util/intest"
-source_commit = "5ea5a54cd3239cf534cfd171422ee676eb7f2934"
+source_commit = "e2788410d8d696605e8cb002585877a063ccc909"
 evidence_files = [
   "rust/crates/tidb-util/Cargo.toml",
   "rust/crates/tidb-util/src/intest/mod.rs",

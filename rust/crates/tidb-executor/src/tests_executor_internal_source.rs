@@ -14,10 +14,8 @@
 
 //! Source-backed ports for the Go `pkg/executor/internal` unit tests.
 //!
-//! The apply-cache and vector-group-checker packages have Rust behavior
-//! carriers in this crate. The remaining internal packages require Go's live
-//! session/domain, PD, resource-control, index-usage, runaway-query, or MPP
-//! infrastructure and are retained below as explicit parity-gap tests.
+//! The tests exercise the apply-cache and vector-group-checker behavior
+//! implemented by this crate.
 
 use std::sync::Arc;
 use std::thread;

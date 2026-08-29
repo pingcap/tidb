@@ -36,10 +36,10 @@
 
 use std::collections::BTreeMap;
 
+use crate::slow_log_float::format_go_float64;
 use crate::slow_log_match::UNSET_CONNECTION_ID;
 use crate::slow_log_rules::{GlobalSlowLogRules, SlowLogCondition, SlowLogRule, SlowLogRules};
 use crate::slow_log_threshold::SlowLogValue;
-use tidb_util::sqlescape::format_go_float64;
 
 /// How one slow-log field's threshold text parses (the `Parse` member of Go
 /// `SlowLogFieldAccessor`).

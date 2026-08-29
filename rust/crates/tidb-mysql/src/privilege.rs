@@ -6,7 +6,7 @@
 #![allow(non_upper_case_globals)]
 
 /// The SQL spelling of the synthetic all-privileges value.
-pub const ALL_PRIVILEGE_LITERAL: &str = "ALL PRIVILEGES";
+const ALL_PRIVILEGE_LITERAL: &str = "ALL PRIVILEGES";
 
 /// Stable privilege bit value used by privilege tables and verification.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]

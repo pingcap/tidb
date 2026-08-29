@@ -125,6 +125,7 @@ pub(crate) fn var_error(error: VarError) -> DriverError {
         VarError::WrongValueForVar(name, value) => {
             tidb_executor::VarErrorKind::WrongValueForVar(name, value)
         }
+        VarError::SqlError(error) => tidb_executor::VarErrorKind::SqlError(error),
         VarError::SessionOnlyVariable(name) => {
             tidb_executor::VarErrorKind::SessionOnlyVariable(name)
         }

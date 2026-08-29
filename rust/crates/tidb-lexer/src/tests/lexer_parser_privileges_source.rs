@@ -11,16 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Batch b054 port of `pkg/parser` part-4 unit tests (Go tests sorted by
-//! file path + line number, items 181–240 on `origin/master`).
-//!
-//! The range starts at the remainder of `pkg/parser/lexer_test.go` (the
-//! scanner APIs this crate owns), then `pkg/parser/main_test.go`,
-//! `pkg/parser/mysql/*`, `pkg/parser/opcode`, and the first slice of
-//! `pkg/parser/parser_test.go`. Lexer-owned cases are re-derived from
-//! `Scanner.scan` / `Scanner.Lex` / `isTokenIdentifier` on origin/master.
-//! mysql/opcode/yacc-parser surfaces that this crate does not expose are
-//! explicit `go-parity-gap` ignores; no behavior is approximated.
+//! Executable scanner-owned behavior derived from pinned Go
+//! `pkg/parser/lexer_test.go` and `pkg/parser/parser_test.go` cases. The tests
+//! are re-derived from `Scanner.scan` / `Scanner.Lex` /
+//! `isTokenIdentifier`.
+//! mysql/opcode/yacc-parser surfaces live with their owning crates and are
+//! deliberately not represented here.
 
 use super::*;
 
@@ -495,107 +491,17 @@ fn test_feature_ids() {
 // pkg/parser/main_test.go
 // ---------------------------------------------------------------------------
 
-/// Go: `pkg/parser/main_test.go::TestMain`.
-#[test]
-// go-parity-gap: TestMain is a goleak process wrapper, not a scanner assertion.
-#[ignore = "go-parity-gap: TestMain is a goleak process wrapper, not a scanner assertion"]
-fn test_main() {}
-
 // ---------------------------------------------------------------------------
 // pkg/parser/mysql/*
 // ---------------------------------------------------------------------------
-
-/// Go: `pkg/parser/mysql/const_test.go::TestSQLMode`.
-#[test]
-// go-parity-gap: SQLMode bit values live in tidb-mysql, not tidb-lexer.
-#[ignore = "go-parity-gap: SQLMode bit values live in tidb-mysql, not tidb-lexer"]
-fn test_sql_mode() {}
-
-/// Go: `pkg/parser/mysql/const_test.go::TestVersionSeparator`.
-#[test]
-// go-parity-gap: VersionSeparator is a mysql package constant, not a lexer token.
-#[ignore = "go-parity-gap: VersionSeparator is a mysql package constant, not a lexer token"]
-fn test_version_separator() {}
-
-/// Go: `pkg/parser/mysql/const_test.go::TestBuildTiDBXReleaseVersion`.
-#[test]
-// go-parity-gap: TiDB-X release-version formatting lives in tidb-mysql.
-#[ignore = "go-parity-gap: TiDB-X release-version formatting lives in tidb-mysql"]
-fn test_build_tidb_x_release_version() {}
-
-/// Go: `pkg/parser/mysql/const_test.go::TestNormalizeTiDBReleaseVersionForNextGen`.
-#[test]
-// go-parity-gap: next-gen version placeholder rewriting lives in tidb-mysql.
-#[ignore = "go-parity-gap: next-gen version placeholder rewriting lives in tidb-mysql"]
-fn test_normalize_tidb_release_version_for_next_gen() {}
-
-/// Go: `pkg/parser/mysql/error_test.go::TestSQLError`.
-#[test]
-// go-parity-gap: mysql.SQLError construction lives in tidb-mysql/tidb-error.
-#[ignore = "go-parity-gap: mysql.SQLError construction lives in tidb-mysql/tidb-error"]
-fn test_sql_error() {}
-
-/// Go: `pkg/parser/mysql/privs_test.go::TestPrivString`.
-#[test]
-// go-parity-gap: PrivilegeType.String lives in tidb-mysql.
-#[ignore = "go-parity-gap: PrivilegeType.String lives in tidb-mysql"]
-fn test_priv_string() {}
-
-/// Go: `pkg/parser/mysql/privs_test.go::TestPrivColumn`.
-#[test]
-// go-parity-gap: privilege column-name round-trip lives in tidb-mysql.
-#[ignore = "go-parity-gap: privilege column-name round-trip lives in tidb-mysql"]
-fn test_priv_column() {}
-
-/// Go: `pkg/parser/mysql/privs_test.go::TestPrivSetString`.
-#[test]
-// go-parity-gap: privilege SET-enum round-trip lives in tidb-mysql.
-#[ignore = "go-parity-gap: privilege SET-enum round-trip lives in tidb-mysql"]
-fn test_priv_set_string() {}
-
-/// Go: `pkg/parser/mysql/privs_test.go::TestPrivsHas`.
-#[test]
-// go-parity-gap: Privileges.Has membership lives in tidb-mysql.
-#[ignore = "go-parity-gap: Privileges.Has membership lives in tidb-mysql"]
-fn test_privs_has() {}
-
-/// Go: `pkg/parser/mysql/privs_test.go::TestPrivAllConsistency`.
-#[test]
-// go-parity-gap: Priv2UserCol/Priv2Str consistency lives in tidb-mysql.
-#[ignore = "go-parity-gap: Priv2UserCol/Priv2Str consistency lives in tidb-mysql"]
-fn test_priv_all_consistency() {}
-
-/// Go: `pkg/parser/mysql/type_test.go::TestFlags`.
-#[test]
-// go-parity-gap: field-type flag helpers live in tidb-mysql.
-#[ignore = "go-parity-gap: field-type flag helpers live in tidb-mysql"]
-fn test_flags() {}
 
 // ---------------------------------------------------------------------------
 // pkg/parser/opcode/opcode_test.go
 // ---------------------------------------------------------------------------
 
-/// Go: `pkg/parser/opcode/opcode_test.go::TestT`.
-#[test]
-// go-parity-gap: opcode.Op String/Format live outside tidb-lexer.
-#[ignore = "go-parity-gap: opcode.Op String/Format live outside tidb-lexer"]
-fn test_t() {}
-
 // ---------------------------------------------------------------------------
 // pkg/parser/parser_test.go — lexer-owned slices
 // ---------------------------------------------------------------------------
-
-/// Go: `pkg/parser/parser_test.go::TestMaxParenthesesDepth`.
-#[test]
-// go-parity-gap: Scanner.parenDepth / maxParenthesesDepth is not tracked by tidb-lexer.
-#[ignore = "go-parity-gap: Scanner.parenDepth / maxParenthesesDepth is not tracked by tidb-lexer"]
-fn test_max_parentheses_depth() {}
-
-/// Go: `pkg/parser/parser_test.go::TestMaxASTDepth`.
-#[test]
-// go-parity-gap: AST nesting limits live in the yacc parser, not the lexer.
-#[ignore = "go-parity-gap: AST nesting limits live in the yacc parser, not the lexer"]
-fn test_max_ast_depth() {}
 
 /// Go: `pkg/parser/parser_test.go::TestSimple` (reserved / unreserved lists).
 ///
@@ -1054,66 +960,6 @@ fn test_special_comments() {
     assert_eq!(hint[1].kind, TokenKind::HintComment);
 }
 
-/// Go: `pkg/parser/parser_test.go::TestRecommendIndex`.
-#[test]
-// go-parity-gap: RECOMMEND INDEX statement parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: RECOMMEND INDEX statement parsing/Restore need the yacc parser"]
-fn test_recommend_index() {}
-
-/// Go: `pkg/parser/parser_test.go::TestAdminStmt`.
-#[test]
-// go-parity-gap: ADMIN statement parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: ADMIN statement parsing/Restore need the yacc parser"]
-fn test_admin_stmt() {}
-
-/// Go: `pkg/parser/parser_test.go::TestDMLStmt`.
-#[test]
-// go-parity-gap: DML statement parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: DML statement parsing/Restore need the yacc parser"]
-fn test_dml_stmt() {}
-
-/// Go: `pkg/parser/parser_test.go::TestDBAStmt`.
-#[test]
-// go-parity-gap: DBA statement parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: DBA statement parsing/Restore need the yacc parser"]
-fn test_dba_stmt() {}
-
-/// Go: `pkg/parser/parser_test.go::TestSetVariable`.
-#[test]
-// go-parity-gap: SET variable parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: SET variable parsing/Restore need the yacc parser"]
-fn test_set_variable() {}
-
-/// Go: `pkg/parser/parser_test.go::TestFlushTable`.
-#[test]
-// go-parity-gap: FLUSH TABLES parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: FLUSH TABLES parsing/Restore need the yacc parser"]
-fn test_flush_table() {}
-
-/// Go: `pkg/parser/parser_test.go::TestFlushPrivileges`.
-#[test]
-// go-parity-gap: FLUSH PRIVILEGES parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: FLUSH PRIVILEGES parsing/Restore need the yacc parser"]
-fn test_flush_privileges() {}
-
-/// Go: `pkg/parser/parser_test.go::TestExpression`.
-#[test]
-// go-parity-gap: expression grammar/Restore need the yacc parser and AST.
-#[ignore = "go-parity-gap: expression grammar/Restore need the yacc parser and AST"]
-fn test_expression() {}
-
-/// Go: `pkg/parser/parser_test.go::TestBuiltin`.
-#[test]
-// go-parity-gap: builtin-function call parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: builtin-function call parsing/Restore need the yacc parser"]
-fn test_builtin() {}
-
-/// Go: `pkg/parser/parser_test.go::TestIdentifier` (parser suite).
-#[test]
-// go-parity-gap: identifier grammar/Restore (aliases, reserved names, CREATE DATABASE) need the yacc parser.
-#[ignore = "go-parity-gap: identifier grammar/Restore (aliases, reserved names, CREATE DATABASE) need the yacc parser"]
-fn test_parser_identifier() {}
-
 /// Go: `pkg/parser/parser_test.go::TestBuiltinFuncAsIdentifier`.
 ///
 /// Pins `isTokenIdentifier`'s `btFuncTokenMap` adjacency rule: a builtin
@@ -1204,12 +1050,6 @@ fn test_builtin_func_as_identifier() {
     }
 }
 
-/// Go: `pkg/parser/parser_test.go::TestDDL`.
-#[test]
-// go-parity-gap: DDL statement parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: DDL statement parsing/Restore need the yacc parser"]
-fn test_ddl() {}
-
 /// Go: `pkg/parser/parser_test.go::TestHintError`.
 ///
 /// Hint-body acceptance is the hint parser. The scanner-owned pieces are
@@ -1264,66 +1104,6 @@ fn test_hint_error() {
     );
 }
 
-/// Go: `pkg/parser/parser_test.go::TestErrorMsg`.
-#[test]
-// go-parity-gap: parser near-token error strings and grammar diagnostics live in tidb-parser.
-#[ignore = "go-parity-gap: parser near-token error strings and grammar diagnostics live in tidb-parser"]
-fn test_error_msg() {}
-
-/// Go: `pkg/parser/parser_test.go::TestGroupConcatSeparatorCharsetCollation`.
-#[test]
-// go-parity-gap: GROUP_CONCAT separator charset/collation is AST typing, not lexer.
-#[ignore = "go-parity-gap: GROUP_CONCAT separator charset/collation is AST typing, not lexer"]
-fn test_group_concat_separator_charset_collation() {}
-
-/// Go: `pkg/parser/parser_test.go::TestOptimizerHints`.
-#[test]
-// go-parity-gap: optimizer-hint grammar and TableOptimizerHint AST live in tidb-parser/tidb-ast.
-#[ignore = "go-parity-gap: optimizer-hint grammar and TableOptimizerHint AST live in tidb-parser/tidb-ast"]
-fn test_optimizer_hints() {}
-
-/// Go: `pkg/parser/parser_test.go::TestType`.
-#[test]
-// go-parity-gap: column-type grammar/Restore need the yacc parser.
-#[ignore = "go-parity-gap: column-type grammar/Restore need the yacc parser"]
-fn test_type() {}
-
-/// Go: `pkg/parser/parser_test.go::TestPrivilege`.
-#[test]
-// go-parity-gap: GRANT/REVOKE privilege parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: GRANT/REVOKE privilege parsing/Restore need the yacc parser"]
-fn test_privilege() {}
-
-/// Go: `pkg/parser/parser_test.go::TestPrivilegeMariaDBEnabled`.
-#[test]
-// go-parity-gap: MariaDB privilege grammar lives in the yacc parser.
-#[ignore = "go-parity-gap: MariaDB privilege grammar lives in the yacc parser"]
-fn test_privilege_maria_db_enabled() {}
-
-/// Go: `pkg/parser/parser_test.go::TestPrivilegeMariaDBDisabled`.
-#[test]
-// go-parity-gap: MariaDB privilege grammar lives in the yacc parser.
-#[ignore = "go-parity-gap: MariaDB privilege grammar lives in the yacc parser"]
-fn test_privilege_maria_db_disabled() {}
-
-/// Go: `pkg/parser/parser_test.go::TestSystemVersionedColumnMariaDBEnabled`.
-#[test]
-// go-parity-gap: system-versioned column grammar lives in the yacc parser.
-#[ignore = "go-parity-gap: system-versioned column grammar lives in the yacc parser"]
-fn test_system_versioned_column_maria_db_enabled() {}
-
-/// Go: `pkg/parser/parser_test.go::TestSystemVersionedColumnMariaDBDisabled`.
-#[test]
-// go-parity-gap: system-versioned column grammar lives in the yacc parser.
-#[ignore = "go-parity-gap: system-versioned column grammar lives in the yacc parser"]
-fn test_system_versioned_column_maria_db_disabled() {}
-
-/// Go: `pkg/parser/parser_test.go::TestComment`.
-#[test]
-// go-parity-gap: COMMENT/ATTRIBUTE clause parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: COMMENT/ATTRIBUTE clause parsing/Restore need the yacc parser"]
-fn test_parser_comment() {}
-
 /// Go: `pkg/parser/parser_test.go::TestParserErrMsg`.
 ///
 /// Exact `near '/*'` wrapping is parser-owned. The scanner still reports
@@ -1347,45 +1127,3 @@ fn test_parser_err_msg() {
         "unclosed comment in DELETE must be invalid"
     );
 }
-
-/// Go: `pkg/parser/parser_test.go::TestSubquery`.
-#[test]
-// go-parity-gap: subquery parsing/Restore need the yacc parser and AST.
-#[ignore = "go-parity-gap: subquery parsing/Restore need the yacc parser and AST"]
-fn test_subquery() {}
-
-/// Go: `pkg/parser/parser_test.go::TestSetOperator`.
-#[test]
-// go-parity-gap: UNION/EXCEPT/INTERSECT parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: UNION/EXCEPT/INTERSECT parsing/Restore need the yacc parser"]
-fn test_set_operator() {}
-
-/// Go: `pkg/parser/parser_test.go::TestUnionOrderBy`.
-#[test]
-// go-parity-gap: UNION ORDER BY parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: UNION ORDER BY parsing/Restore need the yacc parser"]
-fn test_union_order_by() {}
-
-/// Go: `pkg/parser/parser_test.go::TestLikeEscape`.
-#[test]
-// go-parity-gap: LIKE ESCAPE parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: LIKE ESCAPE parsing/Restore need the yacc parser"]
-fn test_like_escape() {}
-
-/// Go: `pkg/parser/parser_test.go::TestLockUnlockTables`.
-#[test]
-// go-parity-gap: LOCK/UNLOCK TABLES parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: LOCK/UNLOCK TABLES parsing/Restore need the yacc parser"]
-fn test_lock_unlock_tables() {}
-
-/// Go: `pkg/parser/parser_test.go::TestWithRollup`.
-#[test]
-// go-parity-gap: GROUP BY WITH ROLLUP parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: GROUP BY WITH ROLLUP parsing/Restore need the yacc parser"]
-fn test_with_rollup() {}
-
-/// Go: `pkg/parser/parser_test.go::TestIndexHint`.
-#[test]
-// go-parity-gap: USE/IGNORE/FORCE INDEX parsing/Restore need the yacc parser.
-#[ignore = "go-parity-gap: USE/IGNORE/FORCE INDEX parsing/Restore need the yacc parser"]
-fn test_index_hint() {}

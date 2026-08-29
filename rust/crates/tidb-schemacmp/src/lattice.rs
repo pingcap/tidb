@@ -57,7 +57,7 @@ pub const ERR_MSG_STRING_LIST_ELEM_MISMATCH: &str =
 /// Go keeps the `Msg` template plus `Args` and renders through `fmt.Sprintf`;
 /// this transcreation renders eagerly at construction, byte-for-byte matching
 /// the Go output for every argument shape this package produces.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct IncompatibleError {
     message: String,
 }
@@ -71,12 +71,6 @@ impl IncompatibleError {
             message: message.into(),
         }
     }
-
-    /// The rendered message, exactly as Go's `Error()` returns it.
-    #[must_use]
-    pub fn message(&self) -> &str {
-        &self.message
-    }
 }
 
 impl fmt::Display for IncompatibleError {
@@ -86,26 +80,6 @@ impl fmt::Display for IncompatibleError {
 }
 
 impl std::error::Error for IncompatibleError {}
-
-/// Renders a string with Go `%q` (`strconv.Quote`) semantics for the
-/// identifier-shaped keys this package quotes.
-fn go_quote(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 2);
-    out.push('"');
-    for character in text.chars() {
-        match character {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\x{:02x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
 
 pub(crate) fn type_mismatch_error(a: &dyn Lattice, b: &dyn Lattice) -> IncompatibleError {
     IncompatibleError::raw(format!(
@@ -140,7 +114,11 @@ pub(crate) fn wrap_tuple_index_error(index: usize, inner: &IncompatibleError) ->
 }
 
 pub(crate) fn wrap_map_key_error(key: &str, inner: &IncompatibleError) -> IncompatibleError {
-    IncompatibleError::raw(format!("at map key {}: {}", go_quote(key), inner))
+    IncompatibleError::raw(format!(
+        "at map key {}: {}",
+        tidb_error::mysql::go_quote_string(key),
+        inner
+    ))
 }
 
 /// Custom equality, mirroring Go's `Equality` interface.
@@ -150,6 +128,9 @@ pub trait Equality: fmt::Debug {
 
     /// Rust downcast hook standing in for Go's dynamic type assertions.
     fn as_any(&self) -> &dyn Any;
+
+    /// Go `%v` rendering used when an equality singleton is incompatible.
+    fn go_format(&self) -> String;
 }
 
 /// The explicit domain of Go's `interface{}` values flowing through
@@ -227,9 +208,10 @@ impl Value {
             Self::Int(value) | Self::Int64(value) => value.to_string(),
             Self::Uint(value) | Self::Uint64(value) => value.to_string(),
             Self::Byte(value) => value.to_string(),
-            Self::Float64(value) => value.to_string(),
+            Self::Float64(value) => tidb_datatype::format_float_g_shortest(*value),
             Self::Str(value) => value.to_utf8_lossy_go(),
             Self::IndexType(value) => value.sql().to_owned(),
+            Self::Equality(value) => value.go_format(),
             Self::Any(value) => value.to_string(),
             other => format!("{other:?}"),
         }
@@ -436,8 +418,8 @@ impl Lattice for EqualitySingleton {
         match cast::<Self>(other) {
             None => Err(type_mismatch_error(self, other)),
             Some(b) if !self.value.equals(b.value.as_ref()) => Err(distinct_singletons_error(
-                &format!("{:?}", self.value),
-                &format!("{:?}", b.value),
+                &self.value.go_format(),
+                &b.value.go_format(),
             )),
             Some(_) => Ok(0),
         }
@@ -447,8 +429,8 @@ impl Lattice for EqualitySingleton {
         match cast::<Self>(other) {
             None => Err(type_mismatch_error(self, other)),
             Some(b) if !self.value.equals(b.value.as_ref()) => Err(distinct_singletons_error(
-                &format!("{:?}", self.value),
-                &format!("{:?}", b.value),
+                &self.value.go_format(),
+                &b.value.go_format(),
             )),
             Some(_) => Ok(self.clone_lattice()),
         }
@@ -874,7 +856,7 @@ impl Lattice for Maybe {
 }
 
 /// Go `StringList`: a list of string where `a <= b` iff `a == b[:len(a)]`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct StringList(pub Vec<GoString>);
 
 impl Lattice for StringList {
@@ -892,8 +874,8 @@ impl Lattice for StringList {
                 return Err(IncompatibleError::raw(format!(
                     "at string list index {}: distinct values ({} vs {})",
                     index,
-                    go_quote(&self.0[index].to_utf8_lossy_go()),
-                    go_quote(&b.0[index].to_utf8_lossy_go()),
+                    tidb_error::mysql::go_quote_bytes(self.0[index].as_bytes()),
+                    tidb_error::mysql::go_quote_bytes(b.0[index].as_bytes()),
                 )));
             }
         }

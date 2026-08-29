@@ -1,5 +1,5 @@
 go_package = "pkg/util/kvcache"
-source_commit = "6a85c6bbbd6cae7e0eea20a75ecd0853ac3545d6"
+source_commit = "e2788410d8d696605e8cb002585877a063ccc909"
 evidence_files = [
   "rust/Cargo.lock",
   "rust/Cargo.toml",

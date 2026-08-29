@@ -15,14 +15,26 @@
 //! Native Rust equivalent of `pkg/util/zeropool/pool.go`.
 //!
 //! Rust moves `T` directly into and out of the pool, so it does not need Go's
-//! secondary pointer pool to avoid interface boxing. The inventory explicitly
-//! declines `sync.Pool`'s GC eviction, Go's nullable factory, and Go's universal
-//! language zero value. A poisoned Rust mutex is recovered instead of becoming
-//! a new failure mode; Go mutexes do not poison.
+//! secondary pointer pool to avoid interface boxing. A poisoned Rust mutex is
+//! recovered instead of becoming a new failure mode; Go mutexes do not poison.
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard};
 
 type Factory<T> = dyn Fn() -> T + Send + Sync;
+
+enum ItemSource<T> {
+    Zero(fn() -> T),
+    Factory(Box<Factory<T>>),
+}
+
+impl<T> ItemSource<T> {
+    fn create(&self) -> T {
+        match self {
+            Self::Zero(zero) => zero(),
+            Self::Factory(factory) => factory(),
+        }
+    }
+}
 
 /// Concurrent pool of reusable values.
 ///
@@ -30,28 +42,25 @@ type Factory<T> = dyn Fn() -> T + Send + Sync;
 /// empty, matching Go's generic zero value.
 pub struct Pool<T> {
     items: Mutex<Vec<T>>,
-    factory: Option<Arc<Factory<T>>>,
+    source: ItemSource<T>,
 }
 
-impl<T> Default for Pool<T> {
+impl<T: Default> Default for Pool<T> {
     fn default() -> Self {
         Self {
             items: Mutex::new(Vec::new()),
-            factory: None,
+            source: ItemSource::Zero(T::default),
         }
     }
 }
 
-impl<T> Pool<T>
-where
-    T: Default,
-{
+impl<T> Pool<T> {
     /// Creates a pool that calls `factory` whenever no pooled value exists.
     #[must_use]
     pub fn new(factory: impl Fn() -> T + Send + Sync + 'static) -> Self {
         Self {
             items: Mutex::new(Vec::new()),
-            factory: Some(Arc::new(factory)),
+            source: ItemSource::Factory(Box::new(factory)),
         }
     }
 
@@ -60,7 +69,7 @@ where
         if let Some(item) = self.items().pop() {
             return item;
         }
-        self.factory.as_ref().map_or_else(T::default, |new| new())
+        self.source.create()
     }
 
     /// Returns a value to the pool.
@@ -94,6 +103,11 @@ mod tests {
 
     #[test]
     fn source_factory_and_zero_value_boundaries_are_exact() {
+        struct NoDefault(usize);
+
+        let factory_only = Pool::new(|| NoDefault(11));
+        assert_eq!(factory_only.get().0, 11);
+
         let zero = Pool::<usize>::default();
         assert_eq!(zero.get(), 0);
         zero.put(7);

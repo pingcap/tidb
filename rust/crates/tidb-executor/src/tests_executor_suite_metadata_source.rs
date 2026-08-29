@@ -15,14 +15,8 @@
 //! Ports of Go `pkg/executor/test/executor/executor_test.go` items 84–1072
 //! (the metadata / session-variable / admin-check slice of the suite).
 //!
-//! SCOPE NOTE. The Go tests in this range drive a mock TiKV through full
-//! sessions and assert on session variables (`@@tidb_current_ts`,
-//! `@@tidb_last_txn_info`), kv-request hooks, coprocessor DAG fields,
-//! failpoints, and the DDL job history — surfaces this tier's local executor
-//! does not model. Each gap is recorded as an `#[ignore]` test citing the Go
-//! source; the contracts the local engine CAN answer (ADMIN CHECK's
-//! consistency errors, hash-partition reads, the duplicate-entry error
-//! shape, the `any_value` column-flag regression) are running tests.
+//! The tests exercise ADMIN CHECK consistency errors, hash-partition reads,
+//! duplicate-entry error shape, and the `any_value` column-flag regression.
 
 use crate::{admin_check, run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
 

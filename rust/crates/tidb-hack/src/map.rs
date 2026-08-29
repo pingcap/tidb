@@ -28,6 +28,8 @@ pub const MAX_TABLE_CAPACITY: usize = 1024;
 /// Deterministic seed used by the original ABI test.
 pub const MOCK_SEED_FOR_TEST: u64 = 4_992_862_800_126_241_206;
 
+const SOURCE_GROUP_SLOTS: usize = 8;
+
 /// Go Swiss-map bucket estimate retained for aggregate compatibility.
 pub const DEF_BUCKET_MEMORY_USAGE_FOR_MAP_STRING_TO_ANY: u64 = 312;
 /// Go Swiss-map bucket estimate retained for aggregate compatibility.
@@ -91,11 +93,10 @@ pub fn map_type<K, V>() -> MapType {
         .extend(Layout::new::<V>())
         .expect("key/value layout must fit address space");
     let slot = slot.pad_to_align();
-    let controls =
-        Layout::from_size_align(GROUP_WIDTH, GROUP_WIDTH).expect("hashbrown group layout");
+    let controls = Layout::new::<u64>();
     let slots = Layout::from_size_align(
         slot.size()
-            .checked_mul(GROUP_WIDTH)
+            .checked_mul(SOURCE_GROUP_SLOTS)
             .expect("map group layout must fit address space"),
         slot.align(),
     )
@@ -108,7 +109,7 @@ pub fn map_type<K, V>() -> MapType {
         group_size: group.pad_to_align().size(),
         slot_size: slot.size(),
         elem_offset,
-        group_slots: GROUP_WIDTH,
+        group_slots: SOURCE_GROUP_SLOTS,
     }
 }
 
@@ -192,15 +193,11 @@ impl<K, V, S> SwissMapWrap<'_, K, V, S> {
     }
 }
 
-/// A hash map with exact allocation-delta tracking for its pinned table.
-///
-/// Go periodically walks private runtime tables and estimates growth between
-/// checkpoints. Hashbrown exposes capacity in constant time, so the Rust owner
-/// records the actual allocation transition on every operation. This removes
-/// the approximation/checkpoint edge cases while preserving the downstream
-/// memory-tracker contract.
+/// A hash map with Go-compatible checkpointed memory accounting.
 pub struct MemAwareMap<K, V> {
     map: HashMap<K, V, SeedableRandomState>,
+    group_size: u64,
+    next_checkpoint: usize,
     bytes: u64,
     seed_for_test: u64,
     clear_sequence: u64,
@@ -221,8 +218,16 @@ where
     #[must_use]
     pub fn from_map(map: HashMap<K, V, SeedableRandomState>) -> Self {
         let bytes = to_swiss_map(&map).size();
+        let used = map.len();
         Self {
             map,
+            group_size: u64::try_from(map_type::<K, V>().group_size)
+                .expect("map group size must fit u64"),
+            next_checkpoint: if used <= SOURCE_GROUP_SLOTS {
+                SOURCE_GROUP_SLOTS * 2
+            } else {
+                used + used.min(MAX_TABLE_CAPACITY)
+            },
             bytes,
             seed_for_test: 0,
             clear_sequence: 0,
@@ -270,14 +275,22 @@ where
         to_swiss_map(&self.map).size()
     }
 
-    /// Inserts or replaces a value and returns the allocation delta.
+    /// Inserts or replaces a value and returns Go's checkpointed memory delta.
     pub fn set(&mut self, key: K, value: V) -> i64 {
-        let before = self.real_bytes();
         self.map.insert(key, value);
-        let after = self.real_bytes();
-        self.bytes = after;
-        i64::try_from(after).expect("map size must fit i64")
-            - i64::try_from(before).expect("map size must fit i64")
+        let used = self.map.len();
+        if used < self.next_checkpoint {
+            return 0;
+        }
+
+        let old_bytes = self.bytes;
+        self.bytes = self.bytes.max(approx_size(
+            self.group_size,
+            u64::try_from(used).expect("map length must fit u64"),
+        ));
+        self.next_checkpoint = used + used.min(MAX_TABLE_CAPACITY);
+        i64::try_from(self.bytes).expect("map size must fit i64")
+            - i64::try_from(old_bytes).expect("map size must fit i64")
     }
 
     /// Inserts or replaces a value and reports allocation delta and insertion.
@@ -292,7 +305,6 @@ where
         self.map = HashMap::with_capacity_and_hasher(capacity, SeedableRandomState::default());
         self.clear_sequence = self.clear_sequence.wrapping_add(1);
         self.seed_for_test = self.seed_for_test.wrapping_add(1);
-        self.bytes = self.real_bytes();
     }
 
     /// Iterates over entries.
@@ -316,7 +328,6 @@ where
             SeedableRandomState::with_seed(MOCK_SEED_FOR_TEST, SharedSeed::global_fixed()),
         );
         self.seed_for_test = MOCK_SEED_FOR_TEST;
-        self.bytes = self.real_bytes();
     }
 
     #[cfg(test)]
@@ -328,6 +339,15 @@ where
     pub(super) const fn clear_sequence(&self) -> u64 {
         self.clear_sequence
     }
+}
+
+fn approx_size(group_size: u64, max_len: u64) -> u64 {
+    const RATIO: u64 = 204;
+    group_size
+        .checked_mul(max_len)
+        .and_then(|size| size.checked_mul(RATIO))
+        .expect("map approximation must fit u64")
+        / 1000
 }
 
 #[cfg(test)]
@@ -346,9 +366,10 @@ mod tests {
         assert_eq!(MAX_TABLE_CAPACITY, 1024);
 
         let integer = map_type::<i64, i64>();
+        assert_eq!(integer.group_size, 136);
         assert_eq!(integer.slot_size, 16);
         assert_eq!(integer.elem_offset, 8);
-        assert_eq!(integer.group_slots, GROUP_WIDTH);
+        assert_eq!(integer.group_slots, SOURCE_GROUP_SLOTS);
 
         let int32 = map_type::<i32, i32>();
         assert_eq!(int32.slot_size, 8);
@@ -363,6 +384,7 @@ mod tests {
         assert_eq!(mixed.elem_offset, 8);
 
         let complex = map_type::<ComplexBits, ComplexBits>();
+        assert_eq!(complex.group_size, 264);
         assert_eq!(complex.slot_size, 32);
         assert_eq!(complex.elem_offset, 16);
 
@@ -385,7 +407,7 @@ mod tests {
             strings.set(format!("key-{index}"), index);
         }
         assert_eq!(strings.len(), 2000);
-        assert_eq!(strings.bytes(), strings.real_bytes());
+        assert!(strings.bytes() > 0);
         assert!(
             strings.real_bytes()
                 > u64::try_from(size_of_val(&strings)).expect("map header must fit u64")
@@ -393,14 +415,13 @@ mod tests {
 
         let mut small = MemAwareMap::<i64, i64>::new(0);
         small.mock_seed_for_test();
-        let empty_bytes = small.real_bytes();
-        for index in 0..8 {
-            small.set(index, index);
+        let initial_bytes = small.bytes();
+        for index in 0..15 {
+            assert_eq!(small.set(index, index), 0);
         }
-        assert!(small.real_bytes() > empty_bytes);
-        let eight_bytes = small.real_bytes();
-        small.set(9, 9);
-        assert!(small.real_bytes() >= eight_bytes);
+        assert_eq!(small.bytes(), initial_bytes);
+        assert!(small.set(15, 15) > 0);
+        assert!(small.bytes() > initial_bytes);
 
         let mut aware = MemAwareMap::<ComplexBits, ComplexBits>::new(0);
         aware.mock_seed_for_test();
@@ -413,8 +434,7 @@ mod tests {
             delta += aware.set(key, key);
         }
         let size = aware.real_bytes();
-        assert_eq!(delta, i64::try_from(size).expect("map size"));
-        assert_eq!(aware.bytes(), size);
+        assert_eq!(delta, i64::try_from(aware.bytes()).expect("map size"));
         assert_eq!(aware.seed_for_test(), MOCK_SEED_FOR_TEST);
 
         let clear_sequence = aware.clear_sequence();
@@ -423,7 +443,7 @@ mod tests {
         assert_eq!(aware.clear_sequence(), clear_sequence + 1);
         assert_ne!(aware.seed_for_test(), MOCK_SEED_FOR_TEST);
         assert_eq!(aware.real_bytes(), size);
-        assert_eq!(aware.bytes(), size);
+        assert_eq!(delta, i64::try_from(aware.bytes()).expect("map size"));
 
         aware.mock_seed_for_test();
         for index in 0..1024 {

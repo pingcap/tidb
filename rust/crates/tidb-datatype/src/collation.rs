@@ -28,7 +28,7 @@ use crate::charset::{
 };
 use crate::{CharsetError, Collation, CollationInfo, Encoding, TransformOp};
 
-static NEW_COLLATION_ENABLED: AtomicBool = AtomicBool::new(true);
+static NEW_COLLATION_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// Source `DefaultLen`, used when a string datum has no known length.
 pub const DEFAULT_LEN: usize = 0;

@@ -503,7 +503,37 @@ fn quoted_string(value: &str, alternate: bool, ascii_only: bool) -> String {
 /// rather than Rust's host Unicode classification, whose printable set differs
 /// for values such as U+0085 and U+200B.
 pub fn go_quote_string(value: &str) -> String {
-    quoted_string(value, false, false)
+    go_quote_bytes(value.as_bytes())
+}
+
+/// Quotes arbitrary Go string bytes exactly as `fmt.Sprintf("%q", value)`
+/// does, including the surrounding double quotes.
+pub fn go_quote_bytes(value: &[u8]) -> String {
+    let mut rendered = String::with_capacity(value.len() + 2);
+    rendered.push('"');
+    let mut remaining = value;
+    while !remaining.is_empty() {
+        let width = match remaining[0] {
+            0x00..=0x7f => 1,
+            0xc0..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf7 => 4,
+            _ => 0,
+        };
+        let decoded = remaining
+            .get(..width)
+            .and_then(|candidate| std::str::from_utf8(candidate).ok())
+            .and_then(|text| text.chars().next());
+        if let Some(character) = decoded {
+            rendered.push_str(&escaped_character(character, '"', false));
+            remaining = &remaining[width..];
+        } else {
+            rendered.push_str(&format!("\\x{:02x}", remaining[0]));
+            remaining = &remaining[1..];
+        }
+    }
+    rendered.push('"');
+    rendered
 }
 
 fn integer_character(argument: &FormatArg) -> char {
@@ -1389,6 +1419,22 @@ fn format_template(template: &str, redact_positions: &[usize], args: &[FormatArg
 mod tests {
     use super::*;
     use crate::mysql::errcode::{ErrDupEntry, ErrNoDB};
+
+    #[test]
+    fn go_quote_accepts_arbitrary_string_bytes() {
+        let bytes = [
+            0xfa, 0x34, 0xe1, 0x09, 0x3c, 0xb4, 0x28, 0x48, 0x57, 0x34, 0xe3, 0x91, 0x7f, 0x00,
+            0x00, 0x00,
+        ];
+        assert_eq!(
+            go_quote_bytes(&bytes),
+            r#""\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00""#
+        );
+        assert_eq!(go_quote_bytes(b"a\tb\nc\rd"), r#""a\tb\nc\rd""#);
+        assert_eq!(go_quote_bytes("日本".as_bytes()), r#""日本""#);
+        assert_eq!(go_quote_bytes(&[0xe6, 0x97]), r#""\xe6\x97""#);
+        assert_eq!(go_quote_string("\u{200b}"), r#""\u200b""#);
+    }
 
     #[test]
     fn source_error_rendering_and_redaction() {

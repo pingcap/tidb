@@ -259,12 +259,14 @@ fn sql_mode_is_normalized_when_it_is_set() {
         (" STRICT_TRANS_TABLES", " STRICT_TRANS_TABLES"),
     ] {
         match session.apply_set(&format!("SET sql_mode = '{value}'")) {
-            Err(DriverError::Var(tidb_executor::VarErrorKind::WrongValueForVar(
-                name,
-                reported,
-            ))) => {
-                assert_eq!(name, "sql_mode");
-                assert_eq!(reported, token, "for {value}");
+            Err(DriverError::Var(tidb_executor::VarErrorKind::SqlError(error))) => {
+                assert_eq!(error.code, 1231, "for {value}");
+                assert_eq!(error.state, "42000", "for {value}");
+                assert_eq!(
+                    error.message,
+                    format!("Variable 'sql_mode' can't be set to the value of '{token}'"),
+                    "for {value}"
+                );
             }
             other => panic!("{value} should be rejected, got {other:?}"),
         }

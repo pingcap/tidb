@@ -220,7 +220,7 @@ impl FdSet {
     }
 
     /// Go `FDSet.ClosureOfEquivalence`: the equivalence classes `cols` touches.
-    fn closure_of_equivalence(&self, cols: &ColSet) -> ColSet {
+    pub fn closure_of_equivalence(&self, cols: &ColSet) -> ColSet {
         let mut result = cols.clone();
         for edge in &self.edges {
             if edge.equiv && edge.from.intersects(&result) && !edge.to.subset_of(&result) {

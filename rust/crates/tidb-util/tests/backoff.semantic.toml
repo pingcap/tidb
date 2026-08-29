@@ -1,5 +1,5 @@
 go_package = "pkg/util/backoff"
-source_commit = "62d4284bee67e64f23b0a7b7f89488b26667c0eb"
+source_commit = "e2788410d8d696605e8cb002585877a063ccc909"
 evidence_files = [
   "rust/crates/tidb-util/src/backoff.rs",
   "rust/crates/tidb-util/src/lib.rs",

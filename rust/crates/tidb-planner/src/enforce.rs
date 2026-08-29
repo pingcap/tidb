@@ -27,9 +27,9 @@
 //!
 //! # Refusals, each naming its Go symbol
 //!
-//! * `MppTask.EnforceExchanger` (`enforce.go:63`) needs
-//!   `property.NeedEnforceExchanger` (partition-property matching over a
-//!   `funcdep.FDSet`) and `EnforceExchangerImpl` builds a
+//! * `MppTask.EnforceExchanger` (`enforce.go:63`) needs the task's current
+//!   `HashCols`, which this task type does not yet carry, and
+//!   `EnforceExchangerImpl` builds a
 //!   `PhysicalExchangeSender`/`PhysicalExchangeReceiver` pair — both
 //!   operators unported. Every MPP-property path through `EnforceProperty`
 //!   runs through it (Go calls it even for an empty sort property), so the
@@ -41,8 +41,6 @@
 //!   (`enforce.go:37`): the session-vars warning sink is unported; the
 //!   not-all-for-partition MPP arm returns the invalid task Go returns, and
 //!   the warning text is not raised anywhere.
-//! * `funcdep.FDSet` is unported; it is only read inside the refused
-//!   `NeedEnforceExchanger`, so no parameter carries it.
 
 use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
 use crate::physical_property::PhysicalProperty;
@@ -54,17 +52,15 @@ impl MppTask {
     /// Go `MppTask.EnforceExchanger(prop, fd)` (`enforce.go:63`): insert an
     /// exchange pair above the task when the partition property demands one.
     ///
-    /// REFUSED: the guard is `property.NeedEnforceExchanger(t.partTp,
-    /// t.HashCols, prop, fd)` — partition-property matching this port does
-    /// not carry (`HashCols` itself is a named boundary on [`MppTask`]) —
-    /// and `EnforceExchangerImpl` builds a `PhysicalExchangeSender` /
+    /// REFUSED: the guard needs `t.HashCols`, which this task type does not
+    /// carry, and `EnforceExchangerImpl` builds a `PhysicalExchangeSender` /
     /// `PhysicalExchangeReceiver` pair, operators that are not ported.
     /// Skipping the exchange instead would emit an MPP plan Go would never
     /// run; refusing is the loud version of the same gap.
     pub fn enforce_exchanger(&self) -> Result<MppTask, PlanError> {
         Err(PlanError::internal(
             "MppTask.EnforceExchanger (enforce.go) is not ported: \
-             property.NeedEnforceExchanger and the \
+             MppTask.HashCols and the \
              PhysicalExchangeSender/PhysicalExchangeReceiver pair of \
              EnforceExchangerImpl are missing",
         ))
@@ -119,6 +115,8 @@ pub fn enforce_property(
         sort_items: prop.sort_items.clone(),
         expected_cnt: f64::MAX,
         can_add_enforcer: false,
+        mpp_partition_cols: Vec::new(),
+        mpp_partition_tp: Default::default(),
         sort_items_for_partition: Vec::new(),
         cte_producer_status: prop.cte_producer_status,
         no_cop_push_down: prop.no_cop_push_down,

@@ -16,15 +16,8 @@
 //! (`analyze_bench_test.go::BenchmarkAnalyzePartition` and the 742–780 slice
 //! of `analyze_test.go`).
 //!
-//! SCOPE NOTE. Go's suite drives a mock-TiKV session: `mysql.stats_*` tables,
-//! failpoints (`injectAnalyzeSnapshot`, `mockKillRunningV2AnalyzeJob`, ...),
-//! auto-analyze, stats persistence across nodes, and SHOW-statements. This
-//! tier's shared analyze engine ([`crate::analyze::kv::analyze_kv_table`])
-//! publishes [`crate::access_cost::TableStatistics`] into the catalog — the
-//! same plan and builder Go's two tiers share — so the ports pin the built
-//! statistics themselves (TopN/histogram/NDV/correlation contents, scope,
-//! sample-rate decisions), and every persistence/failpoint/auto-analyze arm
-//! is recorded as an `#[ignore]` gap test.
+//! The tests exercise the statistics behavior implemented by this crate's
+//! analyze engine ([`crate::analyze::kv::analyze_kv_table`]).
 
 use std::sync::Arc;
 
@@ -108,7 +101,7 @@ fn text_of_encoded(datum: &Datum) -> String {
         bytes
     };
     while let Some((&last, rest)) = body.split_last() {
-        if last == 0 || last >= 0xf9 {
+        if last == 0 || last >= 0xf8 {
             body = rest;
         } else {
             break;
@@ -295,20 +288,16 @@ fn analyze_extract_topn_entries_and_counts_from_index_and_column() {
     assert_eq!(topn_counts(Some(topn)), vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 11]);
 }
 
-/// Go `analyze_test.go:359::TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn`,
-/// virtual-column-index half: `idx(b)` over `b int as (a+1)` with data
+/// Go `analyze_test.go:359::TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn`:
+/// `idx(b)` over `b int as (a+1)` with data
 /// (1, 2, NULL, 3, 4, NULL, 5, 5, 5, 5) and `with 1 topn` builds, for the
 /// index histogram: NDV 5, NULLs 2, buckets [2,2]/[3,3]/[4,4]/[5,5], and a
 /// single TopN entry 6 counting 4 — Go's `show stats_buckets`/
-/// `show stats_topn`/NDV/NULL rows verbatim.
-///
-/// go-parity-gap: the prefix-column half of the same Go test
-/// (`index idx(a(1))` over varchar values aa/ab/ac/bb) diverges — this
-/// tier's sampler does not truncate samples to the index prefix (measured:
-/// NDV 4 with buckets ab/ac/bb and TopN a:1, where Go reports TopN a:3 with
-/// one [b,b] bucket) — recorded in `analyze_prefix_index_truncates_samples`.
+/// `show stats_topn`/NDV/NULL rows verbatim. Its prefix-index half cuts
+/// `idx(a(1))` before collecting statistics: aa/ab/ac become `a`, so the
+/// index has NDV 2, TopN `a` count 3, and one remaining bucket for `b`.
 #[test]
-fn analyze_full_sampling_on_virtual_column_index() {
+fn analyze_full_sampling_on_virtual_or_prefix_column_index() {
     let mut catalog = Catalog::default();
     create(
         &mut catalog,
@@ -349,6 +338,34 @@ fn analyze_full_sampling_on_virtual_column_index() {
     let topn = index.topn.as_ref().expect("topn kept with 1 topn");
     assert_eq!(topn.num(), 1);
     assert_eq!(topn.entries()[0].count, 4, "the value 6 counts 4");
+
+    let mut catalog = Catalog::default();
+    create(
+        &mut catalog,
+        "create table sampling_index_prefix_col(a varchar(3), index idx(a(1)))",
+    );
+    insert(
+        &mut catalog,
+        "insert into sampling_index_prefix_col values ('aa'), ('ab'), ('ac'), ('bb')",
+    );
+    let mut table = kv_table_of(&catalog, "sampling_index_prefix_col");
+    let statistics = analyze_kv_table(&mut table, &options, None, &ctx())
+        .unwrap_or_else(|error| panic!("prefix-index analyze failed: {error:?}"));
+
+    let index = statistics.indexes.values().next().expect("idx statistics");
+    assert_eq!(index.histogram.ndv, 2, "prefix-index NDV");
+    let topn = index.topn.as_ref().expect("prefix index keeps a TopN");
+    assert_eq!(topn.num(), 1);
+    assert_eq!(topn.entries()[0].count, 3);
+    assert_eq!(
+        text_of_encoded(&Datum::new_bytes(topn.entries()[0].encoded.clone())),
+        "a"
+    );
+    assert_eq!(index.histogram.buckets.len(), 1);
+    let bucket = &index.histogram.buckets[0];
+    assert_eq!(text_of_encoded(&bucket.lower_bound), "b");
+    assert_eq!(text_of_encoded(&bucket.upper_bound), "b");
+    assert_eq!(bucket.count, 1);
 }
 
 /// Go `analyze_test.go:458::TestAdjustSampleRateNote` and

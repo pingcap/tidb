@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 
 /// Disjoint set for sparse or non-integer element domains.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Set<T> {
     parent: Vec<usize>,
     value_to_index: HashMap<T, usize>,
@@ -88,18 +88,6 @@ where
     pub fn find_value(&mut self, index: usize) -> Option<T> {
         let root = self.find_root_internal(index);
         self.values.get(root).cloned()
-    }
-
-    /// Returns the number of values inserted into the set.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.parent.len()
-    }
-
-    /// Returns whether no value has been inserted.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.parent.is_empty()
     }
 }
 

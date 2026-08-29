@@ -67,7 +67,6 @@
 
 pub mod fd_graph;
 pub mod null_reject;
-pub mod tests_extract_fd;
 
 pub use fd_graph::{find_common_equiv_classes, FdSet, OuterJoinOptions};
 

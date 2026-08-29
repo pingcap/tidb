@@ -662,7 +662,12 @@ fn batch_reservation(
 /// Go's `rebase4{Signed,Unsigned}` `allocIDs == true` arm. The counter moves to
 /// `max(currentEnd, requiredBase)` and a fresh window of `step` ids above it is
 /// reserved in the same transaction; an empty window means the domain is full.
-fn rebase_reservation(current: u64, required: u64, step: u64, unsigned: bool) -> (Option<u64>, (u64, u64)) {
+fn rebase_reservation(
+    current: u64,
+    required: u64,
+    step: u64,
+    unsigned: bool,
+) -> (Option<u64>, (u64, u64)) {
     let base = if tidb_executor::kv_table::exceeds(required, current, unsigned) {
         required
     } else {
@@ -763,10 +768,7 @@ mod tests {
         // A peer moved the counter past our value meanwhile: the window sits
         // above THAT mark, and the base says so -- ids up to it are already
         // handed out.
-        assert_eq!(
-            rebase_reservation(50, 5, 10, true),
-            (Some(60), (50, 60))
-        );
+        assert_eq!(rebase_reservation(50, 5, 10, true), (Some(60), (50, 60)));
         // The monotonic run continues INSIDE the caller's cached window; the
         // next crossing pays for the following whole window in one write. The
         // base follows the STORED end (`rebase4Signed`: `newBase = max(

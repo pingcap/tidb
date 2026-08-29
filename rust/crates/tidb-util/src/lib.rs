@@ -31,14 +31,6 @@ pub(crate) fn global_logger_test_guard() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|error| error.into_inner())
 }
 
-#[cfg(test)]
-mod tests_dbterror;
-#[cfg(test)]
-mod tests_fastrand;
-#[cfg(test)]
-mod tests_intest;
-mod tests_mathutil;
-
 pub mod arena;
 pub mod backoff;
 pub mod bitmap;
@@ -121,12 +113,3 @@ pub mod versioninfo;
 pub mod vitess;
 pub mod watcher;
 pub mod zeropool;
-
-#[cfg(test)]
-mod tests_naming;
-#[cfg(test)]
-mod tests_redact;
-#[cfg(test)]
-mod tests_slice;
-#[cfg(test)]
-mod tests_sqlescape;

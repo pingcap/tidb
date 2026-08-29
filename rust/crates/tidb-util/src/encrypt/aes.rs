@@ -21,7 +21,7 @@ use std::fmt;
 pub(super) const AES_BLOCK_SIZE: usize = 16;
 
 /// Source-compatible failures from TiDB's AES helpers.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub enum EncryptError {
     /// Go `aes.NewCipher` rejected a key outside 128/192/256 bits.
     InvalidKeyLength(usize),

@@ -1,5 +1,5 @@
 go_package = "pkg/util/redact"
-source_commit = "ae70341a13841576092042b0f2e87dfdf6b675db"
+source_commit = "e2788410d8d696605e8cb002585877a063ccc909"
 evidence_files = [
   "rust/Cargo.lock",
   "rust/crates/tidb-proto/Cargo.toml",
