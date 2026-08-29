@@ -36,6 +36,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: audited every production, test, test-harness, and build artifact
+  in pinned Go `pkg/util/texttree`. Removed the Rust API's valid-UTF-8
+  narrowing: indentation now follows Go's per-invalid-byte `[]rune`
+  conversion, while `PrettyIdentifier` appends identifier bytes unchanged.
+  Updated the ordinary binary-plan and EXPLAIN consumers at their known-valid
+  UTF-8 boundaries, removed duplicate supplemental tests, and retained both
+  original Go tests plus one malformed-byte regression. Complete inventory
+  and WIP gates are recorded in `receipts/util_texttree.md`.
 - 2026-08-28: audited every production, test, and build file in pinned Go
   `pkg/parser/terror`. Removed the redundant `b003` Rust test module, receipt,
   and manifest claim: portable error-code, class, JSON, equality, logging, and

@@ -777,7 +777,10 @@ fn decode_binary_operator(
     } else {
         &operator.name
     };
-    let id = pretty_identifier(&format!("{name}{labels}"), indent, last_child);
+    let id = pretty_identifier(&format!("{name}{labels}"), indent, last_child)
+        .as_utf8()
+        .expect("plan identifiers are valid UTF-8")
+        .to_owned();
     let mut row = vec![
         id,
         format_plan_float(operator.est_rows, false),
@@ -844,7 +847,10 @@ fn decode_binary_operator(
     {
         children.swap(0, 1);
     }
-    let child_indent = indent_4_child(indent, last_child);
+    let child_indent = indent_4_child(indent, last_child)
+        .as_utf8()
+        .expect("plan indentation is valid UTF-8")
+        .to_owned();
     let last = children.len().saturating_sub(1);
     for (index, child) in children.into_iter().enumerate() {
         decode_binary_operator(child, &child_indent, index == last, runtime, brief, output);

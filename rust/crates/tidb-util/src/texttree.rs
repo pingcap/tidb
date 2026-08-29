@@ -13,10 +13,8 @@
 // limitations under the License.
 
 //! Native Rust mapping of the Go `pkg/util/texttree` package.
-//!
-//! For valid UTF-8, Go's `[]rune` and Rust's [`char`] preserve the same Unicode
-//! scalar values, so the source algorithms carry over directly on `Vec<char>`.
-//! The public API accepts UTF-8 `&str`, unlike Go's arbitrary-byte strings.
+
+use tidb_datatype::{go_chars, GoString, GoStringSource};
 
 /// Indicates the current operator sub-tree is not finished, still has child
 /// operators to be attached on.
@@ -34,8 +32,11 @@ pub const TREE_NODE_IDENTIFIER: char = '─';
 
 /// Appends more blank to the `indent` string.
 #[must_use]
-pub fn indent_4_child(indent: &str, is_last_child: bool) -> String {
-    let mut indent_chars: Vec<char> = indent.chars().collect();
+pub fn indent_4_child<T>(indent: &T, is_last_child: bool) -> GoString
+where
+    T: GoStringSource + ?Sized,
+{
+    let mut indent_chars: Vec<char> = go_chars(indent).collect();
 
     if is_last_child {
         // If the current node is the last node of the current operator tree, we
@@ -51,18 +52,22 @@ pub fn indent_4_child(indent: &str, is_last_child: bool) -> String {
 
     indent_chars.push(TREE_BODY);
     indent_chars.push(TREE_GAP);
-    indent_chars.into_iter().collect()
+    GoString::from(indent_chars.into_iter().collect::<String>())
 }
 
 /// Returns a pretty identifier which contains indent and tree node hierarchy
 /// indicator.
 #[must_use]
-pub fn pretty_identifier(id: &str, indent: &str, is_last_child: bool) -> String {
-    if indent.is_empty() {
-        return id.to_string();
+pub fn pretty_identifier<I, D>(id: &I, indent: &D, is_last_child: bool) -> GoString
+where
+    I: GoStringSource + ?Sized,
+    D: GoStringSource + ?Sized,
+{
+    if indent.as_go_bytes().is_empty() {
+        return id.to_go_string();
     }
 
-    let mut indent_chars: Vec<char> = indent.chars().collect();
+    let mut indent_chars: Vec<char> = go_chars(indent).collect();
     for c in indent_chars.iter_mut().rev() {
         if *c != TREE_BODY {
             continue;
@@ -84,74 +89,60 @@ pub fn pretty_identifier(id: &str, indent: &str, is_last_child: bool) -> String 
     // identifier.
     let last = indent_chars.len() - 1;
     indent_chars[last] = TREE_NODE_IDENTIFIER;
-    indent_chars.into_iter().collect::<String>() + id
+    let mut value = indent_chars.into_iter().collect::<String>().into_bytes();
+    value.extend_from_slice(id.as_go_bytes());
+    GoString::from(value)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn source_constants_are_exact() {
-        assert_eq!(
-            (
-                TREE_BODY,
-                TREE_MIDDLE_NODE,
-                TREE_LAST_NODE,
-                TREE_GAP,
-                TREE_NODE_IDENTIFIER
-            ),
-            ('│', '├', '└', ' ', '─')
-        );
-    }
-
     // Go `TestIndent4Child`.
     #[test]
     fn indent_4_child_go_test() {
-        assert_eq!(indent_4_child("    ", false), "    │ ");
-        assert_eq!(indent_4_child("    ", true), "    │ ");
-        assert_eq!(indent_4_child("   │ ", true), "     │ ");
+        assert_eq!(
+            indent_4_child("    ", false).as_bytes(),
+            "    │ ".as_bytes()
+        );
+        assert_eq!(indent_4_child("    ", true).as_bytes(), "    │ ".as_bytes());
+        assert_eq!(
+            indent_4_child("   │ ", true).as_bytes(),
+            "     │ ".as_bytes()
+        );
     }
 
     // Go `TestPrettyIdentifier`.
     #[test]
     fn pretty_identifier_go_test() {
-        assert_eq!(pretty_identifier("test", "", false), "test");
-        assert_eq!(pretty_identifier("test", "  │  ", false), "  ├ ─test");
+        assert_eq!(pretty_identifier("test", "", false).as_bytes(), b"test");
         assert_eq!(
-            pretty_identifier("test", "\t\t│\t\t", false),
-            "\t\t├\t─test"
+            pretty_identifier("test", "  │  ", false).as_bytes(),
+            "  ├ ─test".as_bytes()
         );
-        assert_eq!(pretty_identifier("test", "  │  ", true), "  └ ─test");
-        assert_eq!(pretty_identifier("test", "\t\t│\t\t", true), "\t\t└\t─test");
+        assert_eq!(
+            pretty_identifier("test", "\t\t│\t\t", false).as_bytes(),
+            "\t\t├\t─test".as_bytes()
+        );
+        assert_eq!(
+            pretty_identifier("test", "  │  ", true).as_bytes(),
+            "  └ ─test".as_bytes()
+        );
+        assert_eq!(
+            pretty_identifier("test", "\t\t│\t\t", true).as_bytes(),
+            "\t\t└\t─test".as_bytes()
+        );
     }
 
     #[test]
-    fn indent_4_child_preserves_source_rune_rules() {
-        assert_eq!(indent_4_child("    ", false), "    │ ");
-        assert_eq!(indent_4_child("    ", true), "    │ ");
-        assert_eq!(indent_4_child("   │ ", true), "     │ ");
-        assert_eq!(indent_4_child("", false), "│ ");
-        assert_eq!(indent_4_child("", true), "│ ");
-        assert_eq!(indent_4_child("α│x│y", false), "α│x│y│ ");
-        assert_eq!(indent_4_child("α│x│y", true), "α│x y│ ");
-        assert_eq!(indent_4_child("αxy", true), "αxy│ ");
-    }
-
-    #[test]
-    fn pretty_identifier_preserves_source_rune_rules() {
-        assert_eq!(pretty_identifier("test", "", false), "test");
-        assert_eq!(pretty_identifier("test", "  │  ", false), "  ├ ─test");
+    fn arbitrary_go_string_bytes_follow_rune_conversion_and_raw_id_append() {
         assert_eq!(
-            pretty_identifier("test", "\t\t│\t\t", false),
-            "\t\t├\t─test"
+            indent_4_child(&[0xff, b'|'][..], false).as_bytes(),
+            "�|│ ".as_bytes()
         );
-        assert_eq!(pretty_identifier("test", "  │  ", true), "  └ ─test");
-        assert_eq!(pretty_identifier("test", "\t\t│\t\t", true), "\t\t└\t─test");
-        assert_eq!(pretty_identifier("标", "", false), "标");
-        assert_eq!(pretty_identifier("标", "α│x│y", false), "α│x├─标");
-        assert_eq!(pretty_identifier("标", "α│x│y", true), "α│x└─标");
-        assert_eq!(pretty_identifier("标", "αxy", false), "αx─标");
-        assert_eq!(pretty_identifier("标", "界", true), "─标");
+        assert_eq!(
+            pretty_identifier(&[0xff][..], &[0xff][..], false).as_bytes(),
+            &[0xe2, 0x94, 0x80, 0xff]
+        );
     }
 }

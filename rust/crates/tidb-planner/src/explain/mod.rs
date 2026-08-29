@@ -448,7 +448,10 @@ fn render_operator(
     rows: &mut Vec<Vec<String>>,
 ) {
     let brief = matches!(format, ExplainFormat::Brief | ExplainFormat::PlanTree);
-    let id = pretty_identifier(&operator.explain_id(brief), indent, is_last);
+    let id = pretty_identifier(&operator.explain_id(brief), indent, is_last)
+        .as_utf8()
+        .expect("EXPLAIN identifiers are valid UTF-8")
+        .to_owned();
 
     let mut row = vec![id];
     if format != ExplainFormat::PlanTree {
@@ -481,7 +484,10 @@ fn render_operator(
     rows.push(row);
 
     let child_count = operator.children.len();
-    let child_indent = indent_4_child(indent, is_last);
+    let child_indent = indent_4_child(indent, is_last)
+        .as_utf8()
+        .expect("EXPLAIN indentation is valid UTF-8")
+        .to_owned();
     for (index, child) in operator.children.iter().enumerate() {
         let child_is_last = index + 1 == child_count;
         render_operator(child, format, runtime, &child_indent, child_is_last, rows);
