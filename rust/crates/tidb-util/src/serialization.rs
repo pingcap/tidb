@@ -69,8 +69,6 @@ pub const UINT64_LEN: usize = size_of::<u64>();
 pub const FLOAT32_LEN: usize = size_of::<f32>();
 /// Serialized width of one 64-bit float.
 pub const FLOAT64_LEN: usize = size_of::<f64>();
-/// Serialized width of one exact Go `types.MyDecimal` value.
-pub const MY_DECIMAL_LEN: usize = MYDECIMAL_STRUCT_SIZE;
 /// Serialized width of one packed Go `types.Time` value.
 pub const TIME_LEN: usize = size_of::<u64>();
 /// Serialized width of one signed Go `time.Duration`.
@@ -79,7 +77,6 @@ pub const TIME_DURATION_LEN: usize = size_of::<i64>();
 pub const UNSAFE_POINTER_LEN: usize = size_of::<*const ()>();
 
 /// Source-supported values of Go's aggregate-spill `any` boundary.
-#[derive(Clone, Debug, PartialEq)]
 pub enum InterfaceValue {
     /// Boolean value.
     Bool(bool),
@@ -130,8 +127,7 @@ serializer!(serialize_i64, i64);
 serializer!(serialize_f32, f32);
 serializer!(serialize_f64, f64);
 
-/// Appends a native-width length followed by the exact bytes.
-pub fn serialize_buffer(value: &[u8], output: &mut Vec<u8>) {
+fn serialize_buffer(value: &[u8], output: &mut Vec<u8>) {
     let length = isize::try_from(value.len()).expect("a Vec cannot exceed isize::MAX bytes");
     serialize_int(length, output);
     output.extend_from_slice(value);
@@ -240,7 +236,6 @@ pub fn serialize_interface(value: &InterfaceValue, output: &mut Vec<u8>) {
 }
 
 /// Borrowed positional decoder corresponding to Go's `PosAndBuf`.
-#[derive(Clone, Debug)]
 pub struct Cursor<'a> {
     bytes: &'a [u8],
     position: usize,
@@ -248,7 +243,6 @@ pub struct Cursor<'a> {
 
 impl<'a> Cursor<'a> {
     /// Starts decoding at byte zero.
-    #[must_use]
     pub const fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, position: 0 }
     }
@@ -260,15 +254,8 @@ impl<'a> Cursor<'a> {
     }
 
     /// Returns the current byte position.
-    #[must_use]
     pub const fn position(&self) -> usize {
         self.position
-    }
-
-    /// Returns the unread byte count.
-    #[must_use]
-    pub const fn remaining(&self) -> usize {
-        self.bytes.len() - self.position
     }
 
     fn read_array<const N: usize>(&mut self) -> [u8; N] {
@@ -335,8 +322,7 @@ impl<'a> Cursor<'a> {
         f64::from_ne_bytes(self.read_array())
     }
 
-    /// Reads a native-width length and borrows the following bytes.
-    pub fn read_buffer(&mut self) -> &'a [u8] {
+    fn read_buffer(&mut self) -> &'a [u8] {
         let length = self.read_int() as usize;
         let end = self.position + length;
         let value = &self.bytes[self.position..end];

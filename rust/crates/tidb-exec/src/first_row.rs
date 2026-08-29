@@ -25,9 +25,9 @@
 
 use std::fmt;
 
-use tidb_datatype::{Collation, Datum, DatumKind};
+use tidb_datatype::{Collation, Datum, DatumKind, GoString};
 use tidb_util::serialization::{
-    serialize_bool, serialize_buffer, serialize_f64, serialize_i64, Cursor,
+    serialize_bool, serialize_f64, serialize_i64, serialize_string, Cursor,
 };
 
 /// Go's type-specific FIRST_ROW spill payload selected by aggregate metadata.
@@ -256,7 +256,7 @@ fn encode_source_payload(
             serialize_f64(*value, output);
         }
         (FirstRowSpillKind::String(_), Datum::String(value)) => {
-            serialize_buffer(value.bytes(), output);
+            serialize_string(&GoString::from(value.bytes().to_vec()), output);
         }
         // Go evaluates NULL into the typed zero payload and records nullness
         // in the independent flag. Rust's Datum::Null has no typed payload,
@@ -267,7 +267,9 @@ fn encode_source_payload(
         (FirstRowSpillKind::Float64, Datum::Null) => {
             serialize_f64(0.0, output);
         }
-        (FirstRowSpillKind::String(_), Datum::Null) => serialize_buffer(&[], output),
+        (FirstRowSpillKind::String(_), Datum::Null) => {
+            serialize_string(&GoString::default(), output)
+        }
         (expected, actual) => {
             return Err(FirstRowWireError::DatumKindMismatch {
                 expected,
@@ -283,7 +285,7 @@ fn decode_source_payload(cursor: &mut Cursor<'_>, kind: FirstRowSpillKind) -> Da
         FirstRowSpillKind::Int => Datum::Int(cursor.read_i64()),
         FirstRowSpillKind::Float64 => Datum::Real(cursor.read_f64()),
         FirstRowSpillKind::String(collation) => {
-            Datum::new_collation_string(cursor.read_buffer().to_vec(), collation)
+            Datum::new_collation_string(cursor.read_string().as_bytes().to_vec(), collation)
         }
     }
 }

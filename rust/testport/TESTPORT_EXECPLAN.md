@@ -36,6 +36,11 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: re-audited the complete pinned Go `pkg/util/serialization`
+  package. Removed Rust-only derives/diagnostics, the unused public
+  `MY_DECIMAL_LEN` and `Cursor::remaining`, and public exposure of Go-private
+  buffer helpers; FIRST_ROW now crosses the package boundary through the
+  exported string serializer/deserializer, as Go does.
 - 2026-08-29: re-audited the complete pinned Go `pkg/util/selection`
   package. Removed the Rust-only public `Selectable::is_empty` operation and
   restored the exact four Go test identities; the benchmark-only quickselect

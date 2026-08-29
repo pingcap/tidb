@@ -33,9 +33,12 @@ input, as Go does. `MyDecimal::from_raw_bytes_like_go` and
 `Time::from_go_raw_like_go` preserve the source's unchecked raw field values
 instead of introducing validation during deserialization.
 
-A temporary direct Go probe established the observable unsafe-bool behavior:
-the low bit is loaded (`0` and `2` are false; `1` and `255` are true). Rust now
-uses that exact rule. The probe was removed after use.
+The re-audit also removed Rust-only `must_use`, clone/debug/equality behavior,
+the unused `Cursor::remaining` and `MY_DECIMAL_LEN` APIs, and public exposure
+of the source-private buffer helpers. The FIRST_ROW consumer now calls the
+exported `SerializeString`/`DeserializeString` equivalents, matching Go's
+package boundary. `Cursor::position` remains the native accessor for Go's
+public `PosAndBuf.Pos` field.
 
 ## Validation
 
@@ -51,28 +54,21 @@ Passed:
 - `cargo test --offline --locked -p tidb-exec avg_and_sum_spill_pairs_round_trip_all_original_vectors`
 - `cargo test --offline --locked -p tidb-exec source_spill_layout_has_no_rust_only_type_or_collation_tags`
 - `cargo test --offline --locked -p tidb-exec base_partial_spill_matches_source_native_shape`
-- `cargo check --offline --locked -p tidb-datatype -p tidb-util -p tidb-exec --all-targets`
-- `cargo clippy --offline --locked -p tidb-datatype -p tidb-util --lib
-  --no-deps -- -A clippy::map-or-identity -A
-  clippy::chunks-exact-to-as-chunks -A clippy::wrong-self-convention -A
-  clippy::new-without-default -D warnings`
-- `cargo clippy --offline --locked -p tidb-exec --lib --no-deps -- -A
-  missing-docs -A clippy::empty-line-after-doc-comments -A
-  clippy::large-enum-variant -A clippy::needless-return -A
-  clippy::too-many-arguments -A clippy::needless-borrow -A
-  clippy::type-complexity -A clippy::len-zero -D warnings`
-- `cargo fmt --all -- --check`
+- `cargo check --offline --locked -p tidb-exec --lib`
+- `rustfmt --edition 2021 crates/tidb-util/src/serialization.rs
+  crates/tidb-exec/src/first_row.rs`
 - `git diff --check`
 
-`go test ./pkg/util/serialization -count=1` did not reach this package: the
-existing checkout fails first in `pkg/util/hack` (`checkMapABI` is undefined)
-and the gRPC transport dependency (`http2.TrailerPrefix` is undefined).
+`GOCACHE=/private/tmp/tidb-go-build-cache go test
+./pkg/util/serialization -count=1` did not reach this package: the existing
+checkout fails first in `pkg/util/hack` (`checkMapABI` is undefined) and the
+gRPC transport dependency (`http2.TrailerPrefix` is undefined).
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 
 ## Risk
 
-- Correctness: scoped Rust compilation, lint, and spill round-trip checks pass;
+- Correctness: scoped Rust compilation and spill round-trip checks pass;
   the local Go test command is blocked before package execution as recorded
   above.
 - Compatibility: Rust-only recoverable malformed-spill APIs are intentionally
