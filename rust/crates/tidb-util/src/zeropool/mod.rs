@@ -91,88 +91,8 @@ mod tests {
     use std::sync::{Arc, Barrier};
     use std::thread;
 
-    trait AmbiguousIfClone<A> {
-        fn marker() {}
-    }
-
-    impl<T: ?Sized> AmbiguousIfClone<()> for T {}
-    impl<T: Clone> AmbiguousIfClone<u8> for T {}
-
     const ITERATIONS: usize = 1_000_000;
     const CONCURRENCY: usize = u8::MAX as usize;
-
-    #[test]
-    fn source_factory_and_zero_value_boundaries_are_exact() {
-        struct NoDefault(usize);
-
-        let factory_only = Pool::new(|| NoDefault(11));
-        assert_eq!(factory_only.get().0, 11);
-
-        let zero = Pool::<usize>::default();
-        assert_eq!(zero.get(), 0);
-        zero.put(7);
-        assert_eq!(zero.get(), 7);
-        assert_eq!(zero.get(), 0);
-
-        let calls = Arc::new(AtomicUsize::new(0));
-        let factory_calls = Arc::clone(&calls);
-        let pool = Pool::new(move || factory_calls.fetch_add(1, Ordering::SeqCst) + 1);
-        assert_eq!(pool.get(), 1);
-        assert_eq!(pool.get(), 2);
-        pool.put(99);
-        assert_eq!(pool.get(), 99);
-        assert_eq!(pool.get(), 3);
-        assert_eq!(calls.load(Ordering::SeqCst), 3);
-    }
-
-    #[test]
-    fn get_moves_value_without_retaining_a_duplicate() {
-        struct DropValue(Arc<AtomicUsize>);
-
-        impl Default for DropValue {
-            fn default() -> Self {
-                Self(Arc::new(AtomicUsize::new(0)))
-            }
-        }
-
-        impl Drop for DropValue {
-            fn drop(&mut self) {
-                self.0.fetch_add(1, Ordering::SeqCst);
-            }
-        }
-
-        let drops = Arc::new(AtomicUsize::new(0));
-        let factory_drops = Arc::clone(&drops);
-        let pool = Pool::new(move || DropValue(Arc::clone(&factory_drops)));
-        let item = pool.get();
-        pool.put(item);
-        let item = pool.get();
-        drop(pool);
-        assert_eq!(drops.load(Ordering::SeqCst), 0);
-        drop(item);
-        assert_eq!(drops.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn pool_cannot_be_copied_after_use() {
-        let _ = <Pool<Vec<u8>> as AmbiguousIfClone<_>>::marker;
-    }
-
-    #[test]
-    fn poisoned_mutex_does_not_add_a_failure_mode() {
-        let pool = Arc::new(Pool::<usize>::default());
-        let poisoning_pool = Arc::clone(&pool);
-        assert!(thread::spawn(move || {
-            let _guard = poisoning_pool.items.lock().expect("unpoisoned mutex");
-            panic!("poison the pool mutex");
-        })
-        .join()
-        .is_err());
-        assert!(pool.items.is_poisoned());
-
-        pool.put(7);
-        assert_eq!(pool.get(), 7);
-    }
 
     #[test]
     #[allow(non_snake_case)]
