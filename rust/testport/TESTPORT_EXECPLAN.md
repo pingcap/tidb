@@ -314,6 +314,9 @@ For each bounded behavior cluster:
 - [x] Complete the pinned `pkg/util/size` package in its `tidb-util` owner,
       retain all twenty source constants with Go ABI sizing, and remove the
       supplementary Rust test absent from this test-free Go package.
+- [x] Complete the pinned root `pkg/util/sem` package in its `tidb-util`
+      owner, verify its full policy and cross-crate sysvar wiring, retain its
+      five source tests, and remove supplementary Rust-only assertions.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
