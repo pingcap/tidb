@@ -28,6 +28,9 @@ use tidb_mysql::SqlMode;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UnquoteError;
 
+/// The package's canonical invalid-syntax error value.
+pub const ERR_SYNTAX: UnquoteError = UnquoteError;
+
 impl fmt::Display for UnquoteError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("invalid syntax")
@@ -40,9 +43,7 @@ impl std::error::Error for UnquoteError {}
 ///
 /// The decoded bytes and the unconsumed suffix are returned separately.
 pub fn unquote_char(input: &[u8], quote: u8) -> Result<(Vec<u8>, &[u8]), UnquoteError> {
-    let Some(&first) = input.first() else {
-        return Err(UnquoteError);
-    };
+    let first = input[0];
     if first == quote {
         return Err(UnquoteError);
     }
@@ -144,15 +145,15 @@ pub enum PatternType {
 
 /// Compiles a Unicode wildcard pattern using `escape` as the escape byte.
 pub fn compile_pattern(pattern: impl AsRef<[u8]>, escape: u8) -> (Vec<char>, Vec<PatternType>) {
-    compile_pattern_with_escape(pattern, Some(char::from(escape)))
+    compile_pattern_inner(pattern, escape)
 }
 
-/// Compiles a Unicode wildcard pattern. `None` disables escape processing.
-pub fn compile_pattern_with_escape(
+/// Handles escapes and wildcards in a Unicode pattern.
+pub fn compile_pattern_inner(
     pattern: impl AsRef<[u8]>,
-    escape: Option<char>,
+    escape: u8,
 ) -> (Vec<char>, Vec<PatternType>) {
-    compile_pattern_units(decode_go_runes(pattern.as_ref()), escape)
+    compile_pattern_units(decode_go_runes(pattern.as_ref()), Some(char::from(escape)))
 }
 
 fn compile_pattern_units<T: Copy + PartialEq + From<u8>>(
@@ -198,6 +199,11 @@ fn compile_pattern_units<T: Copy + PartialEq + From<u8>>(
 
 /// Compiles a binary wildcard pattern.
 pub fn compile_pattern_binary(pattern: &[u8], escape: u8) -> (Vec<u8>, Vec<PatternType>) {
+    compile_pattern_inner_binary(pattern, escape)
+}
+
+/// Handles escapes and wildcards in a binary pattern.
+pub fn compile_pattern_inner_binary(pattern: &[u8], escape: u8) -> (Vec<u8>, Vec<PatternType>) {
     compile_pattern_units(pattern.iter().copied(), Some(escape))
 }
 
@@ -312,31 +318,18 @@ pub fn is_exact_match(types: &[PatternType]) -> bool {
     types.iter().all(|kind| *kind == PatternType::Match)
 }
 
-/// Creates an independent owned copy of a string.
-#[must_use]
-pub fn copy(value: &str) -> String {
-    value.to_owned()
-}
-
 /// Creates an independent owned copy of arbitrary Go-string bytes.
 #[must_use]
-pub fn copy_bytes(value: &[u8]) -> Vec<u8> {
+pub fn copy(value: &[u8]) -> Vec<u8> {
     value.to_vec()
 }
 
 /// A displayable closure.
-pub struct StringerFn<F>(RefCell<F>);
+pub struct StringerFunc<F>(pub F);
 
-impl<F> StringerFn<F> {
-    /// Wraps a string-producing closure.
-    pub fn new(function: F) -> Self {
-        Self(RefCell::new(function))
-    }
-}
-
-impl<F: FnMut() -> String> fmt::Display for StringerFn<F> {
+impl<F: Fn() -> String> fmt::Display for StringerFunc<F> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&(self.0.borrow_mut())())
+        formatter.write_str(&(self.0)())
     }
 }
 
@@ -351,7 +344,7 @@ impl fmt::Display for StringerStr {
 }
 
 /// Non-thread-safe display wrapper that caches the first nonempty result.
-pub struct MemoizedString<F> {
+struct MemoizedString<F> {
     function: RefCell<F>,
     result: RefCell<String>,
 }
@@ -366,23 +359,16 @@ impl<F: FnMut() -> String> fmt::Display for MemoizedString<F> {
 }
 
 /// Returns a non-thread-safe memoized string function.
-pub fn memoize_str<F: FnMut() -> String>(function: F) -> MemoizedString<F> {
+pub fn memoize_str<F: FnMut() -> String>(function: F) -> impl fmt::Display {
     MemoizedString {
         function: RefCell::new(function),
         result: RefCell::new(String::new()),
     }
 }
 
-/// Quotes an identifier according to `ANSI_QUOTES` mode.
+/// Quotes arbitrary identifier bytes according to `ANSI_QUOTES` mode.
 #[must_use]
-pub fn escape_identifier(identifier: &str, sql_mode: SqlMode) -> String {
-    String::from_utf8(escape_identifier_bytes(identifier.as_bytes(), sql_mode))
-        .expect("a UTF-8 identifier remains UTF-8 after ASCII quoting")
-}
-
-/// Quotes arbitrary identifier bytes according to ANSI_QUOTES mode.
-#[must_use]
-pub fn escape_identifier_bytes(identifier: &[u8], sql_mode: SqlMode) -> Vec<u8> {
+pub fn escape(identifier: &[u8], sql_mode: SqlMode) -> Vec<u8> {
     let quote = if sql_mode.has_ansi_quotes_mode() {
         b'"'
     } else {
@@ -526,10 +512,8 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
-    use tidb_mysql::{ModeANSIQuotes, SqlMode};
-
     #[test]
-    fn unquote_source_vectors() {
+    fn test_unquote() {
         let rows: &[(&[u8], &[u8], bool)] = &[
             (b"", b"", false),
             (b"'", b"", false),
@@ -569,16 +553,10 @@ mod tests {
             assert_eq!(result.is_ok(), *valid, "input={input:?}");
             assert_eq!(result.unwrap_or_default(), *expected, "input={input:?}");
         }
-
-        let replacement = char::REPLACEMENT_CHARACTER.to_string();
-        let replacement = replacement.as_bytes();
-        let (head, tail) = unquote_char(replacement, b'"').unwrap();
-        assert_eq!(head, replacement[..1]);
-        assert_eq!(tail, &replacement[1..]);
     }
 
     #[test]
-    fn pattern_source_vectors() {
+    fn test_pattern_match() {
         let rows = [
             ("", "a", b'\\', false),
             ("a", "a", b'\\', true),
@@ -620,28 +598,7 @@ mod tests {
     }
 
     #[test]
-    fn binary_and_customized_pattern_boundaries_are_preserved() {
-        let (weights, types) = compile_pattern_binary(&[0xff, b'%', b'_', 0x80], b'\\');
-        assert!(do_match_binary(&[0xff, b'x', b'y', 0x80], &weights, &types));
-        assert!(!do_match_binary(&[0xff, 0x80], &weights, &types));
-
-        let (weights, types) = compile_pattern("A_%", b'\\');
-        assert!(do_match_customized(
-            "aZtail",
-            &weights,
-            &types,
-            |left, right| left.eq_ignore_ascii_case(&right)
-        ));
-
-        let (weights, types) = compile_pattern_with_escape(r"\%", None);
-        assert!(do_match(r"\abc", &weights, &types));
-
-        let (weights, types) = compile_pattern([0xff, b'_', 0xfe], b'\\');
-        assert!(do_match([0x80, b'x', 0xfd], &weights, &types));
-    }
-
-    #[test]
-    fn regexp_and_exact_match_source_vectors() {
+    fn test_compile_like_to_regexp() {
         let regex_rows = [
             ("", "^$"),
             ("a", "^a$"),
@@ -669,7 +626,10 @@ mod tests {
                 "pattern={pattern:?}"
             );
         }
-        assert_eq!(compile_like_to_regexp("-&#~"), "^-&#~$");
+    }
+
+    #[test]
+    fn test_is_exact_match() {
         let exact_rows = [
             ("", b'\\', true),
             ("_", b'\\', false),
@@ -693,7 +653,7 @@ mod tests {
     }
 
     #[test]
-    fn labels_glob_and_memoization_source_vectors() {
+    fn test_build_string_from_labels() {
         assert_eq!(build_string_from_labels(&HashMap::new()), "");
         let one_label = HashMap::from([("aaa".to_owned(), "bbb".to_owned())]);
         assert_eq!(build_string_from_labels(&one_label), "aaa=bbb");
@@ -702,11 +662,18 @@ mod tests {
             ("aaa".to_owned(), "bbb".to_owned()),
         ]);
         assert_eq!(build_string_from_labels(&labels), "aaa=bbb,ccc=ddd");
+    }
+
+    #[test]
+    fn test_escape_glob_question_mark() {
         assert_eq!(escape_glob_question_mark("123"), "123");
         assert_eq!(escape_glob_question_mark("12*3"), "12*3");
         assert_eq!(escape_glob_question_mark("12?"), r"12\?");
         assert_eq!(escape_glob_question_mark("[1-2]"), "[1-2]");
+    }
 
+    #[test]
+    fn test_memoize_str() {
         let calls = Cell::new(0);
         let memoized = memoize_str(|| {
             calls.set(calls.get() + 1);
@@ -715,60 +682,5 @@ mod tests {
         assert_eq!(memoized.to_string(), "slow");
         assert_eq!(memoized.to_string(), "slow");
         assert_eq!(calls.get(), 1);
-
-        let empty_calls = Cell::new(0);
-        let empty = memoize_str(|| {
-            empty_calls.set(empty_calls.get() + 1);
-            String::new()
-        });
-        assert_eq!(empty.to_string(), "");
-        assert_eq!(empty.to_string(), "");
-        assert_eq!(empty_calls.get(), 2);
-    }
-
-    #[test]
-    fn remaining_public_helpers_preserve_source_behavior() {
-        assert_eq!(
-            escape_identifier("foo `bar`", SqlMode::default()),
-            "`foo ``bar```"
-        );
-        assert_eq!(
-            escape_identifier("foo \"bar\"", ModeANSIQuotes),
-            "\"foo \"\"bar\"\"\""
-        );
-        assert_eq!(
-            escape_identifier_bytes(&[0xff, b'`'], SqlMode::default()),
-            [b'`', 0xff, b'`', b'`', b'`']
-        );
-        assert_eq!(get_tail_space_count(b"x   "), 3);
-        assert_eq!(utf8_len(b'a'), 1);
-        assert_eq!(utf8_len("你".as_bytes()[0]), 3);
-        let mut value = "你好x";
-        assert_eq!(trim_utf8_string(&mut value, 2), 6);
-        assert_eq!(value, "x");
-        assert_eq!(convert_pos_in_utf8("你好", 3), 2);
-        assert!(is_upper_ascii(b'A'));
-        assert!(is_lower_ascii(b'z'));
-        assert!(is_numeric_ascii(b'7'));
-
-        let mut lower = "AéB".as_bytes().to_vec();
-        lower_one_string(&mut lower);
-        assert_eq!(lower, "aéb".as_bytes());
-        let mut escaped = b"AAAA".to_vec();
-        assert_eq!(
-            lower_one_string_excluding_escape_char(&mut escaped, b'A'),
-            b'A'
-        );
-        assert_eq!(escaped, b"AaAa");
-        let mut escaped = b"ABC".to_vec();
-        assert_eq!(
-            lower_one_string_excluding_escape_char(&mut escaped, b'a'),
-            b'A'
-        );
-        assert_eq!(escaped, b"abc");
-        assert_eq!(copy("copy"), "copy");
-        assert_eq!(copy_bytes(&[0xff, 0]), [0xff, 0]);
-        assert_eq!(StringerFn::new(|| "fn".to_owned()).to_string(), "fn");
-        assert_eq!(StringerStr("str".to_owned()).to_string(), "str");
     }
 }

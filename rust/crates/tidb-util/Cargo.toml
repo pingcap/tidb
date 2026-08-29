@@ -97,5 +97,9 @@ name = "sqlescape"
 harness = false
 
 [[bench]]
+name = "stringutil"
+harness = false
+
+[[bench]]
 name = "zeropool"
 harness = false

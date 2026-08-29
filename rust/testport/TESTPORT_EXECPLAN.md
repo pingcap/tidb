@@ -36,6 +36,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: audited every production, test, harness, benchmark, and build
+  artifact in pinned Go `pkg/util/stringutil`. Removed Rust-only optional
+  escape handling, UTF-8-narrow wrappers, duplicate byte APIs, public wrapper
+  internals, and supplemental tests; restored the exported inner compilers,
+  exact seven-test surface, and all three benchmarks. The ordinary expression
+  LIKE path now uses the source-shaped compiler. Complete inventory and WIP
+  gates are recorded in `receipts/util_stringutil.md`.
 - 2026-08-29: audited every source and build artifact in pinned Go
   `pkg/util/config` and its sole executor consumer. Added the one-function
   package owner beside Rust's session-variable authority: TOML string-map
