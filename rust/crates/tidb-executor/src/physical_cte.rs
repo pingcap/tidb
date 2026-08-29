@@ -187,11 +187,13 @@ impl CteProducer {
             self.seed.open()?;
             if let Some(recursive) = self.recursive.as_mut() {
                 recursive.open()?;
-                self.iter_out = Some(CteStorage::new(
+                let mut iter_out = CteStorage::new(
                     recursive.ret_field_types().to_vec(),
                     self.max_chunk_size,
                     self.context.statement_memory(),
-                ));
+                );
+                iter_out.open_and_ref()?;
+                self.iter_out = Some(iter_out);
             }
             self.seen.clear();
             Ok(())
@@ -215,7 +217,11 @@ impl CteProducer {
                 }
             }
         }
-        self.iter_out.take();
+        if let Some(mut iter_out) = self.iter_out.take() {
+            if let Err(error) = iter_out.deref_and_close() {
+                first_error.get_or_insert(error);
+            }
+        }
         self.executor_opened = false;
         if !self.has_result() {
             if let Err(error) = self.result.borrow_mut().reopen() {

@@ -2419,16 +2419,23 @@ fn build_cte(
 
     let seed = build_with_state(&cte.seed_plan, catalog, ctx, state)?;
     let output_types = seed.ret_field_types().to_vec();
-    let result = Rc::new(RefCell::new(crate::cte_storage::CteStorage::new(
+    let mut result_storage = crate::cte_storage::CteStorage::new(
         output_types.clone(),
         MAX_CHUNK_SIZE,
         ctx.statement_memory(),
-    )));
-    let iter_in = Rc::new(RefCell::new(crate::cte_storage::CteStorage::new(
+    );
+    result_storage.open_and_ref()?;
+    let result = Rc::new(RefCell::new(result_storage));
+    let mut iter_in_storage = crate::cte_storage::CteStorage::new(
         output_types.clone(),
         MAX_CHUNK_SIZE,
         ctx.statement_memory(),
-    )));
+    );
+    if let Err(error) = iter_in_storage.open_and_ref() {
+        result.borrow_mut().deref_and_close()?;
+        return Err(error.into());
+    }
+    let iter_in = Rc::new(RefCell::new(iter_in_storage));
     state.cte_slots.insert(
         cte.id_for_storage,
         CteBuildSlot {

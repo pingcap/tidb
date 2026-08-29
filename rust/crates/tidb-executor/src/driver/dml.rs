@@ -307,9 +307,6 @@ fn resolve_insert_target(
     if table.is_sequence() {
         return Err(DriverError::InsertIntoSequenceUnsupported(table_name));
     }
-    if matches!(table, TableEntry::Cte(_)) {
-        return Err(DriverError::unsupported("a CTE is not an INSERT target"));
-    }
     let mut column_list = table.column_list();
     let stored_width = column_list.len();
     let named_columns: Vec<String> = if insert.set_syntax {
@@ -365,7 +362,7 @@ fn resolve_insert_target(
             .map(|column| column.generated.is_some())
             .collect(),
         TableEntry::Mem(_) => vec![false; stored_width],
-        TableEntry::Cte(_) | TableEntry::View(_) | TableEntry::Sequence(_) => {
+        TableEntry::View(_) | TableEntry::Sequence(_) => {
             unreachable!("read-only targets were refused above")
         }
     };
@@ -504,14 +501,14 @@ fn run_insert_with_physical(
     let auto_increment_offset = match table {
         TableEntry::Kv(kv) => kv.auto_increment_offset(),
         TableEntry::Mem(_) => None,
-        TableEntry::Cte(_) | TableEntry::View(_) | TableEntry::Sequence(_) => {
+        TableEntry::View(_) | TableEntry::Sequence(_) => {
             unreachable!("INSERT through a read-only relation is refused above")
         }
     };
     let auto_random_offset = match table {
         TableEntry::Kv(kv) => kv.auto_random().map(|spec| spec.offset),
         TableEntry::Mem(_) => None,
-        TableEntry::Cte(_) | TableEntry::View(_) | TableEntry::Sequence(_) => {
+        TableEntry::View(_) | TableEntry::Sequence(_) => {
             unreachable!("INSERT through a read-only relation is refused above")
         }
     };
@@ -2597,7 +2594,7 @@ fn run_update_with_physical(
         // partition, or an unresolvable `ORDER BY` column still errors under
         // `LIMIT 0`.
         match catalog.get_in(&database, &name) {
-            Some(TableEntry::Cte(_) | TableEntry::View(_)) => {
+            Some(TableEntry::View(_)) => {
                 return Err(DriverError::TableNotUpdatable(name.clone()));
             }
             Some(TableEntry::Sequence(_)) => {
@@ -2715,7 +2712,7 @@ fn run_update_with_physical(
             )))
         })?;
         match entry {
-            TableEntry::Cte(_) | TableEntry::View(_) => {
+            TableEntry::View(_) => {
                 return Err(DriverError::TableNotUpdatable(name.clone()));
             }
             TableEntry::Sequence(_) => {
@@ -3208,7 +3205,7 @@ fn run_delete_with_physical(
         // short-circuit, so the target's writability, the partition list, and
         // the `ORDER BY` columns are checked even when nothing is read.
         match catalog.get_in(&database, &name) {
-            Some(TableEntry::Cte(_) | TableEntry::View(_)) => {
+            Some(TableEntry::View(_)) => {
                 return Err(DriverError::DeleteViewUnsupported(name.clone()));
             }
             Some(TableEntry::Sequence(_)) => {
@@ -3258,7 +3255,7 @@ fn run_delete_with_physical(
             )))
         })?;
         match entry {
-            TableEntry::Cte(_) | TableEntry::View(_) => {
+            TableEntry::View(_) => {
                 return Err(DriverError::DeleteViewUnsupported(name.clone()));
             }
             TableEntry::Sequence(_) => {

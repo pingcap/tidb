@@ -376,8 +376,6 @@ pub struct ViewDef {
 pub enum TableEntry {
     /// A plain value matrix (the original mock backing).
     Mem(MemTable),
-    /// A spill-backed common table expression, scoped to one query catalog.
-    Cte(crate::CteTable),
     /// Rows stored as real TiKV-format bytes (see [`crate::kv_table`]).
     Kv(KvTable),
     /// A view: a stored `SELECT` rather than stored rows.
@@ -414,7 +412,6 @@ impl TableEntry {
     pub(crate) fn column_list(&self) -> Vec<(String, FieldType)> {
         match self {
             TableEntry::Mem(mem) => mem.columns.clone(),
-            TableEntry::Cte(cte) => cte.columns().to_vec(),
             TableEntry::Kv(kv) => kv
                 .visible_columns()
                 .iter()
@@ -993,28 +990,6 @@ impl Catalog {
                             physical_table_id: synthetic_table_id,
                             columns: table
                                 .columns
-                                .iter()
-                                .enumerate()
-                                .map(|(offset, (name, ret_type))| SourceColumn {
-                                    id: offset as i64 + 1,
-                                    name: name.clone(),
-                                    offset,
-                                    ret_type: ret_type.clone(),
-                                    ..SourceColumn::default()
-                                })
-                                .collect(),
-                            ..SourceTable::default()
-                        });
-                        synthetic_table_id -= 1;
-                    }
-                    TableEntry::Cte(table) => {
-                        tables.push(SourceTable {
-                            table_id: synthetic_table_id,
-                            table_name: entry_name.clone(),
-                            db_name: database.name.clone(),
-                            physical_table_id: synthetic_table_id,
-                            columns: table
-                                .columns()
                                 .iter()
                                 .enumerate()
                                 .map(|(offset, (name, ret_type))| SourceColumn {

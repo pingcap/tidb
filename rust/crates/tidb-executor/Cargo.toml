@@ -50,3 +50,6 @@ workspace = true
 name = "all"
 path = "tests/all.rs"
 
+[[test]]
+name = "cteutil_source"
+path = "tests/cteutil_source.rs"

@@ -36,6 +36,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: completed the pinned Go `pkg/util/cteutil` package (one
+  production file, one source test, one test harness, and `BUILD.bazel`).
+  Restored the explicit closed/open/reference-counted lifecycle in the
+  spill-backed Rust storage and wired it through the ordinary physical CTE
+  builder and recursive producer. Removed the unused catalog-backed `CteTable`
+  relation and all of its DML/DDL/SHOW branches, plus unused row-matrix helpers
+  that Go does not expose. The standalone suite now has exactly the six source
+  identities; ordinary and spill-backed recursive execution pass. Complete
+  inventory and WIP gates are recorded in `receipts/util_cteutil.md`.
 - 2026-08-29: completed the pinned Go `pkg/util/cdcutil` package (one
   production file, one external test, one test-support file, and
   `BUILD.bazel`). Added the formerly absent Rust owner against the production

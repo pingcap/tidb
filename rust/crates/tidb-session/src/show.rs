@@ -2198,11 +2198,9 @@ impl Session {
                             None,
                             false,
                         )),
-                        tidb_executor::TableEntry::Mem(_) | tidb_executor::TableEntry::Cte(_) => {
-                            Err(DriverError::unsupported(
-                                "SHOW CREATE TABLE needs a storage-backed table",
-                            ))
-                        }
+                        tidb_executor::TableEntry::Mem(_) => Err(DriverError::unsupported(
+                            "SHOW CREATE TABLE needs a storage-backed table",
+                        )),
                     }
                 });
                 let (text, reported, view_charset, is_sequence) = shown?;

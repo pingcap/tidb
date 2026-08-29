@@ -197,7 +197,7 @@ pub mod view;
 pub mod zero_date;
 
 pub use apply::ApplyExec;
-pub use cte_storage::{CteStorage, CteTable};
+pub use cte_storage::CteStorage;
 pub use ddl::{
     added_check_constraint_actions, append_partition_defs, check_constraint_count,
     discarded_check_constraint_actions, escape_partition_name, linear_partitioning_warning,

@@ -520,12 +520,6 @@ fn scan_base_table(
             .into_iter()
             .map(|(handle, row)| (vec![Some(RowId::Kv(handle))], row))
             .collect(),
-        TableEntry::Cte(cte) => cte
-            .to_rows()
-            .map_err(DriverError::from)?
-            .into_iter()
-            .map(|row| (vec![None], row))
-            .collect(),
         // Go expands a view into its stored SELECT before deciding which
         // sources are writable. Its rows therefore participate in a join,
         // but carry no base-table identity and cannot be an UPDATE/DELETE
