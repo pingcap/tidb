@@ -36,6 +36,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: re-audited the complete pinned Go `pkg/util/encrypt` package
+  against its existing Rust owner. Removed three Rust-only regression cases
+  and the extra alias assertion from the source-named suite; the 17 Go test
+  identities and source benchmark remain the complete package surface.
+- 2026-08-29: audited pinned Go `pkg/util/cpu` and found that an atomic port
+  requires the absent `pkg/metrics` EMA gauge plus domain/resource-manager
+  lifecycle consumers, in addition to a cross-platform process CPU clock.
+  Deferred it as a multi-package dependency rather than landing a standalone
+  sampler that could not satisfy the package behavior.
 - 2026-08-29: completed the pinned Go `pkg/util/errmsg` package (one
   production file, one source test, and `BUILD.bazel`). The dedicated Rust
   owner, prepared config snapshot, and ordinary ERR-packet consumer already
@@ -337,8 +346,8 @@ For each bounded behavior cluster:
   `Reader.ReadAt` path. A second source audit restored Go's wrapping `int64`
   writer/cursor arithmetic, made PKCS#7 unpadding borrow the original input,
   and matched each pinned Go cipher constructor's invalid-IV panic. Repinned
-  its complete package receipt; all 17 source tests and three source-derived
-  regressions pass with downstream encrypted-spill and expression consumers.
+  its complete package receipt; all 17 source tests pass with downstream
+  encrypted-spill and expression consumers.
 - 2026-08-28: audited every production, test, benchmark, harness, and build
   file in pinned Go `pkg/util/fastrand`. The owning module already contains
   `TestRand` and the real benchmark target contains all four Go benchmark

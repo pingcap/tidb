@@ -398,60 +398,6 @@ mod tests {
         for (data, block_size) in invalid {
             assert!(pkcs7_unpad(&from_hex(data), block_size).is_err());
         }
-
-        let padded = from_hex("0A0B0C0D04040404");
-        let unpadded = pkcs7_unpad(&padded, 8).expect("valid padding");
-        assert_eq!(unpadded.as_ptr(), padded.as_ptr());
-    }
-
-    fn assert_panics_with(operation: impl FnOnce() + std::panic::UnwindSafe, expected: &str) {
-        let panic = std::panic::catch_unwind(operation).expect_err("operation must panic");
-        let message = panic
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| panic.downcast_ref::<&str>().copied())
-            .expect("string panic");
-        assert_eq!(message, expected);
-    }
-
-    #[test]
-    fn invalid_iv_panics_match_the_go_cipher_constructor() {
-        let key = b"1234567890123456";
-        assert_panics_with(
-            || {
-                let _ = aes_encrypt_with_cbc(b"x", key, b"short");
-            },
-            "cipher.NewCBCEncrypter: IV length must equal block size",
-        );
-        assert_panics_with(
-            || {
-                let _ = aes_decrypt_with_cbc(&[], key, b"short");
-            },
-            "cipher.NewCBCDecrypter: IV length must equal block size",
-        );
-        assert_panics_with(
-            || {
-                let _ = aes_encrypt_with_ofb(b"x", key, b"short");
-            },
-            "cipher.NewOFB: IV length must equal block size",
-        );
-        assert_panics_with(
-            || {
-                let _ = aes_encrypt_with_ctr(b"x", key, b"short");
-            },
-            "bad IV length",
-        );
-        for operation in [
-            aes_encrypt_with_cfb as StreamOperation,
-            aes_decrypt_with_cfb,
-        ] {
-            assert_panics_with(
-                || {
-                    let _ = operation(b"x", key, b"short");
-                },
-                "cipher.newCFB: IV length must equal block size",
-            );
-        }
     }
 
     #[test]
