@@ -28,6 +28,7 @@ use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 use crate::cluster_account_seam::RealClusterAccountWriter;
 use crate::cluster_analyze_seam::RealClusterAnalyze;
 use crate::cluster_session::SkippedTable;
+use crate::cluster_stats_lock_seam::RealClusterStatsLock;
 use crate::cluster_sysvar_seam::{RealClusterSysvarWriter, SysvarPublicationFence};
 use crate::node_config::NodeConfig;
 use crate::real_tikv_node::{
@@ -235,6 +236,10 @@ pub(crate) fn run_cluster_session_node_with_spill(
             // by a control-plane budget. This statement walks the whole
             // catalog plus every row of the table, so its requests take the
             // data-plane deadline.
+            COPROCESSOR_QUERY_TIMEOUT,
+        )),
+        Arc::new(RealClusterStatsLock::new(
+            Arc::new(authority.transaction_opener()),
             COPROCESSOR_QUERY_TIMEOUT,
         )),
         catalog,

@@ -19,6 +19,7 @@
 //! user's transaction. This module therefore stages the shared catalog
 //! directly rather than the user's optional transaction working copy.
 
+use crate::privilege::GlobalPriv;
 use crate::{Session, StmtOutput, WarningLevel};
 use tidb_executor::{Catalog, DriverError};
 
@@ -42,6 +43,16 @@ impl Session {
         lock: bool,
     ) -> Result<Option<StmtOutput>, DriverError> {
         let current_database = self.current_db.clone();
+        // Go's planner appends INSERT and then SELECT visit-info for every
+        // target before it builds the executor. No lock row may change until
+        // every requested table passes both checks.
+        for target in &statement.tables {
+            let (database, table) =
+                tidb_executor::driver::split_table_path_pub(&target.name, &current_database)?;
+            for required in [GlobalPriv::Insert, GlobalPriv::Select] {
+                self.require_named_table_privilege(database, table, required)?;
+            }
+        }
         let context = self.statement_context(true);
         let message = {
             let mut catalog = self

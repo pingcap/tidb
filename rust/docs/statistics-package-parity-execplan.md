@@ -22,6 +22,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Wired `SHOW STATS_BUCKETS` through the same production traversal and decoder, preserving cumulative count, repeat, bounds, and bucket NDV.
 - [x] (2026-08-29) Wired `SHOW STATS_HISTOGRAMS` through the shared statistics cache, including initialized-state filtering, average column size, load status, and live histogram/TopN/CMS memory usage.
 - [x] (2026-08-29) Wired `SHOW HISTOGRAMS_IN_FLIGHT` to the shared needed-item set and Go's cache-state cleanup semantics.
+- [x] (2026-08-29) Completed pinned `pkg/statistics/handle/lockstats` and `pkg/executor/lockstats` behavior across the shared policy, in-process catalog, TiKV internal transaction, session routing, privileges, warnings, errors, and `SHOW STATS_LOCKED`.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -64,6 +65,12 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - Observation: `SHOW HISTOGRAMS_IN_FLIGHT` is not a thread counter. Go sweeps its global needed-item set against current cache load state and counts only entries that still require loading.
   Evidence: pinned `CleanFakeItemsForShowHistInFlights` deletes missing tables and already-satisfied column/index items before returning the count.
 
+- Observation: statistics locking is an internal statistics-handle transaction, not part of the caller's user transaction. Its executor first checks INSERT and SELECT on every target, and warnings are statement-local.
+  Evidence: pinned `LockExec`/`UnlockExec` call the domain statistics handle, while `statsLockImpl` uses `util.CallWithSCtx(..., util.FlagWrapTxn)`; pinned plan building records INSERT then SELECT visit-info for each target.
+
+- Observation: pinned table-level unlock deliberately skips a target whose logical table row is unlocked, even if a partition row remains locked; partition unlock also refuses every partition while the logical table is locked.
+  Evidence: pinned `RemoveLockedTables` continues before visiting partitions when the logical ID is absent, and `RemoveLockedPartitions` returns the whole-table warning before its partition loop.
+
 ## Decision Log
 
 - Decision: reconstruct and test each pinned Go branch before editing Rust; do not preserve Rust-only fallback paths.
@@ -80,6 +87,10 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Decision: make histogram memory an owned histogram operation rather than carrying a manually supplied measurement beside it.
   Rationale: Go computes `Histogram.MemoryUsage` from the live object. Rust's bounds representation differs, so its method measures the equivalent live ownership—histogram value, reserved bucket storage, and variable bound payloads—while preserving Go's empty-histogram zero and component aggregation behavior.
+  Date/Author: 2026-08-29 / Codex
+
+- Decision: implement lockstats policy once over a narrow transaction interface, with separate catalog and TiKV adapters.
+  Rationale: pinned Go centralizes branching, warnings, and delta merging in `pkg/statistics/handle/lockstats` while its restricted SQL session is only the storage boundary. Sharing the policy prevents the two Rust runtime modes from diverging without inventing a Go-visible path.
   Date/Author: 2026-08-29 / Codex
 
 ## Outcomes & Retrospective
@@ -152,3 +163,5 @@ Revision note (2026-08-29): wired `SHOW STATS_BUCKETS` and verified the pinned s
 Revision note (2026-08-29): wired `SHOW STATS_HISTOGRAMS`, removed caller-injected histogram-memory fields, and verified initialized column/index rows plus memory-component totals through the SQL path.
 
 Revision note (2026-08-29): added the shared needed-item lifecycle and wired `SHOW HISTOGRAMS_IN_FLIGHT`; delayed-load coverage observes one live item and then zero after worker cleanup.
+
+Revision note (2026-08-29): completed the atomic inventory for pinned `pkg/statistics/handle/lockstats` (`lock_stats.go`, `query_lock.go`, `unlock_stats.go`; all four original test/support files; `BUILD.bazel`) and `pkg/executor/lockstats` (both executors, executor tests, `BUILD.bazel`). The Rust mapping is `tidb-stats::lock_stats` for policy/query/delta behavior, `tidb-executor::stats_lock` plus `tidb-session::stats_lock_arm` for the in-process restricted-session equivalent, and `tidb-exec::{cluster_stats_lock,real_tikv_stats_lock}` plus the server seam for one independent TiKV transaction. Focused tests cover stable skip messages, table/partition gates, delta propagation and clamping, real persisted system-row mutations, duplicate no-write warnings, INSERT-before-SELECT privilege admission, statement warning publication, and preservation of the caller's transaction.

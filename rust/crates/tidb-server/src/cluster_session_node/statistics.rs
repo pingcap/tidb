@@ -11,6 +11,7 @@
 //! below).
 
 use tidb_exec::cluster_analyze::{AnalyzeStatement, SampleMemoryQuota, MEM_QUOTA_ANALYZE_VARIABLE};
+use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
 use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_session::privilege::GlobalPriv;
 
@@ -19,6 +20,29 @@ use crate::sql_node::{QuerySession, SqlQueryError, WriteOutcome};
 use super::{ClusterServerSession, ER_TABLEACCESS_DENIED_ERROR};
 
 impl ClusterServerSession {
+    /// Runs one persisted statistics-lock operation in the internal
+    /// transaction owned by the statistics handle.
+    pub(super) fn run_stats_lock(
+        &mut self,
+        statement: &ClusterStatsLockStatement,
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        // Unlike DDL and ANALYZE, Go does not move the user's transaction:
+        // the stats handle borrows a separate restricted session and commits
+        // only its `mysql.stats_*` changes.
+        self.session.begin_routed_statement_warnings();
+        for target in &statement.targets {
+            self.require_insert_and_select_privileges(&target.schema, &target.table)?;
+        }
+        let report = self.stats_lock.execute(statement)?;
+        if !report.warning.is_empty() {
+            self.session.append_routed_warning(1105, report.warning);
+        }
+        Ok(WriteOutcome {
+            affected_rows: 0,
+            last_insert_id: 0,
+        })
+    }
+
     /// Performs one `ANALYZE TABLE`, one table at a time.
     ///
     /// Each table is its own transaction, which is what Go does too: an
@@ -41,7 +65,7 @@ impl ClusterServerSession {
         // `CheckPrivilege` runs over the whole plan, so `ANALYZE TABLE ok, no`
         // stores nothing at all.
         for statement in tables {
-            self.require_analyze_privileges(statement)?;
+            self.require_insert_and_select_privileges(&statement.schema, &statement.table)?;
         }
         // Go's analyze memory quota is process-wide and read at execution:
         // `variable.SetMemQuotaAnalyze` drives one `GlobalAnalyzeMemoryTracker`
@@ -96,15 +120,13 @@ impl ClusterServerSession {
     /// This is not a formality on a read: the TopN entries an `ANALYZE`
     /// writes into `mysql.stats_top_n` are ACTUAL COLUMN VALUES, readable by
     /// anyone who can read the statistics.
-    fn require_analyze_privileges(
+    fn require_insert_and_select_privileges(
         &self,
-        statement: &AnalyzeStatement,
+        schema: &str,
+        table: &str,
     ) -> Result<(), SqlQueryError> {
         for required in [GlobalPriv::Insert, GlobalPriv::Select] {
-            if self
-                .session
-                .has_table_privilege(&statement.schema, &statement.table, required)
-            {
+            if self.session.has_table_privilege(schema, table, required) {
                 continue;
             }
             let (user, host) = self.session.authenticated_identity().unwrap_or(("", ""));
@@ -114,7 +136,7 @@ impl ClusterServerSession {
                 format!(
                     "{} command denied to user '{user}'@'{host}' for table '{}'",
                     required.print_name(),
-                    statement.table
+                    table
                 ),
             ));
         }

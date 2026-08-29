@@ -67,8 +67,11 @@ pub enum StoredStateChange {
     /// The stored `SET GLOBAL` overrides: `mysql.global_variables`.
     GlobalVars,
     /// The stored statistics: `mysql.stats_meta` and its histogram tables.
-    /// `ANALYZE TABLE` is the only statement that writes them.
+    /// `ANALYZE TABLE` and `LOAD STATS` write them.
     Statistics,
+    /// The persisted statistics-lock state and the deltas unlocked into
+    /// `mysql.stats_meta`.
+    StatsLock,
 }
 
 /// Whether a `SET` statement carries at least one GLOBAL-scoped assignment.
@@ -387,6 +390,14 @@ impl Session {
                 ) =>
             {
                 StoredStateChange::Statistics
+            }
+            Stmt::Admin(admin)
+                if matches!(
+                    admin.as_ref(),
+                    tidb_ast::AdminStmt::LockStats(_) | tidb_ast::AdminStmt::UnlockStats(_)
+                ) =>
+            {
+                StoredStateChange::StatsLock
             }
             Stmt::Admin(_) | Stmt::Session(_) | Stmt::Query(_) | Stmt::Dml(_) => {
                 StoredStateChange::None

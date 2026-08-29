@@ -87,6 +87,8 @@ fn factory_with_globals(node: &MockNode, globals: GlobalSysvars) -> ClusterSessi
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+        Arc::new(super::mock_seams::MockStatsLock)
+            as Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
         Arc::clone(&node.catalog),
         node.accounts.live.clone(),
         globals,

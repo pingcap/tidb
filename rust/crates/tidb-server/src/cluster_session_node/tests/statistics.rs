@@ -13,6 +13,7 @@ use super::node_fixture::*;
 use crate::configured_user_store::ConfiguredUserStore;
 use crate::sql_node::{ConnectionCancellation, ConnectionClose};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tidb_session::privilege::GlobalPriv;
 use tidb_txnkv::region::RegionBackoffKind;
 use tidb_txnkv::transaction::{
@@ -44,6 +45,123 @@ impl ClusterAnalyze for PanickingAnalyze {
     ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::sql_node::SqlQueryError>
     {
         panic!("{}", self.0)
+    }
+}
+
+#[derive(Default)]
+struct WarningStatsLock {
+    calls: AtomicUsize,
+}
+
+impl crate::cluster_stats_lock_seam::ClusterStatsLock for WarningStatsLock {
+    fn execute(
+        &self,
+        statement: &tidb_exec::cluster_stats_lock::ClusterStatsLockStatement,
+    ) -> Result<
+        tidb_exec::real_tikv_stats_lock::ClusterStatsLockReport,
+        crate::sql_node::SqlQueryError,
+    > {
+        assert!(statement.lock);
+        assert_eq!(statement.targets.len(), 1);
+        assert_eq!(statement.targets[0].schema, "app");
+        assert_eq!(statement.targets[0].table, "t");
+        self.calls.fetch_add(1, Ordering::AcqRel);
+        Ok(tidb_exec::real_tikv_stats_lock::ClusterStatsLockReport {
+            warning: "skip locking locked table: app.t".to_owned(),
+        })
+    }
+}
+
+#[test]
+fn stats_lock_uses_the_internal_cluster_route_without_ending_the_user_transaction() {
+    let node = MockNode::start();
+    let stats_lock = Arc::new(WarningStatsLock::default());
+    let mut session = open_session_on_with_stats_lock(
+        &node,
+        Arc::clone(&stats_lock) as Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
+    );
+
+    session.execute_write("BEGIN").expect("begin");
+    session
+        .execute_write("LOCK STATS t")
+        .expect("cluster lockstats route");
+    assert_eq!(stats_lock.calls.load(Ordering::Acquire), 1);
+    assert!(session.session.in_transaction());
+    assert_eq!(
+        rows(&mut session, "SHOW WARNINGS"),
+        vec![vec![
+            tidb_datatype::Datum::Bytes(b"Warning".to_vec()),
+            tidb_datatype::Datum::Int(1105),
+            tidb_datatype::Datum::Bytes(b"skip locking locked table: app.t".to_vec()),
+        ]]
+    );
+    session
+        .execute_write("ROLLBACK")
+        .expect("rollback user txn");
+}
+
+#[test]
+fn stats_lock_checks_every_target_privilege_before_the_internal_transaction() {
+    let node = MockNode::start();
+    node.accounts.live.create_user("low", "%", "");
+    node.accounts
+        .live
+        .grant_db("low", "%", "app", GlobalPriv::CreateTemporaryTables.mask());
+    let stats_lock = Arc::new(WarningStatsLock::default());
+    let mut session = open_session_as_with_stats_lock(
+        &node,
+        "low",
+        Arc::clone(&stats_lock) as Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
+    );
+
+    let error = session
+        .execute_write("LOCK STATS t")
+        .expect_err("INSERT is checked before SELECT and before the stats transaction");
+    assert_eq!(error.code, 1142);
+    assert_eq!(error.state, *b"42000");
+    assert_eq!(
+        error.message,
+        "INSERT command denied to user 'low'@'%' for table 't'"
+    );
+    assert_eq!(stats_lock.calls.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn stats_lock_planning_keeps_go_error_identities() {
+    use tidb_exec::cluster_stats_lock::ClusterStatsLockError;
+    use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
+
+    let cases = [
+        (
+            ClusterStatsLockError::NoDatabaseSelected,
+            1046,
+            *b"3D000",
+            "No database selected",
+        ),
+        (
+            ClusterStatsLockError::MissingTable {
+                schema: "app".to_owned(),
+                table: "missing".to_owned(),
+            },
+            1146,
+            *b"42S02",
+            "Table 'app.missing' doesn't exist",
+        ),
+        (
+            ClusterStatsLockError::UnknownPartition {
+                partition: "p9".to_owned(),
+                table: "t".to_owned(),
+            },
+            1735,
+            *b"HY000",
+            "Unknown partition 'p9' in table 't'",
+        ),
+    ];
+    for (error, code, state, message) in cases {
+        let error =
+            crate::sql_node::cluster_stats_lock_error(ClusterStatsLockCommitError::Plan(error));
+        assert_eq!((error.code, error.state), (code, state));
+        assert_eq!(error.message, message);
     }
 }
 
@@ -144,6 +262,18 @@ fn analyze_table_routes_to_the_statistics_seam() {
 /// Opens a connection authenticated as `user`, which is how a test says
 /// "somebody other than root".
 fn open_session_as(node: &MockNode, user: &str) -> ClusterServerSession {
+    open_session_as_with_stats_lock(
+        node,
+        user,
+        Arc::new(MockStatsLock) as Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
+    )
+}
+
+fn open_session_as_with_stats_lock(
+    node: &MockNode,
+    user: &str,
+    stats_lock: Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
+) -> ClusterServerSession {
     let cluster = Arc::clone(&node.cluster);
     let factory = ClusterSessionFactory::new(
         Arc::new(MockTransactions(cluster)),
@@ -151,6 +281,7 @@ fn open_session_as(node: &MockNode, user: &str) -> ClusterServerSession {
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+        stats_lock,
         Arc::clone(&node.catalog),
         node.accounts.live.clone(),
         node.sysvars.live.clone(),

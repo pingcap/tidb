@@ -176,9 +176,12 @@ use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_ddl::DdlStatement;
 use tidb_exec::cluster_stats_load::ClusterStatsLoader;
+use tidb_exec::cluster_stats_lock::prepare_cluster_stats_lock;
+use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
 use tidb_exec::real_tikv_analyze::prepare_cluster_analyze;
 use tidb_exec::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_exec::real_tikv_ddl::prepare_cluster_ddl_with_context;
+use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
 use tidb_exec::stats_watch::SharedStats;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_executor::cluster_storage::{
@@ -198,6 +201,7 @@ use crate::cluster_session::{
     cluster_session_catalog, cluster_session_catalog_with_templates, planner_statistics,
     KvTableTemplates, SkippedTable, StatsTemplates, TableAutoIds,
 };
+use crate::cluster_stats_lock_seam::ClusterStatsLock;
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::pipeline_session::MaterializedResultSetSource;
 use crate::sql_node::{
@@ -334,6 +338,8 @@ enum StatementRoute {
     GlobalVars,
     /// One `ANALYZE TABLE`, per table it named.
     Analyze(Vec<AnalyzeStatement>),
+    /// One persisted `LOCK STATS` or `UNLOCK STATS` operation.
+    StatsLock(ClusterStatsLockStatement),
 }
 
 struct ClusterDataLockWaits {
@@ -439,6 +445,8 @@ pub struct ClusterSessionFactory {
     /// The route an `ANALYZE TABLE` takes; see
     /// [`crate::cluster_analyze_seam`].
     analyze: Arc<dyn ClusterAnalyze>,
+    /// The route a persisted statistics-lock operation takes.
+    stats_lock: Arc<dyn ClusterStatsLock>,
     /// The cluster catalog, republished whole by the reload thread and by a
     /// DDL's own inline reload. A connection takes one `Arc` per statement, so
     /// no session ever sees a half-updated catalog.
@@ -506,6 +514,7 @@ impl ClusterSessionFactory {
         accounts: Arc<dyn ClusterAccountWriter>,
         sysvars: Arc<dyn ClusterSysvarWriter>,
         analyze: Arc<dyn ClusterAnalyze>,
+        stats_lock: Arc<dyn ClusterStatsLock>,
         catalog: Arc<SharedClusterCatalog>,
         privileges: PrivilegeRegistry,
         global_vars: GlobalSysvars,
@@ -531,6 +540,7 @@ impl ClusterSessionFactory {
             accounts,
             sysvars,
             analyze,
+            stats_lock,
             catalog,
             privileges,
             processes: ProcessRegistry::default(),
@@ -761,6 +771,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
             accounts: Arc::clone(&self.accounts),
             sysvars: Arc::clone(&self.sysvars),
             analyze: Arc::clone(&self.analyze),
+            stats_lock: Arc::clone(&self.stats_lock),
             catalog: Arc::clone(&self.catalog),
             schema_version: loaded.schema_version,
             stats: Arc::clone(&self.stats),
@@ -991,6 +1002,8 @@ pub struct ClusterServerSession {
     /// The route an `ANALYZE TABLE` takes; see
     /// [`crate::cluster_analyze_seam`].
     analyze: Arc<dyn ClusterAnalyze>,
+    /// The route a persisted statistics-lock operation takes.
+    stats_lock: Arc<dyn ClusterStatsLock>,
     /// The node's catalog, which this connection follows.
     catalog: Arc<SharedClusterCatalog>,
     /// The schema version `session`'s tables were built from. A move in
@@ -1995,6 +2008,17 @@ impl ClusterServerSession {
                     Err(refusal) => Err(SqlQueryError::unknown(refusal.to_string())),
                 }
             }
+            StoredStateChange::StatsLock => {
+                match prepare_cluster_stats_lock(sql, self.session.current_database()) {
+                    Ok(Some(statement)) => Ok(StatementRoute::StatsLock(statement)),
+                    Ok(None) => Err(SqlQueryError::unknown(
+                        "this node could not lower the statistics lock statement",
+                    )),
+                    Err(refusal) => Err(crate::sql_node::cluster_stats_lock_error(
+                        ClusterStatsLockCommitError::Plan(refusal),
+                    )),
+                }
+            }
             StoredStateChange::Schema => {
                 // A CREATE VIEW resolves its body against this node's own
                 // catalog FIRST — a bad body fails here, at CREATE time,
@@ -2031,7 +2055,7 @@ impl ClusterServerSession {
                         // constraint, Go ddl/create_table.go:1470) belong to
                         // this statement; Go appends them to the session's
                         // own context, so drain the lowering context's here.
-                        self.session.begin_ddl_statement_warnings();
+                        self.session.begin_routed_statement_warnings();
                         self.session.drain_context_warnings(&context);
                         Ok(StatementRoute::Ddl(statement))
                     }
@@ -2175,7 +2199,7 @@ impl ClusterServerSession {
             ..
         } = report
         {
-            self.session.append_ddl_warning(1105, warning);
+            self.session.append_routed_warning(1105, warning);
         }
         // Go answers a DDL with an OK packet carrying no rows and no insert
         // id, whether it changed anything or was an IF [NOT] EXISTS no-op.
@@ -2348,6 +2372,9 @@ impl QuerySession for ClusterServerSession {
             StatementRoute::Accounts => return self.run_account_statement(sql).map(Some),
             StatementRoute::GlobalVars => return self.run_global_var_statement(sql).map(Some),
             StatementRoute::Analyze(tables) => return self.run_analyze(&tables).map(Some),
+            StatementRoute::StatsLock(statement) => {
+                return self.run_stats_lock(&statement).map(Some)
+            }
             StatementRoute::Ordinary => {}
         }
         if self.session.apply_set(sql).map_err(map_error)?.is_some() {
@@ -2559,6 +2586,11 @@ impl QuerySession for ClusterServerSession {
             }
             StatementRoute::Analyze(tables) => {
                 return self.run_analyze(&tables).map(GeneralExecuteOutcome::Write)
+            }
+            StatementRoute::StatsLock(statement) => {
+                return self
+                    .run_stats_lock(&statement)
+                    .map(GeneralExecuteOutcome::Write)
             }
             StatementRoute::Ordinary => {}
         }
@@ -2828,6 +2860,12 @@ impl QuerySession for ClusterServerSession {
             }
             StatementRoute::Analyze(tables) => {
                 self.run_analyze(&tables)?;
+                return Ok(QueryResult::new(Box::new(
+                    crate::pipeline_session::affected_rows_source(0),
+                )));
+            }
+            StatementRoute::StatsLock(statement) => {
+                self.run_stats_lock(&statement)?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));

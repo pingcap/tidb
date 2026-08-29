@@ -217,12 +217,9 @@ impl Session {
         }
     }
 
-    /// Records a warning raised while a cluster-routed DDL was APPLIED,
-    /// after the lowering context has already been drained.
-    ///
-    /// Go carries these on `job.Warning` and on the session `StmtContext` the
-    /// statement runs under; both reach the client through `SHOW WARNINGS`.
-    pub fn append_ddl_warning(&mut self, code: u16, message: String) {
+    /// Records a warning raised by a cluster-routed statement after it has
+    /// bypassed the ordinary session executor.
+    pub fn append_routed_warning(&mut self, code: u16, message: String) {
         self.append_warning(WarningLevel::Warning, code, message);
     }
 
@@ -261,10 +258,10 @@ impl Session {
     /// Starts the boundary for the cached prepared PointGet path. That path is
     /// known to be a SELECT rather than SHOW WARNINGS, so the previous buffer
     /// is discarded without revisiting the retained AST.
-    /// The statement boundary for a cluster-routed DDL, which bypasses the
-    /// ordinary run path: the previous statement's warnings go, and the
-    /// statement is never SHOW WARNINGS.
-    pub fn begin_ddl_statement_warnings(&mut self) {
+    /// The statement boundary for a cluster-routed statement, which bypasses
+    /// the ordinary run path: the previous statement's warnings go, and the
+    /// routed statement is never SHOW WARNINGS.
+    pub fn begin_routed_statement_warnings(&mut self) {
         self.snapshot_previous_warning_counts();
         self.warnings.clear();
         self.in_show_warning = false;

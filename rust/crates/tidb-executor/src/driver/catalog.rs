@@ -36,8 +36,8 @@ pub struct MemTable {
 /// Splits a table reference into its schema and table names. A bare name
 /// resolves in the default schema; `db.t` names its schema explicitly.
 ///
-/// Splits a table path for another module in this crate.
-pub(crate) fn split_table_path_pub<'a>(
+/// Splits a table path for executor-adjacent statement arms.
+pub fn split_table_path_pub<'a>(
     path: &'a [String],
     current_db: &'a str,
 ) -> Result<(&'a str, &'a str), DriverError> {

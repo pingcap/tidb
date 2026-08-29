@@ -597,6 +597,13 @@ impl<'view> SystemRow<'view> {
         Ok(self.values.get(&id))
     }
 
+    /// Returns the decoded values keyed by stored column ID. Writers use this
+    /// to edit a system row without losing columns they do not interpret.
+    #[must_use]
+    pub fn into_values(self) -> BTreeMap<i64, Datum> {
+        self.values
+    }
+
     fn wrong_value(&self, column: &str, wanted: &'static str, stored: &Datum) -> SystemTableError {
         SystemTableError::UnexpectedColumnValue {
             name: self.view.name.clone(),

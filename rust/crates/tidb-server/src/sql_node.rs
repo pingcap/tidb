@@ -23,10 +23,12 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use tidb_ast::Stmt;
+use tidb_exec::cluster_stats_lock::ClusterStatsLockError;
 use tidb_exec::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
 use tidb_exec::real_tikv_analyze::ClusterAnalyzeError;
 use tidb_exec::real_tikv_ddl::ClusterDdlError;
 use tidb_exec::real_tikv_dml::ConfiguredWriteError;
+use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
 use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
 use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
@@ -408,6 +410,24 @@ pub(crate) fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError
         ClusterAnalyzeError::Undetermined(_) => SqlQueryError::result_undetermined(),
         ClusterAnalyzeError::Commit(error) => lock_sql_error(&error),
         ClusterAnalyzeError::Other(detail) => SqlQueryError::unknown(detail),
+    }
+}
+
+pub(crate) fn cluster_stats_lock_error(error: ClusterStatsLockCommitError) -> SqlQueryError {
+    match error {
+        ClusterStatsLockCommitError::Undetermined(_) => SqlQueryError::result_undetermined(),
+        ClusterStatsLockCommitError::Commit(error) => lock_sql_error(&error),
+        ClusterStatsLockCommitError::Plan(ClusterStatsLockError::NoDatabaseSelected) => {
+            SqlQueryError::new(1046, *b"3D000", "No database selected")
+        }
+        ClusterStatsLockCommitError::Plan(error @ ClusterStatsLockError::MissingTable { .. }) => {
+            SqlQueryError::new(1146, *b"42S02", error.to_string())
+        }
+        ClusterStatsLockCommitError::Plan(
+            error @ ClusterStatsLockError::UnknownPartition { .. },
+        ) => SqlQueryError::new(1735, *b"HY000", error.to_string()),
+        ClusterStatsLockCommitError::Plan(error) => SqlQueryError::unknown(error.to_string()),
+        ClusterStatsLockCommitError::Other(detail) => SqlQueryError::unknown(detail),
     }
 }
 

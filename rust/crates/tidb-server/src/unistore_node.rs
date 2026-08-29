@@ -527,6 +527,10 @@ pub(crate) fn unistore_cluster_session_stack(
             Arc::clone(&stats),
             IN_PROCESS_TIMEOUT,
         )),
+        Arc::new(crate::cluster_stats_lock_seam::RealClusterStatsLock::new(
+            Arc::new(opener.clone()),
+            IN_PROCESS_TIMEOUT,
+        )),
         catalog,
         users.accounts(),
         users.global_vars(),
