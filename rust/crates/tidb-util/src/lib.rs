@@ -34,7 +34,6 @@ pub(crate) fn global_logger_test_guard() -> std::sync::MutexGuard<'static, ()> {
 pub mod arena;
 pub mod backoff;
 pub mod bitmap;
-pub mod br_key_utils;
 pub mod br_summary;
 pub mod cgroup;
 pub mod channel;

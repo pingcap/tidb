@@ -18,20 +18,20 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-use tidb_util::br_key_utils::compare_bytes_ext;
-
+use super::compare_bytes_ext;
 use super::utils::{collapse, overlaps, stringify_range};
 
 /// Go `spans.Value`: the value stored in the span tree.
 pub type Value = u64;
 
 /// Go `spans.Span = kv.KeyRange`.
-///
-/// boundary: `pkg/kv`'s `KeyRange` is a two-field byte-range struct. This crate
-/// is a BR leaf, so it uses the identical range already landed in
-/// `tidb-util`'s `br/pkg/utils/key.go` port rather than depending upward on
-/// `tidb-txnkv`.
-pub type Span = tidb_util::br_key_utils::KeyRange;
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Span {
+    /// Inclusive lower bound.
+    pub start_key: Vec<u8>,
+    /// Exclusive upper bound; empty means positive infinity.
+    pub end_key: Vec<u8>,
+}
 
 /// Go `join`: the upper bound of two values.
 #[must_use]
@@ -173,7 +173,10 @@ impl ValuedFull {
         if leftmost.key.start_key < val.key.start_key {
             collector.emit(
                 Valued {
-                    key: Span::new(leftmost.key.start_key, val.key.start_key.clone()),
+                    key: Span {
+                        start_key: leftmost.key.start_key,
+                        end_key: val.key.start_key.clone(),
+                    },
                     value: leftmost.value,
                 },
                 true,
@@ -188,7 +191,10 @@ impl ValuedFull {
             == Ordering::Greater
         {
             right_trail = Some(Valued {
-                key: Span::new(val.key.end_key.clone(), rightmost.key.end_key),
+                key: Span {
+                    start_key: val.key.end_key.clone(),
+                    end_key: rightmost.key.end_key,
+                },
                 value: rightmost.value,
             });
             overlapped[last].key.end_key = val.key.end_key.clone();
@@ -284,7 +290,10 @@ mod tests {
     use super::*;
 
     fn s(a: &str, b: &str) -> Span {
-        Span::new(a.as_bytes(), b.as_bytes())
+        Span {
+            start_key: a.as_bytes().to_vec(),
+            end_key: b.as_bytes().to_vec(),
+        }
     }
 
     fn kv(span: Span, value: Value) -> Valued {

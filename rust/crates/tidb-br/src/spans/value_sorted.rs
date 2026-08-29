@@ -144,7 +144,10 @@ mod tests {
     use super::*;
 
     fn s(a: &str, b: &str) -> Span {
-        Span::new(a.as_bytes(), b.as_bytes())
+        Span {
+            start_key: a.as_bytes().to_vec(),
+            end_key: b.as_bytes().to_vec(),
+        }
     }
 
     fn kv(span: Span, value: Value) -> Valued {

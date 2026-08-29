@@ -17,9 +17,9 @@
 
 use std::cmp::Ordering;
 
-use tidb_util::br_key_utils::compare_bytes_ext;
 use tidb_util::redact;
 
+use super::compare_bytes_ext;
 use super::sorted::{Span, Valued};
 
 /// Go `Overlaps`: whether two spans share any part.
@@ -172,7 +172,13 @@ mod tests {
     use super::*;
 
     fn s(start: &str, end: &str, value: u64) -> Valued {
-        Valued::new(Span::new(start.as_bytes(), end.as_bytes()), value)
+        Valued::new(
+            Span {
+                start_key: start.as_bytes().to_vec(),
+                end_key: end.as_bytes().to_vec(),
+            },
+            value,
+        )
     }
 
     /// Go `TestValuedEquals` (`utils_test.go`).

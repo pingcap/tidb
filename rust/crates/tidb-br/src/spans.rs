@@ -36,15 +36,12 @@
 //!   map key; `btree.Item` identity and `ReplaceOrInsert`/`Delete` map onto
 //!   `insert`/`remove` unchanged. `value_sorted.go`'s second index orders by
 //!   `(Value, StartKey)`, which becomes the tuple key of a second map.
-//! - boundary: Go's `Span = kv.KeyRange` is spelled here as
-//!   [`tidb_util::br_key_utils::KeyRange`], the two-field
-//!   `{start_key, end_key}` range that `br/pkg/utils/key.go` already landed
-//!   with. `pkg/kv` sits *above* a leaf BR crate in the Rust workspace, so
-//!   importing `tidb-txnkv` for a two-field struct would invert the layering.
-//!   The struct is field-identical and the same `compare_bytes_ext` operates
-//!   on it, so nothing observable changes.
-//! - boundary: `br/pkg/utils.CompareBytesExt` is already landed as
-//!   [`tidb_util::br_key_utils::compare_bytes_ext`] and is used directly.
+//! - boundary: Go's `Span = kv.KeyRange` is the field-identical native
+//!   [`Span`] struct. Importing the higher-level transaction crate solely for
+//!   this two-field data carrier would invert the crate layering.
+//! - boundary: the package's only needed `br/pkg/utils.CompareBytesExt`
+//!   dependency is kept private here, avoiding a partial public port of the
+//!   much larger `br/pkg/utils` package.
 //! - boundary: `br/pkg/logutil.StringifyRange` is not pulled in as a zap
 //!   helper; its exact rendering (`[<hex start>, <hex end or "inf">)` through
 //!   `redact.Key`/`redact.Value`) is reproduced by [`utils::stringify_range`],
@@ -64,3 +61,19 @@ pub mod value_sorted;
 pub use sorted::{Span, Value, Valued, ValuedFull};
 pub use utils::{collapse, full, overlaps, stringify_range, valued_set_equals};
 pub use value_sorted::{debug, sorted as value_sorted_wrap, ValueSortedFull};
+
+pub(crate) fn compare_bytes_ext(
+    a: &[u8],
+    a_empty_as_inf: bool,
+    b: &[u8],
+    b_empty_as_inf: bool,
+) -> std::cmp::Ordering {
+    let a_inf = a.is_empty() && a_empty_as_inf;
+    let b_inf = b.is_empty() && b_empty_as_inf;
+    match (a_inf, b_inf) {
+        (true, true) => std::cmp::Ordering::Equal,
+        (true, false) => std::cmp::Ordering::Greater,
+        (false, true) => std::cmp::Ordering::Less,
+        (false, false) => a.cmp(b),
+    }
+}
