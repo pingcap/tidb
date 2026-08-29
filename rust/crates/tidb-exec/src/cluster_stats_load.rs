@@ -122,13 +122,12 @@ pub struct ClusterTableStats {
     pub modify_count: i64,
     /// `mysql.stats_meta.count`: the table's estimated row count.
     pub row_count: u64,
-    /// `mysql.stats_meta.last_stats_histograms_version`: the TSO of the last
-    /// write that filled this table's histograms, which is Go's
-    /// `statistics.Table.LastAnalyzeVersion`. Zero means never analyzed; the
-    /// writer (`pkg/statistics/handle/storage/save.go:200`) stamps it with the
-    /// same start TS as `version`, and a GC pass re-stamps both when it drops
-    /// dead histogram rows (`gc.go:144`).
+    /// Go `statistics.Table.LastAnalyzeVersion`: initialized from the analyze
+    /// snapshot and advanced by analyzed column/index histogram versions.
     pub last_analyze_version: u64,
+    /// `mysql.stats_meta.last_stats_histograms_version`, Go's independent
+    /// table-level histogram refresh marker.
+    pub last_stats_hist_version: u64,
     /// Column histograms, in `hist_id` order.
     pub columns: Vec<ClusterStatsItem>,
     /// Index histograms, in `hist_id` order.
@@ -136,6 +135,25 @@ pub struct ClusterTableStats {
 }
 
 impl ClusterTableStats {
+    fn analyzed_histogram_version(&self) -> u64 {
+        self.columns
+            .iter()
+            .chain(&self.indexes)
+            .filter(|item| item.stats_ver != 0)
+            .map(|item| item.histogram.last_update_version)
+            .max()
+            .unwrap_or_default()
+    }
+
+    fn refresh_last_analyze_version(&self, current: u64) -> u64 {
+        let result = current.max(self.analyzed_histogram_version());
+        if result == 0 {
+            self.snapshot
+        } else {
+            result
+        }
+    }
+
     /// The column histogram for one column ID.
     #[must_use]
     pub fn column(&self, id: i64) -> Option<&ClusterStatsItem> {
@@ -199,8 +217,10 @@ impl ClusterTableStats {
             existence_map: Some(Arc::new(RwLock::new(existence))),
             hist_coll,
             version: self.version,
-            last_analyze_version: self.last_analyze_version,
-            last_stats_hist_version: self.last_analyze_version,
+            last_analyze_version: self
+                .last_analyze_version
+                .max(self.analyzed_histogram_version()),
+            last_stats_hist_version: self.last_stats_hist_version.max(self.snapshot),
             table_info_update_ts: table_info.update_ts,
             is_pk_handle: table_info.pk_is_handle,
         })
@@ -430,15 +450,19 @@ impl ClusterStatsLoader {
             return Ok(None);
         };
         let Some(current) = current else {
-            return Ok(Some(lite.to_statistics_table(table_info)));
+            let mut table = lite.to_statistics_table(table_info).as_ref().clone();
+            table.last_analyze_version = lite.refresh_last_analyze_version(0);
+            table.last_stats_hist_version = lite.last_stats_hist_version;
+            return Ok(Some(Arc::new(table)));
         };
 
         let mut updated = current.copy_as(tidb_stats::CopyIntent::BothMapsWritable);
         updated.version = lite.version;
         updated.hist_coll.realtime_count = i64::try_from(lite.row_count).unwrap_or(i64::MAX);
         updated.hist_coll.modify_count = lite.modify_count;
-        updated.last_analyze_version = updated.last_analyze_version.max(lite.last_analyze_version);
-        updated.last_stats_hist_version = lite.last_analyze_version;
+        updated.last_analyze_version =
+            lite.refresh_last_analyze_version(current.last_analyze_version);
+        updated.last_stats_hist_version = lite.last_stats_hist_version;
         updated.table_info_update_ts = table_info.update_ts;
 
         for metadata in lite.columns.into_iter().chain(lite.indexes) {
@@ -551,7 +575,7 @@ impl ClusterStatsLoader {
         column_types: &BTreeMap<i64, FieldType>,
         full_load: bool,
     ) -> Result<Option<ClusterTableStats>, SystemTableError> {
-        let Some((version, snapshot_ts, modify_count, row_count, last_analyze_version)) =
+        let Some((version, snapshot_ts, modify_count, row_count, last_stats_hist_version)) =
             self.load_meta(snapshot, table_id)?
         else {
             return Ok(None);
@@ -573,7 +597,8 @@ impl ClusterStatsLoader {
             snapshot: snapshot_ts,
             modify_count,
             row_count,
-            last_analyze_version,
+            last_analyze_version: snapshot_ts,
+            last_stats_hist_version,
             columns: Vec::new(),
             indexes: Vec::new(),
         };
@@ -744,7 +769,7 @@ impl ClusterStatsLoader {
 
     /// Go `StatsMetaCountAndModifyCount`.
     /// One table's `(version, snapshot, modify_count, count,
-    /// last_analyze_version)`,
+    /// last_stats_histograms_version)`,
     /// or `None` for a table with no row -- the public single-table form of
     /// [`Self::load_all_meta`], and the read behind
     /// [`Self::load_table`]'s presence check.
@@ -989,7 +1014,8 @@ mod tests {
             snapshot: 40,
             modify_count: 3,
             row_count: 100,
-            last_analyze_version: 41,
+            last_analyze_version: 40,
+            last_stats_hist_version: 43,
             columns: vec![
                 ClusterStatsItem {
                     id: 1,
@@ -1032,7 +1058,7 @@ mod tests {
         assert_eq!(table.hist_coll.stats_version, 2);
         assert_eq!(table.version, 42);
         assert_eq!(table.last_analyze_version, 41);
-        assert_eq!(table.last_stats_hist_version, 41);
+        assert_eq!(table.last_stats_hist_version, 43);
         assert_eq!(table.table_info_update_ts, 55);
         assert!(table.is_pk_handle);
         let column = table.hist_coll.get_column(1).unwrap();
@@ -1044,6 +1070,42 @@ mod tests {
         let existence = table.existence_map.as_ref().unwrap().read().unwrap();
         assert!(existence.has_analyzed(1, false));
         assert!(!existence.has(99, false));
+    }
+
+    #[test]
+    fn refresh_keeps_last_analyze_separate_from_the_histogram_refresh_marker() {
+        let stats = ClusterTableStats {
+            table_id: 7,
+            version: 80,
+            snapshot: 50,
+            modify_count: 0,
+            row_count: 1,
+            last_analyze_version: 50,
+            last_stats_hist_version: 70,
+            columns: vec![ClusterStatsItem {
+                id: 1,
+                is_index: false,
+                stats_ver: 2,
+                flag: 0,
+                load_status: StatsLoadedStatus::all_evicted(),
+                histogram: Histogram {
+                    id: 1,
+                    last_update_version: 37,
+                    ..Histogram::default()
+                },
+                topn: None,
+                cms: None,
+            }],
+            indexes: Vec::new(),
+        };
+
+        assert_eq!(stats.refresh_last_analyze_version(23), 37);
+        assert_eq!(stats.last_stats_hist_version, 70);
+
+        let mut no_histograms = stats.clone();
+        no_histograms.columns.clear();
+        assert_eq!(no_histograms.refresh_last_analyze_version(23), 23);
+        assert_eq!(no_histograms.refresh_last_analyze_version(0), 50);
     }
 
     #[test]

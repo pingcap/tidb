@@ -453,6 +453,8 @@ impl StatsCacheImpl {
     /// Go `Get`.
     #[must_use]
     pub fn get(&self, table_id: i64) -> Option<Arc<Table>> {
+        #[cfg(feature = "failpoints")]
+        fail::fail_point!("StatsCacheGetNil", |_| return None);
         self.load().get(table_id)
     }
 
@@ -746,6 +748,22 @@ mod tests {
         assert_eq!(cache.len(), 2);
         assert_eq!(cache.version(), 2);
         assert_eq!(cache.get(1).expect("table").version, 2);
+    }
+
+    #[cfg(feature = "failpoints")]
+    #[test]
+    fn source_stats_cache_get_nil_failpoint_forces_a_miss() {
+        let cache =
+            StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(Box::new(MapCache::new()))));
+        cache.put(1, table(1, 7));
+        assert!(cache.get(1).is_some());
+
+        let scenario = fail::FailScenario::setup();
+        fail::cfg("StatsCacheGetNil", "return").expect("enable StatsCacheGetNil");
+        assert!(cache.get(1).is_none());
+        fail::remove("StatsCacheGetNil");
+        drop(scenario);
+        assert!(cache.get(1).is_some());
     }
 
     #[test]

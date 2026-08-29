@@ -3844,6 +3844,7 @@ dependencies = [
 name = "tidb-stats-handle-cache"
 version = "0.0.0"
 dependencies = [
+ "fail",
  "tidb-config",
  "tidb-datatype",
  "tidb-model",

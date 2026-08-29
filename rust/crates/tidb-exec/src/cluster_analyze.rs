@@ -248,6 +248,7 @@ pub fn analyze_table<S: PagedMetaSnapshot>(
         version,
         snapshot: version,
         last_analyze_version: version,
+        last_stats_hist_version: version,
         // Go's `SaveAnalyzeResultToStorage` stores
         // `max(curModifyCnt - results.BaseModifyCnt, 0)`: the modifications
         // that arrived *while the analyze ran*, which its sample therefore

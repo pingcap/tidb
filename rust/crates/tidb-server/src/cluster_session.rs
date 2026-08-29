@@ -1381,6 +1381,7 @@ mod tests {
             version,
             snapshot: version,
             last_analyze_version: version,
+            last_stats_hist_version: version,
             modify_count: 0,
             row_count: 3_000_065,
             columns: vec![item(1, 3_000_065), item(2, 10), item(3, 3_000_065)],
