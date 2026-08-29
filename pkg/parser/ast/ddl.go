@@ -1745,15 +1745,10 @@ func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 // MViewRefreshMethod is the refresh method of a materialized view.
 type MViewRefreshMethod int
 
-const (
-	MViewRefreshMethodNever MViewRefreshMethod = iota
-	MViewRefreshMethodFast
-)
+const MViewRefreshMethodFast MViewRefreshMethod = iota
 
 func (m MViewRefreshMethod) String() string {
 	switch m {
-	case MViewRefreshMethodNever:
-		return "NEVER REFRESH"
 	case MViewRefreshMethodFast:
 		return "REFRESH FAST"
 	default:
@@ -1771,9 +1766,6 @@ type MViewRefreshClause struct {
 // Restore implements Node interface.
 func (n *MViewRefreshClause) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(n.Method.String())
-	if n.Method == MViewRefreshMethodNever {
-		return nil
-	}
 	if n.StartWith != nil {
 		ctx.WriteKeyWord(" START WITH ")
 		if err := n.StartWith.Restore(ctx); err != nil {
