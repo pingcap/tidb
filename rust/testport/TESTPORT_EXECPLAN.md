@@ -421,6 +421,9 @@ For each bounded behavior cluster:
       five source tests, restore arbitrary-byte Go strings, move enablement
       policy back to its two Go callers, and remove exported sysvar catalogs,
       error-code helpers, derives, and supplemental tests absent from Go.
+- [x] Complete the pinned `pkg/util/vitess` package in its `tidb-util` owner:
+      retain the exact five-row source test and remove Rust-only API policy,
+      expanded package narrative, named key constant, and supplemental vectors.
 - [x] Complete the pinned `pkg/util/table-rule-selector` package in its wired
       `tidb-util` owner: restore Go string-range indices, nil RuleSets, open
       insert types, and exact errors; remove the unused 1,270-line selector and
