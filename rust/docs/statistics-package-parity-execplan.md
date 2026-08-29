@@ -32,6 +32,7 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - [x] (2026-08-29) Removed obsolete ignored predicate-collection gap carriers after wiring the real logical rule, retaining the pinned system-schema exclusion as an executable production-unit regression.
 - [x] (2026-08-29) Completed pinned `pkg/statistics/handle/cache/metrics`, preserving all six operation labels and both gauge labels on the shared TiDB statistics metric families.
 - [x] (2026-08-29) Completed pinned `pkg/statistics/handle/cache/internal/lfu` with buffered TinyLFU admission, cost eviction, the 256-shard secondary table set, metadata-only eviction, dynamic capacity, and wait barriers.
+- [x] (2026-08-29) Ported the pinned parent cache's full-table core: global LFU/map selection, runtime quota backing, hit/miss/update/delete accounting, lifecycle max version, copy-on-write update, in-place update, capacity, eviction, wait, and close behavior.
 - [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
 - [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
 - [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
@@ -107,6 +108,9 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 - Observation: the Rust `StatsCacheInner` and map backend were not shareable across threads, although Go publishes one cache to every session. The LFU backend was thread-safe, but the common trait could not form the parent cache's process-wide ownership boundary.
   Evidence: `StatsCacheInner` lacked `Send + Sync` and `MapCache` stored its map in `RefCell`; a compile-time shared-cache boundary rejected both before the parent package could be wired.
 
+- Observation: Rust registered `tidb_stats_cache_mem_quota` but did not publish its validated global value to a process-wide backing store, so Go's cache constructor could not observe runtime quota changes.
+  Evidence: the session global publisher updated the two ANALYZE atomics only; the new `vardef::STATS_CACHE_MEM_QUOTA` is populated from the same resolved global image before `StatsCache::new` reads it.
+
 ## Decision Log
 
 - Decision: reconstruct and test each pinned Go branch before editing Rust; do not preserve Rust-only fallback paths.
@@ -127,6 +131,10 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 - Decision: implement lockstats policy once over a narrow transaction interface, with separate catalog and TiKV adapters.
   Rationale: pinned Go centralizes branching, warnings, and delta merging in `pkg/statistics/handle/lockstats` while its restricted SQL session is only the storage boundary. Sharing the policy prevents the two Rust runtime modes from diverging without inventing a Go-visible path.
+  Date/Author: 2026-08-29 / Codex
+
+- Decision: make `tidb-stats-handle-cache` own full `tidb_stats::Table` objects and keep reduced planner statistics as a derived consumer view.
+  Rationale: pinned Go caches `statistics.Table`; wrapping the executor's reduced planner view would lose eviction payload, existence-map, histogram-version, and refresh semantics and create a second source of truth.
   Date/Author: 2026-08-29 / Codex
 
 ## Outcomes & Retrospective

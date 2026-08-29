@@ -309,6 +309,9 @@ impl GlobalSysvars {
             effective(tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_TOP_N)
                 .parse::<u64>()
                 .expect("validated analyze TopN default is an unsigned integer");
+        let stats_cache_mem_quota = effective(tidb_vardef::tidb_vars::TIDB_STATS_CACHE_MEM_QUOTA)
+            .parse::<i64>()
+            .expect("validated statistics cache quota is an integer");
         let mut publish = self
             .resolved
             .write()
@@ -327,6 +330,8 @@ impl GlobalSysvars {
                 analyze_default_num_top_n,
                 std::sync::atomic::Ordering::SeqCst,
             );
+            tidb_vardef::STATS_CACHE_MEM_QUOTA
+                .store(stats_cache_mem_quota, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -1367,6 +1372,7 @@ mod tests {
     struct RestoreAnalyzeDefaults {
         buckets: u64,
         top_n: u64,
+        stats_cache_mem_quota: i64,
     }
 
     impl Drop for RestoreAnalyzeDefaults {
@@ -1375,6 +1381,10 @@ mod tests {
                 .store(self.buckets, std::sync::atomic::Ordering::SeqCst);
             tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N
                 .store(self.top_n, std::sync::atomic::Ordering::SeqCst);
+            tidb_vardef::STATS_CACHE_MEM_QUOTA.store(
+                self.stats_cache_mem_quota,
+                std::sync::atomic::Ordering::SeqCst,
+            );
         }
     }
 
@@ -1384,6 +1394,8 @@ mod tests {
             buckets: tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS
                 .load(std::sync::atomic::Ordering::SeqCst),
             top_n: tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(std::sync::atomic::Ordering::SeqCst),
+            stats_cache_mem_quota: tidb_vardef::STATS_CACHE_MEM_QUOTA
+                .load(std::sync::atomic::Ordering::SeqCst),
         };
         let globals = GlobalSysvars::new();
 
@@ -1399,6 +1411,12 @@ mod tests {
                 "5".to_owned(),
             )
             .unwrap();
+        globals
+            .set(
+                tidb_vardef::tidb_vars::TIDB_STATS_CACHE_MEM_QUOTA,
+                "6".to_owned(),
+            )
+            .unwrap();
         assert_eq!(
             tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(std::sync::atomic::Ordering::SeqCst),
             4
@@ -1407,12 +1425,19 @@ mod tests {
             tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(std::sync::atomic::Ordering::SeqCst),
             5
         );
+        assert_eq!(
+            tidb_vardef::STATS_CACHE_MEM_QUOTA.load(std::sync::atomic::Ordering::SeqCst),
+            6
+        );
 
         globals
             .reset(tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_BUCKETS)
             .unwrap();
         globals
             .reset(tidb_vardef::tidb_vars::TIDB_ANALYZE_DEFAULT_NUM_TOP_N)
+            .unwrap();
+        globals
+            .reset(tidb_vardef::tidb_vars::TIDB_STATS_CACHE_MEM_QUOTA)
             .unwrap();
         assert_eq!(
             tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(std::sync::atomic::Ordering::SeqCst),
@@ -1421,6 +1446,10 @@ mod tests {
         assert_eq!(
             tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(std::sync::atomic::Ordering::SeqCst),
             tidb_vardef::defaults::DEF_TIDB_ANALYZE_DEFAULT_NUM_TOP_N as u64
+        );
+        assert_eq!(
+            tidb_vardef::STATS_CACHE_MEM_QUOTA.load(std::sync::atomic::Ordering::SeqCst),
+            tidb_vardef::defaults::DEF_TIDB_STATS_CACHE_MEM_QUOTA
         );
     }
 

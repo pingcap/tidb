@@ -1,0 +1,23 @@
+[package]
+name = "tidb-stats-handle-cache"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB statistics handle cache."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-config = { path = "../tidb-config" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-stats-handle-cache-internal = { path = "../tidb-stats-handle-cache-internal" }
+tidb-stats-handle-cache-internal-lfu = { path = "../tidb-stats-handle-cache-internal-lfu" }
+tidb-stats-handle-cache-internal-mapcache = { path = "../tidb-stats-handle-cache-internal-mapcache" }
+tidb-stats-handle-cache-metrics = { path = "../tidb-stats-handle-cache-metrics" }
+tidb-vardef = { path = "../tidb-vardef" }
+
+[dev-dependencies]
+tidb-stats-handle-cache-internal-testutil = { path = "../tidb-stats-handle-cache-internal-testutil" }

@@ -37,7 +37,7 @@
 //! global registry (the singleton the rewrite deliberately replaces with
 //! explicit wiring), and `runtime.go`.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
 static ENABLE_MDL: AtomicBool = AtomicBool::new(false);
 
@@ -48,6 +48,10 @@ pub static ANALYZE_DEFAULT_NUM_BUCKETS: AtomicU64 =
 /// Go `vardef.AnalyzeDefaultNumTopN`.
 pub static ANALYZE_DEFAULT_NUM_TOP_N: AtomicU64 =
     AtomicU64::new(defaults::DEF_TIDB_ANALYZE_DEFAULT_NUM_TOP_N as u64);
+
+/// Go `vardef.StatsCacheMemQuota`.
+pub static STATS_CACHE_MEM_QUOTA: AtomicI64 =
+    AtomicI64::new(defaults::DEF_TIDB_STATS_CACHE_MEM_QUOTA);
 
 /// Go `IsMDLEnabled` with the process-global kernel selection made explicit.
 ///

@@ -3839,6 +3839,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-stats-handle-cache"
+version = "0.0.0"
+dependencies = [
+ "tidb-config",
+ "tidb-stats",
+ "tidb-stats-handle-cache-internal",
+ "tidb-stats-handle-cache-internal-lfu",
+ "tidb-stats-handle-cache-internal-mapcache",
+ "tidb-stats-handle-cache-internal-testutil",
+ "tidb-stats-handle-cache-metrics",
+ "tidb-vardef",
+]
+
+[[package]]
 name = "tidb-stats-handle-cache-internal"
 version = "0.0.0"
 dependencies = [
