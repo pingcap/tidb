@@ -284,6 +284,10 @@ For each bounded behavior cluster:
       `tidb-util` owner, route all extractor regexes through the Go-regexp
       authority, remove Rust-only constructors/error traits, and delete the
       unused 1,029-line `tidb-exec` duplicate.
+- [x] Complete the pinned `pkg/util/filter` package in its wired `tidb-util`
+      owner, restore the source's distinct validation errors and complete
+      system-schema table, remove supplementary non-source tests, and delete
+      the unused 1,448-line `tidb-exec` duplicate.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope

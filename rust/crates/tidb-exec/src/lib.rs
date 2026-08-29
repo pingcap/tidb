@@ -100,7 +100,6 @@ mod error_conversion;
 pub mod exec_details;
 pub mod executor_utils;
 pub mod explain;
-pub mod filter;
 pub mod first_row;
 /// Go `GlobalSystemVariableInitialValue`, which lives with the rest of the
 /// `vardef` policy in [`tidb_vardef`] because the SESSION tier needs it too:

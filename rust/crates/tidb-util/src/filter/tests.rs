@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use super::*;
-use std::sync::{Arc, Barrier};
 
 fn t(schema: &str, name: &str) -> Table {
     Table {
@@ -377,49 +376,6 @@ fn invalid_regex() {
     }
 }
 
-#[test]
-fn perl_character_classes_are_ascii_only_like_go_regexp() {
-    let ascii_digit = Filter::new(true, Some(rules(&[r"~^tenant\d+$"], &[], &[], &[])))
-        .expect("Go regexp syntax");
-    assert!(ascii_digit.matches(&t("tenant1", "")));
-    assert!(!ascii_digit.matches(&t("tenant١", "")));
-
-    let bracketed_digit = Filter::new(true, Some(rules(&[r"~^tenant[\d]+$"], &[], &[], &[])))
-        .expect("Go regexp syntax");
-    assert!(bracketed_digit.matches(&t("tenant1", "")));
-    assert!(!bracketed_digit.matches(&t("tenant١", "")));
-
-    let not_ascii_digit =
-        Filter::new(true, Some(rules(&[r"~^[\D]+$"], &[], &[], &[]))).expect("Go regexp syntax");
-    assert!(not_ascii_digit.matches(&t("١", "")));
-
-    let ascii_word =
-        Filter::new(true, Some(rules(&[r"~^\w+$"], &[], &[], &[]))).expect("Go regexp syntax");
-    assert!(ascii_word.matches(&t("tenant_1", "")));
-    assert!(!ascii_word.matches(&t("ténant", "")));
-
-    let ascii_space =
-        Filter::new(true, Some(rules(&[r"~^\s+$"], &[], &[], &[]))).expect("Go regexp syntax");
-    assert!(ascii_space.matches(&t("\t ", "")));
-    assert!(!ascii_space.matches(&t("\u{a0}", "")));
-
-    let not_ascii_space =
-        Filter::new(true, Some(rules(&[r"~^\S+$"], &[], &[], &[]))).expect("Go regexp syntax");
-    assert!(not_ascii_space.matches(&t("\u{a0}", "")));
-
-    let not_ascii_word =
-        Filter::new(true, Some(rules(&[r"~^\W+$"], &[], &[], &[]))).expect("Go regexp syntax");
-    assert!(not_ascii_word.matches(&t("é", "")));
-
-    let ascii_boundary =
-        Filter::new(true, Some(rules(&[r"~\bé\b"], &[], &[], &[]))).expect("Go regexp syntax");
-    assert!(!ascii_boundary.matches(&t("é", "")));
-
-    let not_ascii_boundary =
-        Filter::new(true, Some(rules(&[r"~\Bé\B"], &[], &[], &[]))).expect("Go regexp syntax");
-    assert!(not_ascii_boundary.matches(&t("é", "")));
-}
-
 // Go TestMatchReturnsBool.
 #[test]
 fn match_returns_bool() {
@@ -431,63 +387,27 @@ fn match_returns_bool() {
     assert!(f.matches(&t("other", "")));
 }
 
-#[test]
-fn utf8_names_use_source_byte_wildcards() {
-    let filter = Filter::new(true, Some(rules(&[], &[], &[("??", "??")], &[]))).unwrap();
-
-    assert!(filter.matches(&t("é", "é")));
-    assert!(!filter.matches(&t("é", "a")));
-    assert!(!filter.matches(&t("a", "é")));
-    assert!(!filter.matches(&t("你", "é")));
-    assert!(filter.matches(&t("é", "é")), "cached result must agree");
-}
-
 // Go TestIsSystemSchema (schema.go).
 #[test]
 fn system_schema() {
-    assert!(is_system_schema("dm_heartbeat"));
-    assert!(is_system_schema("inspection_schema"));
-    assert!(is_system_schema("information_schema"));
-    assert!(is_system_schema("mysql"));
-    assert!(!is_system_schema("test"));
-}
-
-#[test]
-fn filter_supports_concurrent_callers() {
-    let filter = Arc::new(
-        Filter::new(
-            false,
-            Some(rules(&["tenant*"], &[], &[("tenant*", "orders*")], &[])),
-        )
-        .unwrap(),
-    );
-    let start = Arc::new(Barrier::new(8));
-    let mut workers = Vec::new();
-    for _ in 0..8 {
-        let filter = Arc::clone(&filter);
-        let start = Arc::clone(&start);
-        workers.push(std::thread::spawn(move || {
-            start.wait();
-            for _ in 0..500 {
-                assert!(filter.matches(&t("Tenant1", "Orders1")));
-                assert!(!filter.matches(&t("tenant1", "events")));
-                assert!(!filter.matches(&t("other", "orders1")));
-            }
-        }));
+    for (name, expected) in [
+        ("information_schema", true),
+        ("performance_schema", true),
+        ("mysql", true),
+        ("sys", true),
+        ("INFORMATION_SCHEMA", true),
+        ("PERFORMANCE_SCHEMA", true),
+        ("MYSQL", true),
+        ("SYS", true),
+        ("not_system_schema", false),
+        ("METRICS_SCHEMA", true),
+        ("INSPECTION_SCHEMA", true),
+    ] {
+        let lower_name = go_simple_lowercase(name);
+        assert_eq!(
+            is_system_schema(&lower_name),
+            expected,
+            "schema name = {name}"
+        );
     }
-    for worker in workers {
-        worker.join().unwrap();
-    }
-}
-
-#[test]
-fn poisoned_cache_does_not_add_a_failure_mode() {
-    let filter = Filter::new(false, Some(rules(&["tenant*"], &[], &[], &[]))).unwrap();
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _guard = filter.cache.write().unwrap();
-        panic!("poison filter cache");
-    }));
-
-    assert!(filter.matches(&t("tenant1", "orders1")));
-    assert!(!filter.matches(&t("other", "orders1")));
 }

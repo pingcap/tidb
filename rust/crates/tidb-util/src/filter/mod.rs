@@ -30,7 +30,7 @@ use regex::Regex;
 use tidb_mysql::to_lowercase as go_simple_lowercase;
 
 use crate::table_filter::{MySQLReplicationRules, Table};
-use crate::table_rule_selector::{InsertType, Selector, SelectorError, TrieSelector};
+use crate::table_rule_selector::{InsertType, Selector, TrieSelector};
 
 /// The action a matched rule implies (Go `ActionType`): keep (`DO`) or drop.
 pub type ActionType = bool;
@@ -44,27 +44,11 @@ pub type Rules = MySQLReplicationRules;
 
 /// A filter build error (Go returns `error` from `New`).
 #[derive(Debug)]
-pub enum FilterError {
-    /// A DoDB/IgnoreDB rule had an empty database string.
-    EmptyDb,
-    /// A DoTables/IgnoreTables rule had an empty schema or table string.
-    EmptyTable,
-    /// A regex rule failed to compile.
-    Regex(String),
-    /// The trie selector rejected an insert.
-    Selector(SelectorError),
-}
+pub struct FilterError(String);
 
 impl std::fmt::Display for FilterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FilterError::EmptyDb => f.write_str("DoDB/IgnoreDB rule's DB string cannot be empty"),
-            FilterError::EmptyTable => f.write_str(
-                "DoTables/IgnoreTables rule's DB string or Table string cannot be empty",
-            ),
-            FilterError::Regex(e) => write!(f, "{e}"),
-            FilterError::Selector(e) => write!(f, "{e}"),
-        }
+        f.write_str(&self.0)
     }
 }
 
@@ -296,13 +280,17 @@ fn init_rules(
     };
     for db in &rules.do_dbs {
         if db.is_empty() {
-            return Err(FilterError::EmptyDb);
+            return Err(FilterError(
+                "DoDB rule's DB string cannot be empty".to_owned(),
+            ));
         }
         init_schema_rule(selector, pattern_map, db, true, case_sensitive)?;
     }
     for table in &rules.do_tables {
         if table.schema.is_empty() || table.name.is_empty() {
-            return Err(FilterError::EmptyTable);
+            return Err(FilterError(
+                "DoTables rule's DB string or Table string cannot be empty".to_owned(),
+            ));
         }
         init_table_rule(
             selector,
@@ -315,13 +303,17 @@ fn init_rules(
     }
     for db in &rules.ignore_dbs {
         if db.is_empty() {
-            return Err(FilterError::EmptyDb);
+            return Err(FilterError(
+                "IgnoreDB rule's DB string cannot be empty".to_owned(),
+            ));
         }
         init_schema_rule(selector, pattern_map, db, false, case_sensitive)?;
     }
     for table in &rules.ignore_tables {
         if table.schema.is_empty() || table.name.is_empty() {
-            return Err(FilterError::EmptyTable);
+            return Err(FilterError(
+                "IgnoreTables rule's DB string or Table string cannot be empty".to_owned(),
+            ));
         }
         init_table_rule(
             selector,
@@ -343,7 +335,7 @@ fn init_one_regex(
     case_sensitive: bool,
 ) -> Result<(), FilterError> {
     if !pattern_map.contains_key(origin) {
-        let re = crate::go_regexp::compile(origin, case_sensitive).map_err(FilterError::Regex)?;
+        let re = crate::go_regexp::compile(origin, case_sensitive).map_err(FilterError)?;
         pattern_map.insert(origin.to_owned(), re);
     }
     Ok(())
@@ -371,7 +363,7 @@ fn init_schema_rule(
             }),
             InsertType::Append,
         )
-        .map_err(FilterError::Selector)
+        .map_err(|error| FilterError(error.to_string()))
 }
 
 // Go `initTableRule`.
@@ -401,7 +393,7 @@ fn init_table_rule(
                 }),
                 InsertType::Append,
             )
-            .map_err(FilterError::Selector)?;
+            .map_err(|error| FilterError(error.to_string()))?;
     } else if !db_is_regex && tbl_is_regex {
         init_one_regex(pattern_map, &table_str[1..], case_sensitive)?;
         selector
@@ -415,7 +407,7 @@ fn init_table_rule(
                 }),
                 InsertType::Append,
             )
-            .map_err(FilterError::Selector)?;
+            .map_err(|error| FilterError(error.to_string()))?;
     } else {
         selector
             .insert(
@@ -428,7 +420,7 @@ fn init_table_rule(
                 }),
                 InsertType::Append,
             )
-            .map_err(FilterError::Selector)?;
+            .map_err(|error| FilterError(error.to_string()))?;
     }
     Ok(())
 }
