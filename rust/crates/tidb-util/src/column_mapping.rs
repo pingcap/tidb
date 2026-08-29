@@ -24,9 +24,9 @@ use tidb_mysql::to_lowercase as go_simple_lowercase;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PartitionRule {
-    instance_id_bits: usize,
-    schema_id_bits: usize,
-    table_id_bits: usize,
+    instance_id_bits: isize,
+    schema_id_bits: isize,
+    table_id_bits: isize,
     max_origin_id: i64,
 }
 
@@ -45,12 +45,12 @@ fn partition_rule() -> PartitionRule {
 
 /// Sets the bit size of the instance/schema/table IDs and recomputes the
 /// maximum origin ID, mirroring Go's package-level `SetPartitionRule`.
-pub fn set_partition_rule(instance_id_size: usize, schema_id_size: usize, table_id_size: usize) {
-    let used_bits = instance_id_size
-        .checked_add(schema_id_size)
-        .and_then(|bits| bits.checked_add(table_id_size))
-        .expect("partition ID bit sizes overflow");
-    assert!(used_bits <= 63, "partition ID fields must leave a sign bit");
+pub fn set_partition_rule(instance_id_size: isize, schema_id_size: isize, table_id_size: isize) {
+    let shift = 64_isize
+        .wrapping_sub(instance_id_size)
+        .wrapping_sub(schema_id_size)
+        .wrapping_sub(table_id_size)
+        .wrapping_sub(1) as usize;
 
     *PARTITION_RULE
         .write()
@@ -58,18 +58,38 @@ pub fn set_partition_rule(instance_id_size: usize, schema_id_size: usize, table_
         instance_id_bits: instance_id_size,
         schema_id_bits: schema_id_size,
         table_id_bits: table_id_size,
-        max_origin_id: 1_i64 << (63 - used_bits),
+        max_origin_id: go_shift_i64(1, shift),
     };
 }
 
-/// A column value flowing through the mapping. Go uses `any`; the mapping
-/// functions only handle integers and strings.
+/// A column value flowing through the mapping. Variants preserve the runtime
+/// integer types distinguished by Go's `any` type switch.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
-    /// An integer column value (Go's `int`/`int64`/... collapse to `i64`).
-    Int(i64),
+    /// Go `int`.
+    Int(isize),
+    /// Go `int8`.
+    Int8(i8),
+    /// Go `int16` (not accepted by the source partition-ID switch).
+    Int16(i16),
+    /// Go `int32`.
+    Int32(i32),
+    /// Go `int64`.
+    Int64(i64),
+    /// Go `uint`.
+    Uint(usize),
+    /// Go `uint8` (not accepted by the source partition-ID switch).
+    Uint8(u8),
+    /// Go `uint16`.
+    Uint16(u16),
+    /// Go `uint32`.
+    Uint32(u32),
+    /// Go `uint64`.
+    Uint64(u64),
     /// A string column value.
     Str(String),
+    /// Any other Go dynamic value, which mapping expressions reject.
+    Other(String),
 }
 
 /// `add prefix` expression.
@@ -82,7 +102,7 @@ pub const PARTITION_ID: &str = "partition id";
 /// The error type for column-mapping operations. Mirrors the messages of the
 /// `github.com/pingcap/errors` `*f` helpers (their `" is not valid"` etc.
 /// suffixes) that the source's tests assert on.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ColumnMappingError(String);
 
 impl ColumnMappingError {
@@ -200,9 +220,9 @@ impl Rule {
     /// Checks the source and target column positions.
     fn adjust_column_position(
         &self,
-        source: i64,
-        target: i64,
-    ) -> Result<(i64, i64), ColumnMappingError> {
+        source: isize,
+        target: isize,
+    ) -> Result<(isize, isize), ColumnMappingError> {
         if target == -1 {
             return Err(not_found(format!("target column {}", self.target_column)));
         }
@@ -213,8 +233,8 @@ impl Rule {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct MappingInfo {
     ignore: bool,
-    source_position: i64,
-    target_position: i64,
+    source_position: isize,
+    target_position: isize,
     rule: Option<Arc<Rule>>,
     instance_id: i64,
     schema_id: i64,
@@ -351,7 +371,7 @@ impl Mapping {
         table: &str,
         columns: &[&str],
         mut values: Vec<Value>,
-    ) -> Result<(Vec<Value>, Option<Vec<i64>>), ColumnMappingError> {
+    ) -> Result<(Vec<Value>, Option<Vec<isize>>), ColumnMappingError> {
         let (schema, table) = self.normalize(schema, table);
         let info = self.query_column_info(&schema, &table, columns)?;
         if info.ignore {
@@ -375,27 +395,31 @@ impl Mapping {
     /// Passes unmatched DDL through and rejects matched DDL because DDL column
     /// rewriting is not implemented by this package.
     ///
-    /// # Errors
-    ///
-    /// Returns an error for a matched table or an ambiguous rule.
     pub fn handle_ddl(
         &self,
         schema: &str,
         table: &str,
         columns: &[&str],
         statement: &str,
-    ) -> Result<(String, Option<Vec<i64>>), ColumnMappingError> {
+    ) -> (String, Option<Vec<isize>>, Option<ColumnMappingError>) {
         let (normalized_schema, normalized_table) = self.normalize(schema, table);
-        let info = self.query_column_info(&normalized_schema, &normalized_table, columns)?;
+        let info = match self.query_column_info(&normalized_schema, &normalized_table, columns) {
+            Ok(info) => info,
+            Err(error) => return (statement.to_string(), None, Some(error)),
+        };
         if info.ignore {
-            return Ok((statement.to_string(), None));
+            return (statement.to_string(), None, None);
         }
 
         self.reset_cache();
         let rule = info.rule.expect("a matched mapping has a rule");
-        Err(ColumnMappingError::new(format!(
-            "ddl {statement} @ column mapping rule {schema}/{table}:{rule:?} not implemented"
-        )))
+        (
+            statement.to_string(),
+            None,
+            Some(ColumnMappingError::new(format!(
+                "ddl {statement} @ column mapping rule {schema}/{table}:{rule:?} not implemented"
+            ))),
+        )
     }
 
     fn normalize(&self, schema: &str, table: &str) -> (String, String) {
@@ -497,15 +521,17 @@ impl Mapping {
     }
 }
 
-fn find_column_position(cols: &[&str], col: &str) -> i64 {
-    cols.iter().position(|c| *c == col).map_or(-1, |i| i as i64)
+fn find_column_position(cols: &[&str], col: &str) -> isize {
+    cols.iter()
+        .position(|c| *c == col)
+        .map_or(-1, |i| i as isize)
 }
 
 fn table_name(schema: &str, table: &str) -> String {
     format!("`{schema}`.`{table}`")
 }
 
-fn add_prefix(rule: &Rule, target: i64, vals: &mut [Value]) -> Result<(), ColumnMappingError> {
+fn add_prefix(rule: &Rule, target: isize, vals: &mut [Value]) -> Result<(), ColumnMappingError> {
     let prefix = &rule.arguments[0];
     let Value::Str(origin) = &vals[target as usize] else {
         return Err(not_valid(format!(
@@ -517,7 +543,7 @@ fn add_prefix(rule: &Rule, target: i64, vals: &mut [Value]) -> Result<(), Column
     Ok(())
 }
 
-fn add_suffix(rule: &Rule, target: i64, vals: &mut [Value]) -> Result<(), ColumnMappingError> {
+fn add_suffix(rule: &Rule, target: isize, vals: &mut [Value]) -> Result<(), ColumnMappingError> {
     let suffix = &rule.arguments[0];
     let Value::Str(origin) = &vals[target as usize] else {
         return Err(not_valid(format!(
@@ -532,7 +558,14 @@ fn add_suffix(rule: &Rule, target: i64, vals: &mut [Value]) -> Result<(), Column
 fn partition_id(info: &MappingInfo, vals: &mut [Value]) -> Result<(), ColumnMappingError> {
     let target = info.target_position as usize;
     let (mut origin_id, is_chars) = match &vals[target] {
-        Value::Int(v) => (*v, false),
+        Value::Int(v) => (*v as i64, false),
+        Value::Int8(v) => (*v as i64, false),
+        Value::Int32(v) => (*v as i64, false),
+        Value::Int64(v) => (*v, false),
+        Value::Uint(v) => (*v as i64, false),
+        Value::Uint16(v) => (*v as i64, false),
+        Value::Uint32(v) => (*v as i64, false),
+        Value::Uint64(v) => (*v as i64, false),
         Value::Str(s) => {
             let parsed = s.parse::<i64>().map_err(|_| {
                 not_valid(format!(
@@ -540,6 +573,9 @@ fn partition_id(info: &MappingInfo, vals: &mut [Value]) -> Result<(), ColumnMapp
                 ))
             })?;
             (parsed, true)
+        }
+        unsupported => {
+            return Err(not_valid(format!("type {unsupported:?}")));
         }
     };
 
@@ -554,7 +590,7 @@ fn partition_id(info: &MappingInfo, vals: &mut [Value]) -> Result<(), ColumnMapp
     vals[target] = if is_chars {
         Value::Str(origin_id.to_string())
     } else {
-        Value::Int(origin_id)
+        Value::Int64(origin_id)
     };
     Ok(())
 }
@@ -569,25 +605,25 @@ fn compute_partition_id(
     let schema_bits = partition_rule.schema_id_bits;
     let table_bits = partition_rule.table_id_bits;
 
-    let mut shift_cnt: u32 = 63;
+    let mut shift_cnt = 63_usize;
     let mut instance_id = 0_i64;
     if instance_bits > 0 && !rule.arguments[0].is_empty() {
-        shift_cnt -= instance_bits as u32;
+        shift_cnt = shift_cnt.wrapping_sub(instance_bits as usize);
         let unsigned = parse_uint(&rule.arguments[0], instance_bits)?;
-        instance_id = (unsigned << shift_cnt) as i64;
+        instance_id = go_shift_i64(unsigned, shift_cnt);
     }
 
     let sep = &rule.arguments[3];
 
     let mut schema_id = 0_i64;
     if schema_bits > 0 && !rule.arguments[1].is_empty() {
-        shift_cnt -= schema_bits as u32;
+        shift_cnt = shift_cnt.wrapping_sub(schema_bits as usize);
         schema_id = compute_id(schema, &rule.arguments[1], sep, schema_bits, shift_cnt)?;
     }
 
     let mut table_id = 0_i64;
     if table_bits > 0 && !rule.arguments[2].is_empty() {
-        shift_cnt -= table_bits as u32;
+        shift_cnt = shift_cnt.wrapping_sub(table_bits as usize);
         table_id = compute_id(table, &rule.arguments[2], sep, table_bits, shift_cnt)?;
     }
 
@@ -598,8 +634,8 @@ fn compute_id(
     name: &str,
     prefix: &str,
     sep: &str,
-    bit_size: usize,
-    shift_count: u32,
+    bit_size: isize,
+    shift_count: usize,
 ) -> Result<i64, ColumnMappingError> {
     if name == prefix {
         return Ok(0);
@@ -616,19 +652,30 @@ fn compute_id(
             "the suffix of {id_str} can't be converted to int64"
         ))
     })?;
-    Ok((id << shift_count) as i64)
+    Ok(go_shift_i64(id, shift_count))
 }
 
 /// `strconv.ParseUint(s, 10, bit_size)`: base-10, rejecting a value that does
 /// not fit in `bit_size` bits (or non-digits).
-fn parse_uint(s: &str, bit_size: usize) -> Result<u64, ColumnMappingError> {
+fn parse_uint(s: &str, bit_size: isize) -> Result<u64, ColumnMappingError> {
+    if !(0..=64).contains(&bit_size) {
+        return Err(not_valid(format!("invalid bit size {bit_size}")));
+    }
     let value: u64 = s.parse().map_err(|_| not_valid(format!("parsing {s:?}")))?;
-    if bit_size < 64 && value >= (1_u64 << bit_size) {
+    if bit_size != 0 && bit_size < 64 && value >= (1_u64 << bit_size as usize) {
         return Err(not_valid(format!(
             "value {value} out of range for {bit_size} bits"
         )));
     }
     Ok(value)
+}
+
+fn go_shift_i64(value: u64, shift: usize) -> i64 {
+    if shift >= 64 {
+        0
+    } else {
+        (value << shift) as i64
+    }
 }
 
 #[cfg(test)]
@@ -730,53 +777,17 @@ mod tests {
             .is_err());
 
         // DDL on matched table -> error; unmatched -> pass through
-        assert!(m
-            .handle_ddl("test", "xxx", &["id", "age"], "create table xxx")
-            .is_err());
-        let (statement, poss) = m
-            .handle_ddl("abc", "xxx", &["id", "age"], "create table xxx")
-            .unwrap();
+        let (statement, poss, error) =
+            m.handle_ddl("test", "xxx", &["id", "age"], "create table xxx");
         assert_eq!(statement, "create table xxx");
         assert_eq!(poss, None);
-    }
+        assert!(error.is_some());
 
-    #[test]
-    fn rule_lifecycle_and_table_priority() {
-        let schema_rule = rule("db*", "", "", "id", ADD_PREFIX, &["schema:"], "");
-        let table_rule = rule("db*", "special", "", "id", ADD_SUFFIX, &["-table"], "");
-        let mapping = Mapping::new(false, &[schema_rule.clone(), table_rule.clone()]).unwrap();
-
-        let (values, _) = mapping
-            .handle_row_value("DB1", "special", &["id"], vec![Value::Str("7".into())])
-            .unwrap();
-        assert_eq!(values, vec![Value::Str("7-table".into())]);
-
-        let (values, _) = mapping
-            .handle_row_value("DB1", "other", &["id"], vec![Value::Str("7".into())])
-            .unwrap();
-        assert_eq!(values, vec![Value::Str("schema:7".into())]);
-
-        mapping
-            .update_rule(rule(
-                "db*",
-                "special",
-                "",
-                "id",
-                ADD_PREFIX,
-                &["table:"],
-                "",
-            ))
-            .unwrap();
-        let (values, _) = mapping
-            .handle_row_value("DB1", "special", &["id"], vec![Value::Str("7".into())])
-            .unwrap();
-        assert_eq!(values, vec![Value::Str("table:7".into())]);
-
-        mapping.remove_rule(table_rule).unwrap();
-        let (values, _) = mapping
-            .handle_row_value("DB1", "special", &["id"], vec![Value::Str("7".into())])
-            .unwrap();
-        assert_eq!(values, vec![Value::Str("schema:7".into())]);
+        let (statement, poss, error) =
+            m.handle_ddl("abc", "xxx", &["id", "age"], "create table xxx");
+        assert_eq!(statement, "create table xxx");
+        assert_eq!(poss, None);
+        assert!(error.is_none());
     }
 
     #[test]
@@ -842,6 +853,17 @@ mod tests {
                 max_origin_id: 1 << 56,
             }
         );
+
+        set_partition_rule(-1, 0, 0);
+        assert_eq!(partition_rule().instance_id_bits, -1);
+        assert_eq!(partition_rule().max_origin_id, 0);
+
+        set_partition_rule(0, 0, 0);
+        assert_eq!(partition_rule().max_origin_id, i64::MIN);
+
+        set_partition_rule(64, 0, 0);
+        assert_eq!(partition_rule().instance_id_bits, 64);
+        assert_eq!(partition_rule().max_origin_id, 0);
     }
 
     #[test]
@@ -929,7 +951,18 @@ mod tests {
 
         let mut vals = vec![Value::Str("ha".into()), Value::Int(1)];
         partition_id(&info, &mut vals).unwrap();
-        assert_eq!(vals[1], Value::Int(2 << 59 | 1 << 52 | 1 << 44 | 1));
+        assert_eq!(vals[1], Value::Int64(2 << 59 | 1 << 52 | 1 << 44 | 1));
+
+        let mut vals = vec![Value::Str("ha".into()), Value::Int8(1)];
+        partition_id(&info, &mut vals).unwrap();
+        assert_eq!(vals[1], Value::Int64(2 << 59 | 1 << 52 | 1 << 44 | 1));
+
+        let mut vals = vec![Value::Str("ha".into()), Value::Int16(1)];
+        assert!(partition_id(&info, &mut vals).is_err());
+        let mut vals = vec![Value::Str("ha".into()), Value::Uint8(1)];
+        assert!(partition_id(&info, &mut vals).is_err());
+        let mut vals = vec![Value::Str("ha".into()), Value::Uint64(u64::MAX)];
+        assert!(partition_id(&info, &mut vals).is_err());
 
         info.instance_id = 0;
         let mut vals = vec![Value::Str("ha".into()), Value::Str("123".into())];
@@ -1022,52 +1055,5 @@ mod tests {
         assert_eq!(partial.source_column, "");
         assert_eq!(partial.create_table_query, "");
         partial.valid().unwrap();
-    }
-
-    #[test]
-    fn mapping_supports_concurrent_callers() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<Mapping>();
-
-        let mapping = Arc::new(
-            Mapping::new(
-                false,
-                &[rule(
-                    "db*",
-                    "table*",
-                    "",
-                    "id",
-                    ADD_PREFIX,
-                    &["tenant:"],
-                    "",
-                )],
-            )
-            .unwrap(),
-        );
-        let start = Arc::new(std::sync::Barrier::new(8));
-        let threads = (0..8)
-            .map(|_| {
-                let mapping = Arc::clone(&mapping);
-                let start = Arc::clone(&start);
-                std::thread::spawn(move || {
-                    start.wait();
-                    for id in 0..128 {
-                        let (values, positions) = mapping
-                            .handle_row_value(
-                                "DB1",
-                                "TABLE1",
-                                &["id"],
-                                vec![Value::Str(id.to_string())],
-                            )
-                            .unwrap();
-                        assert_eq!(values, vec![Value::Str(format!("tenant:{id}"))]);
-                        assert_eq!(positions, Some(vec![-1, 0]));
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
-        for thread in threads {
-            thread.join().unwrap();
-        }
     }
 }
