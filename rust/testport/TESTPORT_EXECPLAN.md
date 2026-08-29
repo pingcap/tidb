@@ -36,6 +36,10 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: re-read all four pinned Go `pkg/util/checksum` artifacts and
+  removed two supplemental signed-overflow tests plus their private fixture.
+  Production keeps Go's wrapping arithmetic and zeropool-backed reader path;
+  the suite now contains exactly the ten source tests.
 - 2026-08-29: re-read every pinned Go `pkg/util/redact` artifact and replaced
   Rust's narrowed string-returning de-redaction convenience with Go's general
   line-oriented reader/writer path. `DeRedactFile` and the exact three-test

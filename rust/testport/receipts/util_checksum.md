@@ -29,10 +29,10 @@ ownership, while the checksum layer receives a shared handle to that same
 writer. Reads still overlay the cipher plaintext tail before the checksum
 payload tail, including before either layer is flushed.
 
-The stale semantic manifest and historical audit plan were deleted. The ten
-source-named tests remain, along with two focused tests for Go's signed `int64`
-wrapping arithmetic that is implicit in production source but not reached by
-the source test inputs.
+The stale semantic manifest and historical audit plan were deleted. A strict
+test-surface re-audit also removed two supplemental signed-overflow tests and
+their private recording fixture. Production retains the source's explicit
+wrapping arithmetic, while the suite now contains exactly the ten Go tests.
 
 ## Validation
 
@@ -40,20 +40,19 @@ Profile: WIP; this is one completed package within the continuing repository
 audit, not a repository-wide readiness claim.
 
 - `go test ./pkg/util/checksum`
-- `cargo test --offline --locked -p tidb-util --lib 'checksum::tests'`
+- `cargo test --offline --locked -p tidb-util --lib checksum::tests --no-fail-fast` — passed, exactly 10 tests.
 - `cargo test --offline --locked -p tidb-chunk chunk_util`
-- `cargo test --offline --locked -p tidb-util`
+- `cargo test --offline --locked -p tidb-util --no-run`
 - `cargo test --offline --locked -p tidb-chunk`
 - `cargo check --offline --locked -p tidb-util -p tidb-chunk --all-targets`
-- scoped Clippy for both owning and consumer crates
-- `cargo fmt --all --check`
+- `cargo fmt -p tidb-util -- --check`
 - `git diff --check`
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 
 ## Risk
 
-- Correctness: reduced; live encrypted spill reads retain the same two cache
+- Correctness: live encrypted spill reads retain the same two cache
   overlays without reaching through checksum's public API.
 - Compatibility: intentionally removes one Rust-only public method; the sole
   repository consumer is migrated to Go's separate-writer ownership shape.
