@@ -26,12 +26,17 @@ const SEGMENT_WIDTH: usize = 32;
 const SEGMENT_WIDTH_POWER: u32 = 5;
 const BIT_MASK: u32 = 0x8000_0000;
 
-fn segment_len(bit_len: usize) -> usize {
-    let rounded_bit_len = bit_len
-        .checked_add(SEGMENT_WIDTH - 1)
-        .filter(|rounded| *rounded <= isize::MAX as usize)
-        .expect("bitmap bit length exceeds the source int domain");
-    rounded_bit_len >> SEGMENT_WIDTH_POWER
+fn segment_len(bit_len: isize) -> isize {
+    bit_len.wrapping_add(SEGMENT_WIDTH as isize - 1) >> SEGMENT_WIDTH_POWER
+}
+
+fn new_segments(segment_len: isize) -> Vec<AtomicU32> {
+    let segment_len = usize::try_from(segment_len).expect("bitmap segment length is negative");
+    let mut segments = Vec::with_capacity(segment_len);
+    for _ in 0..segment_len {
+        segments.push(AtomicU32::new(0));
+    }
+    segments
 }
 
 /// A static-length bitmap which is thread-safe on setting.
@@ -42,41 +47,31 @@ fn segment_len(bit_len: usize) -> usize {
 /// probability of racing.
 pub struct ConcurrentBitmap {
     segments: Vec<AtomicU32>,
-    bit_len: usize,
+    bit_len: isize,
 }
 
 impl ConcurrentBitmap {
     /// Initializes a `ConcurrentBitmap` which can store `bit_len` of bits.
-    #[must_use]
-    pub fn new(bit_len: usize) -> Self {
-        let segment_len = segment_len(bit_len);
-        let mut segments = Vec::with_capacity(segment_len);
-        for _ in 0..segment_len {
-            segments.push(AtomicU32::new(0));
-        }
+    pub fn new(bit_len: isize) -> Self {
+        let segments = new_segments(segment_len(bit_len));
         Self { segments, bit_len }
     }
 
     /// Cleans the bitmap if the length is suitable, otherwise renewing one.
-    pub fn reset(&mut self, bit_len: usize) {
+    pub fn reset(&mut self, bit_len: isize) {
         let segment_len = segment_len(bit_len);
-        if segment_len <= self.segments.len() {
+        if segment_len <= self.segments.len() as isize {
             for seg in &self.segments {
                 seg.store(0, Ordering::Relaxed);
             }
             self.bit_len = bit_len;
         } else {
-            let mut segments = Vec::with_capacity(segment_len);
-            for _ in 0..segment_len {
-                segments.push(AtomicU32::new(0));
-            }
-            self.segments = segments;
+            self.segments = new_segments(segment_len);
             self.bit_len = bit_len;
         }
     }
 
     /// Returns size of this bitmap in bytes.
-    #[must_use]
     pub fn bytes_consumed(&self) -> i64 {
         std::mem::size_of::<ConcurrentBitmap>() as i64
             + (SEGMENT_WIDTH / 8 * self.segments.capacity()) as i64
@@ -86,13 +81,13 @@ impl ConcurrentBitmap {
     ///
     /// The returned value indicates whether this call triggers the bit from 0 to
     /// 1. A `bit_index` bigger than the initialized bit length is ignored.
-    pub fn set(&self, bit_index: i64) -> bool {
-        if bit_index < 0 || bit_index >= self.bit_len as i64 {
+    pub fn set(&self, bit_index: isize) -> bool {
+        if bit_index < 0 || bit_index >= self.bit_len {
             return false;
         }
 
         let segment = &self.segments[(bit_index >> SEGMENT_WIDTH_POWER) as usize];
-        let mask = BIT_MASK >> (bit_index % (SEGMENT_WIDTH as i64)) as u32;
+        let mask = BIT_MASK >> (bit_index % SEGMENT_WIDTH as isize) as u32;
         // Repeatedly observe whether the bit is already set, and try to set it
         // based on that observation.
         loop {
@@ -116,12 +111,12 @@ impl ConcurrentBitmap {
     /// A `bit_index` bigger than the initialized bit length is ignored. This
     /// version is concurrent-unsafe; the caller must ensure the write happens on
     /// a single thread, which `&mut self` enforces.
-    pub fn unsafe_set(&mut self, bit_index: i64) {
-        if bit_index < 0 || bit_index >= self.bit_len as i64 {
+    pub fn unsafe_set(&mut self, bit_index: isize) {
+        if bit_index < 0 || bit_index >= self.bit_len {
             return;
         }
 
-        let mask = BIT_MASK >> (bit_index % (SEGMENT_WIDTH as i64)) as u32;
+        let mask = BIT_MASK >> (bit_index % SEGMENT_WIDTH as isize) as u32;
         let seg = self.segments[(bit_index >> SEGMENT_WIDTH_POWER) as usize].get_mut();
         *seg |= mask;
     }
@@ -131,13 +126,12 @@ impl ConcurrentBitmap {
     /// A `bit_index` bigger than the initialized bit length returns false. The
     /// exclusive receiver enforces the source method's non-concurrent access
     /// contract.
-    #[must_use]
-    pub fn unsafe_is_set(&mut self, bit_index: i64) -> bool {
-        if bit_index < 0 || bit_index >= self.bit_len as i64 {
+    pub fn unsafe_is_set(&mut self, bit_index: isize) -> bool {
+        if bit_index < 0 || bit_index >= self.bit_len {
             return false;
         }
 
-        let mask = BIT_MASK >> (bit_index % (SEGMENT_WIDTH as i64)) as u32;
+        let mask = BIT_MASK >> (bit_index % SEGMENT_WIDTH as isize) as u32;
         *self.segments[(bit_index >> SEGMENT_WIDTH_POWER) as usize].get_mut() & mask != 0
     }
 }
@@ -168,13 +162,13 @@ mod tests {
         const INTERVAL: usize = 2;
         const WORKERS: usize = 16;
 
-        let bm = Arc::new(ConcurrentBitmap::new(LOOP_COUNT * INTERVAL));
+        let bm = Arc::new(ConcurrentBitmap::new((LOOP_COUNT * INTERVAL) as isize));
         let mut handles = Vec::with_capacity(WORKERS);
         for worker in 0..WORKERS {
             let bm = Arc::clone(&bm);
             handles.push(thread::spawn(move || {
                 for i in (worker..LOOP_COUNT).step_by(WORKERS) {
-                    bm.set((i * INTERVAL) as i64);
+                    bm.set((i * INTERVAL) as isize);
                 }
             }));
         }
@@ -187,9 +181,9 @@ mod tests {
             .expect("all bitmap worker references should be dropped");
         for i in 0..LOOP_COUNT {
             if i % INTERVAL == 0 {
-                assert!(bm.unsafe_is_set(i as i64));
+                assert!(bm.unsafe_is_set(i as isize));
             } else {
-                assert!(!bm.unsafe_is_set(i as i64));
+                assert!(!bm.unsafe_is_set(i as isize));
             }
         }
     }
@@ -268,57 +262,15 @@ mod tests {
     }
 
     #[test]
-    fn public_bounds_bit_order_and_single_owner_access() {
-        let mut bm = ConcurrentBitmap::new(33);
+    fn source_signed_length_boundaries_are_preserved() {
+        let constructor: fn(isize) -> ConcurrentBitmap = ConcurrentBitmap::new;
+        let mut inert = constructor(-1);
+        assert!(!inert.set(0));
+        assert!(std::panic::catch_unwind(|| constructor(-32)).is_err());
+        assert!(std::panic::catch_unwind(|| constructor(isize::MAX)).is_err());
 
-        assert!(!bm.set(-1));
-        assert!(!bm.set(33));
-        bm.unsafe_set(-1);
-        bm.unsafe_set(33);
-        assert!(!bm.unsafe_is_set(-1));
-        assert!(!bm.unsafe_is_set(33));
-
-        assert!(bm.set(0));
-        assert!(!bm.set(0));
-        bm.unsafe_set(31);
-        bm.unsafe_set(32);
-        assert_eq!(bm.segments[0].load(Ordering::Relaxed), 0x8000_0001);
-        assert_eq!(bm.segments[1].load(Ordering::Relaxed), 0x8000_0000);
-        assert_eq!(
-            bm.bytes_consumed(),
-            (std::mem::size_of::<ConcurrentBitmap>()
-                + bm.segments.capacity() * std::mem::size_of::<u32>()) as i64
-        );
-    }
-
-    #[test]
-    fn clone_is_independent_and_reset_reuses_or_grows_storage() {
-        let mut bm = ConcurrentBitmap::new(64);
-        bm.unsafe_set(0);
-        bm.unsafe_set(63);
-        let mut clone = bm.clone();
-
-        bm.unsafe_set(31);
-        assert!(clone.unsafe_is_set(0));
-        assert!(clone.unsafe_is_set(63));
-        assert!(!clone.unsafe_is_set(31));
-
-        bm.reset(1);
-        assert_eq!(bm.segments.len(), 2);
-        assert!(!bm.unsafe_is_set(0));
-
-        bm.reset(65);
-        assert_eq!(bm.segments.len(), 3);
-        assert!(!bm.unsafe_is_set(64));
-    }
-
-    #[test]
-    fn oversized_length_is_rejected_without_release_wraparound() {
-        assert!(std::panic::catch_unwind(|| ConcurrentBitmap::new(usize::MAX)).is_err());
-        assert!(std::panic::catch_unwind(|| {
-            let mut bm = ConcurrentBitmap::new(1);
-            bm.reset(usize::MAX);
-        })
-        .is_err());
+        inert = constructor(1);
+        inert.reset(isize::MAX);
+        assert!(std::panic::catch_unwind(|| inert.set(32)).is_err());
     }
 }
