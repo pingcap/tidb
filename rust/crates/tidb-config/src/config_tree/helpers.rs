@@ -42,7 +42,7 @@ pub fn valid_max_allowed_packet(v: u64) -> bool {
 
 /// Appends configured suffixes to matching user-facing errors (Go
 /// `ErrorMessageExtension`).
-#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ErrorMessageExtension {
     /// The (anchored) pattern to match against SQL errors.
@@ -51,7 +51,21 @@ pub struct ErrorMessageExtension {
     /// The suffix appended to matching errors.
     #[serde(rename = "suffix")]
     pub suffix: String,
+    /// Prepared matcher populated when the global config is published.
+    #[serde(skip)]
+    pub regexp: Option<regex::Regex>,
 }
+
+impl PartialEq for ErrorMessageExtension {
+    fn eq(&self, other: &Self) -> bool {
+        self.pattern == other.pattern
+            && self.suffix == other.suffix
+            && self.regexp.as_ref().map(regex::Regex::as_str)
+                == other.regexp.as_ref().map(regex::Regex::as_str)
+    }
+}
+
+impl Eq for ErrorMessageExtension {}
 
 /// Prepares/validates error-message extensions (Go
 /// `prepareErrorMessageExtensions`): compiles each pattern, drops or errors
@@ -74,15 +88,20 @@ pub fn prepare_error_message_extensions(
         }
         // Go uses RE2 (regex crate is also RE2-based): operator patterns
         // cannot cause catastrophic backtracking.
-        if regex::Regex::new(&ext.pattern).is_err() {
-            let msg = format!("invalid error-msg-extension regexp {:?}", ext.pattern);
-            if ignore_invalid {
-                first_err.get_or_insert(msg);
-                continue;
+        let matcher = match regex::Regex::new(&ext.pattern) {
+            Ok(matcher) => matcher,
+            Err(_) => {
+                let msg = format!("invalid error-msg-extension regexp {:?}", ext.pattern);
+                if ignore_invalid {
+                    first_err.get_or_insert(msg);
+                    continue;
+                }
+                return Err(msg);
             }
-            return Err(msg);
-        }
-        prepared.push(ext.clone());
+        };
+        let mut prepared_extension = ext.clone();
+        prepared_extension.regexp = Some(matcher);
+        prepared.push(prepared_extension);
     }
     prepared.sort_by(|a, b| {
         if a.pattern.len() != b.pattern.len() {
@@ -415,6 +434,7 @@ mod tests {
         let exts = vec![ErrorMessageExtension {
             pattern: "[".into(),
             suffix: "x".into(),
+            ..Default::default()
         }];
         assert!(prepare_error_message_extensions(&exts, false)
             .unwrap_err()
@@ -424,6 +444,7 @@ mod tests {
         let exts = vec![ErrorMessageExtension {
             pattern: " \t".into(),
             suffix: "x".into(),
+            ..Default::default()
         }];
         assert!(prepare_error_message_extensions(&exts, false)
             .unwrap_err()
@@ -434,10 +455,12 @@ mod tests {
             ErrorMessageExtension {
                 pattern: "".into(),
                 suffix: "empty".into(),
+                ..Default::default()
             },
             ErrorMessageExtension {
                 pattern: "^ok$".into(),
                 suffix: "good".into(),
+                ..Default::default()
             },
         ];
         let (prepared, first) = prepare_error_message_extensions(&exts, true).unwrap();
@@ -450,14 +473,17 @@ mod tests {
             ErrorMessageExtension {
                 pattern: "ab".into(),
                 suffix: "".into(),
+                ..Default::default()
             },
             ErrorMessageExtension {
                 pattern: "abcd".into(),
                 suffix: "".into(),
+                ..Default::default()
             },
             ErrorMessageExtension {
                 pattern: "aa".into(),
                 suffix: "".into(),
+                ..Default::default()
             },
         ];
         let (prepared, _) = prepare_error_message_extensions(&exts, false).unwrap();

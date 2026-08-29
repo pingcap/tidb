@@ -1151,6 +1151,7 @@ metric-label = "keyspace_meta_label_a"
         config.error_message_extensions = vec![ErrorMessageExtension {
             pattern: "^Access denied$".to_owned(),
             suffix: "see documentation".to_owned(),
+            ..Default::default()
         }];
         store_global_config(config);
 
@@ -1170,6 +1171,7 @@ metric-label = "keyspace_meta_label_a"
         config.error_message_extensions = vec![ErrorMessageExtension {
             pattern: "[".to_owned(),
             suffix: "invalid regexp".to_owned(),
+            ..Default::default()
         }];
         assert!(config
             .valid()
@@ -1181,6 +1183,7 @@ metric-label = "keyspace_meta_label_a"
         config.error_message_extensions = vec![ErrorMessageExtension {
             pattern: " \t".to_owned(),
             suffix: "missing pattern".to_owned(),
+            ..Default::default()
         }];
         assert!(config
             .valid()
@@ -1191,6 +1194,7 @@ metric-label = "keyspace_meta_label_a"
         config.error_message_extensions = vec![ErrorMessageExtension {
             pattern: ".*".to_owned(),
             suffix: "not allowed".to_owned(),
+            ..Default::default()
         }];
         assert!(config
             .valid()

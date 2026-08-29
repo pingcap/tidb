@@ -26,7 +26,7 @@
 
 pub mod big_sections;
 pub mod config;
-pub mod errmsg;
+mod errmsg;
 pub mod helpers;
 pub mod load;
 pub mod log_instance;
@@ -35,7 +35,6 @@ pub mod sections;
 
 pub use big_sections::{Performance, Security, Status};
 pub use config::{new_config, Config};
-pub use errmsg::{extend_error_message, extended_error_message};
 pub use helpers::{
     flatten_config_items, prepare_error_message_extensions, valid_max_allowed_packet, Cse,
     ErrorMessageExtension, TrxSummary, DEF_MAX_ALLOWED_PACKET,

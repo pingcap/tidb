@@ -784,27 +784,33 @@ error-msg-extension = [
                 pattern: r"^Access denied for user '.+'@'.+' \(using password: (YES|NO)\)$"
                     .to_owned(),
                 suffix: "see https://docs.pingcap.com/tidbcloud/select-cluster-tier#user-name-prefix for more details".to_owned(),
+                ..Default::default()
             },
             ErrorMessageExtension {
                 pattern: r"^require_secure_transport can not be set to ON with SEM\(security enhanced mode\) enabled$".to_owned(),
                 suffix: "see https://docs.pingcap.com/tidbcloud/secure-connections-to-serverless-tier-clusters for more details".to_owned(),
+                ..Default::default()
             },
             ErrorMessageExtension {
                 pattern: r"^sleep\(\) argument is greater than [0-9]+$".to_owned(),
                 suffix: "see https://docs.pingcap.com/tidbcloud/serverless-tier-limitations#sql for more details".to_owned(),
+                ..Default::default()
             },
             ErrorMessageExtension {
                 pattern: "^[A-Z ]+ command denied to user '[^']+'@'[^']+' for table '[^']+'$".to_owned(),
                 suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-tables for more details".to_owned(),
+                ..Default::default()
             },
             ErrorMessageExtension {
                 pattern: r"^Access denied; you need \(at least one of\) the RESTRICTED_VARIABLES_ADMIN privilege\(s\) for this operation$".to_owned(),
                 suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-variables for more details".to_owned(),
+                ..Default::default()
             },
             ErrorMessageExtension {
                 pattern: "^Feature '.+' is not supported when security enhanced mode is enabled$"
                     .to_owned(),
                 suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#statements for more details".to_owned(),
+                ..Default::default()
             },
         ];
 

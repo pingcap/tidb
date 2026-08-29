@@ -3292,6 +3292,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-errmsg"
+version = "0.0.0"
+dependencies = [
+ "tidb-config",
+ "tidb-error",
+]
+
+[[package]]
 name = "tidb-error"
 version = "0.0.0"
 dependencies = [
@@ -3629,6 +3637,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-distsql",
  "tidb-domain",
+ "tidb-errmsg",
  "tidb-error",
  "tidb-exec",
  "tidb-executor",

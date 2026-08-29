@@ -12,34 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Configured SQL-error suffixes from `pkg/util/errmsg`.
+//! Prepared error-message-extension snapshots owned by `pkg/config`.
 
 use std::sync::{Arc, OnceLock, RwLock};
 
-use regex::Regex;
-
 use super::helpers::ErrorMessageExtension;
 
-struct PreparedExtension {
-    source: ErrorMessageExtension,
-    matcher: Regex,
-}
-
-fn prepared_extensions() -> &'static RwLock<Arc<[PreparedExtension]>> {
-    static PREPARED: OnceLock<RwLock<Arc<[PreparedExtension]>>> = OnceLock::new();
+fn prepared_extensions() -> &'static RwLock<Arc<[ErrorMessageExtension]>> {
+    static PREPARED: OnceLock<RwLock<Arc<[ErrorMessageExtension]>>> = OnceLock::new();
     PREPARED.get_or_init(|| RwLock::new(Arc::from([])))
 }
 
 pub(crate) fn replace_prepared_extensions(extensions: &[ErrorMessageExtension]) {
-    let prepared: Arc<[PreparedExtension]> = extensions
-        .iter()
-        .map(|source| PreparedExtension {
-            matcher: Regex::new(&source.pattern)
-                .expect("validated error-message extension must compile"),
-            source: source.clone(),
-        })
-        .collect::<Vec<_>>()
-        .into();
+    let prepared: Arc<[ErrorMessageExtension]> = extensions.to_vec().into();
     *prepared_extensions()
         .write()
         .expect("prepared error message extensions lock poisoned") = prepared;
@@ -50,37 +35,6 @@ pub(crate) fn configured_extensions() -> Vec<ErrorMessageExtension> {
         .read()
         .expect("prepared error message extensions lock poisoned")
         .iter()
-        .map(|extension| extension.source.clone())
+        .cloned()
         .collect()
-}
-
-/// Returns the first configured extension of `message`, if any.
-///
-/// The returned string has the source `", suffix."` form and trailing periods
-/// are normalized only when a matcher applies.
-#[must_use]
-pub fn extended_error_message(message: &str) -> Option<String> {
-    let extensions = Arc::clone(
-        &prepared_extensions()
-            .read()
-            .expect("prepared error message extensions lock poisoned"),
-    );
-    for extension in extensions.iter() {
-        if extension.source.suffix.is_empty() || !extension.matcher.is_match(message) {
-            continue;
-        }
-        return Some(format!(
-            "{}, {}.",
-            message.trim_end_matches('.'),
-            extension.source.suffix.trim_end_matches('.')
-        ));
-    }
-    None
-}
-
-/// Mutates one SQL-error message with its first configured suffix.
-pub fn extend_error_message(message: &mut String) {
-    if let Some(extended) = extended_error_message(message) {
-        *message = extended;
-    }
 }

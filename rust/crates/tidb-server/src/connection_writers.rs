@@ -257,9 +257,15 @@ pub(crate) fn write_error<O: ConnectionPacketOutput + ?Sized>(
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
     let message = message.as_ref();
-    let extended = std::str::from_utf8(message)
-        .ok()
-        .and_then(tidb_config::config_tree::extended_error_message);
+    let extended = std::str::from_utf8(message).ok().map(|message| {
+        let mut error = tidb_error::mysql::SqlError {
+            code,
+            message: message.to_owned(),
+            state: "HY000",
+        };
+        tidb_errmsg::extend(Some(&mut error));
+        error.message
+    });
     let message = extended.as_deref().map(str::as_bytes).unwrap_or(message);
     let payload = encode_error_packet(&ErrorPacket::new(code, state, message, protocol_41));
     write_payload(output, sequence, &payload)
@@ -480,6 +486,7 @@ mod tests {
         config.error_message_extensions = vec![ErrorMessageExtension {
             pattern: "^Access denied$".to_owned(),
             suffix: "see the operator guide.".to_owned(),
+            ..Default::default()
         }];
         store_global_config(config);
 

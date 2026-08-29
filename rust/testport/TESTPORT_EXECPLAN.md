@@ -155,6 +155,14 @@ For each bounded behavior cluster:
   source `RemoveCharset` slice-mutation behavior. The regenerated tables are
   unchanged and the complete source/Rust/downstream validation is recorded in
   `receipts/parser_charset.md`.
+- 2026-08-28: audited every production, test, and build file in pinned Go
+  `pkg/util/errmsg`. Moved the behavior out of the config crate's Rust-only
+  string helper into a dedicated `tidb-errmsg` owner with Go's SQL-error
+  mutation API, reused the regular expressions prepared during global-config
+  publication, wired the ordinary MySQL error packet path, and transcreated
+  all five source tests including the complete twelve-row regex table and
+  concurrent publication case. The complete inventory and gates are recorded
+  in `receipts/b152.md`.
 - 2026-08-28: audited every production, generated catalog/table, test,
   harness, and build file in pinned Go `pkg/parser/mysql`, including its
   `tidb-error` ownership split. Removed a Rust-only test that failed on host Go
