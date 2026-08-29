@@ -987,6 +987,10 @@ pub trait QuerySession {
     /// Starts one sequential query and returns its lazy result owner.
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError>;
 
+    /// Go `clientConn.addQueryMetrics`' transaction-write SLI finalizer,
+    /// called after the SQL command has written its response.
+    fn finish_execute_stmt(&mut self, _cost: Duration) {}
+
     /// Splits one COM_QUERY text into the statements the connection runs in
     /// order — Go `handleQuery` parses the whole text and loops the result
     /// (`conn.go:1861`). More than one statement is admitted by the client's

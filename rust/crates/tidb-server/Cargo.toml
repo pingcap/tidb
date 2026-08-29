@@ -55,6 +55,7 @@ tidb-config = { path = "../tidb-config" }
 toml.workspace = true
 
 [dev-dependencies]
+fail = { version = "0.4", features = ["failpoints"] }
 prost.workspace = true
 # The TLS tests act as a real client against this node's own material.
 rcgen.workspace = true
@@ -81,4 +82,5 @@ path = "tests/configured_user_store_source.rs"
 # (the global_allocator in src/bin/tidb-server.rs). The opt-out exists
 # for builds that must stay on the platform allocator.
 default = ["jemalloc"]
+failpoints = ["tidb-util/failpoints"]
 jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]

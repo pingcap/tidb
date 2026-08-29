@@ -16,45 +16,60 @@ to the pin.
 
 ## Rust ownership and audit result
 
-`rust/crates/tidb-util/src/sli.rs` is the sole package owner. The audit moved
-the implementation out of the unrelated `tidb-exec` compatibility crate and
-removed its Rust-only observation return type, public field accessors, public
-constructor, per-instance failpoint switch, clone/equality surface, synthetic
-KV-size fixtures, and supplementary tests that did not execute Go's session,
-executor, or storage integration.
+`rust/crates/tidb-util/src/sli.rs` is the package owner. It preserves Go's
+zero-valued accumulator, signed `time.Duration` nanoseconds, native-width
+`int` counters, wrapping accumulation, validity/small-transaction rules,
+metric selection, exact metric metadata/buckets, reset, string rendering, and
+`CheckTxnWriteThroughput` failpoint. Rust-only derives, accessors, observation
+values, synthetic size fixtures, and supplementary package-local tests remain
+removed.
 
-The retained implementation has Go's zero-valued accumulator and exported
-operations. `FinishExecuteStmt` now reports directly to the process Prometheus
-histograms and returns nothing. The histograms use the exact Go metric names,
-help text, exponential buckets, namespace, and subsystem.
+The required integration is implemented through ordinary owners rather than a
+separate SLI runner:
 
-Go's production integration is outside this package: `LazyTxn` owns the value,
-executor completion supplies commit/scan details, insert-select invalidates it,
-and the server supplies elapsed time and transaction state. Rust does not yet
-have a production path that exposes exact commit write bytes/keys from its
-storage transaction, so this package deliberately does not invent estimates or
-wire a partial metric that could report false throughput. That dependency is
-an explicit integration prerequisite, not behavior added to `pkg/util/sli`.
+- `tidb-session` owns one accumulator beside its transaction and invalidates
+  INSERT/REPLACE SELECT at execution;
+- `tidb-exec` and cluster storage expose actual final encoded mutation
+  bytes/keys and actual snapshot-processed keys; rows answered from the
+  transaction's own buffer are not counted as TiKV processed keys;
+- cluster and real-TiKV server sessions add those details only at successful
+  statement/commit completion and only add processed keys for affected writes;
+- the common MySQL text/prepared dispatch finalizes elapsed time, affected
+  rows, and current transaction state for cached and fresh plans alike.
+
+No affected-row byte estimate, backend threshold, or cache-specific execution
+path was added.
 
 ## Validation
 
 Profile: WIP; this is one completed package within the continuing repository
 audit, not a repository-wide readiness claim.
 
-- `go test ./pkg/util/sli` — blocked before this package compiled by the
-  workspace's existing `google.golang.org/grpc/internal/transport` /
-  `http2.TrailerPrefix` dependency mismatch.
-- `cargo test -p tidb-util --locked` — passed.
-- `cargo check -p tidb-exec --lib --locked` — passed.
-- `cargo fmt --all -- --check` and `git diff --check` — passed.
+- `GOCACHE=/private/tmp/tidb-go-build-cache go test ./pkg/util/sli` — blocked
+  before the package compiled by the workspace's existing
+  `google.golang.org/grpc/internal/transport` / `http2.TrailerPrefix`
+  dependency mismatch.
+- `cargo test --offline --locked -q -p tidb-server --features failpoints
+  --lib txn_write_throughput_sli_matches_source -- --nocapture` — passed the
+  complete Go external source-test scenario and exact state strings.
+- `cargo test --offline --locked -q -p tidb-executor --lib
+  cluster_storage::tests` — passed.
+- `cargo test --offline --locked -q -p tidb-exec --lib
+  real_tikv_dml::tests` — passed.
+- `cargo check --offline --locked -q -p tidb-session --lib` — passed.
+- `cargo check --offline --locked -q -p tidb-server --lib --features
+  failpoints` — passed.
+- scoped `cargo fmt` and `git diff --check` — passed.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 
 ## Risk
 
-- Correctness: reduced; the package no longer exposes a synthetic substitute
-  for metric reporting and keeps Go's accumulation, validity, threshold,
-  reset, and formatting behavior.
-- Compatibility: the unused `tidb-exec` module and Rust-only APIs are removed.
-- Performance: metric initialization occurs once; steady-state reporting is a
-  direct Prometheus histogram observation as in Go.
+- Correctness: exact encoded mutation and snapshot evidence replaces the
+  previous missing production integration; the Go source regression pins all
+  accumulator states, including failed-commit cleanup.
+- Compatibility: the accumulator is internal session state and the added
+  report fields are propagated through every existing Rust consumer.
+- Performance: write detail collection walks the final mutation set already
+  committed, and read-key collection remains disabled outside tracked write
+  statements; metric initialization remains one-time.

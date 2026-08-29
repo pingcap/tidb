@@ -1762,6 +1762,12 @@ pub enum ConfiguredWriteOutcome {
         affected_rows: u64,
         /// Warnings produced while planning this statement.
         warnings: Vec<ConfiguredWriteWarning>,
+        /// Go commit detail `WriteSize`: encoded key and value bytes.
+        write_size: isize,
+        /// Go commit detail `WriteKeys`: number of final mutations.
+        write_keys: isize,
+        /// Go scan detail `ProcessedKeys` observed while planning the write.
+        processed_keys: i64,
     },
     /// Nothing was published; the statement still has an affected-row count.
     NoPublication {
@@ -1773,6 +1779,8 @@ pub enum ConfiguredWriteOutcome {
         affected_rows: u64,
         /// Warnings raised while determining that no mutation is needed.
         warnings: Vec<ConfiguredWriteWarning>,
+        /// Go scan detail `ProcessedKeys` observed while planning the write.
+        processed_keys: i64,
     },
 }
 
@@ -1829,6 +1837,12 @@ pub struct ConfiguredWriteReport {
     pub no_write: Option<NoWriteReason>,
     /// Warnings the server must expose in the statement's OK packet.
     pub warnings: Vec<ConfiguredWriteWarning>,
+    /// Go commit detail `WriteSize`; zero when nothing was published.
+    pub write_size: isize,
+    /// Go commit detail `WriteKeys`; zero when nothing was published.
+    pub write_keys: isize,
+    /// Go scan detail `ProcessedKeys` for the statement.
+    pub processed_keys: i64,
 }
 
 /// Opens one transaction on the shared authority, publishes a bound write, and
@@ -1852,23 +1866,33 @@ pub fn commit_configured_write<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
             outcome,
             affected_rows,
             warnings,
+            write_size,
+            write_keys,
+            processed_keys,
         } => {
             classify_configured_write_commit_outcome(&outcome)?;
             Ok(ConfiguredWriteReport {
                 affected_rows,
                 no_write: None,
                 warnings,
+                write_size,
+                write_keys,
+                processed_keys,
             })
         }
         ConfiguredWriteOutcome::NoPublication {
             reason,
             affected_rows,
             warnings,
+            processed_keys,
             ..
         } => Ok(ConfiguredWriteReport {
             affected_rows,
             no_write: Some(reason),
             warnings,
+            write_size: 0,
+            write_keys: 0,
+            processed_keys,
         }),
     }
 }
@@ -1913,6 +1937,34 @@ where
     ) -> Result<Option<Vec<u8>>, ConfiguredWriteError> {
         Ok(self.snapshot_get(key, call)?.value)
     }
+}
+
+struct CountingWritePlanningSnapshot<'a, S> {
+    inner: &'a mut S,
+    processed_keys: i64,
+}
+
+impl<S: WritePlanningSnapshot> WritePlanningSnapshot for CountingWritePlanningSnapshot<'_, S> {
+    fn read_at_snapshot(
+        &mut self,
+        key: &[u8],
+        call: &UnaryCallContext,
+    ) -> Result<Option<Vec<u8>>, ConfiguredWriteError> {
+        let value = self.inner.read_at_snapshot(key, call)?;
+        if value.is_some() {
+            self.processed_keys = self.processed_keys.wrapping_add(1);
+        }
+        Ok(value)
+    }
+}
+
+fn mutation_write_details(mutations: &[OptimisticMutation]) -> (isize, isize) {
+    mutations
+        .iter()
+        .fold((0_isize, 0_isize), |(size, keys), mutation| {
+            let mutation_size = mutation.key().len().wrapping_add(mutation.value().len()) as isize;
+            (size.wrapping_add(mutation_size), keys.wrapping_add(1))
+        })
 }
 
 /// Plans one bound write against `snapshot` without publishing it.
@@ -1985,15 +2037,29 @@ where
     L: RegionRecoveryLoader,
     T: TimestampSource,
 {
-    match plan_configured_write(&mut transaction, write, call, session_tz)? {
+    let (plan, processed_keys) = {
+        let mut snapshot = CountingWritePlanningSnapshot {
+            inner: &mut transaction,
+            processed_keys: 0,
+        };
+        let plan = plan_configured_write(&mut snapshot, write, call, session_tz)?;
+        (plan, snapshot.processed_keys)
+    };
+    match plan {
         ConfiguredWritePlan::Write {
             mutations,
             affected_rows,
-        } => Ok(ConfiguredWriteOutcome::Published {
-            outcome: Box::new(transaction.commit(mutations, call)?),
-            affected_rows,
-            warnings: Vec::new(),
-        }),
+        } => {
+            let (write_size, write_keys) = mutation_write_details(&mutations);
+            Ok(ConfiguredWriteOutcome::Published {
+                outcome: Box::new(transaction.commit(mutations, call)?),
+                affected_rows,
+                warnings: Vec::new(),
+                write_size,
+                write_keys,
+                processed_keys,
+            })
+        }
         ConfiguredWritePlan::NoWrite {
             reason,
             affected_rows,
@@ -2002,6 +2068,7 @@ where
             reason,
             affected_rows,
             warnings: Vec::new(),
+            processed_keys,
         }),
         ConfiguredWritePlan::Ignore {
             mutations,
@@ -2012,17 +2079,22 @@ where
             reason: NoWriteReason::IgnoredDuplicate,
             affected_rows,
             warnings,
+            processed_keys,
         }),
         ConfiguredWritePlan::Ignore {
             mutations,
             affected_rows,
             warnings,
         } => {
+            let (write_size, write_keys) = mutation_write_details(&mutations);
             let outcome = transaction.commit(mutations, call)?;
             Ok(ConfiguredWriteOutcome::Published {
                 outcome: Box::new(outcome),
                 affected_rows,
                 warnings,
+                write_size,
+                write_keys,
+                processed_keys,
             })
         }
     }

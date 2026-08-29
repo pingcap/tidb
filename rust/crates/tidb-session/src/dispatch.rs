@@ -1694,6 +1694,9 @@ impl Session {
                             insert.rows.len() == 1,
                             enable_strict_not_null_check,
                         );
+                    if insert.source.is_some() {
+                        self.write_sli.set_invalid();
+                    }
                     let result = self.with_staged_catalog(|catalog| {
                         // Go executes the statement the protocol BOUND
                         // (`pkg/server`'s `statement`/`executableParams`

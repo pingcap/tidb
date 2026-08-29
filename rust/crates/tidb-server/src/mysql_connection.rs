@@ -1315,6 +1315,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 protocol_41,
             )?,
             Command::Query(bytes) => {
+                let query_started = std::time::Instant::now();
                 commands.text_query_commands += 1;
                 // `decode_command` has already trimmed exactly one terminal
                 // NUL for issue 1989. Embedded and repeated NUL bytes remain
@@ -1473,7 +1474,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             break;
                         }
                         Err(error) => {
-                            return Err(MysqlConnectionError::PartialResult(error.message))
+                            drop(result);
+                            engine.finish_execute_stmt(query_started.elapsed());
+                            return Err(MysqlConnectionError::PartialResult(error.message));
                         }
                     }
                     drop(result);
@@ -1482,6 +1485,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 if !aborted {
                     engine.flush_multi_statement_warning();
                 }
+                engine.finish_execute_stmt(query_started.elapsed());
             }
             Command::StmtPrepare(bytes) => {
                 commands.stmt_prepare_commands += 1;
@@ -1598,6 +1602,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 commands.stmt_prepare_successes += 1;
             }
             Command::StmtExecute(bytes) => {
+                let execute_started = std::time::Instant::now();
                 commands.stmt_execute_commands += 1;
                 let statement_id = match prepared_statement_id(&bytes) {
                     Ok(statement_id) => statement_id,
@@ -1960,6 +1965,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         record_client_warnings(&output, &engine);
                     }
                 }
+                engine.finish_execute_stmt(execute_started.elapsed());
             }
             Command::StmtSendLongData(bytes) => {
                 commands.stmt_send_long_data_commands += 1;

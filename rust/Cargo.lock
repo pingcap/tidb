@@ -3629,6 +3629,7 @@ version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
  "ctrlc",
+ "fail",
  "prost 0.14.4",
  "rcgen",
  "rustix 1.1.4",

@@ -271,6 +271,10 @@ impl QuerySessionFactory for PipelineSessionFactory {
 }
 
 impl QuerySession for PipelineServerSession {
+    fn finish_execute_stmt(&mut self, cost: std::time::Duration) {
+        self.session.finish_txn_write_throughput(cost);
+    }
+
     fn query_cancellation(&self) -> Option<Arc<dyn crate::sql_node::ActiveQueryCancellation>> {
         Some(Arc::new(self.session.begin_query_cancellation()))
     }

@@ -46,7 +46,7 @@ use tidb_exec::real_tikv_ddl::{
     commit_cluster_ddl, prepare_cluster_ddl_with_context, ClusterDdlReport, SchemaVersionNotifier,
 };
 use tidb_exec::real_tikv_dml::{
-    prepare_configured_write, prepare_text_write, ConfiguredWriteWarning,
+    prepare_configured_write, prepare_text_write, ConfiguredWriteReport, ConfiguredWriteWarning,
 };
 use tidb_exec::real_tikv_read::{
     prepare_configured_point_read, PdTimestampSource, ProductionReadProcessAuthority,
@@ -558,6 +558,8 @@ where
             time_zone: RealTiKvSessionTimeZone::default(),
             cursor_memory,
             statement_warnings: Vec::new(),
+            write_sli: tidb_util::sli::TxnWriteThroughputSli::default(),
+            last_affected_rows: 0,
             _process: process,
         })
     }
@@ -603,6 +605,10 @@ pub struct RealTiKvServerSession<
     /// The warning records the most recently completed statement exposes in
     /// its OK packet. Configured DML builds them while resolving `IGNORE`.
     statement_warnings: Vec<ConfiguredWriteWarning>,
+    /// Go `LazyTxn.writeSLI` for this worker-local session.
+    write_sli: tidb_util::sli::TxnWriteThroughputSli,
+    /// Go statement-context affected rows read by `addQueryMetrics`.
+    last_affected_rows: u64,
     _process: ProcessGuard,
 }
 
@@ -817,12 +823,25 @@ where
                             sql_error.message.clone(),
                         )
                     })?;
+                let (write_size, write_keys) = transaction.write_details();
                 transaction
                     .commit()
                     .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-                report
+                ConfiguredWriteReport {
+                    write_size,
+                    write_keys,
+                    ..report
+                }
             }
         };
+        if report.write_size > 0 {
+            self.write_sli
+                .add_txn_write_size(report.write_size, report.write_keys);
+        }
+        if report.processed_keys > 0 && report.affected_rows > 0 {
+            self.write_sli.add_read_keys(report.processed_keys);
+        }
+        self.last_affected_rows = report.affected_rows;
         self.statement_warnings = report.warnings;
         Ok(WriteOutcome {
             affected_rows: report.affected_rows,
@@ -1062,6 +1081,15 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
+    fn finish_execute_stmt(&mut self, cost: std::time::Duration) {
+        let cost = i64::try_from(cost.as_nanos()).unwrap_or(i64::MAX);
+        self.write_sli.finish_execute_stmt(
+            cost,
+            self.last_affected_rows,
+            self.transaction.is_active(),
+        );
+    }
+
     /// This session's status word: it owns a real explicit transaction (so the
     /// `SERVER_STATUS_IN_TRANS` bit is its own [`SessionTransaction`]'s answer)
     /// but no `autocommit` variable, so that bit is constant here.
@@ -1081,6 +1109,7 @@ where
     }
 
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        self.last_affected_rows = 0;
         let process_statement = self._process.statement_started(sql, "", "autocommit");
         self.statement_warnings.clear();
         let cancellation = Arc::new(CancelHandle::default());
@@ -1127,6 +1156,7 @@ where
         statement: &PreparedPointRead,
         parameters: &[i64],
     ) -> Result<QueryResult<'a>, SqlQueryError> {
+        self.last_affected_rows = 0;
         let process_statement = self
             ._process
             .statement_started(statement.sql(), "", "autocommit");
@@ -1160,6 +1190,7 @@ where
     }
 
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        self.last_affected_rows = 0;
         let _process_statement = self._process.statement_started(sql, "", "autocommit");
         // `SET time_zone` updates this session's own zone rather than reaching
         // storage at all: every read's DAG request and every write's
@@ -1213,22 +1244,44 @@ where
     }
 
     fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {
+        self.last_affected_rows = 0;
         match classify_transaction_control(sql) {
             None => Ok(None),
             Some(TransactionControl::Begin { mode }) => {
                 // A BEGIN that implicitly commits a previous transaction reports
                 // that commit's failure: the client must not be told the new
                 // transaction started while the old one's writes were lost.
+                let write_details = self
+                    .transaction
+                    .opened()
+                    .map(MultiStatementTransaction::write_details)
+                    .unwrap_or((0, 0));
                 self.transaction
                     .begin(mode)
                     .map_err(|error| self.transaction_error(&error))?;
+                if write_details.0 > 0 {
+                    self.write_sli
+                        .add_txn_write_size(write_details.0, write_details.1);
+                }
                 Ok(Some(true))
             }
             Some(control @ (TransactionControl::Commit | TransactionControl::Rollback)) => {
                 let commit = control == TransactionControl::Commit;
+                let write_details = (commit)
+                    .then(|| {
+                        self.transaction
+                            .opened()
+                            .map(MultiStatementTransaction::write_details)
+                            .unwrap_or((0, 0))
+                    })
+                    .unwrap_or((0, 0));
                 self.transaction
                     .end(commit)
                     .map_err(|error| self.transaction_error(&error))?;
+                if write_details.0 > 0 {
+                    self.write_sli
+                        .add_txn_write_size(write_details.0, write_details.1);
+                }
                 Ok(Some(false))
             }
             // This node reads; it stages no writes, so a savepoint would have

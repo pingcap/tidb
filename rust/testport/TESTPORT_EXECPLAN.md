@@ -36,6 +36,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: re-audited the complete pinned Go `pkg/util/sli` package and
+  every production integration point used by its sole external source test.
+  Restored Go's signed duration/native-int representation and failpoint,
+  attached one accumulator to each ordinary session, added exact final
+  mutation bytes/keys and remote processed-key details to the cluster and
+  real-TiKV executor paths, invalidated INSERT/REPLACE SELECT, and finalized
+  the accumulator from the common text/prepared command path. Ported
+  `TestTxnWriteThroughputSLI` as one source-derived cluster executor test.
 - 2026-08-29: re-audited the complete pinned Go `pkg/util/slice` package.
   Removed Rust-only `must_use` diagnostics from `Int64sToStrings` and
   `DeepClone`; all production behavior and the sole source test identity were
@@ -660,6 +668,10 @@ For each bounded behavior cluster:
   than retained as a second inactive implementation. The real vendored client
   has the same three global hook setters and already emits events from normal
   request, lock, and region-cache paths. Date/Author: 2026-08-29, Codex.
+- Decision: `pkg/util/sli` consumes commit and scan details from the ordinary
+  executor/transaction seams. Estimated row sizes, affected-row proxies, and
+  backend- or cache-specific reporting pipelines are not substitutes for Go's
+  `CommitDetail` and `ScanDetail`. Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 
@@ -691,6 +703,12 @@ For each bounded behavior cluster:
   initializer, so the native equivalent is one registration call in the
   ordinary server startup plus a typed `Arc<Trace>` value in the vendored
   client's immutable trace context.
+- The SLI source regression exposed that Rust's cluster read-key collector
+  counted rows served from the transaction's own mutation buffer. Go
+  `ScanDetail.ProcessedKeys` counts storage processing instead: the exact
+  `REPLACE ... SELECT` transaction case is `readKeys: 0`. Recording successful
+  snapshot results fixed the production seam without changing the source
+  test's expected output.
 
 ## Outcomes & Retrospective
 

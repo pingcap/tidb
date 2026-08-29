@@ -223,6 +223,8 @@ where
     /// the record key the buffer is keyed by.
     table: ConfiguredTable,
     buffer: TransactionMutationBuffer,
+    /// Go statement scan detail accumulated while planning the current write.
+    statement_processed_keys: i64,
     /// Per-statement RPC budget. Stored as a duration, never as an already
     /// minted [`UnaryCallContext`]: that type carries an absolute deadline, so
     /// one minted at `BEGIN` would hand every later statement — and the commit
@@ -293,6 +295,7 @@ where
             mode,
             table,
             buffer: TransactionMutationBuffer::new(),
+            statement_processed_keys: 0,
             timeout,
             keep_alive: None,
             lock_values: BTreeMap::new(),
@@ -538,6 +541,7 @@ where
         write: &ConfiguredPreparedWrite,
         session_tz: &SessionTimeZone,
     ) -> Result<ConfiguredWriteReport, TransactionStatementError> {
+        self.statement_processed_keys = 0;
         let plan = if self.mode.is_pessimistic() {
             match write {
                 ConfiguredPreparedWrite::ReplaceRows { .. }
@@ -559,6 +563,7 @@ where
             plan_configured_write(self, write, &self.statement_call(), session_tz)
                 .map_err(|error| TransactionStatementError::write(&error))?
         };
+        let processed_keys = self.statement_processed_keys;
         match plan {
             ConfiguredWritePlan::Write {
                 mutations,
@@ -575,6 +580,9 @@ where
                     affected_rows,
                     no_write: None,
                     warnings: Vec::new(),
+                    write_size: 0,
+                    write_keys: 0,
+                    processed_keys,
                 })
             }
             ConfiguredWritePlan::NoWrite {
@@ -584,6 +592,9 @@ where
                 affected_rows,
                 no_write: Some(reason),
                 warnings: Vec::new(),
+                write_size: 0,
+                write_keys: 0,
+                processed_keys,
             }),
             ConfiguredWritePlan::Ignore {
                 mutations,
@@ -601,9 +612,24 @@ where
                     affected_rows,
                     no_write: None,
                     warnings,
+                    write_size: 0,
+                    write_keys: 0,
+                    processed_keys,
                 })
             }
         }
+    }
+
+    /// Go commit detail `WriteSize` and `WriteKeys` for the final coalesced
+    /// transaction mutation set.
+    pub fn write_details(&self) -> (isize, isize) {
+        self.buffer
+            .staged_entries()
+            .fold((0_isize, 0_isize), |(size, keys), mutation| {
+                let mutation_size =
+                    mutation.key().len().wrapping_add(mutation.value().len()) as isize;
+                (size.wrapping_add(mutation_size), keys.wrapping_add(1))
+            })
     }
 
     /// Plans a pessimistic conflict-resolving write until every key it might
@@ -992,6 +1018,9 @@ where
             // after a lock conflict would recompute the same stale mutation.
             OpenTransaction::Pessimistic(transaction) => transaction.for_update_get(key, call)?,
         };
+        if value.is_some() {
+            self.statement_processed_keys = self.statement_processed_keys.wrapping_add(1);
+        }
         Ok(value)
     }
 }

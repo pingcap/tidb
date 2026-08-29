@@ -188,7 +188,7 @@ enum UndoEntry {
     Presume { key: Key },
 }
 
-/// Raw keys actually consumed by the current statement.
+/// Raw snapshot keys actually consumed by the current statement.
 ///
 /// A pessimistic locking read must lock rows after the executor has applied
 /// its predicates and limits. Tracking at the storage seam records precisely
@@ -206,7 +206,7 @@ struct StatementReadKeyState {
 }
 
 impl StatementReadKeys {
-    /// Starts a new locking statement and discards any prior statement's keys.
+    /// Starts a new statement and discards any prior statement's keys.
     pub fn begin(&self) {
         let mut state = self.lock();
         state.keys.clear();
@@ -713,11 +713,16 @@ impl TableStorage for ClusterTableStorage {
         // buffer answers is still one `get` here, because the shape the count
         // describes is the plan's, not the transport's.
         crate::storage::note_storage_op(|ops| ops.gets += 1);
-        self.read_keys.record(key);
         match self.buffer.get(key) {
             Some(Some(value)) => Ok(value),
             Some(None) => Err(StorageError::NotFound),
-            None => self.snapshot_get(key)?.ok_or(StorageError::NotFound),
+            None => match self.snapshot_get(key)? {
+                Some(value) => {
+                    self.read_keys.record(key);
+                    Ok(value)
+                }
+                None => Err(StorageError::NotFound),
+            },
         }
     }
 
@@ -765,11 +770,10 @@ impl TableStorage for ClusterTableStorage {
                 .unwrap_or_else(|poison| poison.into_inner())
                 .batch_get(&missing)?;
             for (key, value) in snapshot_values {
-                values.insert(Key::from_bytes(key), value);
+                let key = Key::from_bytes(key);
+                self.read_keys.record(&key);
+                values.insert(key, value);
             }
-        }
-        for key in keys {
-            self.read_keys.record(key);
         }
         Ok(values)
     }
@@ -1041,6 +1045,7 @@ impl MergedIterator {
             if order != std::cmp::Ordering::Greater {
                 let (key, value) = self.batch[self.batch_position].clone();
                 self.batch_position += 1;
+                self.read_keys.record(&Key::from_bytes(key.clone()));
                 if order == std::cmp::Ordering::Less {
                     self.current = Some((Key::from_bytes(key), value));
                     return Ok(());
@@ -1068,9 +1073,6 @@ impl StorageIterator for MergedIterator {
             .current
             .as_ref()
             .map_or(&self.empty_key, |(key, _)| key);
-        if self.current.is_some() {
-            self.read_keys.record(key);
-        }
         key
     }
 

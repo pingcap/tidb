@@ -1661,6 +1661,7 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             return Ok(());
         }
+        let write_details = self.buffer_write_details();
         if let Some(write_transaction) = write_transaction {
             let transaction = write_transaction
                 .lock()
@@ -1668,7 +1669,10 @@ impl ClusterServerSession {
                 .take();
             if let Some(transaction) = transaction {
                 return match transaction.commit(&self.buffer) {
-                    Ok(()) => Ok(()),
+                    Ok(()) => {
+                        self.record_write_details(write_details);
+                        Ok(())
+                    }
                     Err(error) => {
                         self.buffer.reset();
                         Err(error)
@@ -1676,7 +1680,35 @@ impl ClusterServerSession {
                 };
             }
         }
-        self.commit_autocommit_buffer(read_ts, resource_group)
+        let outcome = self.commit_autocommit_buffer(read_ts, resource_group);
+        if outcome.is_ok() {
+            self.record_write_details(write_details);
+        }
+        outcome
+    }
+
+    fn buffer_write_details(&self) -> (isize, isize) {
+        self.buffer.snapshot().iter().fold(
+            (0_isize, 0_isize),
+            |(write_size, write_keys), (key, value)| {
+                let entry_size = key
+                    .as_bytes()
+                    .len()
+                    .wrapping_add(value.as_ref().map_or(0, Vec::len));
+                (
+                    write_size.wrapping_add(entry_size as isize),
+                    write_keys.wrapping_add(1),
+                )
+            },
+        )
+    }
+
+    fn record_write_details(&mut self, (write_size, write_keys): (isize, isize)) {
+        if write_size > 0 {
+            self.session
+                .txn_write_throughput_sli()
+                .add_txn_write_size(write_size, write_keys);
+        }
     }
 
     fn rollback_prefetched_write(write_transaction: Option<transactions::WriteTransactionSlot>) {
@@ -1733,8 +1765,12 @@ impl ClusterServerSession {
             let resource_group = self.session.current_resource_group().to_owned();
             return self.commit_autocommit_buffer(None, &resource_group);
         };
+        let write_details = self.buffer_write_details();
         match transaction.commit(&self.buffer) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                self.record_write_details(write_details);
+                Ok(())
+            }
             Err(error) => {
                 self.buffer.reset();
                 Err(error)
@@ -2077,6 +2113,10 @@ impl ClusterServerSession {
 }
 
 impl QuerySession for ClusterServerSession {
+    fn finish_execute_stmt(&mut self, cost: std::time::Duration) {
+        self.session.finish_txn_write_throughput(cost);
+    }
+
     fn query_cancellation(&self) -> Option<Arc<dyn crate::sql_node::ActiveQueryCancellation>> {
         Some(Arc::new(self.session.begin_query_cancellation()))
     }
@@ -2273,18 +2313,35 @@ impl QuerySession for ClusterServerSession {
             }
             _ => Vec::new(),
         };
-        let affected_rows = self.with_prelocked_statement(
+        let read_keys = self.storage.read_keys();
+        let attempt_read_keys = read_keys.clone();
+        let affected_rows = match self.with_prelocked_statement(
             StatementReadShape::Unknown,
             prelock_keys,
             &resource_group,
-            move |session| match session.run(&owned).map_err(map_error)? {
-                StmtResult::Affected(count) => Ok(count),
-                StmtResult::Done(_) => Ok(0),
-                StmtResult::Rows(_) => Err(SqlQueryError::unknown(
-                    "a write statement unexpectedly produced rows",
-                )),
+            move |session| {
+                attempt_read_keys.begin();
+                match session.run(&owned).map_err(map_error)? {
+                    StmtResult::Affected(count) => Ok(count),
+                    StmtResult::Done(_) => Ok(0),
+                    StmtResult::Rows(_) => Err(SqlQueryError::unknown(
+                        "a write statement unexpectedly produced rows",
+                    )),
+                }
             },
-        )?;
+        ) {
+            Ok(affected_rows) => affected_rows,
+            Err(error) => {
+                read_keys.cancel();
+                return Err(error);
+            }
+        };
+        let processed_keys = read_keys.finish().len() as i64;
+        if affected_rows > 0 && processed_keys > 0 {
+            self.session
+                .txn_write_throughput_sli()
+                .add_read_keys(processed_keys);
+        }
         Ok(Some(WriteOutcome {
             affected_rows,
             last_insert_id: self.session.statement_insert_id(),
@@ -2549,8 +2606,20 @@ impl QuerySession for ClusterServerSession {
             }
             _ => Vec::new(),
         };
-        let output =
-            self.with_prelocked_statement(shape, prelock_keys, &resource_group, move |session| {
+        let is_write = match effective {
+            Some(template) => self.session.statement_kind_parsed(template) == StmtKind::Write,
+            None => self.session.statement_kind(&sql).map_err(map_error)? == StmtKind::Write,
+        };
+        let write_read_keys = is_write.then(|| self.storage.read_keys());
+        let attempt_read_keys = write_read_keys.clone();
+        let output = match self.with_prelocked_statement(
+            shape,
+            prelock_keys,
+            &resource_group,
+            move |session| {
+                if let Some(read_keys) = attempt_read_keys.as_ref() {
+                    read_keys.begin();
+                }
                 if fast_select {
                     let cached = cached_select
                         .as_ref()
@@ -2603,7 +2672,28 @@ impl QuerySession for ClusterServerSession {
                 } else {
                     session.run_with_params(&sql, &params).map_err(map_error)
                 }
-            })?;
+            },
+        ) {
+            Ok(output) => output,
+            Err(error) => {
+                if let Some(read_keys) = write_read_keys {
+                    read_keys.cancel();
+                }
+                return Err(error);
+            }
+        };
+        if let Some(read_keys) = write_read_keys {
+            let affected_rows = match &output {
+                StmtOutput::Affected(count) => *count,
+                StmtOutput::Rows { .. } | StmtOutput::Done(_) => 0,
+            };
+            let processed_keys = read_keys.finish().len() as i64;
+            if affected_rows > 0 && processed_keys > 0 {
+                self.session
+                    .txn_write_throughput_sli()
+                    .add_read_keys(processed_keys);
+            }
+        }
         let result_authority = matches!(&output, StmtOutput::Rows { .. })
             .then(|| self.session.result_materialization_authority());
         Ok(match output {

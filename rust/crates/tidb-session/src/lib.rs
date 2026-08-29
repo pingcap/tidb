@@ -393,6 +393,9 @@ pub struct Session {
     statement_result_authority: std::cell::RefCell<Option<ResultMaterializationAuthority>>,
     /// The open transaction, if any.
     txn: Option<Transaction>,
+    /// Go `LazyTxn.writeSLI`: transaction write-throughput state shared by
+    /// every statement until the transaction ends.
+    write_sli: tidb_util::sli::TxnWriteThroughputSli,
     /// Go `SessionVars.LocalTemporaryTables` (an `infoschema.SessionTables`):
     /// the LOCAL temporary tables this connection created, as
     /// `(folded schema, folded name, table)`.
@@ -690,6 +693,7 @@ impl Default for Session {
             ),
             statement_result_authority: std::cell::RefCell::new(None),
             txn: None,
+            write_sli: tidb_util::sli::TxnWriteThroughputSli::default(),
             local_temporary_tables: Vec::new(),
             global_temporary_data: std::collections::HashMap::new(),
             vars: SessionVars::new(),
@@ -1430,6 +1434,21 @@ impl Session {
             StmtOutput::Affected(count) => StmtResult::Affected(count),
             StmtOutput::Done(created) => StmtResult::Done(created),
         })
+    }
+
+    /// Go `GetTxnWriteThroughputSLI`: returns the session's transaction-wide
+    /// SLI accumulator.
+    pub fn txn_write_throughput_sli(&mut self) -> &mut tidb_util::sli::TxnWriteThroughputSli {
+        &mut self.write_sli
+    }
+
+    /// Go server `addQueryMetrics`' SLI call at the end of one SQL command.
+    pub fn finish_txn_write_throughput(&mut self, cost: Duration) {
+        let cost = i64::try_from(cost.as_nanos()).unwrap_or(i64::MAX);
+        let affected_rows = u64::try_from(self.prev_row_count.max(0)).unwrap_or(0);
+        let in_txn = self.in_transaction();
+        self.write_sli
+            .finish_execute_stmt(cost, affected_rows, in_txn);
     }
 
     /// Like [`Session::run`], but a query result also carries its column

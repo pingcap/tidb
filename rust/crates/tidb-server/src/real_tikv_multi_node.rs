@@ -235,6 +235,8 @@ impl QuerySessionFactory for RealTiKvMultiSessionFactory {
             time_zone: RealTiKvSessionTimeZone::default(),
             cursor_memory,
             statement_warnings: Vec::new(),
+            write_sli: tidb_util::sli::TxnWriteThroughputSli::default(),
+            last_affected_rows: 0,
             _process: process,
         })
     }
@@ -261,11 +263,20 @@ pub struct RealTiKvMultiServerSession {
     time_zone: RealTiKvSessionTimeZone,
     cursor_memory: tidb_executor::SessionMemory,
     statement_warnings: Vec<ConfiguredWriteWarning>,
+    write_sli: tidb_util::sli::TxnWriteThroughputSli,
+    last_affected_rows: u64,
     _process: ProcessGuard,
 }
 
 impl QuerySession for RealTiKvMultiServerSession {
+    fn finish_execute_stmt(&mut self, cost: std::time::Duration) {
+        let cost = i64::try_from(cost.as_nanos()).unwrap_or(i64::MAX);
+        self.write_sli
+            .finish_execute_stmt(cost, self.last_affected_rows, false);
+    }
+
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        self.last_affected_rows = 0;
         let process_statement = self._process.statement_started(sql, "", "autocommit");
         self.statement_warnings.clear();
         let cancellation = Arc::new(CancelHandle::default());
@@ -340,6 +351,7 @@ impl QuerySession for RealTiKvMultiServerSession {
         statement: &PreparedPointRead,
         parameters: &[i64],
     ) -> Result<QueryResult<'a>, SqlQueryError> {
+        self.last_affected_rows = 0;
         let process_statement = self
             ._process
             .statement_started(statement.sql(), "", "autocommit");
@@ -404,6 +416,14 @@ impl QuerySession for RealTiKvMultiServerSession {
             &session_tz,
         )
         .map_err(|error| configured_write_error(&error))?;
+        if report.write_size > 0 {
+            self.write_sli
+                .add_txn_write_size(report.write_size, report.write_keys);
+        }
+        if report.processed_keys > 0 && report.affected_rows > 0 {
+            self.write_sli.add_read_keys(report.processed_keys);
+        }
+        self.last_affected_rows = report.affected_rows;
         self.statement_warnings = report.warnings;
         Ok(WriteOutcome {
             affected_rows: report.affected_rows,
@@ -430,6 +450,7 @@ impl QuerySession for RealTiKvMultiServerSession {
     /// The default schema is the first served table's, which is the same
     /// relation the command line named first.
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        self.last_affected_rows = 0;
         let _process_statement = self._process.statement_started(sql, "", "autocommit");
         // `SET time_zone` updates this session's own zone rather than reaching
         // storage: every subsequent read from either relation and every

@@ -484,6 +484,19 @@ impl OpenClusterTransaction for MockSessionTransaction {
         if staged.is_empty() {
             return Ok(());
         }
+        for key in buffer.presume_not_exists_keys() {
+            if self.data.contains_key(&key) {
+                let hint = buffer
+                    .duplicate_key_hint_for(&key)
+                    .expect("a presumed INSERT key carries its duplicate error text");
+                buffer.reset();
+                return Err(SqlQueryError::new(
+                    1062,
+                    *b"23000",
+                    format!("Duplicate entry '{}' for key '{}'", hint.value, hint.key),
+                ));
+            }
+        }
         let outcome = self.cluster.publish(staged, self.start_ts);
         commit_outcome_to_sql_error(&outcome).map_err(sql_error)?;
         buffer.reset();

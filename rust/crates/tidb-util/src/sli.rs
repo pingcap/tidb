@@ -16,49 +16,54 @@
 
 use std::fmt;
 use std::sync::OnceLock;
-use std::time::Duration;
 
 use prometheus::{exponential_buckets, Histogram, HistogramOpts};
 
 const SMALL_TXN_AFFECT_ROW: u64 = 20;
-const SMALL_TXN_SIZE: i64 = 1024 * 1024;
+const SMALL_TXN_SIZE: isize = 1024 * 1024;
 
 /// Reports transaction write-throughput metrics for SLI.
 #[derive(Default)]
 pub struct TxnWriteThroughputSli {
     invalid: bool,
     affect_row: u64,
-    write_size: i64,
-    read_keys: i64,
-    write_keys: i64,
-    write_time: Duration,
+    write_size: isize,
+    read_keys: isize,
+    write_keys: isize,
+    write_time: i64,
 }
 
 impl TxnWriteThroughputSli {
     /// Records the cost of a write statement and reports the transaction when
     /// the statement leaves the transaction.
-    pub fn finish_execute_stmt(&mut self, cost: Duration, affect_row: u64, in_txn: bool) {
+    pub fn finish_execute_stmt(&mut self, cost: i64, affect_row: u64, in_txn: bool) {
         if affect_row > 0 {
-            self.write_time += cost;
+            self.write_time = self.write_time.wrapping_add(cost);
             self.affect_row = self.affect_row.wrapping_add(affect_row);
         }
 
         if !in_txn {
             if affect_row == 0 {
-                self.write_time += cost;
+                self.write_time = self.write_time.wrapping_add(cost);
             }
             self.report_metric();
+
+            #[cfg(feature = "failpoints")]
+            if fail::eval("CheckTxnWriteThroughput", |_| true).unwrap_or(false) {
+                return;
+            }
+
             self.reset();
         }
     }
 
     /// Adds the read keys.
     pub fn add_read_keys(&mut self, read_keys: i64) {
-        self.read_keys = self.read_keys.wrapping_add(read_keys);
+        self.read_keys = self.read_keys.wrapping_add(read_keys as isize);
     }
 
     /// Adds the transaction write size and keys.
-    pub fn add_txn_write_size(&mut self, size: i64, keys: i64) {
+    pub fn add_txn_write_size(&mut self, size: isize, keys: isize) {
         self.write_size = self.write_size.wrapping_add(size);
         self.write_keys = self.write_keys.wrapping_add(keys);
     }
@@ -68,10 +73,11 @@ impl TxnWriteThroughputSli {
             return;
         }
         if self.is_small_txn() {
-            small_txn_write_duration().observe(self.write_time.as_secs_f64());
+            small_txn_write_duration().observe(self.write_time as f64 / 1_000_000_000.0);
         } else {
             #[expect(clippy::cast_precision_loss, reason = "Go converts int to float64")]
-            txn_write_throughput().observe(self.write_size as f64 / self.write_time.as_secs_f64());
+            txn_write_throughput()
+                .observe(self.write_size as f64 / (self.write_time as f64 / 1_000_000_000.0));
         }
     }
 
@@ -81,16 +87,14 @@ impl TxnWriteThroughputSli {
     }
 
     /// Whether this transaction is invalid for SLI reporting.
-    #[must_use]
     pub fn is_invalid(&self) -> bool {
         self.invalid
             || self.read_keys > self.write_keys
             || self.write_size == 0
-            || self.write_time.is_zero()
+            || self.write_time == 0
     }
 
     /// Whether this is a small transaction.
-    #[must_use]
     pub fn is_small_txn(&self) -> bool {
         self.affect_row <= SMALL_TXN_AFFECT_ROW && self.write_size <= SMALL_TXN_SIZE
     }
@@ -154,11 +158,12 @@ fn new_registered_histogram(options: HistogramOpts) -> Histogram {
     histogram
 }
 
-fn format_go_duration(duration: Duration) -> String {
-    let total = duration.as_nanos();
+fn format_go_duration(duration: i64) -> String {
+    let total = u128::from(duration.unsigned_abs());
     if total == 0 {
         return "0s".to_owned();
     }
+    let sign = if duration < 0 { "-" } else { "" };
     if total < 1_000_000_000 {
         let (scale, precision, unit) = if total < 1_000 {
             (1, 0, "ns")
@@ -167,13 +172,13 @@ fn format_go_duration(duration: Duration) -> String {
         } else {
             (1_000_000, 6, "ms")
         };
-        let mut output = (total / scale).to_string();
+        let mut output = format!("{sign}{}", total / scale);
         push_fraction(&mut output, total % scale, precision);
         output.push_str(unit);
         return output;
     }
     let seconds = total / 1_000_000_000;
-    let mut tail = (seconds % 60).to_string();
+    let mut tail = format!("{sign}{}", seconds % 60);
     push_fraction(&mut tail, total % 1_000_000_000, 9);
     tail.push('s');
     let minutes = seconds / 60;
@@ -182,9 +187,13 @@ fn format_go_duration(duration: Duration) -> String {
     }
     let hours = minutes / 60;
     if hours == 0 {
-        return format!("{minutes}m{tail}");
+        return format!("{sign}{minutes}m{}", tail.trim_start_matches('-'));
     }
-    format!("{hours}h{}m{tail}", minutes % 60)
+    format!(
+        "{sign}{hours}h{}m{}",
+        minutes % 60,
+        tail.trim_start_matches('-')
+    )
 }
 
 fn push_fraction(output: &mut String, fraction: u128, precision: usize) {
