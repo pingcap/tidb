@@ -74,8 +74,6 @@ fn test_put() {
 
     let mut lru_max_mem = SimpleLruCache::with_memory_guard(3, 0.0, max_mem, instance_mem_used);
     let mut lru_zero_quota = SimpleLruCache::with_memory_guard(3, 0.0, 0, instance_mem_used);
-    assert_eq!(3, lru_max_mem.capacity());
-    assert_eq!(3, lru_zero_quota.capacity());
 
     let keys: Vec<MockCacheKey> = (0..5).map(MockCacheKey::new).collect();
     let vals: Vec<i64> = (0..5).collect();
@@ -133,7 +131,6 @@ fn contains(cache: &mut SimpleLruCache<MockCacheKey, i64>, key: &MockCacheKey) -
 fn test_zero_quota() {
     let mut lru: SimpleLruCache<MockCacheKey, i64> =
         SimpleLruCache::with_memory_guard(100, 0.0, 0, instance_mem_used);
-    assert_eq!(100, lru.capacity());
 
     for i in 0..100 {
         lru.put(MockCacheKey::new(i), i);
@@ -148,7 +145,6 @@ fn test_oom_guard() {
     let max_mem = TEST_MEM_TOTAL;
 
     let mut lru = SimpleLruCache::with_memory_guard(3, 1.0, max_mem, instance_mem_used);
-    assert_eq!(3, lru.capacity());
 
     for i in 0..5 {
         lru.put(MockCacheKey::new(i), i);
@@ -185,7 +181,6 @@ fn test_get() {
         let value = *lru.get(&keys[i]).expect("hit expected");
         assert_eq!(vals[i], value);
         assert_eq!(3, lru.size());
-        assert_eq!(3, lru.capacity());
 
         // The hit now sits at the front of the list carrying its key/value.
         let front_key = lru.keys()[0].identity();
@@ -265,7 +260,6 @@ fn test_values() {
 #[test]
 fn test_put_profile_name() {
     let mut _lru: SimpleLruCache<Vec<u8>, ()> = SimpleLruCache::new(3);
-    assert_eq!(3, _lru.capacity());
     assert_eq!(
         PROFILE_NAME,
         "github.com/pingcap/tidb/pkg/util/kvcache.(*SimpleLRUCache).Put"

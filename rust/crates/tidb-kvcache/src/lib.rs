@@ -72,7 +72,7 @@ impl<const N: usize> CacheKey for [u8; N] {
 }
 
 /// Capacity must remain positive.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct InvalidCapacity;
 
 impl fmt::Display for InvalidCapacity {
@@ -164,11 +164,6 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
         self.on_evict = Some(Box::new(callback));
     }
 
-    /// Removes the automatic-eviction callback.
-    pub fn clear_on_evict(&mut self) {
-        self.on_evict = None;
-    }
-
     /// Looks up a value and promotes it to most recently used.
     pub fn get<Q>(&mut self, key: &Q) -> Option<&V>
     where
@@ -193,7 +188,7 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
 
         self.insert_new(hash, key, value);
         if self.memory_guard.is_none() {
-            if self.len() > self.capacity {
+            if self.entry_count() > self.capacity {
                 self.evict_oldest();
             }
             return;
@@ -204,7 +199,7 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
         };
         loop {
             let above_memory_limit = used > self.memory_threshold();
-            if !above_memory_limit && self.len() <= self.capacity {
+            if !above_memory_limit && self.entry_count() <= self.capacity {
                 break;
             }
             if self.oldest.is_none() {
@@ -221,13 +216,14 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
     }
 
     /// Removes a key without invoking the eviction callback.
-    pub fn delete<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    pub fn delete<Q>(&mut self, key: &Q)
     where
         Q: CacheKey + ?Sized,
     {
-        let index = *self.elements.get(key.hash_bytes())?;
-        let node = self.remove_index(index);
-        Some((node.key, node.value))
+        let Some(&index) = self.elements.get(key.hash_bytes()) else {
+            return;
+        };
+        let _ = self.remove_index(index);
     }
 
     /// Removes every entry without invoking the eviction callback.
@@ -237,29 +233,10 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
         }
     }
 
-    /// Returns the number of retained entries.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.elements.len()
-    }
-
     /// Returns the current cache size (`SimpleLRUCache.Size`).
     #[must_use]
     pub fn size(&self) -> usize {
-        self.len()
-    }
-
-    /// Returns whether the cache is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.elements.is_empty()
-    }
-
-    /// The configured entry bound. Go's tests read the unexported
-    /// `capacity` field directly; this accessor exposes the same value.
-    #[must_use]
-    pub fn capacity(&self) -> usize {
-        self.capacity
+        self.entry_count()
     }
 
     /// Returns values in most-recently-used order.
@@ -286,7 +263,7 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
             return Err(InvalidCapacity);
         }
         self.capacity = capacity;
-        while self.len() > self.capacity {
+        while self.entry_count() > self.capacity {
             let _ = self.remove_oldest();
         }
         Ok(())
@@ -316,6 +293,10 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
         });
         self.elements.insert(hash, index);
         self.link_front(index);
+    }
+
+    fn entry_count(&self) -> usize {
+        self.elements.len()
     }
 
     fn move_to_front(&mut self, index: usize) {

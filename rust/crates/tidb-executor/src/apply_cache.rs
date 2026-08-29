@@ -140,13 +140,13 @@ impl<V> ApplyCache<V> {
     /// Returns the number of retained values.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.lock().entries.len()
+        self.lock().entries.size()
     }
 
     /// Returns whether the cache has no retained values.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.lock().entries.is_empty()
+        self.lock().entries.size() == 0
     }
 
     fn lock(&self) -> MutexGuard<'_, CacheState<V>> {

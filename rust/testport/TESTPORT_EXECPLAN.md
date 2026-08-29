@@ -237,8 +237,9 @@ For each bounded behavior cluster:
       b097, b099, b101, b103, and b112 that did not establish executable
       parity.
 - [x] Re-audit the complete pinned `pkg/util/kvcache` package, remove an
-      invented `Peek` gap absent from Go, repin its semantic receipt, and make
-      its translated tests platform-neutral; all 16 runnable tests pass.
+      invented `Peek` gap absent from Go, remove the duplicate semantic test
+      carrier and Rust-only public cache APIs, repin its semantic receipt, and
+      make its translated tests platform-neutral; all 8 Go tests pass.
 - [x] Remove empty expression carriers for Go-only nil-interface,
       `baseBuiltinFunc`, and concrete `*Sig` object-model call shapes, plus the
       no-op SQL-digest retriever test whose complete production owner is not
