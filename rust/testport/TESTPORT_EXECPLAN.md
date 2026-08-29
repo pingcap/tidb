@@ -36,6 +36,10 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-08-29: re-audited the complete pinned Go `pkg/util/bitmap` package.
+  Removed its remaining Rust-only signed-boundary regression and restored the
+  exact three Go test identities while retaining the source-derived signed
+  length behavior in production.
 - 2026-08-29: re-audited the complete pinned Go `pkg/util/encrypt` package
   against its existing Rust owner. Removed three Rust-only regression cases
   and the extra alias assertion from the source-named suite; the 17 Go test

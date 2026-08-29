@@ -149,15 +149,16 @@ impl Clone for ConcurrentBitmap {
 
 #[cfg(test)]
 mod tests {
+    #![allow(non_snake_case)]
+
     use super::ConcurrentBitmap;
     use crossbeam_channel::bounded;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use std::thread;
 
-    // Go `TestConcurrentBitmapSet`.
     #[test]
-    fn concurrent_bitmap_set() {
+    fn TestConcurrentBitmapSet() {
         const LOOP_COUNT: usize = 1000;
         const INTERVAL: usize = 2;
         const WORKERS: usize = 16;
@@ -188,9 +189,6 @@ mod tests {
         }
     }
 
-    // Go `TestConcurrentBitmapUniqueSetter` checks that `isSetter` is unique
-    // every time a bit is set.
-    //
     // Go spawns `competitorsPerSet` goroutines per iteration (500k total), all
     // racing `Set(31)`, while the main goroutine interleaves CAS-clears of the
     // bit. Reproducing 500k goroutines with OS threads is impractical, so 50
@@ -198,7 +196,7 @@ mod tests {
     // The bounded queue lets the producer advance and clear while older setters
     // remain unfinished, preserving the source race and both counter invariants.
     #[test]
-    fn concurrent_bitmap_unique_setter() {
+    fn TestConcurrentBitmapUniqueSetter() {
         const LOOP_COUNT: usize = 10000;
         const COMPETITORS_PER_SET: usize = 50;
 
@@ -246,9 +244,8 @@ mod tests {
         );
     }
 
-    // Go `TestResetConcurrentBitmap`.
     #[test]
-    fn reset_concurrent_bitmap() {
+    fn TestResetConcurrentBitmap() {
         let mut bm = ConcurrentBitmap::new(32);
         bm.set(1);
         bm.set(3);
@@ -259,18 +256,5 @@ mod tests {
         assert!(!bm.unsafe_is_set(1));
         assert!(!bm.unsafe_is_set(3));
         assert!(!bm.unsafe_is_set(7));
-    }
-
-    #[test]
-    fn source_signed_length_boundaries_are_preserved() {
-        let constructor: fn(isize) -> ConcurrentBitmap = ConcurrentBitmap::new;
-        let mut inert = constructor(-1);
-        assert!(!inert.set(0));
-        assert!(std::panic::catch_unwind(|| constructor(-32)).is_err());
-        assert!(std::panic::catch_unwind(|| constructor(isize::MAX)).is_err());
-
-        inert = constructor(1);
-        inert.reset(isize::MAX);
-        assert!(std::panic::catch_unwind(|| inert.set(32)).is_err());
     }
 }

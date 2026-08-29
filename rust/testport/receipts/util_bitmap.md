@@ -23,9 +23,8 @@ outcomes for negative and maximum lengths, including Reset's malformed
 `MaxInt` state, instead of applying a Rust-only validity policy.
 
 The audit removed deterministic oversized-length rejection, Rust-only
-`must_use` diagnostics, two supplemental tests, and the retired semantic
-manifest. The exact three Go test translations remain, plus one required
-regression for the corrected signed-length behavior.
+`must_use` diagnostics, supplemental tests, and the retired semantic manifest.
+Exactly the three Go test identities remain.
 
 ## Validation
 
@@ -33,13 +32,8 @@ Profile: WIP; this completes one package in the continuing package-by-package
 audit, not a repository-wide readiness claim.
 
 - `go test ./pkg/util/bitmap` — passed.
-- Direct Go probe — `new(-1)` was inert, `new(-32)` and `new(MaxInt)` panicked,
-  `reset(MaxInt)` returned, and the following `set(32)` panicked.
-- Pre-fix focused regression — failed to compile because `new` and `reset`
-  required `usize` instead of source-width `isize`.
 - `cargo test -q -p tidb-util bitmap::tests --lib --locked --
-  --test-threads=1` — passed; four tests ran.
-- The same focused command with `--release` — passed; four tests ran.
+  --test-threads=1` — passed; three tests ran.
 - `cargo check -p tidb-util --all-targets --locked`, `cargo fmt --all --check`,
   and `git diff --check` — passed.
 
