@@ -5686,7 +5686,7 @@ MViewTableOptionList:
 	}
 
 MViewTableOption:
-	"COMMENT" "=" stringLit
+	"COMMENT" EqOpt stringLit
 	{
 		$$ = &mviewCreateOptions{hasComment: true, comment: $3}
 	}
@@ -5889,7 +5889,7 @@ AlterMaterializedViewActionList:
 	}
 
 AlterMaterializedViewAction:
-	"COMMENT" "=" stringLit
+	"COMMENT" EqOpt stringLit
 	{
 		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionComment, Comment: $3}
 	}
