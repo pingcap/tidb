@@ -15,7 +15,7 @@
 //! Batch b047 (`pkg/statistics.part6`) — Go unit tests from
 //! `pkg/statistics/handle/lockstats` (query/unlock), `pkg/statistics/handle/storage`
 //! (dump/gc/read/stats_read_writer), `pkg/statistics/handle/syncload`,
-//! `pkg/statistics/handle/updatetest`, read from `origin/master`.
+//! read from `origin/master`.
 //!
 //! Almost every test in this slice drives the statistics handle through a mock
 //! store / session (`testkit.CreateMockStoreAndDomain` or a mocked
@@ -92,9 +92,9 @@ fn remove_locked_partitions_failed_if_the_whole_table_is_locked() {
     unimplemented!("storage-bound Go test")
 }
 
-// --- pkg/statistics/handle/main_test.go, updatetest/main_test.go ---
-// TestMain harnesses (testkit bootstrap) — skipped-reason: Go test harness,
-// not an assertion-bearing test.
+// --- pkg/statistics/handle/main_test.go ---
+// TestMain harness (testkit bootstrap) — skipped-reason: Go test harness, not
+// an assertion-bearing test.
 
 // --- pkg/statistics/handle/storage/dump_test.go ---
 
@@ -319,115 +319,4 @@ fn slow_stats_saving_for_partitioned_table() {
 fn failed_to_handle_slow_stats_saving() {
     // go-parity-gap: failure-injection path of the save worker.
     unimplemented!("storage-bound Go test")
-}
-
-// --- pkg/statistics/handle/updatetest/update_test.go ---
-
-#[ignore]
-#[test]
-fn single_session_insert() {
-    // go-parity-gap: stats-meta delta maintenance after INSERT via session.
-    unimplemented!("session-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn rollback() {
-    // go-parity-gap: transaction rollback delta behavior via session.
-    unimplemented!("session-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn multi_session() {
-    // go-parity-gap: cross-session delta merge via session.
-    unimplemented!("session-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn txn_with_failure() {
-    // go-parity-gap: failed-transaction delta behavior via session.
-    unimplemented!("session-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn update_partition() {
-    // go-parity-gap: partition-level Update via handle + storage.
-    unimplemented!("session-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn auto_update() {
-    // go-parity-gap: auto-analyze feedback update loop via session.
-    unimplemented!("session-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn auto_update_partition() {
-    // go-parity-gap: partitioned auto-update loop via session.
-    unimplemented!("session-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn issue25700() {
-    // go-parity-gap: regression needing session-driven UPDATE + analyze.
-    unimplemented!("session-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn split_range() {
-    // go-parity-gap: Histogram.SplitRange needs ranger.Range + stmtctx, which
-    // tidb-stats does not depend on yet.
-    unimplemented!("ranger-dependent Go test")
-}
-
-#[ignore]
-#[test]
-fn out_of_order_update() {
-    // go-parity-gap: out-of-order stats-meta updates via session.
-    unimplemented!("session-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn load_hist_correlation() {
-    // go-parity-gap: column correlation reload via storage.
-    unimplemented!("session-bound Go test")
-}
-
-// BenchmarkHandleAutoAnalyze — skipped-reason: throughput benchmark without
-// assertions.
-
-#[ignore]
-#[test]
-fn merge_top_n() {
-    // go-parity-gap: merge-partition TopN during auto-update via handle.
-    unimplemented!("session-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn stats_variables() {
-    // go-parity-gap: session-variable effects on stats update via session.
-    unimplemented!("session-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn auto_update_partition_in_dynamic_only_mode() {
-    // go-parity-gap: dynamic-prune-mode auto update via session.
-    unimplemented!("session-bound Go test")
-}
-
-#[ignore]
-#[test]
-fn auto_analyze_ratio() {
-    // go-parity-gap: auto-analyze ratio trigger evaluated on a live session.
-    unimplemented!("session-bound Go test")
 }

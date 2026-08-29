@@ -825,6 +825,12 @@ For each bounded behavior cluster:
       with queues, singleflight, retries, priority, metrics, and lifecycle;
       those dependencies are not complete. The inventory is in
       `receipts/statistics_handle_syncload_audit.md`.
+- [x] Audit the complete pinned `pkg/statistics/handle/updatetest` package.
+      Remove all 15 ignored empty Rust functions: Go's 23 tests and benchmark
+      are an integrated stats-handle validation package, not independently
+      portable scalar cases. The package remains unclaimed until the ordinary
+      session/storage statistics runtime exists. The inventory is in
+      `receipts/statistics_handle_updatetest_audit.md`.
 - [ ] Audit the next bounded package cluster by reading pinned Go first, then
       fill executable gaps and remove false carriers.
 - [ ] Run Ready validation and self-review only when the requested parity scope
@@ -951,6 +957,12 @@ For each bounded behavior cluster:
   storage, metrics, queue, retry, and worker lifecycle. The extracted Rust API
   and source-absent tests are removed until the complete package can land.
   Date/Author: 2026-08-29, Codex.
+- Decision: `pkg/statistics/handle/updatetest` is one integration-test package
+  over the real stats handle. Empty functions cannot stand in for its session,
+  transaction, SQL/storage, partition, auto-analyze, usage, lock, and leak
+  checks. Its two locally pure tests do not make the package independently
+  claimable; TopN merge is already tested in its production owner. All empty
+  carriers are removed. Date/Author: 2026-08-29, Codex.
 
 ## Surprises & Discoveries
 
