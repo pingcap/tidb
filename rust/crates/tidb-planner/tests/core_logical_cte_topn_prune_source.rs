@@ -69,13 +69,17 @@ fn schema_of(ids: &[i64]) -> Schema {
 }
 
 fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
+    static COLUMN_ALLOCATOR: tidb_planner::expression_rewriter::ColumnIdAllocator =
+        tidb_planner::expression_rewriter::ColumnIdAllocator::new();
     RuleContext {
         allocator,
+        column_allocator: &COLUMN_ALLOCATOR,
         builder: &PreservingFunctionBuilder,
         use_plan_cache: false,
         // Go's `AllowDeriveTopN` defaults ON.
         allow_derive_topn: true,
         disabled_rules: Default::default(),
+        statistics_load: None,
     }
 }
 

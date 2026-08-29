@@ -1,0 +1,98 @@
+# Complete Go-to-Rust statistics package parity
+
+This ExecPlan is a living document. Keep `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` up to date as work proceeds.
+
+Reference: `PLANS.md` at repository root. The pinned source of truth is Go commit `e2788410d8d696605e8cb002585877a063ccc909`. Repository policy requires one complete upstream Go package, including production sources, variants, tests, fixtures, and validation gates, as the minimum completion unit.
+
+## Purpose / Big Picture
+
+Rust must make the same statistics-loading and planning decisions as the pinned Go implementation. A query should collect the same predicate-column demand at the same logical-rule position, request the same column and index items, apply the same synchronous timeout policy, publish the same loaded state, and expose the same statistics through planning and `SHOW` statements. Rust-only thresholds, narrow cache paths, and behavioral approximations are removed rather than retained as alternatives.
+
+## Progress
+
+- [x] (2026-08-29) Persisted analyze snapshot metadata and matched outdated-statistics pseudo policy.
+- [x] (2026-08-29) Added exact secondary-index reads and per-item histogram, bucket, TopN, and CMS loading.
+- [x] (2026-08-29) Added logical predicate-column demand collection, including lineage, physical-table visitation, and operator counting.
+- [ ] Wire collection and sync/async requests at Go's logical-rule positions (completed: request seam and production loader compile; remaining: exact partition expansion, access-path pruning, timeout/cache state, and regressions).
+- [ ] Replace eager startup/reload statistics reads with Go's lite load and make later item requests authoritative.
+- [ ] Wire all pinned Go `SHOW STATS_*` surfaces to the shared cache and storage semantics.
+- [ ] Inventory every production file, platform/generated variant, original test/support artifact, fixture, and validation gate in pinned `pkg/statistics`; close or explicitly retain seed-only gaps until the whole package is complete.
+- [ ] Run the Ready validation profile, including `make lint`, only after the complete package inventory is closed.
+
+## Surprises & Discoveries
+
+- Observation: the pinned `CollectPredicateColumnsPoint` is not only a collector. It prunes each `DataSource`'s access paths and uses the retained index IDs to avoid loading statistics for indexes the planner just removed.
+  Evidence: `pkg/planner/core/rule/rule_collect_plan_stats.go` calls `pruneIndexesForAllDataSources` before `collectSyncIndices`.
+
+- Observation: synchronous load timeout is statement state, not merely a warning. Go marks sync loading failed, prevents plan-cache admission, appends the original load error when pseudo fallback is enabled, and caps the wait by `max_execution_time`.
+  Evidence: pinned `RequestLoadStats` in `pkg/planner/core/rule/rule_collect_plan_stats.go`.
+
+- Observation: Go expands requested table items to physical partition IDs only after column and index demand is combined.
+  Evidence: pinned `expandStatsNeededColumnsForStaticPruning` appends one item per `tid2pids` entry.
+
+## Decision Log
+
+- Decision: reconstruct and test each pinned Go branch before editing Rust; do not preserve Rust-only fallback paths.
+  Rationale: the requested acceptance condition is behavioral parity, and local convenience policies are explicitly out of scope.
+  Date/Author: 2026-08-29 / Codex
+
+- Decision: keep statistics storage shared across sessions while making request/wait outcome statement-local.
+  Rationale: this matches Go's domain statistics handle plus statement context split.
+  Date/Author: 2026-08-29 / Codex
+
+- Decision: do not claim `pkg/statistics` complete from individual files or functions.
+  Rationale: repository policy makes the whole pinned Go package the atomic completion unit.
+  Date/Author: 2026-08-29 / Codex
+
+## Outcomes & Retrospective
+
+The exact storage item reader and logical demand collector are integrated and pushed. The current milestone is not complete: the planner request seam compiles, but Go's access-path pruning, static-partition expansion, and timeout/cache state still require exact implementation and focused regression evidence.
+
+## Context and Orientation
+
+`rust/crates/tidb-planner/src/logical/rule_collect_plan_stats.rs` corresponds to Go's logical statistics-usage collector and rule. `rust/crates/tidb-executor/src/driver/catalog.rs` owns the session-visible catalog and planner statistics cache. `rust/crates/tidb-exec/src/cluster_stats_load.rs` reads individual statistics objects from TiDB system tables. `rust/crates/tidb-server/src/cluster_session_node/mod.rs` connects production cluster snapshots to the executor catalog. `rust/crates/tidb-session/src/stmt_ctx.rs` snapshots system variables into `tidb_executor::StmtContext`.
+
+A full load includes histogram payload needed for estimation; a metadata load preserves existence/load-state information without fetching all buckets and TopN data. Static partition pruning plans against physical partition table IDs, so a logical table request must be copied to those IDs. Plan-cache admission must be denied after sync-load fallback because a pseudo-derived plan must not be reused as though loaded statistics produced it.
+
+## Plan of Work
+
+First, finish the logical rule as one behavior: collect usage, mark a determinate full item per analyzed table, prune access paths, collect retained index demand, expand to physical partitions, request async or sync loading, and record Go's statement outcome. Keep planner-only traversal in `tidb-planner`; pass only the resulting item demand across the executor boundary.
+
+Second, change startup and periodic refresh to load Go's lite table state. Prove a later item request adds exactly the requested payload and atomically republishes the planner view.
+
+Third, map every pinned Go statistics `SHOW` producer and filter to Rust. Remove placeholder documentation and ignored/stub tests only after their behavior is either implemented or shown absent in the pinned package.
+
+Finally, build a complete pinned-package inventory and run the required validation gates. A file/function match is evidence, not a package completion claim.
+
+## Concrete Steps
+
+Run commands from `rust/` unless stated otherwise:
+
+    cargo check --locked -p tidb-planner -p tidb-executor -p tidb-session -p tidb-server
+    cargo test --locked -p tidb-planner rule_collect_plan_stats::tests --lib
+    cargo test --locked -p tidb-executor <focused_statistics_test>
+    cargo fmt -p tidb-planner -p tidb-executor -p tidb-session -p tidb-server -- --check
+
+From repository root, use `git diff --check` after every slice. Before a completion claim, follow `.agents/skills/tidb-verify-profile/SKILL.md` Ready profile and run `make lint` because code changed.
+
+## Validation and Acceptance
+
+Focused tests must prove metadata versus full demand, determinate first-column selection, exclusion of already-full and pruned indexes, virtual generated-column dependency discovery, static partition expansion, async publication, sync success, sync error, timeout fallback, wait capping, and plan-cache refusal. Production cluster tests must prove a fresh snapshot is used per requested item and the shared cache publishes the loaded object.
+
+Package acceptance additionally requires a complete inventory of pinned `pkg/statistics` and its required tests/fixtures. No package-complete statement is permitted while an inventory row is absent or marked incomplete.
+
+## Idempotence and Recovery
+
+Checks and focused tests are safe to rerun. Statistics workers publish immutable table snapshots into shared locks, so a retry may replace a table with an equivalent or newer view. Do not reset or discard unrelated working-tree changes. If a test reveals a mismatch, return to the pinned Go function and update this plan's discovery or decision log before changing behavior.
+
+## Artifacts and Notes
+
+Pushed evidence includes commits `e0d5b4c1f0` (individual item loading) and `00179562d2` (logical demand collection). The current uncommitted seam compiles with:
+
+    cargo check --locked -p tidb-session -p tidb-server
+
+## Interfaces and Dependencies
+
+`tidb_planner::logical::rule_collect_plan_stats::StatisticsLoadRequester` is the rule-to-runtime request interface. `tidb_executor::driver::StatisticsItemLoader` is the runtime-to-storage interface. `Catalog::request_statistics_load` owns session cache publication and wait semantics. `ClusterStatisticsItemLoader` owns production snapshot acquisition and `SharedStats` publication. These interfaces must remain narrow enough that the planner does not depend on cluster storage types, while their observable behavior remains identical to pinned Go.
+
+Revision note (2026-08-29): created the living plan after completing exact item loading and logical usage collection; recorded the three parity gaps found while reviewing the first request-seam implementation.

@@ -58,6 +58,9 @@ pub(crate) struct StatementVarSnapshot {
     join_reorder_threshold: i32,
     default_string_match_selectivity: f64,
     enable_pseudo_for_outdated_stats: bool,
+    stats_load_sync_wait_ms: u64,
+    stats_load_pseudo_timeout: bool,
+    max_execution_time_ms: u64,
     advanced_join_reorder: bool,
     constraint_check_in_place: bool,
     ordering_index_selectivity_ratio: f64,
@@ -584,6 +587,24 @@ impl Session {
                 .and_then(|value| value.parse::<f64>().ok())
                 .unwrap_or(0.0),
             enable_pseudo_for_outdated_stats: on("tidb_enable_pseudo_for_outdated_stats"),
+            stats_load_sync_wait_ms: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_STATS_LOAD_SYNC_WAIT)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_SYNC_WAIT as u64),
+            stats_load_pseudo_timeout: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_STATS_LOAD_PSEUDO_TIMEOUT)
+                .map_or(true, |value| {
+                    !value.eq_ignore_ascii_case("OFF") && value != "0"
+                }),
+            max_execution_time_ms: self
+                .vars
+                .get_system("max_execution_time")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(0),
             advanced_join_reorder: not_off(
                 tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
             ),
@@ -709,6 +730,9 @@ impl Session {
         let join_reorder_threshold = snapshot.join_reorder_threshold;
         let default_string_match_selectivity = snapshot.default_string_match_selectivity;
         let enable_pseudo_for_outdated_stats = snapshot.enable_pseudo_for_outdated_stats;
+        let stats_load_sync_wait_ms = snapshot.stats_load_sync_wait_ms;
+        let stats_load_pseudo_timeout = snapshot.stats_load_pseudo_timeout;
+        let max_execution_time_ms = snapshot.max_execution_time_ms;
         let advanced_join_reorder = snapshot.advanced_join_reorder;
         let constraint_check_in_place = snapshot.constraint_check_in_place;
         let ordering_index_selectivity_ratio = snapshot.ordering_index_selectivity_ratio;
@@ -807,6 +831,11 @@ impl Session {
                 .with_like_default_escape(like_default_escape)
                 .with_default_string_match_selectivity(default_string_match_selectivity)
                 .with_pseudo_for_outdated_stats(enable_pseudo_for_outdated_stats)
+                .with_stats_load_policy(
+                    stats_load_sync_wait_ms,
+                    stats_load_pseudo_timeout,
+                    max_execution_time_ms,
+                )
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_resource_group_name(self.active_resource_group.clone())
                 .with_lazy_clock(snapshot.timestamp, zone);
@@ -859,6 +888,11 @@ impl Session {
         .with_like_default_escape(like_default_escape)
         .with_default_string_match_selectivity(default_string_match_selectivity)
         .with_pseudo_for_outdated_stats(enable_pseudo_for_outdated_stats)
+        .with_stats_load_policy(
+            stats_load_sync_wait_ms,
+            stats_load_pseudo_timeout,
+            max_execution_time_ms,
+        )
         .with_auto_increment_step(increment, offset)
         .with_auto_increment_zero_explicit(sql_mode.has_no_auto_value_on_zero_mode())
         .with_foreign_key_checks(self.foreign_key_checks())

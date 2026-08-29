@@ -89,9 +89,45 @@ struct Database {
 /// state. Statistics are neither: the stats handle publishes one cache for
 /// every session, including sessions currently reading through an older
 /// transaction image.
-#[derive(Debug, Default)]
+/// Storage half of Go's statistics sync/async load worker.
+pub trait StatisticsItemLoader: Send + Sync {
+    /// Loads the requested items and returns refreshed planner tables for
+    /// publication into the requesting session's cache.
+    fn load_items(
+        &self,
+        items: &[tidb_model::StatsLoadItem],
+        resource_group: &str,
+    ) -> Result<Vec<(i64, Arc<crate::access_cost::TableStatistics>)>, String>;
+}
+
+#[derive(Default)]
 struct StatisticsCache {
     values: std::sync::RwLock<HashMap<i64, Arc<crate::access_cost::TableStatistics>>>,
+    loader: std::sync::RwLock<Option<Arc<dyn StatisticsItemLoader>>>,
+}
+
+impl std::fmt::Debug for StatisticsCache {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StatisticsCache")
+            .field(
+                "tables",
+                &self
+                    .values
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .len(),
+            )
+            .field(
+                "has_loader",
+                &self
+                    .loader
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .is_some(),
+            )
+            .finish()
+    }
 }
 
 /// A catalog of databases and their tables, the position Go's `infoschema`
@@ -1223,6 +1259,270 @@ impl Catalog {
             .insert(table_id, statistics);
     }
 
+    /// Installs the domain statistics worker used by logical optimization.
+    pub fn set_statistics_item_loader(&mut self, loader: Arc<dyn StatisticsItemLoader>) {
+        *self
+            .statistics
+            .loader
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(loader);
+    }
+
+    fn statistics_load_items(
+        &self,
+        usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
+        _determinate: bool,
+    ) -> Vec<tidb_model::StatsLoadItem> {
+        let mut columns = usage.predicate_columns.clone();
+
+        // Go `markAtLeastOneFullStatsLoadForEachTable`: determinate mode
+        // keeps at least one analyzed, non-virtual column payload per table
+        // unless some column or non-MV index is already full.
+        {
+            for table_id in &usage.visited_logical_table_ids {
+                let Some(statistics) = self.table_statistics(*table_id) else {
+                    continue;
+                };
+                if columns.iter().any(|(item, full)| {
+                    item.table_id == *table_id
+                        && *full
+                        && statistics
+                            .column_stats_existence
+                            .get(&item.id)
+                            .copied()
+                            .unwrap_or(false)
+                }) {
+                    continue;
+                }
+                if statistics.pseudo
+                    || statistics
+                        .column_load_status
+                        .values()
+                        .any(|status| status.is_full_load())
+                    || statistics
+                        .index_load_status
+                        .iter()
+                        .any(|(index_id, status)| {
+                            status.is_full_load()
+                                && self.kv_table_by_id(*table_id).is_none_or(|table| {
+                                    table.mv_key_part_source(*index_id).is_none()
+                                })
+                        })
+                {
+                    continue;
+                }
+                let Some(table) = self.kv_table_by_id(*table_id) else {
+                    continue;
+                };
+                if let Some(column) = table.columns.iter().find(|column| {
+                    column
+                        .generated
+                        .as_ref()
+                        .is_none_or(|generated| generated.stored)
+                        && statistics
+                            .column_stats_existence
+                            .get(&column.id)
+                            .copied()
+                            .unwrap_or(false)
+                }) {
+                    columns.insert(
+                        tidb_model::TableItemID {
+                            table_id: *table_id,
+                            id: column.id,
+                            is_index: false,
+                            is_sync_load_failed: false,
+                        },
+                        true,
+                    );
+                }
+            }
+        }
+
+        let mut items: HashMap<tidb_model::TableItemID, bool> = columns.clone();
+        // Go `CollectDependingVirtualCols` is used only to discover expression
+        // indexes; virtual columns themselves are not load items.
+        let mut index_source_columns = columns.keys().copied().collect::<Vec<_>>();
+        for column in columns.keys() {
+            let Some(table) = self.kv_table_by_id(column.table_id) else {
+                continue;
+            };
+            let Some(name) = table
+                .columns
+                .iter()
+                .find(|metadata| metadata.id == column.id)
+                .map(|metadata| metadata.name.as_str())
+            else {
+                continue;
+            };
+            index_source_columns.extend(table.columns.iter().filter_map(|metadata| {
+                let generated = metadata.generated.as_ref()?;
+                (!generated.stored
+                    && generated
+                        .dependencies
+                        .iter()
+                        .any(|dependency| dependency.eq_ignore_ascii_case(name)))
+                .then_some(tidb_model::TableItemID {
+                    table_id: column.table_id,
+                    id: metadata.id,
+                    is_index: false,
+                    is_sync_load_failed: false,
+                })
+            }));
+        }
+        for column in index_source_columns {
+            let Some(table) = self.kv_table_by_id(column.table_id) else {
+                continue;
+            };
+            let Some(offset) = table
+                .columns
+                .iter()
+                .position(|metadata| metadata.id == column.id)
+            else {
+                continue;
+            };
+            let Some(statistics) = self.table_statistics(column.table_id) else {
+                continue;
+            };
+            if statistics.pseudo {
+                continue;
+            }
+            for index in table.indexes() {
+                if !index.column_offsets.contains(&offset)
+                    || !statistics.index_is_load_needed(index.id)
+                {
+                    continue;
+                }
+                items.insert(
+                    tidb_model::TableItemID {
+                        table_id: column.table_id,
+                        id: index.id,
+                        is_index: true,
+                        is_sync_load_failed: false,
+                    },
+                    true,
+                );
+            }
+        }
+
+        // Go expands the combined column/index demand after collection. The
+        // map is populated only by static-pruning partition data sources.
+        let logical_items = items.clone();
+        for (item, full_load) in logical_items {
+            if let Some(partition_ids) = usage.table_partition_ids.get(&item.table_id) {
+                for partition_id in partition_ids {
+                    items.insert(
+                        tidb_model::TableItemID {
+                            table_id: *partition_id,
+                            id: item.id,
+                            is_index: item.is_index,
+                            is_sync_load_failed: false,
+                        },
+                        full_load,
+                    );
+                }
+            }
+        }
+
+        // Go's stats handle drops requests already satisfied by the shared
+        // cache before queueing workers.
+        items.retain(|item, full_load| {
+            let Some(statistics) = self.table_statistics(item.table_id) else {
+                return false;
+            };
+            if item.is_index {
+                return statistics.index_is_load_needed(item.id);
+            }
+            statistics.column_is_load_needed(item.id, *full_load)
+        });
+
+        let mut result = items
+            .into_iter()
+            .map(|(table_item_id, full_load)| tidb_model::StatsLoadItem {
+                table_item_id,
+                full_load,
+            })
+            .collect::<Vec<_>>();
+        result.sort_by_key(|item| {
+            (
+                item.table_item_id.table_id,
+                item.table_item_id.is_index,
+                item.table_item_id.id,
+            )
+        });
+        result
+    }
+
+    /// Go `RequestLoadStats` plus `SyncWaitStatsLoad` at the logical-rule
+    /// boundary. The worker always publishes when it finishes; a synchronous
+    /// caller additionally waits up to the session's configured deadline.
+    pub fn request_statistics_load(
+        &self,
+        usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
+        context: &crate::StmtContext,
+    ) -> Result<(), tidb_planner::plan_base::PlanError> {
+        let wait = std::time::Duration::from_millis(context.stats_load_wait_ms());
+        let items = self.statistics_load_items(usage, !wait.is_zero());
+        if items.is_empty() {
+            return Ok(());
+        }
+        let loader = self
+            .statistics
+            .loader
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let Some(loader) = loader else {
+            return Ok(());
+        };
+        let cache = Arc::clone(&self.statistics);
+        let resource_group = context.resource_group_name().to_owned();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            let loaded = loader.load_items(&items, &resource_group);
+            if let Ok(tables) = &loaded {
+                let mut values = cache
+                    .values
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                for (table_id, statistics) in tables {
+                    values.insert(*table_id, Arc::clone(statistics));
+                }
+            }
+            let _ = sender.send(loaded.map(|_| ()));
+        });
+        if wait.is_zero() {
+            return Ok(());
+        }
+        match receiver.recv_timeout(wait) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => {
+                context.report_sync_stats_failed();
+                if context.stats_load_pseudo_timeout() {
+                    context
+                        .set_skip_plan_cache("sync-load timed out and fell back to pseudo stats");
+                    context.append_warning_parts(1105, &error);
+                    Ok(())
+                } else {
+                    Err(tidb_planner::plan_base::PlanError::internal(error))
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                if context.stats_load_pseudo_timeout() =>
+            {
+                context.report_sync_stats_failed();
+                context.set_skip_plan_cache("sync-load timed out and fell back to pseudo stats");
+                context.append_warning_parts(1105, "sync load stats timeout");
+                Ok(())
+            }
+            Err(error) => {
+                context.report_sync_stats_failed();
+                Err(tidb_planner::plan_base::PlanError::internal(
+                    error.to_string(),
+                ))
+            }
+        }
+    }
+
     /// One table's loaded statistics; `None` is Go's `PseudoTable`.
     #[must_use]
     pub fn table_statistics(
@@ -1765,5 +2065,123 @@ impl ColumnResolver for TableResolver<'_> {
             .iter()
             .position(|(n, _)| n.eq_ignore_ascii_case(name))
             .map(|i| (i, self.columns[i].1.clone(), (i + 1) as i64))
+    }
+}
+
+#[cfg(test)]
+mod statistics_request_tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct RecordingLoader {
+        requests: std::sync::Mutex<Vec<tidb_model::StatsLoadItem>>,
+        delay: std::time::Duration,
+        failure: Option<String>,
+    }
+
+    impl StatisticsItemLoader for RecordingLoader {
+        fn load_items(
+            &self,
+            items: &[tidb_model::StatsLoadItem],
+            _resource_group: &str,
+        ) -> Result<Vec<(i64, Arc<crate::access_cost::TableStatistics>)>, String> {
+            *self
+                .requests
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = items.to_vec();
+            if !self.delay.is_zero() {
+                std::thread::sleep(self.delay);
+            }
+            match &self.failure {
+                Some(error) => Err(error.clone()),
+                None => Ok(Vec::new()),
+            }
+        }
+    }
+
+    fn analyzed_lite_catalog() -> (Catalog, i64, i64) {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE t(a INT, b INT, KEY ia(a))", &mut catalog)
+            .expect("fixture DDL");
+        let TableEntry::Kv(table) = catalog.get_in("test", "t").expect("fixture table") else {
+            panic!("fixture is not a KV table")
+        };
+        let table_id = table.table_id;
+        let column_id = table.columns[0].id;
+        let statistics = crate::access_cost::TableStatistics {
+            pseudo: false,
+            row_count: 10,
+            column_load_status: [(column_id, tidb_stats::StatsLoadedStatus::all_evicted())]
+                .into_iter()
+                .collect(),
+            column_stats_existence: [(column_id, true)].into_iter().collect(),
+            ..crate::access_cost::TableStatistics::default()
+        };
+        catalog.set_table_statistics(table_id, Arc::new(statistics));
+        (catalog, table_id, column_id)
+    }
+
+    #[test]
+    fn determinate_load_requests_one_analyzed_column_per_visited_table() {
+        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
+        let loader = Arc::new(RecordingLoader::default());
+        catalog.set_statistics_item_loader(loader.clone());
+        let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
+            visited_logical_table_ids: [table_id].into_iter().collect(),
+            ..Default::default()
+        };
+
+        catalog
+            .request_statistics_load(
+                &usage,
+                &crate::StmtContext::for_query().with_stats_load_policy(100, true, 0),
+            )
+            .expect("synchronous load");
+        let requests = loader
+            .requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(requests.len(), 1);
+        assert!(requests.iter().any(|request| {
+            request.table_item_id.table_id == table_id
+                && request.table_item_id.id == column_id
+                && !request.table_item_id.is_index
+                && request.full_load
+        }));
+    }
+
+    #[test]
+    fn timeout_marks_failure_warns_and_refuses_plan_cache() {
+        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
+        catalog.set_statistics_item_loader(Arc::new(RecordingLoader {
+            delay: std::time::Duration::from_millis(40),
+            ..RecordingLoader::default()
+        }));
+        let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
+            predicate_columns: [(
+                tidb_model::TableItemID {
+                    table_id,
+                    id: column_id,
+                    is_index: false,
+                    is_sync_load_failed: false,
+                },
+                true,
+            )]
+            .into_iter()
+            .collect(),
+            visited_logical_table_ids: [table_id].into_iter().collect(),
+            ..Default::default()
+        };
+        let context = crate::StmtContext::for_query().with_stats_load_policy(100, true, 5);
+
+        catalog
+            .request_statistics_load(&usage, &context)
+            .expect("pseudo fallback converts the timeout to a warning");
+        assert!(context.sync_stats_failed());
+        assert!(context.skip_plan_cache());
+        let warnings = context.take_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].1, 1105);
+        assert_eq!(warnings[0].2, "sync load stats timeout");
     }
 }

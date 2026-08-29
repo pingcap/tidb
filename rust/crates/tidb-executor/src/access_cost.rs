@@ -81,6 +81,12 @@ pub struct TableStatistics {
     /// Go `Index.StatsLoadedStatus`, retained separately from the estimator's
     /// reduced index shape.
     pub index_load_status: BTreeMap<i64, tidb_stats::StatsLoadedStatus>,
+    /// Go `ColAndIdxExistenceMap`'s column entries. The value says whether
+    /// the persisted histogram row is analyzed.
+    pub column_stats_existence: BTreeMap<i64, bool>,
+    /// Go `ColAndIdxExistenceMap`'s index entries. The value says whether the
+    /// persisted histogram row is analyzed.
+    pub index_stats_existence: BTreeMap<i64, bool>,
 }
 
 impl TableStatistics {
@@ -146,6 +152,8 @@ impl TableStatistics {
             .keys()
             .map(|id| (*id, tidb_stats::StatsLoadedStatus::full_load()))
             .collect();
+        let column_stats_existence = columns.keys().map(|id| (*id, true)).collect();
+        let index_stats_existence = indexes.keys().map(|id| (*id, true)).collect();
         Self {
             pseudo: row_count == 0 || (columns.is_empty() && indexes.is_empty()),
             row_count,
@@ -156,6 +164,8 @@ impl TableStatistics {
             indexes,
             column_load_status,
             index_load_status,
+            column_stats_existence,
+            index_stats_existence,
         }
     }
 
@@ -170,6 +180,55 @@ impl TableStatistics {
         self.column_load_status = columns;
         self.index_load_status = indexes;
         self
+    }
+
+    /// Preserves Go's system-table existence map independently of the
+    /// in-memory column/index objects.
+    #[must_use]
+    pub fn with_stats_existence(
+        mut self,
+        columns: BTreeMap<i64, bool>,
+        indexes: BTreeMap<i64, bool>,
+    ) -> Self {
+        self.column_stats_existence = columns;
+        self.index_stats_existence = indexes;
+        self
+    }
+
+    /// Go `Table.ColumnIsLoadNeeded`.
+    #[must_use]
+    pub fn column_is_load_needed(&self, id: i64, full_load: bool) -> bool {
+        if self.pseudo {
+            return false;
+        }
+        let Some(analyzed) = self.column_stats_existence.get(&id).copied() else {
+            return false;
+        };
+        let Some(status) = self.column_load_status.get(&id).copied() else {
+            return true;
+        };
+        if !analyzed {
+            return false;
+        }
+        if full_load {
+            !status.is_full_load()
+        } else {
+            !status.stats_initialized()
+        }
+    }
+
+    /// Go `Table.IndexIsLoadNeeded`.
+    #[must_use]
+    pub fn index_is_load_needed(&self, id: i64) -> bool {
+        let analyzed = self
+            .index_stats_existence
+            .get(&id)
+            .copied()
+            .unwrap_or(false);
+        match self.index_load_status.get(&id).copied() {
+            None => analyzed,
+            Some(status) => analyzed && !status.is_full_load(),
+        }
     }
 
     /// Stamps the two TSOs the loaded `mysql.stats_meta` row carries, which

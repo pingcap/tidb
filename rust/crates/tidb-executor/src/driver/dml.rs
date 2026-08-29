@@ -2322,6 +2322,9 @@ fn cached_dml_physical_plan(
         true,
     )
     .ok()?;
+    if ctx.skip_plan_cache() {
+        return None;
+    }
     tidb_planner::physical_plan_cache::plan_cacheable(&root, cacheability).ok()?;
     Some(root)
 }

@@ -409,6 +409,9 @@ impl RuleId {
                 Some(&super::rule_eliminate_empty_selection::EmptySelectionEliminator)
             }
             Self::ResolveExpand => Some(&super::rule_resolve_expand::ResolveExpand),
+            Self::CollectPredicateColumnsPoint => {
+                Some(&super::rule_collect_plan_stats::CollectPredicateColumnsPoint)
+            }
             Self::GcSubstituter
             | Self::DecorrelateSolver
             | Self::SemiJoinRewriter
@@ -419,7 +422,6 @@ impl RuleId {
             | Self::ConvertOuterToInnerJoin
             | Self::OuterJoinEliminator
             | Self::PartitionProcessor
-            | Self::CollectPredicateColumnsPoint
             | Self::AggregationPushDownSolver
             | Self::PredicateSimplification
             | Self::FullTextIndexResolverTopN
@@ -587,6 +589,8 @@ pub struct RuleContext<'a> {
     pub allow_derive_topn: bool,
     /// Go `DefaultDisabledLogicalRulesList`.
     pub disabled_rules: DisabledLogicalRules,
+    /// Go's domain `StatsHandle`, reached at this rule's exact position.
+    pub statistics_load: Option<&'a dyn super::rule_collect_plan_stats::StatisticsLoadRequester>,
 }
 
 /// Go `base.LogicalOptRule` (`base/rule_base.go`).

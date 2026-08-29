@@ -175,7 +175,9 @@ use crate::resultset_source::ResultSetSource;
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_ddl::DdlStatement;
+use tidb_exec::cluster_stats_load::ClusterStatsLoader;
 use tidb_exec::real_tikv_analyze::prepare_cluster_analyze;
+use tidb_exec::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_exec::real_tikv_ddl::prepare_cluster_ddl_with_context;
 use tidb_exec::stats_watch::SharedStats;
 use tidb_executor::access_path::StatementReadShape;
@@ -193,8 +195,8 @@ use tidb_exec::cluster_table_storage::LockKeysOutcome;
 use crate::cluster_account_seam::ClusterAccountWriter;
 use crate::cluster_analyze_seam::ClusterAnalyze;
 use crate::cluster_session::{
-    cluster_session_catalog, cluster_session_catalog_with_templates, KvTableTemplates,
-    SkippedTable, StatsTemplates, TableAutoIds,
+    cluster_session_catalog, cluster_session_catalog_with_templates, planner_statistics,
+    KvTableTemplates, SkippedTable, StatsTemplates, TableAutoIds,
 };
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::pipeline_session::MaterializedResultSetSource;
@@ -336,6 +338,71 @@ enum StatementRoute {
 
 struct ClusterDataLockWaits {
     transactions: Arc<dyn ClusterTransactions>,
+}
+
+struct ClusterStatisticsItemLoader {
+    transactions: Arc<dyn ClusterTransactions>,
+    catalog: Arc<SharedClusterCatalog>,
+    stats: Arc<SharedStats>,
+}
+
+impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader {
+    fn load_items(
+        &self,
+        items: &[tidb_model::StatsLoadItem],
+        resource_group: &str,
+    ) -> Result<Vec<(i64, Arc<tidb_executor::access_cost::TableStatistics>)>, String> {
+        let catalog = self.catalog.load();
+        let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
+        let mut updated = std::collections::BTreeSet::new();
+        for requested in items {
+            let item = requested.table_item_id;
+            let Some(table) = catalog
+                .databases
+                .iter()
+                .flat_map(|database| &database.tables)
+                .find(|table| table.id == item.table_id)
+            else {
+                continue;
+            };
+            let column_type = (!item.is_index)
+                .then(|| {
+                    table.cols().iter_deref().find_map(|column| {
+                        let column = column.read();
+                        (column.id == item.id).then(|| column.field_type.clone())
+                    })
+                })
+                .flatten();
+            let snapshot = self.transactions.open_snapshot(resource_group)?;
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            let loaded = loader
+                .load_item(
+                    &mut snapshot,
+                    item.table_id,
+                    item.is_index,
+                    item.id,
+                    column_type.as_ref(),
+                    requested.full_load,
+                )
+                .map_err(|error| error.to_string())?;
+            if loaded.is_some_and(|loaded| self.stats.update_item(item.table_id, loaded)) {
+                updated.insert(item.table_id);
+            }
+        }
+        let snapshot = self.stats.load();
+        Ok(updated
+            .into_iter()
+            .filter_map(|table_id| {
+                let table = catalog
+                    .databases
+                    .iter()
+                    .flat_map(|database| &database.tables)
+                    .find(|table| table.id == table_id)?;
+                let stats = snapshot.get(&table_id)?.loaded()?;
+                Some((table_id, Arc::new(planner_statistics(stats, table))))
+            })
+            .collect())
+    }
 }
 
 impl tidb_session::DataLockWaitsProvider for ClusterDataLockWaits {
@@ -602,7 +669,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         kv_templates.reuse(&loaded);
-        let built = cluster_session_catalog_with_templates(
+        let mut built = cluster_session_catalog_with_templates(
             &loaded,
             &storage,
             &statistics,
@@ -611,6 +678,13 @@ impl QuerySessionFactory for ClusterSessionFactory {
             &template_storage,
             Some(&mut kv_templates),
         );
+        built
+            .catalog
+            .set_statistics_item_loader(Arc::new(ClusterStatisticsItemLoader {
+                transactions: Arc::clone(&self.transactions),
+                catalog: Arc::clone(&self.catalog),
+                stats: Arc::clone(&self.stats),
+            }));
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
         session.set_index_usage_collector(Arc::clone(&self.index_usage_collector));
         session.set_data_lock_waits_provider(self.data_lock_waits.clone());

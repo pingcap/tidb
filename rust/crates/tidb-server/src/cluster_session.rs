@@ -954,7 +954,22 @@ const UNSIGNED_FLAG: u32 = 1 << 5;
 /// the other. A histogram whose `hist_id` names no current column or index --
 /// a dropped one whose stats rows have not been GC'd -- is skipped, because
 /// the estimator keys on the live schema.
-fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStatistics {
+pub(crate) fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStatistics {
+    let column_stats_existence = stats
+        .columns
+        .iter()
+        .map(|item| {
+            (
+                item.id,
+                item.stats_ver != 0 || item.histogram.ndv > 0 || item.histogram.null_count > 0,
+            )
+        })
+        .collect();
+    let index_stats_existence = stats
+        .indexes
+        .iter()
+        .map(|item| (item.id, item.stats_ver != 0))
+        .collect();
     let mut columns = std::collections::BTreeMap::new();
     let mut column_load_status = std::collections::BTreeMap::new();
     for column in table.cols().iter_deref() {
@@ -1004,6 +1019,7 @@ fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStat
     )
     .with_stat_versions(stats.version, stats.last_analyze_version)
     .with_load_statuses(column_load_status, index_load_status)
+    .with_stats_existence(column_stats_existence, index_stats_existence)
 }
 
 /// Go `Column.StatsAvailable()` / `IsColumnAnalyzedOrSynthesized`: whether

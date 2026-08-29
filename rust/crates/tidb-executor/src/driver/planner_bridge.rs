@@ -809,8 +809,28 @@ fn optimize_built_logical(
     column_ids: &ColumnIdAllocator,
     session_zone: &tidb_expr::SessionTimeZone,
 ) -> Result<LogicalPlan, tidb_planner::plan_base::PlanError> {
+    struct PlannerStatisticsLoad<'a> {
+        catalog: &'a Catalog,
+        context: &'a crate::StmtContext,
+    }
+
+    impl tidb_planner::logical::rule_collect_plan_stats::StatisticsLoadRequester
+        for PlannerStatisticsLoad<'_>
+    {
+        fn request(
+            &self,
+            usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
+        ) -> Result<(), tidb_planner::plan_base::PlanError> {
+            self.catalog.request_statistics_load(usage, self.context)
+        }
+    }
+
     let flags = tidb_planner::logical::rule::add_second_column_prune(flags);
     let function_builder = RealFunctionBuilder::new(ctx);
+    let statistics_load = PlannerStatisticsLoad {
+        catalog,
+        context: ctx,
+    };
     let rule_context = RuleContext {
         allocator: plan_ids,
         column_allocator: column_ids,
@@ -818,6 +838,7 @@ fn optimize_built_logical(
         use_plan_cache,
         allow_derive_topn: true,
         disabled_rules: DisabledLogicalRules::default(),
+        statistics_load: Some(&statistics_load),
     };
     let optimized = logical_optimize(&rule_context, flags, plan)
         .map_err(|(_, error)| error)?
@@ -914,6 +935,9 @@ pub(crate) fn cached_physical_query_plan(
         return None;
     }
     let (_, physical) = planner_physical_query(query, catalog, current_database, ctx, true).ok()?;
+    if ctx.skip_plan_cache() {
+        return None;
+    }
     tidb_planner::physical_plan_cache::plan_cacheable(&physical, cacheability).ok()?;
     Some(physical)
 }

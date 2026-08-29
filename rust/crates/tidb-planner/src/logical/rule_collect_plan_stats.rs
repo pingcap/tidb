@@ -28,7 +28,9 @@ use tidb_expr::expression::Expression;
 use tidb_model::TableItemID;
 
 use super::data_source::DataSource;
+use super::rule::{LogicalOptRule, RuleContext};
 use super::LogicalPlan;
+use crate::plan_base::PlanError;
 
 /// Go `CollectColumnStatsUsage`'s statistics-loading result.
 #[derive(Debug, Default)]
@@ -41,6 +43,37 @@ pub struct ColumnStatsUsage {
     pub table_partition_ids: HashMap<i64, Vec<i64>>,
     /// Number of logical operators visited.
     pub operator_count: u64,
+}
+
+/// The domain statistics handle reached by Go
+/// `CollectPredicateColumnsPoint.Optimize`.
+pub trait StatisticsLoadRequester {
+    /// Requests the collected items before later logical rules and physical
+    /// enumeration read their statistics.
+    fn request(&self, usage: &ColumnStatsUsage) -> Result<(), PlanError>;
+}
+
+/// Go `CollectPredicateColumnsPoint`.
+pub struct CollectPredicateColumnsPoint;
+
+impl LogicalOptRule for CollectPredicateColumnsPoint {
+    fn optimize(
+        &self,
+        ctx: &RuleContext<'_>,
+        plan: LogicalPlan,
+    ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
+        let usage = collect_column_stats_usage(&plan);
+        if let Some(requester) = ctx.statistics_load {
+            if let Err(error) = requester.request(&usage) {
+                return Err((plan, error));
+            }
+        }
+        Ok((plan, false))
+    }
+
+    fn name(&self) -> &'static str {
+        "collect_predicate_columns_point"
+    }
 }
 
 #[derive(Default)]
@@ -310,6 +343,8 @@ pub fn collect_column_stats_usage(plan: &LogicalPlan) -> ColumnStatsUsage {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use tidb_ast::CiString;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
@@ -320,8 +355,10 @@ mod tests {
     use crate::logical::data_source::DataSourceColumn;
     use crate::logical::join::LogicalJoin;
     use crate::logical::projection::LogicalProjection;
+    use crate::logical::rule_tests::{test_context, TEST_BUILDER};
     use crate::logical::selection::LogicalSelection;
     use crate::logical::BaseLogicalPlan;
+    use crate::plan_base::PlanIdAllocator;
 
     fn column(id: i64) -> Column {
         Column::new(id, FieldType::new(FieldTypeCode::LongLong))
@@ -422,5 +459,39 @@ mod tests {
         assert_eq!(usage.predicate_columns.get(&item(7, 11)), Some(&false));
         assert_eq!(usage.predicate_columns.get(&item(8, 21)), Some(&false));
         assert_eq!(usage.operator_count, 3);
+    }
+
+    #[test]
+    fn logical_rule_requests_the_collected_usage_at_its_go_position() {
+        struct Requester {
+            calls: Cell<usize>,
+            operators: Cell<u64>,
+        }
+
+        impl StatisticsLoadRequester for Requester {
+            fn request(&self, usage: &ColumnStatsUsage) -> Result<(), PlanError> {
+                self.calls.set(self.calls.get() + 1);
+                self.operators.set(usage.operator_count);
+                Ok(())
+            }
+        }
+
+        let allocator = PlanIdAllocator::new();
+        let requester = Requester {
+            calls: Cell::new(0),
+            operators: Cell::new(0),
+        };
+        let mut context = test_context(&allocator);
+        context.builder = &TEST_BUILDER;
+        context.statistics_load = Some(&requester);
+        let plan = source(1, 7, &[(11, 1)]);
+
+        let (returned, changed) = CollectPredicateColumnsPoint
+            .optimize(&context, plan)
+            .expect("statistics request");
+        assert!(!changed);
+        assert!(matches!(returned, LogicalPlan::DataSource(_)));
+        assert_eq!(requester.calls.get(), 1);
+        assert_eq!(requester.operators.get(), 1);
     }
 }

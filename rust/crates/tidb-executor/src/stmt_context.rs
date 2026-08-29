@@ -554,6 +554,16 @@ pub struct StmtContext {
     /// Go `SessionVars.EnablePseudoForOutdatedStats`: whether this statement
     /// may replace stale analyzed distributions with pseudo statistics.
     enable_pseudo_for_outdated_stats: bool,
+    /// Go `SessionVars.StatsLoadSyncWait`, in milliseconds.
+    stats_load_sync_wait_ms: u64,
+    /// Go `vardef.StatsLoadPseudoTimeout`.
+    stats_load_pseudo_timeout: bool,
+    /// Go `SessionVars.GetMaxExecutionTime()`, in milliseconds.
+    max_execution_time_ms: u64,
+    /// Go `StmtCtx.IsSyncStatsFailed`.
+    sync_stats_failed: Arc<AtomicBool>,
+    /// Go `StmtCtx.SetSkipPlanCache`'s first reason.
+    skip_plan_cache_reason: Arc<Mutex<Option<String>>>,
     /// The validated statement snapshot of `@@block_encryption_mode`.
     block_encryption_mode: tidb_expr::BlockEncryptionMode,
     /// `@@max_allowed_packet`, which the result-sizing string builtins read.
@@ -757,6 +767,11 @@ impl StmtContext {
             like_default_escape: b'\\',
             default_string_match_selectivity: 0.0,
             enable_pseudo_for_outdated_stats: false,
+            stats_load_sync_wait_ms: tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_SYNC_WAIT as u64,
+            stats_load_pseudo_timeout: tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_PSEUDO_TIMEOUT,
+            max_execution_time_ms: 0,
+            sync_stats_failed: Arc::default(),
+            skip_plan_cache_reason: Arc::default(),
             block_encryption_mode: tidb_expr::BlockEncryptionMode::default(),
             // Go `vardef.DefMaxAllowedPacket`, the value a default server runs
             // with and the one the `Columns` trait default already used.
@@ -989,6 +1004,20 @@ impl StmtContext {
         self
     }
 
+    /// Attaches Go's synchronous statistics-load policy.
+    #[must_use]
+    pub fn with_stats_load_policy(
+        mut self,
+        wait_ms: u64,
+        pseudo_timeout: bool,
+        max_execution_time_ms: u64,
+    ) -> Self {
+        self.stats_load_sync_wait_ms = wait_ms;
+        self.stats_load_pseudo_timeout = pseudo_timeout;
+        self.max_execution_time_ms = max_execution_time_ms;
+        self
+    }
+
     /// Attaches the AES mode selected by this session for the statement.
     #[must_use]
     pub fn with_block_encryption_mode(mut self, mode: tidb_expr::BlockEncryptionMode) -> Self {
@@ -1030,6 +1059,64 @@ impl StmtContext {
     #[must_use]
     pub fn enable_pseudo_for_outdated_stats(&self) -> bool {
         self.enable_pseudo_for_outdated_stats
+    }
+
+    /// Go `SessionVars.StatsLoadSyncWait`, in milliseconds.
+    #[must_use]
+    pub const fn stats_load_sync_wait_ms(&self) -> u64 {
+        self.stats_load_sync_wait_ms
+    }
+
+    /// Go `vardef.StatsLoadPseudoTimeout`.
+    #[must_use]
+    pub const fn stats_load_pseudo_timeout(&self) -> bool {
+        self.stats_load_pseudo_timeout
+    }
+
+    /// Go caps synchronous statistics loading by `max_execution_time` when
+    /// that statement limit is non-zero.
+    #[must_use]
+    pub const fn stats_load_wait_ms(&self) -> u64 {
+        if self.max_execution_time_ms > 0
+            && self.max_execution_time_ms < self.stats_load_sync_wait_ms
+        {
+            self.max_execution_time_ms
+        } else {
+            self.stats_load_sync_wait_ms
+        }
+    }
+
+    /// Records Go `StmtCtx.IsSyncStatsFailed`.
+    pub fn report_sync_stats_failed(&self) {
+        self.sync_stats_failed
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Go `StmtCtx.IsSyncStatsFailed`.
+    #[must_use]
+    pub fn sync_stats_failed(&self) -> bool {
+        self.sync_stats_failed
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Go `StmtCtx.SetSkipPlanCache`.
+    pub fn set_skip_plan_cache(&self, reason: impl Into<String>) {
+        let mut current = self
+            .skip_plan_cache_reason
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if current.is_none() {
+            *current = Some(reason.into());
+        }
+    }
+
+    /// Whether this statement must not publish a prepared-plan cache entry.
+    #[must_use]
+    pub fn skip_plan_cache(&self) -> bool {
+        self.skip_plan_cache_reason
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
     }
 
     /// The connection charset/collation used while building expressions.
@@ -2582,6 +2669,20 @@ impl Columns for StmtContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stats_load_wait_is_capped_and_failure_state_is_shared_by_clones() {
+        let ctx = StmtContext::for_query().with_stats_load_policy(100, true, 7);
+        let clone = ctx.clone();
+        assert_eq!(ctx.stats_load_wait_ms(), 7);
+        assert!(!clone.sync_stats_failed());
+        assert!(!clone.skip_plan_cache());
+
+        ctx.report_sync_stats_failed();
+        ctx.set_skip_plan_cache("sync-load timed out and fell back to pseudo stats");
+        assert!(clone.sync_stats_failed());
+        assert!(clone.skip_plan_cache());
+    }
 
     #[test]
     fn sleep_keeps_a_kill_installed_after_a_physical_table_reader_is_built() {
